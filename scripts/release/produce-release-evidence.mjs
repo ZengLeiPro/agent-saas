@@ -196,6 +196,10 @@ export async function produceReleaseEvidence(options) {
     'Compatibility report',
   );
 
+  const { digest: productionDigest, ...productionBody } = production;
+  if (digestBuffer(Buffer.from(canonicalJson(productionBody))) !== productionDigest) {
+    throw new Error('Production state digest does not match its canonical body');
+  }
   if (integration.finalPullRequest.mergeCommitOid !== releaseSha)
     throw new Error('Final Integration PR merge commit does not equal the release SHA');
   if (checks.appCi.headSha !== releaseSha || checks.acsImpact.headSha !== releaseSha)

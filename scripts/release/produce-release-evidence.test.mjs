@@ -15,6 +15,32 @@ const DIGESTS = Object.fromEntries(
   ]),
 );
 
+function productionState() {
+  const body = {
+    schemaVersion: 1,
+    environment: 'production',
+    observedAt: '2026-08-28T00:00:00.000Z',
+    releaseId: 'release-previous',
+    components: {
+      web: { gitSha: BASE_SHA, artifactDigest: DIGESTS.web },
+      api: { gitSha: BASE_SHA, artifactDigest: DIGESTS.server },
+      runtimeWorker: { gitSha: BASE_SHA, artifactDigest: DIGESTS.server },
+      acs: {
+        gitSha: BASE_SHA,
+        orchestratorArtifactDigest: DIGESTS.acs,
+        sandboxImageDigest: DIGESTS.image,
+      },
+    },
+    configFingerprints: {
+      runtime: DIGESTS.server,
+      acs: DIGESTS.acs,
+      web: DIGESTS.web,
+    },
+    topology: { observedAt: '2026-08-28T00:00:00.000Z' },
+  };
+  return { ...body, digest: digestBuffer(Buffer.from(canonicalJson(body))) };
+}
+
 async function fixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-producer-'));
   const documents = {
@@ -53,21 +79,7 @@ async function fixture(overrides = {}) {
         headSha: RELEASE_SHA,
       },
     },
-    production: {
-      schemaVersion: 1,
-      environment: 'production',
-      digest: DIGESTS.production,
-      components: {
-        web: { gitSha: BASE_SHA, artifactDigest: DIGESTS.web },
-        api: { gitSha: BASE_SHA, artifactDigest: DIGESTS.server },
-        runtimeWorker: { gitSha: BASE_SHA, artifactDigest: DIGESTS.server },
-        acs: {
-          gitSha: BASE_SHA,
-          orchestratorArtifactDigest: DIGESTS.acs,
-          sandboxImageDigest: DIGESTS.image,
-        },
-      },
-    },
+    production: productionState(),
     'baseline-artifacts': {
       serverBundle: { uri: 'oss://releases/base/server.tgz', digest: DIGESTS.server, size: 10 },
       webAssets: { uri: 'oss://releases/base/web.tgz', digest: DIGESTS.web, size: 11 },
@@ -93,7 +105,7 @@ async function fixture(overrides = {}) {
     compatibility: {
       schemaVersion: 1,
       releaseSha: RELEASE_SHA,
-      productionBaselineDigest: DIGESTS.production,
+      productionBaselineDigest: productionState().digest,
       affectedComponents: [],
       status: 'not_required',
       executedAt: '2026-08-28T01:00:00.000Z',
@@ -121,6 +133,17 @@ test('produces digest-bound release evidence from independent authoritative inpu
   assert.equal(evidence.integrationCandidates[0].candidateId, documents.integration.task.id);
   const { evidenceDigest, ...body } = evidence;
   assert.equal(evidenceDigest, digestBuffer(Buffer.from(canonicalJson(body))));
+});
+
+test('rejects production components tampered without recomputing the canonical digest', async () => {
+  const base = await fixture();
+  base.documents.production.components.web.artifactDigest = `sha256:${'9'.repeat(64)}`;
+  await writeFile(base.options.production, `${JSON.stringify(base.documents.production)}\n`);
+
+  await assert.rejects(
+    produceReleaseEvidence(base.options),
+    /Production state digest does not match its canonical body/u,
+  );
 });
 
 test('rejects a final Integration PR that is not the release commit', async () => {

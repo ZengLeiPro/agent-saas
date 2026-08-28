@@ -7,6 +7,7 @@ import { readRuntimeIdentity } from './read-runtime-identity.mjs';
 const TARGET = 'a'.repeat(40);
 const BASELINE = 'b'.repeat(40);
 const DIGEST = `sha256:${'c'.repeat(64)}`;
+const RELEASE_TARGET = `/opt/agent-saas-app/releases/${'c'.repeat(64)}`;
 
 function productionIdentity(overrides = {}) {
   const component = (gitSha) => ({
@@ -38,6 +39,7 @@ function productionIdentity(overrides = {}) {
         activeColorFile: '/etc/agent-saas/active-color',
         unit: 'agent-saas-server@blue.service',
         releaseSymlink: '/opt/agent-saas-app/color/blue',
+        releaseTarget: RELEASE_TARGET,
         pidfile: '/run/agent-saas-server-blue.pid',
       },
       runtimeWorker: {
@@ -45,6 +47,7 @@ function productionIdentity(overrides = {}) {
         activeColorFile: '/etc/agent-saas/runtime-worker-active-color',
         unit: 'agent-saas-runtime-worker@green.service',
         releaseSymlink: '/opt/agent-saas-app/worker/green',
+        releaseTarget: RELEASE_TARGET,
         pidfile: '/run/agent-saas-runtime-worker-green.pid',
         readyfile: '/run/agent-saas-runtime-worker-green.ready',
       },
@@ -64,7 +67,7 @@ function runtimeObservation(overrides = {}) {
     now: Date.parse('2026-08-25T00:01:00.000Z'),
     topologyExecFileSync: (_command, args) =>
       args.includes('ControlGroup') ? '/system.slice/agent-saas.service\n' : '123\n',
-    topologyRealpathSync: () => `/srv/releases/${TARGET}`,
+    topologyRealpathSync: () => RELEASE_TARGET,
     topologyReadFileSync: (path) => {
       if (path.endsWith('active-color')) return path.includes('runtime-worker') ? 'green' : 'blue';
       if (path.includes('/proc/')) return '0::/system.slice/agent-saas.service';
@@ -204,7 +207,13 @@ test('runtime identity rejects placeholder topology fields', () => {
   const identity = productionIdentity({
     topology: {
       ...productionIdentity().topology,
-      api: { unit: 'blue', releaseSymlink: 'blue', pidfile: 'blue', readyfile: 'blue' },
+      api: {
+        unit: 'blue',
+        releaseSymlink: 'blue',
+        releaseTarget: 'blue',
+        pidfile: 'blue',
+        readyfile: 'blue',
+      },
     },
   });
   const result = readRuntimeIdentity({
@@ -215,6 +224,29 @@ test('runtime identity rejects placeholder topology fields', () => {
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /deployed systemd template/u);
   assert.match(result.blockingReasons.join('\n'), /absolute path/u);
+});
+
+test('runtime identity binds live symlinks to content-addressed release targets', () => {
+  const identity = productionIdentity({
+    topology: {
+      ...productionIdentity().topology,
+      api: {
+        ...productionIdentity().topology.api,
+        releaseTarget: `/opt/agent-saas-app/releases/${'d'.repeat(64)}`,
+      },
+    },
+  });
+  const result = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(identity),
+    ...runtimeObservation(),
+  });
+  assert.equal(result.ok, false);
+  assert.match(
+    result.blockingReasons.join('\n'),
+    /releaseTarget does not match the deployed path/u,
+  );
+  assert.match(result.blockingReasons.join('\n'), /does not resolve to releaseTarget/u);
 });
 
 test('runtime identity fails closed for stale or unverifiable topology observations', () => {

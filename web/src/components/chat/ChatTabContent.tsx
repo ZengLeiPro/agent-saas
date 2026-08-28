@@ -1,5 +1,5 @@
 import { type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
 import { cn } from "@/lib/utils";
@@ -21,6 +21,8 @@ interface ChatTabContentProps {
   messages: MessageItem[];
   loading: boolean;
   isLoadingMessages?: boolean;
+  sessionLoadError?: string | null;
+  onRetrySessionLoad?: () => void;
   hasMoreHistory?: boolean;
   isLoadingEarlier?: boolean;
   onLoadEarlier?: () => Promise<void>;
@@ -162,6 +164,8 @@ export function ChatTabContent({
   messages,
   loading,
   isLoadingMessages,
+  sessionLoadError,
+  onRetrySessionLoad,
   hasMoreHistory,
   isLoadingEarlier,
   onLoadEarlier,
@@ -259,6 +263,7 @@ export function ChatTabContent({
   const isInitialConversation = initialComposer
     && !readOnly
     && !isLoadingMessages
+    && !sessionLoadError
     && messages.length === 0
     && !loading
     && !activeAskUser
@@ -272,7 +277,7 @@ export function ChatTabContent({
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div
         className={cn(
-          "flex min-h-0 basis-0 overflow-hidden transition-[flex-grow,opacity] duration-300 ease-out",
+          "relative flex min-h-0 basis-0 overflow-hidden transition-[flex-grow,opacity] duration-300 ease-out",
           isInitialConversation ? "pointer-events-none grow-0 opacity-0" : "grow opacity-100",
         )}
       >
@@ -297,8 +302,36 @@ export function ChatTabContent({
           sessionParticipants={displaySessionParticipants}
           sessionId={readOnly ? undefined : sessionId}
           debugModeOverride={debugModeOverride}
-          emptySlot={readOnly || initialComposer ? undefined : emptySlot}
+          emptySlot={sessionLoadError ? (
+            <div role="alert" className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">{sessionLoadError}</p>
+                <p className="text-xs text-muted-foreground">无需刷新页面，可直接重新加载当前会话。</p>
+              </div>
+              {onRetrySessionLoad && (
+                <button
+                  type="button"
+                  onClick={onRetrySessionLoad}
+                  className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  <RefreshCw className="size-3.5" />
+                  重新加载
+                </button>
+              )}
+            </div>
+          ) : readOnly || initialComposer ? undefined : emptySlot}
         />
+        {sessionLoadError && messages.length > 0 && (
+          <div role="alert" className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-lg border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-md backdrop-blur">
+            <span>{sessionLoadError}</span>
+            {onRetrySessionLoad && (
+              <button type="button" onClick={onRetrySessionLoad} className="inline-flex shrink-0 items-center gap-1 font-medium text-foreground">
+                <RefreshCw className="size-3" />
+                重试
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {readOnly && readOnlyInputPlaceholder ? (

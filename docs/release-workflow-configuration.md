@@ -40,7 +40,9 @@ Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`EC
 Workflow，不进入 Staging 部署或 Production Promotion Workflow。
 
 Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
-`RELEASE_RECORD_OSS_URI`。观察 URL 指向 `evidence-service.mjs` 的
+`RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
+地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。观察 URL 指向
+`evidence-service.mjs` 的
 `/production-observation` 端点；端点必须返回
 绑定 release ID 和 Manifest digest 的连续探针样本，覆盖 HTTP/WS、Agent 首 Token/完整轮次/
 恢复、Worker lease、Integration gate、Sandbox 生命周期、Cron 去重以及登录/会话/任务看板

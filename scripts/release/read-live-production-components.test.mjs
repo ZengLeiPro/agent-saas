@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import {
   parseReleaseEnvironment,
+  readJson,
   validateLiveProductionComponents,
 } from './read-live-production-components.mjs';
 
@@ -49,5 +51,24 @@ test('rejects unknown identity and ambiguous release environment', () => {
         acs: {},
       }),
     /Web release identity/u,
+  );
+});
+
+test('reads the strict ACS health route without a cache-busting query', async (t) => {
+  const server = createServer((request, response) => {
+    if (request.url !== '/health') {
+      response.writeHead(404).end();
+      return;
+    }
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ status: 'ok' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.equal(typeof address, 'object');
+  assert.deepEqual(
+    await readJson(`http://127.0.0.1:${address.port}/health`, { cacheBust: false }),
+    { status: 'ok' },
   );
 });

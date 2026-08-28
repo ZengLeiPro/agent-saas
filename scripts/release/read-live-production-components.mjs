@@ -104,9 +104,9 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
   return { color, unit };
 }
 
-async function json(url) {
+export async function readJson(url, { cacheBust = true } = {}) {
   const requestUrl = new URL(url);
-  requestUrl.searchParams.set('release_observation', String(Date.now()));
+  if (cacheBust) requestUrl.searchParams.set('release_observation', String(Date.now()));
   const response = await fetch(requestUrl, {
     headers: { 'cache-control': 'no-cache' },
     signal: AbortSignal.timeout(10_000),
@@ -147,9 +147,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ),
   };
   const [api, web, acs] = await Promise.all([
-    json(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
-    json(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
-    json(options['acs-url'] ?? 'http://127.0.0.1:3400/health'),
+    readJson(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
+    readJson(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
+    readJson(options['acs-url'] ?? 'http://127.0.0.1:3400/health', { cacheBust: false }),
   ]);
   const apiRoot = realpathSync(`/opt/agent-saas-app/color/${apiUnit.color}`);
   const workerRoot = realpathSync(`/opt/agent-saas-app/worker/${workerUnit.color}`);

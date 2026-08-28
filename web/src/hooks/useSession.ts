@@ -5,19 +5,13 @@ import type {
   TokenUsage,
 } from "@/lib/sessionsApi";
 import type { AgentProfile, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
-import { formatRuntimeFailureMessage, isInsufficientCreditsFailure } from "@agent/shared";
-import {
-  mergeServerMessagesWithLocalTail,
-  mergeSessionMessageDelta,
-  mergeSessionMessagePage,
-} from "@agent/shared";
+import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
 import { sessionsPreload } from "@/lib/preload";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import {
   saveSessionMessages,
-  loadSessionMessageSnapshot,
   clearSessionMessages,
 } from "@/lib/messageCache";
 import {
@@ -27,10 +21,11 @@ import {
 import { fetchGroupSessions } from "@agent/shared";
 import type { MessageItem } from "@/components/types";
 import {
-  appendPendingInteractions,
-  recordPerformanceMeasure,
-  type PendingInteraction,
-} from "./sessionMessageHelpers";
+  loadSessionDetailRequest,
+  SESSION_DETAIL_PAGE_SIZE,
+  type SessionDetailCursor,
+  type SessionDetailLoadOptions,
+} from "./sessionDetailLoader";
 
 export interface SessionCallbacks {
   resetMessages: () => void;
@@ -63,6 +58,8 @@ export interface SessionState {
   sessions: ApiSessionListItem[];
   isLoadingSessions: boolean;
   isLoadingMessages: boolean;
+  sessionLoadError: string | null;
+  retrySessionLoad: () => void;
   hasMoreHistory: boolean;
   isLoadingEarlier: boolean;
   loadEarlierMessages: () => Promise<void>;
@@ -83,7 +80,7 @@ export interface SessionState {
   loadMoreSessions: () => Promise<void>;
   loadSessionDetail: (
     id: string,
-    opts?: { scrollToBottom?: boolean; preserveTail?: boolean },
+    opts?: SessionDetailLoadOptions,
   ) => Promise<void>;
   newSession: () => void;
   selectSession: (id: string) => void;
@@ -123,8 +120,6 @@ export interface SessionOptions {
 }
 
 const RECENT_LOCAL_SESSION_TTL_MS = 60_000;
-const SESSION_DETAIL_PAGE_SIZE = 200;
-
 // sessionsPreload 是模块级 Promise，只在页面加载时用当时的 token 拉了一次会话。
 // 首次挂载消费它可以省一次 waterfall；但账号 A 登出 → 账号 B 登录时 <App/> 会重新
 // 挂载，useSession 也随之重跑 mount effect——此时 sessionsPreload 里躺着 A 的数据，
@@ -150,6 +145,7 @@ export function useSession(
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
@@ -160,11 +156,8 @@ export function useSession(
   const hasInitialLoadRef = useRef(false);
   const loadDetailPromiseRef = useRef<Promise<void> | null>(null);
   const loadNonceRef = useRef(0);
-  const detailCursorRef = useRef<Map<string, {
-    historyComplete: boolean;
-    tailCursor?: string;
-    oldestCursor?: string;
-  }>>(new Map());
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const detailCursorRef = useRef<Map<string, SessionDetailCursor>>(new Map());
   // 历史分页锁按会话隔离：A 会话的慢请求不能卡住随后打开的 B 会话。
   const loadingEarlierSessionIdsRef = useRef<Set<string>>(new Set());
 
@@ -302,214 +295,14 @@ export function useSession(
   }, []);
 
   const loadSessionDetail = useCallback(
-    async (
-      id: string,
-      opts?: {
-        scrollToBottom?: boolean;
-        silent?: boolean;
-        preserveTail?: boolean;
-      },
-    ) => {
-      const nonce = ++loadNonceRef.current;
-      const isStale = () => loadNonceRef.current !== nonce;
-      const mapperPromise = import("@/lib/sessionMessageMapper");
-
-      // silent 模式（后台恢复、WS 重连等）不显示 loading 指示器
-      if (!opts?.silent) setIsLoadingMessages(true);
-
-      let baseMessages: MessageItem[] | null = null;
-      let requestCursor: string | undefined;
-      let baseHistoryComplete = false;
-      let baseOldestCursor: string | undefined;
-
-      /**
-       * getMessages() 返回的是**全局当前消息数组**（与 id 无关），所以 preserveTail 只有在
-       * "目标会话恰好就是屏幕上正在显示的会话"时才成立。否则会把上一个会话的尾部
-       * （含用户消息与失败提示）整段拼进另一个会话——2026-08-01 线上跨会话失败提示泄漏的根因。
-       */
-      const canPreserveTail = opts?.preserveTail === true && sessionIdRef.current === id;
-
-      // preserveTail 场景（done 后同会话刷新）：本地内存里已有最新尾部，cached 反而是更旧的快照，
-      // 跳过以免闪回。
-      if (canPreserveTail && cbRef.current.getMessages) {
-        const detailState = detailCursorRef.current.get(id);
-        if (detailState?.tailCursor) {
-          baseMessages = cbRef.current.getMessages();
-          requestCursor = detailState.tailCursor;
-          baseHistoryComplete = detailState.historyComplete;
-          baseOldestCursor = detailState.oldestCursor;
-        }
-      } else {
-        // 先尝试展示本地缓存（冷启动 / 后台恢复时瞬间可见）
-        const cached = await loadSessionMessageSnapshot(id);
-        if (isStale()) return;
-        if (cached) {
-          const cachedMessages = cached.messages.filter((message) => message.type !== "system-error");
-          baseMessages = cachedMessages;
-          requestCursor = cached.tailCursor;
-          baseHistoryComplete = cached.historyComplete;
-          baseOldestCursor = cached.oldestCursor;
-          detailCursorRef.current.set(id, {
-            historyComplete: cached.historyComplete,
-            ...(cached.tailCursor ? { tailCursor: cached.tailCursor } : {}),
-            ...(cached.oldestCursor ? { oldestCursor: cached.oldestCursor } : {}),
-          });
-          setHasMoreHistory(!cached.historyComplete);
-          cbRef.current.setMessages(cachedMessages, opts);
-          setSessionId(id);
-        }
-      }
-
-      try {
-        const requestStartedAt = performance.now();
-        const params = new URLSearchParams();
-        params.set("limit", String(SESSION_DETAIL_PAGE_SIZE));
-        if (opts?.silent) params.set("silent", "1");
-        if (requestCursor) params.set("after", requestCursor);
-        const serializedParams = params.toString();
-        const query = serializedParams ? `?${serializedParams}` : "";
-        const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(id)}${query}`,
-        );
-        const responseReceivedAt = performance.now();
-        recordPerformanceMeasure(
-          "agent-saas:session-detail-fetch",
-          requestStartedAt,
-          responseReceivedAt,
-        );
-        if (isStale()) return;
-        if (response.ok) {
-          const data: ApiSessionDetail = await response.json();
-          const responseParsedAt = performance.now();
-          recordPerformanceMeasure(
-            "agent-saas:session-detail-json",
-            responseReceivedAt,
-            responseParsedAt,
-          );
-          if (isStale()) return;
-          const sessionOwner =
-            data.owner?.username ??
-            sessionsRef.current.find((s) => s.sessionId === id)?.owner
-              ?.username;
-          const mapper = await mapperPromise; if (isStale()) return; const incomingMsgs = mapper.mapSessionDetailToMessages(data, sessionOwner);
-          let msgs = data.mode === "delta" && baseMessages
-            ? mergeSessionMessageDelta(baseMessages, incomingMsgs)
-            : incomingMsgs;
-          const historyComplete = data.mode === "delta"
-            ? baseHistoryComplete
-            : data.historyComplete !== false;
-          const oldestCursor = data.mode === "delta"
-            ? baseOldestCursor
-            : data.oldestCursor ?? incomingMsgs[0]?.id;
-
-          // 增量基底里可能保留上一轮的临时状态；以本次 lastRunState / pending API
-          // 为真源重建，避免已结束的交互或失败 banner 永久粘在历史里。
-          msgs = msgs.filter((message) =>
-            message.type !== "system-error" && !message.id.startsWith("pending-"),
-          );
-
-          // a-2 对账：根据 lastRunState 在消息尾追加 system-error banner,
-          // 解决"后端已 failed/cancelled,但用户进会话仍以为 AI 在转/没回复" 的鬼状态。
-          // 旧 transcript 无 lastRunState 字段会跳过；已经追过则按 content dedupe。
-          // 用户侧通俗文案;原始 lrs.error 仅留在 server.log + PG runtime_events。
-          if (data.lastRunState) {
-            const lrs = data.lastRunState;
-            let alertContent: string | null = null;
-            let severity: 'error' | 'cancelled' | 'billing' = 'error';
-            if (lrs.status === 'failed' || lrs.status === 'orphaned') {
-              alertContent = formatRuntimeFailureMessage(lrs.error, lrs.failureKind);
-              if (isInsufficientCreditsFailure(lrs.error)) severity = 'billing';
-            } else if (lrs.status === 'cancelled') {
-              alertContent = '会话已停止';
-              severity = 'cancelled';
-            }
-            if (alertContent) {
-              const last = msgs[msgs.length - 1];
-              if (!(last?.type === 'system-error' && last.content === alertContent && last.failureKind === lrs.failureKind && last.recoveryAction === lrs.recoveryAction)) {
-                msgs.push({
-                  id: `system-error-${lrs.runId}`,
-                  type: 'system-error',
-                  content: alertContent,
-                  severity, runId: lrs.runId, ...(lrs.failureKind ? { failureKind: lrs.failureKind } : {}), ...(lrs.recoveryAction ? { recoveryAction: lrs.recoveryAction } : {}),
-                  ...(lrs.finishedAt ? { timestamp: Date.parse(lrs.finishedAt) || Date.now() } : {}),
-                });
-              }
-            }
-            cbRef.current.onLastRunState?.(id, lrs);
-          }
-          cbRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
-          cbRef.current.onSandboxProfile?.(id, data.sandboxProfile);
-
-          if (isStale()) return;
-          // preserveTail：refresh 时服务端 transcript 可能尚未写入最后一条 assistant text，
-          // 合并保留本地尾部，避免消息瞬间消失。
-          // 归属在请求前后各校验一次：飞行期间用户切走时，屏幕上已是别的会话的消息，不能再拼。
-          let finalMsgs = msgs;
-          if (canPreserveTail && sessionIdRef.current === id && cbRef.current.getMessages) {
-            const localMsgs = cbRef.current.getMessages();
-            finalMsgs = mergeServerMessagesWithLocalTail(msgs, localMsgs);
-          }
-          cbRef.current.setMessages(finalMsgs, opts);
-          const messagesCommittedAt = performance.now();
-          recordPerformanceMeasure(
-            "agent-saas:session-detail-map-commit",
-            responseParsedAt,
-            messagesCommittedAt,
-          );
-          requestAnimationFrame(() => {
-            recordPerformanceMeasure(
-              "agent-saas:session-detail-visible",
-              requestStartedAt,
-              performance.now(),
-            );
-          });
-          setSessionId(id);
-          setSessionOwner(data.owner ?? null);
-          setHasMoreHistory(!historyComplete);
-          void fetchTokenUsage(id);
-          detailCursorRef.current.set(id, {
-            historyComplete,
-            ...(data.cursor ? { tailCursor: data.cursor } : {}),
-            ...(oldestCursor ? { oldestCursor } : {}),
-          });
-          saveSessionMessages(id, finalMsgs, {
-            historyComplete,
-            ...(data.cursor ? { tailCursor: data.cursor } : {}),
-            ...(oldestCursor ? { oldestCursor } : {}),
-          });
-
-          // pending 交互不再阻塞首屏；详情一到就先渲染，再异步补入交互卡片。
-          void authFetch(
-            `/api/chat/interactions/pending?sessionId=${encodeURIComponent(id)}`,
-          ).then(async (pendingRes) => {
-            if (!pendingRes.ok) return null;
-            return pendingRes.json() as Promise<PendingInteraction[]>;
-          }).then((pendingList) => {
-            if (!pendingList || isStale() || sessionIdRef.current !== id) return;
-            const currentMessages = cbRef.current.getMessages?.() ?? finalMsgs;
-            cbRef.current.setMessages(
-              appendPendingInteractions(currentMessages, pendingList),
-              { scrollToBottom: false },
-            );
-          }).catch(() => {
-            // pending check is best-effort
-          });
-        } else {
-          console.error("加载会话详情失败:", response.statusText);
-          if (response.status === 404 || response.status === 403) {
-            cbRef.current.onSessionInvalidated?.(id, response.status); removeSession(id);
-            setSessionOwner(null);
-            setTokenUsage(null);
-            setContextUsage(null);
-          }
-        }
-      } catch (err) {
-        console.error("加载会话详情失败:", err);
-      } finally {
-        if (!isStale()) setIsLoadingMessages(false);
-      }
-    },
-    [],
+    (id: string, opts?: SessionDetailLoadOptions) =>
+      loadSessionDetailRequest(id, opts, {
+        callbacksRef: cbRef, sessionsRef, sessionIdRef, detailCursorRef,
+        loadNonceRef, detailAbortRef, setIsLoadingMessages, setSessionLoadError,
+        setHasMoreHistory, setSessionId, setSessionOwner, setTokenUsage,
+        setContextUsage, fetchTokenUsage, removeSession,
+      }),
+    [], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const loadEarlierMessages = useCallback(async () => {
@@ -865,18 +658,27 @@ export function useSession(
     // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
     // 只有新建会话这条路径原先漏了）。
     ++loadNonceRef.current;
+    detailAbortRef.current?.abort();
+    detailAbortRef.current = null;
     cbRef.current.cancelActiveStream();
     cbRef.current.resetMessages(); cbRef.current.onNewSession?.();
     isNewSessionRef.current = true;
-    setSessionId(null);
+    setSessionId(sessionIdRef.current = null);
     setSessionOwner(null);
     setTokenUsage(null);
     setContextUsage(null);
     setIsLoadingMessages(false);
+    setSessionLoadError(null);
     setHasMoreHistory(false);
     setIsLoadingEarlier(false);
     localStorage.removeItem(SESSION_STORAGE_KEY);
   }, []);
+
+  const retrySessionLoad = useCallback(() => {
+    const id = sessionIdRef.current;
+    if (!id) return;
+    loadDetailPromiseRef.current = loadSessionDetail(id);
+  }, [loadSessionDetail]);
 
   const refreshTokenUsage = useCallback(async () => {
     if (sessionId) void fetchTokenUsage(sessionId);
@@ -902,6 +704,12 @@ export function useSession(
       });
     }
   }, [loadSessionDetail]);
+
+  useEffect(() => () => {
+    ++loadNonceRef.current;
+    detailAbortRef.current?.abort();
+    detailAbortRef.current = null;
+  }, []);
 
   // 从 URL 加载初始会话详情
   useEffect(() => {
@@ -1035,6 +843,8 @@ export function useSession(
     sessions,
     isLoadingSessions,
     isLoadingMessages,
+    sessionLoadError,
+    retrySessionLoad,
     hasMoreHistory,
     isLoadingEarlier,
     deleteSessionId,

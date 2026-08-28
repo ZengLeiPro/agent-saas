@@ -89,7 +89,10 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     act(() => result.current.selectSession("legacy-a"));
     const legacyPromise = result.current.loadDetailPromiseRef.current;
-    await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/sessions/legacy-a")));
+    await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/sessions/legacy-a"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ));
     activeSessionId = "daily-b";
     act(() => result.current.selectSession("daily-b"));
     const dailyPromise = result.current.loadDetailPromiseRef.current;
@@ -188,8 +191,13 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(result.current.sessionId).toBe(expectedSessionId);
     expect(activeSessionId).toBe(expectedSessionId);
-    if (status === 403 || status === 404) expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
-    else expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
+    if (status === 403 || status === 404) {
+      expect(callbacks.onSessionInvalidated).toHaveBeenCalledWith("next-session", status);
+      expect(result.current.sessionLoadError).toBeNull();
+    } else {
+      expect(callbacks.onSessionInvalidated).not.toHaveBeenCalled();
+      expect(result.current.sessionLoadError).toBe("会话无法打开，请重试");
+    }
     expect(callbacks.resetMessages).toHaveBeenCalled();
   });
 
@@ -222,7 +230,10 @@ describe("useSession 跨会话详情请求隔离", () => {
 
     expect(callbacks.setMessages).toHaveBeenCalled();
     expect(result.current.sessionId).toBe("session-a");
-    expect(authFetchMock).toHaveBeenCalledWith(expect.stringContaining("limit=200"));
+    expect(authFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("limit=200"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("刷新失败会话时按结构化协议恢复策略拒绝提示", async () => {

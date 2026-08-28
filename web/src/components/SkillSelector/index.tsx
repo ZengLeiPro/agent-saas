@@ -202,7 +202,6 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     setImportOk(false);
     try {
       const result = await governanceResourcesApi.importPersonalSkillPackage(files);
-      setImportDialogOpen(false);
       setImportOk(true);
       const auditStatus = result.auditCompletion === "pending" ? "，审计记录同步中" : "";
       setImportMsg(result.selected === false
@@ -214,6 +213,7 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       setImportOk(false);
       setImportMsg(`导入失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
+      setImportDialogOpen(false);
       setImporting(false);
     }
   }, [refresh]);

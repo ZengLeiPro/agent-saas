@@ -24,6 +24,7 @@ import {
   deriveDwsPrincipalWorkspaceId,
   deriveDwsWorkspaceMountSubPath,
   redactDwsError,
+  redactDwsProfilePaths,
   resolveDwsPrincipalCwd,
   type DwsWorkspacePrincipal,
 } from './authFlow.js';
@@ -506,11 +507,10 @@ export function deriveDwsAgentDelegationResourceId(accountId: string, args: stri
 }
 
 function sanitizeDwsBusinessOutput(content: string, profileId: string): string {
-  return content
+  return redactDwsProfilePaths(content
     .split(profileId).join('[DWS_PROFILE_REDACTED]')
     .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
-    .replace(/((?:["']?(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|token)["']?)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
-    .replace(/(?:\/[^\s"']+)*\/\.dws\/(?:config|keys)(?:\/[^\s"']*)?/gi, '[DWS_PROFILE_PATH_REDACTED]');
+    .replace(/((?:["']?(?:access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|token)["']?)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]'));
 }
 
 function sanitizeDwsExecutionAudit(record: ExecutionInvocationAudit, profileId: string): ExecutionInvocationAudit {

@@ -384,14 +384,24 @@ function isDwsProfileMissingError(error: unknown): boolean {
 
 export function redactDwsError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
-  return text
+  const redacted = redactDwsProfilePaths(text
     .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
     .replace(/((?:access_token|refresh_token|authorization|token)\s*[=:]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
-    .replace(/(--profile(?:=|\s+)["']?)[^\s"']+/gi, '$1[REDACTED]')
-    .replace(/(?:\/[^\s"']+)*\/\.dws\/(?:config|keys)(?:\/[^\s"']*)?/gi, '[DWS_PROFILE_PATH_REDACTED]')
+    .replace(/(--profile(?:=|\s+)["']?)[^\s"']+/gi, '$1[REDACTED]'));
+  return redacted
     .replace(/https:\/\/login\.dingtalk\.com\/oauth2\/device\/verify\.htm\?user_code=[A-Z0-9-]+/gi, '[DWS_AUTH_URL_REDACTED]')
     .replace(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/gi, '[DWS_USER_CODE_REDACTED]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 1_000) || 'unknown_error';
+}
+
+export function redactDwsProfilePaths(text: string): string {
+  // Token scanning is linear and avoids ambiguous nested regex backtracking on slash-rich DWS content.
+  return text.replace(/[^\s"']+/g, (token) => {
+    const normalized = token.toLowerCase();
+    if (!normalized.includes('/.dws/config') && !normalized.includes('/.dws/keys')) return token;
+    const pathStart = token.indexOf('/');
+    return `${token.slice(0, pathStart)}[DWS_PROFILE_PATH_REDACTED]`;
+  });
 }

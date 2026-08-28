@@ -47,6 +47,7 @@ jobs:
       PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
       PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
+      RELEASE_RECORD_OSS_REGION: cn-shenzhen
       RELEASE_ID_INPUT: ${{ inputs.release_id }}
       PROMOTION_REASON: ${{ inputs.reason }}
 
@@ -188,9 +189,12 @@ jobs:
           case "$RELEASE_RECORD_OSS_URI" in oss://*) ;; *) exit 1 ;; esac
           record_uri="$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID"
           mkdir -p "$RUNNER_TEMP/oss-record"
-          aliyun oss cp "$record_uri/manifest.json" "$RUNNER_TEMP/oss-record/manifest.json"
-          aliyun oss cp "$record_uri/artifact-index.json" "$RUNNER_TEMP/oss-record/artifact-index.json"
-          aliyun oss cp "$record_uri/record.json" "$RUNNER_TEMP/oss-record/record.json"
+          aliyun --secure oss cp "$record_uri/manifest.json" \
+            "$RUNNER_TEMP/oss-record/manifest.json" --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$record_uri/artifact-index.json" \
+            "$RUNNER_TEMP/oss-record/artifact-index.json" --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$record_uri/record.json" \
+            "$RUNNER_TEMP/oss-record/record.json" --region "$RELEASE_RECORD_OSS_REGION"
           diff -u <(jq -S . "$RUNNER_TEMP/manifest.json") \
             <(jq -S . "$RUNNER_TEMP/oss-record/manifest.json")
           diff -u <(jq -S . "$RUNNER_TEMP/release/artifact-index.json") \
@@ -205,7 +209,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/selected"
-          fetch() { case "$1" in oss://*) aliyun oss cp "$1" "$2" ;; https://*) curl -fsSL --retry 3 "$1" -o "$2" ;; *) return 1 ;; esac; }
+          fetch() { case "$1" in oss://*) aliyun --secure oss cp "$1" "$2" --region "$RELEASE_RECORD_OSS_REGION" ;; https://*) curl -fsSL --retry 3 "$1" -o "$2" ;; *) return 1 ;; esac; }
           for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
             set -- $pair
             uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
@@ -438,23 +442,32 @@ jobs:
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
           had_index=false; had_identity=false
-          if aliyun oss stat "$PRODUCTION_WEB_OSS_URI/index.html" >/dev/null 2>&1; then
-            aliyun oss cp "$PRODUCTION_WEB_OSS_URI/index.html" "$RUNNER_TEMP/web-before/index.html"
+          if aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/index.html" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
+              "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
             had_index=true
           fi
           test "$had_index" = true
-          if aliyun oss stat "$PRODUCTION_WEB_OSS_URI/release-identity.json" >/dev/null 2>&1; then
-            aliyun oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" "$RUNNER_TEMP/web-before/release-identity.json"
+          if aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+              "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
             had_identity=true
           fi
           restore_web_entry() {
             if [ "$had_identity" = true ]; then
-              aliyun oss cp "$RUNNER_TEMP/web-before/release-identity.json" "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force || true
+              aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
+                "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || true
             else
-              aliyun oss rm "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force || true
+              aliyun --secure oss rm "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || true
             fi
             if [ "$had_index" = true ]; then
-              aliyun oss cp "$RUNNER_TEMP/web-before/index.html" "$PRODUCTION_WEB_OSS_URI/index.html" --force || true
+              aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
+                "$PRODUCTION_WEB_OSS_URI/index.html" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || true
             fi
           }
           web_committed=false
@@ -462,17 +475,22 @@ jobs:
             [ "$web_committed" = true ] || restore_web_entry
           }
           trap cleanup_web_on_exit EXIT
-          aliyun oss cp "$RUNNER_TEMP/web-assets/" "$PRODUCTION_WEB_OSS_URI/" --recursive --force \
-            --exclude index.html --exclude release-identity.json
-          aliyun oss cp "$RUNNER_TEMP/web-assets/release-identity.json" "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force
-          aliyun oss cp "$RUNNER_TEMP/web-assets/index.html" "$PRODUCTION_WEB_OSS_URI/index.html" --force
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" "$PRODUCTION_WEB_OSS_URI/" \
+            --recursive --force --exclude index.html --exclude release-identity.json \
+            --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/release-identity.json" \
+            "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+            --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/index.html" \
+            "$PRODUCTION_WEB_OSS_URI/index.html" --force \
+            --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
           mkdir -p "$RUNNER_TEMP/web-oss-readback"
           while IFS= read -r -d '' source; do
             relative="${source#"$RUNNER_TEMP/web-assets/"}"
             mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
-            aliyun oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
-              "$RUNNER_TEMP/web-oss-readback/$relative"
+            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
+              "$RUNNER_TEMP/web-oss-readback/$relative" --region "$RELEASE_RECORD_OSS_REGION"
             cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
           done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
           curl -fsS --retry 10 -H 'cache-control: no-cache' \

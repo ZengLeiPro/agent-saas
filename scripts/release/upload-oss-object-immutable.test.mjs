@@ -23,8 +23,9 @@ async function fixture({ stat = 'exists', remote = 'release-bytes', mismatch = f
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$FAKE_LOG"
-test "$1" = oss
-case "$2" in
+test "$1" = --secure
+test "$2" = oss
+case "$3" in
   stat)
     case "$FAKE_STAT" in
       exists) exit 0 ;;
@@ -33,14 +34,14 @@ case "$2" in
     esac
     ;;
   cp)
-    if [[ "$3" == oss://* ]]; then
+    if [[ "$4" == oss://* ]]; then
       if [[ "$FAKE_READBACK_MISMATCH" = 1 ]]; then
-        printf 'tampered-bytes' > "$4"
+        printf 'tampered-bytes' > "$5"
       else
-        cp "$FAKE_REMOTE" "$4"
+        cp "$FAKE_REMOTE" "$5"
       fi
     else
-      cp "$3" "$FAKE_REMOTE"
+      cp "$4" "$FAKE_REMOTE"
     fi
     ;;
 esac
@@ -62,6 +63,7 @@ esac
           FAKE_REMOTE: remotePath,
           FAKE_STAT: stat,
           FAKE_READBACK_MISMATCH: mismatch ? '1' : '0',
+          RELEASE_RECORD_OSS_REGION: 'cn-shenzhen',
         },
       });
     },
@@ -77,8 +79,11 @@ test('reads back an existing object without uploading it again', async () => {
     await state.run();
     const log = await state.log();
     assert.equal(log.length, 2);
-    assert.equal(log[0], 'oss stat oss://bucket/releases/object.tgz');
-    assert.match(log[1], /^oss cp oss:\/\/bucket\/releases\/object\.tgz /u);
+    assert.equal(log[0], '--secure oss stat oss://bucket/releases/object.tgz --region cn-shenzhen');
+    assert.match(
+      log[1],
+      /^--secure oss cp oss:\/\/bucket\/releases\/object\.tgz .* --region cn-shenzhen$/u,
+    );
   } finally {
     await rm(state.root, { recursive: true, force: true });
   }
@@ -91,8 +96,14 @@ test('uploads only after a recognizable 404 and reads the same bytes back', asyn
     assert.equal(await readFile(state.remotePath, 'utf8'), 'release-bytes');
     const log = await state.log();
     assert.equal(log.length, 3);
-    assert.match(log[1], /^oss cp .*source\.tgz oss:\/\/bucket\/releases\/object\.tgz$/u);
-    assert.match(log[2], /^oss cp oss:\/\/bucket\/releases\/object\.tgz /u);
+    assert.match(
+      log[1],
+      /^--secure oss cp .*source\.tgz oss:\/\/bucket\/releases\/object\.tgz --region cn-shenzhen$/u,
+    );
+    assert.match(
+      log[2],
+      /^--secure oss cp oss:\/\/bucket\/releases\/object\.tgz .* --region cn-shenzhen$/u,
+    );
     assert.ok(log.every((line) => !/--force|--forbid-overwrite/u.test(line)));
   } finally {
     await rm(state.root, { recursive: true, force: true });
@@ -107,7 +118,9 @@ test('fails closed on non-404 stat errors without attempting an upload', async (
       assert.match(error.stderr, /503 ServiceUnavailable/u);
       return true;
     });
-    assert.deepEqual(await state.log(), ['oss stat oss://bucket/releases/object.tgz']);
+    assert.deepEqual(await state.log(), [
+      '--secure oss stat oss://bucket/releases/object.tgz --region cn-shenzhen',
+    ]);
   } finally {
     await rm(state.root, { recursive: true, force: true });
   }
@@ -119,8 +132,14 @@ test('rejects an uploaded object whose byte-for-byte readback differs', async ()
     await assert.rejects(state.run());
     const log = await state.log();
     assert.equal(log.length, 3);
-    assert.match(log[1], /^oss cp .*source\.tgz oss:\/\/bucket\/releases\/object\.tgz$/u);
-    assert.match(log[2], /^oss cp oss:\/\/bucket\/releases\/object\.tgz /u);
+    assert.match(
+      log[1],
+      /^--secure oss cp .*source\.tgz oss:\/\/bucket\/releases\/object\.tgz --region cn-shenzhen$/u,
+    );
+    assert.match(
+      log[2],
+      /^--secure oss cp oss:\/\/bucket\/releases\/object\.tgz .* --region cn-shenzhen$/u,
+    );
   } finally {
     await rm(state.root, { recursive: true, force: true });
   }

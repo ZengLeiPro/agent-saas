@@ -30,6 +30,7 @@ on:
       - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'
       - 'scripts/deploy-acs-orchestrator.sh'
+      - 'scripts/release/upload-oss-object-immutable.sh'
       - 'scripts/acs-browser-lease-e2e.mjs'
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'

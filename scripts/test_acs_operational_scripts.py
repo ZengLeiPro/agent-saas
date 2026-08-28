@@ -276,6 +276,20 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
+    def test_immutable_baseline_uploader_requires_an_exact_sha_acs_publish(self):
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('scripts/release/upload-oss-object-immutable.sh\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
+
     def test_verifies_per_pod_or_identical_shared_snat_before_process_replacement(self):
         prepare = self.deploy_script.index('if prepare_snat_rollback; then')
         replaced = self.deploy_script.index('PROCESS_REPLACED=true')

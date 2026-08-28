@@ -173,6 +173,7 @@ deploy_app() {
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server >/dev/null
     mv "$candidate" "$target"
   fi
+  mkdir -p "$target/server/data" "$target/workspace-shared"
   api_active="$(tr -d '[:space:]' </etc/agent-saas/active-color)"
   worker_active="$(tr -d '[:space:]' </etc/agent-saas/runtime-worker-active-color)"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac

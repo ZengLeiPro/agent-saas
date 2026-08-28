@@ -9,6 +9,7 @@ test('OSS immutable upload uses supported non-force semantics and always reads b
 
   assert.match(script, /aliyun oss stat "\$target_uri"/u);
   assert.match(script, /aliyun oss cp "\$source_path" "\$target_uri"/u);
+  assert.match(script, /unlink "\$readback"/u);
   assert.match(script, /aliyun oss cp "\$target_uri" "\$readback"/u);
   assert.match(script, /cmp "\$source_path" "\$readback"/u);
   assert.doesNotMatch(script, /aliyun oss cp[^\n]*--force(?:\s|$)/u);

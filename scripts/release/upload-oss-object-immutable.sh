@@ -16,5 +16,8 @@ else
 fi
 readback="$(mktemp)"
 trap 'rm -f "$readback"' EXIT
+# ossutil v1 treats an existing destination as an overwrite prompt, while
+# mktemp creates the file. Remove only that exact empty placeholder first.
+unlink "$readback"
 aliyun oss cp "$target_uri" "$readback"
 cmp "$source_path" "$readback"

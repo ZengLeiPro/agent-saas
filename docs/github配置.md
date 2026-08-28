@@ -454,6 +454,7 @@ gh secret set '<SECRET_NAME>' \
 - `PRODUCTION_OBSERVATION_URL`
 - `PRODUCTION_SSH_HOST_KEY_SHA256`
 - `RELEASE_RECORD_OSS_URI`
+- `RELEASE_RECORD_OSS_REGION`
 
 格式要求：
 
@@ -462,6 +463,7 @@ gh secret set '<SECRET_NAME>' \
 | `PRODUCTION_OBSERVATION_URL`     | `https://staging-agent-api.kaiyan.net/production-observation` |
 | `PRODUCTION_SSH_HOST_KEY_SHA256` | `SHA256:IwX0iO/NoCSv02g4Zczm9+OD+ESws26lr09d0UWPlCI`          |
 | `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
+| `RELEASE_RECORD_OSS_REGION`      | `cn-shenzhen`                                                 |
 
 生产观察当前由隔离部署的 Evidence Service 统一提供读端点，因此 URL 使用 Staging API 域名，但其
 查询必须绑定生产 release ID 与 Manifest digest；这不表示生产应用部署在 Staging ECS。
@@ -526,6 +528,9 @@ gh variable set PRODUCTION_SSH_HOST_KEY_SHA256 \
 gh variable set RELEASE_RECORD_OSS_URI \
   --repo "$TARGET_REPOSITORY" --env production \
   --body 'oss://agent-saas-release-records'
+gh variable set RELEASE_RECORD_OSS_REGION \
+  --repo "$TARGET_REPOSITORY" --env production \
+  --body 'cn-shenzhen'
 ```
 
 ## 10. 最终读回验收

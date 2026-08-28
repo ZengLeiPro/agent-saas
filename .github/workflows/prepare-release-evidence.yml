@@ -34,6 +34,7 @@ jobs:
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
       PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
+      RELEASE_RECORD_OSS_REGION: ${{ vars.RELEASE_RECORD_OSS_REGION }}
       ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       APP_CI_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -223,11 +224,14 @@ jobs:
           : "${ALIBABACLOUD_ACCESS_KEY_ID:?Missing production secret ALIYUN_ACCESS_KEY_ID}"
           : "${ALIBABACLOUD_ACCESS_KEY_SECRET:?Missing production secret ALIYUN_ACCESS_KEY_SECRET}"
           : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
+          : "${RELEASE_RECORD_OSS_REGION:?Missing production variable RELEASE_RECORD_OSS_REGION}"
           case "$RELEASE_RECORD_OSS_URI" in oss://*) ;; *) exit 1 ;; esac
+          case "$RELEASE_RECORD_OSS_REGION" in cn-*) ;; *) exit 1 ;; esac
           mkdir -p "$RUNNER_TEMP/baseline-indexes" "$RUNNER_TEMP/baseline-index-raw"
           : > "$RUNNER_TEMP/baseline-index-uris.txt"
           for prefix in baselines records; do
-            aliyun oss ls "$RELEASE_RECORD_OSS_URI/$prefix/" --limited-num 1000 \
+            aliyun --secure oss ls "$RELEASE_RECORD_OSS_URI/$prefix/" \
+              --limited-num 1000 --region "$RELEASE_RECORD_OSS_REGION" \
               > "$RUNNER_TEMP/$prefix-list.txt"
             awk '$NF ~ /\/artifact-index\.json$/ {print $NF}' \
               "$RUNNER_TEMP/$prefix-list.txt" >> "$RUNNER_TEMP/baseline-index-uris.txt"
@@ -242,7 +246,8 @@ jobs:
             index_number=$((index_number + 1))
             raw="$RUNNER_TEMP/baseline-index-raw/$index_number.json"
             target="$RUNNER_TEMP/baseline-indexes/$index_number.json"
-            aliyun oss cp "$index_uri" "$raw"
+            aliyun --secure oss cp "$index_uri" "$raw" \
+              --region "$RELEASE_RECORD_OSS_REGION"
             jq --arg indexUri "$index_uri" '. + {indexUri: $indexUri}' "$raw" > "$target"
           done < "$RUNNER_TEMP/baseline-index-uris.txt"
           node scripts/release/resolve-baseline-artifacts.mjs \

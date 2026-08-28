@@ -261,6 +261,30 @@ test('runtime identity fails closed for stale or unverifiable topology observati
   assert.equal(stale.ok, false);
   assert.match(stale.blockingReasons.join('\n'), /stale or in the future/u);
 
+  const refreshedAt = Date.parse('2026-08-28T09:45:00.000Z');
+  const refreshed = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(staleIdentity),
+    refreshTopologyObservation: true,
+    ...runtimeObservation(),
+    now: refreshedAt,
+  });
+  assert.equal(refreshed.ok, true);
+  assert.equal(refreshed.identity.topology.observedAt, new Date(refreshedAt).toISOString());
+
+  const refreshedButUnverifiable = readRuntimeIdentity({
+    identityPath: './production.json',
+    readFileSync: () => JSON.stringify(staleIdentity),
+    refreshTopologyObservation: true,
+    ...runtimeObservation({
+      topologyProcessExists: () => false,
+    }),
+    now: refreshedAt,
+  });
+  assert.equal(refreshedButUnverifiable.ok, false);
+  assert.equal(refreshedButUnverifiable.identity.topology.observedAt, '2000-01-01T00:00:00.000Z');
+  assert.match(refreshedButUnverifiable.blockingReasons.join('\n'), /live process/u);
+
   const missing = readRuntimeIdentity({
     identityPath: './production.json',
     readFileSync: () => JSON.stringify(productionIdentity()),

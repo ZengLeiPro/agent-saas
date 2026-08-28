@@ -5,6 +5,7 @@ import type { PgTaskboardStore } from './store.js';
 import {
   cancelExecution,
   claimExecution,
+  completeExecution,
   shouldPersistIntegrationDurableSession,
   unresolvedExecutionRecovery,
 } from './storeExecutionLifecycle.js';
@@ -312,6 +313,55 @@ describe('claimExecution model consistency', () => {
       task: { id: task.id },
       execution: { id: 'execution-1', purpose: 'work' },
     });
+  });
+});
+
+describe('completeExecution', () => {
+  it('treats Runtime cancellation after a protocol handoff as successful stage completion', async () => {
+    const handedOffTask = { ...task, status: 'in_review' as const, version: 2 };
+    const executionRow = {
+      id: 'execution-1', task_id: task.id, run_id: 'run-1', session_id: 'session-1',
+      status: 'running', purpose: 'work', trigger: 'initial', protocol_version: 2,
+      requested_by: identity.ownerUserId, transitioned_at: new Date('2026-08-18T01:05:00.000Z'),
+      terminal_reason_code: 'execution_transitioned', fence_epoch: 1,
+      created_at: new Date(task.createdAt), updated_at: new Date(task.updatedAt),
+      reconcile_lease_valid: true,
+    };
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql.includes('SELECT *') && sql.includes('reconcile_lease_valid')) return { rows: [executionRow] };
+        if (sql.includes('AS merged')) return { rows: [{ merged: false }] };
+        if (sql.includes('SELECT c.id FROM')) return { rows: [{ id: 'comment-1' }] };
+        if (sql.includes('UPDATE taskboard_executions') && sql.includes('SET status=$2')) {
+          return { rows: [{ ...executionRow, status: values?.[1], error: values?.[2], terminal_reason_code: null }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    const store = {
+      pool: { query: vi.fn(async () => ({ rows: [{
+        task_id: task.id, tenant_id: identity.tenantId, owner_user_id: identity.ownerUserId,
+      }] })) },
+      tasksTable: 'taskboard_tasks', boardsTable: 'taskboard_boards', executionsTable: 'taskboard_executions',
+      commentsTable: 'taskboard_comments', changesTable: 'taskboard_changes',
+      executionOutboxTable: 'taskboard_execution_outbox', cancellationOutboxTable: 'taskboard_cancellation_outbox',
+      integrationSourcesTable: 'taskboard_sources', remediationAttemptsTable: 'taskboard_remediation_attempts',
+      requireTaskWithBoard: vi.fn(async () => ({ task: handedOffTask, boardArchivedAt: undefined })),
+      requireTask: vi.fn(async () => handedOffTask),
+      withTransaction: vi.fn(async (operation: (transaction: typeof client) => Promise<unknown>) => operation(client)),
+    } as unknown as PgTaskboardStore;
+
+    await expect(completeExecution(store, 'run-1', {
+      status: 'cancelled', error: 'execution_transitioned', commentBody: 'handoff already persisted',
+    })).resolves.toMatchObject({ execution: { status: 'succeeded' } });
+
+    const completion = client.query.mock.calls.find(([sql]) => String(sql).includes('UPDATE taskboard_executions')
+      && String(sql).includes('SET status=$2'));
+    expect(completion?.[1]).toEqual(['run-1', 'succeeded', null, 'execution_transitioned']);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE taskboard_cancellation_outbox'),
+      ['execution-1', 'execution_transitioned'],
+    );
   });
 });
 

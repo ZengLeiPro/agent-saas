@@ -65,6 +65,14 @@ evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
 
+发布证据写入前使用 `scripts/release/produce-release-evidence.mjs` 汇合六类独立输入：Taskboard
+Integration 快照、GitHub checks、`read-production-state.mjs` 的生产读回、不可变基线制品、组件分类/
+迁移计划和 N/N+1 兼容报告。生产器要求最终 Integration PR 的 merge commit、两类 check 的
+`headSha` 都等于完整发布 SHA，并将 Integration 快照和兼容报告分别重算摘要；运行组件有变更时，
+兼容报告必须包含至少一项带证据 URI 的通过检查。仅治理文件变化时才允许
+`status=not_required`，且报告仍绑定发布 SHA、生产基线摘要和空的组件集合。生成结果通过写 Token
+`POST` 到服务后，必须再用只读 Token `GET` 回读并逐字节比较，写 Token 不得进入 Workflow。
+
 `STAGING_ISOLATION_EVIDENCE_URL` 应指向 `/staging-isolation`。Staging 与 Production 可部署
 相互隔离的实例和 token；反向代理必须只暴露 HTTPS，数据目录必须落在持久盘。服务落地和真实
 探针接入仍属于首次运行前的外部资源建设，不得用本地单测替代。

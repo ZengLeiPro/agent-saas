@@ -55,7 +55,7 @@ function productionIdentity(overrides = {}) {
 
 function successfulGit(command, args) {
   assert.equal(command, 'git');
-  if (args[0] === 'diff') return 'web/src/App.tsx\nhand-server/src/worker.ts\n';
+  if (args.includes('diff')) return 'web/src/App.tsx\nhand-server/src/worker.ts\n';
   return '';
 }
 
@@ -104,7 +104,7 @@ test('preflight pins ancestry to origin/main and ignores caller-selected refs', 
     mainRef: TARGET,
     execFileSync: (command, args) => {
       calls.push([command, args]);
-      return args[0] === 'diff' ? 'web/src/App.tsx\n' : '';
+      return args.includes('diff') ? 'web/src/App.tsx\n' : '';
     },
     readFileSync: () => JSON.stringify(productionIdentity()),
     runtimeObservation: runtimeObservation(),

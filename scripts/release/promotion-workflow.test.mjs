@@ -5,6 +5,18 @@ import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+const acsUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+  import.meta.url,
+);
+const serverUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-server@.service.template',
+  import.meta.url,
+);
+const workerUnitPath = new URL(
+  '../../daemon-packaging/systemd/agent-saas-runtime-worker@.service.template',
+  import.meta.url,
+);
 
 function ordered(text, markers) {
   let cursor = -1;
@@ -87,6 +99,9 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
 test('workflow preserves partial matrices, rollback evidence, migrations, and observation boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
+  const acsUnit = await readFile(acsUnitPath, 'utf8');
+  const serverUnit = await readFile(serverUnitPath, 'utf8');
+  const workerUnit = await readFile(workerUnitPath, 'utf8');
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /target_match=false/u);
   assert.match(workflow, /write-production-identity\.mjs/u);
@@ -108,8 +123,17 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(workflow, /Persist Web operation receipt/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
+  assert.match(deploy, /Existing ACS release path must be a symlink/u);
+  assert.doesNotMatch(
+    deploy,
+    /previous="\$\(readlink -f \/opt\/agent-saas\/acs-current 2>\/dev\/null \|\| true\)"/u,
+  );
+  assert.match(deploy, /verify --root "\$target" --component acs >\/dev\/null/u);
+  assert.match(deploy, /verify --root "\$target" --component server >\/dev\/null/u);
   assert.match(deploy, /verify --root "\$target" --component server/u);
   assert.match(deploy, /releases\/\$artifact_digest/u);
+  assert.match(deploy, /mkdir -p "\$target\/server\/data" "\$target\/workspace-shared"/u);
   assert.match(deploy, /r\.environment !== 'production'/u);
   assert.match(
     deploy,
@@ -121,5 +145,27 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
   assert.match(deploy, /exit 20/u);
   assert.doesNotMatch(deploy, /pnpm (?:install|build)/u);
+  assert.match(acsUnit, /^User=root$/mu);
+  assert.match(acsUnit, /^Group=root$/mu);
+  assert.match(
+    acsUnit,
+    /^Environment=ACS_RELEASE_IDENTITY_FILE=\/etc\/agent-saas\/acs-release-identity\.json$/mu,
+  );
+  assert.match(
+    serverUnit,
+    /^BindPaths=\/mnt\/agent-saas\/server-data:\/opt\/agent-saas-app\/color\/%i\/server\/data$/mu,
+  );
+  assert.match(
+    serverUnit,
+    /^BindPaths=\/opt\/agent-saas\/workspace-shared:\/opt\/agent-saas-app\/color\/%i\/workspace-shared$/mu,
+  );
+  assert.match(
+    workerUnit,
+    /^BindPaths=\/mnt\/agent-saas\/server-data:\/opt\/agent-saas-app\/worker\/%i\/server\/data$/mu,
+  );
+  assert.match(
+    workerUnit,
+    /^BindPaths=\/opt\/agent-saas\/workspace-shared:\/opt\/agent-saas-app\/worker\/%i\/workspace-shared$/mu,
+  );
   execFileSync('bash', ['-n', deployPath.pathname]);
 });

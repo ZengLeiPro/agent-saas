@@ -189,7 +189,7 @@ describe("pushUrl / replaceUrl 写入 history（jsdom）", () => {
   it("pushUrl 目标不同则 pushState", () => {
     const spy = vi.spyOn(window.history, "pushState");
     pushUrl("cron", null);
-    expect(spy).toHaveBeenCalledWith({}, "", "/cron");
+    expect(spy).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/cron");
     expect(window.location.pathname).toBe("/cron");
   });
 
@@ -203,17 +203,17 @@ describe("pushUrl / replaceUrl 写入 history（jsdom）", () => {
   it("replaceUrl 用 replaceState", () => {
     const spy = vi.spyOn(window.history, "replaceState");
     replaceUrl("files", null);
-    expect(spy).toHaveBeenCalledWith({}, "", "/files");
+    expect(spy).toHaveBeenCalledWith({ __appHistoryIndex: 0 }, "", "/files");
   });
 
   it("pushSettingsUrl / replaceSettingsUrl", () => {
     const push = vi.spyOn(window.history, "pushState");
     pushSettingsUrl("files");
-    expect(push).toHaveBeenCalledWith({}, "", "/settings/files-storage");
+    expect(push).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/settings/files-storage");
 
     const replace = vi.spyOn(window.history, "replaceState");
     replaceSettingsUrl("memory");
-    expect(replace).toHaveBeenCalledWith({}, "", "/settings/my-agent?tab=memory");
+    expect(replace).toHaveBeenCalledWith({ __appHistoryIndex: 1 }, "", "/settings/my-agent?tab=memory");
   });
 
   // origin 变量仅用于文档说明测试运行在 localhost，无需断言

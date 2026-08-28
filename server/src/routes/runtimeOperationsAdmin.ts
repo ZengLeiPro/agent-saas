@@ -326,6 +326,19 @@ export function createRuntimeOperationsAdminRouter(
     });
   });
 
+  router.get('/scheduler/runtime-config', async (_req, res) => {
+    if (!options.runtimeSchedulerCapacity) {
+      res.status(503).json({ error: 'Runtime scheduler capacity control is unavailable' });
+      return;
+    }
+    try {
+      const runtimeScheduler = await options.runtimeSchedulerCapacity.getSnapshot();
+      res.json({ runtimeScheduler });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   router.patch('/scheduler/runtime-config', requireSuperAdmin, async (req, res) => {
     if (!options.runtimeSchedulerCapacity) {
       res.status(503).json({ error: 'Runtime scheduler capacity control is unavailable' });

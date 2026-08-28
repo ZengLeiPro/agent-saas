@@ -80,6 +80,9 @@ export const SETTINGS_REGISTRY = defineSettingsRegistry([
 
   { scope: "platform", id: "tenants", label: "组织", iconKey: "org", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.org-business.tenants" },
   { scope: "platform", id: "signup", label: "注册管理", iconKey: "signup", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.org-business.signup" },
+  { scope: "platform", id: "platform-admins", label: "平台管理员", iconKey: "admin", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.org-business.platform-admins" },
+  { scope: "platform", id: "agent-templates", label: "智能体模板", iconKey: "expert", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.resource-center.agent-templates" },
+  { scope: "platform", id: "environment-templates", label: "环境模板", iconKey: "runtime-pool", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.resource-center.environment-templates" },
   { scope: "platform", id: "models", label: "模型", iconKey: "model", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.resource-center.models" },
   { scope: "platform", id: "billing", label: "计费", iconKey: "billing", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.org-business.entitlements-billing" },
   { scope: "platform", id: "remote-hands", label: "执行环境池", iconKey: "runtime-pool", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.runtime.execution-providers" },

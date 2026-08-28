@@ -11,7 +11,7 @@ function access(
   return { status, personalAllowed: true, tenantEntryAllowed, platformEntryAllowed, retry: vi.fn() };
 }
 
-function renderSidebar(currentAccess: ManagementSettingsAccess) {
+function renderSidebar(currentAccess: ManagementSettingsAccess, onOpenOrganizationGovernance?: () => void) {
   return render(
     <UnifiedSettingsSidebar
       width={280}
@@ -21,6 +21,7 @@ function renderSidebar(currentAccess: ManagementSettingsAccess) {
       target="personal"
       activeSection="account-security"
       onNavigate={vi.fn()}
+      onOpenOrganizationGovernance={onOpenOrganizationGovernance}
       onResizeMouseDown={vi.fn()}
       onResizeDoubleClick={vi.fn()}
       footer={<div>footer</div>}
@@ -93,5 +94,21 @@ describe("UnifiedSettingsSidebar 权威管理分组", () => {
     expect(screen.getByRole("status").textContent).toContain("正在更新管理权限");
     expect(screen.getAllByText("组织管理").length).toBeGreaterThan(0);
     expect(screen.getAllByText("平台管理").length).toBeGreaterThan(0);
+  });
+
+  it("平台权限允许时显示三个补充管理入口", () => {
+    renderSidebar(access("ready", false, true));
+
+    expect(screen.getByRole("button", { name: "平台管理员" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "智能体模板" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "环境模板" })).toBeTruthy();
+  });
+
+  it("组织分组提供明确治理入口并触发独立回调", () => {
+    const onOpenOrganizationGovernance = vi.fn();
+    renderSidebar(access("ready", true, false), onOpenOrganizationGovernance);
+
+    fireEvent.click(screen.getByRole("button", { name: "进入组织治理" }));
+    expect(onOpenOrganizationGovernance).toHaveBeenCalledTimes(1);
   });
 });

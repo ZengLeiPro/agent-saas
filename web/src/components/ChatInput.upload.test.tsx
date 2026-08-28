@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "./ChatInput";
@@ -92,38 +93,18 @@ describe("ChatInput 布局", () => {
 });
 
 describe("ChatInput 沙箱档位", () => {
-  it("新会话默认日常并支持点击与方向键切换", () => {
+  it("默认只展示当前档位，点击后展开单选菜单", async () => {
+    const user = userEvent.setup();
     const onChange = vi.fn();
-    const view = render(
-      <ChatInput
-        input=""
-        uploading={false}
-        hasUploadedFiles={false}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-        onFileSelect={vi.fn()}
-        sandboxProfile="daily"
-        onSandboxProfileChange={onChange}
-      />,
-    );
+    renderInput({ sandboxProfile: "daily", onSandboxProfileChange: onChange });
+
+    const trigger = screen.getByRole("button", { name: "运行环境：日常" });
+    expect(screen.queryByRole("radio", { name: /编程/ })).toBeNull();
+
+    await user.click(trigger);
 
     expect(screen.getByRole("radio", { name: "日常" }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: "编程" }));
-    expect(onChange).toHaveBeenLastCalledWith("coding");
-
-    view.rerender(
-      <ChatInput
-        input=""
-        uploading={false}
-        hasUploadedFiles={false}
-        onInputChange={vi.fn()}
-        onSend={vi.fn()}
-        onFileSelect={vi.fn()}
-        sandboxProfile="daily"
-        onSandboxProfileChange={onChange}
-      />,
-    );
-    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowRight" });
+    await user.click(screen.getByRole("radio", { name: "编程" }));
     expect(onChange).toHaveBeenLastCalledWith("coding");
   });
 
@@ -131,10 +112,10 @@ describe("ChatInput 沙箱档位", () => {
     const onChange = vi.fn();
     renderInput({ sessionId: "session-1", sandboxProfile: "coding", onSandboxProfileChange: onChange });
 
-    expect(screen.getByRole("radio", { name: "编程" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByRole("radiogroup", { name: "沙箱档位" }).getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: "日常" }));
-    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowLeft" });
+    const trigger = screen.getByRole("button", { name: "运行环境：编程" }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("radio")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -142,9 +123,10 @@ describe("ChatInput 沙箱档位", () => {
     const onChange = vi.fn();
     renderInput({ loading: true, sandboxProfile: "daily", onSandboxProfileChange: onChange });
 
-    expect(screen.getByRole("radiogroup", { name: "沙箱档位" }).getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(screen.getByRole("radio", { name: "编程" }));
-    fireEvent.keyDown(screen.getByRole("radiogroup", { name: "沙箱档位" }), { key: "ArrowRight" });
+    const trigger = screen.getByRole("button", { name: "运行环境：日常" }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("radio")).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 });

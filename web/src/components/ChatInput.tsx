@@ -1,8 +1,8 @@
 import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
-import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle } from "lucide-react";
+import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle, ChevronDown } from "lucide-react";
 
 import AttachmentControls from "@/components/AttachmentControls";
-import { Popover, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
 import type { ModelList } from "@/types/models";
@@ -233,17 +233,16 @@ export function ChatInput({
   }, [modelList, lockedGroupId]);
 
   const profileLocked = !!sessionId || isDisabled || loading;
+  const profileLabel = sandboxProfile === "coding" ? "编程" : "日常";
   const handleProfileKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (profileLocked || !onSandboxProfileChange) return;
+    if (profileLocked) return;
     let next: SandboxProfile | null = null;
     if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home") next = "daily";
     if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "End") next = "coding";
     if (!next) return;
     event.preventDefault();
-    onSandboxProfileChange(next);
-    requestAnimationFrame(() => {
-      wrapperRef.current?.querySelector<HTMLButtonElement>(`[role="radio"][data-profile="${next}"]`)?.focus();
-    });
+    onSandboxProfileChange?.(next);
+    event.currentTarget.querySelector<HTMLButtonElement>(`[data-profile="${next}"]`)?.focus();
   }, [onSandboxProfileChange, profileLocked]);
 
   const handleMicClick = useCallback(async () => {
@@ -475,45 +474,55 @@ export function ChatInput({
                   onChange={onFileSelect}
                   disabled={attachmentDisabled}
                 />
-                <div
-                  role="radiogroup"
-                  aria-label="沙箱档位"
-                  aria-disabled={profileLocked}
-                  onKeyDown={handleProfileKeyDown}
-                  className={cn(
-                    "ml-1 flex h-8 items-center rounded-full border border-border bg-muted/50 p-0.5",
-                    profileLocked && "opacity-70",
-                  )}
-                >
-                  {([
-                    { value: "daily" as const, label: "日常", tip: "适合日常问答与轻量任务" },
-                    { value: "coding" as const, label: "编程", tip: "适合编译测试、浏览器、音视频和大型文档处理" },
-                  ]).map((option) => {
-                    const checked = sandboxProfile === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="radio"
-                        data-profile={option.value}
-                        aria-checked={checked}
-                        aria-disabled={profileLocked}
-                        tabIndex={checked ? 0 : -1}
-                        title={option.tip}
-                        onClick={() => {
-                          if (!profileLocked) onSandboxProfileChange?.(option.value);
-                        }}
-                        className={cn(
-                          "h-6 rounded-full px-2 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          checked ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-                          profileLocked && "cursor-not-allowed",
-                        )}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={profileLocked}
+                      aria-label={`运行环境：${profileLabel}`}
+                      title={profileLocked ? `当前会话使用${profileLabel}环境` : "选择运行环境"}
+                      className={cn(
+                        "ml-1 flex h-8 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors",
+                        "hover:bg-muted-foreground/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        profileLocked && "cursor-not-allowed opacity-60",
+                      )}
+                    >
+                      <span>{profileLabel}</span>
+                      <ChevronDown className="size-3.5" aria-hidden="true" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="start" sideOffset={8} className="w-36 rounded-xl p-1.5 shadow-xl">
+                    <div className="px-2.5 pb-1 pt-1 text-[11px] text-muted-foreground">运行环境</div>
+                    <div role="radiogroup" aria-label="运行环境" onKeyDown={handleProfileKeyDown}>
+                      {([
+                        { value: "daily" as const, label: "日常" },
+                        { value: "coding" as const, label: "编程" },
+                      ]).map((option) => {
+                        const checked = sandboxProfile === option.value;
+                        return (
+                          <PopoverClose asChild key={option.value}>
+                            <button
+                              type="button"
+                              role="radio"
+                              data-profile={option.value}
+                              aria-checked={checked}
+                              tabIndex={checked ? 0 : -1}
+                              onClick={() => {
+                                if (!profileLocked) onSandboxProfileChange?.(option.value);
+                              }}
+                              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium outline-none transition-colors hover:bg-accent focus-visible:bg-accent"
+                            >
+                              <span className="w-3.5 shrink-0 text-center text-xs text-muted-foreground" aria-hidden="true">
+                                {checked ? "●" : "○"}
+                              </span>
+                              <span>{option.label}</span>
+                            </button>
+                          </PopoverClose>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="flex items-center gap-1">

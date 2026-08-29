@@ -148,6 +148,7 @@ export function DesktopLayout(props: LayoutProps) {
     || (activeTab === "capabilities" && !capabilityReplayOpen)
     || activeTab === "cron";
 
+  const [taskDetailPanelTarget, setTaskDetailPanelTarget] = useState<HTMLDivElement | null>(null); const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const sidePreviewOpen = !!previewFilePath && previewMode === "side";
 
   useEffect(() => {
@@ -169,10 +170,13 @@ export function DesktopLayout(props: LayoutProps) {
             : null;
   const rightPanelOpen = rightPanelKind !== null;
   const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
+  const showTaskDetailPanel = !settingsMode && !analysisMode && activeTab === "cron" && taskDetailOpen;
+  const showDockedPanel = showRightPanel || showTaskDetailPanel;
   const rightPanelKey = rightPanelKind === 'subagent'
     ? subagentTranscript?.childSessionId ?? null
     : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
-  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, rightPanelKey);
+  const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
+  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, dockedPanelKey);
 
   // 侧边栏折叠
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
@@ -436,7 +440,7 @@ export function DesktopLayout(props: LayoutProps) {
 
       {/* 右侧内容区 */}
       <div
-        ref={showRightPanel ? splitContainerRef : undefined}
+        ref={showDockedPanel ? splitContainerRef : undefined}
         className={cn(
           "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
           sidebarCollapsed && !settingsMode && !analysisMode && "ml-2.5",
@@ -449,7 +453,7 @@ export function DesktopLayout(props: LayoutProps) {
             !capabilityReplayActive && "rounded-xl",
             contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
-          style={showRightPanel
+          style={showDockedPanel
             ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
             : { flex: 1 }}
         >
@@ -673,6 +677,8 @@ export function DesktopLayout(props: LayoutProps) {
               <CronManager
                 headerNavigationTarget={cronHeaderNavigationTarget}
                 headerActionsTarget={cronHeaderActionsTarget}
+                detailPanelTarget={taskDetailPanelTarget}
+                onTaskDetailOpenChange={setTaskDetailOpen}
               />
             </Suspense>
           </div>
@@ -975,6 +981,15 @@ export function DesktopLayout(props: LayoutProps) {
             </FloatingPanel>
           </>
         )}
+
+        <div className={cn("w-2.5 shrink-0 items-center justify-center", showTaskDetailPanel ? "flex" : "hidden")}>
+          <ResizablePanelDivider label="调整任务详情宽度" onMouseDown={onDividerMouseDown} onDoubleClick={onDividerDoubleClick} />
+        </div>
+        <div
+          ref={setTaskDetailPanelTarget}
+          className={cn("min-w-0 flex-col", showTaskDetailPanel ? "flex" : "hidden")}
+          style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0, minWidth: "min(26rem, 75%)" }}
+        />
       </div>
     </div>
   );

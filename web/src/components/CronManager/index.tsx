@@ -18,6 +18,9 @@ interface CronManagerProps {
   headerNavigationTarget?: HTMLElement | null;
   /** 桌面端全局 Header 的操作区；undefined 时由当前二级视图渲染页内 Header。 */
   headerActionsTarget?: HTMLElement | null;
+  /** 桌面端与主内容同级的任务详情停靠区。 */
+  detailPanelTarget?: HTMLElement | null;
+  onTaskDetailOpenChange?: (open: boolean) => void;
 }
 
 type CronView = "schedule" | "board";
@@ -43,7 +46,13 @@ function cronViewHref(view: CronView, location: Pick<Location, "pathname" | "sea
   return `${location.pathname}${search ? `?${search}` : ""}`;
 }
 
-export function CronManager({ onJobCountChange, headerNavigationTarget, headerActionsTarget }: CronManagerProps) {
+export function CronManager({
+  onJobCountChange,
+  headerNavigationTarget,
+  headerActionsTarget,
+  detailPanelTarget,
+  onTaskDetailOpenChange,
+}: CronManagerProps) {
   const [view, setView] = useState<CronView>(() => cronViewFromLocation());
   const [mountedViews, setMountedViews] = useState<Record<CronView, boolean>>(() => ({
     schedule: cronViewFromLocation() === "schedule",
@@ -121,6 +130,8 @@ export function CronManager({ onJobCountChange, headerNavigationTarget, headerAc
             <TaskBoardView
               active={view === "board"}
               headerActionsTarget={view === "board" ? headerActionsTarget : null}
+              detailPanelTarget={detailPanelTarget}
+              onDetailOpenChange={onTaskDetailOpenChange}
             />
           </div>
         ) : null}

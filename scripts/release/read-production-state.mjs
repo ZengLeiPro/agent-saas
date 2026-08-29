@@ -9,11 +9,196 @@ function required(value, label) {
   return value;
 }
 
+function exactObject(value, allowedKeys, label) {
+  const object = required(value, label);
+  if (Array.isArray(object)) throw new Error(`${label} must be an object`);
+  const unknown = Object.keys(object).filter((key) => !allowedKeys.includes(key));
+  if (unknown.length > 0) throw new Error(`${label} has unknown fields: ${unknown.join(', ')}`);
+  return object;
+}
+
+function configIdentitySide(value, label, { observed = false } = {}) {
+  const allowed = observed
+    ? ['schemaVersion', 'digest', 'credentialVersionDigest', 'versionResolution', 'secretRefCount']
+    : ['schemaVersion', 'digest', 'credentialVersionDigest'];
+  const side = exactObject(value, allowed, label);
+  if (!Number.isSafeInteger(side.schemaVersion) || side.schemaVersion <= 0) {
+    throw new Error(`${label}.schemaVersion is invalid`);
+  }
+  if (!DIGEST_PATTERN.test(side.digest ?? '')) throw new Error(`${label}.digest is invalid`);
+  if (
+    side.credentialVersionDigest !== undefined &&
+    side.credentialVersionDigest !== null &&
+    !DIGEST_PATTERN.test(side.credentialVersionDigest)
+  ) {
+    throw new Error(`${label}.credentialVersionDigest is invalid`);
+  }
+  if (!observed && side.credentialVersionDigest === null) {
+    throw new Error(`${label}.credentialVersionDigest must be omitted rather than null`);
+  }
+  if (observed) {
+    if (!Object.hasOwn(side, 'credentialVersionDigest')) {
+      throw new Error(`${label}.credentialVersionDigest is required`);
+    }
+    if (!['resolved', 'partial', 'unavailable'].includes(side.versionResolution)) {
+      throw new Error(`${label}.versionResolution is invalid`);
+    }
+    if (!Number.isSafeInteger(side.secretRefCount) || side.secretRefCount < 0) {
+      throw new Error(`${label}.secretRefCount is invalid`);
+    }
+  }
+  return {
+    schemaVersion: side.schemaVersion,
+    digest: side.digest,
+    ...(side.credentialVersionDigest !== undefined
+      ? { credentialVersionDigest: side.credentialVersionDigest }
+      : {}),
+    ...(observed
+      ? {
+          versionResolution: side.versionResolution,
+          secretRefCount: side.secretRefCount,
+        }
+      : {}),
+  };
+}
+
+const CONFIG_IDENTITY_STATUSES = ['consistent', 'drifted', 'unverifiable', 'not_collected'];
+const CONFIG_IDENTITY_REASONS = [
+  'expected_not_bound',
+  'observed_unavailable',
+  'secret_ref_version_unresolved',
+  'schema_version_unsupported',
+];
+
+function assertConfigIdentityRelationship(summary, expected, observed) {
+  if (observed) {
+    const hasCredentialDigest = observed.credentialVersionDigest != null;
+    const invalidResolutionShape =
+      (observed.versionResolution === 'resolved' &&
+        hasCredentialDigest !== (observed.secretRefCount > 0)) ||
+      (observed.versionResolution === 'partial' &&
+        (!hasCredentialDigest || observed.secretRefCount === 0)) ||
+      (observed.versionResolution === 'unavailable' &&
+        (hasCredentialDigest || observed.secretRefCount === 0));
+    if (invalidResolutionShape) {
+      throw new Error('Production API observed config identity version metadata conflicts');
+    }
+  }
+  if (summary.status === 'unverifiable') {
+    const reasonMatches =
+      (summary.reason === 'expected_not_bound' && !expected && Boolean(observed)) ||
+      (summary.reason === 'observed_unavailable' && !observed) ||
+      (summary.reason === 'secret_ref_version_unresolved' &&
+        Boolean(observed) &&
+        observed?.versionResolution !== 'resolved') ||
+      (summary.reason === 'schema_version_unsupported' &&
+        Boolean(expected) &&
+        Boolean(observed) &&
+        (expected?.schemaVersion !== summary.schemaVersion ||
+          observed?.schemaVersion !== summary.schemaVersion));
+    if (!reasonMatches) {
+      throw new Error('Production API unverifiable config identity reason conflicts with its sides');
+    }
+  }
+  if (!['consistent', 'drifted'].includes(summary.status) || !expected || !observed) return;
+  if (expected.schemaVersion !== summary.schemaVersion || observed.schemaVersion !== summary.schemaVersion) {
+    throw new Error(`Production API ${summary.status} config identity has unsupported side schema`);
+  }
+  const credentialDiffers =
+    expected.credentialVersionDigest !== undefined &&
+    expected.credentialVersionDigest !== observed.credentialVersionDigest;
+  if (
+    summary.status === 'consistent' &&
+    (expected.digest !== observed.digest ||
+      observed.versionResolution !== 'resolved' ||
+      credentialDiffers)
+  ) {
+    throw new Error('Production API consistent config identity conflicts with its sides');
+  }
+  if (
+    summary.status === 'drifted' &&
+    expected.digest === observed.digest &&
+    (observed.versionResolution !== 'resolved' || !credentialDiffers)
+  ) {
+    throw new Error('Production API drifted config identity has no comparable mismatch');
+  }
+}
+
+export function validateConfigIdentitySummary(value) {
+  const summary = exactObject(
+    value,
+    [
+      'schemaVersion',
+      'status',
+      'reason',
+      'expected',
+      'observed',
+      'releaseId',
+      'firstObservedAt',
+      'lastObservedAt',
+      'lastChangedAt',
+    ],
+    'Production API config identity',
+  );
+  if (summary.schemaVersion !== 1 || !CONFIG_IDENTITY_STATUSES.includes(summary.status)) {
+    throw new Error('Production API config identity payload is malformed');
+  }
+  if (summary.reason !== undefined && !CONFIG_IDENTITY_REASONS.includes(summary.reason)) {
+    throw new Error('Production API config identity reason is malformed');
+  }
+  for (const field of ['releaseId', 'firstObservedAt', 'lastObservedAt', 'lastChangedAt']) {
+    if (summary[field] !== undefined && (typeof summary[field] !== 'string' || !summary[field])) {
+      throw new Error(`Production API config identity ${field} is malformed`);
+    }
+  }
+  if (
+    (summary.status === 'consistent' || summary.status === 'drifted') &&
+    (!summary.expected || !summary.observed)
+  ) {
+    throw new Error(
+      `Production API ${summary.status} config identity requires expected and observed`,
+    );
+  }
+  if (summary.status === 'unverifiable' && !summary.reason) {
+    throw new Error('Production API unverifiable config identity requires reason');
+  }
+  if (summary.status !== 'unverifiable' && summary.reason) {
+    throw new Error('Production API config identity reason is only valid for unverifiable');
+  }
+  if (summary.status === 'not_collected' && summary.observed) {
+    throw new Error('Production API not_collected config identity must not include observed');
+  }
+  const expected = summary.expected
+    ? configIdentitySide(summary.expected, 'configIdentity.expected')
+    : undefined;
+  const observed = summary.observed
+    ? configIdentitySide(summary.observed, 'configIdentity.observed', { observed: true })
+    : undefined;
+  assertConfigIdentityRelationship(summary, expected, observed);
+  return {
+    schemaVersion: 1,
+    status: summary.status,
+    ...(summary.reason ? { reason: summary.reason } : {}),
+    ...(expected ? { expected } : {}),
+    ...(observed ? { observed } : {}),
+    ...(summary.releaseId ? { releaseId: summary.releaseId } : {}),
+    ...(summary.firstObservedAt ? { firstObservedAt: summary.firstObservedAt } : {}),
+    ...(summary.lastObservedAt ? { lastObservedAt: summary.lastObservedAt } : {}),
+    ...(summary.lastChangedAt ? { lastChangedAt: summary.lastChangedAt } : {}),
+  };
+}
+
 export function validateProductionObservations({ runtime, api, web, acs }) {
   const identity = required(runtime, 'Trusted runtime identity');
   const apiRelease = required(api?.release, 'Production API release identity');
   const webRelease = required(web, 'Production Web release identity');
   const acsRelease = required(acs, 'Production ACS release identity');
+  // TASK-318：API 只读脱敏配置身份摘要。严格重建白名单字段，未知字段
+  // 直接拒绝，禁止意外 secret/路径进入 Production State 与 Release Evidence。
+  const apiConfigIdentity =
+    api?.configIdentity === undefined
+      ? undefined
+      : validateConfigIdentitySummary(api.configIdentity);
   if (
     identity.environment !== 'production' ||
     apiRelease.environment !== 'production' ||
@@ -28,6 +213,18 @@ export function validateProductionObservations({ runtime, api, web, acs }) {
     throw new Error('Production Web or ACS identity is not attested');
   if (acsRelease.namespace !== 'agent-saas-coding')
     throw new Error('Production ACS namespace is not authoritative');
+  if (apiConfigIdentity?.releaseId && apiConfigIdentity.releaseId !== apiRelease.releaseId) {
+    throw new Error('Production API config identity releaseId disagrees with API release identity');
+  }
+  if (identity.configIdentity && apiConfigIdentity?.expected) {
+    for (const field of ['schemaVersion', 'digest', 'credentialVersionDigest']) {
+      if (
+        (identity.configIdentity[field] ?? null) !== (apiConfigIdentity.expected[field] ?? null)
+      ) {
+        throw new Error(`Production expected config identity ${field} disagrees across observers`);
+      }
+    }
+  }
 
   const components = identity.components;
   if (!components) throw new Error('Trusted production component matrix is missing');
@@ -74,6 +271,9 @@ export function validateProductionObservations({ runtime, api, web, acs }) {
       acs: acsRelease.configFingerprint,
       web: webRelease.configFingerprint,
     },
+    // TASK-318：结构化配置身份（四态 + 安全摘要）。与上面的 legacy
+    // configFingerprints 并存（显式版本化，不改变旧字段语义）。
+    ...(apiConfigIdentity ? { configIdentity: apiConfigIdentity } : {}),
     topology: identity.topology,
   };
   return {

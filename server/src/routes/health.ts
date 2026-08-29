@@ -6,6 +6,7 @@ import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
+import type { ConfigIdentitySummary } from '@agent/shared';
 import type { EffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 
 interface IntegrationV3HealthStatus {
@@ -24,6 +25,8 @@ export interface HealthRouteOptions {
   getRuntimeAdmissionSnapshot?: () => RuntimeAdmissionSnapshot | undefined;
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
+  /** TASK-318：只读脱敏配置身份摘要。 */
+  getConfigIdentitySummary?: () => ConfigIdentitySummary | null;
   getEnvironmentSafetyAttested?: () => boolean;
   /** Non-sensitive effective configuration identity for deployment readback. */
   getEffectiveConfigStatus?: () => EffectiveConfigStatus;
@@ -110,6 +113,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     const runtimeReady = runtimeAdmission?.admitting !== false;
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
+    const configIdentity = options.getConfigIdentitySummary?.() ?? undefined;
     const safetyAttested =
       release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
     let integrationV3: IntegrationV3HealthStatus | undefined;
@@ -146,6 +150,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
         environment: effectiveConfig.environment,
         appliedAt: effectiveConfig.appliedAt,
       } : {}),
+      ...(configIdentity ? { configIdentity } : {}),
       ...(integrationV3 ? { integrationV3 } : {}),
     });
   });

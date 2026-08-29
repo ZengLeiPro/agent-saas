@@ -1,3 +1,4 @@
+import type { ConfigIdentitySide, ConfigIdentitySummary } from "@agent/shared";
 import type { UserInfo } from "@/components/UserManager/types";
 
 export type SearchMatchKind = "run" | "session" | "user" | "tenant" | "sandbox" | "workspace";
@@ -167,6 +168,11 @@ export interface OverviewAttentionItem {
   actions?: string[];
 }
 
+export type OverviewConfigIdentitySide = ConfigIdentitySide;
+
+/** Release-bound Config Identity（TASK-318），直接复用 shared wire 契约。 */
+export type OverviewConfigIdentity = ConfigIdentitySummary;
+
 export interface OverviewSnapshot {
   generatedAt: string;
   health: {
@@ -192,6 +198,7 @@ export interface OverviewSnapshot {
     handFailures1h: number;
     storage: StorageHealth | null;
   };
+  configIdentity?: OverviewConfigIdentity | null;
   attention: OverviewAttentionItem[];
 }
 

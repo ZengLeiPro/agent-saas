@@ -21,12 +21,14 @@ exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
 
 upsert_env() {
-  local manifest="$1" target="$2" role="$3"
-  node - "$manifest" "$target" "$role" <<'NODE'
+  local manifest="$1" target="$2" role="$3" config_identity="$4"
+  node - "$manifest" "$target" "$role" "$config_identity" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, target, role] = process.argv.slice(2);
+const [manifestPath, target, role, configIdentityJson] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const component = role === 'web' ? manifest.components.web : manifest.components.api;
+// TASK-318：Release expected config identity 随发布绑定（由 config-identity-cli 计算）。
+const identity = JSON.parse(configIdentityJson);
 const desired = {
   AGENT_SAAS_RELEASE_ID: manifest.releaseId,
   AGENT_SAAS_RELEASE_SHA: component.sourceSha,
@@ -34,7 +36,12 @@ const desired = {
   AGENT_SAAS_WEB_DIGEST: manifest.components.web.artifactDigest,
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: manifest.components.acs.orchestratorArtifactDigest,
   AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: manifest.components.acs.sandboxImageDigest,
+  AGENT_SAAS_CONFIG_IDENTITY_DIGEST: identity.digest,
+  AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: String(identity.schemaVersion),
 };
+if (identity.credentialVersionDigest) {
+  desired.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = identity.credentialVersionDigest;
+}
 fs.writeFileSync(`${target}.candidate`, `${Object.entries(desired).map(([key, value]) => `${key}=${value}`).join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${target}.candidate`, target);
 NODE
@@ -239,8 +246,15 @@ deploy_app() {
   trap 'exit 130' HUP INT TERM
   ln -sfn "$target" "/opt/agent-saas-app/color/$api_idle"
   ln -sfn "$target" "/opt/agent-saas-app/worker/$worker_idle"
-  upsert_env "$MANIFEST_PATH" "$api_env" api
-  upsert_env "$MANIFEST_PATH" "$worker_env" worker
+  # TASK-318：发布前对主机实际配置计算 expected config identity（同一实现于
+  # 运行期 observed identity；含受管 inline secret 的 production fail-closed）。
+  config_identity="$(node "$target/server/dist/config-identity-cli.js" \
+    --config /etc/agent-saas/config.json --environment production \
+    --process-cwd "$target/server" \
+    --runtime-data-dir /mnt/agent-saas/server-data \
+    --env-file /etc/agent-saas/server.env)"
+  upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity"
+  upsert_env "$MANIFEST_PATH" "$worker_env" worker "$config_identity"
 
   rm -f "/run/agent-saas-server-$api_idle.pid" "/run/agent-saas-server-$api_idle.draining"
   systemctl enable --now "agent-saas-server@$api_idle"
@@ -252,8 +266,9 @@ deploy_app() {
 const fs = require('node:fs');
 const [manifestPath, readyPath] = process.argv.slice(2);
 const m = JSON.parse(fs.readFileSync(manifestPath));
-const r = JSON.parse(fs.readFileSync(readyPath)).release;
-if (r.environment !== 'production' || r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest) process.exit(1);
+const ready = JSON.parse(fs.readFileSync(readyPath));
+const r = ready.release;
+if (r.environment !== 'production' || r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest || ready.configIdentity?.status !== 'consistent') process.exit(1);
 NODE
 
   cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"

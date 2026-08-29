@@ -144,6 +144,11 @@ export interface AppRuntime {
   cronRuntime: CronRuntime;
   getMemoryIndexService?: () => MemoryIndexService | null;
   getMemoryConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
+  /**
+   * TASK-318：只读脱敏配置身份摘要（/api/healthz/ready 与平台概览 snapshot 消费）。
+   * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
+   */
+  getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;

@@ -202,6 +202,7 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
   assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
+  assert.match(deploy, /Staging config identity is not consistent with the release binding/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);
   assert.match(deploy, /kill -USR2/u);
   assert.match(deploy, /orchestratorArtifactDigest/u);

@@ -68,6 +68,10 @@ export function createSharedConfigRefresher(params: {
   onSttUpdated?: (next: AppConfig['stt']) => void;
   /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
   onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
+  /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
+  onConfigReloaded?: () => void;
+  /** 应用新配置前的门禁；支持异步校验，失败时保留旧内存配置。 */
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -83,6 +87,8 @@ export function createSharedConfigRefresher(params: {
     onWebToolsUpdated,
     onSttUpdated,
     onModelsUpdated,
+    onConfigReloaded,
+    validateConfigReload,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -93,27 +99,21 @@ export function createSharedConfigRefresher(params: {
   const configPath = getAppConfigPath(processCwd);
   // 进程启动时已经读过一次盘，把当时的指纹作为基线，避免首次调用做无谓重载。
   let appliedConfigStamp = readStamp(configPath);
+  let pendingConfigStamp: FileStamp | undefined;
   let appliedTenantsStamp = tenantsFilePath ? readStamp(tenantsFilePath) : undefined;
   let lastCheckedAtMs = 0;
 
-  function refreshConfigFile(): void {
-    const stamp = readStamp(configPath);
-    if (sameStamp(stamp, appliedConfigStamp)) return;
+  function warnConfigReload(error: unknown): void {
+    // 别人正写到一半、写坏了，或未通过 Production 安全门禁：保留当前
+    // 内存配置，且不推进 appliedConfigStamp，修好后可立刻重新拾取。
+    logger?.warn(
+      `[SharedConfig] config.json 已变化但解析失败或安全校验失败，继续使用当前内存配置：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
-    let nextConfig: AppConfig;
-    try {
-      nextConfig = loadAppConfig(processCwd);
-    } catch (error) {
-      // 别人正写到一半、或写坏了：保留当前内存配置，等下一次变更再试。
-      // 不推进 appliedConfigStamp，这样修好之后能立刻被重新拾起。
-      logger?.warn(
-        `[SharedConfig] config.json 已变化但解析失败，继续使用当前内存配置：${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return;
-    }
-
+  function applyConfigFile(nextConfig: AppConfig, stamp: FileStamp | undefined): void {
     const modelsChanged = Boolean(nextConfig.models)
       && JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models);
     const titleGeneratorChanged = JSON.stringify(config.titleGenerator ?? null)
@@ -203,6 +203,47 @@ export function createSharedConfigRefresher(params: {
     }
 
     appliedConfigStamp = stamp;
+    try {
+      // 整体重载成功：即便逐段都没命中，身份层也需要重算。
+      onConfigReloaded?.();
+    } catch (error) {
+      logger?.warn(
+        `[SharedConfig] config identity 回调执行失败：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  function refreshConfigFile(): void {
+    const stamp = readStamp(configPath);
+    if (sameStamp(stamp, appliedConfigStamp) || (pendingConfigStamp !== undefined && sameStamp(stamp, pendingConfigStamp))) return;
+
+    let nextConfig: AppConfig;
+    let validation: void | Promise<void>;
+    try {
+      nextConfig = loadAppConfig(processCwd);
+      validation = validateConfigReload?.(nextConfig);
+    } catch (error) {
+      warnConfigReload(error);
+      return;
+    }
+
+    if (validation && typeof validation.then === 'function') {
+      pendingConfigStamp = stamp;
+      void Promise.resolve(validation)
+        .then(() => {
+          // 校验期间文件若再次变化，丢弃旧候选；下一次热路径会读取最新版。
+          if (!sameStamp(readStamp(configPath), stamp)) return;
+          applyConfigFile(nextConfig, stamp);
+        })
+        .catch(warnConfigReload)
+        .finally(() => {
+          pendingConfigStamp = undefined;
+        });
+      return;
+    }
+    applyConfigFile(nextConfig, stamp);
   }
 
   function refreshTenantsFile(): void {

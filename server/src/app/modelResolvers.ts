@@ -53,6 +53,10 @@ export function createModelResolvers(params: {
   onSttUpdated?: (next: AppConfig['stt']) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
   resolveRuntimeModels?: (next: NonNullable<AppConfig['models']>) => Promise<NonNullable<AppConfig['models']>>;
+  /** config 文件重载成功后的回调（TASK-318：observed config identity 重算）。 */
+  onConfigReloaded?: () => void;
+  /** config 文件应用前的安全门禁（Production inline secret / ref version fail closed）。 */
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
 }): ModelResolvers {
   const { config, processCwd, tenantStore, tenantsFilePath, logger } = params;
 
@@ -81,6 +85,8 @@ export function createModelResolvers(params: {
         `[SharedConfig] 模型 SecretRef 解析失败，继续使用上一份运行时模型快照：${error instanceof Error ? error.message : String(error)}`,
       ));
     },
+    ...(params.onConfigReloaded ? { onConfigReloaded: params.onConfigReloaded } : {}),
+    ...(params.validateConfigReload ? { validateConfigReload: params.validateConfigReload } : {}),
     tenantStore,
     tenantsFilePath,
     logger,

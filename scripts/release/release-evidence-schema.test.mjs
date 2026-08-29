@@ -49,6 +49,26 @@ const invalidMutations = [
   ],
   ['affected component name', (value) => value.affectedComponents.push('unknown')],
   ['API/Worker coupling', (value) => (value.affectedComponents = ['api'])],
+  [
+    'partial config identity',
+    (value) => (value.configIdentity = { schemaVersion: 1, status: 'consistent' }),
+  ],
+  [
+    'impossible consistent config identity',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'consistent',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'unavailable',
+          secretRefCount: 1,
+        },
+      }),
+  ],
 ];
 
 for (const [name, mutate] of invalidMutations) {

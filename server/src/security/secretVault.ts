@@ -10,6 +10,11 @@ export interface SecretRef {
   createdAt: string;
   updatedAt: string;
   revokedAt?: string;
+  /**
+   * Opaque version（TASK-318 config identity）：put=1，rotate 递增。
+   * 只用于配置身份/轮换观测，不承载任何访问控制语义；旧数据缺省视为 1。
+   */
+  version?: number;
 }
 
 export type VaultOperation = 'read' | 'write' | 'rotate' | 'revoke';
@@ -51,6 +56,12 @@ export interface SecretVault {
   revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void>;
   /** 可选：使当前进程的 plaintext cache 失效；跨进程 rotate 后强制 fresh read。 */
   invalidate?(ref: SecretRef | string): void;
+  /**
+   * 可选（TASK-318）：只读 ref 元数据（id/kind/owner/version 等，不含明文）。
+   * Config identity 用它解析受管 ref 的 opaque version；vault 不支持时
+   * 调用方应把版本视为不可验证，而不是伪造版本。
+   */
+  inspectRef?(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null>;
 }
 
 interface StoredSecret extends SecretRef {
@@ -77,6 +88,7 @@ export class InMemorySecretVault implements SecretVault {
       metadata,
       createdAt: now,
       updatedAt: now,
+      version: 1,
     };
     this.secrets.set(secret.id, secret);
     return toRef(secret);
@@ -92,7 +104,7 @@ export class InMemorySecretVault implements SecretVault {
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const secret = this.read(ref);
     assertAllowed(secret, caller, 'rotate');
-    const updated: StoredSecret = { ...secret, value, updatedAt: new Date().toISOString(), revokedAt: undefined };
+    const updated: StoredSecret = { ...secret, value, updatedAt: new Date().toISOString(), revokedAt: undefined, version: nextVersion(secret) };
     this.secrets.set(secret.id, updated);
     return toRef(updated);
   }
@@ -101,6 +113,15 @@ export class InMemorySecretVault implements SecretVault {
     const secret = this.read(ref);
     assertAllowed(secret, caller, 'revoke');
     this.secrets.set(secret.id, { ...secret, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  }
+
+  /** 只读元数据（不含明文）；供 config identity 解析 opaque version。 */
+  async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
+    const id = typeof ref === 'string' ? ref : ref.id;
+    const secret = this.secrets.get(id);
+    if (!secret) return null;
+    assertMetadataInspectionAllowed(secret, caller);
+    return toRef(secret);
   }
 
   private read(ref: SecretRef | string): StoredSecret {
@@ -132,8 +153,8 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
     write: ['signup_config_admin'],
   },
   stt: { read: ['__system__'], write: ['__system__', 'audio_transcribe_config_admin'] },
-  'tenant-hand': { read: ['__system__'], write: ['__system__'] },
-  tenant_hand: { read: ['__system__'], write: ['__system__'] },
+  'tenant-hand': { read: ['__system__'], write: ['__system__'], rotate: ['__system__'] },
+  tenant_hand: { read: ['__system__'], write: ['__system__'], rotate: ['__system__'] },
   web_tools: { read: ['__system__'], write: ['tool_controls_admin'] },
 };
 
@@ -202,9 +223,53 @@ function assertCallerHasOperationScope(caller: VaultCaller, operation: VaultOper
   }
 }
 
+function opaqueVersion(secret: Pick<StoredSecret, 'id' | 'version'>): number {
+  // v1 迁移：TASK-318 之前写入的 vault 数据没有 version，显式视为 1；
+  // 非法值不能悄悄回退，否则 rotation identity 会失真。
+  if (secret.version === undefined) return 1;
+  if (!Number.isSafeInteger(secret.version) || secret.version <= 0) {
+    throw new Error(`secret has invalid opaque version: ${secret.id}`);
+  }
+  return secret.version;
+}
+
 function toRef(secret: StoredSecret): SecretRef {
   const { value: _value, ...ref } = secret;
+  return { ...ref, version: opaqueVersion(secret) };
+}
+
+function sanitizeInspectedRef(value: unknown): SecretRef {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('HttpSecretVault inspect response is malformed');
+  }
+  const raw = value as Record<string, unknown>;
+  for (const field of ['id', 'ownerId', 'kind', 'createdAt'] as const) {
+    if (typeof raw[field] !== 'string' || raw[field].length === 0) {
+      throw new Error(`HttpSecretVault inspect response ${field} is malformed`);
+    }
+  }
+  if (raw.updatedAt !== undefined && (typeof raw.updatedAt !== 'string' || !raw.updatedAt)) {
+    throw new Error('HttpSecretVault inspect response updatedAt is malformed');
+  }
+  if (raw.metadata !== undefined && (!raw.metadata || typeof raw.metadata !== 'object' || Array.isArray(raw.metadata))) {
+    throw new Error('HttpSecretVault inspect response metadata is malformed');
+  }
+  const ref: SecretRef = {
+    id: raw.id as string,
+    ownerId: raw.ownerId as string,
+    kind: raw.kind as string,
+    metadata: (raw.metadata as Record<string, unknown> | undefined) ?? {},
+    createdAt: raw.createdAt as string,
+    updatedAt: (raw.updatedAt as string | undefined) ?? (raw.createdAt as string),
+    version: opaqueVersion(raw as unknown as SecretRef),
+  };
+  if (typeof raw.revokedAt === 'string' && raw.revokedAt) ref.revokedAt = raw.revokedAt;
   return ref;
+}
+
+/** opaque version 递增：旧数据没有 version 时从 1 起步（rotate 后为 2）。 */
+function nextVersion(secret: StoredSecret): number {
+  return opaqueVersion(secret) + 1;
 }
 
 
@@ -232,7 +297,7 @@ export class EncryptedFileSecretVault implements SecretVault {
     return this.withWriteLock(async () => {
       const data = await this.load();
       const now = new Date().toISOString();
-      const secret: StoredSecret = { id: randomUUID(), ownerId, kind, value, metadata, createdAt: now, updatedAt: now };
+      const secret: StoredSecret = { id: randomUUID(), ownerId, kind, value, metadata, createdAt: now, updatedAt: now, version: 1 };
       data.secrets.push(secret);
       await this.save(data);
       return toRef(secret);
@@ -253,7 +318,7 @@ export class EncryptedFileSecretVault implements SecretVault {
       if (idx < 0) throw new Error(`secret not found: ${refId(ref)}`);
       const current = data.secrets[idx]!;
       assertAllowed(current, caller, 'rotate');
-      const updated: StoredSecret = { ...current, value, revokedAt: undefined, updatedAt: new Date().toISOString() };
+      const updated: StoredSecret = { ...current, value, revokedAt: undefined, updatedAt: new Date().toISOString(), version: nextVersion(current) };
       data.secrets[idx] = updated;
       await this.save(data);
       return toRef(updated);
@@ -270,6 +335,15 @@ export class EncryptedFileSecretVault implements SecretVault {
       data.secrets[idx] = { ...current, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       await this.save(data);
     });
+  }
+
+  /** 只读元数据（不含明文）；旧记录缺少 version 时显式迁移为 1。 */
+  async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
+    const data = await this.load();
+    const secret = data.secrets.find((s) => s.id === refId(ref));
+    if (!secret) return null;
+    assertMetadataInspectionAllowed(secret, caller);
+    return toRef(secret);
   }
 
   private async read(ref: SecretRef | string): Promise<StoredSecret> {
@@ -349,6 +423,23 @@ function isFileExistsError(error: unknown): boolean {
     && (error as { code?: unknown }).code === 'EEXIST');
 }
 
+const CONFIG_IDENTITY_METADATA_SCOPE = 'secret:metadata:read';
+
+/** Config identity 只能读取 ref 元数据，不能借此调用 getSecret。 */
+function assertMetadataInspectionAllowed(
+  secret: Pick<SecretRef, 'ownerId' | 'kind'>,
+  caller: VaultCaller,
+): void {
+  if (hasConfigIdentityMetadataScope(caller)) return;
+  assertAllowed(secret, caller, 'read');
+}
+
+function hasConfigIdentityMetadataScope(caller: VaultCaller): boolean {
+  return caller.actor === 'system'
+    && caller.userId === '__system__'
+    && (caller.scopes ?? []).includes(CONFIG_IDENTITY_METADATA_SCOPE);
+}
+
 function refId(ref: SecretRef | string): string {
   return typeof ref === 'string' ? ref : ref.id;
 }
@@ -368,11 +459,14 @@ export interface HttpSecretVaultOptions {
   cacheTtlMs?: number;
   /** Cache 最大条目数（默认 256）。命中 / 写入按 Map 插入顺序做 LRU 淘汰。 */
   maxCacheEntries?: number;
+  /** metadata-only inspect cache TTL（默认 5 秒）；到期后重检远端 version。 */
+  metadataCacheTtlMs?: number;
   /** 注入当前时间（毫秒），用于测试 TTL 行为。 */
   nowMs?: () => number;
 }
 
 const DEFAULT_HTTP_CACHE_TTL_MS = 30_000;
+const DEFAULT_HTTP_METADATA_CACHE_TTL_MS = 5_000;
 const DEFAULT_HTTP_CACHE_MAX_ENTRIES = 256;
 const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 20_000;
 
@@ -387,10 +481,12 @@ export class HttpSecretVault implements SecretVault {
   private readonly fetchImpl: typeof fetch;
   private readonly requestTimeoutMs: number;
   private readonly cacheTtlMs: number;
+  private readonly metadataCacheTtlMs: number;
   private readonly maxCacheEntries: number;
   private readonly nowMs: () => number;
   private readonly cache = new Map<string, CacheEntry>();
   private readonly refs = new Map<string, SecretRef>();
+  private readonly refMetadataExpiresAt = new Map<string, number>();
 
   constructor(private readonly options: HttpSecretVaultOptions) {
     if (!options.authToken || options.authToken.length < 8) throw new Error('HttpSecretVault authToken is required');
@@ -404,6 +500,8 @@ export class HttpSecretVault implements SecretVault {
       throw new Error('HttpSecretVault requestTimeoutMs must be positive');
     }
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_HTTP_CACHE_TTL_MS;
+    this.metadataCacheTtlMs =
+      options.metadataCacheTtlMs ?? DEFAULT_HTTP_METADATA_CACHE_TTL_MS;
     this.maxCacheEntries = options.maxCacheEntries ?? DEFAULT_HTTP_CACHE_MAX_ENTRIES;
     this.nowMs = options.nowMs ?? (() => Date.now());
   }
@@ -417,7 +515,7 @@ export class HttpSecretVault implements SecretVault {
   ): Promise<SecretRef> {
     assertAllowed({ ownerId, kind }, caller, 'write');
     const created = await this.post<SecretRef>('/secrets', { ownerId, kind, value, caller, metadata });
-    this.refs.set(created.id, created);
+    this.rememberRef(created);
     return created;
   }
 
@@ -430,18 +528,37 @@ export class HttpSecretVault implements SecretVault {
     const result = await this.post<{ value: string; ref?: SecretRef }>('/secrets/resolve', { ref: id, caller });
     if (result.ref) {
       assertAllowed(result.ref, caller, 'read');
-      this.refs.set(result.ref.id, result.ref);
+      this.rememberRef(result.ref);
     }
     this.writeCache(cacheKey, result.value);
     return result.value;
+  }
+
+  /** metadata-only 远端读取；TTL 到期后重检，确保外部 rotate 会改变 observed identity。 */
+  async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
+    const id = refId(ref);
+    const known = typeof ref === 'string' ? this.refs.get(ref) : ref;
+    if (known) assertMetadataInspectionAllowed(known, caller);
+    else if (!hasConfigIdentityMetadataScope(caller)) {
+      this.assertRemoteOperation(ref, caller, 'read');
+    }
+    const cached = this.readRefMetadata(id);
+    if (cached) return cached;
+    const response = await this.post<unknown | null>('/secrets/inspect', { ref: id, caller });
+    if (!response) return null;
+    const inspected = sanitizeInspectedRef(response);
+    if (inspected.id !== id) throw new Error('HttpSecretVault inspect response ref id mismatch');
+    assertMetadataInspectionAllowed(inspected, caller);
+    this.rememberRef(inspected);
+    return inspected;
   }
 
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const id = refId(ref);
     this.assertRemoteOperation(ref, caller, 'rotate');
     const updated = await this.post<SecretRef>(`/secrets/${encodeURIComponent(id)}/rotate`, { value, caller });
-    this.refs.set(updated.id, updated);
     this.invalidate(id);
+    this.rememberRef(updated);
     return updated;
   }
 
@@ -453,11 +570,31 @@ export class HttpSecretVault implements SecretVault {
   }
 
   /**
-   * 主动失效本地 cache entry。外部 KMS webhook（或 admin 工具）在远端 rotate/
-   * revoke 后可调本方法，避免本地 cache 命中 stale plaintext。无 entry 时静默。
+   * 主动失效本地 plaintext 与 metadata cache。外部 KMS webhook（或 admin 工具）
+   * 在远端 rotate/revoke 后可调用，下一次 inspect 会立即重检 opaque version。
    */
   invalidate(ref: SecretRef | string): void {
-    this.invalidateCache(refId(ref));
+    const id = refId(ref);
+    this.invalidateCache(id);
+    this.refMetadataExpiresAt.delete(id);
+  }
+
+  private rememberRef(ref: SecretRef): void {
+    this.refs.set(ref.id, ref);
+    if (this.metadataCacheTtlMs > 0) {
+      this.refMetadataExpiresAt.set(ref.id, this.nowMs() + this.metadataCacheTtlMs);
+    } else {
+      this.refMetadataExpiresAt.delete(ref.id);
+    }
+  }
+
+  private readRefMetadata(id: string): SecretRef | undefined {
+    const expiresAt = this.refMetadataExpiresAt.get(id);
+    if (expiresAt === undefined || expiresAt <= this.nowMs()) {
+      this.refMetadataExpiresAt.delete(id);
+      return undefined;
+    }
+    return this.refs.get(id);
   }
 
   private assertRemoteOperation(ref: SecretRef | string, caller: VaultCaller, operation: VaultOperation): void {

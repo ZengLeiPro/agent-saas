@@ -4,6 +4,7 @@ import { readFileSync as defaultReadFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import { verifyInstalledRelease } from './verify-installed-release.mjs';
+import { validateConfigIdentitySummary } from './read-production-state.mjs';
 
 function requiredString(value, label, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`${label} is invalid`);
@@ -192,11 +193,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'Live component identity does not match independently recomputed installed bytes',
     );
   }
+  const configIdentity =
+    api.configIdentity === undefined
+      ? undefined
+      : validateConfigIdentitySummary(api.configIdentity);
   const output = {
     schemaVersion: 1,
     environment: 'production',
     observedAt: new Date().toISOString(),
     components,
+    // TASK-318：透传经严格白名单重建的只读摘要（旧 API 无字段时向后兼容）。
+    ...(configIdentity ? { configIdentity } : {}),
     topology: {
       api: { color: apiUnit.color, unit: apiUnit.unit },
       runtimeWorker: { color: workerUnit.color, unit: workerUnit.unit },

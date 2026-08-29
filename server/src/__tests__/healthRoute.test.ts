@@ -496,6 +496,32 @@ describe('health router', () => {
     });
   });
 
+  it('TASK-318：readiness 透传只读脱敏 configIdentity 摘要', async () => {
+    const configIdentity = {
+      schemaVersion: 1 as const,
+      status: 'drifted' as const,
+      expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+      observed: {
+        schemaVersion: 1,
+        digest: `sha256:${'b'.repeat(64)}`,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved' as const,
+        secretRefCount: 0,
+      },
+      lastChangedAt: '2026-08-29T12:00:00.000Z',
+    };
+    const server = await startHealthServer({
+      getConfigIdentitySummary: () => configIdentity,
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    expect(response.status).toBe(200);
+    expect(body.configIdentity).toEqual(configIdentity);
+    expect(JSON.stringify(body.configIdentity)).not.toContain('plaintext-secret-probe');
+  });
+
   it('defaults warmup to done when no status provider is wired', async () => {
     const server = await startHealthServer({});
     servers.push(server);

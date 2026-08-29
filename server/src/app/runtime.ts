@@ -97,7 +97,7 @@ import { createCronNotifier } from '../cron/notifier.js';
 import type { NotifyChannel } from '../cron/notifyChannel.js';
 import { createDingtalkNotifyChannel } from '../cron/notifyChannels/index.js';
 import { buildFollowupContext } from '../cron/followup.js';
-import { assertDevDatabaseSafety, loadAppConfig } from './config.js';
+import { assertDevDatabaseSafety, loadAppConfig } from './config.js'; import { initializeRuntimeConfigIdentityAssembly } from './configIdentityAssembly.js';
 import { createRuntimeWebPushAssembly, startTaskboardStatusNotificationWorker } from './runtimeWebPush.js';
 import { createModelResolvers } from './modelResolvers.js';
 import { resolveImageUnderstandingModelConfigs } from './imageUnderstandingModelConfigs.js';
@@ -691,7 +691,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd);
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({ config, secretVault, logger: serverLogger.child('ConfigIdentity') });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -1541,7 +1541,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
-  // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
+  // 模型解析器：如果配置了 models，则绑定到 RawRuntime / WebChannel / Cron。
   // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
@@ -1560,6 +1560,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (!value) throw new Error('models 未配置');
       return value;
     }),
+    ...configIdentityAssembly.modelResolverHooks,
   });
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
@@ -2926,7 +2927,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,
-    cronRuntime,
+    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
     getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
     memoryIndexShutdown,

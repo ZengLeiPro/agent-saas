@@ -150,11 +150,16 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
       getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
-      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts ? () => runtime.runtimeRunStore!.getActiveCounts!() : undefined,
+      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
+        ? () => runtime.runtimeRunStore!.getActiveCounts!()
+        : undefined,
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
       getEffectiveConfigStatus,
+      getConfigIdentitySummary: runtime.getConfigIdentitySummary
+        ? () => runtime.getConfigIdentitySummary!()
+        : undefined,
       ...(runtime.egressConfigStore
         ? {
             getEnvironmentSafetyAttested: () =>
@@ -165,7 +170,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
-  // App update: version check + APK download
+  // App update: version check + APK download.
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
   app.use('/api/upload', tenantFeatureGuard(runtime.tenantStore, 'filesEnabled', '文件能力'));

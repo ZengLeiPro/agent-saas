@@ -7,6 +7,143 @@ const fullShaSchema = z
   .regex(/^[a-f0-9]{40}$/u, 'Expected a lowercase complete 40-character SHA');
 const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u, 'Expected a sha256 digest');
 
+/**
+ * TASK-318：只读脱敏配置身份摘要（与 server /api/healthz/ready 的
+ * configIdentity 同构；strict 校验防止旧 schema/缺字段数据混入 evidence）。
+ */
+const configIdentitySideSchema = z
+  .object({
+    schemaVersion: z.number().int().positive(),
+    digest: sha256DigestSchema,
+    credentialVersionDigest: sha256DigestSchema.optional(),
+  })
+  .strict();
+const configIdentitySummarySchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    status: z.enum(['consistent', 'drifted', 'unverifiable', 'not_collected']),
+    reason: z
+      .enum([
+        'expected_not_bound',
+        'observed_unavailable',
+        'secret_ref_version_unresolved',
+        'schema_version_unsupported',
+      ])
+      .optional(),
+    expected: configIdentitySideSchema.optional(),
+    observed: z
+      .object({
+        schemaVersion: z.number().int().positive(),
+        digest: sha256DigestSchema,
+        credentialVersionDigest: sha256DigestSchema.nullable(),
+        versionResolution: z.enum(['resolved', 'partial', 'unavailable']),
+        secretRefCount: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    releaseId: z.string().min(1).optional(),
+    firstObservedAt: z.string().min(1).optional(),
+    lastObservedAt: z.string().min(1).optional(),
+    lastChangedAt: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.status === 'consistent' || value.status === 'drifted') && !value.expected) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expected'],
+        message: `${value.status} requires expected`,
+      });
+    }
+    if ((value.status === 'consistent' || value.status === 'drifted') && !value.observed) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['observed'],
+        message: `${value.status} requires observed`,
+      });
+    }
+    if (value.status === 'unverifiable' && !value.reason) {
+      ctx.addIssue({ code: 'custom', path: ['reason'], message: 'unverifiable requires reason' });
+    }
+    if (value.status !== 'unverifiable' && value.reason) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: 'reason is only valid for unverifiable',
+      });
+    }
+    if (value.status === 'unverifiable' && value.reason) {
+      const reasonMatches =
+        (value.reason === 'expected_not_bound' && !value.expected && Boolean(value.observed)) ||
+        (value.reason === 'observed_unavailable' && !value.observed) ||
+        (value.reason === 'secret_ref_version_unresolved' &&
+          Boolean(value.observed) &&
+          value.observed?.versionResolution !== 'resolved') ||
+        (value.reason === 'schema_version_unsupported' &&
+          Boolean(value.expected) &&
+          Boolean(value.observed) &&
+          (value.expected?.schemaVersion !== value.schemaVersion ||
+            value.observed?.schemaVersion !== value.schemaVersion));
+      if (!reasonMatches) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['reason'],
+          message: 'unverifiable reason conflicts with expected/observed identity',
+        });
+      }
+    }
+    if (value.status === 'not_collected' && value.observed) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['observed'],
+        message: 'not_collected must not include observed',
+      });
+    }
+    if (value.observed) {
+      const hasCredentialDigest = value.observed.credentialVersionDigest !== null;
+      const invalidResolutionShape =
+        (value.observed.versionResolution === 'resolved' &&
+          hasCredentialDigest !== (value.observed.secretRefCount > 0)) ||
+        (value.observed.versionResolution === 'partial' &&
+          (!hasCredentialDigest || value.observed.secretRefCount === 0)) ||
+        (value.observed.versionResolution === 'unavailable' &&
+          (hasCredentialDigest || value.observed.secretRefCount === 0));
+      if (invalidResolutionShape) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['observed', 'versionResolution'],
+          message: 'observed credential digest/count conflicts with versionResolution',
+        });
+      }
+    }
+    if (
+      (value.status === 'consistent' || value.status === 'drifted') &&
+      value.expected &&
+      value.observed
+    ) {
+      const credentialDiffers =
+        value.expected.credentialVersionDigest !== undefined &&
+        value.expected.credentialVersionDigest !== value.observed.credentialVersionDigest;
+      if (
+        value.expected.schemaVersion !== value.schemaVersion ||
+        value.observed.schemaVersion !== value.schemaVersion ||
+        (value.status === 'consistent' &&
+          (value.expected.digest !== value.observed.digest ||
+            value.observed.versionResolution !== 'resolved' ||
+            credentialDiffers)) ||
+        (value.status === 'drifted' &&
+          value.expected.digest === value.observed.digest &&
+          (value.observed.versionResolution !== 'resolved' || !credentialDiffers))
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['status'],
+          message: `${value.status} conflicts with expected/observed identity`,
+        });
+      }
+    }
+  });
+
 const artifactUriSchema = z
   .string()
   .trim()
@@ -128,6 +265,8 @@ export const releaseEvidenceSchema = z
       })
       .strict(),
     productionBaseline: productionBaselineSchema,
+    // TASK-318：结构化配置身份（可选；由 Production State 的 configIdentity 透传）。
+    configIdentity: configIdentitySummarySchema.optional(),
     baselineArtifacts: baselineArtifactsSchema,
     affectedComponents: z.array(releaseComponentSchema).max(4),
     migrationPlan: z

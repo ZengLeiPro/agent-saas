@@ -13,6 +13,7 @@ import { platformAdminApi } from "../api";
 import { formatAttentionKind, formatAttentionTitle, formatRunStatus } from "../displayText";
 import { attentionSeverity, formatNumber, formatRate, formatTime, formatYuan } from "../format";
 import type { BillingDailyPoint, OverviewAttentionEntityRef, OverviewSnapshot, PlatformTrendResponse } from "../types";
+import { ConfigIdentityCard } from "./ConfigIdentityCard";
 
 function navigate(section: PlatformAdminSection, search?: Record<string, string | number | boolean | null | undefined>) {
   navigatePlatformAdmin({ section, search });
@@ -181,6 +182,8 @@ export function OverviewPage() {
           onClick={() => navigate("efficiency")}
         />
       </div>
+
+      <ConfigIdentityCard identity={snapshot?.configIdentity} />
 
       <div className="grid gap-3 xl:grid-cols-2">
         <Card density="compact">

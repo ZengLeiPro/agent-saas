@@ -257,6 +257,9 @@ export async function produceReleaseEvidence(options) {
       },
     },
     productionBaseline,
+    // TASK-318：把 Production State 的结构化配置身份透传进 evidence
+    //（旧 configFingerprints 字段仍在 state 里，不进 evidence，语义不变）。
+    ...(production.configIdentity ? { configIdentity: production.configIdentity } : {}),
     baselineArtifacts,
     affectedComponents: classification.components,
     migrationPlan: migration.migrationPlan,

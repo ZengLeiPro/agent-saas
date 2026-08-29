@@ -13,6 +13,7 @@ import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
 import type { AppConfig } from '../app/config.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
+import { assertProductionManagedCredentialSafety } from '../release/configIdentity.js';
 
 const BASE_GROUP = {
   id: 'ark-agents',
@@ -516,5 +517,141 @@ describe('createSharedConfigRefresher', () => {
 
     expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
     expect(calls).toBe(0);
+  });
+
+  it('TASK-318：config 文件重载成功后调用 onConfigReloaded，重算 observed config identity', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const reasons: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onConfigReloaded: () => reasons.push('reloaded'),
+      now: () => clock,
+    });
+
+    // 无变化 -> 不触发回调
+    refresher.refreshIfChanged();
+    expect(reasons).toEqual([]);
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(reasons).toEqual(['reloaded']);
+    expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
+  });
+
+  it('TASK-318：Production 安全门禁在应用前拒绝受管 inline secret，整次重载保持旧配置', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let reloadCalls = 0;
+    let webToolsCalls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      validateConfigReload: assertProductionManagedCredentialSafety,
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+      onWebToolsUpdated: () => {
+        webToolsCalls += 1;
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify(
+        {
+          agent: { cwd: '.' },
+          server: { port: 3200 },
+          models: { groups: [BASE_GROUP, QWEN_GROUP], default: 'ark-agents/glm-5.2' },
+          webTools: {
+            enabled: true,
+            search: { enabled: true, provider: 'tavily', apiKey: 'inline-secret-key' },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    clock += 5_000;
+    refresher.refreshIfChanged();
+
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    expect(config.webTools).toBeUndefined();
+    expect(webToolsCalls).toBe(0);
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('webTools.search.apiKey'))).toBe(true);
+  });
+
+  it('TASK-318：异步 ref version 门禁失败时也在应用前 fail closed', async () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let reloadCalls = 0;
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      validateConfigReload: async () => {
+        await Promise.resolve();
+        throw new Error('managed ref version unresolved');
+      },
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(config.models!.groups.map((group) => group.id)).not.toContain('qwen');
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('managed ref version unresolved'))).toBe(true);
+  });
+
+  it('TASK-318：onConfigReloaded 抛错不打断热更新主流程（配置仍完成替换）', () => {
+    writeConfig(dir, [BASE_GROUP]);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+    } as unknown as AppConfig;
+    const warns: string[] = [];
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onConfigReloaded: () => {
+        throw new Error('identity recompute exploded');
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
+    clock += 5_000;
+    expect(() => refresher.refreshIfChanged()).not.toThrow();
+    // 热更新本身成功完成，回调异常只被记录。
+    expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
+    expect(warns.some((message) => message.includes('identity recompute exploded'))).toBe(true);
   });
 });

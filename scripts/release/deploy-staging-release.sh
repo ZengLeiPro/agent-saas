@@ -408,9 +408,38 @@ NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'
+shared_root=/mnt/agent-saas-staging/workspace-shared
+runuser -u agent-saas-staging -- mkdir -p "$shared_root/.ky-agent"
+for shared_asset in \
+  .browser-profile-seed \
+  .ky-agent/scripts \
+  .ky-agent/skills-pool \
+  prompts \
+  MEMORY.template.md \
+  PERSONA.template.md \
+  questions.template.md; do
+  live_asset="$shared_root/$shared_asset"
+  if [ -e "$live_asset" ] && [ ! -L "$live_asset" ]; then
+    echo "Staging immutable shared asset conflicts with persistent path: $live_asset" >&2
+    exit 1
+  fi
+  runuser -u agent-saas-staging -- ln -sfn \
+    "$current/server/workspace-shared/$shared_asset" "$live_asset.candidate-$GITHUB_RUN_ID"
+  runuser -u agent-saas-staging -- mv -Tf \
+    "$live_asset.candidate-$GITHUB_RUN_ID" "$live_asset"
+done
+# TASK-318：发布前对 Staging 实际配置计算 expected config identity（与运行期
+# observed identity 同一实现；Staging 启动断言要求该 digest 必须存在）。
+config_identity="$(node "$target/server/dist/config-identity-cli.js" \
+  --config /etc/agent-saas-staging/config.json --environment staging \
+  --process-cwd /mnt/agent-saas-staging/runtime/server \
+  --runtime-data-dir /mnt/agent-saas-staging/runtime/server/data \
+  --env-file "$server_env")"
+node - "$MANIFEST_PATH" "$server_env" "$config_identity" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, configIdentityJson] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const identity = JSON.parse(configIdentityJson);
 const desired = {
   AGENT_SAAS_RELEASE_ID: manifest.releaseId,
   AGENT_SAAS_RELEASE_SHA: manifest.releaseSha,
@@ -418,8 +447,17 @@ const desired = {
   AGENT_SAAS_WEB_DIGEST: manifest.components.web.artifactDigest,
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: manifest.components.acs.orchestratorArtifactDigest,
   AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: manifest.components.acs.sandboxImageDigest,
+  AGENT_SAAS_CONFIG_IDENTITY_DIGEST: identity.digest,
+  AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION: String(identity.schemaVersion),
 };
-const keys = new Set(Object.keys(desired));
+if (identity.credentialVersionDigest) {
+  desired.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST = identity.credentialVersionDigest;
+}
+const keys = new Set([
+  ...Object.keys(desired),
+  // identity 未解析到 credential version 时删除旧 release 遗留值，禁止串线。
+  'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
+]);
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
 for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`);
 fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
@@ -503,6 +541,8 @@ const acs = JSON.parse(fs.readFileSync(acsPath, 'utf8'));
 const release = api.release ?? {};
 if (release.releaseId !== manifest.releaseId || release.releaseSha !== manifest.releaseSha)
   throw new Error('Staging API readiness identity does not match Manifest');
+if (api.configIdentity?.status !== 'consistent')
+  throw new Error('Staging config identity is not consistent with the release binding');
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
 if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging')

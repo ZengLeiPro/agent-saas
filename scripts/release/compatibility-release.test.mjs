@@ -62,9 +62,14 @@ test('builds compatibility runtime identities without carrying stale App metadat
     releaseId: RELEASE_ID,
     sourceSha: SHA,
     serverDigest: DIGEST,
+    configIdentityDigest: DIGEST,
+    configIdentityCredentialVersionDigest: DIGEST,
   });
   assert.equal(environment.AGENT_SAAS_RELEASE_SHA, SHA);
   assert.equal(environment.AGENT_SAAS_WEB_DIGEST, DIGEST);
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_DIGEST, DIGEST);
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION, '1');
+  assert.equal(environment.AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST, DIGEST);
 
   const acs = buildCompatibilityAcsIdentity({
     releaseId: RELEASE_ID,
@@ -94,6 +99,18 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
     environment: 'production',
     observedAt: '2026-08-28T16:00:00.000Z',
     components,
+    configIdentity: {
+      schemaVersion: 1,
+      status: 'consistent',
+      expected: { schemaVersion: 1, digest: DIGEST },
+      observed: {
+        schemaVersion: 1,
+        digest: DIGEST,
+        credentialVersionDigest: null,
+        versionResolution: 'resolved',
+        secretRefCount: 0,
+      },
+    },
     topology: {
       api: { color: 'blue', unit: 'agent-saas-server@blue.service' },
       runtimeWorker: { color: 'blue', unit: 'agent-saas-runtime-worker@blue.service' },
@@ -108,6 +125,8 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
   assert.equal(identity.topology.api.activeColor, 'blue');
   assert.equal(identity.components.api.deployedAt, live.observedAt);
   assert.match(identity.configFingerprint, /^sha256:[a-f0-9]{64}$/u);
+  assert.deepEqual(identity.configIdentity, { schemaVersion: 1, digest: DIGEST });
+  assert.equal(identity.configIdentity.status, undefined);
 });
 
 test('legacy deploy entrypoints persist immutable baselines and refresh trusted identity', async () => {
@@ -125,6 +144,17 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /GITHUB_RUN_ATTEMPT='\$\{GITHUB_RUN_ATTEMPT\}'/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ID/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
+  assert.match(appWorkflow, /config-identity-cli\.js/u);
+  assert.match(
+    appWorkflow,
+    /failed to calculate candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
+  );
+  assert.match(
+    appWorkflow,
+    /failed to persist candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
+  );
+  assert.match(appWorkflow, /candidate config identity status=\$CONFIG_IDENTITY_STATUS/u);
+  assert.match(appWorkflow, /--config-identity-digest/u);
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),

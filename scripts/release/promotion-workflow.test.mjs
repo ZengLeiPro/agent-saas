@@ -167,6 +167,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /releases\/\$artifact_digest/u);
   assert.match(deploy, /mkdir -p "\$target\/server\/data" "\$target\/workspace-shared"/u);
   assert.match(deploy, /r\.environment !== 'production'/u);
+  assert.match(deploy, /ready\.configIdentity\?\.status !== 'consistent'/u);
   assert.match(
     deploy,
     /systemctl show "agent-saas-runtime-worker@\$worker_idle" --property Environment --value/u,

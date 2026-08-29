@@ -1649,13 +1649,50 @@ jobs:
             fi
           fi
 
+          if ! CONFIG_IDENTITY_JSON="$(node "$RELEASE_DIR/server/dist/config-identity-cli.js" \
+            --config /etc/agent-saas/config.json --environment production \
+            --process-cwd "$RELEASE_DIR/server" \
+            --runtime-data-dir /mnt/agent-saas/server-data \
+            --env-file /etc/agent-saas/server.env)"; then
+            log "ERROR: failed to calculate candidate config identity"
+            rollback_idle_and_exit
+          fi
+          if ! CONFIG_IDENTITY_DIGEST="$(node -e \
+            'process.stdout.write(JSON.parse(process.argv[1]).digest)' \
+            "$CONFIG_IDENTITY_JSON")"; then
+            log "ERROR: candidate config identity digest is malformed"
+            rollback_idle_and_exit
+          fi
+          if ! CONFIG_IDENTITY_SCHEMA_VERSION="$(node -e \
+            'process.stdout.write(String(JSON.parse(process.argv[1]).schemaVersion))' \
+            "$CONFIG_IDENTITY_JSON")"; then
+            log "ERROR: candidate config identity schema is malformed"
+            rollback_idle_and_exit
+          fi
+          if ! CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST="$(node -e \
+            'process.stdout.write(JSON.parse(process.argv[1]).credentialVersionDigest ?? "")' \
+            "$CONFIG_IDENTITY_JSON")"; then
+            log "ERROR: candidate config credential identity is malformed"
+            rollback_idle_and_exit
+          fi
+          CONFIG_IDENTITY_ARGS=(
+            --config-identity-digest "$CONFIG_IDENTITY_DIGEST"
+            --config-identity-schema-version "$CONFIG_IDENTITY_SCHEMA_VERSION"
+          )
+          if [ -n "$CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST" ]; then
+            CONFIG_IDENTITY_ARGS+=(
+              --config-identity-credential-version-digest "$CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST"
+            )
+          fi
+
           if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs" \
             --identity /etc/agent-saas/runtime-identity.json \
             --api-output "/etc/agent-saas/server-${IDLE}.release.env" \
             --worker-output "/etc/agent-saas/runtime-worker-${WORKER_IDLE}.release.env" \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" \
-            --server-digest "$SERVER_ARTIFACT_DIGEST" >/dev/null; then
-            log "ERROR: failed to write compatibility env after runtime preflight"
+            --server-digest "$SERVER_ARTIFACT_DIGEST" \
+            "${CONFIG_IDENTITY_ARGS[@]}" >/dev/null; then
+            log "ERROR: failed to persist candidate config identity and compatibility env"
             rollback_idle_and_exit
           fi
 

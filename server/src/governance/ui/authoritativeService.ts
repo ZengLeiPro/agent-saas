@@ -288,11 +288,17 @@ export class AuthoritativeGovernanceService {
       const inputs = await this.listEffectiveInputs(actor, requested);
       const views: EffectiveResourceViewDto[] = [];
       for (const input of inputs) {
-        const resource = await this.resolveResource(input, actor);
-        // 权限结论本身仍由七层评估权威返回；但列表是只读展示查询，
-        // agent/skill 这类没有运行依赖索引的资源按约定省略 readiness，
-        // 不允许让整个“我的权限”页面 503（readiness 省略≠降级为允许）。
-        views.push(await this.view(actor, resource, actionFor(resource, 'use'), { unavailableReadiness: 'omit' }));
+        try {
+          const resource = await this.resolveResource(input, actor);
+          // 权限结论本身仍由七层评估权威返回；但列表是只读展示查询，
+          // agent/skill 这类没有运行依赖索引的资源按约定省略 readiness，
+          // 不允许让整个“我的权限”页面 503（readiness 省略≠降级为允许）。
+          views.push(await this.view(actor, resource, actionFor(resource, 'use'), { unavailableReadiness: 'omit' }));
+        } catch (error) {
+          // 已删除资源的陈旧赋权不再是“有效资源”；列表省略它不会产生授权结果，显式评估仍返回 404。
+          if (error instanceof GovernanceUiError && error.code === 'RESOURCE_NOT_FOUND') continue;
+          throw error;
+        }
       }
       return views;
     });

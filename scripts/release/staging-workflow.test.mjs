@@ -232,13 +232,14 @@ test('Evidence Service dependencies suppress their standalone CLIs when bundled'
   }
 });
 
-test('Staging API and Worker keep mutable runtime data under the isolated NAS root', async () => {
+test('Staging API and Worker run immutable code while mutable paths stay in isolated configuration', async () => {
   for (const path of [serverUnitPath, workerUnitPath]) {
     const unit = await readFile(path, 'utf8');
     assert.match(unit, /User=agent-saas-staging/u);
     assert.match(unit, /Group=agent-saas-staging/u);
-    assert.match(unit, /WorkingDirectory=\/mnt\/agent-saas-staging\/runtime\/server/u);
+    assert.match(unit, /WorkingDirectory=\/opt\/agent-saas-staging\/current\/server/u);
     assert.match(unit, /ExecStart=.*\/opt\/agent-saas-staging\/current\/server\/dist\/index\.js/u);
+    assert.match(unit, /Environment=KB_PREVIEW_AUTO_GENERATE=false/u);
   }
 
   const workerUnit = await readFile(workerUnitPath, 'utf8');

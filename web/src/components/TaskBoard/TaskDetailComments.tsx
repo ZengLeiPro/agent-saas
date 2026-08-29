@@ -96,8 +96,10 @@ export function TaskDetailComments({
       <button type="button" className="relative flex h-8 w-full items-center justify-center rounded-md text-sm font-semibold transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-expanded={detailsExpanded} aria-controls="task-detail-information"
         aria-label={detailsExpanded ? "收起任务详情" : "展开任务详情"} onClick={onToggleDetails}>
-        <span>讨论（{comments.length}）</span>
-        <ChevronDown className={`absolute right-1 size-4 transition-transform duration-300 ${detailsExpanded ? "rotate-180" : ""}`} />
+        <span className="relative inline-flex items-center">
+          <span>讨论（{comments.length}）</span>
+          <ChevronDown className={`absolute left-full ml-1 size-4 transition-transform duration-300 ${detailsExpanded ? "rotate-180" : ""}`} />
+        </span>
       </button>
     </header>
   );

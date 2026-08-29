@@ -130,7 +130,11 @@ describe("TaskDetailComments", () => {
     const form = screen.getByRole("textbox", { name: "发表讨论" }).closest("form");
     expect(toggle.textContent).toContain("讨论（0）");
     expect(toggle.className).toContain("justify-center");
-    expect(toggle.querySelector("svg")?.classList.contains("rotate-180")).toBe(true);
+    const chevron = toggle.querySelector("svg");
+    expect(chevron?.classList.contains("left-full")).toBe(true);
+    expect(chevron?.classList.contains("ml-1")).toBe(true);
+    expect(chevron?.classList.contains("right-1")).toBe(false);
+    expect(chevron?.classList.contains("rotate-180")).toBe(true);
     expect(discussion.nextElementSibling).toBe(form);
     expect(discussion.className).toContain("slide-in-from-bottom-1");
     expect(screen.queryByText(/^评论（/)).toBeNull();

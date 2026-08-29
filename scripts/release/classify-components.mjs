@@ -19,6 +19,7 @@ const PATH_COMPONENTS = Object.freeze([
   ['docs/', []],
   ['scripts/release/', []],
   ['scripts/staging/', []],
+  ['e2e/staging/', []],
   ['infra/staging/', []],
   ['config/', []],
   ['mobile/', []],

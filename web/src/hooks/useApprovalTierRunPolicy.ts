@@ -8,10 +8,15 @@ import type { SessionRuntime } from "./useChatAppStateTypes";
 
 /**
  * TASK-256：三档「有效批准策略」向活跃 run 的传播逻辑（自 useChatAppState 抽出）。
- * 档位变化（含 ask->low-risk、full->low-risk）都会触发：
- * full/low-risk 向活跃 run 发送对应策略（低风险档带 lowRiskOnly），
- * ask 发送关闭指令重置回人工审批；低风险档即使会话开关被拨动也维持 lowRiskOnly，
- * 不升为全量自动批准。
+ *
+ * 权威链路（三轮 review 返工）：账户档位保存走 PATCH /me/preferences，服务端
+ * convergeActiveRunApprovalPolicies 会原子重写该用户**所有**活跃 run 的 approvalPolicy
+ * metadata（含其他会话与钉钉/定时任务渠道），下一次工具裁决从 runStore 读新策略。
+ * 因此账户档位 effect 不再发送 best-effort WS（避免 ensureConnectedSend=false / 服务端拒绝
+ * 却仍显示「已保存即生效」）；HTTP 保存只有在服务端收敛成功后才返回成功。
+ *
+ * ask 档的会话级「自动授权工具」开关（setAutoApproveRunShell）仍是 run 级升档：
+ * 仅该开关开启时为该 run 发送全量自动批准，持久化在 localStorage，随会话切换恢复。
  */
 export function useApprovalTierRunPolicy(options: {
   approvalTier: ApprovalTier;
@@ -36,6 +41,7 @@ export function useApprovalTierRunPolicy(options: {
         action: 'approval_policy',
         sessionId: currentSessionId,
         runId: activeRun.runId,
+        // 低风险档即使会话开关被拨动，也维持 lowRiskOnly 语义，不升为全量自动批准。
         approvalPolicy: approvalTier === "low-risk"
           ? approvalPolicyPayloadForTier("low-risk")
           : { autoApproveTools: nextChecked },
@@ -44,28 +50,15 @@ export function useApprovalTierRunPolicy(options: {
   }, [approvalTier, activeRunsBySession, sessionIdRef, setAutoApproveRunShellState]);
 
   useEffect(() => {
-    const currentSessionId = sessionIdRef.current;
-    const activeRun = currentSessionId ? activeRunsBySession.current.get(currentSessionId) : undefined;
-    const sendCurrentRunPolicy = (approvalPolicy: { autoApproveTools: boolean; lowRiskOnly?: boolean }) => {
-      if (!currentSessionId || !activeRun?.runId || !isActiveRuntimeStatus(activeRun.status)) return;
-      void wsClient.ensureConnectedSend({
-        action: 'approval_policy',
-        sessionId: currentSessionId,
-        runId: activeRun.runId,
-        approvalPolicy,
-      });
-    };
-
+    // 账户档位只同步本地展示态；所有 active run 的权威策略由保存偏好的 HTTP 服务端原子
+    // 收敛。这里不再发当前会话 WS，避免 best-effort 失败却显示「已保存即生效」。
     if (approvalTier === "full" || approvalTier === "low-risk") {
       setAutoApproveRunShellState(true);
-      sendCurrentRunPolicy(approvalPolicyPayloadForTier(approvalTier));
       return;
     }
-
     setAutoApproveRunShellState(false);
     clearRunShellApprovalStorage();
-    sendCurrentRunPolicy({ autoApproveTools: false });
-  }, [approvalTier, activeRunsBySession, sessionIdRef, setAutoApproveRunShellState]);
+  }, [approvalTier, setAutoApproveRunShellState]);
 
   return { setAutoApproveRunShell };
 }

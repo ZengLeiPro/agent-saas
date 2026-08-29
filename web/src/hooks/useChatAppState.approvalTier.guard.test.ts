@@ -11,10 +11,9 @@ const MOBILE = readFileSync(join(__dirname, "../layouts/MobileLayout.tsx"), "utf
  * TASK-256 review 返工：Web 端必须消费统一的三档「有效批准策略」。
  * 此前 useChatAppState / Desktop / Mobile 只判断 authorizationModeEnabled === true：
  * 1. 缺失字段的老用户被当作 ask，与服务端 ?? true 默认（full）不一致；
- * 2. ask->low-risk 档位切换不触发 approval_policy effect，活跃 run 仍是「每次询问」；
- * 3. full->low-risk 发送 autoApproveTools:false，服务端把 metadata.approvalPolicy
- *    写成 null，活跃 run 被降为「每次询问」而不是低风险档。
- * 传播逻辑现抽出为 useApprovalTierRunPolicy，本守卫同时覆盖两处源码。
+ * 2. 账户档位过去只对当前会话 best-effort 发 WS，其他 active run 保留旧策略；
+ * 3. 三轮返工后服务端保存偏好时原子收敛全部 active run，前端账户 effect 不再发 WS。
+ * 会话级覆盖逻辑仍抽在 useApprovalTierRunPolicy，本守卫同时覆盖两处源码。
  */
 describe("三档有效批准策略统一传播", () => {
   it("useChatAppState 经 resolveApprovalTier 取档，不再用 === true 直读布尔", () => {
@@ -23,16 +22,16 @@ describe("三档有效批准策略统一传播", () => {
     expect(SOURCE).toContain("useApprovalTierRunPolicy({");
   });
 
-  it("approval_policy effect 依赖 approvalTier，档位切换（含 ask->low-risk）都会触发", () => {
-    expect(POLICY).toContain("const sendCurrentRunPolicy = (approvalPolicy");
-    expect(POLICY).toContain("approvalPolicyPayloadForTier(approvalTier)");
-    expect(POLICY).toContain("autoApproveTools: false");
-    // effect 依赖数组必须含 approvalTier，否则 ask->low-risk 不触发
-    expect(POLICY).toContain("}, [approvalTier, activeRunsBySession, sessionIdRef, setAutoApproveRunShellState]);");
+  it("账户档位 effect 只同步展示态，不再 best-effort 发送当前会话 WS", () => {
+    const marker = POLICY.indexOf("账户档位只同步本地展示态");
+    expect(marker).toBeGreaterThan(0);
+    const effect = POLICY.slice(marker, POLICY.indexOf("}, [approvalTier, setAutoApproveRunShellState]);", marker));
+    expect(effect).not.toContain("ensureConnectedSend");
+    expect(POLICY).toContain("}, [approvalTier, setAutoApproveRunShellState]);");
   });
 
-  it("低风险档向活跃 run 与新消息都显式携带 lowRiskOnly", () => {
-    // 活跃 run：会话开关拨动也维持 lowRiskOnly，不升为全量自动批准
+  it("低风险档的会话级覆盖与新消息都显式携带 lowRiskOnly", () => {
+    // ask 档会话开关/低风险显示态路径维持 lowRiskOnly，不升为全量自动批准
     expect(POLICY).toContain('approvalTier === "low-risk"');
     expect(POLICY).toContain('approvalPolicyPayloadForTier("low-risk")');
     // 新消息路径按 approvalTierRef 表达，不依赖服务端兜底

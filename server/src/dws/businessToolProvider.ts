@@ -29,6 +29,10 @@ import {
   type DwsWorkspacePrincipal,
 } from './authFlow.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
+// TASK-256（三轮 review 返工）：命令路径级只读/写例外登记表。每条路径逐一对照
+// references 文档核实：含 attendance.approve.list 等路径中带破坏性 token 的纯查询，
+// 以及 chat.mute-at-all 等末尾 token 误导读判定的写命令。
+import { DWS_READ_COMMAND_PATHS, DWS_WRITE_COMMAND_PATHS } from './readCommands.js';
 import type { DwsConnectionStore } from './store.js';
 
 const businessInputSchema = z.object({
@@ -70,12 +74,6 @@ const DESTRUCTIVE_VERBS = new Set([
 const FORBIDDEN_VERBS = new Set([
   'auth', 'consume', 'credential', 'download', 'exec', 'export', 'import', 'login', 'logout',
   'pat', 'serve', 'shell', 'token', 'upload', 'watch',
-]);
-// 命令路径级只读例外（<module>.<sub…>.<action>）：路径本身含写动词（如 doc.comment.list
-// 的 comment）但官方文档证实为纯查询，末尾 token 读判定会被全路径写扫描否决，故显式登记。
-// 新增条目必须核实 references 文档中该完整路径仅为查询命令且无写形态。
-const READ_COMMAND_PATHS = new Set([
-  'aitable.form.share.get', 'doc.comment.list', 'mail.auto-reply.get', 'todo.comment.list',
 ]);
 // 2026-08-29（TASK-256）：解禁 --format/-f。skill 文档强制所有命令带 --format json，
 // 且本 Broker 的 execute() 自身追加 --format json，禁用它与自身行为矛盾，导致合法
@@ -492,14 +490,23 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   const commandPath = args.slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex);
   const pathTokens = commandPath.flatMap(token => token.toLowerCase().replace(/^\+/, '').split('-').filter(Boolean));
   const normalizedAction = commandPath.at(-1)!.toLowerCase().replace(/^\+/, '');
-  const actionTokens = [normalizedAction, ...normalizedAction.split('-')].filter(Boolean);
   const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
   const flagNameTokens = trailingArgs.filter(token => token.startsWith('-'))
     .flatMap(token => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
+  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  // TASK-256（三轮 review 返工）：显式登记表优先于全路径动词扫描。登记条目均已对照
+  // references 文档核实（见 readCommands.ts）：路径中带 approve 等破坏性 token 的纯查询
+  // （attendance.approve.list）不再被破坏性扫描否决；末尾 token 误导读判定的写命令
+  // （chat.mute-at-all）被显式否决。登记表之外的未知命令保持 fail-closed。
+  if (DWS_WRITE_COMMAND_PATHS.has(normalizedCommandPath)) {
+    return { module, commandPath: normalizedCommandPath, risk: 'write' };
+  }
+  if (DWS_READ_COMMAND_PATHS.has(normalizedCommandPath)) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {
     throw new Error('DWS 破坏性或高影响动作本阶段未开放');
   }
-  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
   // auth.status 只读特判：skill 文档要求追加 --format json，允许末尾仅带格式旗标。
   const isAuthStatus = normalizedCommandPath === 'auth.status'
     && trailingArgs.every(token => token === '--help' || token === '-h' || token === '--format' || token === '-f' || token === 'json');
@@ -512,16 +519,11 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   }
   // 2026-08-29（TASK-256 review 返工）：写动词判定扫描完整 commandPath，防止位置参数
   // 覆盖已出现的写动词（如 `chat message send all --group cid` 曾被末尾 all 降档为 read）。
-  // 例外：显式登记的只读命令路径不受全路径写扫描否决。
-  if (READ_COMMAND_PATHS.has(normalizedCommandPath)) {
-    return { module, commandPath: normalizedCommandPath, risk: 'read' };
-  }
   if (pathTokens.some(token => WRITE_VERBS.has(token))) {
     return { module, commandPath: normalizedCommandPath, risk: 'write' };
   }
-  if (actionTokens.some(token => READ_VERBS.has(token))) {
-    return { module, commandPath: normalizedCommandPath, risk: 'read' };
-  }
+  // terminal action 必须精确登记；禁止 future-query-shape 因包含 query 子 token 被放宽。
+  if (READ_VERBS.has(normalizedAction)) return { module, commandPath: normalizedCommandPath, risk: 'read' };
   throw new Error('DWS 动作未登记风险等级，已拒绝执行');
 }
 

@@ -861,7 +861,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
         getModelsConfig: () => config.models,
-        legacyWriteGate,
+        runStore: runtime.runtimeRunStore, legacyWriteGate,
       }),
     );
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES

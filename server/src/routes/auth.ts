@@ -14,6 +14,8 @@ import type { ModelsConfig } from "../types/index.js";
 import { registerAuthDebugModeRoute } from "./authDebugMode.js";
 import { validateTenantUserPolicy } from "./authUserPolicy.js";
 import type { UserStore } from "../data/users/store.js";
+import { ActiveRunApprovalPolicyConvergenceError, savePreferencesWithApprovalConvergence } from "../runtime/accountApprovalPreferenceService.js";
+import type { RunStore } from "../runtime/runStoreTypes.js";
 import { withTenantDebugModeLock } from "../data/tenants/debugModeLock.js";
 import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
@@ -276,8 +278,9 @@ export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
    * 模型配置支持管理端热更新，不能在 Router 创建时捕获旧对象。
    */
   getModelsConfig?: () => ModelsConfig | undefined;
+  /** TASK-256：账户批准档位变化时，服务端原子收敛该用户所有 active run metadata。 */
+  runStore?: Pick<RunStore, "updateApprovalPolicyForActiveByUser">;
 }
-
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const {
@@ -296,6 +299,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     secretVault,
     loginCodeService,
     getModelsConfig,
+    runStore,
   } = deps;
   const router = Router();
   router.use(createLegacyAuthWriteGate(deps.legacyWriteGate)); registerAuthDebugModeRoute(router, { userStore, ...(tenantStore ? { tenantStore } : {}) });
@@ -1517,15 +1521,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           return;
         }
       }
-      const updated = await userStore.updatePreferences(
-        req.user.sub,
-        parsed.data,
-      );
+      const result = await savePreferencesWithApprovalConvergence({ userStore, runStore, userId: req.user.sub, preferences: parsed.data });
       auditLog(req, "user_updated");
-      res.json({ preferences: updated.preferences ?? {} });
+      res.json(result);
     } catch (err) {
-      res
-        .status(500)
+      res.status(err instanceof ActiveRunApprovalPolicyConvergenceError ? 503 : 500)
         .json({ error: err instanceof Error ? err.message : "更新失败" });
     }
   });

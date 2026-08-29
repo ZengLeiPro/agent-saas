@@ -460,11 +460,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
-  const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch) => {
-    runtimeVersionBySessionRef.current.set(
-      sid,
-      (runtimeVersionBySessionRef.current.get(sid) ?? 0) + 1,
-    );
+  const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch, opts?: { silent?: boolean }) => {
+    // silent：dump 类 ref->Map 同步不是 run 生命周期变化，不递增 version（TASK-312：否则切换会话会让在途终态探活误判失效）。
+    if (!opts?.silent) runtimeVersionBySessionRef.current.set(sid, (runtimeVersionBySessionRef.current.get(sid) ?? 0) + 1);
     const existing = activeRunsBySession.current.get(sid) ?? { status: 'idle' as const, attached: false };
     const next: SessionRuntime = { ...existing };
     if (patch.status !== undefined) next.status = patch.status; if (patch.source !== undefined) next.source = patch.source;
@@ -661,6 +659,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       existing?.status && isActiveRuntimeStatus(existing.status)
         ? existing.status
         : (loadingRef.current ? 'running' : 'idle');
+    // silent：dump 保留 Map 已有 active binding 字段（streamId/runId/cursor），不重置、不递增 version。
     patchSessionRuntime(sid, {
       status: inferredStatus,
       streamId: streamIdRef.current,
@@ -668,7 +667,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       lastEventId: lastEventIdRef.current,
       lastEventCursor: lastEventCursorRef.current,
       attached: wsAttachedRef.current,
-    });
+    }, { silent: true });
   }, [patchSessionRuntime]);
 
   /** 从 Map 加载 sid 的 runtime 到当前 ref（不调 setState,UI 由调用方决定） */
@@ -1814,7 +1813,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const terminalStatus = d.status, statusRunId = d.runId, statusStreamId = d.streamId;
           const terminalRuntimeVersion = runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0;
           setTimeout(() => {
-            if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
+            // TASK-312：done 清掉 loading 或用户切走都不能放弃探活；version 未变 = 仍是原 active binding，由 /stream-status 权威结果决定收敛（终态不再永久残留）或保活（run 交接空窗不闪断）。
+            if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
             void (async () => {
               const idMismatched = Boolean(
                 (statusRunId && runIdRef.current && statusRunId !== runIdRef.current)
@@ -1828,7 +1828,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               }
               if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
               if (idMismatched && active !== false) return;
-              if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
               finalizeTerminalRuntime({
                 sessionId: d.sessionId,
                 status: terminalStatus,

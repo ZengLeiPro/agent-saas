@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
 import { authFetch } from "@agent/shared";
 import { useAuth } from "../src/contexts/AuthContext";
 import { useColors, spacing, typography } from "../src/theme";
@@ -19,7 +18,6 @@ const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 export default function LoginScreen() {
   const colors = useColors();
-  const router = useRouter();
   const { login, loginWithSms } = useAuth();
   const [mode, setMode] = useState<"password" | "sms">("password");
   const [username, setUsername] = useState("");
@@ -332,17 +330,6 @@ export default function LoginScreen() {
             ) : (
               <Text style={styles.buttonText}>{mode === "password" ? "登录" : "验证码登录"}</Text>
             )}
-          </TouchableOpacity>
-
-          {/* SPIKE 入口：验证完删除 */}
-          <TouchableOpacity
-            style={{ marginTop: 24, alignItems: "center" }}
-            onPress={() => router.push("/webview-spike")}
-            activeOpacity={0.7}
-          >
-            <Text style={{ color: colors.mutedForeground, fontSize: 13, textDecorationLine: "underline" }}>
-              Web 版体验（Spike）
-            </Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>

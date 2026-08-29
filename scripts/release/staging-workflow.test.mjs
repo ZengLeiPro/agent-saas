@@ -69,14 +69,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /name: Authorize current runner for Staging SSH/u);
   assert.match(workflow, /https:\/\/api\.ipify\.org/u);
   assert.match(workflow, /\.resources\.api\.securityGroupId/u);
-  assert.match(workflow, /aliyun ecs AuthorizeSecurityGroup/u);
+  assert.match(workflow, /aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup/u);
   assert.match(workflow, /--SourceCidrIp "\$source_cidr"/u);
   assert.doesNotMatch(workflow, /--SourceCidrIp 0\.0\.0\.0\/0/u);
   assert.match(
     workflow,
     /name: Revoke temporary Staging SSH ingress\s+if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u,
   );
-  assert.match(workflow, /aliyun ecs RevokeSecurityGroup/u);
+  assert.match(workflow, /aliyun --region cn-shenzhen ecs RevokeSecurityGroup/u);
   assert.match(workflow, /ssh-keyscan -T 10 -t ed25519/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);

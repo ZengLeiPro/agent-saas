@@ -203,6 +203,10 @@ docker compose run --rm server bash -c "
 
 或者更稳：先在**本机**跑 ETL 把数据写到 Azeroth RDS（一次性，几分钟），ECS 启动时数据已在 PG，跳过 transcripts 同步。
 
+生产 ECS 主机上没有源码检出与 tsx：改用随 release 交付的 Admin Runner 运行同一 ETL
+（`node dist/admin/migrate-events-file-to-pg.mjs …`，环境与配置加载见
+[`admin-runner.md`](admin-runner.md)），不要在生产拼装 dev 依赖。
+
 ## 5. 启动 + 验证
 
 ```bash

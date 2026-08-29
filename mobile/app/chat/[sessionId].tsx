@@ -1,6 +1,8 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { showTextPrompt } from '../../src/lib/prompt';
+import { isV1RouteAllowed } from '../../src/app/v1Capabilities';
+import { getV1BuildProfile } from '../../src/app/v1Runtime';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
@@ -275,6 +277,11 @@ export default function ChatDetailScreen() {
 
   const handlePreviewMd = useCallback((filePath: string) => {
     const type = getPreviewFileType(filePath);
+    // V1 范围裁剪（M00-01/M50-03）：HTML 主动内容预览延期，生产构建 fail closed。
+    if (type === 'html' && !isV1RouteAllowed('chat/html-preview', getV1BuildProfile())) {
+      Alert.alert('暂不支持预览', 'HTML 预览将在后续版本提供，当前版本不支持打开该格式');
+      return;
+    }
     const screen = type === 'html' ? '/chat/html-preview' : '/chat/markdown-preview';
     router.push({ pathname: screen as any, params: { filePath, ...(sessionOwner ? { owner: sessionOwner } : {}) } });
   }, [router, sessionOwner]);

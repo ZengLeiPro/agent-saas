@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "自动 Release Evidence Writer 需要独立的 RELEASE_EVIDENCE_WRITE_TOKEN 写入身份，并使用 RELEASE_EVIDENCE_READ_TOKEN 完成写后只读校验",
-  "updatedAt": "2026-08-28",
+  "reason": "TASK-316 Hand durable invocation journal：HAND_INVOCATION_STORE_DIR 指定 journal 目录使 Hand 重启后 invocation 幂等重放与结果对账成为可能",
+  "updatedAt": "2026-08-29",
   "domains": {
     "server": {
       "budget": 48,
@@ -103,13 +103,14 @@
       ]
     },
     "hand-server": {
-      "budget": 16,
+      "budget": 17,
       "names": [
         "HAND_CONTAINER_CPUS",
         "HAND_CONTAINER_DOCKER_PATH",
         "HAND_CONTAINER_IMAGE",
         "HAND_CONTAINER_MEMORY",
         "HAND_CONTAINER_USER",
+        "HAND_INVOCATION_STORE_DIR",
         "HAND_SERVER_AUTH_TOKEN",
         "HAND_SERVER_BACKEND",
         "HAND_SERVER_HOST",

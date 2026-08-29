@@ -80,7 +80,7 @@ export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
   description: [
     '通过受控 DWS Broker 查询或写入钉钉业务数据。',
     'args 只填写 dws 后面的参数数组，例如 ["calendar","event","list","--today"]；不要填写 dws、--profile、--format 或任何 token。',
-    'credentialMode=agent 表示以当前企业专家自身钉钉账号执行，要求 Session 绑定企业专家；requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session。',
+    'credentialMode=agent 表示以当前企业专家自身钉钉账号执行，要求 Session 绑定企业专家；requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session 或个人定时任务。',
     'auth 模块只开放只读的 auth status；写操作必须在用户明确要求或确认后传 confirmed=true；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
   ].join('\n'),
   schema: businessInputSchema,
@@ -180,7 +180,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
       || (operator.role === 'admin' && operator.tenantId === identity.tenantId)
       || operatorIsPlatformAdmin;
     const orgAgentId = session?.orgAgentId;
-    const requiresOrgAgent = input.credentialMode === 'agent' || session?.channel === 'cron';
+    // requester 模式（含个人 Cron）只要求 Session/user/workspace 身份一致，按 Session owner
+    // 的个人钉钉连接解析凭据；仅 agent 模式才要求 Session 绑定企业专家。
+    const requiresOrgAgent = input.credentialMode === 'agent';
     const mismatchFields = [
       ...(!operatorCanActForSessionOwner ? ['operator.sessionOwnerTenantScope'] : []),
       ...(requiresOrgAgent && !orgAgentId ? ['session.orgAgentId'] : []),
@@ -192,7 +194,8 @@ export class DwsBusinessToolProvider implements ToolProvider {
         : []),
     ];
     if (mismatchFields.length > 0) {
-      const cronSessionUnbound = mismatchFields.length === 1
+      const cronSessionUnbound = input.credentialMode === 'agent'
+        && mismatchFields.length === 1
         && mismatchFields[0] === 'session.orgAgentId'
         && session?.channel === 'cron';
       const diagnostic = {

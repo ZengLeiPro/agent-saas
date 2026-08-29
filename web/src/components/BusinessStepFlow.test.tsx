@@ -129,6 +129,13 @@ describe("BusinessStepFlow", () => {
     const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
     expect(screen.queryByText("已完成")).toBeNull();
     const header = region.querySelector("header")!;
+    const statusIcon = header.querySelector(".lucide-circle-check") as SVGElement;
+    expect(header.className).toContain("items-center");
+    expect(header.className).toContain("gap-2");
+    expect(statusIcon.classList.contains("size-3.5")).toBe(true);
+    expect(statusIcon.classList.contains("text-success")).toBe(true);
+    expect(statusIcon.classList.contains("mt-1")).toBe(false);
+    expect(titleToggle.className).toContain("py-1");
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByTestId("business-step-chevron-right")).toBeTruthy();
     expect(screen.queryByText("17/18 张通过，1 张税号过期退回")).toBeNull();
@@ -483,6 +490,14 @@ describe("BusinessStepSectionView", () => {
     );
 
     const titleToggle = screen.getByRole("button", { name: /核验订单.*第 1\/2 步/ });
+    const header = titleToggle.closest("header")!;
+    const statusIcon = header.querySelector(".lucide-circle-check") as SVGElement;
+    expect(header.className).toContain("items-center");
+    expect(header.className).toContain("gap-2");
+    expect(statusIcon.classList.contains("size-3.5")).toBe(true);
+    expect(statusIcon.classList.contains("text-success")).toBe(true);
+    expect(statusIcon.classList.contains("mt-1")).toBe(false);
+    expect(titleToggle.className).toContain("py-1");
     expect(titleToggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByText(/过程 ·/)).toBeNull();
     expect(screen.queryByText("全部通过")).toBeNull();

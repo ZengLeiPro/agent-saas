@@ -346,11 +346,11 @@ function TerminalBlock({
 
   return (
     <section aria-label={`业务步骤${label}`} data-business-step={event.id}>
-      <header className="flex items-start gap-2.5">
-        <Icon className={activityStatusIconClass(tone, "mt-1 size-4 shrink-0")} />
+      <header className="flex items-center gap-2">
+        <Icon className={activityStatusIconClass(tone, "size-3.5 shrink-0")} />
         <button
           type="button"
-          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-0.5 text-left"
+          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-1 text-left"
           aria-expanded={bodyOpen}
           onClick={toggle}
         >
@@ -528,19 +528,19 @@ export function BusinessStepSectionView({
       aria-label={terminalMeta ? `业务步骤${terminalMeta.label}` : "业务步骤"}
       data-business-step-section={section.id}
     >
-      <header className="flex items-start gap-2.5">
+      <header className="flex items-center gap-2">
         {terminalMeta ? (
-          <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "mt-1 size-4 shrink-0")} />
+          <terminalMeta.Icon className={activityStatusIconClass(terminalMeta.tone, "size-3.5 shrink-0")} />
         ) : isActive ? (
-          <Loader2 className={activityStatusIconClass("active", "mt-1 size-4 shrink-0 animate-spin")} />
+          <Loader2 className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
         ) : resumePending ? (
-          <Clock3 className="mt-1 size-4 shrink-0 text-muted-foreground/70" />
+          <Clock3 className="size-3.5 shrink-0 text-muted-foreground/70" />
         ) : (
-          <Play className="mt-1 size-4 shrink-0 text-muted-foreground/60" />
+          <Play className="size-3.5 shrink-0 text-muted-foreground/60" />
         )}
         <button
           type="button"
-          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-0.5 text-left"
+          className="inline-flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-1 text-left"
           aria-expanded={sectionOpen}
           onClick={toggleSection}
         >

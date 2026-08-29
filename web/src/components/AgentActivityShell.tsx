@@ -1,16 +1,17 @@
 import type { ReactNode } from 'react';
 import { ChevronRight, CircleAlert, CircleCheck, CircleX, Clock3, Loader2, PauseCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { activityStatusIconClass } from './activityStatusStyles';
 
 export type AgentActivityState = 'running' | 'completed' | 'warning' | 'failed' | 'waiting' | 'cancelled';
 
 function StatusIcon({ state }: { state: AgentActivityState }) {
-  if (state === 'running') return <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />;
-  if (state === 'completed') return <CircleCheck className="size-3.5 shrink-0 text-emerald-500" />;
-  if (state === 'warning') return <CircleAlert className="size-3.5 shrink-0 text-amber-500" />;
-  if (state === 'failed') return <CircleX className="size-3.5 shrink-0 text-destructive" />;
-  if (state === 'cancelled') return <PauseCircle className="size-3.5 shrink-0 text-muted-foreground" />;
-  return <Clock3 className="size-3.5 shrink-0 text-amber-500" />;
+  if (state === 'running') return <Loader2 className={activityStatusIconClass('active', 'size-3.5 shrink-0 animate-spin')} />;
+  if (state === 'completed') return <CircleCheck className={activityStatusIconClass('success', 'size-3.5 shrink-0')} />;
+  if (state === 'warning') return <CircleAlert className={activityStatusIconClass('warning', 'size-3.5 shrink-0')} />;
+  if (state === 'failed') return <CircleX className={activityStatusIconClass('danger', 'size-3.5 shrink-0')} />;
+  if (state === 'cancelled') return <PauseCircle className={activityStatusIconClass('neutral', 'size-3.5 shrink-0')} />;
+  return <Clock3 className={activityStatusIconClass('pending', 'size-3.5 shrink-0')} />;
 }
 
 /**

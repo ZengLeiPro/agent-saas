@@ -22,6 +22,11 @@ export interface UserPreferences {
   /** 业务步骤默认展示方式：智能折叠、始终折叠或始终展开。 */
   businessStepDisplayMode?: BusinessStepDisplayMode;
   authorizationModeEnabled?: boolean;
+  /**
+   * 2026-08-29（TASK-256）：「低风险常开」个人档。仅在 authorizationModeEnabled=false
+   * 时生效：自动批准 safe + workspace_write 工具调用，dangerous 仍人工批准。
+   */
+  lowRiskToolsAutoApproveEnabled?: boolean;
   /** 会话列表是否显示头像；false（默认）时列表使用紧凑单行布局。 */
   showSessionListAvatar?: boolean;
   /** 当前用户新建会话时默认使用的模型引用（group/model）。 */

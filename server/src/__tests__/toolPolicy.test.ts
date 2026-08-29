@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+
+import { z } from 'zod';
+
+import type { ToolDescriptor } from '../agent/toolRuntime.js';
+import { DefaultToolPolicy } from '../runtime/toolPolicy.js';
+import type { RunContext, ToolPolicyDecision } from '../runtime/types.js';
+
+function descriptor(partial: Partial<ToolDescriptor>): ToolDescriptor {
+  return {
+    id: partial.id ?? 'TestTool',
+    name: partial.name ?? 'TestTool',
+    displayName: partial.displayName ?? 'TestTool',
+    description: 'test',
+    schema: z.object({}),
+    risk: partial.risk ?? 'dangerous',
+    approvalMode: partial.approvalMode ?? 'web',
+    auditCategory: 'test',
+    ...partial,
+  } as ToolDescriptor;
+}
+
+function context(partial: { approvalPolicy?: RunContext['approvalPolicy'] } = {}): RunContext {
+  return {
+    channelContext: { channel: 'web', user: { id: 'user-1', username: 'alice' } },
+    approvalPolicy: partial.approvalPolicy,
+  } as unknown as RunContext;
+}
+
+describe('DefaultToolPolicy 低风险常开档（TASK-256）', () => {
+  const policy = new DefaultToolPolicy();
+
+  async function decide(
+    tool: Partial<ToolDescriptor>,
+    approvalPolicy: RunContext['approvalPolicy'],
+  ): Promise<ToolPolicyDecision> {
+    return policy.decide(descriptor(tool), {}, context({ approvalPolicy }));
+  }
+
+  it('safe 工具任何档位都放行', async () => {
+    expect(await decide({ risk: 'safe' }, undefined)).toEqual({ type: 'allow' });
+    expect(await decide({ risk: 'safe' }, { autoApproveTools: true, lowRiskOnly: true })).toEqual({ type: 'allow' });
+  });
+
+  it('低风险常开档自动批准 workspace_write，dangerous 仍需人工批准', async () => {
+    const lowRisk = { autoApproveTools: true, lowRiskOnly: true } as const;
+    expect(await decide({ risk: 'workspace_write' }, lowRisk)).toEqual({ type: 'allow' });
+    await expect(decide({ risk: 'dangerous' }, lowRisk)).resolves.toMatchObject({ type: 'requires_approval' });
+  });
+
+  it('全部授权档维持既有行为：非 safe 且非 neverAutoApprove 一律放行', async () => {
+    expect(await decide({ risk: 'workspace_write' }, { autoApproveTools: true })).toEqual({ type: 'allow' });
+    expect(await decide({ risk: 'dangerous' }, { autoApproveTools: true })).toEqual({ type: 'allow' });
+  });
+
+  it('未开启自动批准时非 safe 工具一律人工审批（现状回归）', async () => {
+    await expect(decide({ risk: 'workspace_write' }, undefined)).resolves.toMatchObject({ type: 'requires_approval' });
+    await expect(decide({ risk: 'dangerous' }, undefined)).resolves.toMatchObject({ type: 'requires_approval' });
+  });
+
+  it('neverAutoApprove 恒为人工，不受任何自动批准档影响', async () => {
+    const neverTool = descriptor({
+      risk: 'dangerous',
+      resolveCallPolicy: () => ({ risk: 'dangerous', neverAutoApprove: true }),
+    });
+    await expect(policy.decide(neverTool, {}, context({ approvalPolicy: { autoApproveTools: true } })))
+      .resolves.toMatchObject({ type: 'requires_approval' });
+    await expect(policy.decide(neverTool, {}, context({ approvalPolicy: { autoApproveTools: true, lowRiskOnly: true } })))
+      .resolves.toMatchObject({ type: 'requires_approval' });
+  });
+
+  it('resolveCallPolicy 动态降档：dangerous 工具的 safe 调用在低风险档也放行', async () => {
+    const dynamicTool = descriptor({
+      risk: 'dangerous',
+      resolveCallPolicy: () => ({ risk: 'safe' }),
+    });
+    expect(await policy.decide(dynamicTool, {}, context({ approvalPolicy: { autoApproveTools: true, lowRiskOnly: true } })))
+      .toEqual({ type: 'allow' });
+    expect(await policy.decide(dynamicTool, {}, context({ approvalPolicy: undefined })))
+      .toEqual({ type: 'allow' });
+  });
+});

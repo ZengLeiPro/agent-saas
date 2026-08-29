@@ -285,6 +285,14 @@ export interface RunStore {
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
   listActiveByUser?(userId: string): Promise<RunRecord[]>;
+  /**
+   * 账户批准档位变化时，单条 SQL 原子重写该用户全部活跃 run 的 approvalPolicy。
+   * 返回被更新的 runId；TASK-256 安全降档收敛使用，避免逐 run 更新产生部分成功。
+   */
+  updateApprovalPolicyForActiveByUser?(
+    userId: string,
+    approvalPolicy: Record<string, unknown> | null,
+  ): Promise<string[]>;
   getActiveCounts?(): Promise<ActiveRunCounts>;
   listBySession?(sessionId: string, options?: { limit?: number; beforeUpdatedAt?: string }): Promise<RunRecord[]>;
   listRecoverable(now?: Date): Promise<RunRecord[]>;

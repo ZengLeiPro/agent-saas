@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Volume2, VolumeX, Loader2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
 import { FloatingPanel, FLOATING_PANEL_SURFACE } from "@/components/ui/floating-panel";
 import { Tabs } from "@/components/ui/tabs";
@@ -126,12 +127,11 @@ export function DesktopLayout(props: LayoutProps) {
   const { config: roleKitConfig } = useRoleKitConfig();
   const roleKitV2Enabled = roleKitConfig.roleKitV2Enabled;
   const sidebarLayout = authUser?.preferences?.sidebarLayout ?? "double";
-  const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
+  // TASK-256：统一三档 tier（缺省默认全部授权，与服务端一致）。
+  const approvalTier = resolveApprovalTier(authUser?.preferences);
   const handleSidebarLayoutChange = useCallback((layout: "double" | "single") => {
     updatePreferences({ sidebarLayout: layout });
-    void saveUserPreferences({ sidebarLayout: layout }).then((saved) => {
-      if (saved) updatePreferences(saved);
-    });
+    void saveUserPreferences({ sidebarLayout: layout }).then((saved) => { if (saved) updatePreferences(saved); });
   }, [updatePreferences]);
 
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
@@ -626,7 +626,7 @@ export function DesktopLayout(props: LayoutProps) {
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
-              canAutoApproveRunShell={!authorizationModeEnabled}
+              canAutoApproveRunShell={approvalTier === "ask"}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}

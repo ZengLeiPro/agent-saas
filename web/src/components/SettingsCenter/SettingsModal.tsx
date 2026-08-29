@@ -102,9 +102,9 @@ function clearRunShellApprovalStorage() {
 }
 
 export function GeneralSection() {
-  // 授权模式对所有用户开放（2026-07-02 起），每个用户自行切换。
+  // 授权模式对所有用户开放（2026-07-02 起）；TASK-256：缺失字段默认开启（!== false），与服务端 ?? true 一致。
   const { user, updatePreferences } = useAuth();
-  const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
+  const authorizationModeEnabled = user ? user.preferences?.authorizationModeEnabled !== false : false;
   const preferredDefaultModel = user?.preferences?.defaultModel;
   const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? "auto";
   const recoveredDraft = useRef(restoreSettingsDraft<{

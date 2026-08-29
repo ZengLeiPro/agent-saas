@@ -2665,18 +2665,15 @@ export class RawAgentLoop implements AgentLoop {
       if (!run || !Object.prototype.hasOwnProperty.call(run.metadata ?? {}, 'approvalPolicy')) {
         return context;
       }
-      const approvalPolicy = run.metadata?.approvalPolicy;
-      const autoApproveTools = Boolean(
-        approvalPolicy
-        && typeof approvalPolicy === 'object'
-        && (
-          (approvalPolicy as { autoApproveTools?: unknown }).autoApproveTools === true
-          || (approvalPolicy as { autoApproveRunShell?: unknown }).autoApproveRunShell === true
-        ),
-      );
+      const policy = run.metadata?.approvalPolicy as Record<string, unknown> | null | undefined;
+      const autoApproveTools = Boolean(policy
+        && (policy.autoApproveTools === true || policy.autoApproveRunShell === true));
+      // 「低风险常开」档（TASK-256）：重建时保留 lowRiskOnly，dangerous 仍人工批准。
       return {
         ...context,
-        approvalPolicy: autoApproveTools ? { autoApproveTools: true } : undefined,
+        approvalPolicy: autoApproveTools
+          ? { autoApproveTools: true, ...(policy?.lowRiskOnly === true ? { lowRiskOnly: true } : {}) }
+          : undefined,
       };
     } catch {
       return context;

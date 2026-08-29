@@ -47,4 +47,56 @@ describe('resolveEffectiveApprovalPolicy', () => {
       identity,
     )).toBeUndefined();
   });
+
+  // TASK-256：个人「低风险常开」档。
+  it('账户关闭全部授权但开启低风险常开时返回 lowRiskOnly 策略', () => {
+    expect(resolveEffectiveApprovalPolicy(
+      {
+        resolveUserAutoApproveTools: () => false,
+        resolveUserLowRiskAutoApprove: () => true,
+      },
+      undefined,
+      identity,
+    )).toEqual({ autoApproveTools: true, lowRiskOnly: true });
+  });
+
+  it('全部授权优先于低风险常开', () => {
+    const resolveUserLowRiskAutoApprove = vi.fn(() => true);
+    expect(resolveEffectiveApprovalPolicy(
+      {
+        resolveUserAutoApproveTools: () => true,
+        resolveUserLowRiskAutoApprove,
+      },
+      undefined,
+      identity,
+    )).toEqual({ autoApproveTools: true });
+    expect(resolveUserLowRiskAutoApprove).not.toHaveBeenCalled();
+  });
+
+  it('两档偏好都关闭时保留人工审批；低风险 resolver 抛错 fail-closed', () => {
+    expect(resolveEffectiveApprovalPolicy(
+      {
+        resolveUserAutoApproveTools: () => false,
+        resolveUserLowRiskAutoApprove: () => false,
+      },
+      undefined,
+      identity,
+    )).toBeUndefined();
+    expect(resolveEffectiveApprovalPolicy(
+      {
+        resolveUserAutoApproveTools: () => false,
+        resolveUserLowRiskAutoApprove: () => { throw new Error('store unavailable'); },
+      },
+      undefined,
+      identity,
+    )).toBeUndefined();
+  });
+
+  it('客户端显式携带 lowRiskOnly 时透传受限档', () => {
+    expect(resolveEffectiveApprovalPolicy(
+      { resolveUserAutoApproveTools: () => false, resolveUserLowRiskAutoApprove: () => false },
+      { autoApproveTools: true, lowRiskOnly: true },
+      identity,
+    )).toEqual({ autoApproveTools: true, lowRiskOnly: true });
+  });
 });

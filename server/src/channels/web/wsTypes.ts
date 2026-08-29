@@ -66,6 +66,8 @@ export interface WsChatMessage {
     approvalPolicy?: {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
+        /** 「低风险常开」档（TASK-256）：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
+        lowRiskOnly?: boolean;
     };
     voiceFile?: {
         savedPath: string;
@@ -98,6 +100,7 @@ export interface WsApprovalPolicyMessage {
     approvalPolicy?: {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
+        lowRiskOnly?: boolean;
     };
 }
 

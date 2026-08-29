@@ -285,6 +285,23 @@ export class PgRunStoreQueries {
     return result.rows.map(row => normalizeRunRecord(row.row_json));
   }
 
+  /** TASK-256：单条 UPDATE 原子收敛账户批准策略，防止逐 run 更新只成功一部分。 */
+  async updateApprovalPolicyForActiveByUser(
+    userId: string,
+    approvalPolicy: Record<string, unknown> | null,
+  ): Promise<string[]> {
+    const result = await this.pool.query<{ run_id: string }>(`
+      UPDATE ${this.runsTable}
+      SET metadata=jsonb_set(COALESCE(metadata, '{}'::jsonb), '{approvalPolicy}', $2::jsonb, true),
+          status_reason='approval_policy_updated', updated_at=now()
+      WHERE user_id=$1
+        AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+        AND COALESCE(metadata->'approvalPolicy', 'null'::jsonb) IS DISTINCT FROM $2::jsonb
+      RETURNING run_id
+    `, [userId, JSON.stringify(approvalPolicy)]);
+    return result.rows.map(row => row.run_id);
+  }
+
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     // 只有 message_submissions 中已提交的记录才是“已受理”。仅有 runs.idempotency_key
     // 的预创建/失败记录不能短路新的请求；管理员代操作也必须按认证 submitter 域查询。

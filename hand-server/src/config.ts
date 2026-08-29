@@ -39,6 +39,16 @@ export interface HandServerConfig {
   };
   /** 日志 level。 */
   logLevel: 'debug' | 'info' | 'warn' | 'error';
+  /**
+   * Durable Tool Invocation（TASK-316）：invocation journal 落盘目录。
+   * `mode: 'memory'` 表示显式关闭持久化（退回纯内存行为，仅建议测试环境用）。
+   * `explicit` = 目录由 HAND_INVOCATION_STORE_DIR 显式指定（init 失败时拒绝启动，
+   * 而不是静默退化成内存模式）。
+   */
+  invocationStore:
+    { mode: 'file'; dir: string; retentionMs: number; explicit: boolean } | { mode: 'memory' };
+  /** SIGTERM drain：等待在途 invocation 收尾的最长时间；超时后强退。 */
+  drainTimeoutMs: number;
 }
 
 function parseBoolEnv(name: string): boolean | undefined {
@@ -72,7 +82,17 @@ function parseModeEnv(name: string): number | undefined {
 function parseListEnv(name: string, delimiter = ','): string[] | undefined {
   const raw = process.env[name]?.trim();
   if (!raw) return undefined;
-  return raw.split(delimiter).map((item) => item.trim()).filter(Boolean);
+  return raw
+    .split(delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parsePositiveIntEnv(name: string): number | undefined {
+  const parsed = parseIntEnv(name);
+  if (parsed === undefined) return undefined;
+  if (parsed <= 0) throw new Error(`${name} 非法: ${process.env[name]}（必须为正整数）`);
+  return parsed;
 }
 
 export function loadConfigFromEnv(): HandServerConfig {
@@ -97,6 +117,23 @@ export function loadConfigFromEnv(): HandServerConfig {
 
   const logLevel = (process.env.HAND_SERVER_LOG_LEVEL ?? 'info') as HandServerConfig['logLevel'];
 
+  const invocationStoreRaw = process.env.HAND_INVOCATION_STORE_DIR?.trim();
+  const invocationStore: HandServerConfig['invocationStore'] =
+    invocationStoreRaw && ['memory', 'none', 'off'].includes(invocationStoreRaw.toLowerCase())
+      ? { mode: 'memory' }
+      : {
+          mode: 'file',
+          dir: invocationStoreRaw
+            ? resolve(invocationStoreRaw)
+            : resolve(process.env.HOME ?? '/tmp', '.ky-hand-server-invocations'),
+          retentionMs: Math.max(
+            60_000,
+            parsePositiveIntEnv('HAND_INVOCATION_RETENTION_MS') ?? 24 * 60 * 60_000,
+          ),
+          explicit: Boolean(invocationStoreRaw),
+        };
+  const drainTimeoutMs = parsePositiveIntEnv('HAND_DRAIN_TIMEOUT_MS') ?? 30_000;
+
   return {
     port,
     host: process.env.HAND_SERVER_HOST?.trim() || '127.0.0.1',
@@ -108,9 +145,16 @@ export function loadConfigFromEnv(): HandServerConfig {
       gid: parseIntEnv('HAND_WORKSPACE_GID'),
     },
     backend: backendRaw,
-    networkPolicy: parseNetworkPolicyFromEnv(process.env, 'HAND_NETWORK_POLICY', DEFAULT_ISOLATED_NETWORK_POLICY),
+    networkPolicy: parseNetworkPolicyFromEnv(
+      process.env,
+      'HAND_NETWORK_POLICY',
+      DEFAULT_ISOLATED_NETWORK_POLICY,
+    ),
     container: {
-      image: process.env.HAND_CONTAINER_IMAGE?.trim() || process.env.KY_AGENT_CONTAINER_IMAGE?.trim() || undefined,
+      image:
+        process.env.HAND_CONTAINER_IMAGE?.trim() ||
+        process.env.KY_AGENT_CONTAINER_IMAGE?.trim() ||
+        undefined,
       dockerPath: process.env.HAND_CONTAINER_DOCKER_PATH?.trim() || undefined,
       user: process.env.HAND_CONTAINER_USER?.trim() || undefined,
       memory: process.env.HAND_CONTAINER_MEMORY?.trim() || undefined,
@@ -122,5 +166,7 @@ export function loadConfigFromEnv(): HandServerConfig {
       securityOpt: parseListEnv('HAND_CONTAINER_SECURITY_OPT'),
     },
     logLevel,
+    invocationStore,
+    drainTimeoutMs,
   };
 }

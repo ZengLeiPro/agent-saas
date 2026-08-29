@@ -316,6 +316,8 @@ export interface TaskBoardTask {
   deletedAt?: string;
   createdAt: string;
   updatedAt: string;
+  /** 任务状态更新与最新评论创建时间中的较新值。 */
+  latestActivityAt?: string;
 }
 
 export interface TaskBoardComment {

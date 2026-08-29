@@ -15,6 +15,7 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       description TEXT NOT NULL DEFAULT '',
       attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
       status TEXT NOT NULL CHECK (status IN (${TASKBOARD_STATUSES.map(quoteSqlLiteral).join(', ')})),
+      status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       priority TEXT NOT NULL DEFAULT 'none' CHECK (priority IN (${TASKBOARD_PRIORITIES.map(quoteSqlLiteral).join(', ')})),
       labels TEXT[] NOT NULL DEFAULT '{}',
       sort_order DOUBLE PRECISION NOT NULL,
@@ -59,6 +60,7 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_user_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creator_name TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'delivery';
+    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_pull_request_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS pull_request_number INTEGER;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS head_oid TEXT;

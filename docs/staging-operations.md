@@ -9,11 +9,18 @@ Staging 是独立的发布验证环境，不是生产配置的别名。资源权
 1. 按资源清单创建 ECS、OSS、DNS/证书、数据库角色和 NAS 隔离根；Staging 通知保持禁用。
 2. 将 `infra/staging/acs-runtime.yaml` 应用到明确的 Staging ACK/ACS context；创建
    `agent-saas-staging-acr` Secret 时只从密钥系统注入，不提交 Secret YAML。
-3. 安装三个 `*-staging.service`，创建独立 `/etc`、`/opt`、`/var/lib`、`/run/lock`
+3. 给 Staging ECS 绑定现有最小权限实例角色 `AgentSaasAcsSnatRole`，并在
+   `/var/lib/agent-saas-staging/acs/.aliyun/config.json` 为服务用户配置 `EcsRamRole`、
+   `cn-shenzhen`；不得把 GitHub 部署 AK 写入运行时。发布脚本会在切换 release symlink 前，
+   以 `agent-saas-staging` 身份真实读取目标 SNAT 表，失败即拒绝部署。
+   Staging database/role 与生产复用同一 RDS 实例；当前 RDS SSL 为 off，Staging 内网连接必须
+   显式使用 `sslmode=disable` 与服务端一致，不得为 Staging 单独重启共享 RDS。发布脚本会在
+   切换 release symlink 前，用候选制品的 `pg` 驱动真实连接并核对 database/role。
+4. 安装三个 `*-staging.service`，创建独立 `/etc`、`/opt`、`/var/lib`、`/run/lock`
    路径并限制属主；生产的 active-color、release symlink、unit、端口和锁均不得复用。
-4. 安装 nginx 配置并增量配置 DNS。`fc.kaiyan.net` 是共享 FC 域名，本方案不使用
+5. 安装 nginx 配置并增量配置 DNS。`fc.kaiyan.net` 是共享 FC 域名，本方案不使用
    `fc3-domain`，也不覆盖其路由。
-5. 在 GitHub 创建 `staging` Environment，按工作流文档配置独立 Secrets/Variables。
+6. 在 GitHub 创建 `staging` Environment，按工作流文档配置独立 Secrets/Variables。
 
 ## 必做验收
 

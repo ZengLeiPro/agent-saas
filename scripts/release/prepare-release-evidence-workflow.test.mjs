@@ -47,6 +47,7 @@ test('automatic Evidence Writer binds independent sources to one immutable SHA',
   assert.doesNotMatch(workflow, /aliyun --region "\$RELEASE_RECORD_OSS_REGION" --secure/u);
   assert.match(workflow, /resolve-baseline-artifacts\.mjs/u);
   assert.match(workflow, /produce-release-evidence\.mjs/u);
+  assert.match(workflow, /cat "\$RUNNER_TEMP\/classification\.json" >&2/u);
   assert.match(workflow, /publish-release-evidence\.mjs/u);
   assert.match(workflow, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.match(workflow, /RELEASE_EVIDENCE_READ_TOKEN/u);

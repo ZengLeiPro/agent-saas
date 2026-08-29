@@ -22,7 +22,23 @@ mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
 
-previous="$(readlink -f "$current" 2>/dev/null || true)"
+previous=''
+had_previous_release=false
+if [ -L "$current" ]; then
+  previous="$(readlink -f -- "$current")" || {
+    echo 'Staging current symlink cannot be resolved' >&2
+    exit 1
+  }
+  case "$previous" in
+    "$root/releases/"*) ;;
+    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
+  esac
+  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
+  had_previous_release=true
+elif [ -e "$current" ]; then
+  echo 'Staging current path exists but is not a symlink' >&2
+  exit 1
+fi
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
@@ -45,14 +61,17 @@ rollback() {
   else
     rm -f "$acs_identity"
   fi
-  if [ -n "$previous" ] && [ -d "$previous" ]; then
+  if [ "$had_previous_release" = true ]; then
     ln -sfn "$previous" "$current"
+    systemctl restart agent-saas-acs-orchestrator-staging.service || true
+    systemctl restart agent-saas-server-staging.service || true
+    systemctl restart agent-saas-runtime-worker-staging.service || true
   else
     rm -f "$current"
+    systemctl stop agent-saas-runtime-worker-staging.service || true
+    systemctl stop agent-saas-server-staging.service || true
+    systemctl stop agent-saas-acs-orchestrator-staging.service || true
   fi
-  systemctl restart agent-saas-acs-orchestrator-staging.service || true
-  systemctl restart agent-saas-server-staging.service || true
-  systemctl restart agent-saas-runtime-worker-staging.service || true
 }
 finish() {
   status=$?
@@ -63,6 +82,46 @@ finish() {
 }
 trap finish EXIT
 trap 'exit 130' HUP INT TERM
+
+node - "$acs_env" <<'NODE'
+const fs = require('node:fs');
+const envPath = process.argv[2];
+const values = Object.fromEntries(
+  fs.readFileSync(envPath, 'utf8')
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#') && line.includes('='))
+    .map((line) => {
+      const separator = line.indexOf('=');
+      return [line.slice(0, separator), line.slice(separator + 1).trim()];
+    }),
+);
+const mode = values.ACS_SNAT_MODE || 'disabled';
+if (mode !== 'disabled') {
+  for (const key of ['ACS_SNAT_REGION_ID', 'ACS_SNAT_TABLE_ID', 'ACS_SNAT_IP']) {
+    if (!values[key]) throw new Error(`Staging ACS configuration is missing ${key}`);
+  }
+}
+if (mode === 'shared-cidr' && !(values.ACS_SNAT_SHARED_CIDRS || values.ACS_SNAT_SHARED_CIDR)) {
+  throw new Error('Staging ACS shared-cidr mode has no configured CIDR');
+}
+NODE
+snat_mode="$(awk -F= '$1 == "ACS_SNAT_MODE" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+if [ -n "$snat_mode" ] && [ "$snat_mode" != disabled ]; then
+  aliyun_cli="$(command -v aliyun)" || {
+    echo 'Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing' >&2
+    exit 1
+  }
+  "$aliyun_cli" version >/dev/null
+  snat_region="$(awk -F= '$1 == "ACS_SNAT_REGION_ID" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+  snat_table="$(awk -F= '$1 == "ACS_SNAT_TABLE_ID" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+  runuser -u agent-saas-staging -- env HOME=/var/lib/agent-saas-staging/acs \
+    "$aliyun_cli" vpc DescribeSnatTableEntries \
+    --RegionId "$snat_region" --SnatTableId "$snat_table" --PageSize 1 --PageNumber 1 \
+    >/dev/null || {
+      echo 'Staging ACS SNAT runtime identity cannot read the configured SNAT table' >&2
+      exit 1
+    }
+fi
 
 if [ -d "$target" ]; then
   node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server
@@ -84,6 +143,33 @@ else
   node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs
   mv "$candidate" "$target"
 fi
+
+runuser -u agent-saas-staging -- env \
+  STAGING_CONFIG_PATH=/etc/agent-saas-staging/config.json STAGING_RELEASE_ROOT="$target" \
+  /usr/bin/node - <<'NODE'
+const fs = require('node:fs');
+const { Client } = require(`${process.env.STAGING_RELEASE_ROOT}/server/node_modules/pg`);
+const config = JSON.parse(fs.readFileSync(process.env.STAGING_CONFIG_PATH, 'utf8'));
+const client = new Client({
+  connectionString: config.runtimeEventStore.connectionString,
+  connectionTimeoutMillis: 10_000,
+});
+(async () => {
+  try {
+    await client.connect();
+    const result = await client.query('SELECT current_database() AS database, current_user AS username');
+    const row = result.rows[0];
+    if (row.database !== 'agent_saas_staging' || row.username !== 'agent_saas_staging') {
+      throw new Error('Staging database identity does not match the isolated database and role');
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+})().catch((error) => {
+  console.error(`Staging database runtime preflight failed: ${error.message}`);
+  process.exit(1);
+});
+NODE
 
 ln -sfn "$target" "$current"
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'

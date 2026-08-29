@@ -152,6 +152,11 @@ export interface RawRuntimeRunDispatchConfig {
    * 子 Agent）都以服务端持久化偏好兜底，避免依赖客户端逐条消息携带策略。
    */
   resolveUserAutoApproveTools?: (identity: { userId?: string; username?: string }) => boolean | undefined;
+  /**
+   * 2026-08-29（TASK-256）：解析账户级「低风险常开」偏好（autoApproveTools 的受限档：
+   * 自动批准 safe + workspace_write，dangerous 仍人工批准）。仅在「全部授权」未开启时生效。
+   */
+  resolveUserLowRiskAutoApprove?: (identity: { userId?: string; username?: string }) => boolean | undefined;
   /** Resolve the account profile full name for scheduler wake identity injection. */
   resolveUserRealName?: (identity: { userId?: string; username?: string }) => string | undefined;
   /** Default raw loop turn budget when a run does not specify maxTurns. */

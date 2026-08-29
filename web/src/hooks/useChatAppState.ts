@@ -7,6 +7,8 @@ import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
 import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
+import { approvalPolicyPayloadForTier, resolveApprovalTier } from "@/lib/approvalTier";
+import { useApprovalTierRunPolicy } from "./useApprovalTierRunPolicy";
 import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
@@ -46,7 +48,7 @@ export type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import { parseUrl, pushUrl, replaceUrl, buildUrl, buildSettingsUrl, replaceSettingsUrl, replaceAdminSettingsUrl, buildAdminSettingsUrl, buildPlatformAdminUrl, pushPlatformAdminUrl, replacePlatformAdminUrl, buildTenantAdminUrl, pushTenantAdminUrl, replaceTenantAdminUrl, normalizeTenantAdminSection, preserveScopeSearch, preserveSearchKeys, TENANT_ADMIN_SCOPE_KEYS, pushGovernanceUrl, replaceGovernanceUrl, analysisHistoryStateForNavigation } from "@/lib/urlSync";
 import { buildGovernanceUrl, governanceRoute, type GovernanceRouteState } from "@/lib/governanceNavigation";
 import { registerUpdateGuard, registerBeforeReloadHook, maybeReloadOnPopstate } from "@/lib/swUpdate";
-import { clearRunShellApprovalStorage, runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
+import { runShellApprovalStorageKey } from "@/lib/runShellApprovalStorage";
 import type { AdminSettingsState, PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import { useMessages } from "@/hooks/useMessages";
 import { usePersonalSettingsNavigation } from "@/hooks/usePersonalSettingsNavigation";
@@ -88,7 +90,8 @@ type PendingInteractionResponse = { type: "permission_request" | "ask_user"; res
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
-  const authorizationModeEnabled = user?.preferences?.authorizationModeEnabled === true;
+  // TASK-256：统一走三档 tier（与服务端 ?? true 默认一致），低风险档向活跃 run 发送 lowRiskOnly。
+  const approvalTier = resolveApprovalTier(user?.preferences);
   // 从 URL 解析初始状态（仅执行一次）
   const [urlState] = useState(() => parseUrl());
 
@@ -292,7 +295,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [autoApproveRunShell, setAutoApproveRunShellState] = useState(false);
-  const effectiveAutoApproveRunShell = authorizationModeEnabled || autoApproveRunShell;
+  // full / low-risk 档本身已自动批准工具；ask 档由会话级开关决定。
+  const effectiveAutoApproveRunShell = approvalTier !== "ask" || autoApproveRunShell;
   const modelListRef = useRef(modelList);
   modelListRef.current = modelList;
   const fetchModelList = useCallback(() => {
@@ -336,6 +340,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const uploadingRef = useRef(fileUpload.uploading); uploadingRef.current = fileUpload.uploading;
   const selectedModelRef = useRef(selectedModel); selectedModelRef.current = selectedModel;
   const autoApproveRunShellRef = useRef(effectiveAutoApproveRunShell); autoApproveRunShellRef.current = effectiveAutoApproveRunShell;
+  const approvalTierRef = useRef(approvalTier); approvalTierRef.current = approvalTier;
   const msgRef = useRef(msg); msgRef.current = msg;
   const pendingInteractionResponsesRef = useRef(new Map<string, PendingInteractionResponse>());
   const interactionResponseGenerationRef = useRef(new Map<string, number>());
@@ -460,11 +465,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const reconcileLastRunStateRef = useRef<(sessionId: string, lastRunState: LastRunState) => void>(() => {});
 
   /** Partial patch Map.get(sid)；若 sid === current,同步 ref（不动 setState 状态） */
-  const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch) => {
-    runtimeVersionBySessionRef.current.set(
-      sid,
-      (runtimeVersionBySessionRef.current.get(sid) ?? 0) + 1,
-    );
+  const patchSessionRuntime = useCallback((sid: string, patch: SessionRuntimePatch, opts?: { silent?: boolean }) => {
+    // silent：dump 类 ref->Map 同步不是 run 生命周期变化，不递增 version（TASK-312：否则切换会话会让在途终态探活误判失效）。
+    if (!opts?.silent) runtimeVersionBySessionRef.current.set(sid, (runtimeVersionBySessionRef.current.get(sid) ?? 0) + 1);
     const existing = activeRunsBySession.current.get(sid) ?? { status: 'idle' as const, attached: false };
     const next: SessionRuntime = { ...existing };
     if (patch.status !== undefined) next.status = patch.status; if (patch.source !== undefined) next.source = patch.source;
@@ -661,6 +664,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       existing?.status && isActiveRuntimeStatus(existing.status)
         ? existing.status
         : (loadingRef.current ? 'running' : 'idle');
+    // silent：dump 保留 Map 已有 active binding 字段（streamId/runId/cursor），不重置、不递增 version。
     patchSessionRuntime(sid, {
       status: inferredStatus,
       streamId: streamIdRef.current,
@@ -668,7 +672,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       lastEventId: lastEventIdRef.current,
       lastEventCursor: lastEventCursorRef.current,
       attached: wsAttachedRef.current,
-    });
+    }, { silent: true });
   }, [patchSessionRuntime]);
 
   /** 从 Map 加载 sid 的 runtime 到当前 ref（不调 setState,UI 由调用方决定） */
@@ -847,49 +851,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [session.sessionId]);
 
-  const setAutoApproveRunShell = useCallback((checked: boolean) => {
-    const nextChecked = authorizationModeEnabled ? true : checked;
-    setAutoApproveRunShellState(nextChecked);
-    const currentSessionId = sessionIdRef.current;
-    if (currentSessionId) {
-      if (!authorizationModeEnabled) {
-        localStorage.setItem(runShellApprovalStorageKey(currentSessionId), nextChecked ? 'true' : 'false');
-      }
-      const activeRun = activeRunsBySession.current.get(currentSessionId);
-      if (activeRun?.runId && isActiveRuntimeStatus(activeRun.status)) {
-        void wsClient.ensureConnectedSend({
-          action: 'approval_policy',
-          sessionId: currentSessionId,
-          runId: activeRun.runId,
-          approvalPolicy: { autoApproveTools: nextChecked },
-        });
-      }
-    }
-  }, [authorizationModeEnabled]);
-
-  useEffect(() => {
-    const currentSessionId = sessionIdRef.current;
-    const activeRun = currentSessionId ? activeRunsBySession.current.get(currentSessionId) : undefined;
-    const sendCurrentRunPolicy = (checked: boolean) => {
-      if (!currentSessionId || !activeRun?.runId || !isActiveRuntimeStatus(activeRun.status)) return;
-      void wsClient.ensureConnectedSend({
-        action: 'approval_policy',
-        sessionId: currentSessionId,
-        runId: activeRun.runId,
-        approvalPolicy: { autoApproveTools: checked },
-      });
-    };
-
-    if (authorizationModeEnabled) {
-      setAutoApproveRunShellState(true);
-      sendCurrentRunPolicy(true);
-      return;
-    }
-
-    setAutoApproveRunShellState(false);
-    clearRunShellApprovalStorage();
-    sendCurrentRunPolicy(false);
-  }, [authorizationModeEnabled]);
+  // TASK-256：三档策略向活跃 run 的传播（含 lowRiskOnly 语义）抽出为 useApprovalTierRunPolicy。
+  const { setAutoApproveRunShell } = useApprovalTierRunPolicy({
+    approvalTier, sessionIdRef, activeRunsBySession, setAutoApproveRunShellState,
+  });
 
   const prevSessionIdForShellApprovalRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -902,7 +867,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       return;
     }
 
-    if (authorizationModeEnabled) {
+    if (approvalTier !== "ask") {
       setAutoApproveRunShellState(true);
       return;
     }
@@ -920,7 +885,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
       return carryNewSessionChoice;
     });
-  }, [authorizationModeEnabled, session.sessionId]);
+  }, [approvalTier, session.sessionId]);
 
   // ---- URL 路由同步 ----
   const TAB_LABELS: Partial<Record<AppTab, string>> = {
@@ -1814,7 +1779,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           const terminalStatus = d.status, statusRunId = d.runId, statusStreamId = d.streamId;
           const terminalRuntimeVersion = runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0;
           setTimeout(() => {
-            if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
+            // TASK-312：done 清掉 loading 或用户切走都不能放弃探活；version 未变 = 仍是原 active binding，由 /stream-status 权威结果决定收敛（终态不再永久残留）或保活（run 交接空窗不闪断）。
+            if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
             void (async () => {
               const idMismatched = Boolean(
                 (statusRunId && runIdRef.current && statusRunId !== runIdRef.current)
@@ -1828,7 +1794,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               }
               if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
               if (idMismatched && active !== false) return;
-              if (!loadingRef.current || sessionIdRef.current !== d.sessionId) return;
               finalizeTerminalRuntime({
                 sessionId: d.sessionId,
                 status: terminalStatus,
@@ -2502,7 +2467,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         ? { orgAgentId: pendingOrgAgentIdRef.current }
         : {}),
       model: selectedModelRef.current || undefined,
-      ...(autoApproveRunShellForMessage ? { approvalPolicy: { autoApproveTools: true } } : {}),
+      // TASK-256：低风险档消息级显式携带 lowRiskOnly（与账户 tier 同一模型，不依赖
+      // 服务端兜底）；ask 档会话开关开启时为全量自动批准（会话级升档）。
+      ...(autoApproveRunShellForMessage ? {
+        approvalPolicy: approvalPolicyPayloadForTier(approvalTierRef.current === "low-risk" ? "low-risk" : "full"),
+      } : {}),
       attachments: attachments.length > 0
         ? attachments.map((file) => ({
           ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),

@@ -36,10 +36,25 @@ export class DefaultToolPolicy implements ToolPolicy {
     const identity = _context.channelContext.user ?? _context.channelContext.sessionOwner;
     const autoApproveTools = _context.approvalPolicy?.autoApproveTools === true
       || _context.approvalPolicy?.autoApproveRunShell === true;
+    // 「低风险常开」档（TASK-256）：自动批准上限到 workspace_write；
+    // dangerous 仍走人工批准。neverAutoApprove 恒为人工，不受该档影响。
+    const lowRiskOnly = _context.approvalPolicy?.lowRiskOnly === true;
     if (
       autoApproveTools
       && identity
       && risk !== 'safe'
+      && risk !== 'dangerous'
+      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id)
+      && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name)
+      && !neverAutoApprove
+    ) {
+      return { type: 'allow' };
+    }
+    if (
+      autoApproveTools
+      && !lowRiskOnly
+      && identity
+      && risk === 'dangerous'
       && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.id)
       && !INTERACTIVE_PERMISSION_TOOLS.has(descriptor.name)
       && !neverAutoApprove

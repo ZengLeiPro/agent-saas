@@ -34,6 +34,12 @@
       "database": "agent_saas_staging",
       "role": "agent_saas_staging",
       "networkReadback": "reachable-from-staging-ecs",
+      "transportSecurity": {
+        "endpoint": "private-vpc",
+        "rdsSslEnabled": false,
+        "clientSslMode": "disable",
+        "alignmentStatus": "matched-to-shared-rds-live-readback"
+      },
       "migrationStatus": "automated-post-api-start-with-table-readback"
     },
     "nas": {
@@ -64,6 +70,14 @@
       "namespace": "agent-saas-staging",
       "clusterId": "c819935b09a7d4a2a844561ef22a17448",
       "sharedComputePool": true,
+      "egressNat": {
+        "mode": "shared-cidr",
+        "regionId": "cn-shenzhen",
+        "snatTableId": "stb-wz94jmf2krggpzh4jek3p",
+        "publicIp": "120.77.218.94",
+        "isolationLevel": "shared-production-egress-control-plane",
+        "configurationStatus": "applied-and-live-readback-verified"
+      },
       "pv": "agent-saas-staging-workspace",
       "pvc": "agent-saas-staging-workspace",
       "serviceAccount": "agent-saas-staging-orchestrator",
@@ -78,6 +92,22 @@
       "stateRoot": "/var/lib/agent-saas-staging",
       "configRoot": "/etc/agent-saas-staging",
       "lockRoot": "/run/lock/agent-saas-staging",
+      "dependencies": {
+        "aliyunCli": {
+          "path": "/usr/local/bin/aliyun",
+          "version": "3.4.2",
+          "size": 93146374,
+          "digest": "sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4",
+          "status": "installed-and-production-byte-identical",
+          "authentication": {
+            "mode": "EcsRamRole",
+            "roleName": "AgentSaasAcsSnatRole",
+            "instanceAttachment": "verified",
+            "serviceHome": "/var/lib/agent-saas-staging/acs",
+            "profileStatus": "configured-and-live-snat-readback-verified"
+          }
+        }
+      },
       "serviceUnits": "installed-enabled-inactive-until-first-rc",
       "configurationStatus": "schema-and-fail-closed-safety-verified",
       "accountSeed": "production-users-and-tenants-only-plus-dedicated-staging-e2e-admin"

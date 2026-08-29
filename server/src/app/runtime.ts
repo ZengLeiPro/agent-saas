@@ -130,6 +130,7 @@ import { RunPreflightService } from '../runtime/runPreflight.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { MemoryIndexService } from '../memory/index/service.js';
 import { UserStore } from '../data/users/store.js';
+import { createApprovalPreferenceResolvers } from './userPreferenceResolvers.js';
 import type { UserInfo } from '../data/users/types.js';
 import { TenantStore } from '../data/tenants/store.js';
 import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
@@ -1682,17 +1683,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           : undefined;
       return user?.role as 'admin' | 'user' | undefined;
     },
-    // 「全部授权」是账户级服务端策略，不能依赖 Web 客户端逐条消息透传。
-    // 老用户没有该字段时与前端默认值保持一致：默认开启；用户不存在则 fail-closed。
-    resolveUserAutoApproveTools: ({ userId, username }: { userId?: string; username?: string }) => {
-      const user = userId
-        ? userStore?.findById(userId)
-        : username
-          ? userStore?.findByUsername(username)
-          : undefined;
-      if (!user) return undefined;
-      return user.preferences?.authorizationModeEnabled ?? true;
-    },
+    // 账户级授权偏好 resolver（TASK-256 抽出为 userPreferenceResolvers 工厂）：
+    // 「全部授权」默认开启；「低风险常开」仅在全部授权关闭时生效，dangerous 仍人工批准。
+    ...createApprovalPreferenceResolvers(userStore),
     // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
     resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId

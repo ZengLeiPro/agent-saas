@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Volume2, VolumeX, Loader2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
+import { FloatingPanel, FLOATING_PANEL_SURFACE } from "@/components/ui/floating-panel";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
@@ -10,9 +12,7 @@ import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
-import { DisplaySettingsMenu } from "@/components/DisplaySettingsMenu";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
-import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanelDock } from "@/hooks/useSystemPanel";
 import { SystemPanel } from "@/components/SystemPanel";
@@ -77,13 +77,6 @@ const SuspenseFallback = (
   </div>
 );
 
-/**
- * 浮动内容框：纯白面板浮在品牌底（--background）上，靠描边勾轮廓、双层柔和阴影撑起层次。
- * 主会话、右侧预览/文件/系统面板与能力中心共用同一档，切 tab 时外框不跳。
- */
-const FLOATING_PANEL_SURFACE =
-  "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]";
-
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
@@ -134,16 +127,14 @@ export function DesktopLayout(props: LayoutProps) {
   const { config: roleKitConfig } = useRoleKitConfig();
   const roleKitV2Enabled = roleKitConfig.roleKitV2Enabled;
   const sidebarLayout = authUser?.preferences?.sidebarLayout ?? "double";
-  const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
+  // TASK-256：统一三档 tier（缺省默认全部授权，与服务端一致）。
+  const approvalTier = resolveApprovalTier(authUser?.preferences);
   const handleSidebarLayoutChange = useCallback((layout: "double" | "single") => {
     updatePreferences({ sidebarLayout: layout });
-    void saveUserPreferences({ sidebarLayout: layout }).then((saved) => {
-      if (saved) updatePreferences(saved);
-    });
+    void saveUserPreferences({ sidebarLayout: layout }).then((saved) => { if (saved) updatePreferences(saved); });
   }, [updatePreferences]);
 
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
-  const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
 
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
@@ -450,7 +441,6 @@ export function DesktopLayout(props: LayoutProps) {
           "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
           sidebarCollapsed && !settingsMode && !analysisMode && "ml-2.5",
           chatFontLarge && "chat-font-large",
-          chatWidthWide && "chat-width-wide",
         )}
       >
         <div
@@ -554,12 +544,6 @@ export function DesktopLayout(props: LayoutProps) {
                 open={activeUsageCard === "billing"}
                 onOpenChange={handleBillingCardOpenChange}
               />
-              <DisplaySettingsMenu
-                isLarge={chatFontLarge}
-                isWide={chatWidthWide}
-                onFontSizeChange={setChatFontLarge}
-                onWidthChange={setChatWidthWide}
-              />
               {ttsPlayer.available && (
                 <Button
                   variant="ghost"
@@ -642,7 +626,7 @@ export function DesktopLayout(props: LayoutProps) {
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
-              canAutoApproveRunShell={!authorizationModeEnabled}
+              canAutoApproveRunShell={approvalTier === "ask"}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
@@ -875,6 +859,8 @@ export function DesktopLayout(props: LayoutProps) {
                   )}
                   sidebarLayout={sidebarLayout}
                   onSidebarLayoutChange={handleSidebarLayoutChange}
+                  chatFontLarge={chatFontLarge}
+                  onChatFontSizeChange={setChatFontLarge}
                   personalAgentEnabled={personalAgentEnabled}
                   renderTrash={() => (
                     <TrashView
@@ -943,12 +929,8 @@ export function DesktopLayout(props: LayoutProps) {
                 onDoubleClick={onDividerDoubleClick}
               />
             </div>
-            <div
-              className={cn(
-                "min-w-0 flex-col overflow-hidden rounded-xl",
-                FLOATING_PANEL_SURFACE,
-                showRightPanel ? "flex" : "hidden",
-              )}
+            <FloatingPanel
+              className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden")}
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
               {rightPanelKind === 'subagent' && subagentTranscript ? (
@@ -990,7 +972,7 @@ export function DesktopLayout(props: LayoutProps) {
                   />
                 </Suspense>
               </div>
-            </div>
+            </FloatingPanel>
           </>
         )}
       </div>

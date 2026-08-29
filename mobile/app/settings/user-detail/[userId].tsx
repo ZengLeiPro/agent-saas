@@ -20,6 +20,8 @@ import type { UserInfo } from '@agent/shared';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
+import { isV1RouteAllowed } from '../../../src/app/v1Capabilities';
+import { getV1BuildProfile } from '../../../src/app/v1Runtime';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {
@@ -40,6 +42,12 @@ export default function UserDetailScreen() {
 
   const isAdmin = currentUser?.role === 'admin';
   const isSelf = userId === currentUser?.id;
+  // V1 范围裁剪（M00-01）：生产构建无用户管理/审计移动页，
+  // 管理类行（编辑资料/操作日志/禁用/删除）与 admin 视图全部隐藏。
+  const v1Profile = getV1BuildProfile();
+  const v1AdminActionsEnabled =
+    isV1RouteAllowed('user-form', v1Profile) &&
+    isV1RouteAllowed('settings/audit-log', v1Profile);
 
   // For non-admin viewing self, fetch from /api/auth/me
   const [selfProfile, setSelfProfile] = useState<UserInfo | null>(null);
@@ -347,16 +355,16 @@ export default function UserDetailScreen() {
   // 操作日志: admin only
   const actionRows: { key: string; Icon: LucideIcon; label: string; onPress: () => void }[] = [];
 
-  if (isSelf || isAdmin) {
+  if (isSelf || (isAdmin && v1AdminActionsEnabled)) {
     actionRows.push({ key: 'avatar', Icon: Camera, label: '修改头像', onPress: () => void handleAvatarUpload() });
   }
-  if (isAdmin) {
+  if (isAdmin && v1AdminActionsEnabled) {
     actionRows.push({ key: 'edit', Icon: SquarePen, label: '编辑资料', onPress: handleEdit });
   }
   if (isSelf) {
     actionRows.push({ key: 'password', Icon: Lock, label: '修改密码', onPress: () => router.push('/change-password') });
   }
-  if (isAdmin) {
+  if (isAdmin && v1AdminActionsEnabled) {
     actionRows.push({ key: 'logs', Icon: FileText, label: '操作日志', onPress: handleViewLogs });
   }
 
@@ -454,7 +462,7 @@ export default function UserDetailScreen() {
         </View>
 
         {/* 危险操作 — only admin and not self */}
-        {isAdmin && !isSelf && (
+        {isAdmin && !isSelf && v1AdminActionsEnabled && (
           <View style={styles.section}>
             <View style={styles.card}>
               <TouchableOpacity

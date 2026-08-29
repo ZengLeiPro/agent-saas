@@ -63,6 +63,7 @@ jobs:
           printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
           test "$GITHUB_REF" = refs/heads/main
           created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          created_at="$(node -e "process.stdout.write(new Date(process.argv[1]).toISOString())" "$created_at")"
           release_date="${created_at:0:10}"
           release_id="rc-${release_date//-/}-$(printf '%02d' "$GITHUB_RUN_NUMBER")"
           expires_at="$(node -e "process.stdout.write(new Date(Date.parse(process.argv[1])+86400000).toISOString())" "$created_at")"
@@ -187,6 +188,9 @@ jobs:
 
       - name: Build immutable artifacts once
         if: env.REUSE_RC != 'true'
+        env:
+          VITE_API_BASE: ${{ env.STAGING_API_URL }}
+          VITE_WEB_ORIGIN: ${{ env.STAGING_WEB_URL }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release"
@@ -329,6 +333,25 @@ jobs:
             -f state=in_progress -f environment=staging \
             -f environment_url="$STAGING_WEB_URL" >/dev/null
 
+      - name: Authorize current runner for Staging SSH
+        run: |
+          set -euo pipefail
+          runner_ip="$(curl -4 -fsS --retry 5 https://api.ipify.org)"
+          node -e "if (!require('node:net').isIPv4(process.argv[1])) process.exit(1)" "$runner_ip"
+          security_group_id="$(jq -r .resources.api.securityGroupId infra/staging/resource-plan.json)"
+          printf '%s' "$security_group_id" | grep -Eq '^sg-[a-z0-9]+$'
+          source_cidr="$runner_ip/32"
+          {
+            echo "STAGING_SSH_SECURITY_GROUP_ID=$security_group_id"
+            echo "STAGING_SSH_SOURCE_CIDR=$source_cidr"
+          } >> "$GITHUB_ENV"
+          aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup \
+            --RegionId cn-shenzhen --SecurityGroupId "$security_group_id" \
+            --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$source_cidr" \
+            --Policy accept --Priority 1 \
+            --Description "GitHub Staging SSH $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
+            --ClientToken "staging-ssh-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >/dev/null
+
       - name: Configure Staging SSH
         run: |
           set -euo pipefail
@@ -339,7 +362,15 @@ jobs:
           printf '%s\n' "$STAGING_ECS_SSH_KEY" > ~/.ssh/staging_key
           chmod 600 ~/.ssh/staging_key
           : "${STAGING_SSH_HOST_KEY_SHA256:?Missing pinned Staging SSH host key fingerprint}"
-          ssh-keyscan -t ed25519 -H "$STAGING_ECS_HOST" > "$RUNNER_TEMP/staging-known-host"
+          scan_path="$RUNNER_TEMP/staging-known-host"
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 10 -t ed25519 -H "$STAGING_ECS_HOST" > "$scan_path"; then
+              break
+            fi
+            test "$attempt" -lt 5
+            sleep 2
+          done
+          test -s "$scan_path"
           test "$(ssh-keygen -lf "$RUNNER_TEMP/staging-known-host" -E sha256 | awk '{print $2}')" = \
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/staging-known-host" >> ~/.ssh/known_hosts
@@ -382,6 +413,7 @@ jobs:
       - name: Verify migrations and create isolated Integration fixture
         run: |
           set -euo pipefail
+          touch "$RUNNER_TEMP/staging-fixtures-touched"
           test "$STAGING_E2E_USERNAME" = staging-e2e-admin
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
           scp -i ~/.ssh/staging_key scripts/staging/ensure-integration-fixture.mjs \
@@ -424,6 +456,10 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/staging-fixtures-touched" ]; then
+            echo 'Staging fixture phase was not reached; cleanup is not required'
+            exit 0
+          fi
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-after.json"
 
@@ -461,6 +497,21 @@ jobs:
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$STAGING_RELEASE_OSS_URI/records/$STAGING_RELEASE_ID/attestations/$(basename "$snapshot_path")"
 
+      - name: Revoke temporary Staging SSH ingress
+        if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if aliyun --region cn-shenzhen ecs RevokeSecurityGroup \
+              --RegionId cn-shenzhen --SecurityGroupId "$STAGING_SSH_SECURITY_GROUP_ID" \
+              --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$STAGING_SSH_SOURCE_CIDR" \
+              --Policy accept --Priority 1 >/dev/null; then
+              exit 0
+            fi
+            test "$attempt" -lt 5
+            sleep 2
+          done
+
       - name: Complete GitHub Staging Deployment
         if: always() && env.STAGING_DEPLOYMENT_ID != ''
         env:
@@ -472,12 +523,21 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
             -f state="$state" -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
 
+      - name: Verify completed Staging evidence bundle
+        if: success()
+        run: |
+          set -euo pipefail
+          for evidence in manifest.json isolation-summary.json staging-e2e-summary.json \
+            staging-fixture-reset-before.json staging-fixture-reset-after.json; do
+            test -f "$RUNNER_TEMP/$evidence"
+          done
+
       - name: Upload independent Staging evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: staging-evidence-${{ env.STAGING_RELEASE_ID }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
           path: |
             test-results/

@@ -67,6 +67,10 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/test_acs_operational_scripts.py'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('docs/release-manifest-v1.md'), {
     components: [],
     blockingReason: null,

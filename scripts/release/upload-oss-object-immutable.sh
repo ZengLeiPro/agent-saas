@@ -9,9 +9,11 @@ case "$target_uri" in oss://*) ;; *) echo 'target must be an OSS URI' >&2; exit 
 case "$region" in cn-*) ;; *) echo 'invalid OSS region' >&2; exit 1 ;; esac
 
 stat_error="$(mktemp)"
+list_output=''
 readback=''
 cleanup() {
   rm -f "$stat_error"
+  if [[ -n "$list_output" ]]; then rm -f "$list_output"; fi
   if [[ -n "$readback" ]]; then rm -f "$readback"; fi
 }
 trap cleanup EXIT
@@ -20,11 +22,35 @@ if aliyun --secure oss stat "$target_uri" --region "$region" >"$stat_error" 2>&1
   :
 else
   stat_status=$?
+  object_missing=false
+  object_known_existing=false
   if grep -Eiq '(^|[^[:digit:]])404([^[:digit:]]|$)|NoSuchKey' "$stat_error"; then
+    object_missing=true
+  elif grep -Eiq '(^|[^[:digit:]])403([^[:digit:]]|$)|AccessDenied' "$stat_error"; then
+    # OSS returns AccessDenied instead of NoSuchKey to a least-privilege RAM
+    # user for a missing object. ListObjects is independently authorized, so
+    # use an exact-name listing to distinguish absence from a real auth error.
+    list_output="$(mktemp)"
+    if ! aliyun --secure oss ls "$target_uri" --limited-num 2 --region "$region" \
+      >"$list_output" 2>&1; then
+      cat "$stat_error" >&2
+      cat "$list_output" >&2
+      exit "$stat_status"
+    fi
+    if awk -v target="$target_uri" '$NF == target { found = 1 } END { exit found ? 0 : 1 }' \
+      "$list_output"; then
+      object_known_existing=true
+    else
+      object_missing=true
+    fi
+  fi
+  if [[ "$object_missing" = true ]]; then
     # ossutil v1 does not implement --forbid-overwrite. Never pass --force: an
     # object appearing after the stat must be refused by the locked WORM bucket
     # or by ossutil's overwrite prompt instead of being silently replaced.
     aliyun --secure oss cp "$source_path" "$target_uri" --region "$region"
+  elif [[ "$object_known_existing" = true ]]; then
+    :
   else
     cat "$stat_error" >&2
     exit "$stat_status"

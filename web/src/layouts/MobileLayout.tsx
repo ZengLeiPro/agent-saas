@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
 import { SwipeDrawer } from "@/components/mobile/SwipeDrawer";
 import { SlidePanel } from "@/components/SlidePanel";
@@ -13,6 +14,7 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
@@ -87,6 +89,7 @@ export function MobileLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser, isLoading: authLoading, authEnabled } = useAuth();
+  const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const accessTarget = managementAccessTarget({
     settingsOpen,
     adminSettingsTarget: adminSettings?.target,
@@ -103,7 +106,8 @@ export function MobileLayout(props: LayoutProps) {
   const subagentTranscript = subagentTranscriptContext?.transcript ?? null;
   const closeSubagentTranscript = subagentTranscriptContext?.closeTranscript;
   const { config: roleKitConfig } = useRoleKitConfig();
-  const authorizationModeEnabled = authUser?.preferences?.authorizationModeEnabled === true;
+  // TASK-256：统一三档 tier 语义（缺失字段默认全部授权，与服务端一致）。
+  const approvalTier = resolveApprovalTier(authUser?.preferences);
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
@@ -413,7 +417,7 @@ export function MobileLayout(props: LayoutProps) {
         </div>
       )}
 
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+      <div className={cn("relative flex min-h-0 flex-1 overflow-hidden", chatFontLarge && "chat-font-large")}>
         <SwipeDrawer
           open={sheetOpen}
           onOpenChange={(open) => { if (!open) closeDrawer(); else setSheetOpen(true); }}
@@ -593,7 +597,7 @@ export function MobileLayout(props: LayoutProps) {
               selectedModel={selectedModel}
               sessionId={sessionId}
               onModelChange={onModelChange}
-              canAutoApproveRunShell={!authorizationModeEnabled}
+              canAutoApproveRunShell={approvalTier === "ask"}
               autoApproveRunShell={autoApproveRunShell}
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
@@ -704,6 +708,8 @@ export function MobileLayout(props: LayoutProps) {
               reserveCloseButtonSpace
             />
           )}
+          chatFontLarge={chatFontLarge}
+          onChatFontSizeChange={setChatFontLarge}
           personalAgentEnabled={personalAgentEnabled}
         />
 

@@ -40,6 +40,7 @@ const NON_RUNTIME_FILES = new Set([
   'docker-compose.yml',
   'eas.json',
   'eslint.config.mjs',
+  'scripts/test_acs_operational_scripts.py',
 ]);
 
 export function classifyPath(filePath) {

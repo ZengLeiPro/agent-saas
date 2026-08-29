@@ -276,6 +276,39 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
+    def test_mixed_publish_and_contract_changes_run_both_gates(self):
+        self.assertIn(
+            "if: needs.changes.outputs.contract_check == 'true'",
+            self.workflow,
+        )
+        self.assertNotIn(
+            "if: needs.changes.outputs.publish != 'true' && "
+            "needs.changes.outputs.contract_check == 'true'",
+            self.workflow,
+        )
+
+    def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
+        self.assertIn(
+            'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py',
+            self.workflow,
+        )
+        self.assertRegex(
+            self.workflow,
+            r'install -m 0555[\s\\]+workspace-shared/\.ky-agent/skills-pool/browser/scripts/acs_browser\.py',
+        )
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+            changed.write('workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py\n')
+            changed.flush()
+            classified = subprocess.run(
+                ['bash', str(ACS_CLASSIFIER), changed.name],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(classified.returncode, 0, classified.stderr)
+        self.assertIn('publish=true', classified.stdout)
+
     def test_immutable_baseline_uploader_requires_an_exact_sha_acs_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('scripts/release/upload-oss-object-immutable.sh\n')

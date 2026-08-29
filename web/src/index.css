@@ -334,13 +334,6 @@
   .content-container {
     @apply mx-auto max-w-3xl md:max-w-4xl px-3;
   }
-  .chat-width-wide .content-container {
-    @apply md:max-w-6xl;
-  }
-  .chat-width-wide .initial-conversation-content .content-container {
-    @apply md:max-w-4xl;
-  }
-
   /* Markdown 消息的 prose 样式预设 */
   .prose-chat {
     @apply prose prose-sm prose-neutral dark:prose-invert max-w-none

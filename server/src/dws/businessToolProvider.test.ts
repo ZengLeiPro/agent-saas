@@ -108,7 +108,71 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['auth', 'status'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['auth', 'status', '--verbose'] })).toBe('dangerous');
+    // TASK-256：skill 文档强制所有命令带 --format json，格式旗标不得再触发受限旗标误判。
+    expect(resolveDwsBusinessRisk({ args: ['doc', 'read', '--format', 'json'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox', '--format', 'json'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['auth', 'status', '--format', 'json'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['sheet', 'list', '-f', 'json'] })).toBe('safe');
+    // TASK-256：补录 skill 文档证实但此前未登记的只读动作。
+    expect(resolveDwsBusinessRisk({ args: ['aisearch', 'person', '--keyword', '张三'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['aisearch', 'behavior', '--types', 'all'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['aisearch', 'enterprise'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', 'list', 'mine', '--max', '10'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', 'list', 'all'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', 'list', 'shared'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['minutes', 'get', 'transcription'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'check', 'record'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'check', 'result'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'vacation', 'balance'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'vacation', 'types'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'report', 'columns'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['attendance', 'rules'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['mail', 'mailbox', 'profile'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['mail', 'message', 'verify'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['contact', 'user', 'profile'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['agoal', 'user', 'rules'] })).toBe('safe');
+    // TASK-256：补录文档证实、受 confirmed 闸门约束的确认制写动作（分档仍为 write）。
+    expect(resolveDwsBusinessRisk({ args: ['mail', 'rule', 'adjust', '--order', 'up'] })).toBe('workspace_write');
+    expect(resolveDwsBusinessRisk({ args: ['drive', 'mkdir', '--name', '新目录'] })).toBe('workspace_write');
     expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['todo', 'list'] })).toEqual({ risk: 'safe' });
+    expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['aisearch', 'person', '--keyword', '张三', '--format', 'json'] })).toEqual({ risk: 'safe' });
+  });
+
+  it('TASK-256 review 返工：位置参数不得把真实写命令降档为 read', () => {
+    // review 复现：末尾位置参数命中读动词，曾把 send/create 降档为 safe，绕过 confirmed 闸门。
+    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'], confirmed: true })).toBe('workspace_write');
+    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'status', '--group', 'cid'], confirmed: true })).toBe('workspace_write');
+    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create', 'info', '--title', 'x'], confirmed: true })).toBe('workspace_write');
+    // 无 confirmed 时风险档不变（write），confirmed 闸门在 provider invoke 层拦截（见下个用例）。
+    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'] })).toBe('workspace_write');
+    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create', 'info', '--title', 'x'] })).toBe('workspace_write');
+  });
+
+  it('TASK-256 review 返工：缺 confirmed 时 provider 不得调用底层 invoke', async () => {
+    const { provider, invoke, context } = setup();
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['chat', 'message', 'send', 'all', '--group', 'cid'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('TASK-256 review 返工：全路径写扫描后正常只读路径仍为 safe，拒绝语义不变', () => {
+    expect(resolveDwsBusinessRisk({ args: ['minutes', 'list', 'all'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['aisearch', 'person'] })).toBe('safe');
+    // 路径含写动词但文档证实纯查询的例外命令保持 safe。
+    expect(resolveDwsBusinessRisk({ args: ['doc', 'comment', 'list', '--node', 'nid'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['todo', 'comment', 'list', '--task-id', 'tid'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['mail', 'auto-reply', 'get'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['aitable', 'form', 'share', 'get', '--base-id', 'b'] })).toBe('safe');
+    // 例外表外的同类路径形态仍按写动词分档（fail closed）。
+    expect(resolveDwsBusinessRisk({ args: ['doc', 'comment', 'create', '--node', 'nid'], confirmed: true })).toBe('workspace_write');
+    // destructive / forbidden 既有拒绝语义不变。
+    expect(resolveDwsBusinessRisk({ args: ['doc', 'delete'], confirmed: true })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['drive', 'file', 'download'] })).toBe('dangerous');
+    expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
   });
 
   it('使用专家 profile 在隔离 connector workspace 执行读命令并写入治理审计', async () => {

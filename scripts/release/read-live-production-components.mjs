@@ -24,7 +24,18 @@ export function parseReleaseEnvironment(text) {
   return values;
 }
 
-export function validateLiveProductionComponents({ api, web, workerEnvironment, acs }) {
+export function hasSystemdEnvironment(environment, key, value) {
+  const escaped = `${key}=${value}`.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'u').test(String(environment));
+}
+
+export function validateLiveProductionComponents({
+  api,
+  web,
+  workerReleaseEnvironment,
+  workerSystemdEnvironment,
+  acs,
+}) {
   const apiRelease = api?.release;
   if (
     api?.status !== 'ok' ||
@@ -34,7 +45,7 @@ export function validateLiveProductionComponents({ api, web, workerEnvironment, 
     throw new Error('Production API release identity is not attested');
   if (web?.environment !== 'production' || web?.schemaVersion !== 1)
     throw new Error('Production Web release identity is not attested');
-  if (workerEnvironment.AGENT_SAAS_ENVIRONMENT !== 'production')
+  if (!hasSystemdEnvironment(workerSystemdEnvironment, 'AGENT_SAAS_ENVIRONMENT', 'production'))
     throw new Error('Production Worker environment is not explicit');
   if (
     acs?.environment !== 'production' ||
@@ -58,12 +69,12 @@ export function validateLiveProductionComponents({ api, web, workerEnvironment, 
     },
     runtimeWorker: {
       gitSha: requiredString(
-        workerEnvironment.AGENT_SAAS_RELEASE_SHA,
+        workerReleaseEnvironment.AGENT_SAAS_RELEASE_SHA,
         'Worker source SHA',
         SHA_PATTERN,
       ),
       artifactDigest: requiredString(
-        workerEnvironment.AGENT_SAAS_SERVER_DIGEST,
+        workerReleaseEnvironment.AGENT_SAAS_SERVER_DIGEST,
         'Worker artifact digest',
         DIGEST_PATTERN,
       ),
@@ -93,6 +104,11 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
   const mainPid = execFileSync('systemctl', ['show', unit, '--property', 'MainPID', '--value'], {
     encoding: 'utf8',
   }).trim();
+  const systemdEnvironment = execFileSync(
+    'systemctl',
+    ['show', unit, '--property', 'Environment', '--value'],
+    { encoding: 'utf8' },
+  ).trim();
   const pidfile = `/run/${prefix}-${color}.pid`;
   if (!/^[1-9][0-9]*$/u.test(mainPid) || readFileSync(pidfile, 'utf8').trim() !== mainPid)
     throw new Error(`${role} pidfile does not match systemd MainPID`);
@@ -101,12 +117,12 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
     if (readFileSync(readyfile, 'utf8').trim() !== mainPid)
       throw new Error('Worker readyfile does not match systemd MainPID');
   }
-  return { color, unit };
+  return { color, unit, systemdEnvironment };
 }
 
-async function json(url) {
+export async function readJson(url, { cacheBust = true } = {}) {
   const requestUrl = new URL(url);
-  requestUrl.searchParams.set('release_observation', String(Date.now()));
+  if (cacheBust) requestUrl.searchParams.set('release_observation', String(Date.now()));
   const response = await fetch(requestUrl, {
     headers: { 'cache-control': 'no-cache' },
     signal: AbortSignal.timeout(10_000),
@@ -140,16 +156,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     defaultReadFileSync,
     defaultExecFileSync,
   );
-  const workerEnvironment = {
+  const workerReleaseEnvironment = {
     ...parseReleaseEnvironment(defaultReadFileSync('/etc/agent-saas/server.env', 'utf8')),
     ...parseReleaseEnvironment(
       defaultReadFileSync(`/etc/agent-saas/runtime-worker-${workerUnit.color}.release.env`, 'utf8'),
     ),
   };
   const [api, web, acs] = await Promise.all([
-    json(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
-    json(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
-    json(options['acs-url'] ?? 'http://127.0.0.1:3400/health'),
+    readJson(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
+    readJson(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
+    readJson(options['acs-url'] ?? 'http://127.0.0.1:3400/health', { cacheBust: false }),
   ]);
   const apiRoot = realpathSync(`/opt/agent-saas-app/color/${apiUnit.color}`);
   const workerRoot = realpathSync(`/opt/agent-saas-app/worker/${workerUnit.color}`);
@@ -160,7 +176,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     verifyInstalledRelease(apiRoot, 'server'),
     verifyInstalledRelease(acsRoot, 'acs'),
   ]);
-  const components = validateLiveProductionComponents({ api, web, workerEnvironment, acs });
+  const components = validateLiveProductionComponents({
+    api,
+    web,
+    workerReleaseEnvironment,
+    workerSystemdEnvironment: workerUnit.systemdEnvironment,
+    acs,
+  });
   if (
     serverBytes.artifactDigest !== components.api.artifactDigest ||
     serverBytes.artifactDigest !== components.runtimeWorker.artifactDigest ||
@@ -175,7 +197,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     environment: 'production',
     observedAt: new Date().toISOString(),
     components,
-    topology: { api: apiUnit, runtimeWorker: workerUnit },
+    topology: {
+      api: { color: apiUnit.color, unit: apiUnit.unit },
+      runtimeWorker: { color: workerUnit.color, unit: workerUnit.unit },
+    },
     byteEvidence: {
       apiAndRuntimeWorker: {
         root: apiRoot,

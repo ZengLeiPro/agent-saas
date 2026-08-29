@@ -40,12 +40,20 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /group: staging-deploy\s+cancel-in-progress: false/u);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/u);
+  assert.match(
+    workflow,
+    /created_at="\$\(node -e "process\.stdout\.write\(new Date\(process\.argv\[1\]\)\.toISOString\(\)\)" "\$created_at"\)"/u,
+  );
   assert.match(workflow, /environment: staging/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
+  assert.match(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
+  assert.match(workflow, /VITE_WEB_ORIGIN: \$\{\{ env\.STAGING_WEB_URL \}\}/u);
   assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
   assert.match(workflow, /ensure-integration-fixture\.mjs/u);
   assert.match(workflow, /STAGING_E2E_INTEGRATION_TASK_ID=\$integration_task_id/u);
+  assert.match(workflow, /touch "\$RUNNER_TEMP\/staging-fixtures-touched"/u);
+  assert.match(workflow, /if \[ ! -f "\$RUNNER_TEMP\/staging-fixtures-touched" \]; then/u);
   assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
   assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
   assert.match(workflow, /blockers\.length > 0/u);
@@ -55,6 +63,21 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /web-oss-readback/u);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
+  assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
+  assert.match(workflow, /test -f "\$RUNNER_TEMP\/\$evidence"/u);
+  assert.match(workflow, /if-no-files-found: warn/u);
+  assert.match(workflow, /name: Authorize current runner for Staging SSH/u);
+  assert.match(workflow, /https:\/\/api\.ipify\.org/u);
+  assert.match(workflow, /\.resources\.api\.securityGroupId/u);
+  assert.match(workflow, /aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup/u);
+  assert.match(workflow, /--SourceCidrIp "\$source_cidr"/u);
+  assert.doesNotMatch(workflow, /--SourceCidrIp 0\.0\.0\.0\/0/u);
+  assert.match(
+    workflow,
+    /name: Revoke temporary Staging SSH ingress\s+if: always\(\) && env\.STAGING_SSH_SOURCE_CIDR != ''/u,
+  );
+  assert.match(workflow, /aliyun --region cn-shenzhen ecs RevokeSecurityGroup/u);
+  assert.match(workflow, /ssh-keyscan -T 10 -t ed25519/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
@@ -77,6 +100,31 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /sandboxImageDigest/u);
   assert.match(deploy, /rollback_root/u);
   assert.match(deploy, /deployment_committed=true/u);
+  assert.match(deploy, /if \[ -L "\$current" \]; then/u);
+  assert.match(deploy, /readlink -f -- "\$current"/u);
+  assert.match(deploy, /had_previous_release=false/u);
+  assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
+  assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
+  assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
+  assert.match(deploy, /aliyun_cli="\$\(command -v aliyun\)"/u);
+  assert.match(
+    deploy,
+    /Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing/u,
+  );
+  assert.match(
+    deploy,
+    /runuser -u agent-saas-staging -- env HOME=\/var\/lib\/agent-saas-staging\/acs/u,
+  );
+  assert.match(deploy, /"\$aliyun_cli" vpc DescribeSnatTableEntries/u);
+  assert.match(deploy, /Staging ACS SNAT runtime identity cannot read the configured SNAT table/u);
+  assert.match(deploy, /STAGING_RELEASE_ROOT="\$target"/u);
+  assert.match(deploy, /SELECT current_database\(\) AS database, current_user AS username/u);
+  assert.match(deploy, /Staging database runtime preflight failed/u);
+  assert.ok(
+    deploy.indexOf('Staging database runtime preflight failed') <
+      deploy.indexOf('ln -sfn "$target" "$current"'),
+  );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
@@ -94,8 +142,36 @@ test('resource plan records provisioned resources ready for first deployment', a
   assert.equal(plan.resources.acs.status, 'applied');
   assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');
   assert.equal(plan.resources.acs.sharedComputePool, true);
+  assert.deepEqual(plan.resources.acs.egressNat, {
+    mode: 'shared-cidr',
+    regionId: 'cn-shenzhen',
+    snatTableId: 'stb-wz94jmf2krggpzh4jek3p',
+    publicIp: '120.77.218.94',
+    isolationLevel: 'shared-production-egress-control-plane',
+    configurationStatus: 'applied-and-live-readback-verified',
+  });
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
+  assert.deepEqual(plan.resources.database.transportSecurity, {
+    endpoint: 'private-vpc',
+    rdsSslEnabled: false,
+    clientSslMode: 'disable',
+    alignmentStatus: 'matched-to-shared-rds-live-readback',
+  });
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
+  assert.deepEqual(plan.resources.runtime.dependencies.aliyunCli, {
+    path: '/usr/local/bin/aliyun',
+    version: '3.4.2',
+    size: 93146374,
+    digest: 'sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4',
+    status: 'installed-and-production-byte-identical',
+    authentication: {
+      mode: 'EcsRamRole',
+      roleName: 'AgentSaasAcsSnatRole',
+      instanceAttachment: 'verified',
+      serviceHome: '/var/lib/agent-saas-staging/acs',
+      profileStatus: 'configured-and-live-snat-readback-verified',
+    },
+  });
   assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');
   assert.equal(plan.resources.egressProxy.listen, '127.0.0.1:3128');
   assert.equal(plan.resources.e2eIdentity.status, 'created-password-hash-verified');

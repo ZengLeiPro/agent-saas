@@ -276,6 +276,17 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
+    def test_mixed_publish_and_contract_changes_run_both_gates(self):
+        self.assertIn(
+            "if: needs.changes.outputs.contract_check == 'true'",
+            self.workflow,
+        )
+        self.assertNotIn(
+            "if: needs.changes.outputs.publish != 'true' && "
+            "needs.changes.outputs.contract_check == 'true'",
+            self.workflow,
+        )
+
     def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
         self.assertIn(
             'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py',

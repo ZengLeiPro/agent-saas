@@ -64,6 +64,14 @@
       "namespace": "agent-saas-staging",
       "clusterId": "c819935b09a7d4a2a844561ef22a17448",
       "sharedComputePool": true,
+      "egressNat": {
+        "mode": "shared-cidr",
+        "regionId": "cn-shenzhen",
+        "snatTableId": "stb-wz94jmf2krggpzh4jek3p",
+        "publicIp": "120.77.218.94",
+        "isolationLevel": "shared-production-egress-control-plane",
+        "configurationStatus": "applied-and-live-readback-verified"
+      },
       "pv": "agent-saas-staging-workspace",
       "pvc": "agent-saas-staging-workspace",
       "serviceAccount": "agent-saas-staging-orchestrator",

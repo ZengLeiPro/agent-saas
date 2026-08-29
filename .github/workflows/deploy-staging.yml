@@ -63,6 +63,7 @@ jobs:
           printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
           test "$GITHUB_REF" = refs/heads/main
           created_at="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)"
+          created_at="$(node -e "process.stdout.write(new Date(process.argv[1]).toISOString())" "$created_at")"
           release_date="${created_at:0:10}"
           release_id="rc-${release_date//-/}-$(printf '%02d' "$GITHUB_RUN_NUMBER")"
           expires_at="$(node -e "process.stdout.write(new Date(Date.parse(process.argv[1])+86400000).toISOString())" "$created_at")"

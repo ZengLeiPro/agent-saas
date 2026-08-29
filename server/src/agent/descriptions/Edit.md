@@ -4,4 +4,4 @@
 
 匹配顺序：先精确匹配；失败后自动归一化 CRLF/LF、行尾空白、弯引号、Unicode 破折号和特殊空格再尝试。原文件的 UTF-8 BOM 与主行尾格式会保留。未传 `replace_all: true` 时，每个 `old_string` 必须只命中一次；单次调用最多执行 10000 处替换。
 
-成功结果包含替换计数、首个变更行和有界 unified diff metadata。新建文件请用 Write。输入文件或替换结果大于 1MB 时会拒绝；敏感路径（.ky-agent/settings.json、.env、.git/、.ssh/、.npmrc）会被拒绝。
+同一运行进程内、同一路径的 Write/Edit 会串行执行，并通过同目录临时文件、fsync 与原子 rename 一次提交。成功结果包含替换计数、首个变更行和有界 unified diff metadata。新建文件请用 Write。输入文件或替换结果大于 1MB 时会拒绝；敏感路径（.ky-agent/settings.json、.env、.git/、.ssh/、.npmrc）会被拒绝。

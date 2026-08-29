@@ -329,6 +329,7 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     const truncated = metadata.truncated === true;
 
     const detail: PresentationDetailLine[] = [{ k: '路径', v: filePath }];
+    if (metadata.pathRecovered === true) detail.push({ tree: '├', k: '路径自愈', v: '已匹配实际文件名' });
     // 请求范围与实读行数分开写：两者不一致本身就是重要信息
     if (metadata.ranged === true) {
       const offset = num(input.offset) ?? 1;
@@ -676,7 +677,7 @@ const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
     'snapshotPreparationMs', 'snapshotMaterializationMs', 'snapshotDependencyMs', 'snapshotDependencyCacheHit',
     'snapshotFallbackReason', 'validationChainSplit', 'validationChainCommandCount', 'validationChainMaxConcurrency',
   ],
-  Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged'],
+  Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged', 'pathRecovered'],
   Write: ['bytesWritten'],
   Edit: [
     'replacements', 'occurrences', 'editCount', 'fuzzyMatches', 'bomPreserved', 'lineEnding',

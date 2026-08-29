@@ -13,7 +13,7 @@ import {
   type ToolPresentation,
 } from './toolPresentationBuilder.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
-import { withTrustedFile, writeTrustedFile } from '../security/trustedFile.js';
+import { atomicWriteTrustedFile } from '../security/trustedFile.js';
 import type {
   ToolInvocationRequest,
   ToolInvocationResponse,
@@ -67,6 +67,9 @@ import {
 import { materializeReadToolImage, tryReadWorkspaceImage } from './readImageTool.js';
 import { createdArtifactToolResult, prepareArtifactInvocation } from './artifactToolRuntime.js';
 import { resolveShellConcurrency, shellToolSchema, type ShellToolInput } from './shellToolSchema.js';
+import { parseProvablyReadOnlyRgCommand, resolveShellCallPolicy } from './shellReadOnlyPolicy.js';
+import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
+import { openRecoveredWorkspaceReadFile } from './workspacePathRecovery.js';
 const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
@@ -397,7 +400,7 @@ export const readFileToolDescriptor: ToolDescriptor<{ path: string; offset?: num
   category: 'workspace',
   label: '读取文件',
   // 两个上限必须留在描述里：模型按它规划分片读取，写错会导致反复截断或超限重试。
-  descriptionInvariants: [String(MAX_FILE_BYTES), String(MAX_READ_LINES)],
+  descriptionInvariants: [String(MAX_FILE_BYTES), String(MAX_READ_LINES), 'Unicode', 'sed | head'],
 };
 
 export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: string }> = {
@@ -414,6 +417,7 @@ export const writeFileToolDescriptor: ToolDescriptor<{ path: string; content: st
   auditCategory: 'filesystem.write',
   category: 'workspace',
   label: '写入文件',
+  descriptionInvariants: ['原子', '串行', 'fsync', 'rename'],
 };
 
 export const runShellToolDescriptor: ToolDescriptor<ShellToolInput> = {
@@ -424,13 +428,14 @@ export const runShellToolDescriptor: ToolDescriptor<ShellToolInput> = {
   schema: shellToolSchema,
   risk: 'dangerous',
   approvalMode: 'web',
+  resolveCallPolicy: resolveShellCallPolicy,
   resolveConcurrency: resolveShellConcurrency,
   auditCategory: 'process.shell',
   category: 'workspace',
   label: '执行 Shell',
   // 运行时事实与搜索契约：执行环境认知错误会让模型误判可操作范围；rg 优先级是
   // Shell-first 搜索改造（2026-07-25）的落点，删掉会退回全目录 grep。
-  descriptionInvariants: ['当前工作区运行时', 'rg --files', 'rg -n', 'python3'],
+  descriptionInvariants: ['当前工作区运行时', 'rg --no-config --files', 'rg --no-config -n', '按 argv 直接执行', 'python3'],
 };
 
 export const bashOutputToolDescriptor: ToolDescriptor<{
@@ -629,7 +634,16 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
-          return await this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, undefined, context.invocationId, context.env);
+          return await this._runShellStreaming(
+            workspace,
+            args.command,
+            args.timeoutMs,
+            signal,
+            undefined,
+            context.invocationId,
+            context.env,
+            parseProvablyReadOnlyRgCommand(args.command),
+          );
         }
         case 'Edit': {
           const result = await runWorkspaceEdit(input as Parameters<typeof runWorkspaceEdit>[0], workspace, (fullPath) => assertSandboxReadAllowed(workspace, fullPath));
@@ -668,7 +682,16 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     let done = false;
     let notify: (() => void) | undefined;
     const wake = () => { notify?.(); notify = undefined; };
-    this._runShellStreaming(workspace, args.command, args.timeoutMs, signal, (chunk) => { queue.push(chunk); wake(); }, request.context.invocationId, request.context.env)
+    this._runShellStreaming(
+      workspace,
+      args.command,
+      args.timeoutMs,
+      signal,
+      (chunk) => { queue.push(chunk); wake(); },
+      request.context.invocationId,
+      request.context.env,
+      parseProvablyReadOnlyRgCommand(args.command),
+    )
       .then((response) => queue.push({ type: 'completed', response }))
       .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err) } }))
       .finally(() => { done = true; wake(); });
@@ -690,36 +713,62 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     path: string,
     options: { offset?: number; limit?: number } = {},
   ): Promise<{ content: string; metadata: Record<string, unknown> }> {
-    const fullPath = resolveWorkspacePath(workspace.root, path);
-    assertSandboxReadAllowed(workspace, fullPath);
-    const relPath = relativeWorkspacePath(workspace.root, fullPath); return await withTrustedFile(workspace.root, relPath, async (trusted) => {
-      const fileStat = trusted.stats; const stablePath = trusted.fdPath;
+    assertSandboxReadAllowed(workspace, resolveWorkspacePath(workspace.root, path));
+    const recovered = await openRecoveredWorkspaceReadFile(workspace.root, path);
+    const { fullPath, relativePath: relPath, trusted } = recovered;
+    try {
+      assertSandboxReadAllowed(workspace, fullPath);
+      const fileStat = trusted.stats;
+      const stablePath = trusted.fdPath;
       const countLines = (text: string): number => (text ? text.split('\n').length : 0);
-      const imageResult = await tryReadWorkspaceImage({ fullPath: stablePath, relPath, fileSize: fileStat.size, ...options }); if (imageResult) return imageResult;
-    if (options.offset !== undefined || options.limit !== undefined) {
-      const content = await readLineRange(stablePath, relPath, {
-        offset: options.offset ?? 1,
-        limit: options.limit ?? MAX_READ_LINES,
+      const recoveredMetadata = recovered.recovered ? { pathRecovered: true } : {};
+      const imageResult = await tryReadWorkspaceImage({
+        fullPath: stablePath,
+        relPath,
+        fileSize: fileStat.size,
+        ...options,
       });
-      return {
-        content,
-        metadata: { path: relPath, fileBytes: fileStat.size, linesRead: countLines(content), ranged: true },
-      };
-    }
-    if (fileStat.size <= MAX_FILE_BYTES) {
-      const handle = await open(stablePath, 'r');
-      try {
-        const buffer = Buffer.alloc(fileStat.size);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-        const content = buffer.toString('utf-8', 0, bytesRead);
+      if (imageResult) {
+        return {
+          ...imageResult,
+          metadata: { ...imageResult.metadata, ...recoveredMetadata },
+        };
+      }
+      if (options.offset !== undefined || options.limit !== undefined) {
+        const content = await readLineRange(stablePath, relPath, {
+          offset: options.offset ?? 1,
+          limit: options.limit ?? MAX_READ_LINES,
+        });
         return {
           content,
-          metadata: { path: relPath, fileBytes: fileStat.size, linesRead: countLines(content) },
+          metadata: {
+            path: relPath,
+            fileBytes: fileStat.size,
+            linesRead: countLines(content),
+            ranged: true,
+            ...recoveredMetadata,
+          },
         };
-      } finally {
-        await handle.close();
       }
-    }
+      if (fileStat.size <= MAX_FILE_BYTES) {
+        const handle = await open(stablePath, 'r');
+        try {
+          const buffer = Buffer.alloc(fileStat.size);
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+          const content = buffer.toString('utf-8', 0, bytesRead);
+          return {
+            content,
+            metadata: {
+              path: relPath,
+              fileBytes: fileStat.size,
+              linesRead: countLines(content),
+              ...recoveredMetadata,
+            },
+          };
+        } finally {
+          await handle.close();
+        }
+      }
       const prefix = await readFilePrefix(stablePath, MAX_FILE_BYTES);
       return {
         content: `${prefix}\n...[truncated: file ${relPath} is ${fileStat.size} bytes; showing first ${MAX_FILE_BYTES} bytes. Use Read with {"path":"${relPath}","offset":1,"limit":${MAX_READ_LINES}} to continue by line chunks.]`,
@@ -729,16 +778,25 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
           linesRead: countLines(prefix),
           truncated: true,
           shownBytes: MAX_FILE_BYTES,
+          ...recoveredMetadata,
         },
       };
-    });
+    } finally {
+      await trusted.handle.close();
+    }
   }
 
   private async _writeFile(workspace: WorkspaceRef, path: string, content: string): Promise<string> {
     const fullPath = resolveWorkspacePath(workspace.root, path);
     assertSandboxReadAllowed(workspace, fullPath);
-    await writeTrustedFile(workspace.root, relativeWorkspacePath(workspace.root, fullPath), content, { encoding: 'utf-8', createParents: true });
-    return relativeWorkspacePath(workspace.root, fullPath);
+    const relPath = relativeWorkspacePath(workspace.root, fullPath);
+    await withWorkspaceFileMutationQueue(workspace.root, relPath, async () => {
+      await atomicWriteTrustedFile(workspace.root, relPath, content, {
+        encoding: 'utf-8',
+        createParents: true,
+      });
+    });
+    return relPath;
   }
 
   private async _runShellStreaming(
@@ -749,6 +807,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
     onChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => void | Promise<void>,
     invocationId?: string,
     runtimeEnv?: Record<string, string>,
+    directArgv?: string[],
   ): Promise<ToolInvocationResponse> {
     return await runLocalShellStreaming({
       workspace,
@@ -758,6 +817,7 @@ export class ServerLocalExecutionProvider implements ExecutionProvider {
       onChunk,
       invocationId,
       runtimeEnv,
+      directArgv,
       envBuilder: this.envBuilder,
       findDeniedPathMention,
     });
@@ -775,6 +835,10 @@ async function readFilePrefix(fullPath: string, maxBytes: number): Promise<strin
   }
 }
 
+function quoteShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 async function readLineRange(
   fullPath: string,
   relPath: string,
@@ -789,8 +853,9 @@ async function readLineRange(
   let hasMore = false;
   let returnedBytes = 0;
   let byteLimitReached = false;
-  // 为说明性 suffix 预留空间，保证最终 tool_result 仍落在硬上限内。
-  const contentByteBudget = MAX_READ_OUTPUT_BYTES - 512;
+  let oversizedLine: { lineNo: number; bytes: number } | undefined;
+  // 为包含完整路径的可执行 Shell 建议预留空间，保证最终 tool_result 仍落在硬上限内。
+  const contentByteBudget = MAX_READ_OUTPUT_BYTES - 8 * 1024;
   try {
     for await (const line of rl) {
       lineNo += 1;
@@ -810,6 +875,7 @@ async function readLineRange(
       lines.push(bounded.text);
       returnedBytes += separatorBytes + Buffer.byteLength(bounded.text, 'utf8');
       if (bounded.truncated) {
+        oversizedLine = { lineNo, bytes: Buffer.byteLength(line, 'utf8') };
         hasMore = true;
         byteLimitReached = true;
         break;
@@ -823,8 +889,10 @@ async function readLineRange(
     return `...[no content: offset ${offset} is beyond EOF for ${relPath}; total lines=${lineNo}]`;
   }
   const endLine = offset + lines.length - 1;
-  const suffix = byteLimitReached
-    ? `\n...[truncated: Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes while showing ${relPath} lines ${offset}-${endLine}; narrow the line range or use Search/Shell for targeted inspection]`
+  const suffix = oversizedLine
+    ? `\n...[truncated: line ${oversizedLine.lineNo} is ${oversizedLine.bytes} UTF-8 bytes and exceeds the Read budget; use Shell: sed -n '${oversizedLine.lineNo}p' -- ${quoteShellArgument(relPath)} | head -c ${MAX_READ_OUTPUT_BYTES}]`
+    : byteLimitReached
+      ? `\n...[truncated: Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes while showing ${relPath} lines ${offset}-${endLine}; narrow the line range or use Search/Shell for targeted inspection]`
     : hasMore
       ? `\n...[truncated: showing ${relPath} lines ${offset}-${endLine}; next Read offset=${endLine + 1}, limit=${limit}]`
     : `\n...[EOF: showing ${relPath} lines ${offset}-${endLine}; total lines=${lineNo}]`;

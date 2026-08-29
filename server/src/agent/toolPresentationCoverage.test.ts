@@ -134,6 +134,16 @@ describe('截断前 metadata 规则', () => {
     expect(result?.status).toBe('ok');
   });
 
+  it('Read 展示路径自愈结果', () => {
+    const result = buildToolPresentation(
+      'Read',
+      { path: '制度/差旅\u202F制度.md' },
+      undefined,
+      { path: '制度/差旅 制度.md', fileBytes: 800, linesRead: 12, pathRecovered: true },
+    );
+    expect(result?.detail).toContainEqual({ tree: '├', k: '路径自愈', v: '已匹配实际文件名' });
+  });
+
   it('Read 截断时标 warn 并写明只返回了多少', () => {
     const result = buildToolPresentation(
       'Read',

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,7 @@ import {
 import { WebToolProvider } from '../agent/webToolProvider.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { DefaultExecutionTransportRegistry } from '../runtime/inProcessTransport.js';
-import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
+import type { ToolInvocationResponse, ToolInvocationStreamChunk } from '../runtime/handProtocol.js';
 import type { HandRecord, HandStore, RegisterHandInput, HandStatus } from '../runtime/handStore.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import {
@@ -196,8 +196,67 @@ describe('PlatformToolRuntime', () => {
       expect(boundedResp.status).toBe('success');
       if (boundedResp.status === 'success') {
         expect(Buffer.byteLength(boundedResp.content, 'utf8')).toBeLessThanOrEqual(MAX_READ_OUTPUT_BYTES);
-        expect(boundedResp.content).toContain(`Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes`);
+        expect(boundedResp.content).toContain('line 1 is');
+        expect(boundedResp.content).toContain("use Shell: sed -n '1p' -- 'minified.js' | head -c");
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers Read paths with Unicode spaces and normalization variants', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-read-recovery-'));
+    try {
+      await writeFile(join(root, 'daily report.txt'), 'space recovered', 'utf8');
+      await writeFile(join(root, 'café.txt'), 'unicode recovered', 'utf8');
+      const provider = new ServerLocalExecutionProvider();
+
+      const spaceResponse = await provider.execute({
+        toolName: 'Read',
+        input: { path: 'daily\u202Freport.txt' },
+        context: { workspace: workspace(root) },
+      });
+      expect(spaceResponse).toMatchObject({
+        status: 'success',
+        content: 'space recovered',
+        metadata: { path: 'daily report.txt', pathRecovered: true },
+      });
+
+      const unicodeResponse = await provider.execute({
+        toolName: 'Read',
+        input: { path: 'café.txt'.normalize('NFD') },
+        context: { workspace: workspace(root) },
+      });
+      expect(unicodeResponse).toMatchObject({
+        status: 'success',
+        content: 'unicode recovered',
+        metadata: { path: 'café.txt', pathRecovered: true },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('atomically replaces Write targets and preserves their mode', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-write-atomic-'));
+    try {
+      const target = join(root, 'notes.txt');
+      await writeFile(target, 'before', 'utf8');
+      await chmod(target, 0o600);
+      const before = await stat(target);
+      const provider = new ServerLocalExecutionProvider();
+
+      const response = await provider.execute({
+        toolName: 'Write',
+        input: { path: 'notes.txt', content: 'after' },
+        context: { workspace: workspace(root) },
+      });
+      const after = await stat(target);
+
+      expect(response.status).toBe('success');
+      expect(await readFile(target, 'utf8')).toBe('after');
+      expect(after.ino).not.toBe(before.ino);
+      expect(after.mode & 0o777).toBe(0o600);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1031,6 +1090,35 @@ describe('PlatformToolRuntime', () => {
       status: 'error',
       error: expect.stringContaining('server-local sandbox denied command'),
     });
+  });
+
+  it('server-local 流式只读 rg 也按 argv 直执，不触发 shell 启动脚本', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-shell-direct-stream-'));
+    const marker = join(root, 'shell-started');
+    try {
+      const rgPath = join(root, 'rg');
+      const bashEnv = join(root, 'bash-env.sh');
+      await writeFile(rgPath, '#!/bin/sh\nprintf "direct rg\\n"\n', 'utf8');
+      await chmod(rgPath, 0o755);
+      await writeFile(bashEnv, `/usr/bin/touch ${JSON.stringify(marker)}\n`, 'utf8');
+      const provider = new ServerLocalExecutionProvider({
+        envBuilder: () => ({ PATH: root }),
+      });
+      const chunks: ToolInvocationStreamChunk[] = [];
+      for await (const chunk of provider.executeStream({
+        toolName: 'Shell',
+        input: { command: 'rg --no-config -n needle .' },
+        context: {
+          workspace: workspace(root),
+          env: { BASH_ENV: bashEnv },
+        },
+      })) chunks.push(chunk);
+
+      expect(chunks.at(-1)).toMatchObject({ type: 'completed', response: { status: 'success' } });
+      await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   // P5 升级（2026-06-22）：findDeniedPathMention 加路径变形 bypass 覆盖。

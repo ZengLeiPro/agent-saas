@@ -23,6 +23,7 @@ export interface LocalShellExecutionOptions {
   onChunk?: (chunk: ToolInvocationStreamChunk) => void | Promise<void>;
   invocationId?: string;
   runtimeEnv?: Record<string, string>;
+  directArgv?: string[];
   envBuilder?: (workspace: WorkspaceRef) => Record<string, string>;
   findDeniedPathMention: (workspace: WorkspaceRef, command: string) => string | undefined;
 }
@@ -43,18 +44,25 @@ export async function runLocalShellStreaming(options: LocalShellExecutionOptions
     // envBuilder 未注入时（旧测试 / 内部直调 ServerLocalExecutionProvider）保持 process.env
     // 旧行为，避免破坏向后兼容；生产路径通过 createDefaultExecutionTransportRegistry({ envBuilder })
     // 在 app/runtime.ts 装配时强制注入。
+    const baseEnv = options.envBuilder
+      ? options.envBuilder(workspace)
+      : (process.env as Record<string, string>);
     const childEnv = {
-      ...(options.envBuilder
-        ? options.envBuilder(workspace)
-        : (process.env as Record<string, string>)),
+      ...baseEnv,
       ...(runtimeEnv ?? {}),
+      ...(options.directArgv ? { PATH: baseEnv.PATH ?? '/usr/local/bin:/usr/bin:/bin' } : {}),
     };
-    const child = spawn(command, {
+    const spawnOptions = {
       cwd: workspace.root,
       env: childEnv,
-      shell: process.platform === 'win32' || !existsSync('/bin/bash') ? true : '/bin/bash',
       detached: process.platform !== 'win32',
-    });
+    };
+    const child = options.directArgv
+      ? spawn(options.directArgv[0]!, options.directArgv.slice(1), spawnOptions)
+      : spawn(command, {
+          ...spawnOptions,
+          shell: process.platform === 'win32' || !existsSync('/bin/bash') ? true : '/bin/bash',
+        });
     // P0（2026-08-29）：输出管理对标 ref/pi OutputAccumulator。
     // 内存只留头窗口 + 滚动尾窗；超过窗口后全量字节流式落盘（不终止命令），
     // 仅超过磁盘配额才终止。行数/字节数由累加器增量统计，不能靠截断后文本回头数。

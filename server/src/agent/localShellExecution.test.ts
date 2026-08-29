@@ -75,6 +75,31 @@ describe('runLocalShellStreaming', () => {
     }
   });
 
+  it('directArgv 不经过 shell 解析', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'local-shell-direct-'));
+    roots.push(root);
+    const workspace: WorkspaceRef = {
+      root,
+      userId: 'user-1',
+      sessionId: 'session-1',
+      executionTarget: 'server-local',
+    };
+
+    const response = await runLocalShellStreaming({
+      workspace,
+      command: 'touch should-not-exist',
+      directArgv: [process.execPath, '-e', 'process.stdout.write(process.argv[1])', '$(touch should-not-exist)'],
+      invocationId: 'direct-argv',
+      findDeniedPathMention: () => undefined,
+    });
+
+    expect(response.status).toBe('success');
+    if (response.status === 'success') {
+      expect(response.content).toContain('$(touch should-not-exist)');
+    }
+    await expect(stat(join(root, 'should-not-exist'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('实时输出的 UTF-8 字符跨 data chunk 时不产生替换符', async () => {
     const root = await mkdtemp(join(tmpdir(), 'local-shell-utf8-'));
     roots.push(root);

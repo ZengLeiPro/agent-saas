@@ -3,8 +3,9 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 
 import type { ArtifactKind } from '../runtime/artifactStore.js';
-import { openTrustedFile, openTrustedFileForUpdate } from '../security/trustedFile.js';
+import { atomicWriteTrustedFile, openTrustedFile } from '../security/trustedFile.js';
 import { applyWorkspaceEdits, type EditOperation } from './editOperations.js';
+import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type { ToolDescriptor, ToolResult, WorkspaceRef } from './toolRuntime.js';
 
@@ -174,7 +175,7 @@ export const editToolDescriptor: ToolDescriptor<EditInput> = {
   name: 'Edit',
   displayName: 'Edit',
   description: loadToolDescription('Edit'),
-  descriptionInvariants: ['批量', 'CRLF/LF', '10000', 'unified diff', '1MB'],
+  descriptionInvariants: ['批量', 'CRLF/LF', '10000', '原子 rename', 'unified diff', '1MB'],
   schema: editInputSchema,
   prepareInput: prepareEditInput,
   risk: 'workspace_write',
@@ -237,54 +238,52 @@ export async function runWorkspaceEdit(
   assertNotDenied(relPath, EDIT_DENY_PATTERNS, (path) =>
     `Edit: path "${path}" is in the deny list (sensitive config / credentials). Ask the admin via console if a change is genuinely required.`);
 
-  let opened: Awaited<ReturnType<typeof openTrustedFileForUpdate>>;
-  try {
-    opened = await openTrustedFileForUpdate(workspace.root, relPath);
-  } catch (err) {
-    throw new Error(`Edit: cannot open ${relPath} (${err instanceof Error ? err.message : String(err)})`);
-  }
-  try {
-    if (opened.stats.size > MAX_EDIT_FILE_BYTES) {
-      throw new Error(`Edit: file too large (${opened.stats.size}B > ${MAX_EDIT_FILE_BYTES}B); use Write to rewrite.`);
-    }
-    let content: string;
+  return await withWorkspaceFileMutationQueue(workspace.root, relPath, async () => {
+    let opened: Awaited<ReturnType<typeof openTrustedFile>>;
     try {
-      content = await opened.handle.readFile('utf-8');
+      opened = await openTrustedFile(workspace.root, relPath);
     } catch (err) {
-      throw new Error(`Edit: cannot read ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+      throw new Error(`Edit: cannot open ${relPath} (${err instanceof Error ? err.message : String(err)})`);
     }
-    const applied = applyWorkspaceEdits(content, collectEditOperations(input), relPath);
-    const updatedBytes = Buffer.from(applied.updatedContent, 'utf8');
-    let written = 0;
-    while (written < updatedBytes.length) {
-      const result = await opened.handle.write(updatedBytes, written, updatedBytes.length - written, written);
-      if (result.bytesWritten <= 0) throw new Error(`Edit: short write while updating ${relPath}.`);
-      written += result.bytesWritten;
+    try {
+      if (opened.stats.size > MAX_EDIT_FILE_BYTES) {
+        throw new Error(`Edit: file too large (${opened.stats.size}B > ${MAX_EDIT_FILE_BYTES}B); use Write to rewrite.`);
+      }
+      let content: string;
+      try {
+        content = await opened.handle.readFile('utf-8');
+      } catch (err) {
+        throw new Error(`Edit: cannot read ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+      }
+      const applied = applyWorkspaceEdits(content, collectEditOperations(input), relPath);
+      const updatedBytes = Buffer.from(applied.updatedContent, 'utf8');
+      await atomicWriteTrustedFile(workspace.root, relPath, updatedBytes, {
+        expectedFile: opened.stats,
+        expectedContent: Buffer.from(content, 'utf8'),
+      });
+      const bytesBefore = Buffer.byteLength(content, 'utf8');
+      const bytesAfter = updatedBytes.length;
+      return {
+        content: `Edited ${relPath} (${applied.replacements} replacement${applied.replacements === 1 ? '' : 's'} across ${applied.editCount} edit${applied.editCount === 1 ? '' : 's'}, ${bytesAfter} bytes).`,
+        metadata: {
+          path: relPath,
+          replacements: applied.replacements,
+          occurrences: applied.occurrences,
+          editCount: applied.editCount,
+          fuzzyMatches: applied.fuzzyMatches,
+          bomPreserved: applied.bomPreserved,
+          lineEnding: applied.lineEnding === '\r\n' ? 'CRLF' : 'LF',
+          bytesBefore,
+          bytesAfter,
+          diff: applied.diff,
+          diffTruncated: applied.diffTruncated,
+          firstChangedLine: applied.firstChangedLine,
+        },
+      };
+    } finally {
+      await opened.handle.close();
     }
-    await opened.handle.truncate(updatedBytes.length);
-    await opened.handle.sync();
-    const bytesBefore = Buffer.byteLength(content, 'utf8');
-    const bytesAfter = updatedBytes.length;
-    return {
-      content: `Edited ${relPath} (${applied.replacements} replacement${applied.replacements === 1 ? '' : 's'} across ${applied.editCount} edit${applied.editCount === 1 ? '' : 's'}, ${bytesAfter} bytes).`,
-      metadata: {
-        path: relPath,
-        replacements: applied.replacements,
-        occurrences: applied.occurrences,
-        editCount: applied.editCount,
-        fuzzyMatches: applied.fuzzyMatches,
-        bomPreserved: applied.bomPreserved,
-        lineEnding: applied.lineEnding === '\r\n' ? 'CRLF' : 'LF',
-        bytesBefore,
-        bytesAfter,
-        diff: applied.diff,
-        diffTruncated: applied.diffTruncated,
-        firstChangedLine: applied.firstChangedLine,
-      },
-    };
-  } finally {
-    await opened.handle.close();
-  }
+  });
 }
 
 export async function createWorkspaceArtifactPayload(

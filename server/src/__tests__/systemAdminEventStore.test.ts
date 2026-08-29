@@ -117,9 +117,37 @@ describe('GET /api/admin/system/event-store', () => {
     expect(body.capacity).toMatchObject({
       available: true, tableName: 'runtime_events', totalBytes: 140, tableBytes: 100, indexBytes: 40,
     });
-    expect(body.capacity.series).toHaveLength(1);
+    expect(body.capacity.series).toEqual([expect.objectContaining({
+      totalBytes: 140,
+      tableBytes: 100,
+      indexBytes: 40,
+    })]);
     expect(store.listMetricSeries).toHaveBeenCalledWith('pg_table_size', 'runtime_events', 48);
     expect(JSON.stringify(body)).not.toContain('authorizationRef');
+  });
+
+  it.each([
+    ['旧格式', { table: 'runtime_events' }],
+    ['负数', { tableBytes: 100, indexBytes: -1, totalBytes: 99 }],
+  ])('treats a fresh %s capacity sample as unavailable', async (_name, detailJson) => {
+    const capacity = metric({ detailJson });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? capacity : null),
+      listMetricSeries: vi.fn(async () => [capacity]),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      capacity: {
+        available: false,
+        totalBytes: null,
+        tableBytes: null,
+        indexBytes: null,
+        sampledAt: null,
+        series: [],
+      },
+    });
   });
 
   it('returns never-run rather than healthy when the store has no retention snapshot', async () => {

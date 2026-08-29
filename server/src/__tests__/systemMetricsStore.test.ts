@@ -97,12 +97,24 @@ describe('PgSystemMetricsStore', () => {
     await expect(store.countWorkspaceUsage()).resolves.toBe(7);
   });
 
-  it('serializes status writes and keeps lastSuccessAt monotonic across processes', async () => {
+  it('creates an index for bounded retention status authority reads', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.init();
+
+    const index = pool.queries.find((query) => query.text.includes('_retention_status_id_idx'));
+    expect(index?.text).toContain(`ON ${store.systemMetricsTable} (id DESC)`);
+    expect(index?.text).toContain("WHERE metric = 'runtime_event_retention' AND label = 'status'");
+  });
+
+  it('updates one indexed status row and keeps lastSuccessAt monotonic without JSON history sorting', async () => {
     const pool = createFakePool();
     (pool as any).connect = async () => ({
       async query(text: string, values: unknown[] = []) {
         pool.queries.push({ text, values });
-        if (text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
+        if (text.includes('SELECT id, metric, label')
+          && text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
           return {
             rows: [{
               id: 1,
@@ -136,15 +148,19 @@ describe('PgSystemMetricsStore', () => {
       categories: {},
     });
 
-    const insert = pool.queries.find((query) => query.text.includes("VALUES ('runtime_event_retention', 'status'"));
-    expect(JSON.parse(String(insert?.values[1]))).toMatchObject({
+    const authorityRead = pool.queries.find((query) => query.text.includes('FOR UPDATE'));
+    const update = pool.queries.find((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`));
+    const compact = pool.queries.find((query) => query.text.includes(`DELETE FROM ${store.systemMetricsTable}`));
+    expect(authorityRead?.text).toContain('ORDER BY id DESC');
+    expect(authorityRead?.text).not.toContain("detail_json->>'lastSuccessAt'");
+    expect(JSON.parse(String(update?.values[1]))).toMatchObject({
       state: 'failed',
       lastSuccessAt: '2026-08-29T12:00:00.000Z',
       errorCategory: 'execution_failed',
     });
+    expect(update?.text).toContain('sampled_at = clock_timestamp()');
+    expect(compact?.text).toContain("label = 'status' AND id <> $1");
     expect(pool.queries.some((query) => query.text.includes('pg_advisory_xact_lock'))).toBe(true);
-    expect(pool.queries.some((query) => query.text.includes("ORDER BY detail_json->>'lastSuccessAt' DESC, id DESC"))).toBe(true);
-    expect(insert?.text).toContain("$2::jsonb, now()");
   });
 
   it('preserves the latest retention status while pruning ordinary expired series', async () => {
@@ -156,7 +172,7 @@ describe('PgSystemMetricsStore', () => {
     const query = pool.queries.find((item) => item.text.includes(`DELETE FROM ${store.systemMetricsTable}`));
     expect(query?.text).toContain("expired.metric = 'runtime_event_retention'");
     expect(query?.text).toContain('SELECT latest.id');
-    expect(query?.text).toContain('ORDER BY latest.sampled_at DESC, latest.id DESC');
+    expect(query?.text).toContain('ORDER BY latest.id DESC');
     expect(query?.values).toEqual([90]);
   });
 

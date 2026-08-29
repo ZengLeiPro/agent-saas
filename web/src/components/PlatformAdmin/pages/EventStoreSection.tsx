@@ -32,10 +32,18 @@ function normalizedStatus(data: EventStoreStatusResponse): EventStoreRetentionSt
     : "unavailable";
 }
 
+function hasCompleteCapacity(data: EventStoreStatusResponse): boolean {
+  const { capacity } = data;
+  const values = [capacity.totalBytes, capacity.tableBytes, capacity.indexBytes];
+  if (!capacity.available || !capacity.sampledAt) return false;
+  if (values.some((value) => value === null || !Number.isFinite(value) || value < 0)) return false;
+  return capacity.totalBytes! >= capacity.tableBytes! + capacity.indexBytes!;
+}
+
 function statusTone(data: EventStoreStatusResponse, refreshFailed: boolean): MetricTone {
   const status = normalizedStatus(data);
   if (status === "blocked" || status === "failed") return "bad";
-  if (!data.available || status === "unavailable" || !data.capacity.available) return "default";
+  if (!data.available || status === "unavailable" || !hasCompleteCapacity(data)) return "default";
   if (
     refreshFailed || !data.retention.enabled || data.retention.stale || data.capacity.stale
     || status === "stale" || status === "running" || status === "never_run"
@@ -54,7 +62,7 @@ function healthText(data: EventStoreStatusResponse, refreshFailed: boolean): str
   const status = normalizedStatus(data);
   if (status === "blocked") return "已阻断";
   if (status === "failed") return "失败";
-  if (!data.available || status === "unavailable" || !data.capacity.available) return "不可用";
+  if (!data.available || status === "unavailable" || !hasCompleteCapacity(data)) return "不可用";
   if (!data.retention.enabled) return "未启用";
   if (refreshFailed || data.retention.stale || data.capacity.stale || status === "stale") return "已过期";
   if (status === "running" || status === "never_run") return "需关注";
@@ -82,6 +90,7 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
   const tone = statusTone(data, refreshFailed);
   const status = normalizedStatus(data);
   const retentionStale = data.retention.stale || data.retention.status === "stale";
+  const capacityAvailable = hasCompleteCapacity(data);
   const capacityStale = data.capacity.stale;
   const categories = Object.entries(data.retention.categories);
   const samples = [...data.capacity.series]
@@ -153,7 +162,7 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
           <h3 className="text-xs font-medium text-muted-foreground">runtime_events 容量</h3>
           <span className="max-w-full break-all font-mono text-xs text-muted-foreground">{data.capacity.tableName ?? "表名不可用"}</span>
         </div>
-        {!data.capacity.available ? (
+        {!capacityAvailable ? (
           <EmptyState icon={Database} title="容量不可用" description="容量字段显示为「—」，不代表 0 B。" compact />
         ) : (
           <>

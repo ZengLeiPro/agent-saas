@@ -81,6 +81,7 @@ describe("EventStoreSection", () => {
     render(<EventStoreSection data={data} />);
     expect(screen.queryByText("健康")).toBeNull();
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
+    expect(screen.getByText("容量不可用")).toBeTruthy();
   });
 
   it("容量过期时总体健康降级为已过期", () => {
@@ -106,7 +107,7 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
-  it("null 数值显示破折号而不是 0", () => {
+  it("旧格式新鲜容量样本含 null 时显示不可用，绝不显示绿色健康或 0", () => {
     const data = fixture();
     data.retention.durationMs = null;
     data.retention.watermarks.billing = null;
@@ -118,7 +119,9 @@ describe("EventStoreSection", () => {
     data.capacity.totalBytes = null;
     data.capacity.series = [];
     render(<EventStoreSection data={data} />);
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(7);
+    expect(screen.queryByText("健康")).toBeNull();
+    expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
     expect(screen.queryByText("0 B")).toBeNull();
     expect(screen.queryByText(/^0$/)).toBeNull();
   });

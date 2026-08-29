@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pg from 'pg';
 
-import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
+import {
+  RuntimeEventRetention,
+  type RuntimeEventRetentionStatusSnapshot,
+} from '../runtime/runtimeEventRetention.js';
 import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 
 const { Pool } = pg;
@@ -125,37 +128,65 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     expect(await countAssistantStreamEvents()).toBe(0);
   });
 
-  it('单调合并并发 lastSuccessAt，并在普通序列裁剪后保留最后状态供重启继承', async () => {
+  it('按实际获锁顺序发布权威状态，并在裁剪和重启后保持 lastSuccessAt 单调', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
-    const newerSuccess = {
-      schemaVersion: 1 as const,
-      state: 'execute_succeeded' as const,
-      mode: 'execute' as const,
-      lastStartedAt: '2026-08-29T12:00:00.000Z',
-      lastCompletedAt: '2026-08-29T12:00:01.000Z',
-      lastSuccessAt: '2026-08-29T12:00:01.000Z',
-      durationMs: 1000,
-      errorCategory: null,
-      nextScheduledAt: null,
-      watermarks: { legal: '100', billing: '100', effectiveDeleteThrough: '100' },
-      maxGlobalSequence: '100',
-      categories: {},
-    };
-    const olderFailure = {
-      ...newerSuccess,
-      state: 'failed' as const,
+    const newerSuccess = statusSnapshot();
+    const olderFailure = statusSnapshot({
+      state: 'failed',
       lastStartedAt: '2026-08-29T11:00:00.000Z',
       lastCompletedAt: '2026-08-29T11:00:01.000Z',
       lastSuccessAt: '2026-08-29T11:00:01.000Z',
       errorCategory: 'execution_failed',
+    });
+    let announceLockWait!: () => void;
+    let resumeLock!: () => void;
+    const lockWaitStarted = new Promise<void>((resolve) => { announceLockWait = resolve; });
+    const lockCanContinue = new Promise<void>((resolve) => { resumeLock = resolve; });
+    const delayedPool = {
+      async connect() {
+        const client = await pool.connect();
+        const query = client.query.bind(client) as unknown as (
+          text: string,
+          values?: unknown[],
+        ) => Promise<unknown>;
+        return {
+          async query(text: string, values: unknown[] = []) {
+            if (text.includes('pg_advisory_xact_lock')) {
+              announceLockWait();
+              await lockCanContinue;
+            }
+            return query(text, values);
+          },
+          release: () => client.release(),
+        };
+      },
     };
-    const secondProcessStore = new PgSystemMetricsStore({ pool, tablePrefix: prefix });
+    const delayedStore = new PgSystemMetricsStore({
+      pool: delayedPool as unknown as InstanceType<typeof Pool>,
+      tablePrefix: prefix,
+    });
+    const delayedWrite = delayedStore.recordRuntimeEventRetentionStatus(newerSuccess);
+    await lockWaitStarted;
+    try {
+      await metricsStore.recordRuntimeEventRetentionStatus(olderFailure);
+      expect(await latestDetail()).toMatchObject({
+        state: 'failed',
+        lastSuccessAt: olderFailure.lastSuccessAt,
+      });
+    } finally {
+      resumeLock();
+    }
+    await delayedWrite;
 
-    await Promise.all([
-      metricsStore.recordRuntimeEventRetentionStatus(newerSuccess),
-      secondProcessStore.recordRuntimeEventRetentionStatus(olderFailure),
-    ]);
-    expect(await latestDetail()).toMatchObject({ lastSuccessAt: newerSuccess.lastSuccessAt });
+    expect(await latestDetail()).toMatchObject({
+      state: 'execute_succeeded',
+      lastSuccessAt: newerSuccess.lastSuccessAt,
+    });
+    const singleton = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM ${metricsStore.systemMetricsTable}
+       WHERE metric = 'runtime_event_retention' AND label = 'status'`,
+    );
+    expect(singleton.rows[0]?.count).toBe('1');
 
     await metricsStore.insertMetric({ metric: 'disk_root', valueNum: 1, sampledAt: new Date('2000-01-01T00:00:00.000Z') });
     await pool.query(`UPDATE ${metricsStore.systemMetricsTable} SET sampled_at = '2000-01-01T00:00:00.000Z'`);
@@ -169,6 +200,61 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
       lastSuccessAt: newerSuccess.lastSuccessAt,
     });
   });
+
+  it('从长历史按索引权威行合并并收敛为单例，不执行 JSON 历史排序', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    await pool.query(`
+      INSERT INTO ${metricsStore.systemMetricsTable}
+        (metric, label, value_num, detail_json, sampled_at)
+      SELECT 'runtime_event_retention', 'status', 0,
+             jsonb_build_object(
+               'lastSuccessAt', CASE WHEN sequence = 128
+                 THEN '2026-08-29T12:00:01.000Z'
+                 ELSE '2026-08-29T11:00:01.000Z'
+               END
+             ),
+             timestamptz '2026-08-29T12:00:00.000Z' - (sequence * interval '1 minute')
+      FROM generate_series(1, 128) AS history(sequence)
+      ORDER BY sequence
+    `);
+    expect(await latestDetail()).toMatchObject({ lastSuccessAt: '2026-08-29T12:00:01.000Z' });
+
+    await metricsStore.recordRuntimeEventRetentionStatus(statusSnapshot({
+      state: 'failed',
+      lastSuccessAt: '2026-08-29T11:00:01.000Z',
+      errorCategory: 'execution_failed',
+    }));
+
+    const remaining = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM ${metricsStore.systemMetricsTable}
+       WHERE metric = 'runtime_event_retention' AND label = 'status'`,
+    );
+    expect(remaining.rows[0]?.count).toBe('1');
+    expect(await latestDetail()).toMatchObject({
+      state: 'failed',
+      lastSuccessAt: '2026-08-29T12:00:01.000Z',
+    });
+  });
+
+  function statusSnapshot(
+    overrides: Partial<RuntimeEventRetentionStatusSnapshot> = {},
+  ): RuntimeEventRetentionStatusSnapshot {
+    return {
+      schemaVersion: 1,
+      state: 'execute_succeeded',
+      mode: 'execute',
+      lastStartedAt: '2026-08-29T12:00:00.000Z',
+      lastCompletedAt: '2026-08-29T12:00:01.000Z',
+      lastSuccessAt: '2026-08-29T12:00:01.000Z',
+      durationMs: 1000,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal: '100', billing: '100', effectiveDeleteThrough: '100' },
+      maxGlobalSequence: '100',
+      categories: {},
+      ...overrides,
+    };
+  }
 
   function createRetention(
     retentionPool: InstanceType<typeof Pool>,

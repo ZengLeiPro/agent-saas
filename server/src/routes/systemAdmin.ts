@@ -432,23 +432,33 @@ function serializeCapacity(
   now: Date,
 ) {
   if (!tableName || !latest) return unavailableCapacity(tableName);
-  const detail = latest.detailJson;
+  const capacity = capacityValues(latest);
+  if (!capacity) return unavailableCapacity(tableName);
   const sampledMs = Date.parse(latest.sampledAt);
   return {
     available: true,
     tableName,
-    totalBytes: nullableNumber(detail?.totalBytes) ?? latest.valueNum,
-    tableBytes: nullableNumber(detail?.tableBytes),
-    indexBytes: nullableNumber(detail?.indexBytes),
+    ...capacity,
     sampledAt: latest.sampledAt,
     stale: !Number.isFinite(sampledMs) || now.getTime() - sampledMs > 30 * 60_000,
-    series: series.map((metric) => ({
-      sampledAt: metric.sampledAt,
-      totalBytes: nullableNumber(metric.detailJson?.totalBytes) ?? metric.valueNum,
-      tableBytes: nullableNumber(metric.detailJson?.tableBytes),
-      indexBytes: nullableNumber(metric.detailJson?.indexBytes),
-    })).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
+    series: series.flatMap((metric) => {
+      const values = capacityValues(metric);
+      return values ? [{ sampledAt: metric.sampledAt, ...values }] : [];
+    }).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
   };
+}
+
+function capacityValues(metric: SystemMetricRecord): {
+  totalBytes: number;
+  tableBytes: number;
+  indexBytes: number;
+} | null {
+  const totalBytes = nonnegativeNumber(metric.detailJson?.totalBytes);
+  const tableBytes = nonnegativeNumber(metric.detailJson?.tableBytes);
+  const indexBytes = nonnegativeNumber(metric.detailJson?.indexBytes);
+  if (totalBytes === null || tableBytes === null || indexBytes === null) return null;
+  if (totalBytes < tableBytes + indexBytes) return null;
+  return { totalBytes, tableBytes, indexBytes };
 }
 
 function serializeCategories(value: unknown): Record<string, { eligible: number | null; deleted: number | null }> {
@@ -478,6 +488,11 @@ function nullableString(value: unknown): string | null {
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function nonnegativeNumber(value: unknown): number | null {
+  const number = nullableNumber(value);
+  return number !== null && number >= 0 ? number : null;
 }
 
 function invalidQuery(res: Response, error: z.ZodError): void {

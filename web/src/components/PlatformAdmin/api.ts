@@ -28,6 +28,28 @@ type QueryValue = string | number | boolean | null | undefined;
 
 const nullableNumberSchema = z.number().nullable();
 const nullableStringSchema = z.string().nullable();
+const eventStoreCapacityPointSchema = z.object({
+  totalBytes: nullableNumberSchema,
+  tableBytes: nullableNumberSchema,
+  indexBytes: nullableNumberSchema,
+  sampledAt: z.string(),
+});
+const eventStoreCapacitySchema = z.object({
+  available: z.boolean(),
+  tableName: nullableStringSchema,
+  totalBytes: nullableNumberSchema,
+  tableBytes: nullableNumberSchema,
+  indexBytes: nullableNumberSchema,
+  sampledAt: nullableStringSchema,
+  stale: z.boolean(),
+  series: z.array(eventStoreCapacityPointSchema),
+}).refine(
+  (capacity) => !capacity.available || (
+    capacity.sampledAt !== null && hasCompleteCapacityValues(capacity)
+    && capacity.series.every(hasCompleteCapacityValues)
+  ),
+  { message: "可用的 EventStore 容量必须包含完整的非负 table/index/total 字段" },
+);
 const eventStoreStatusSchema = z.object({
   schemaVersion: z.literal(1),
   available: z.boolean(),
@@ -52,22 +74,18 @@ const eventStoreStatusSchema = z.object({
     }),
     categories: z.record(z.string(), z.object({ eligible: nullableNumberSchema, deleted: nullableNumberSchema })),
   }),
-  capacity: z.object({
-    available: z.boolean(),
-    tableName: nullableStringSchema,
-    totalBytes: nullableNumberSchema,
-    tableBytes: nullableNumberSchema,
-    indexBytes: nullableNumberSchema,
-    sampledAt: nullableStringSchema,
-    stale: z.boolean(),
-    series: z.array(z.object({
-      totalBytes: nullableNumberSchema,
-      tableBytes: nullableNumberSchema,
-      indexBytes: nullableNumberSchema,
-      sampledAt: z.string(),
-    })),
-  }),
+  capacity: eventStoreCapacitySchema,
 });
+
+function hasCompleteCapacityValues(capacity: {
+  totalBytes: number | null;
+  tableBytes: number | null;
+  indexBytes: number | null;
+}): boolean {
+  const values = [capacity.totalBytes, capacity.tableBytes, capacity.indexBytes];
+  return values.every((value) => value !== null && Number.isFinite(value) && value >= 0)
+    && capacity.totalBytes! >= capacity.tableBytes! + capacity.indexBytes!;
+}
 
 export function buildAdminApiPath(path: string, query: Record<string, QueryValue> = {}): string {
   const params = new URLSearchParams();

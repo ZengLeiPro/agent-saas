@@ -99,6 +99,11 @@ export class PgSystemMetricsStore {
         ON ${this.systemMetricsTable} (metric, label, sampled_at DESC)
       `);
       await client.query(`
+        CREATE INDEX IF NOT EXISTS ${this.systemMetricsTable}_retention_status_id_idx
+        ON ${this.systemMetricsTable} (id DESC)
+        WHERE metric = 'runtime_event_retention' AND label = 'status'
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ${this.workspaceUsageTable} (
           path TEXT PRIMARY KEY,
           tenant_id TEXT NOT NULL,
@@ -155,7 +160,7 @@ export class PgSystemMetricsStore {
              SELECT latest.id
              FROM ${this.systemMetricsTable} AS latest
              WHERE latest.metric = 'runtime_event_retention' AND latest.label = 'status'
-             ORDER BY latest.sampled_at DESC, latest.id DESC
+             ORDER BY latest.id DESC
              LIMIT 1
            )
          )`,
@@ -198,11 +203,14 @@ export class PgSystemMetricsStore {
   }
 
   async getLatestMetric(metric: SystemMetricName | string, label = ''): Promise<SystemMetricRecord | null> {
+    const orderBy = metric === 'runtime_event_retention' && label === 'status'
+      ? 'id DESC'
+      : 'sampled_at DESC, id DESC';
     const result = await this.pool.query<MetricRow>(
       `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
        FROM ${this.systemMetricsTable}
        WHERE metric = $1 AND label = $2
-       ORDER BY sampled_at DESC, id DESC
+       ORDER BY ${orderBy}
        LIMIT 1`,
       [metric, label],
     );
@@ -218,17 +226,33 @@ export class PgSystemMetricsStore {
         `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
          FROM ${this.systemMetricsTable}
          WHERE metric = 'runtime_event_retention' AND label = 'status'
-           AND detail_json->>'lastSuccessAt' IS NOT NULL
-         ORDER BY detail_json->>'lastSuccessAt' DESC, id DESC
-         LIMIT 1`,
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
       );
-      const persisted = previous.rows[0]?.detail_json?.lastSuccessAt;
+      const current = previous.rows[0];
+      const persisted = current?.detail_json?.lastSuccessAt;
       const lastSuccessAt = laterTimestamp(snapshot.lastSuccessAt, typeof persisted === 'string' ? persisted : null);
-      await client.query(
-        `INSERT INTO ${this.systemMetricsTable} (metric, label, value_num, detail_json, sampled_at)
-         VALUES ('runtime_event_retention', 'status', $1, $2::jsonb, now())`,
-        [snapshot.durationMs ?? 0, JSON.stringify({ ...snapshot, lastSuccessAt })],
-      );
+      const values = [snapshot.durationMs ?? 0, JSON.stringify({ ...snapshot, lastSuccessAt })];
+      if (current) {
+        await client.query(
+          `UPDATE ${this.systemMetricsTable}
+           SET value_num = $1, detail_json = $2::jsonb, sampled_at = clock_timestamp()
+           WHERE id = $3`,
+          [...values, current.id],
+        );
+        await client.query(
+          `DELETE FROM ${this.systemMetricsTable}
+           WHERE metric = 'runtime_event_retention' AND label = 'status' AND id <> $1`,
+          [current.id],
+        );
+      } else {
+        await client.query(
+          `INSERT INTO ${this.systemMetricsTable} (metric, label, value_num, detail_json, sampled_at)
+           VALUES ('runtime_event_retention', 'status', $1, $2::jsonb, clock_timestamp())`,
+          values,
+        );
+      }
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK').catch(() => undefined);

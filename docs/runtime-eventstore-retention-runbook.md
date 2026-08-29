@@ -100,13 +100,13 @@ pnpm -C server maintenance:runtime-events -- \
 
 平台管理员可只读调用 `GET /api/admin/system/event-store?hours=24`（`hours` 范围 1–720，默认 24）。接口只读取既有 `system_metrics`，不会触发 retention、DELETE、billing projection、索引操作或扫描 `runtime_events`。响应固定为 `schemaVersion: 1`、`available`、`generatedAt`、`retention`、`capacity`。
 
-- retention 快照追加写入 `metric=runtime_event_retention,label=status`。worker 在启动配置门禁、每轮开始、成功、门禁阻断和失败时更新；execute 缺少授权或正数 legal watermark 时应用保持 fail-closed，并在真实启动路径写入脱敏 `blocked`，不会触发 EventStore 查询或删除。重复调用正在执行的 worker 不会覆盖 `running`。有 Store 但尚无快照时，接口派生 `never_run`，未知的下一轮时间保持 `null`。状态包括 `never_run/running/dry_run_succeeded/execute_succeeded/blocked/failed`，接口还会派生 `stale/unavailable`。
+- retention 使用 `metric=runtime_event_retention,label=status` 的权威单例状态。worker 在启动配置门禁、每轮开始、成功、门禁阻断和失败时更新同一落点；execute 缺少授权或正数 legal watermark 时应用保持 fail-closed，并在真实启动路径写入脱敏 `blocked`，不会触发 EventStore 查询或删除。重复调用正在执行的 worker 不会覆盖 `running`。有 Store 但尚无快照时，接口派生 `never_run`，未知的下一轮时间保持 `null`。状态包括 `never_run/running/dry_run_succeeded/execute_succeeded/blocked/failed`，接口还会派生 `stale/unavailable`。
 - 快照字段包括 mode、最近开始/完成/成功时间、duration、nextScheduledAt、legal/billing/effective watermarks、max global sequence，以及每类别 eligible/deleted；同一类别前批已提交、后批失败时会保留累计 deleted，并据真实副作用标记 `partial_failure`。调度时间只来自 worker 快照，不按请求时间猜测。错误只保存稳定 `errorCategory`（例如 `authorization_missing`、`legal_watermark_invalid`、`partial_failure`、`execution_failed`）；不保存错误 message、authorizationRef、SQL 参数或事件内容。快照写入失败只记固定告警，不改变 retention 成败。
-- retention 过期阈值为 `max(2 × sweepInterval, 30 分钟)`；容量过期阈值为 30 分钟。有 Store 但无运行快照时显示 `never_run`，Store 缺失或快照契约不可识别时显示 `unavailable`；未知数值保持 `null`，不得解释成健康或 0。写入使用事务级 advisory lock，并与最新快照单调合并 `lastSuccessAt`；普通 metrics 裁剪会保留最后一条 retention 状态，因此蓝绿进程、停用或长期故障后不会回退成更旧成功时间或 `never_run`。
-- 容量继续复用 `metric=pg_table_size` 历史序列；每个 PG 表的 `valueNum=totalBytes`，`tableBytes` 使用 `pg_table_size`（含 heap、TOAST、FSM/VM，不含索引），`indexBytes` 使用 `pg_indexes_size`，`totalBytes` 使用 `pg_total_relation_size`。PostgreSQL `tablePrefix` 在配置层归一为小写，`capacity.series` 仅映射真实 events table 的既有采样。
-- 性能边界：一次接口请求只在 `system_metrics` 查询最新 retention、最新容量，并以 `metric='pg_table_size' AND label=<eventsTable> AND sampled_at>=...` 定向读取容量时间窗，使用既有 `(metric,label,sampled_at)` 索引；不会先加载同时间窗全部 metrics，也不做 runtime_events 的 COUNT/MAX、不启动采样或维护任务。
+- retention 过期阈值为 `max(2 × sweepInterval, 30 分钟)`；容量过期阈值为 30 分钟。有 Store 但无运行快照时显示 `never_run`，Store 缺失或快照契约不可识别时显示 `unavailable`；未知数值保持 `null`，不得解释成健康或 0。写入在事务级 advisory lock 内按受索引支撑的最大 `id` 读取权威行，单调合并 `lastSuccessAt`，以 `clock_timestamp()` 更新并清理旧重复行；它不依赖事务开始时间，也不按 JSON 字段排序历史。普通 metrics 裁剪同样按最大 `id` 保留该状态，因此蓝绿进程乱序获锁、停用或长期故障后不会回退成更旧成功时间或 `never_run`。
+- 容量继续复用 `metric=pg_table_size` 历史序列；每个 PG 表的 `valueNum=totalBytes`，`tableBytes` 使用 `pg_table_size`（含 heap、TOAST、FSM/VM，不含索引），`indexBytes` 使用 `pg_indexes_size`，`totalBytes` 使用 `pg_total_relation_size`。PostgreSQL `tablePrefix` 在配置层归一为小写，`capacity.series` 仅映射真实 events table 的既有采样。滚动发布期间遇到缺少任一三分量、负数或 total 小于 table+index 的旧/无效样本时，容量整体返回“不可用”，不得显示绿色健康。
+- 性能边界：状态写入只通过 `runtime_event_retention/status` 的 partial `id DESC` 索引读取并更新一个权威行，首次遇到旧重复行时在锁内收敛为单例，不做每轮全历史 JSON 扫描或排序。一次接口请求只在 `system_metrics` 查询最新 retention、最新容量，并以 `metric='pg_table_size' AND label=<eventsTable> AND sampled_at>=...` 定向读取容量时间窗，使用既有 `(metric,label,sampled_at)` 索引；不会先加载同时间窗全部 metrics，也不做 runtime_events 的 COUNT/MAX、不启动采样或维护任务。
 
-合并后至少观察两个 sweep 周期：确认 never-run 派生、启动门禁 blocked、running/成功状态按时追加、同类后批失败保留累计删除、恢复更新 lastSuccessAt、容量三分量和 total 对齐、stale 在采样恢复后解除；同时检查固定的状态落库告警、system_metrics 增长量、接口 P95 延迟和平台管理员 403 门禁。
+合并后至少观察两个 sweep 周期：确认 never-run 派生、启动门禁 blocked、running/成功状态按时更新、同类后批失败保留累计删除、乱序写入后 lastSuccessAt 单调、容量三分量和 total 对齐、旧样本不显示健康、stale 在采样恢复后解除；同时检查固定的状态落库告警、system_metrics 增长量、接口 P95 延迟和平台管理员 403 门禁。
 
 ## 8. 生产取证清单
 

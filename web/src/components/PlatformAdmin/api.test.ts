@@ -71,6 +71,7 @@ describe("platform admin api", () => {
     await expect(platformAdminApi.eventStoreStatus()).resolves.toMatchObject({
       schemaVersion: 1,
       retention: { status: "execute_succeeded" },
+      capacity: { available: false },
     });
   });
 
@@ -79,6 +80,15 @@ describe("platform admin api", () => {
     ["{bad-json", "坏 JSON"],
     [JSON.stringify({ schemaVersion: 1 }), "缺失字段"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "future_status" } }), "未知状态"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      capacity: {
+        ...eventStoreFixture().capacity,
+        available: true,
+        sampledAt: "2026-08-29T14:00:00.000Z",
+        totalBytes: 140,
+      },
+    }), "旧格式可用容量仍缺 table/index 字段"],
   ])("rejects 2xx %s rather than replacing trusted EventStore data (%s)", async (body) => {
     authFetchMock.mockResolvedValue(new Response(body, { status: 200 }));
 

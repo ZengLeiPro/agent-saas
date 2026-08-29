@@ -17,15 +17,19 @@ import {
   WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
   WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY,
 } from './workspaceHandTools.js';
-import { persistShellOutputFiles } from './shellOutputFiles.js';
+import { persistShellOutputFiles, shellOutputBaseName } from './shellOutputFiles.js';
+import { ShellChannelAccumulator } from './shellOutputAccumulator.js';
+import { createThrottledShellProgress, LimitedUtf8Decoder } from './shellProgressEmitter.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
   MAX_READ_LINES,
   MAX_READ_OUTPUT_BYTES,
-  MAX_SHELL_CAPTURE_BYTES,
-  MAX_SHELL_STREAM_BYTES,
+  MAX_SHELL_SPILL_BYTES,
+  SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS,
+  SHELL_PROGRESS_SNAPSHOT_MAX_CHARS,
   formatShellOutput,
+  type ShellOutputFileRef,
 } from './toolOutput.js';
 import type {
   ToolInvocationRequest,
@@ -181,25 +185,33 @@ export class ContainerExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
+          const spillBaseName = shellOutputBaseName(context.invocationId);
           const result = await this.runDocker(workspace, ['/bin/sh', '-lc', args.command], {
             operation: 'runShell',
             timeoutMs: args.timeoutMs ?? this.shellTimeoutMs,
-            stdoutLimit: MAX_SHELL_CAPTURE_BYTES,
-            stderrLimit: MAX_SHELL_CAPTURE_BYTES,
+            stdoutLimit: MAX_SHELL_SPILL_BYTES,
+            stderrLimit: MAX_SHELL_SPILL_BYTES,
             signal,
             allowNonZeroExit: true,
             returnOutputOnError: true,
             runtimeEnv: context.env,
+            capture: {
+              stdout: new ShellChannelAccumulator('stdout', workspace.root, spillBaseName),
+              stderr: new ShellChannelAccumulator('stderr', workspace.root, spillBaseName),
+            },
           }, audit);
-          const { outputFiles, outputFileError } = await this.persistShellOutput(
+          const { outputFiles, outputFileError } = await this.mergeShellOutput(
             workspace,
             context.invocationId,
-            result.stdout,
-            result.stderr,
-            Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+            spillBaseName,
+            result,
           );
           const content = formatShellOutput({
             ...result,
+            stdoutLines: result.stdoutLines,
+            stderrLines: result.stderrLines,
+            outputWindowTruncated: result.outputWindowTruncated,
+            outputQuotaTerminated: result.outputQuotaTerminated,
             outputFiles,
             ...(outputFileError ? { outputFileError } : {}),
           });
@@ -212,6 +224,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             ...(result.timedOut ? { timedOut: true } : {}),
             ...(result.aborted ? { aborted: true } : {}),
             ...(result.outputExceeded ? { outputExceeded: true } : {}),
+            ...(result.outputWindowTruncated ? { outputWindowTruncated: true } : {}),
+            ...(result.outputQuotaTerminated ? { outputQuotaTerminated: true } : {}),
             ...(outputFiles.length > 0 ? { outputFiles } : {}),
             ...(outputFileError ? { outputFileError } : {}),
           };
@@ -290,26 +304,61 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     let done = false;
     let notify: (() => void) | undefined;
     const wake = () => { notify?.(); notify = undefined; };
+    const push = (chunk: ToolInvocationStreamChunk) => { queue.push(chunk); wake(); };
+    const spillBaseName = shellOutputBaseName(context.invocationId);
+    const stdoutAcc = new ShellChannelAccumulator('stdout', workspace.root, spillBaseName);
+    const stderrAcc = new ShellChannelAccumulator('stderr', workspace.root, spillBaseName);
+    const startedAt = Date.now();
+    const progress = createThrottledShellProgress((message) => push({ type: 'progress', message }));
+    const stdoutDecoder = new LimitedUtf8Decoder();
+    const stderrDecoder = new LimitedUtf8Decoder();
+    const buildHeartbeatMessage = (): string => {
+      const stats = `running ${((Date.now() - startedAt) / 1000).toFixed(1)}s · stdout=${stdoutAcc.bytesReceived()} bytes · stderr=${stderrAcc.bytesReceived()} bytes`;
+      const tailBudget = Math.floor(SHELL_PROGRESS_SNAPSHOT_MAX_CHARS / 2);
+      const stdoutTail = stdoutAcc.tailSnapshot(tailBudget);
+      const stderrTail = stderrAcc.tailSnapshot(tailBudget);
+      const tails = [
+        stdoutTail ? `[stdout tail]\n${stdoutTail}` : undefined,
+        stderrTail ? `[stderr tail]\n${stderrTail}` : undefined,
+      ].filter(Boolean).join('\n');
+      return tails ? `${stats}\n${tails}` : stats;
+    };
+    const heartbeat = setInterval(() => {
+      if (!done) progress.maybeEmitSnapshot(buildHeartbeatMessage);
+    }, SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS);
+    heartbeat.unref?.();
     this.runDocker(workspace, ['/bin/sh', '-lc', args.command], {
       operation: 'runShell',
       timeoutMs: args.timeoutMs ?? this.shellTimeoutMs,
-      stdoutLimit: MAX_SHELL_CAPTURE_BYTES,
-      stderrLimit: MAX_SHELL_CAPTURE_BYTES,
+      stdoutLimit: MAX_SHELL_SPILL_BYTES,
+      stderrLimit: MAX_SHELL_SPILL_BYTES,
       signal,
       allowNonZeroExit: true,
       returnOutputOnError: true,
-      onOutput: createLimitedStreamForwarder((chunk) => { queue.push(chunk); wake(); }),
+      runtimeEnv: context.env,
+      capture: { stdout: stdoutAcc, stderr: stderrAcc },
+      onOutput: (channel, chunk) => {
+        const allowed = progress.allowRaw(chunk.length);
+        const decoder = channel === 'stdout' ? stdoutDecoder : stderrDecoder;
+        // allowed=0 时仍调用，用当前 chunk 补齐预算边界前未完成的 UTF-8 字符。
+        const content = decoder.decode(chunk, allowed);
+        if (content) push({ type: 'output', channel, content });
+        if (progress.isRawExhausted()) progress.notifyRawExhausted();
+      },
     }, audit)
       .then(async (result) => {
-        const { outputFiles, outputFileError } = await this.persistShellOutput(
+        const { outputFiles, outputFileError } = await this.mergeShellOutput(
           workspace,
           context.invocationId,
-          result.stdout,
-          result.stderr,
-          Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+          spillBaseName,
+          result,
         );
         const content = formatShellOutput({
           ...result,
+          stdoutLines: result.stdoutLines,
+          stderrLines: result.stderrLines,
+          outputWindowTruncated: result.outputWindowTruncated,
+          outputQuotaTerminated: result.outputQuotaTerminated,
           outputFiles,
           ...(outputFileError ? { outputFileError } : {}),
         });
@@ -322,10 +371,12 @@ export class ContainerExecutionProvider implements ExecutionProvider {
           ...(result.timedOut ? { timedOut: true } : {}),
           ...(result.aborted ? { aborted: true } : {}),
           ...(result.outputExceeded ? { outputExceeded: true } : {}),
+          ...(result.outputWindowTruncated ? { outputWindowTruncated: true } : {}),
+          ...(result.outputQuotaTerminated ? { outputQuotaTerminated: true } : {}),
           ...(outputFiles.length > 0 ? { outputFiles } : {}),
           ...(outputFileError ? { outputFileError } : {}),
         };
-        queue.push({
+        push({
           type: 'completed',
           response: result.error
             ? { status: 'error', error: `${result.error}\n\n${content}`, audit, metadata }
@@ -334,8 +385,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
               : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata },
         });
       })
-      .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err), audit } }))
-      .finally(() => { done = true; wake(); });
+      .catch((err) => push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err), audit } }))
+      .finally(() => { clearInterval(heartbeat); done = true; wake(); });
     while (!done || queue.length > 0) {
       const chunk = queue.shift();
       if (chunk) { yield chunk; continue; }
@@ -343,29 +394,46 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     }
   }
 
-  private async persistShellOutput(
+  private async mergeShellOutput(
     workspace: WorkspaceRef,
     invocationId: string | undefined,
-    stdout: string,
-    stderr: string,
-    force = false,
-  ) {
+    spillBaseName: string,
+    result: {
+      stdout: string;
+      stderr: string;
+      error?: string;
+      timedOut?: boolean;
+      aborted?: boolean;
+      outputQuotaTerminated?: boolean;
+      stdoutWindowTruncated?: boolean;
+      stderrWindowTruncated?: boolean;
+      spillFiles?: ShellOutputFileRef[];
+      spillError?: string;
+    },
+  ): Promise<{ outputFiles: ShellOutputFileRef[]; outputFileError?: string }> {
+    const spillByChannel = new Map((result.spillFiles ?? []).map((file) => [file.channel, file]));
+    let persisted: ShellOutputFileRef[] = [];
+    let persistError: string | undefined;
     try {
-      return {
-        outputFiles: await persistShellOutputFiles({
-          workspaceRoot: workspace.root,
-          invocationId,
-          stdout,
-          stderr,
-          force,
-        }),
-      };
+      persisted = await persistShellOutputFiles({
+        workspaceRoot: workspace.root,
+        invocationId,
+        baseName: spillBaseName,
+        // 已截窗的通道只能引用累加器写出的全量文件；绝不能把窗口摘要覆盖成
+        // “完整输出”。若溢出写盘失败，保留 spillError 明示失败。
+        stdout: result.stdoutWindowTruncated ? '' : result.stdout,
+        stderr: result.stderrWindowTruncated ? '' : result.stderr,
+        force: Boolean(result.error || result.timedOut || result.aborted || result.outputQuotaTerminated),
+      });
     } catch (err) {
-      return {
-        outputFiles: [],
-        outputFileError: err instanceof Error ? err.message : String(err),
-      };
+      persistError = err instanceof Error ? err.message : String(err);
     }
+    const persistedByChannel = new Map(persisted.map((file) => [file.channel, file]));
+    const outputFiles = (['stdout', 'stderr'] as const)
+      .map((channel) => spillByChannel.get(channel) ?? persistedByChannel.get(channel))
+      .filter((file): file is ShellOutputFileRef => Boolean(file));
+    const outputFileError = [result.spillError, persistError].filter(Boolean).join('; ') || undefined;
+    return { outputFiles, ...(outputFileError ? { outputFileError } : {}) };
   }
 
   private async runNodeHelper(
@@ -413,8 +481,14 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       signal?: AbortSignal;
       allowNonZeroExit?: boolean;
       returnOutputOnError?: boolean;
-      onOutput?: (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void;
+      onOutput?: (channel: 'stdout' | 'stderr', chunk: Buffer) => void;
       runtimeEnv?: Record<string, string>;
+      /**
+       * P0（2026-08-29）：Shell 专用输出累加器注入点。传入后输出不再全量驻留内存，
+       * 改为头窗口 + 滚动尾窗 + 磁盘溢出，超限不终止命令（仅磁盘配额终止）。
+       * 文件 helper（runNodeHelper）不传此参数，保持原内存捕获语义不受影响。
+       */
+      capture?: { stdout: ShellChannelAccumulator; stderr: ShellChannelAccumulator };
     },
     audit: ExecutionInvocationAudit[],
   ): Promise<{
@@ -428,7 +502,16 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     error?: string;
     timedOut?: boolean;
     aborted?: boolean;
+    /** capture 模式：窗口截断或磁盘配额终止时为 true（语义由调用方按两子字段细分）。 */
     outputExceeded?: boolean;
+    stdoutLines?: number;
+    stderrLines?: number;
+    stdoutWindowTruncated?: boolean;
+    stderrWindowTruncated?: boolean;
+    outputWindowTruncated?: boolean;
+    outputQuotaTerminated?: boolean;
+    spillFiles?: ShellOutputFileRef[];
+    spillError?: string;
   }> {
     const name = `${this.containerNamePrefix}-${randomUUID()}`;
     const dockerArgs = [
@@ -482,6 +565,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     let timedOut = false;
     let aborted = false;
     let outputExceeded = false;
+    let outputStorageError: string | undefined;
+    let terminationReason: 'timeout' | 'aborted' | 'quota' | 'spill' | undefined;
     let spawnError: unknown;
     let terminationStarted = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -504,42 +589,76 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
       killTimer.unref?.();
     };
+    const handleSpillFailure = (message: string) => {
+      if (outputStorageError) return;
+      outputStorageError = message;
+      terminationReason ??= 'spill';
+      terminate();
+    };
+    const removeStdoutSpillHandler = options.capture?.stdout.onSpillFailure(handleSpillFailure);
+    const removeStderrSpillHandler = options.capture?.stderr.onSpillFailure(handleSpillFailure);
 
     const timer = setTimeout(() => {
+      if (terminationStarted) return;
       timedOut = true;
+      terminationReason = 'timeout';
       terminate();
     }, options.timeoutMs);
     timer.unref();
 
     const abortListener = () => {
+      if (terminationStarted) return;
       aborted = true;
+      terminationReason = 'aborted';
       terminate();
     };
     options.signal?.addEventListener('abort', abortListener, { once: true });
     if (options.signal?.aborted) abortListener();
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > options.stdoutLimit) {
-        outputExceeded = true;
-        terminate();
-        return;
+    const captureChunk = (
+      channel: 'stdout' | 'stderr',
+      chunk: Buffer,
+      source: NodeJS.ReadableStream & { pause(): unknown; resume(): unknown; isPaused(): boolean },
+    ) => {
+      const accumulator = channel === 'stdout' ? options.capture?.stdout : options.capture?.stderr;
+      if (channel === 'stdout') stdoutBytes += chunk.length;
+      else stderrBytes += chunk.length;
+      if (accumulator) {
+        const feedResult = accumulator.feed(chunk);
+        if (feedResult.backpressured && !source.isPaused()) {
+          source.pause();
+          void accumulator.waitUntilWritable().then(() => {
+            if (!terminationStarted && !outputStorageError) source.resume();
+          });
+        }
+        if (feedResult.spillFailed) {
+          handleSpillFailure('failed to write output spill file');
+          return;
+        }
+        if (feedResult.quotaExceeded) {
+          if (!terminationStarted) {
+            outputExceeded = true;
+            terminationReason = 'quota';
+            terminate();
+          }
+          return;
+        }
+      } else {
+        const bytes = channel === 'stdout' ? stdoutBytes : stderrBytes;
+        const limit = channel === 'stdout' ? options.stdoutLimit : options.stderrLimit;
+        if (bytes > limit) {
+          outputExceeded = true;
+          terminate();
+          return;
+        }
+        const text = chunk.toString('utf-8');
+        if (channel === 'stdout') stdout += text;
+        else stderr += text;
       }
-      const text = chunk.toString('utf-8');
-      stdout += text;
-      options.onOutput?.('stdout', text, chunk.length);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes > options.stderrLimit) {
-        outputExceeded = true;
-        terminate();
-        return;
-      }
-      const text = chunk.toString('utf-8');
-      stderr += text;
-      options.onOutput?.('stderr', text, chunk.length);
-    });
+      options.onOutput?.(channel, chunk);
+    };
+    child.stdout.on('data', (chunk: Buffer) => captureChunk('stdout', chunk, child.stdout));
+    child.stderr.on('data', (chunk: Buffer) => captureChunk('stderr', chunk, child.stderr));
 
     child.stdin.end(options.input ?? '');
 
@@ -558,17 +677,54 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     }
     if (terminationStarted || spawnError) await cleanup();
 
-    const error = this.classifyDockerError({
-      exit,
-      spawnError,
-      timedOut,
-      outputExceeded,
-      aborted: aborted || options.signal?.aborted === true,
-      stdout,
-      stderr,
-      timeoutMs: options.timeoutMs,
-      allowNonZeroExit: options.allowNonZeroExit === true,
-    });
+    // capture 模式收尾：窗口内容 + 增量统计 + 溢出文件引用；未捕获通道保持内存全量。
+    let stdoutResult = stdout;
+    let stderrResult = stderr;
+    let stdoutBytesResult = stdoutBytes;
+    let stderrBytesResult = stderrBytes;
+    let stdoutLines: number | undefined;
+    let stderrLines: number | undefined;
+    let stdoutWindowTruncated = false;
+    let stderrWindowTruncated = false;
+    let windowTruncated = false;
+    const quotaTerminated = options.capture ? terminationReason === 'quota' : outputExceeded;
+    let spillFiles: ShellOutputFileRef[] | undefined;
+    let spillError: string | undefined;
+    if (options.capture) {
+      const [stdoutFinal, stderrFinal] = await Promise.all([
+        options.capture.stdout.finalize(),
+        options.capture.stderr.finalize(),
+      ]);
+      stdoutResult = stdoutFinal.content;
+      stderrResult = stderrFinal.content;
+      stdoutBytesResult = stdoutFinal.totalBytes;
+      stderrBytesResult = stderrFinal.totalBytes;
+      stdoutLines = stdoutFinal.lines;
+      stderrLines = stderrFinal.lines;
+      stdoutWindowTruncated = stdoutFinal.truncatedToWindow;
+      stderrWindowTruncated = stderrFinal.truncatedToWindow;
+      windowTruncated = stdoutWindowTruncated || stderrWindowTruncated;
+      // outputQuotaTerminated 仅表示配额是首次终止原因；收尾残余字节越线不改写原因。
+      spillFiles = [stdoutFinal.spillFile, stderrFinal.spillFile].filter((file): file is ShellOutputFileRef => Boolean(file));
+      spillError = stdoutFinal.spillError ?? stderrFinal.spillError;
+      outputStorageError = outputStorageError ?? spillError;
+    }
+    removeStdoutSpillHandler?.();
+    removeStderrSpillHandler?.();
+
+    const error = terminationReason === 'spill' && outputStorageError
+      ? `Container command full-output persistence failed: ${outputStorageError}`
+      : this.classifyDockerError({
+          exit,
+          spawnError,
+          timedOut,
+          outputExceeded: quotaTerminated,
+          aborted,
+          stdout: stdoutResult,
+          stderr: stderrResult,
+          timeoutMs: options.timeoutMs,
+          allowNonZeroExit: options.allowNonZeroExit === true,
+        });
     const durationMs = Date.now() - startedAt;
     audit.push({
       provider: 'server-container',
@@ -576,43 +732,59 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       image: this.image,
       containerName: name,
       timeoutMs: options.timeoutMs,
-      stdoutBytes,
-      stderrBytes,
+      stdoutBytes: stdoutBytesResult,
+      stderrBytes: stderrBytesResult,
       exitCode: exit?.code ?? null,
       signal: exit?.signal ?? null,
       status: error ? 'error' : 'success',
       ...(timedOut ? { timedOut: true } : {}),
-      ...(outputExceeded ? { outputExceeded: true } : {}),
-      ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
+      ...(windowTruncated || quotaTerminated ? { outputExceeded: true } : {}),
+      ...(aborted ? { aborted: true } : {}),
       ...(error ? { error } : {}),
     } satisfies ExecutionInvocationAudit);
+
+    const captureExtras = options.capture
+      ? {
+          stdoutLines,
+          stderrLines,
+          stdoutWindowTruncated,
+          stderrWindowTruncated,
+          outputWindowTruncated: windowTruncated,
+          outputQuotaTerminated: quotaTerminated,
+          ...(windowTruncated || quotaTerminated ? { outputExceeded: true } : {}),
+          ...(spillFiles?.length ? { spillFiles } : {}),
+          ...(spillError ? { spillError } : {}),
+        }
+      : {};
 
     if (error) {
       if (options.returnOutputOnError) {
         return {
-          stdout,
-          stderr,
-          stdoutBytes,
-          stderrBytes,
+          stdout: stdoutResult,
+          stderr: stderrResult,
+          stdoutBytes: stdoutBytesResult,
+          stderrBytes: stderrBytesResult,
           exitCode: exit?.code ?? null,
           signal: exit?.signal ?? null,
           durationMs,
           error,
           ...(timedOut ? { timedOut: true } : {}),
-          ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
-          ...(outputExceeded ? { outputExceeded: true } : {}),
+          ...(aborted ? { aborted: true } : {}),
+          ...(quotaTerminated ? { outputExceeded: true } : {}),
+          ...captureExtras,
         };
       }
       throw new Error(error);
     }
     return {
-      stdout,
-      stderr,
-      stdoutBytes,
-      stderrBytes,
+      stdout: stdoutResult,
+      stderr: stderrResult,
+      stdoutBytes: stdoutBytesResult,
+      stderrBytes: stderrBytesResult,
       exitCode: exit?.code ?? null,
       signal: exit?.signal ?? null,
       durationMs,
+      ...captureExtras,
     };
   }
 
@@ -667,31 +839,6 @@ function relativeWorkspacePath(cwd: string, fullPath: string): string {
 function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
   const fullPath = resolveWorkspacePath(cwd, inputPath);
   return relativeWorkspacePath(cwd, fullPath);
-}
-
-function createLimitedStreamForwarder(
-  push: (chunk: ToolInvocationStreamChunk) => void,
-): (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void {
-  let streamedBytes = 0;
-  let suppressed = false;
-  return (channel, content, byteLength) => {
-    if (suppressed) return;
-    const remainingBytes = MAX_SHELL_STREAM_BYTES - streamedBytes;
-    if (remainingBytes <= 0) {
-      suppressed = true;
-      push({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
-      return;
-    }
-    if (byteLength <= remainingBytes) {
-      streamedBytes += byteLength;
-      push({ type: 'output', channel, content });
-      return;
-    }
-    streamedBytes = MAX_SHELL_STREAM_BYTES;
-    suppressed = true;
-    push({ type: 'output', channel, content: content.slice(0, remainingBytes) });
-    push({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
-  };
 }
 
 const CONTAINER_FILE_HELPER_SCRIPT = `

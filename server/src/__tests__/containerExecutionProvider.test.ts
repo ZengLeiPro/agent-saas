@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,7 +9,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ContainerExecutionProvider } from '../agent/containerExecutionProvider.js';
-import { MAX_SHELL_CAPTURE_BYTES } from '../agent/toolOutput.js';
 import type { AgentOptionsConfig } from '../agent/options.js';
 import { buildTenantScopedEnv } from '../agent/tenantEnv.js';
 import { WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY } from '../agent/workspaceHandTools.js';
@@ -404,7 +403,7 @@ describeIfDocker('ContainerExecutionProvider', () => {
     expect(result.content).toContain('Exit code: 0');
     expect(result.content).toContain('Full output files: stdout=tmp/tool-results/');
     expect(result.content).toContain('[stdout]');
-    expect(result.content).toContain('truncated');
+    expect(result.content).toContain('omitted from in-memory window');
     expect(result.content.length).toBeLessThan(70 * 1024);
     const match = /stdout=(tmp\/tool-results\/[^ ]+\.txt)/.exec(result.content);
     expect(match?.[1]).toBeTruthy();
@@ -414,18 +413,28 @@ describeIfDocker('ContainerExecutionProvider', () => {
     expect(listContainers(prefix)).toBe('');
   });
 
-  it('cleans up the container when stdout or stderr exceeds the hard capture cap', async () => {
-    await expect(invokeOrThrow(provider, workspace(root), 'Shell', {
-      command: `node -e "process.stdout.write(\\\"x\\\".repeat(${MAX_SHELL_CAPTURE_BYTES + 1024}))"`,
-      timeoutMs: 15_000,
-    })).rejects.toThrow('output exceeded limit');
-    await sleep(1_000);
-    expect(listContainers(prefix)).toBe('');
+  it('streams stdout/stderr above the legacy 4MB cap to files without terminating the command', async () => {
+    const bytesPerChannel = 4 * 1024 * 1024 + 1024;
+    const response = await invoke(provider, workspace(root), 'Shell', {
+      command: `node -e "process.stdout.write(\\\"x\\\".repeat(${bytesPerChannel})); process.stderr.write(\\\"y\\\".repeat(${bytesPerChannel}))"`,
+      timeoutMs: 30_000,
+    });
 
-    await expect(invokeOrThrow(provider, workspace(root), 'Shell', {
-      command: `node -e "process.stderr.write(\\\"x\\\".repeat(${MAX_SHELL_CAPTURE_BYTES + 1024}))"`,
-      timeoutMs: 15_000,
-    })).rejects.toThrow('output exceeded limit');
+    expect(response.status).toBe('success');
+    if (response.status === 'success') {
+      expect(response.metadata).toMatchObject({
+        stdoutBytes: bytesPerChannel,
+        stderrBytes: bytesPerChannel,
+        outputExceeded: true,
+        outputWindowTruncated: true,
+      });
+      const outputFiles = response.metadata?.outputFiles as Array<{ channel: string; path: string; bytes: number }>;
+      expect(outputFiles).toHaveLength(2);
+      for (const file of outputFiles) {
+        expect(file.bytes).toBe(bytesPerChannel);
+        expect(statSync(join(root, file.path)).size).toBe(bytesPerChannel);
+      }
+    }
     await sleep(1_000);
     expect(listContainers(prefix)).toBe('');
   });

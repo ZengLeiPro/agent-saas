@@ -3,12 +3,16 @@ import { existsSync } from 'fs';
 
 import type { ToolInvocationStreamChunk, ToolInvocationResponse } from '../runtime/handProtocol.js';
 import type { WorkspaceRef } from './toolRuntime.js';
-import { persistShellOutputFiles } from './shellOutputFiles.js';
+import { persistShellOutputFiles, shellOutputBaseName } from './shellOutputFiles.js';
+import { ShellChannelAccumulator } from './shellOutputAccumulator.js';
+import { createThrottledShellProgress, LimitedUtf8Decoder } from './shellProgressEmitter.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
-  MAX_SHELL_CAPTURE_BYTES,
-  MAX_SHELL_STREAM_BYTES,
+  MAX_SHELL_SPILL_BYTES,
+  SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS,
+  SHELL_PROGRESS_SNAPSHOT_MAX_CHARS,
   formatShellOutput,
+  type ShellOutputFileRef,
 } from './toolOutput.js';
 
 export interface LocalShellExecutionOptions {
@@ -51,15 +55,17 @@ export async function runLocalShellStreaming(options: LocalShellExecutionOptions
       shell: process.platform === 'win32' || !existsSync('/bin/bash') ? true : '/bin/bash',
       detached: process.platform !== 'win32',
     });
-    let stdout = '';
-    let stderr = '';
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let streamedBytes = 0;
-    let streamSuppressed = false;
+    // P0（2026-08-29）：输出管理对标 ref/pi OutputAccumulator。
+    // 内存只留头窗口 + 滚动尾窗；超过窗口后全量字节流式落盘（不终止命令），
+    // 仅超过磁盘配额才终止。行数/字节数由累加器增量统计，不能靠截断后文本回头数。
+    const spillBaseName = shellOutputBaseName(invocationId);
+    const stdoutAcc = new ShellChannelAccumulator('stdout', workspace.root, spillBaseName);
+    const stderrAcc = new ShellChannelAccumulator('stderr', workspace.root, spillBaseName);
+    let quotaTerminated = false;
+    let outputStorageError: string | undefined;
+    let terminationReason: 'timeout' | 'aborted' | 'quota' | 'spill' | undefined;
     let timedOut = false;
     let aborted = false;
-    let outputExceeded = false;
     let spawnError: Error | undefined;
     const startedAt = Date.now();
     const timeoutValue = timeoutMs ?? DEFAULT_SHELL_TIMEOUT_MS;
@@ -68,13 +74,16 @@ export async function runLocalShellStreaming(options: LocalShellExecutionOptions
     let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
     let hardFinalizeTimer: ReturnType<typeof setTimeout> | undefined;
     let killStarted = false;
+    let removeSpillFailureHandlers = () => {};
     const finish = (response: ToolInvocationResponse) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(heartbeat);
       if (sigkillTimer) clearTimeout(sigkillTimer);
       if (hardFinalizeTimer) clearTimeout(hardFinalizeTimer);
       signal?.removeEventListener('abort', onAbort);
+      removeSpillFailureHandlers();
       resolvePromise(response);
     };
     const killWithSignal = (signalName: NodeJS.Signals) => {
@@ -98,98 +107,161 @@ export async function runLocalShellStreaming(options: LocalShellExecutionOptions
       sigkillTimer.unref?.();
     };
     const onAbort = () => {
+      if (killStarted) return;
       aborted = true;
+      terminationReason = 'aborted';
       kill();
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     const timer = setTimeout(() => {
+      if (killStarted) return;
       timedOut = true;
+      terminationReason = 'timeout';
       kill();
     }, timeoutValue);
     timer.unref?.();
-    const emitStreamChunk = (channel: 'stdout' | 'stderr', text: string, chunkBytes: number) => {
-      if (!onChunk || streamSuppressed) return;
-      const remainingBytes = MAX_SHELL_STREAM_BYTES - streamedBytes;
-      if (remainingBytes <= 0) {
-        streamSuppressed = true;
-        void onChunk({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
-        return;
-      }
-      if (chunkBytes <= remainingBytes) {
-        streamedBytes += chunkBytes;
-        void onChunk({ type: 'output', channel, content: text });
-        return;
-      }
-      streamedBytes = MAX_SHELL_STREAM_BYTES;
-      streamSuppressed = true;
-      void onChunk({ type: 'output', channel, content: text.slice(0, remainingBytes) });
-      void onChunk({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
+    // 流式进度：原始输出转发满 64KB 预算后不再静默，转为节流尾窗快照。
+    const progress = createThrottledShellProgress((message) => {
+      void onChunk?.({ type: 'progress', message });
+    });
+    const stdoutDecoder = new LimitedUtf8Decoder();
+    const stderrDecoder = new LimitedUtf8Decoder();
+    const handleSpillFailure = (message: string) => {
+      if (outputStorageError) return;
+      outputStorageError = message;
+      terminationReason ??= 'spill';
+      kill();
+      void onChunk?.({ type: 'progress', message: `Shell full-output persistence failed; terminating command: ${message}` });
     };
+    const removeStdoutSpillHandler = stdoutAcc.onSpillFailure(handleSpillFailure);
+    const removeStderrSpillHandler = stderrAcc.onSpillFailure(handleSpillFailure);
+    removeSpillFailureHandlers = () => {
+      removeStdoutSpillHandler();
+      removeStderrSpillHandler();
+    };
+    const buildHeartbeatMessage = (): string => {
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+      const stats = `running ${elapsed}s · stdout=${stdoutAcc.bytesReceived()} bytes · stderr=${stderrAcc.bytesReceived()} bytes`;
+      if (!progress.isRawExhausted()) return stats;
+      const tail = (stdoutAcc.bytesReceived() >= stderrAcc.bytesReceived() ? stdoutAcc : stderrAcc)
+        .tailSnapshot(SHELL_PROGRESS_SNAPSHOT_MAX_CHARS);
+      return tail ? `${stats}\n${tail}` : stats;
+    };
+    const heartbeat = setInterval(() => {
+      if (settled || finalizing) return;
+      progress.maybeEmitSnapshot(buildHeartbeatMessage);
+    }, SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS);
+    heartbeat.unref?.();
     const emit = (channel: 'stdout' | 'stderr', chunk: Buffer) => {
-      if (settled || finalizing || outputExceeded) return;
-      const text = chunk.toString('utf-8');
-      if (channel === 'stdout') { stdoutBytes += chunk.length; stdout += text; } else { stderrBytes += chunk.length; stderr += text; }
-      if (stdoutBytes + stderrBytes > MAX_SHELL_CAPTURE_BYTES) {
-        outputExceeded = true;
-        kill();
-        void onChunk?.({ type: 'progress', message: `Shell output exceeded hard capture limit ${MAX_SHELL_CAPTURE_BYTES} bytes; terminating command.` });
+      if (settled || finalizing || quotaTerminated || outputStorageError) return;
+      const acc = channel === 'stdout' ? stdoutAcc : stderrAcc;
+      const source = channel === 'stdout' ? child.stdout : child.stderr;
+      const decoder = channel === 'stdout' ? stdoutDecoder : stderrDecoder;
+      const feedResult = acc.feed(chunk);
+      if (feedResult.backpressured && source && !source.isPaused()) {
+        source.pause();
+        void acc.waitUntilWritable().then(() => {
+          if (!settled && !finalizing && !killStarted && !outputStorageError) source.resume();
+        });
+      }
+      if (feedResult.spillFailed) {
+        handleSpillFailure('failed to write output spill file');
         return;
       }
-      emitStreamChunk(channel, text, chunk.length);
+      if (feedResult.quotaExceeded) {
+        if (!killStarted) {
+          quotaTerminated = true;
+          terminationReason = 'quota';
+          kill();
+          void onChunk?.({ type: 'progress', message: `Shell output exceeded the ${MAX_SHELL_SPILL_BYTES}-byte disk quota; terminating command.` });
+        }
+        return;
+      }
+      if (!onChunk) return;
+      const allowed = progress.allowRaw(chunk.length);
+      // allowed=0 时仍要调用：decoder 可能留着预算边界前的半个 UTF-8 字符，
+      // 会最多消费当前 chunk 的 3 个续字节把它补完整。
+      const content = decoder.decode(chunk, allowed);
+      if (content) void onChunk({ type: 'output', channel, content });
+      if (progress.isRawExhausted()) progress.notifyRawExhausted();
     };
     const finalize = async (code: number | null, sig: NodeJS.Signals | null) => {
       if (settled || finalizing) return;
       finalizing = true;
+      clearTimeout(timer);
+      clearInterval(heartbeat);
       const durationMs = Date.now() - startedAt;
-      let outputFiles: import('./toolOutput.js').ShellOutputFileRef[] = [];
+      const [stdoutFinal, stderrFinal] = await Promise.all([stdoutAcc.finalize(), stderrAcc.finalize()]);
+      const windowTruncated = stdoutFinal.truncatedToWindow || stderrFinal.truncatedToWindow;
+      // outputQuotaTerminated 表示“配额是首次终止原因”，不是收尾残余字节顺带越线。
+      // 已溢出的通道有自己的落盘文件（累加器全量保真）；未溢出的通道走既有
+      // persistShellOutputFiles（超时/中止/配额终止时强制落盘）。两路共用同一
+      // 基名，最终信封的 Full output files 路径与进度提示承诺的一致。
+      const merged: ShellOutputFileRef[] = [];
       let outputFileError: string | undefined;
       try {
-        outputFiles = await persistShellOutputFiles({
+        const persisted = await persistShellOutputFiles({
           workspaceRoot: workspace.root,
           invocationId,
-          stdout,
-          stderr,
-          force: timedOut || aborted || outputExceeded,
+          baseName: spillBaseName,
+          stdout: stdoutFinal.truncatedToWindow ? '' : stdoutFinal.content,
+          stderr: stderrFinal.truncatedToWindow ? '' : stderrFinal.content,
+          force: timedOut || aborted || quotaTerminated || Boolean(outputStorageError),
         });
+        const persistedByChannel = new Map(persisted.map((file) => [file.channel, file]));
+        const stdoutFile = stdoutFinal.spillFile ?? persistedByChannel.get('stdout');
+        const stderrFile = stderrFinal.spillFile ?? persistedByChannel.get('stderr');
+        if (stdoutFile) merged.push(stdoutFile);
+        if (stderrFile) merged.push(stderrFile);
       } catch (err) {
         outputFileError = err instanceof Error ? err.message : String(err);
       }
+      const spillErrors = [stdoutFinal.spillError, stderrFinal.spillError].find(Boolean);
+      if (!outputFileError && spillErrors) outputFileError = spillErrors;
       const content = formatShellOutput({
-        stdout,
-        stderr,
-        stdoutBytes,
-        stderrBytes,
+        stdout: stdoutFinal.content,
+        stderr: stderrFinal.content,
+        stdoutBytes: stdoutFinal.totalBytes,
+        stderrBytes: stderrFinal.totalBytes,
+        stdoutLines: stdoutFinal.lines,
+        stderrLines: stderrFinal.lines,
         exitCode: code,
         signal: sig,
         durationMs,
         timedOut,
         aborted,
-        captureLimitExceeded: outputExceeded,
-        outputFiles,
+        outputWindowTruncated: windowTruncated,
+        outputQuotaTerminated: quotaTerminated,
+        outputFiles: merged,
         outputFileError,
       });
       const metadata = {
         exitCode: code,
         signal: sig,
-        stdoutBytes,
-        stderrBytes,
+        stdoutBytes: stdoutFinal.totalBytes,
+        stderrBytes: stderrFinal.totalBytes,
         durationMs,
         ...(timedOut ? { timedOut: true } : {}),
         ...(aborted ? { aborted: true } : {}),
-        ...(outputFiles.length > 0 ? { outputFiles } : {}),
+        ...(merged.length > 0 ? { outputFiles: merged } : {}),
         ...(outputFileError ? { outputFileError } : {}),
-        ...(outputExceeded ? { outputExceeded: true } : {}),
+        ...(windowTruncated ? { outputExceeded: true, outputWindowTruncated: true } : {}),
+        ...(quotaTerminated ? { outputExceeded: true, outputQuotaTerminated: true } : {}),
       };
-      if (outputExceeded) {
-        finish({ status: 'error', error: `Shell output exceeded hard capture limit ${MAX_SHELL_CAPTURE_BYTES} bytes\n\n${content}`, metadata });
+      if (terminationReason === 'quota') {
+        finish({ status: 'error', error: `Shell output exceeded the ${MAX_SHELL_SPILL_BYTES}-byte disk quota\n\n${content}`, metadata });
         return;
       }
-      if (timedOut) {
+      if (terminationReason === 'timeout') {
         finish({ status: 'error', error: `Shell timed out after ${timeoutValue}ms\n\n${content}`, metadata });
         return;
       }
-      if (aborted) {
+      if (terminationReason === 'aborted') {
         finish({ status: 'error', error: `Shell aborted\n\n${content}`, metadata });
+        return;
+      }
+      if (outputFileError) {
+        finish({ status: 'error', error: `Shell full-output persistence failed: ${outputFileError}\n\n${content}`, metadata });
         return;
       }
       if (spawnError) {

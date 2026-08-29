@@ -39,7 +39,6 @@ import { ContainerExecutionProvider } from './containerExecutionProvider.js';
 import { resolveRemoteHandAuthToken, resolveRemoteHandInvokeTimeoutMs } from './handMetadata.js';
 import { MemorySearchToolProvider } from './memorySearchToolProvider.js';
 import { runLocalShellStreaming } from './localShellExecution.js';
-import { persistShellOutputFiles } from './shellOutputFiles.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import {
   memoryPathFromSuccessfulTool,
@@ -49,14 +48,10 @@ import {
   shellCommandMentionsMemoryPath,
 } from './toolRuntimePaths.js';
 import {
-  DEFAULT_SHELL_TIMEOUT_MS,
   DEFAULT_BACKGROUND_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
   MAX_READ_LINES,
   MAX_READ_OUTPUT_BYTES,
-  MAX_SHELL_CAPTURE_BYTES,
-  MAX_SHELL_STREAM_BYTES,
-  formatShellOutput,
   truncateUtf8Prefix,
 } from './toolOutput.js';
 import {

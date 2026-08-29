@@ -312,6 +312,9 @@ NODE
 - SSH 私钥必须对应 Staging ECS 用户。
 - `RELEASE_EVIDENCE_TOKEN` 必须是 Evidence Service 的只读 Token，不得使用写入 Token。
 - E2E 账号必须是隔离 Staging 专用平台管理员测试账号。
+- 隔离证据写 Token 不进入 GitHub。Staging Workflow 只把现场采集结果传回 Staging ECS，
+  由 ECS 本机的 `/etc/agent-saas-staging/release-evidence-write.token` 完成不可变写入，再用上述
+  只读 Token 经 HTTPS 回读比较。
 - Secret 必须从批准的密码库或凭据交付渠道读取，通过标准输入写入；禁止出现在命令参数、日志或文档中。
 
 安全写入形式如下，实际执行时由安全凭据源向标准输入提供值：

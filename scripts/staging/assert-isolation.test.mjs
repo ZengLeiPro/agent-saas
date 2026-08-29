@@ -68,6 +68,20 @@ test('accepts fresh production denials and schema-bound shared NAS logical isola
   assert.deepEqual(summary.residualRisks, [SHARED_NAS_RESIDUAL_RISK]);
 });
 
+test('keeps the evidence digest stable across JSON field order and assertion time', () => {
+  const original = evidence();
+  const reordered = {
+    probes: original.probes.map((probe) => Object.fromEntries(Object.entries(probe).reverse())),
+    environment: original.environment,
+    schemaVersion: original.schemaVersion,
+  };
+  const first = assertIsolationEvidence(original, { now: NOW });
+  const second = assertIsolationEvidence(reordered, { now: NOW + 30_000 });
+
+  assert.equal(first.evidenceDigest, second.evidenceDigest);
+  assert.notEqual(first.observedAt, second.observedAt);
+});
+
 test('rejects a missing, allowed, or stale probe', () => {
   const missing = evidence();
   missing.probes.pop();

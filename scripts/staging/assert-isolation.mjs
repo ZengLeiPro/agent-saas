@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { canonicalJson, digestBuffer } from '../release/artifact-lib.mjs';
 
 export const REQUIRED_ISOLATION_PROBES = Object.freeze([
   'database-role-cannot-read-or-write-production',
@@ -91,7 +91,7 @@ export function assertIsolationEvidence(value, { now = Date.now(), maxAgeMs = 60
       throw new Error(`Isolation probe did not prove a fresh production denial: ${id}`);
     }
   }
-  const normalized = JSON.stringify(
+  const normalized = canonicalJson(
     [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id))),
   );
   return {
@@ -99,7 +99,7 @@ export function assertIsolationEvidence(value, { now = Date.now(), maxAgeMs = 60
     environment: 'staging',
     status: 'verified-with-accepted-residual-risk',
     residualRisks: [SHARED_NAS_RESIDUAL_RISK],
-    evidenceDigest: `sha256:${createHash('sha256').update(normalized).digest('hex')}`,
+    evidenceDigest: digestBuffer(Buffer.from(normalized)),
     observedAt: new Date(now).toISOString(),
   };
 }

@@ -38,6 +38,7 @@ export interface CreateEgressConfigAdminRouterOptions {
   /** 保存代理凭据后刷新 dispatcher 的同步缓存 */
   refreshProxyCredential?: () => Promise<void>;
   fetchImpl?: typeof fetch;
+  loopbackFetchImpl?: typeof fetch;
   logger?: { warn(msg: string): void; info(msg: string): void };
 }
 
@@ -159,12 +160,14 @@ async function syncSandboxToOrchestrator(args: {
   config: AppConfig;
   secretVault?: SecretVault;
   fetchImpl: typeof fetch;
+  loopbackFetchImpl?: typeof fetch;
   egress: EgressConfig;
 }): Promise<{ ok: boolean; error?: string }> {
   const result = await requestAcsOrchestrator({
     config: args.config,
     secretVault: args.secretVault,
     fetchImpl: args.fetchImpl,
+    loopbackFetchImpl: args.loopbackFetchImpl,
     timeoutMs: ORCHESTRATOR_SYNC_TIMEOUT_MS,
     path: '/runtime-config',
     method: 'PATCH',
@@ -257,6 +260,7 @@ export function createEgressConfigAdminRouter(
       config: options.config,
       secretVault: options.secretVault,
       fetchImpl,
+      loopbackFetchImpl: options.loopbackFetchImpl,
       egress: nextConfig,
     });
     await options.store.recordSandboxSync(sync).catch(() => undefined);

@@ -19,6 +19,7 @@ const workerUnitPath = new URL(
 const serverPackagePath = new URL('../../server/package.json', import.meta.url);
 const scenarioRoutesPath = new URL('../../server/src/routes/scenarios.ts', import.meta.url);
 const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', import.meta.url);
+const e2eHelpersPath = new URL('../../e2e/staging/helpers.ts', import.meta.url);
 
 function runScriptLines(text) {
   const output = [];
@@ -64,6 +65,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /state staging_deployed/u);
   assert.match(workflow, /state verified/u);
   assert.match(workflow, /web-oss-readback/u);
+  assert.match(
+    workflow,
+    /oss cp "\$RUNNER_TEMP\/web-assets\/" "\$STAGING_WEB_OSS_URI\/"[\s\S]*--recursive --force --exclude index\.html --exclude release-identity\.json/u,
+  );
+  assert.doesNotMatch(workflow, /oss sync|--delete/u);
+  const webIdentityIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/release-identity.json" --force');
+  const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');
+  assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
@@ -103,6 +112,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   const e2eIndex = workflow.indexOf('Run real browser and ACS E2E');
   assert.ok(deployIndex > 0 && deployIndex < migrationIndex && migrationIndex < e2eIndex);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('Staging browser login selects only the password-login submit button', async () => {
+  const helpers = await readFile(e2eHelpersPath, 'utf8');
+  assert.match(
+    helpers,
+    /getByRole\('button', \{ name: '登录', exact: true \}\)\.click\(\)/u,
+  );
 });
 
 test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {

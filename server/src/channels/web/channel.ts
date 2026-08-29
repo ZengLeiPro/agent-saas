@@ -100,6 +100,7 @@ import { handleWebChannelEvents, type WebChannelEventTitleContext } from './chan
 import { bindChatAttachments } from './attachmentBinding.js';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
+import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
 export type { ModelResolver } from './channelConfig.js';
 
 /**
@@ -1954,22 +1955,18 @@ export class WebChannel implements BaseChannel {
     const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
     // durable runStore 是判活真源；buffer 只负责传输与同进程 WS 绑定。
     let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
-    let durableStatus: string | undefined;
-    let durableTenantId: string | undefined;
-    let durableAccessError: string | null = null;
+    let durableBinding: ResumeDurableBinding | undefined;
     if (bufferActive) {
       try {
         const runStore = this.config.enqueueRuntime?.runStore;
-        if (runStore?.getActiveBySession) {
-          const activeRun = await runStore.getActiveBySession(sid);
-          if (!activeRun) {
-            this.eventBufferStore.complete(sid);
-            bufferActive = false;
-          } else {
-            durableStatus = activeRun.status;
-            durableTenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId) ?? undefined;
-            if (!durableTenantId) durableAccessError = 'Access denied';
-          }
+        if (runStore?.getActiveBySession) durableBinding = await resolveResumeDurableBinding(
+          runStore.getActiveBySession.bind(runStore),
+          sid,
+          (run) => this.eventStoreTenantForClient(client, run.tenantId, run.userId) ?? undefined,
+        );
+        if (durableBinding?.active === false) {
+          this.eventBufferStore.complete(sid);
+          bufferActive = false;
         }
       } catch (err) {
         chatLogger.warn(`[resume] runStore.getActiveBySession 异常,降级信 buffer: ${err instanceof Error ? err.message : String(err)}`);
@@ -1993,24 +1990,26 @@ export class WebChannel implements BaseChannel {
     const bufferAccessError = bufferEntry.userId
       ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
       : this.anonymousBindingAccessError(client, activeEntry?.ws);
-    if (durableAccessError || bufferAccessError) {
+    if (durableBinding?.accessError || bufferAccessError) {
       this.wsSend(client.ws, {
         type: 'active_stream', sessionId: sid, active: false,
         ...(requestId ? { requestId } : {}),
       });
       return;
     }
-    if (activeStreamId) {
-      this.wsActiveStream.set(client.ws, activeStreamId);
+    const resumeStreamId = activeStreamId ?? durableBinding?.streamId;
+    const resumeRunId = activeEntry?.runId ?? durableBinding?.runId;
+    if (resumeStreamId) {
+      this.wsActiveStream.set(client.ws, resumeStreamId);
     }
 
     this.wsSend(client.ws, {
       type: 'active_stream',
       sessionId: sid,
       active: true,
-      streamId: activeStreamId,
-      ...(activeEntry?.runId ? { runId: activeEntry.runId } : {}),
-      status: durableStatus ?? 'running',
+      streamId: resumeStreamId,
+      ...(resumeRunId ? { runId: resumeRunId } : {}),
+      status: durableBinding?.status ?? 'running',
       ...(requestId ? { requestId } : {}),
     });
 
@@ -2020,7 +2019,7 @@ export class WebChannel implements BaseChannel {
       && this.wsActiveStream.get(client.ws) === activeStreamId,
     );
     if (alreadyDirectBound) {
-      await this.pushPendingInteractions(client, sid, durableTenantId);
+      await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
       return;
     }
 
@@ -2037,11 +2036,11 @@ export class WebChannel implements BaseChannel {
       if (!hasBufferCursor && lastEventCursor) {
         // The boundary was captured before async status lookup. Events pushed while either
         // status lookup or durable replay is in flight are recovered by subscribeFrom below.
-        const tenantId = durableTenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
+        const tenantId = durableBinding?.tenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
         const store = tenantId ? await this.getRuntimeEventStoreForSession(sid, tenantId) : null;
         if (store) {
           durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
-            lastEventCursor, activeRunId: activeEntry?.runId ?? '', tenantId,
+            lastEventCursor, activeRunId: resumeRunId ?? '', tenantId,
           });
         }
       } else {
@@ -2096,7 +2095,7 @@ export class WebChannel implements BaseChannel {
       });
     }
 
-    await this.pushPendingInteractions(client, sid, durableTenantId);
+    await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
   }
 
   private async tryReplayDurableRuntimeEvents(

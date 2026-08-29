@@ -76,6 +76,13 @@ test('classifies root dependency files while explicitly ignoring release-only go
     blockingReason: null,
   });
   assert.deepEqual(
+    classifyPath('daemon-packaging/systemd/agent-saas-server-staging.service.template'),
+    {
+      components: [],
+      blockingReason: null,
+    },
+  );
+  assert.deepEqual(
     classifyPath('daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template'),
     {
       components: [],

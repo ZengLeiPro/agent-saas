@@ -36,6 +36,7 @@ const NON_RUNTIME_FILES = new Set([
   'README.md',
   'app.json',
   'config.example.json',
+  'daemon-packaging/systemd/agent-saas-server-staging.service.template',
   'daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template',
   'docker-compose.local-db.yml',
   'docker-compose.override.ecs.yml',

@@ -1,14 +1,15 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-316 Hand durable invocation journal：HAND_INVOCATION_STORE_DIR 指定 journal 目录使 Hand 重启后 invocation 幂等重放与结果对账成为可能",
+  "reason": "Staging API 通过 AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE 读取隔离 Worker 的单槽 readyfile，避免误读生产蓝绿 active-color 身份",
   "updatedAt": "2026-08-29",
   "domains": {
     "server": {
-      "budget": 48,
+      "budget": 49,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
         "AGENT_AZEROTH_LEAD_URL",
+        "AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE",
         "AGENT_SAAS_CONFIG_PATH",
         "AGENT_SAAS_CREATE_WORKSPACE_VENV",
         "AGENT_SAAS_DRAIN_ABORT_GRACE_MS",

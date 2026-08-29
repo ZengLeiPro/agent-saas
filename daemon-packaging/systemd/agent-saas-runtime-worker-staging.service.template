@@ -11,13 +11,14 @@ Group=agent-saas-staging
 RuntimeDirectory=agent-saas-staging
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-WorkingDirectory=/mnt/agent-saas-staging/runtime/server
+WorkingDirectory=/opt/agent-saas-staging/current/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/runtime-worker.pid
 Environment=AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready
+Environment=KB_PREVIEW_AUTO_GENERATE=false
 EnvironmentFile=/etc/agent-saas-staging/server.env
 ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js
 ExecStop=/bin/kill -USR2 $MAINPID

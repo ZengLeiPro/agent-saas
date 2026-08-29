@@ -144,6 +144,33 @@ else
   mv "$candidate" "$target"
 fi
 
+runuser -u agent-saas-staging -- env \
+  STAGING_CONFIG_PATH=/etc/agent-saas-staging/config.json STAGING_RELEASE_ROOT="$target" \
+  /usr/bin/node - <<'NODE'
+const fs = require('node:fs');
+const { Client } = require(`${process.env.STAGING_RELEASE_ROOT}/server/node_modules/pg`);
+const config = JSON.parse(fs.readFileSync(process.env.STAGING_CONFIG_PATH, 'utf8'));
+const client = new Client({
+  connectionString: config.runtimeEventStore.connectionString,
+  connectionTimeoutMillis: 10_000,
+});
+(async () => {
+  try {
+    await client.connect();
+    const result = await client.query('SELECT current_database() AS database, current_user AS username');
+    const row = result.rows[0];
+    if (row.database !== 'agent_saas_staging' || row.username !== 'agent_saas_staging') {
+      throw new Error('Staging database identity does not match the isolated database and role');
+    }
+  } finally {
+    await client.end().catch(() => {});
+  }
+})().catch((error) => {
+  console.error(`Staging database runtime preflight failed: ${error.message}`);
+  process.exit(1);
+});
+NODE
+
 ln -sfn "$target" "$current"
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 const fs = require('node:fs');

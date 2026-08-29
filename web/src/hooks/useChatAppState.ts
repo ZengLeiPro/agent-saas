@@ -2116,6 +2116,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         if (latestSid === sessionIdRef.current) {
           sessionRef.current.setContextUsage(null);
         }
+        // TASK-312：done 终态必须同步落 per-session Map。当前会话的 session_status 终态被 defer
+        // latch 推迟到 done 收口；若只清 UI 不写 Map，ws 源 active 永久残留（侧边栏转圈不消失）。
+        const doneEvent = data as Extract<WsEvent, { type: 'done' }>;
+        if (doneEvent.sessionId && isActiveRuntimeStatus(activeRunsBySession.current.get(doneEvent.sessionId)?.status ?? 'idle')) {
+          patchSessionRuntime(doneEvent.sessionId, { status: doneEvent.error ? 'failed' : 'completed', streamId: null, runId: null, lastEventId: null, attached: false });
+        }
         // 已 detach（切换会话后）或 loading 已被其他路径（watchdog/reject）清掉：
         // 本轮 outbox 条目已由 onChatDone 清理；已 ACK 的插话由服务端消费或回退执行。
         if (!loadingRef.current) {
@@ -2125,14 +2131,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         dispatchConnection('complete');
         if (latestSid) {
           trackedAiReplyStreamsRef.current.delete(latestSid);
-          const doneEvent = data as Extract<WsEvent, { type: 'done' }>;
           if (doneEvent.error) {
             // done.error：本轮 run 失败,必须把失败明确地呈现给用户,而不是只静默清 loading。
             // 用户侧通俗文案;原始 doneEvent.error（model error）仅保留在 server.log + PG runtime_events。
-            // 协调：shared/wsEventProcessor 在 done 时若所有 user 气泡都已 failed,会注入一条同样
-            //   通俗的 text 兜底（mobile 等不支持 system-error 的客户端也能看到）。
-            //   web 端要升级成红边 system-error,所以扫尾 N 条找那条 text,有则就地替换、无则追加。
-            // dedupe：若最末已是相同 content 的 system-error（重复 done 事件）则跳过。
+            // 协调：wsEventProcessor 在 done 时注入同内容 text 兜底（mobile 等不支持 system-error 的客户端可见）；
+            //   web 端扫尾 3 条找那条 text 就地升级为红边 system-error；最末已是同 content system-error（重复 done）则跳过。
             const alertContent = formatRuntimeFailureMessage(doneEvent.error, doneEvent.failureKind);
             const alertSeverity = isInsufficientCreditsFailure(doneEvent.error) ? 'billing' : 'error';
             const msgs = msgRef.current.messagesRef.current;
@@ -2149,9 +2152,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               }
               if (upgradeIdx >= 0) {
                 msgRef.current.updateMessageAt(upgradeIdx, (m) => ({
-                  id: m.id,
-                  type: 'system-error',
-                  content: alertContent,
+                  id: m.id, type: 'system-error', content: alertContent,
                   severity: alertSeverity, runId: doneEvent.runId, ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}),
                   timestamp: Date.now(),
                 }));
@@ -2189,8 +2190,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         setLoading(false);
         setStopping(false);
 
-        // onChatDone 只移除本轮 entry；其他 acked 条目是服务端持久化插话，不能随本轮 done 丢弃。
-        // 2026-08-04 终态设计：本地不再扣留排队消息，无需 done 后续发。
+        // onChatDone 只移除本轮 entry；其他 acked 条目是服务端持久化插话，不能随本轮 done 丢弃（2026-08-04：本地不再扣留排队消息）。
       }
     });
 

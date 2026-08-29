@@ -1853,7 +1853,7 @@ export class WebChannel implements BaseChannel {
       return;
     }
     const approvalPolicy = wantsToolAutoApproval(msg.approvalPolicy)
-      ? { autoApproveTools: true }
+      ? { autoApproveTools: true, ...(msg.approvalPolicy?.lowRiskOnly === true ? { lowRiskOnly: true } : {}) }
       : null;
     await runStore.markStatus(
       runId,
@@ -2307,7 +2307,7 @@ export class WebChannel implements BaseChannel {
     const executionConfig = this.config.executionConfig ?? DEFAULT_EXECUTION_CONFIG;
     // 授权模式对所有已认证用户生效（2026-07-02 起）：用户通过账户设置自行切换。
     const approvalPolicy = user && wantsToolAutoApproval(msg.approvalPolicy)
-      ? { autoApproveTools: true }
+      ? { autoApproveTools: true, ...(msg.approvalPolicy?.lowRiskOnly === true ? { lowRiskOnly: true } : {}) }
       : undefined;
 
     // 读取（或为老客户端生成）客户端消息 ID —— 贯穿全链路的幂等/绑定键
@@ -3486,7 +3486,7 @@ export class WebChannel implements BaseChannel {
         }
         if (
           event.type === 'permission_request'
-          && approvalPolicy?.autoApproveTools === true
+          && approvalPolicy?.autoApproveTools === true && approvalPolicy?.lowRiskOnly !== true
           && user?.role === 'admin'
           && user.tenantId === DEFAULT_TENANT_ID
           && event.toolName
@@ -3501,7 +3501,7 @@ export class WebChannel implements BaseChannel {
           event.type === 'permission_request'
           && user
           && !(user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID)
-          && approvalPolicy?.autoApproveTools === true
+          && approvalPolicy?.autoApproveTools === true && approvalPolicy?.lowRiskOnly !== true
         ) {
           // 安全工具：无路径风险，直接放行
           const safeTools = new Set([

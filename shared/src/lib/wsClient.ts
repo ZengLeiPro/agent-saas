@@ -55,6 +55,8 @@ export interface WsChatMessage {
     approvalPolicy?: {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
+        /** 「低风险常开」档：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
+        lowRiskOnly?: boolean;
     };
     /** 只能使用 Demo 启动 API 返回的不透明运行绑定。 */
     voiceFile?: {
@@ -84,6 +86,7 @@ export interface WsApprovalPolicyMessage {
     approvalPolicy?: {
         autoApproveTools?: boolean;
         autoApproveRunShell?: boolean;
+        lowRiskOnly?: boolean;
     };
 }
 

@@ -100,6 +100,11 @@ export interface ToolApprovalPolicyOptions {
   autoApproveTools?: boolean;
   /** @deprecated Legacy client field. Treated the same as autoApproveTools. */
   autoApproveRunShell?: boolean;
+  /**
+   * 2026-08-29（TASK-256）：个人「低风险常开」档。仅当 autoApproveTools=true 时生效：
+   * 自动批准上限到 workspace_write，dangerous 仍走人工批准（neverAutoApprove 不变）。
+   */
+  lowRiskOnly?: boolean;
 }
 
 /**

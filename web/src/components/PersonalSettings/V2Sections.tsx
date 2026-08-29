@@ -14,8 +14,9 @@ import { authFetch } from "@/lib/authFetch";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { navigateSettingsRoute } from "@/lib/urlSync";
 import { EntityIcons } from "@/lib/icons";
+import { resolveApprovalTier } from "@/lib/approvalTier";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
-import { isDebugModeAvailable, startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
+import { isDebugModeAvailable, saveUserPreferences, startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
 import { governanceAccessApi, type OAuthGrantResponse, type OAuthRevocationPreview, type OAuthRevocationResult } from "@agent/shared/lib/governanceApi";
 import type { MyAgentSettingsTab } from "@/types/settings";
 
@@ -149,6 +150,44 @@ const approvalActionLabel: Record<OAuthGrantView['approvals'][number]['action'],
 };
 
 export function ConnectionsSection() {
+  const { user, updatePreferences } = useAuth();
+  // TASK-256：统一走 resolveApprovalTier（与服务端 ?? true 默认一致），
+  // 与聊天 hook / Desktop / Mobile 使用同一有效策略模型；未登录时显示 ask。
+  const approvalTier: "ask" | "low-risk" | "full" = user
+    ? resolveApprovalTier(user.preferences)
+    : "ask";
+  const [approvalSaving, setApprovalSaving] = useState(false);
+  const [approvalSaved, setApprovalSaved] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+
+  const handleApprovalTierChange = useCallback(async (next: "ask" | "low-risk" | "full") => {
+    if (next === approvalTier || approvalSaving) return;
+    const previousPreferences = {
+      authorizationModeEnabled: approvalTier === "full",
+      lowRiskToolsAutoApproveEnabled: approvalTier === "low-risk",
+    };
+    const nextPreferences = {
+      authorizationModeEnabled: next === "full",
+      lowRiskToolsAutoApproveEnabled: next === "low-risk",
+    };
+    setApprovalSaving(true);
+    setApprovalSaved(false);
+    setApprovalError(null);
+    updatePreferences(nextPreferences);
+    try {
+      const saved = await saveUserPreferences(nextPreferences);
+      if (!saved) throw new Error("保存失败");
+      updatePreferences(saved);
+      setApprovalSaved(true);
+      window.setTimeout(() => setApprovalSaved(false), 2000);
+    } catch (error) {
+      updatePreferences(previousPreferences);
+      setApprovalError(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setApprovalSaving(false);
+    }
+  }, [approvalSaving, approvalTier, updatePreferences]);
+
   const [grants, setGrants] = useState<OAuthGrantView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -349,13 +388,53 @@ export function ConnectionsSection() {
             <EntityIcons.admin className="mt-0.5 size-5 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <h2 id="runtime-tool-approval" className="font-semibold">运行时工具批准</h2>
-              <p className="mt-1 text-sm text-muted-foreground">当前权威 Runtime Approval API 尚未提供，所有工具保持“每次询问”；旧全局偏好开关不再作为治理批准能力。</p>
+              <p className="mt-1 text-sm text-muted-foreground">选择运行时执行工具时的批准方式；该设置是账户级偏好，对 Web、钉钉与定时任务统一生效。</p>
             </div>
-            <span className="rounded-full border bg-muted px-3 py-1 text-xs">每次询问</span>
+            {approvalSaving ? <Loader2 className="mt-1 size-4 animate-spin text-muted-foreground" /> : approvalSaved ? <span className="mt-1 text-xs text-emerald-600">已保存</span> : null}
           </div>
+          <div className="mt-4 space-y-2" role="radiogroup" aria-labelledby="runtime-tool-approval">
+            {([
+              {
+                value: "ask" as const,
+                title: "每次询问",
+                description: "除标记为安全的只读工具外，每次工具调用都弹出批准卡片。",
+              },
+              {
+                value: "low-risk" as const,
+                title: "低风险常开",
+                description: "自动批准低风险操作（只读查询与工作区写入）；高风险工具仍需逐次批准。",
+              },
+              {
+                value: "full" as const,
+                title: "全部自动批准",
+                description: "除明确要求人工确认的高影响动作外，全部自动放行；仍保留沙箱与安全审计防线。",
+              },
+            ]).map(option => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={approvalTier === option.value}
+                disabled={approvalSaving}
+                onClick={() => { void handleApprovalTierChange(option.value); }}
+                className={`w-full rounded-xl border p-3 text-left text-sm transition-colors disabled:opacity-60 ${approvalTier === option.value ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{option.title}</span>
+                  {approvalTier === option.value ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">当前</span> : null}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">{option.description}</div>
+              </button>
+            ))}
+          </div>
+          {approvalError ? <div className="mt-3 text-sm text-destructive" role="alert">{approvalError}</div> : null}
           <div className="mt-4 flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-            <span>需等待后端按工具类别返回上层策略、允许范围、风险、版本和 allowedActions 后才能开启自动批准。</span>
+            <span>
+              安全边界：「每次询问」与「低风险常开」档下，删除、撤销、审批裁决等高风险动作始终人工确认。
+              「全部自动批准」档只保留对明确要求人工确认的动作（如钉钉写操作的二次确认）的人工闸门，
+              其余动作（包括部分删除/撤销类高风险工具）都会自动放行，请谨慎选择。
+            </span>
           </div>
         </section>
       </div>

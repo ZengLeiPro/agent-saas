@@ -29,6 +29,10 @@ import {
   type DwsWorkspacePrincipal,
 } from './authFlow.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
+// TASK-256（三轮 review 返工）：命令路径级只读/写例外登记表。每条路径逐一对照
+// references 文档核实：含 attendance.approve.list 等路径中带破坏性 token 的纯查询，
+// 以及 chat.mute-at-all 等末尾 token 误导读判定的写命令。
+import { DWS_READ_COMMAND_PATHS, DWS_WRITE_COMMAND_PATHS } from './readCommands.js';
 import type { DwsConnectionStore } from './store.js';
 
 const businessInputSchema = z.object({
@@ -44,17 +48,24 @@ const ALLOWED_MODULES = new Set([
   'contact', 'devdoc', 'ding', 'doc', 'drive', 'kb', 'mail', 'minutes', 'oa', 'report', 'sheet',
   'table', 'todo', 'wiki',
 ]);
+// 只读动作白名单。新增动词必须满足：在钉钉官方文档（skills-pool/dws/references）
+// 中仅作为查询动作出现，且从未作为写/破坏性命令的末尾 token。
+// 2026-08-29（TASK-256）：skill 文档证实的只读动作大量未登记，导致 `aisearch person`、
+// `minutes list mine`、`report inbox` 等纯查询被误判为 dangerous + neverAutoApprove，
+// 表现为同类低风险查询反复弹批准。
 const READ_VERBS = new Set([
-  'check', 'count', 'current', 'detail', 'fields', 'find', 'get',
-  'history', 'info', 'list', 'list-all', 'members', 'query', 'read', 'records', 'search',
-  'show', 'stats', 'status', 'summary', 'tree', 'view', 'whoami',
+  'all', 'balance', 'behavior', 'check', 'columns', 'count', 'current', 'detail', 'enterprise',
+  'fields', 'find', 'get', 'history', 'inbox', 'info', 'list', 'list-all', 'members', 'mine',
+  'person', 'profile', 'query', 'read', 'record', 'records', 'result', 'rules', 'search',
+  'shared', 'show', 'stats', 'status', 'summary', 'transcription', 'tree', 'types', 'verify',
+  'view', 'whoami',
 ]);
 const WRITE_VERBS = new Set([
-  'accept', 'add', 'append', 'archive', 'assign', 'bind', 'cancel', 'close', 'comment',
+  'accept', 'add', 'adjust', 'append', 'archive', 'assign', 'bind', 'cancel', 'close', 'comment',
   'complete', 'copy', 'create', 'disable', 'edit', 'enable', 'finish', 'forward',
-  'invite', 'join', 'leave', 'like', 'mark', 'move', 'new', 'open', 'patch', 'pause', 'post',
-  'publish', 'rename', 'replace', 'reply', 'respond', 'resume', 'save', 'send', 'set', 'share',
-  'start', 'submit', 'unarchive', 'unshare', 'update', 'write',
+  'invite', 'join', 'leave', 'like', 'mark', 'mkdir', 'move', 'new', 'open', 'patch', 'pause',
+  'post', 'publish', 'rename', 'replace', 'reply', 'respond', 'resume', 'save', 'send', 'set',
+  'share', 'start', 'submit', 'unarchive', 'unshare', 'update', 'write',
 ]);
 const DESTRUCTIVE_VERBS = new Set([
   'agree', 'approve', 'clear', 'delete', 'dismiss', 'kick', 'pass', 'purge', 'recall',
@@ -64,7 +75,10 @@ const FORBIDDEN_VERBS = new Set([
   'auth', 'consume', 'credential', 'download', 'exec', 'export', 'import', 'login', 'logout',
   'pat', 'serve', 'shell', 'token', 'upload', 'watch',
 ]);
-const FORBIDDEN_FLAGS = /^(?:-p|-f|--profile|--format|--token|--access-token|--refresh-token|--config-dir|--keychain-dir|--client-id|--client-secret|--action|--operation|--method|--command|--output|--out|--output-dir|--download-dir|--file|--path|--dir|--directory)(?:=|$)/;
+// 2026-08-29（TASK-256）：解禁 --format/-f。skill 文档强制所有命令带 --format json，
+// 且本 Broker 的 execute() 自身追加 --format json，禁用它与自身行为矛盾，导致合法
+// 读命令被误判为 restricted-flag → dangerous。--profile 必须继续禁用（Broker 独占）。
+const FORBIDDEN_FLAGS = /^(?:-p|--profile|--token|--access-token|--refresh-token|--config-dir|--keychain-dir|--client-id|--client-secret|--action|--operation|--method|--command|--output|--out|--output-dir|--download-dir|--file|--path|--dir|--directory)(?:=|$)/;
 
 interface ClassifiedCommand {
   module: string;
@@ -476,15 +490,26 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   const commandPath = args.slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex);
   const pathTokens = commandPath.flatMap(token => token.toLowerCase().replace(/^\+/, '').split('-').filter(Boolean));
   const normalizedAction = commandPath.at(-1)!.toLowerCase().replace(/^\+/, '');
-  const actionTokens = [normalizedAction, ...normalizedAction.split('-')].filter(Boolean);
   const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
   const flagNameTokens = trailingArgs.filter(token => token.startsWith('-'))
     .flatMap(token => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
+  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
+  // TASK-256（三轮 review 返工）：显式登记表优先于全路径动词扫描。登记条目均已对照
+  // references 文档核实（见 readCommands.ts）：路径中带 approve 等破坏性 token 的纯查询
+  // （attendance.approve.list）不再被破坏性扫描否决；末尾 token 误导读判定的写命令
+  // （chat.mute-at-all）被显式否决。登记表之外的未知命令保持 fail-closed。
+  if (DWS_WRITE_COMMAND_PATHS.has(normalizedCommandPath)) {
+    return { module, commandPath: normalizedCommandPath, risk: 'write' };
+  }
+  if (DWS_READ_COMMAND_PATHS.has(normalizedCommandPath)) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
   if ([...pathTokens, ...flagNameTokens].some(token => DESTRUCTIVE_VERBS.has(token))) {
     throw new Error('DWS 破坏性或高影响动作本阶段未开放');
   }
-  const normalizedCommandPath = commandPath.map(token => token.toLowerCase()).join('.');
-  const isAuthStatus = normalizedCommandPath === 'auth.status' && trailingArgs.length === 0;
+  // auth.status 只读特判：skill 文档要求追加 --format json，允许末尾仅带格式旗标。
+  const isAuthStatus = normalizedCommandPath === 'auth.status'
+    && trailingArgs.every(token => token === '--help' || token === '-h' || token === '--format' || token === '-f' || token === 'json');
   if (isAuthStatus) return { module, commandPath: normalizedCommandPath, risk: 'read' };
   if (pathTokens.some(token => FORBIDDEN_VERBS.has(token))) {
     throw new Error('DWS 命令超出业务 Broker 边界');
@@ -492,12 +517,13 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if (trailingArgs.length > 0 && trailingArgs.every(token => token === '--help' || token === '-h')) {
     return { module, commandPath: normalizedCommandPath, risk: 'read' };
   }
-  if (actionTokens.some(token => WRITE_VERBS.has(token))) {
+  // 2026-08-29（TASK-256 review 返工）：写动词判定扫描完整 commandPath，防止位置参数
+  // 覆盖已出现的写动词（如 `chat message send all --group cid` 曾被末尾 all 降档为 read）。
+  if (pathTokens.some(token => WRITE_VERBS.has(token))) {
     return { module, commandPath: normalizedCommandPath, risk: 'write' };
   }
-  if (actionTokens.some(token => READ_VERBS.has(token))) {
-    return { module, commandPath: normalizedCommandPath, risk: 'read' };
-  }
+  // terminal action 必须精确登记；禁止 future-query-shape 因包含 query 子 token 被放宽。
+  if (READ_VERBS.has(normalizedAction)) return { module, commandPath: normalizedCommandPath, risk: 'read' };
   throw new Error('DWS 动作未登记风险等级，已拒绝执行');
 }
 

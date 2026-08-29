@@ -52,6 +52,6 @@ web/src/components/MessageItem.tsx	1120	production
 web/src/components/MessageList.tsx	1125	production
 web/src/components/MobileSessionList.tsx	1033	production
 web/src/components/ModelManager/index.tsx	1366	production
-web/src/components/SettingsCenter/SettingsModal.tsx	1070	production
+web/src/components/SettingsCenter/SettingsModal.tsx	1012	production
 web/src/components/TenantManager/index.tsx	1222	production
 web/src/hooks/useChatAppState.ts	3158	production

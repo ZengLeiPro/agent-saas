@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
 import {
@@ -24,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader, SettingsPanelHeaderStickyProvider } from "@/components/SettingsCenter/SettingsPanelHeader";
 import { BrowserNotificationSettings } from "@/components/SettingsCenter/BrowserNotificationSettings";
+import { AppearanceLayoutPreferences } from "@/components/SettingsCenter/AppearanceLayoutPreferences";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import {
   ConnectionsSection,
@@ -58,73 +58,6 @@ const RUN_SHELL_APPROVAL_STORAGE_PREFIX = "agentChat.autoApproveRunShell.";
 
 function initials(name?: string) {
   return (name || "U").trim().slice(0, 1).toUpperCase();
-}
-
-function SidebarLayoutPreference({
-  value,
-  onChange,
-}: {
-  value: SidebarLayoutPref;
-  onChange?: (layout: SidebarLayoutPref) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div>
-        <div className="text-sm font-medium text-foreground">桌面侧边栏样式</div>
-        <div className="mt-1 text-sm text-muted-foreground">选择桌面 Web 端的会话导航布局，移动端不受影响。</div>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {[
-          { id: "double" as const, title: "双栏侧边栏", desc: "保留当前样式：左侧分组，右侧会话列表。" },
-          { id: "single" as const, title: "单栏会话列表", desc: "在新建会话下方按最新时间混排会话与分组。" },
-        ].map((item) => {
-          const active = value === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={cn(
-                "rounded-xl border p-3 text-left transition-colors",
-                active ? "border-primary bg-primary/5 text-foreground" : "border-border hover:bg-muted/60",
-              )}
-              onClick={() => onChange?.(item.id)}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold">{item.title}</span>
-                {active && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">当前</span>}
-              </div>
-              <div className="mt-1 text-xs leading-5 text-muted-foreground">{item.desc}</div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function SessionListAvatarPreference({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: boolean;
-  onChange: (value: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="min-w-0">
-        <div className="text-sm font-medium text-foreground">会话列表显示头像</div>
-        <div className="mt-1 text-sm text-muted-foreground">开启后会话列表显示 Agent 头像；关闭时使用更紧凑的单行样式。</div>
-      </div>
-      <Switch
-        checked={value}
-        disabled={disabled}
-        onCheckedChange={onChange}
-        aria-label="会话列表显示头像"
-      />
-    </div>
-  );
 }
 
 function PlaceholderSection({
@@ -800,6 +733,8 @@ export interface SettingsModalProps {
   renderTrash?: () => ReactNode;
   sidebarLayout?: SidebarLayoutPref;
   onSidebarLayoutChange?: (layout: SidebarLayoutPref) => void;
+  chatFontLarge?: boolean;
+  onChatFontSizeChange?: (large: boolean) => void;
   /** false 时隐藏只服务个人通用 Agent 的设置；管理员调用方应传 true。 */
   personalAgentEnabled?: boolean;
   onNavigationControllerChange?: (controller: SettingsDirtyController | null) => void;
@@ -815,6 +750,8 @@ export function SettingsModalInner({
   renderTrash,
   sidebarLayout = "double",
   onSidebarLayoutChange,
+  chatFontLarge = false,
+  onChatFontSizeChange,
   personalAgentEnabled = true,
   onNavigationControllerChange,
   dirtyController, embedded = false,
@@ -952,10 +889,15 @@ export function SettingsModalInner({
           description="配置侧边栏、会话列表和其他界面偏好。"
           actions={<span className="text-sm text-muted-foreground">{personalizationSaving ? "保存中…" : personalizationSaved ? "已保存" : "更改即时保存"}</span>}
         >
-          <div className="space-y-6">
-            <SidebarLayoutPreference value={sidebarLayout} onChange={(next) => { onSidebarLayoutChange?.(next); setPersonalizationSaved(true); }} />
-            <SessionListAvatarPreference value={showSessionListAvatar} disabled={personalizationSaving} onChange={(next) => { void handleShowSessionListAvatarChange(next); }} />
-          </div>
+          <AppearanceLayoutPreferences
+            chatFontLarge={chatFontLarge}
+            onChatFontSizeChange={(next) => { onChatFontSizeChange?.(next); setPersonalizationSaved(true); }}
+            sidebarLayout={sidebarLayout}
+            onSidebarLayoutChange={(next) => { onSidebarLayoutChange?.(next); setPersonalizationSaved(true); }}
+            showSessionListAvatar={showSessionListAvatar}
+            avatarSaving={personalizationSaving}
+            onShowSessionListAvatarChange={(next) => { void handleShowSessionListAvatarChange(next); }}
+          />
         </PlaceholderSection>
       ),
     },

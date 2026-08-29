@@ -11,9 +11,7 @@ import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { TrashView } from "@/components/chat/TrashView";
 import { TokenUsageDisplay } from "@/components/TokenUsageDisplay";
 import { BillingMiniBadge } from "@/components/BillingMiniBadge";
-import { DisplaySettingsMenu } from "@/components/DisplaySettingsMenu";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
-import { useChatWidth } from "@/hooks/useChatWidth";
 import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanelDock } from "@/hooks/useSystemPanel";
 import { SystemPanel } from "@/components/SystemPanel";
@@ -137,7 +135,6 @@ export function DesktopLayout(props: LayoutProps) {
   }, [updatePreferences]);
 
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
-  const { isWide: chatWidthWide, setIsWide: setChatWidthWide } = useChatWidth();
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
 
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
@@ -444,7 +441,6 @@ export function DesktopLayout(props: LayoutProps) {
           "my-2.5 mr-2.5 flex min-h-0 min-w-0 flex-1",
           sidebarCollapsed && !settingsMode && !analysisMode && "ml-2.5",
           chatFontLarge && "chat-font-large",
-          chatWidthWide && "chat-width-wide",
         )}
       >
         <div
@@ -547,12 +543,6 @@ export function DesktopLayout(props: LayoutProps) {
                 sessionId={sessionId}
                 open={activeUsageCard === "billing"}
                 onOpenChange={handleBillingCardOpenChange}
-              />
-              <DisplaySettingsMenu
-                isLarge={chatFontLarge}
-                isWide={chatWidthWide}
-                onFontSizeChange={setChatFontLarge}
-                onWidthChange={setChatWidthWide}
               />
               {ttsPlayer.available && (
                 <Button
@@ -869,6 +859,8 @@ export function DesktopLayout(props: LayoutProps) {
                   )}
                   sidebarLayout={sidebarLayout}
                   onSidebarLayoutChange={handleSidebarLayoutChange}
+                  chatFontLarge={chatFontLarge}
+                  onChatFontSizeChange={setChatFontLarge}
                   personalAgentEnabled={personalAgentEnabled}
                   renderTrash={() => (
                     <TrashView

@@ -13,6 +13,7 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
 import { EmptySessionScenarios } from "@/components/scenarios/EmptySessionScenarios";
@@ -87,6 +88,7 @@ export function MobileLayout(props: LayoutProps) {
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser, isLoading: authLoading, authEnabled } = useAuth();
+  const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const accessTarget = managementAccessTarget({
     settingsOpen,
     adminSettingsTarget: adminSettings?.target,
@@ -413,7 +415,7 @@ export function MobileLayout(props: LayoutProps) {
         </div>
       )}
 
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+      <div className={cn("relative flex min-h-0 flex-1 overflow-hidden", chatFontLarge && "chat-font-large")}>
         <SwipeDrawer
           open={sheetOpen}
           onOpenChange={(open) => { if (!open) closeDrawer(); else setSheetOpen(true); }}
@@ -704,6 +706,8 @@ export function MobileLayout(props: LayoutProps) {
               reserveCloseButtonSpace
             />
           )}
+          chatFontLarge={chatFontLarge}
+          onChatFontSizeChange={setChatFontLarge}
           personalAgentEnabled={personalAgentEnabled}
         />
 

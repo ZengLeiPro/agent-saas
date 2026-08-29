@@ -94,7 +94,7 @@ describe('GET /api/admin/system/event-store', () => {
     const capacity = metric({});
     const store = {
       getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : capacity),
-      listMetricsSince: vi.fn(async () => [capacity]),
+      listMetricSeries: vi.fn(async () => [capacity]),
     };
     const server = await startServer({ store });
     servers.push(server);
@@ -118,14 +118,14 @@ describe('GET /api/admin/system/event-store', () => {
       available: true, tableName: 'runtime_events', totalBytes: 140, tableBytes: 100, indexBytes: 40,
     });
     expect(body.capacity.series).toHaveLength(1);
-    expect(store.listMetricsSince).toHaveBeenCalledWith(48);
+    expect(store.listMetricSeries).toHaveBeenCalledWith('pg_table_size', 'runtime_events', 48);
     expect(JSON.stringify(body)).not.toContain('authorizationRef');
   });
 
   it('returns never-run rather than healthy when the store has no retention snapshot', async () => {
     const store = {
       getLatestMetric: vi.fn(async () => null),
-      listMetricsSince: vi.fn(async () => []),
+      listMetricSeries: vi.fn(async () => []),
     };
     const server = await startServer({ store });
     servers.push(server);
@@ -144,7 +144,7 @@ describe('GET /api/admin/system/event-store', () => {
     });
     const store = {
       getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? old : null),
-      listMetricsSince: vi.fn(async () => []),
+      listMetricSeries: vi.fn(async () => []),
     };
     const server = await startServer({ store });
     servers.push(server);

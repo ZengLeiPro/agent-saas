@@ -139,10 +139,18 @@ export class RuntimeEventRetention {
     this.billingCatchupMaxBatches = clampInt(options.billingCatchupMaxBatches ?? 100, 1, 10_000);
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.options.enabled !== true || !this.stopped) return;
     this.stopped = false;
     this.scheduleNext();
+    const gateError = this.configurationGateError();
+    if (gateError) {
+      const now = new Date().toISOString();
+      this.lastStartedAt = now;
+      this.lastCompletedAt = now;
+      await this.recordStatus(this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }));
+      this.options.logger?.warn?.(`RuntimeEventRetention configuration blocked: category=${gateError.category}`);
+    }
     this.options.logger?.info?.(
       `RuntimeEventRetention started: mode=${this.executionMode} interval=${this.sweepIntervalMinutes}m `
       + `batchLimit=${this.batchLimit} maxBatchesPerCategory=${this.maxBatchesPerCategory} `
@@ -171,12 +179,8 @@ export class RuntimeEventRetention {
     let maxGlobalSequence: string | null = null;
     await this.recordStatus(this.snapshot('running', { categories }));
     try {
-      if (this.executionMode === 'execute' && !this.authorizationRef) {
-        throw new RetentionGateError('authorization_missing');
-      }
-      if (this.executionMode === 'execute' && this.legalDeleteThroughGlobalSequence <= 0n) {
-        throw new RetentionGateError('legal_watermark_invalid');
-      }
+      const gateError = this.configurationGateError();
+      if (gateError) throw gateError;
       // dry-run 必须严格只读，不能为了预览推进 billing projection。
       const projection = this.executionMode === 'execute'
         ? await this.advanceBillingProjection()
@@ -197,10 +201,11 @@ export class RuntimeEventRetention {
           categories[category.name] = { eligible, deleted: 0 };
           continue;
         }
-        const categoryDeleted = await this.deleteCategory(category);
+        const categoryDeleted = await this.deleteCategory(category, (progress) => {
+          categories[category.name] = { eligible: progress, deleted: progress };
+        });
         deletedByCategory[category.name] = categoryDeleted;
         eligibleByCategory[category.name] = categoryDeleted;
-        categories[category.name] = { eligible: categoryDeleted, deleted: categoryDeleted };
         deleted += categoryDeleted;
       }
 
@@ -244,6 +249,13 @@ export class RuntimeEventRetention {
     } finally {
       this.inFlight = false;
     }
+  }
+
+  private configurationGateError(): RetentionGateError | null {
+    if (this.executionMode !== 'execute') return null;
+    if (!this.authorizationRef) return new RetentionGateError('authorization_missing');
+    if (this.legalDeleteThroughGlobalSequence <= 0n) return new RetentionGateError('legal_watermark_invalid');
+    return null;
   }
 
   private scheduleNext(): void {
@@ -479,12 +491,13 @@ export class RuntimeEventRetention {
     return Number(result.rows[0]?.eligible ?? '0');
   }
 
-  private async deleteCategory(category: RetentionCategory): Promise<number> {
+  private async deleteCategory(category: RetentionCategory, onProgress: (deleted: number) => void): Promise<number> {
     let deleted = 0;
     for (let batchNo = 0; batchNo < this.maxBatchesPerCategory; batchNo++) {
       const batch = await this.options.pool.query(category.deleteSql, category.params);
       const batchDeleted = batch.rowCount ?? 0;
       deleted += batchDeleted;
+      onProgress(deleted);
       if (batchDeleted < this.batchLimit) break;
     }
     return deleted;
@@ -543,7 +556,9 @@ class RetentionGateError extends Error {
 }
 
 function inferErrorCategory(categories: Record<string, { eligible: number; deleted: number }>): string {
-  return Object.keys(categories).length > 0 ? 'partial_failure' : 'execution_failed';
+  return Object.values(categories).some((category) => category.deleted > 0)
+    ? 'partial_failure'
+    : 'execution_failed';
 }
 
 function sanitizeIdentifier(value: string): string {

@@ -26,10 +26,20 @@ const CATEGORY_TEXT: Record<string, string> = {
   "hand-events": "Hand 事件",
 };
 
-function statusTone(data: EventStoreStatusResponse): MetricTone {
-  if (!data.available || data.retention.status === "unavailable") return "default";
-  if (data.retention.status === "blocked" || data.retention.status === "failed") return "bad";
-  if (!data.retention.enabled || data.retention.stale || data.retention.status === "stale" || data.retention.status === "running" || data.retention.status === "never_run") return "warn";
+function normalizedStatus(data: EventStoreStatusResponse): EventStoreRetentionStatus {
+  return Object.prototype.hasOwnProperty.call(STATUS_TEXT, data.retention.status)
+    ? data.retention.status
+    : "unavailable";
+}
+
+function statusTone(data: EventStoreStatusResponse, refreshFailed: boolean): MetricTone {
+  const status = normalizedStatus(data);
+  if (status === "blocked" || status === "failed") return "bad";
+  if (!data.available || status === "unavailable" || !data.capacity.available) return "default";
+  if (
+    refreshFailed || !data.retention.enabled || data.retention.stale || data.capacity.stale
+    || status === "stale" || status === "running" || status === "never_run"
+  ) return "warn";
   return "good";
 }
 
@@ -40,13 +50,13 @@ function badgeVariant(tone: MetricTone): "success" | "warning" | "danger" | "mut
   return "muted";
 }
 
-function healthText(data: EventStoreStatusResponse): string {
-  const status = data.retention.status;
-  if (!data.available || status === "unavailable") return "不可用";
+function healthText(data: EventStoreStatusResponse, refreshFailed: boolean): string {
+  const status = normalizedStatus(data);
   if (status === "blocked") return "已阻断";
   if (status === "failed") return "失败";
+  if (!data.available || status === "unavailable" || !data.capacity.available) return "不可用";
   if (!data.retention.enabled) return "未启用";
-  if (data.retention.stale || status === "stale") return "已过期";
+  if (refreshFailed || data.retention.stale || data.capacity.stale || status === "stale") return "已过期";
   if (status === "running" || status === "never_run") return "需关注";
   return "健康";
 }
@@ -64,12 +74,13 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
         <div className="border-b px-4 py-3">
           <h2 id="event-store-title" className="text-sm font-semibold">EventStore</h2>
         </div>
-        <EmptyState icon={Database} title="暂无 EventStore 数据" description="状态接口尚未返回可信数据。" compact />
+        <EmptyState icon={Database} title="EventStore 状态不可用" description="状态接口尚未返回可验证数据，当前不能判断为健康。" compact />
       </section>
     );
   }
 
-  const tone = statusTone(data);
+  const tone = statusTone(data, refreshFailed);
+  const status = normalizedStatus(data);
   const retentionStale = data.retention.stale || data.retention.status === "stale";
   const capacityStale = data.capacity.stale;
   const categories = Object.entries(data.retention.categories);
@@ -88,7 +99,7 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
           <h2 id="event-store-title" className="text-sm font-semibold">EventStore</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">事件保留水位与 runtime_events 容量（最近 24 小时）</p>
         </div>
-        <Badge variant={badgeVariant(tone)}>{healthText(data)}</Badge>
+        <Badge variant={badgeVariant(tone)}>{healthText(data, refreshFailed)}</Badge>
       </div>
 
       {(refreshFailed || retentionStale || capacityStale) && (
@@ -101,11 +112,11 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
       )}
 
       <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard title="总体健康" value={healthText(data)} tone={tone} description={data.available ? (data.retention.enabled ? "保留任务已启用" : "保留任务未启用") : "状态源不可用"} />
+        <MetricCard title="总体健康" value={healthText(data, refreshFailed)} tone={tone} description={data.available ? (data.retention.enabled ? "保留任务已启用" : "保留任务未启用") : "状态源不可用"} />
         <MetricCard title="运行模式" value={data.available ? data.retention.mode : "—"} description={data.available ? "只读状态" : "不可用"} valueClassName="break-all font-mono text-xl" />
         <MetricCard
           title="最近结果"
-          value={data.available ? STATUS_TEXT[data.retention.status] : "不可用"}
+          value={data.available ? STATUS_TEXT[status] : "不可用"}
           tone={tone}
           description={`完成 ${formatTime(data.retention.lastCompletedAt)} · 成功 ${formatTime(data.retention.lastSuccessAt)}`}
         />

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { authFetch } from "@/lib/authFetch";
 import type {
   OverviewSnapshot,
@@ -23,6 +25,49 @@ import type {
 import type { UserInfo } from "@/components/UserManager/types";
 
 type QueryValue = string | number | boolean | null | undefined;
+
+const nullableNumberSchema = z.number().nullable();
+const nullableStringSchema = z.string().nullable();
+const eventStoreStatusSchema = z.object({
+  schemaVersion: z.literal(1),
+  available: z.boolean(),
+  generatedAt: z.string(),
+  retention: z.object({
+    enabled: z.boolean(),
+    mode: z.enum(["dry-run", "execute"]),
+    status: z.enum(["never_run", "running", "dry_run_succeeded", "execute_succeeded", "blocked", "failed", "stale", "unavailable"]),
+    stale: z.boolean(),
+    lastStartedAt: nullableStringSchema,
+    lastCompletedAt: nullableStringSchema,
+    lastSuccessAt: nullableStringSchema,
+    durationMs: nullableNumberSchema,
+    errorCategory: nullableStringSchema,
+    nextScheduledAt: nullableStringSchema,
+    watermarks: z.object({
+      legal: nullableStringSchema,
+      billing: nullableStringSchema,
+      effective: nullableStringSchema,
+      maxGlobalSequence: nullableStringSchema,
+      lag: nullableStringSchema,
+    }),
+    categories: z.record(z.string(), z.object({ eligible: nullableNumberSchema, deleted: nullableNumberSchema })),
+  }),
+  capacity: z.object({
+    available: z.boolean(),
+    tableName: nullableStringSchema,
+    totalBytes: nullableNumberSchema,
+    tableBytes: nullableNumberSchema,
+    indexBytes: nullableNumberSchema,
+    sampledAt: nullableStringSchema,
+    stale: z.boolean(),
+    series: z.array(z.object({
+      totalBytes: nullableNumberSchema,
+      tableBytes: nullableNumberSchema,
+      indexBytes: nullableNumberSchema,
+      sampledAt: z.string(),
+    })),
+  }),
+});
 
 export function buildAdminApiPath(path: string, query: Record<string, QueryValue> = {}): string {
   const params = new URLSearchParams();
@@ -183,8 +228,11 @@ export const platformAdminApi = {
   systemMetrics(query: { hours?: number } = {}): Promise<SystemMetricsResponse> {
     return getJson(buildAdminApiPath("/system/metrics", query));
   },
-  eventStoreStatus(query: { hours?: number } = {}): Promise<EventStoreStatusResponse> {
-    return getJson(buildAdminApiPath("/system/event-store", query));
+  async eventStoreStatus(query: { hours?: number } = {}): Promise<EventStoreStatusResponse> {
+    const response = await getJson<unknown>(buildAdminApiPath("/system/event-store", query));
+    const parsed = eventStoreStatusSchema.safeParse(response);
+    if (!parsed.success) throw new Error("EventStore 状态响应无效");
+    return parsed.data;
   },
   systemStorage(): Promise<SystemStorageResponse> {
     return getJson(buildAdminApiPath("/system/storage"));

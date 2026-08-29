@@ -72,7 +72,7 @@ export class PgSystemMetricsStore {
     if (!options.pool && !options.connectionString) {
       throw new Error('PgSystemMetricsStore requires either pool or connectionString');
     }
-    const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
+    const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime').toLowerCase();
     this.systemMetricsTable = `${prefix}_system_metrics`;
     this.workspaceUsageTable = `${prefix}_workspace_usage`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
@@ -146,8 +146,19 @@ export class PgSystemMetricsStore {
 
   async pruneSystemMetrics(retentionDays: number): Promise<number> {
     const result = await this.pool.query(
-      `DELETE FROM ${this.systemMetricsTable}
-       WHERE sampled_at < now() - ($1::int * interval '1 day')`,
+      `DELETE FROM ${this.systemMetricsTable} AS expired
+       WHERE expired.sampled_at < now() - ($1::int * interval '1 day')
+         AND NOT (
+           expired.metric = 'runtime_event_retention'
+           AND expired.label = 'status'
+           AND expired.id = (
+             SELECT latest.id
+             FROM ${this.systemMetricsTable} AS latest
+             WHERE latest.metric = 'runtime_event_retention' AND latest.label = 'status'
+             ORDER BY latest.sampled_at DESC, latest.id DESC
+             LIMIT 1
+           )
+         )`,
       [retentionDays],
     );
     return result.rowCount ?? 0;
@@ -158,7 +169,7 @@ export class PgSystemMetricsStore {
       `SELECT DISTINCT ON (metric, label)
          id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
        FROM ${this.systemMetricsTable}
-       ORDER BY metric, label, sampled_at DESC`,
+       ORDER BY metric, label, sampled_at DESC, id DESC`,
     );
     return result.rows.map(mapMetricRow);
   }
@@ -174,12 +185,24 @@ export class PgSystemMetricsStore {
     return result.rows.map(mapMetricRow);
   }
 
+  async listMetricSeries(metric: SystemMetricName | string, label: string, hours: number): Promise<SystemMetricRecord[]> {
+    const result = await this.pool.query<MetricRow>(
+      `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
+       FROM ${this.systemMetricsTable}
+       WHERE metric = $1 AND label = $2
+         AND sampled_at >= now() - ($3::int * interval '1 hour')
+       ORDER BY sampled_at DESC, id DESC`,
+      [metric, label, hours],
+    );
+    return result.rows.map(mapMetricRow);
+  }
+
   async getLatestMetric(metric: SystemMetricName | string, label = ''): Promise<SystemMetricRecord | null> {
     const result = await this.pool.query<MetricRow>(
       `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
        FROM ${this.systemMetricsTable}
        WHERE metric = $1 AND label = $2
-       ORDER BY sampled_at DESC
+       ORDER BY sampled_at DESC, id DESC
        LIMIT 1`,
       [metric, label],
     );
@@ -187,26 +210,32 @@ export class PgSystemMetricsStore {
   }
 
   async recordRuntimeEventRetentionStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
-    let lastSuccessAt = snapshot.lastSuccessAt;
-    if (!lastSuccessAt) {
-      const previousSuccess = await this.pool.query<MetricRow>(
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${this.systemMetricsTable}:retention-status`]);
+      const previous = await client.query<MetricRow>(
         `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
          FROM ${this.systemMetricsTable}
-         WHERE metric = 'runtime_event_retention'
-           AND label = 'status'
-           AND detail_json->>'state' IN ('dry_run_succeeded', 'execute_succeeded')
-         ORDER BY sampled_at DESC
+         WHERE metric = 'runtime_event_retention' AND label = 'status'
+           AND detail_json->>'lastSuccessAt' IS NOT NULL
+         ORDER BY detail_json->>'lastSuccessAt' DESC, id DESC
          LIMIT 1`,
       );
-      const persisted = previousSuccess.rows[0]?.detail_json?.lastSuccessAt;
-      if (typeof persisted === 'string') lastSuccessAt = persisted;
+      const persisted = previous.rows[0]?.detail_json?.lastSuccessAt;
+      const lastSuccessAt = laterTimestamp(snapshot.lastSuccessAt, typeof persisted === 'string' ? persisted : null);
+      await client.query(
+        `INSERT INTO ${this.systemMetricsTable} (metric, label, value_num, detail_json, sampled_at)
+         VALUES ('runtime_event_retention', 'status', $1, $2::jsonb, now())`,
+        [snapshot.durationMs ?? 0, JSON.stringify({ ...snapshot, lastSuccessAt })],
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
     }
-    await this.insertMetric({
-      metric: 'runtime_event_retention',
-      label: 'status',
-      valueNum: snapshot.durationMs ?? 0,
-      detailJson: { ...snapshot, lastSuccessAt },
-    });
   }
 
   async listPgTopTables(limit = 5): Promise<Array<{ table: string; bytes: number; sampledAt: string }>> {
@@ -364,14 +393,14 @@ export class PgSystemMetricsStore {
       total_bytes: string;
     }>(
       `SELECT tablename AS table_name,
-              pg_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS table_bytes,
+              pg_table_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS table_bytes,
               pg_indexes_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS index_bytes,
               pg_total_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS total_bytes
        FROM pg_tables
        WHERE schemaname = current_schema()
          AND tablename LIKE $1
        ORDER BY pg_total_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) DESC`,
-      [`${prefix}_%`],
+      [`${sanitizeIdentifier(prefix).toLowerCase()}_%`],
     );
     return result.rows.map((row) => ({
       table: row.table_name,
@@ -432,6 +461,14 @@ function mapWorkspaceUsageRow(row: WorkspaceUsageRow): WorkspaceUsageRecord {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function laterTimestamp(current: string | null, persisted: string | null): string | null {
+  const currentMs = current ? Date.parse(current) : Number.NaN;
+  const persistedMs = persisted ? Date.parse(persisted) : Number.NaN;
+  if (!Number.isFinite(currentMs)) return Number.isFinite(persistedMs) ? persisted : null;
+  if (!Number.isFinite(persistedMs)) return current;
+  return currentMs >= persistedMs ? current : persisted;
 }
 
 // FIX-4: -1 表示 du 失败/超时（与空目录的 0 区分），允许落库；其余负值一律归一为 -1。

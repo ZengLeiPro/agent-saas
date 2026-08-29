@@ -89,11 +89,19 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
       lastSuccessAt: expect.any(String),
     });
 
-    let failAssistantStream = true;
+    await pool.query(`
+      INSERT INTO ${eventsTable} (tenant_id, session_id, run_id, event_type, timestamp) VALUES
+        ('tenant-a', 'session-a', 'run-a', 'assistant_stream_event', now() - interval '1 hour'),
+        ('tenant-a', 'session-a', 'run-a', 'assistant_stream_event', now() - interval '1 hour'),
+        ('tenant-a', 'session-a', 'run-a', 'run_finished', now() - interval '1 hour');
+      UPDATE ${billingProjectionStateTable}
+      SET last_global_sequence = (SELECT max(global_sequence) FROM ${eventsTable})
+      WHERE key = 'runtime_events';
+    `);
+    let assistantDeleteCalls = 0;
     const partialPool = {
       query: async (text: string, params?: unknown[]) => {
-        if (failAssistantStream && text.includes('retention:assistant-stream')) {
-          failAssistantStream = false;
+        if (text.includes('retention:assistant-stream') && ++assistantDeleteCalls === 2) {
           throw new Error('injected database failure');
         }
         return pool.query(text, params);
@@ -103,11 +111,63 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
       executionMode: 'execute',
       legalDeleteThroughGlobalSequence: '100',
       authorizationRef: 'CHG-test',
+      batchLimit: 1,
     });
     await expect(recoverable.runOnce()).rejects.toThrow('injected database failure');
-    expect(await latestDetail()).toMatchObject({ state: 'failed', errorCategory: 'partial_failure' });
+    expect(await latestDetail()).toMatchObject({
+      state: 'failed',
+      errorCategory: 'partial_failure',
+      categories: { 'assistant-stream': { eligible: 1, deleted: 1 } },
+    });
+    expect(await countAssistantStreamEvents()).toBe(1);
     await recoverable.runOnce();
     expect((await latestDetail()).state).toBe('execute_succeeded');
+    expect(await countAssistantStreamEvents()).toBe(0);
+  });
+
+  it('单调合并并发 lastSuccessAt，并在普通序列裁剪后保留最后状态供重启继承', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    const newerSuccess = {
+      schemaVersion: 1 as const,
+      state: 'execute_succeeded' as const,
+      mode: 'execute' as const,
+      lastStartedAt: '2026-08-29T12:00:00.000Z',
+      lastCompletedAt: '2026-08-29T12:00:01.000Z',
+      lastSuccessAt: '2026-08-29T12:00:01.000Z',
+      durationMs: 1000,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal: '100', billing: '100', effectiveDeleteThrough: '100' },
+      maxGlobalSequence: '100',
+      categories: {},
+    };
+    const olderFailure = {
+      ...newerSuccess,
+      state: 'failed' as const,
+      lastStartedAt: '2026-08-29T11:00:00.000Z',
+      lastCompletedAt: '2026-08-29T11:00:01.000Z',
+      lastSuccessAt: '2026-08-29T11:00:01.000Z',
+      errorCategory: 'execution_failed',
+    };
+    const secondProcessStore = new PgSystemMetricsStore({ pool, tablePrefix: prefix });
+
+    await Promise.all([
+      metricsStore.recordRuntimeEventRetentionStatus(newerSuccess),
+      secondProcessStore.recordRuntimeEventRetentionStatus(olderFailure),
+    ]);
+    expect(await latestDetail()).toMatchObject({ lastSuccessAt: newerSuccess.lastSuccessAt });
+
+    await metricsStore.insertMetric({ metric: 'disk_root', valueNum: 1, sampledAt: new Date('2000-01-01T00:00:00.000Z') });
+    await pool.query(`UPDATE ${metricsStore.systemMetricsTable} SET sampled_at = '2000-01-01T00:00:00.000Z'`);
+    expect(await metricsStore.pruneSystemMetrics(90)).toBeGreaterThan(0);
+    expect(await latestDetail()).toMatchObject({ lastSuccessAt: newerSuccess.lastSuccessAt });
+
+    const restartedStore = new PgSystemMetricsStore({ pool, tablePrefix: prefix });
+    await restartedStore.recordRuntimeEventRetentionStatus({ ...olderFailure, lastSuccessAt: null });
+    expect(await latestDetail()).toMatchObject({
+      state: 'failed',
+      lastSuccessAt: newerSuccess.lastSuccessAt,
+    });
   });
 
   function createRetention(
@@ -123,6 +183,13 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
       statusRecorder: (snapshot) => metricsStore.recordRuntimeEventRetentionStatus(snapshot),
       ...overrides,
     });
+  }
+
+  async function countAssistantStreamEvents(): Promise<number> {
+    const result = await pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM ${eventsTable} WHERE event_type = 'assistant_stream_event'`,
+    );
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   async function latestDetail(): Promise<Record<string, unknown>> {

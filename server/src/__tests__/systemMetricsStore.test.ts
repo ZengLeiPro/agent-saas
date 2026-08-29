@@ -97,25 +97,28 @@ describe('PgSystemMetricsStore', () => {
     await expect(store.countWorkspaceUsage()).resolves.toBe(7);
   });
 
-  it('preserves the latest success time when a new process records a failure', async () => {
+  it('serializes status writes and keeps lastSuccessAt monotonic across processes', async () => {
     const pool = createFakePool();
-    (pool as any).query = async (text: string, values: unknown[] = []) => {
-      pool.queries.push({ text, values });
-      if (text.includes("detail_json->>'state' IN")) {
-        return {
-          rows: [{
-            id: 1,
-            metric: 'runtime_event_retention',
-            label: 'status',
-            value_num: 10,
-            detail_json: { lastSuccessAt: '2026-08-29T12:00:00.000Z' },
-            sampled_at: '2026-08-29T12:00:00.000Z',
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 1 };
-    };
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
+          return {
+            rows: [{
+              id: 1,
+              metric: 'runtime_event_retention',
+              label: 'status',
+              value_num: 10,
+              detail_json: { lastSuccessAt: '2026-08-29T12:00:00.000Z' },
+              sampled_at: '2026-08-29T12:00:00.000Z',
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release() {},
+    });
     const store = new PgSystemMetricsStore({ pool: pool as never });
 
     await store.recordRuntimeEventRetentionStatus({
@@ -124,7 +127,7 @@ describe('PgSystemMetricsStore', () => {
       mode: 'execute',
       lastStartedAt: '2026-08-29T13:00:00.000Z',
       lastCompletedAt: '2026-08-29T13:00:01.000Z',
-      lastSuccessAt: null,
+      lastSuccessAt: '2026-08-29T11:00:00.000Z',
       durationMs: 1000,
       errorCategory: 'execution_failed',
       nextScheduledAt: null,
@@ -133,12 +136,41 @@ describe('PgSystemMetricsStore', () => {
       categories: {},
     });
 
-    const insert = pool.queries.find((query) => query.text.includes(`INSERT INTO ${store.systemMetricsTable}`));
-    expect(JSON.parse(String(insert?.values[3]))).toMatchObject({
+    const insert = pool.queries.find((query) => query.text.includes("VALUES ('runtime_event_retention', 'status'"));
+    expect(JSON.parse(String(insert?.values[1]))).toMatchObject({
       state: 'failed',
       lastSuccessAt: '2026-08-29T12:00:00.000Z',
       errorCategory: 'execution_failed',
     });
+    expect(pool.queries.some((query) => query.text.includes('pg_advisory_xact_lock'))).toBe(true);
+    expect(pool.queries.some((query) => query.text.includes("ORDER BY detail_json->>'lastSuccessAt' DESC, id DESC"))).toBe(true);
+    expect(insert?.text).toContain("$2::jsonb, now()");
+  });
+
+  it('preserves the latest retention status while pruning ordinary expired series', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.pruneSystemMetrics(90);
+
+    const query = pool.queries.find((item) => item.text.includes(`DELETE FROM ${store.systemMetricsTable}`));
+    expect(query?.text).toContain("expired.metric = 'runtime_event_retention'");
+    expect(query?.text).toContain('SELECT latest.id');
+    expect(query?.text).toContain('ORDER BY latest.sampled_at DESC, latest.id DESC');
+    expect(query?.values).toEqual([90]);
+  });
+
+  it('reads a metric series with index-leading metric and label predicates', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.listMetricSeries('pg_table_size', 'runtime_events', 720);
+
+    const query = pool.queries.at(-1)!;
+    expect(query.text).toContain('WHERE metric = $1 AND label = $2');
+    expect(query.text).toContain("sampled_at >= now() - ($3::int * interval '1 hour')");
+    expect(query.text).toContain('ORDER BY sampled_at DESC, id DESC');
+    expect(query.values).toEqual(['pg_table_size', 'runtime_events', 720]);
   });
 
   it('samples separate table/index/total bytes for each PG table', async () => {
@@ -152,11 +184,12 @@ describe('PgSystemMetricsStore', () => {
     };
     const store = new PgSystemMetricsStore({ pool: pool as never });
 
-    await expect(store.queryPgRuntimeTableSizes()).resolves.toEqual([{
+    await expect(store.queryPgRuntimeTableSizes('Runtime')).resolves.toEqual([{
       table: 'runtime_events', tableBytes: 10, indexBytes: 4, totalBytes: 14,
     }]);
-    expect(pool.queries.at(-1)?.text).toContain('pg_relation_size');
+    expect(pool.queries.at(-1)?.text).toContain('pg_table_size');
     expect(pool.queries.at(-1)?.text).toContain('pg_indexes_size');
     expect(pool.queries.at(-1)?.text).toContain('pg_total_relation_size');
+    expect(pool.queries.at(-1)?.values).toEqual(['runtime_%']);
   });
 });

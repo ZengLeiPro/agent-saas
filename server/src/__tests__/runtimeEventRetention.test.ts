@@ -18,6 +18,8 @@ class FakePool {
   categoryParams: Partial<Record<RetentionCategory, unknown[][]>> = {};
   queries: string[] = [];
   failCategoryOnce?: RetentionCategory;
+  failCategoryOnCall: Partial<Record<RetentionCategory, number>> = {};
+  categoryCalls: Partial<Record<RetentionCategory, number>> = {};
 
   async query(text: string, params?: unknown[]) {
     this.queries.push(text);
@@ -29,8 +31,11 @@ class FakePool {
     }
     const category = retentionCategory(text);
     if (category) {
-      if (this.failCategoryOnce === category) {
+      const callNo = (this.categoryCalls[category] ?? 0) + 1;
+      this.categoryCalls[category] = callNo;
+      if (this.failCategoryOnce === category || this.failCategoryOnCall[category] === callNo) {
         this.failCategoryOnce = undefined;
+        delete this.failCategoryOnCall[category];
         throw new Error('sensitive SQL failure');
       }
       const calls = this.categoryParams[category] ?? [];
@@ -46,7 +51,7 @@ class FakePool {
 }
 
 describe('RuntimeEventRetention', () => {
-  it('does not start scheduled retention unless explicitly enabled', () => {
+  it('does not start scheduled retention unless explicitly enabled', async () => {
     const pool = new FakePool();
     const info = vi.fn();
     const baseOptions = {
@@ -58,11 +63,11 @@ describe('RuntimeEventRetention', () => {
     };
     const disabledByDefault = new RuntimeEventRetention(baseOptions);
 
-    disabledByDefault.start();
+    await disabledByDefault.start();
     expect(info).not.toHaveBeenCalled();
 
     const enabled = new RuntimeEventRetention({ ...baseOptions, enabled: true });
-    enabled.start();
+    await enabled.start();
     expect(info).toHaveBeenCalledWith(
       'RuntimeEventRetention started: mode=dry-run interval=10m batchLimit=10000 maxBatchesPerCategory=10 legalWatermark=0',
     );
@@ -118,6 +123,32 @@ describe('RuntimeEventRetention', () => {
     const invalidWatermark = new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' });
     await expect(invalidWatermark.runOnce()).rejects.toThrow(/watermark 无效/);
     expect(snapshots.at(-1)).toMatchObject({ state: 'blocked', errorCategory: 'legal_watermark_invalid' });
+  });
+
+  it('records a blocked snapshot from the enabled worker startup path without querying events', async () => {
+    const pool = new FakePool();
+    const snapshots: any[] = [];
+    const warn = vi.fn();
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+      logger: { warn },
+    });
+
+    await retention.start();
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ state: 'blocked', errorCategory: 'authorization_missing' });
+    expect(snapshots[0].nextScheduledAt).toEqual(expect.any(String));
+    expect(pool.queries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention configuration blocked: category=authorization_missing');
+    retention.stop();
   });
 
   it('records running and successful dry-run snapshots without failing on recorder errors', async () => {
@@ -266,21 +297,22 @@ describe('RuntimeEventRetention', () => {
     expect(pool.categoryParams['tool-delta']).toHaveLength(2);
   });
 
-  it('records partial failure and a later recovery without persisting error messages', async () => {
+  it('retains committed batches when the same category fails later, then records recovery', async () => {
     const pool = new FakePool();
     pool.billingWatermark = '99';
     pool.maxGlobalSequence = '99';
-    pool.deleteBatches['tool-delta'] = [1, 1];
-    pool.failCategoryOnce = 'assistant-stream';
+    pool.deleteBatches['tool-delta'] = [2, 1];
+    pool.failCategoryOnCall['tool-delta'] = 2;
     const snapshots: any[] = [];
     const retention = createRetention(pool, {
+      batchLimit: 2,
       statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
     });
 
     await expect(retention.runOnce()).rejects.toThrow('sensitive SQL failure');
     expect(snapshots.at(-1)).toMatchObject({
       state: 'failed', errorCategory: 'partial_failure',
-      categories: { 'tool-delta': { eligible: 1, deleted: 1 } },
+      categories: { 'tool-delta': { eligible: 2, deleted: 2 } },
     });
     expect(JSON.stringify(snapshots.at(-1))).not.toContain('sensitive SQL failure');
 

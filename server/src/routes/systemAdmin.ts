@@ -112,10 +112,12 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
     }
     try {
       const hours = parsed.data.hours ?? 24;
-      const [retentionMetric, capacityMetric, metrics] = await Promise.all([
+      const [retentionMetric, capacityMetric, capacitySeries] = await Promise.all([
         store.getLatestMetric('runtime_event_retention', 'status'),
         options.eventsTable ? store.getLatestMetric('pg_table_size', options.eventsTable) : Promise.resolve(null),
-        store.listMetricsSince(hours),
+        options.eventsTable
+          ? store.listMetricSeries('pg_table_size', options.eventsTable, hours)
+          : Promise.resolve([]),
       ]);
       res.json({
         schemaVersion: 1,
@@ -130,7 +132,7 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
         capacity: serializeCapacity(
           options.eventsTable,
           capacityMetric,
-          metrics.filter((metric) => metric.metric === 'pg_table_size' && metric.label === options.eventsTable),
+          capacitySeries,
           generatedAt,
         ),
       });

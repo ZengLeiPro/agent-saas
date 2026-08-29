@@ -62,7 +62,7 @@ describe("InfraPage EventStore loading", () => {
     expect(api.eventStoreStatus).toHaveBeenCalledWith({ hours: 24 });
   });
 
-  it("刷新 EventStore 失败时显示错误并保留最近可信值", async () => {
+  it("后续刷新 EventStore 失败时显示错误并保留最近可信值", async () => {
     render(<InfraPage />);
     expect(await screen.findByText("billing-marker-321")).toBeTruthy();
 
@@ -73,5 +73,15 @@ describe("InfraPage EventStore loading", () => {
     expect(screen.getByText("billing-marker-321")).toBeTruthy();
     expect(screen.getByText(/刷新失败；当前显示最近一次可信数据/)).toBeTruthy();
     expect(api.eventStoreStatus).toHaveBeenLastCalledWith({ hours: 24 });
+  });
+
+  it("初始 EventStore 响应无效时明确显示状态不可用", async () => {
+    api.eventStoreStatus.mockRejectedValueOnce(new Error("EventStore 状态响应无效"));
+
+    render(<InfraPage />);
+
+    expect(await screen.findByText("EventStore 状态不可用")).toBeTruthy();
+    expect(screen.getByText(/当前不能判断为健康/)).toBeTruthy();
+    expect(screen.queryByText("健康")).toBeNull();
   });
 });

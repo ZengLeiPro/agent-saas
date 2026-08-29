@@ -1084,9 +1084,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       logger: serverLogger.child('RuntimeEventRetention'),
     });
     if (enableSingletonWorkers) {
-      runtimeEventRetention.start();
+      await runtimeEventRetention.start();
     } else {
-      serverLogger.info(`RuntimeEventRetention disabled for processRole=${processRole}`);
+      serverLogger.info(`RuntimeEventRetention worker disabled for processRole=${processRole}`);
     }
     if (enableSchedulerWorker) {
       const recoveryResult = await recoverRunningToolInvocations({

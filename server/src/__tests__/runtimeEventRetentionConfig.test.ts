@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
+import { retentionWorkerOptions } from '../app/runtimeEventRetentionConfig.js';
+import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 
 const baseConfig = { agent: { cwd: '/tmp/agent' }, server: { port: 3200 } };
 
 describe('runtime event retention config', () => {
-  it('accepts bounded retention windows and requires execute watermarks', () => {
+  it('accepts bounded retention windows and leaves execute gate failures observable at worker startup', () => {
     const config = parseAppConfig({
       ...baseConfig,
       runtimeEventRetention: {
@@ -35,13 +37,49 @@ describe('runtime event retention config', () => {
       ...baseConfig,
       runtimeEventRetention: { modelDiagnosticRetentionDays: 30, modelRequestFinishedRetentionDays: 7 },
     })).toThrow(/不得短于/);
-    expect(() => parseAppConfig({
+    expect(parseAppConfig({
       ...baseConfig,
-      runtimeEventRetention: { executionMode: 'execute', legalDeleteThroughGlobalSequence: '100' },
-    })).toThrow(/authorizationRef/);
-    expect(() => parseAppConfig({
+      runtimeEventRetention: { enabled: true, executionMode: 'execute', legalDeleteThroughGlobalSequence: '100' },
+    }).runtimeEventRetention).toMatchObject({ enabled: true, executionMode: 'execute' });
+    expect(parseAppConfig({
       ...baseConfig,
-      runtimeEventRetention: { executionMode: 'execute', authorizationRef: 'CHG-198', legalDeleteThroughGlobalSequence: '0' },
-    })).toThrow(/正数/);
+      runtimeEventRetention: { enabled: true, executionMode: 'execute', authorizationRef: 'CHG-198', legalDeleteThroughGlobalSequence: '0' },
+    }).runtimeEventRetention).toMatchObject({ enabled: true, legalDeleteThroughGlobalSequence: '0' });
+  });
+
+  it('records a fail-closed blocked snapshot through parsed app config and worker options', async () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      runtimeEventRetention: {
+        enabled: true,
+        executionMode: 'execute',
+        legalDeleteThroughGlobalSequence: '100',
+      },
+    });
+    const snapshots: unknown[] = [];
+    const query = vi.fn();
+    const worker = new RuntimeEventRetention({
+      pool: { query } as never,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      ...retentionWorkerOptions(config.runtimeEventRetention),
+      statusRecorder: (snapshot) => { snapshots.push(snapshot); },
+    });
+
+    await worker.start();
+
+    expect(snapshots).toEqual([expect.objectContaining({ state: 'blocked', errorCategory: 'authorization_missing' })]);
+    expect(query).not.toHaveBeenCalled();
+    worker.stop();
+  });
+
+  it('normalizes PostgreSQL tablePrefix to the unquoted identifier form', () => {
+    const config = parseAppConfig({
+      ...baseConfig,
+      runtimeEventStore: { backend: 'pg', connectionString: 'postgres://example/test', tablePrefix: 'Agent_Runtime' },
+    });
+
+    expect(config.runtimeEventStore).toMatchObject({ tablePrefix: 'agent_runtime' });
   });
 });

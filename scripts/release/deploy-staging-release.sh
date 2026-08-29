@@ -71,6 +71,8 @@ rollback() {
     systemctl stop agent-saas-runtime-worker-staging.service || true
     systemctl stop agent-saas-server-staging.service || true
     systemctl stop agent-saas-acs-orchestrator-staging.service || true
+    systemctl reset-failed agent-saas-runtime-worker-staging.service \
+      agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
   fi
 }
 finish() {
@@ -175,6 +177,29 @@ const client = new Client({
   console.error(`Staging database runtime preflight failed: ${error.message}`);
   process.exit(1);
 });
+NODE
+
+node - /etc/agent-saas-staging/config.json <<'NODE'
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const failures = [];
+if (config.tts) failures.push('tts must be absent');
+if (config.stt?.enabled !== false) failures.push('stt.enabled must be false');
+for (const key of ['apiKey', 'apiKeyRef', 'ossAccessKeyId', 'ossAccessKeyIdRef', 'ossAccessKeySecret', 'ossAccessKeySecretRef']) {
+  if (config.stt?.[key]) failures.push(`stt.${key} must be absent`);
+}
+if (config.memory?.enabled !== false) failures.push('memory.enabled must be false');
+if (config.memory?.index) failures.push('memory.index must be absent');
+for (const key of ['injectContext', 'maintenance', 'polling', 'consolidation']) {
+  if (config.memory?.[key]?.enabled !== false) failures.push(`memory.${key}.enabled must be false`);
+}
+if (Object.keys(config.dispatch?.env ?? {}).length > 0) failures.push('dispatch.env must be empty');
+if (config.systemMonitor?.enabled !== false) failures.push('systemMonitor.enabled must be false');
+if (config.runtimeEventRetention?.enabled !== false) failures.push('runtimeEventRetention.enabled must be false');
+if (config.integrationV3ControlPlane) failures.push('integrationV3ControlPlane must be absent');
+if (failures.length > 0) {
+  throw new Error(`Staging runtime profile preflight failed:\n- ${failures.join('\n- ')}`);
+}
 NODE
 
 ln -sfn "$target" "$current"

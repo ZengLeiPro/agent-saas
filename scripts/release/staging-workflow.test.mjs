@@ -119,6 +119,13 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /"\$aliyun_cli" vpc DescribeSnatTableEntries/u);
   assert.match(deploy, /Staging ACS SNAT runtime identity cannot read the configured SNAT table/u);
   assert.match(deploy, /STAGING_RELEASE_ROOT="\$target"/u);
+  assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
+  assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
+  assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
+  assert.match(
+    deploy,
+    /tar -xzf "\$candidate\/\.release\/acs-orchestrator\.tgz" -C "\$candidate"/u,
+  );
   assert.match(deploy, /SELECT current_database\(\) AS database, current_user AS username/u);
   assert.match(deploy, /Staging database runtime preflight failed/u);
   assert.ok(

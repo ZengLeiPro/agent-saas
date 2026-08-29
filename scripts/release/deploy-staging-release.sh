@@ -130,12 +130,18 @@ if [ -d "$target" ]; then
   test "$existing" = "$manifest_digest" || { echo 'Immutable Staging release conflicts' >&2; exit 1; }
 else
   rm -rf "$candidate"
-  mkdir -p "$candidate/server" "$candidate/web" "$candidate/acs-orchestrator" "$candidate/.release"
+  mkdir -p "$candidate/web" "$candidate/.release"
   install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
   install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
-  tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate/server"
+  tar -tzf "$candidate/.release/server-bundle.tgz" \
+    | awk '$0 == "./server/dist/index.js" || $0 == "server/dist/index.js" { found = 1 } END { exit !found }' \
+    || { echo 'Staging server bundle must contain server/dist/index.js' >&2; exit 1; }
+  tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
+    | awk '$0 == "./acs-orchestrator/dist/index.js" || $0 == "acs-orchestrator/dist/index.js" { found = 1 } END { exit !found }' \
+    || { echo 'Staging ACS bundle must contain acs-orchestrator/dist/index.js' >&2; exit 1; }
+  tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate"
   tar -xzf "$RELEASE_DIR/web-assets.tgz" -C "$candidate/web"
-  tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
+  tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate"
   test -s "$candidate/server/dist/index.js"
   test -s "$candidate/acs-orchestrator/dist/index.js"
   install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"

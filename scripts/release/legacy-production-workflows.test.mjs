@@ -34,3 +34,17 @@ test('the immutable RC promotion workflow remains the release-bound production e
   assert.match(workflow, /release_id:/u);
   assert.match(workflow, /environment: production/u);
 });
+
+test('promotion extracts rooted compatibility bundles at the release root', async () => {
+  const deploy = await readFile(
+    new URL('../../scripts/release/deploy-production-release.sh', import.meta.url),
+    'utf8',
+  );
+  assert.match(deploy, /Production server bundle must contain server\/dist\/index\.js/u);
+  assert.match(deploy, /Production ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
+  assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
+  assert.match(
+    deploy,
+    /tar -xzf "\$candidate\/\.release\/acs-orchestrator\.tgz" -C "\$candidate"/u,
+  );
+});

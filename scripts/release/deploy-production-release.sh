@@ -59,9 +59,12 @@ deploy_acs() {
     node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs >/dev/null
   else
     candidate="$target.candidate-$GITHUB_RUN_ID"
-    rm -rf "$candidate" && mkdir -p "$candidate/acs-orchestrator" "$candidate/.release"
+    rm -rf "$candidate" && mkdir -p "$candidate/.release"
     install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
-    tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
+    tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
+      | awk '$0 == "./acs-orchestrator/dist/index.js" || $0 == "acs-orchestrator/dist/index.js" { found = 1 } END { exit !found }' \
+      || { echo 'Production ACS bundle must contain acs-orchestrator/dist/index.js' >&2; exit 1; }
+    tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate"
     test -s "$candidate/acs-orchestrator/dist/index.js"
     install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
@@ -165,9 +168,12 @@ deploy_app() {
     node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server >/dev/null
   else
     candidate="$target.candidate-$GITHUB_RUN_ID"
-    rm -rf "$candidate" && mkdir -p "$candidate/server" "$candidate/.release"
+    rm -rf "$candidate" && mkdir -p "$candidate/.release"
     install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
-    tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate/server"
+    tar -tzf "$candidate/.release/server-bundle.tgz" \
+      | awk '$0 == "./server/dist/index.js" || $0 == "server/dist/index.js" { found = 1 } END { exit !found }' \
+      || { echo 'Production server bundle must contain server/dist/index.js' >&2; exit 1; }
+    tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate"
     test -s "$candidate/server/dist/index.js"
     install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component server >/dev/null

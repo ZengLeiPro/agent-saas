@@ -37,6 +37,10 @@ export function packArgs(directory, target) {
   return ['--no-xattrs', '-czf', target, '-C', directory, '.'];
 }
 
+export function packRootedArgs(directory, entry, target) {
+  return ['--no-xattrs', '-czf', target, '-C', directory, entry];
+}
+
 export function assertProductionBuildPlatform(platform = process.platform) {
   if (platform !== 'linux')
     throw new Error('Production release artifacts must be built on Linux for native dependencies');
@@ -87,6 +91,11 @@ async function pack(directory, target) {
   return { path: basename(target), ...(await digestFile(target)) };
 }
 
+async function packRooted(directory, entry, target) {
+  run('tar', packRootedArgs(directory, entry, target));
+  return { path: basename(target), ...(await digestFile(target)) };
+}
+
 export async function buildRelease(argv = process.argv) {
   const opts = options(argv);
   assertProductionBuildPlatform();
@@ -115,7 +124,7 @@ export async function buildRelease(argv = process.argv) {
   run('cp', ['-R', join(root, 'web/dist'), join(stage, 'web')]);
 
   const artifacts = {
-    serverBundle: await pack(join(stage, 'server'), join(output, 'server-bundle.tgz')),
+    serverBundle: await packRooted(stage, 'server', join(output, 'server-bundle.tgz')),
     webAssets: await pack(join(stage, 'web'), join(output, 'web-assets.tgz')),
   };
   if (opts['include-acs']) {
@@ -127,8 +136,9 @@ export async function buildRelease(argv = process.argv) {
       join(root, 'acs-orchestrator/config/staging.env'),
       join(stage, 'acs-orchestrator/staging.env'),
     ]);
-    artifacts.acsOrchestrator = await pack(
-      join(stage, 'acs-orchestrator'),
+    artifacts.acsOrchestrator = await packRooted(
+      stage,
+      'acs-orchestrator',
       join(output, 'acs-orchestrator.tgz'),
     );
   }

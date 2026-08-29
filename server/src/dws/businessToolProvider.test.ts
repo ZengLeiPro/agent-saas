@@ -150,13 +150,18 @@ describe('DwsBusinessToolProvider', () => {
   });
 
   it('TASK-256 review 返工：缺 confirmed 时 provider 不得调用底层 invoke', async () => {
-    const { provider, invoke, context } = setup();
+    const { provider, invoke, auditStore, context } = setup();
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
       input: { args: ['chat', 'message', 'send', 'all', '--group', 'cid'], credentialMode: 'agent' },
       authorization: { approved: true, source: 'policy_auto' },
     }, context)).rejects.toThrow();
     expect(invoke).not.toHaveBeenCalled();
+    expect(auditStore.events.at(-1)?.metadata).toMatchObject({
+      commandPath: 'chat.message.send.all',
+      policySource: 'legacy_verb_fallback',
+      policyCliVersionCatalogs: '1.0.55,1.0.60',
+    });
   });
 
   it('TASK-256 review 返工：全路径写扫描后正常只读路径仍为 safe，拒绝语义不变', () => {
@@ -198,6 +203,8 @@ describe('DwsBusinessToolProvider', () => {
     expect(auditStore.events.map(event => event.result)).toEqual(['intent', 'succeeded']);
     expect(auditStore.events[0]?.metadata).toMatchObject({
       commandPath: 'calendar.event.list',
+      policySource: 'cli_schema',
+      policyCliVersionCatalogs: '1.0.55,1.0.60',
       delegationBindingId: 'assignment-a',
       delegationAssignmentVersion: 3,
     });

@@ -39,6 +39,12 @@ elif [ -e "$current" ]; then
   echo 'Staging current path exists but is not a symlink' >&2
   exit 1
 fi
+worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
+printf '%s\n' "$worker_unit_environment" \
+  | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
+    exit 1
+  }
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"

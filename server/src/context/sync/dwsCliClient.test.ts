@@ -164,7 +164,7 @@ describe('DwsCliContextClient', () => {
       });
   });
 
-  it('maps minutes list/summary/transcription and follows transcript pagination', async () => {
+  it('maps v1.0.60 minutes list/summary/transcription and follows transcript pagination', async () => {
     const { client, json } = setup([
       {
         data: {
@@ -209,6 +209,18 @@ describe('DwsCliContextClient', () => {
     expect(summary).toEqual({ content: '核心结论' });
     expect(json.mock.calls[3]![0]).toContain('transcript-cursor-2');
     expect(transcript).toEqual({ content: '甲: 第一段 补充\n乙: 第二段' });
+  });
+
+  it('restarts a complete v1.0.60 minutes inventory when durable legacy cursor state exists', async () => {
+    const { client, json } = setup([{
+      data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } },
+    }]);
+
+    await expect(client.listMinutes({ scope, window, pageSize: 20, cursor: 'legacy-cursor' }))
+      .resolves.toEqual({ items: [] });
+    expect(json.mock.calls[0]![0]).not.toContain('legacy-cursor');
+    expect(json.mock.calls[0]![0]).toContain('--page-all');
   });
 
   it('fails closed when a v1.0.60 minutes inventory is not complete and has no safe cursor', async () => {

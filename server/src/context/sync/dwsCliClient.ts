@@ -59,7 +59,7 @@ const DEFAULT_MAX_TRANSCRIPT_PAGES = 1_000;
 const DEFAULT_MAX_TRANSCRIPT_CHARACTERS = 100_000;
 const MAX_MINUTES_LIST_PAGES = 100;
 
-/** Deterministic argv builder/parser for the pinned DWS v1.0.60 read commands. */
+/** Deterministic argv builder/parser for the pinned DWS v1.0.60 command contracts. */
 export class DwsCliContextClient implements DwsContextClient {
   private readonly maxTranscriptPages: number;
   private readonly maxTranscriptCharacters: number;
@@ -246,7 +246,8 @@ export class DwsCliContextClient implements DwsContextClient {
     cursor?: string;
     pageSize: number;
   }): Promise<DwsPage<DwsMinutesRecord>> {
-    if (input.cursor) throw new Error('DWS v1.0.60 minutes +list-all 完整读取不接受外部 cursor');
+    // v1.0.60 的完整 accessible 查询不接受 cursor。若这里带 cursor，只可能是升级前
+    // 持久化的失败窗口；从头重读并依赖存储幂等去重，才能让旧重试状态自动收敛。
     const args = withProfile([
       'dws', 'minutes', '+list-all', '--limit', String(input.pageSize),
       '--page-all', '--page-limit', String(MAX_MINUTES_LIST_PAGES),

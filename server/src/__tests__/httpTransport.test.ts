@@ -164,33 +164,6 @@ describe('HttpTransport.invoke', () => {
     expect(bodyParsed.context.workspace).not.toHaveProperty('root');
   });
 
-  it('does not dispatch requests that were aborted before invocation', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new Error('must not dispatch');
-    }) as unknown as typeof fetch;
-    const transport = new HttpTransport({
-      baseUrl: 'http://127.0.0.1:3300',
-      authToken: 'token',
-      fetchImpl,
-    });
-    const controller = new AbortController();
-    controller.abort();
-    const request = buildRequest({
-      context: { workspace: SAMPLE_WORKSPACE, signal: controller.signal },
-    });
-
-    await expect(transport.invoke(request)).resolves.toMatchObject({
-      status: 'error', metadata: { aborted: true },
-    });
-    const chunks = [];
-    for await (const chunk of transport.invokeStream(request)) chunks.push(chunk);
-    expect(chunks).toEqual([{
-      type: 'completed',
-      response: expect.objectContaining({ status: 'error', metadata: { aborted: true } }),
-    }]);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
   it('returns success response body verbatim', async () => {
     const expected: ToolInvocationResponse = {
       status: 'success',

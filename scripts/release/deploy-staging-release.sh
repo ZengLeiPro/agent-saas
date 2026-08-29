@@ -2,6 +2,7 @@
 set -euo pipefail
 
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
+: "${UNIT_DIR:?UNIT_DIR is required}"
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
@@ -21,6 +22,44 @@ lock=/run/lock/agent-saas-staging/deploy.lock
 mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
+
+install_staging_unit() {
+  source_path="$1"
+  destination_path="$2"
+  candidate_path="${destination_path}.candidate-${GITHUB_RUN_ID}"
+  test -f "$source_path" || {
+    echo "Missing Staging systemd unit template: $source_path" >&2
+    exit 1
+  }
+  install -o root -g root -m 0644 "$source_path" "$candidate_path"
+  mv -f "$candidate_path" "$destination_path"
+}
+
+install -d -o agent-saas-staging -g agent-saas-staging -m 0750 \
+  /mnt/agent-saas-staging/runtime/server
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-server-staging.service.template" \
+  /etc/systemd/system/agent-saas-server-staging.service
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" \
+  /etc/systemd/system/agent-saas-runtime-worker-staging.service
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" \
+  /etc/systemd/system/agent-saas-acs-orchestrator-staging.service
+systemctl daemon-reload
+
+for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
+  test "$(systemctl show "$service_name" --property WorkingDirectory --value)" = \
+    /mnt/agent-saas-staging/runtime/server || {
+    echo "$service_name does not use the persistent Staging runtime directory" >&2
+    exit 1
+  }
+  systemctl show "$service_name" --property ExecStart --value \
+    | grep -Fq '/opt/agent-saas-staging/current/server/dist/index.js' || {
+    echo "$service_name does not execute the immutable Staging server entrypoint" >&2
+    exit 1
+  }
+done
 
 previous=''
 had_previous_release=false

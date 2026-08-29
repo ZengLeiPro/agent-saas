@@ -81,6 +81,19 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   );
   assert.match(workflow, /aliyun --region cn-shenzhen ecs RevokeSecurityGroup/u);
   assert.match(workflow, /ssh-keyscan -T 10 -t ed25519/u);
+  assert.match(
+    workflow,
+    /daemon-packaging\/systemd\/agent-saas-server-staging\.service\.template/u,
+  );
+  assert.match(
+    workflow,
+    /daemon-packaging\/systemd\/agent-saas-runtime-worker-staging\.service\.template/u,
+  );
+  assert.match(
+    workflow,
+    /daemon-packaging\/systemd\/agent-saas-acs-orchestrator-staging\.service\.template/u,
+  );
+  assert.match(workflow, /UNIT_DIR='\$remote'/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
@@ -97,6 +110,12 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.doesNotMatch(deploy, /pnpm (install|build)|npm (install|run)/u);
   assert.doesNotMatch(deploy, /\/opt\/agent-saas-app|agent-saas-server@|active-color/u);
   assert.match(deploy, /\/opt\/agent-saas-staging/u);
+  assert.match(deploy, /UNIT_DIR:\?UNIT_DIR is required/u);
+  assert.match(deploy, /install_staging_unit/u);
+  assert.match(deploy, /systemctl daemon-reload/u);
+  assert.match(deploy, /\/mnt\/agent-saas-staging\/runtime\/server/u);
+  assert.match(deploy, /does not use the persistent Staging runtime directory/u);
+  assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);
   assert.match(deploy, /kill -USR2/u);
   assert.match(deploy, /orchestratorArtifactDigest/u);

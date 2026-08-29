@@ -413,7 +413,7 @@ describePg('PgTaskboardStore contract', () => {
       { ...alice, displayName: '爱丽丝 @alice' },
       first.id,
     )).toEqual([expect.objectContaining({ authorName: '爱丽丝 @alice' })]);
-    expect((await store.getTask(alice, first.id)).commentCount).toBe(1);
+    const taskWithComment = await store.getTask(alice, first.id); expect(taskWithComment.commentCount).toBe(1); expect(taskWithComment.latestActivityAt).toBe(comment.createdAt); expect((await store.listTasks(alice, board.id)).find((task) => task.id === first.id)?.latestActivityAt).toBe(comment.createdAt);
 
     const archivedTask = await store.archiveTask(alice, first.id, { expectedVersion: edited.version });
     await expect(store.createComment(alice, first.id, { body: '禁止新增' }))

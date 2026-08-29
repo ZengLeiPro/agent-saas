@@ -98,6 +98,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.deleted_at ? { deletedAt: toIso(row.deleted_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
+    ...(row.latest_activity_at ? { latestActivityAt: toIso(row.latest_activity_at) } : {}),
   };
 }
 

@@ -42,6 +42,7 @@ export function TaskCard({
 }: TaskCardProps) {
   const dueAt = formatDueAt(task.dueAt);
   const createdAt = formatTaskDate(task.createdAt);
+  const latestActivityAt = formatTaskDate(task.latestActivityAt ?? task.updatedAt);
   const completedAt = formatTaskDate(task.completedAt);
   const creatorName = task.creatorName?.trim() || "提交人未知";
   const kind = task.kind ?? "delivery";
@@ -49,6 +50,7 @@ export function TaskCard({
     `打开任务 ${task.identifier} ${task.title}`,
     `提交人 ${creatorName}`,
     createdAt ? `提交于 ${createdAt}` : null,
+    latestActivityAt ? `最新于 ${latestActivityAt}` : null,
     completedAt ? `完成于 ${completedAt}` : null,
     dueAt ? `截止 ${dueAt}` : null,
     `${task.commentCount} 条评论`,
@@ -155,6 +157,7 @@ export function TaskCard({
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
             {createdAt ? <time dateTime={task.createdAt}>提交 {createdAt}</time> : null}
+            {latestActivityAt ? <time dateTime={task.latestActivityAt ?? task.updatedAt}>最新 {latestActivityAt}</time> : null}
             {completedAt ? (
               <time className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400" dateTime={task.completedAt}>
                 <CircleCheck className="size-3" />

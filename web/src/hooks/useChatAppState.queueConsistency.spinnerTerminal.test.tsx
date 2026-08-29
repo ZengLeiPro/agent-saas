@@ -111,6 +111,13 @@ vi.mock("@/lib/wsClient", () => ({
   },
 }));
 
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 function emit(data: unknown): void {
   for (const handler of [...harness.messageHandlers]) handler({ data });
 }
@@ -126,37 +133,114 @@ beforeEach(() => {
   Object.values(harness.session).forEach((value) => {
     if (typeof value === "function" && "mockClear" in value) (value as ReturnType<typeof vi.fn>).mockClear();
   });
-  harness.authFetch.mockReset().mockResolvedValue(new Response("{}", { status: 404 }));
+  harness.authFetch.mockReset().mockResolvedValue(response({}, 404));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-// TASK-312 回归：done 终态必须同步写 per-session runtime Map，否则 defer latch 让
-// ws 源 active 永久残留，侧边栏转圈只有整页刷新才消失。
+// TASK-312 回归：终态必须「最终清除、不刷新页面」，但不得在 terminal -> next-run
+// handoff 空窗立即清 Map（侧边栏转圈闪断/列表回跳）。收敛由 750ms 延迟探活配合
+// /stream-status 权威结果完成；version 仲裁让下一 run lifecycle 的旧终态探活失效。
 describe("useChatAppState sidebar spinner terminal convergence", () => {
-  it("clears the spinner when the current session's run completes via session_status + done", () => {
-    harness.session.sessionId = "session-a";
-    harness.session.isNewSession = false;
-    const { result } = renderHook(() => useChatAppState());
+  function startRunningSession(result: { current: ReturnType<typeof useChatAppState> }) {
     act(() => result.current.selectSession("session-a"));
-
     act(() => {
       emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-a", runId: "run-a" });
     });
     expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+  }
 
+  function emitTerminalSequence() {
+    // 服务端真实投影顺序：session_status(terminal) 先到（defer latch 保活），done 紧随其后收口 UI。
     act(() => {
-      // 服务端终态投影顺序：session_status(completed) 先到，defer latch 暂不写 Map。
       emit({ type: "session_status", sessionId: "session-a", status: "completed", streamId: "stream-a", runId: "run-a" });
       emit({ type: "done", sessionId: "session-a", streamId: "stream-a", runId: "run-a" });
     });
+  }
 
+  it("keeps the latch through done and clears the spinner after the probe confirms no next run", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+
+    emitTerminalSequence();
     expect(result.current.loading).toBe(false);
+    // handoff 空窗：done 不得立即清 active latch（否则列表转圈闪断/回跳旧时间）。
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 无下一 run：权威 inactive 后终态最终清除，无需刷新页面。
     expect(result.current.runningSessionIds.has("session-a")).toBe(false);
     expect(result.current.sessionRuntimeStatuses.get("session-a")).toBeUndefined();
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("keeps the spinner through done when the probe confirms the next run is active", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+
+    emitTerminalSequence();
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "waiting_user", streamId: "stream-next", runId: "run-next" })
+        : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 有下一 run：handoff 期间 runningSessionIds 不变 false，最终收敛为下一 run 的精确 active status。
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("waiting_user");
+  });
+
+  it("lets a next-run lifecycle invalidate the stale terminal probe via version arbitration", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+
+    emitTerminalSequence();
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    // 下一 run lifecycle 在探活窗口内到达：version 仲裁必须让旧终态探活失效。
+    act(() => {
+      emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-next", runId: "run-next" });
+    });
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
   });
 
   it("clears a detached session's spinner when its terminal session_status arrives after switching away", () => {

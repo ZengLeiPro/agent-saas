@@ -401,8 +401,15 @@ jobs:
             --arg configFingerprint "$(jq -r .digest "$RUNNER_TEMP/manifest.json")" \
             '{schemaVersion:1,environment:"staging",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
-          aliyun --secure oss sync "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" \
-            --delete --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" "$STAGING_WEB_OSS_URI/" \
+            --recursive --force --exclude index.html --exclude release-identity.json \
+            --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/release-identity.json" \
+            "$STAGING_WEB_OSS_URI/release-identity.json" --force \
+            --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/index.html" \
+            "$STAGING_WEB_OSS_URI/index.html" --force \
+            --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
           mkdir -p "$RUNNER_TEMP/web-oss-readback"
           while IFS= read -r -d '' source; do

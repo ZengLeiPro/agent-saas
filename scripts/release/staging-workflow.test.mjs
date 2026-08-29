@@ -64,6 +64,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /state staging_deployed/u);
   assert.match(workflow, /state verified/u);
   assert.match(workflow, /web-oss-readback/u);
+  assert.match(
+    workflow,
+    /oss cp "\$RUNNER_TEMP\/web-assets\/" "\$STAGING_WEB_OSS_URI\/"[\s\S]*--recursive --force --exclude index\.html --exclude release-identity\.json/u,
+  );
+  assert.doesNotMatch(workflow, /oss sync|--delete/u);
+  const webIdentityIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/release-identity.json" --force');
+  const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');
+  assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);

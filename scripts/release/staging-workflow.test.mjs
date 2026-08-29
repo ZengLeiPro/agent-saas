@@ -107,11 +107,17 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
-  assert.match(deploy, /command -v aliyun >\/dev\/null/u);
+  assert.match(deploy, /aliyun_cli="\$\(command -v aliyun\)"/u);
   assert.match(
     deploy,
     /Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing/u,
   );
+  assert.match(
+    deploy,
+    /runuser -u agent-saas-staging -- env HOME=\/var\/lib\/agent-saas-staging\/acs/u,
+  );
+  assert.match(deploy, /"\$aliyun_cli" vpc DescribeSnatTableEntries/u);
+  assert.match(deploy, /Staging ACS SNAT runtime identity cannot read the configured SNAT table/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
@@ -145,6 +151,13 @@ test('resource plan records provisioned resources ready for first deployment', a
     size: 93146374,
     digest: 'sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4',
     status: 'installed-and-production-byte-identical',
+    authentication: {
+      mode: 'EcsRamRole',
+      roleName: 'AgentSaasAcsSnatRole',
+      instanceAttachment: 'verified',
+      serviceHome: '/var/lib/agent-saas-staging/acs',
+      profileStatus: 'configured-and-live-snat-readback-verified',
+    },
   });
   assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');
   assert.equal(plan.resources.egressProxy.listen, '127.0.0.1:3128');

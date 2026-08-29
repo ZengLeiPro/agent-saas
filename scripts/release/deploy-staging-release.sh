@@ -107,11 +107,20 @@ if (mode === 'shared-cidr' && !(values.ACS_SNAT_SHARED_CIDRS || values.ACS_SNAT_
 NODE
 snat_mode="$(awk -F= '$1 == "ACS_SNAT_MODE" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
 if [ -n "$snat_mode" ] && [ "$snat_mode" != disabled ]; then
-  command -v aliyun >/dev/null || {
+  aliyun_cli="$(command -v aliyun)" || {
     echo 'Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing' >&2
     exit 1
   }
-  aliyun version >/dev/null
+  "$aliyun_cli" version >/dev/null
+  snat_region="$(awk -F= '$1 == "ACS_SNAT_REGION_ID" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+  snat_table="$(awk -F= '$1 == "ACS_SNAT_TABLE_ID" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+  runuser -u agent-saas-staging -- env HOME=/var/lib/agent-saas-staging/acs \
+    "$aliyun_cli" vpc DescribeSnatTableEntries \
+    --RegionId "$snat_region" --SnatTableId "$snat_table" --PageSize 1 --PageNumber 1 \
+    >/dev/null || {
+      echo 'Staging ACS SNAT runtime identity cannot read the configured SNAT table' >&2
+      exit 1
+    }
 fi
 
 if [ -d "$target" ]; then

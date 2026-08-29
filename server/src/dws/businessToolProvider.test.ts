@@ -149,7 +149,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create', 'info', '--title', 'x'] })).toBe('workspace_write');
   });
 
-  it('TASK-256 review 返工：缺 confirmed 时 provider 不得调用底层 invoke', async () => {
+  it('TASK-256 review 返工：缺 confirmed 时 provider 不得触达底层 invoke', async () => {
     const { provider, invoke, auditStore, context } = setup();
     await expect(provider.invoke({
       toolId: 'DwsBusiness',
@@ -160,8 +160,28 @@ describe('DwsBusinessToolProvider', () => {
     expect(auditStore.events.at(-1)?.metadata).toMatchObject({
       commandPath: 'chat.message.send.all',
       policySource: 'legacy_verb_fallback',
-      policyCliVersionCatalogs: '1.0.55,1.0.60',
+      policyCliVersion: '1.0.55',
     });
+  });
+
+  it('TASK-335 review 返工：明确 confirmed 也不能绕过破坏性 flag 或本地文件边界', async () => {
+    const rejectedCommands = [
+      ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],
+      ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '@data.csv'],
+    ];
+    for (const args of rejectedCommands) {
+      const { provider, invoke, auditStore, context } = setup();
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args, credentialMode: 'agent', confirmed: true },
+        authorization: { approved: true, source: 'human_approval' },
+      }, context)).rejects.toThrow();
+      expect(invoke).not.toHaveBeenCalled();
+      expect(auditStore.events.at(-1)).toMatchObject({
+        reason: 'DWS_BUSINESS_ACTION_REJECTED',
+        metadata: { policySource: 'platform_boundary' },
+      });
+    }
   });
 
   it('TASK-256 review 返工：全路径写扫描后正常只读路径仍为 safe，拒绝语义不变', () => {
@@ -204,7 +224,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(auditStore.events[0]?.metadata).toMatchObject({
       commandPath: 'calendar.event.list',
       policySource: 'cli_schema',
-      policyCliVersionCatalogs: '1.0.55,1.0.60',
+      policyCliVersion: '1.0.55',
       delegationBindingId: 'assignment-a',
       delegationAssignmentVersion: 3,
     });

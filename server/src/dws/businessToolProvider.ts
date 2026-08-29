@@ -30,7 +30,7 @@ import {
 } from './authFlow.js';
 import {
   classifyDwsBusinessCommand,
-  DWS_COMMAND_POLICY_CLI_VERSION_LABEL,
+  DWS_ACTIVE_CLI_VERSION,
   DwsCommandPolicyError,
   type ClassifiedDwsCommand,
 } from './commandPolicy.js';
@@ -197,7 +197,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_ACTION_REJECTED', error instanceof DwsCommandPolicyError ? {
         ...(error.commandPath ? { commandPath: error.commandPath } : {}),
         policySource: error.policySource,
-        policyCliVersionCatalogs: DWS_COMMAND_POLICY_CLI_VERSION_LABEL,
+        policyCliVersion: DWS_ACTIVE_CLI_VERSION,
       } : undefined);
       throw error;
     }
@@ -205,7 +205,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       await auditRejection('DWS_BUSINESS_CONFIRMATION_REQUIRED', {
         commandPath: command.commandPath,
         policySource: command.policySource,
-        policyCliVersionCatalogs: DWS_COMMAND_POLICY_CLI_VERSION_LABEL,
+        policyCliVersion: DWS_ACTIVE_CLI_VERSION,
       });
       throw new Error('DWS 写操作缺少用户明确确认');
     }
@@ -245,7 +245,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         module: command.module,
         commandPath: command.commandPath,
         policySource: command.policySource,
-        policyCliVersionCatalogs: DWS_COMMAND_POLICY_CLI_VERSION_LABEL,
+        policyCliVersion: DWS_ACTIVE_CLI_VERSION,
         credentialMode: input.credentialMode,
         sessionBound: Boolean(orgAgentId),
         sessionOwnerUserId: identity.id,

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveDwsBusinessRisk } from './businessToolProvider.js';
-import { DWS_READ_COMMAND_OVERRIDES } from './commandPolicyOverrides.js';
+import {
+  DWS_READ_COMMAND_OVERRIDES,
+  DWS_WRITE_COMMAND_OVERRIDES,
+} from './commandPolicyOverrides.js';
 
 /**
  * DWS schema 只读例外契约。每一项均已对照当前技能池文档或 CLI 契约核实为纯查询；
@@ -32,7 +35,9 @@ describe('DWS schema 只读覆盖契约', () => {
   });
 
   it('真实写/破坏性命令与未知命令不得降档', () => {
-    expect(resolveDwsBusinessRisk({ args: ['chat', 'mute-at-all'] })).toBe('workspace_write');
+    for (const path of DWS_WRITE_COMMAND_OVERRIDES) {
+      expect(resolveDwsBusinessRisk({ args: path.split('.') }), path).toBe('workspace_write');
+    }
     expect(
       resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'] }),
     ).toBe('workspace_write');

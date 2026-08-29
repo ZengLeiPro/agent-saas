@@ -1,9 +1,13 @@
 import {
-  DWS_COMMAND_POLICY_BY_PATH,
+  DWS_COMMAND_POLICY_BY_CLI_VERSION,
   DWS_COMMAND_POLICY_CATALOGS,
   type DwsCommandPolicyCode,
 } from './generated/commandPolicy.js';
-import { DWS_READ_COMMAND_OVERRIDES } from './commandPolicyOverrides.js';
+import {
+  DWS_READ_COMMAND_OVERRIDES,
+  DWS_WRITE_COMMAND_OVERRIDES,
+} from './commandPolicyOverrides.js';
+import { DWS_ACTIVE_CLI_VERSION } from './commandPolicyVersion.js';
 
 const ALLOWED_MODULES = new Set([
   'agoal',
@@ -32,7 +36,7 @@ const ALLOWED_MODULES = new Set([
   'wiki',
 ]);
 
-// 仅保留给旧 CLI schema 未覆盖的兼容命令；正式叶子命令均优先使用版本化 effect manifest。
+// 仅保留给当前 CLI schema 未覆盖的兼容命令；正式叶子命令均使用当前版本 manifest。
 const READ_VERBS = new Set([
   'all',
   'balance',
@@ -162,6 +166,7 @@ const FORBIDDEN_FLAGS =
 export type DwsCommandPolicySource =
   | 'cli_schema'
   | 'legacy_read_table'
+  | 'legacy_write_table'
   | 'auth_status'
   | 'help'
   | 'legacy_verb_fallback'
@@ -186,10 +191,12 @@ export class DwsCommandPolicyError extends Error {
   }
 }
 
+export { DWS_ACTIVE_CLI_VERSION };
 export const DWS_COMMAND_POLICY_CLI_VERSIONS = Object.freeze(
   DWS_COMMAND_POLICY_CATALOGS.map((catalog) => catalog.cliVersion),
 );
-export const DWS_COMMAND_POLICY_CLI_VERSION_LABEL = DWS_COMMAND_POLICY_CLI_VERSIONS.join(',');
+const DWS_ACTIVE_COMMAND_POLICY: Readonly<Record<string, DwsCommandPolicyCode>> =
+  DWS_COMMAND_POLICY_BY_CLI_VERSION[DWS_ACTIVE_CLI_VERSION];
 
 function isForbiddenDwsFlag(arg: string): boolean {
   if (FORBIDDEN_FLAGS.test(arg)) return true;
@@ -201,6 +208,12 @@ function isForbiddenDwsFlag(arg: string): boolean {
   )
     return true;
   return /(?:^|-)(?:local|source-file|contents-file|template-file)(?:-|$)/.test(name);
+}
+
+function isForbiddenDwsValue(arg: string): boolean {
+  const separator = arg.startsWith('-') ? arg.indexOf('=') : -1;
+  const value = separator >= 0 ? arg.slice(separator + 1) : arg;
+  return (value.startsWith('@') && value.length > 1) || /^file:\/\//i.test(value);
 }
 
 function manifestPolicy(
@@ -234,7 +247,7 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
     throw new DwsCommandPolicyError('DWS 命令路径不完整', undefined, 'unregistered');
   }
   for (const arg of args) {
-    if (/[\u0000-\u001F\u007F]/.test(arg) || isForbiddenDwsFlag(arg)) {
+    if (/[\u0000-\u001F\u007F]/.test(arg) || isForbiddenDwsFlag(arg) || isForbiddenDwsValue(arg)) {
       throw new DwsCommandPolicyError('DWS 命令包含受限参数', undefined, 'platform_boundary');
     }
   }
@@ -258,6 +271,13 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
   const flagNameTokens = trailingArgs
     .filter((token) => token.startsWith('-'))
     .flatMap((token) => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
+  if (flagNameTokens.some((token) => DESTRUCTIVE_VERBS.has(token))) {
+    throw new DwsCommandPolicyError(
+      'DWS 破坏性或高影响动作本阶段未开放',
+      commandPath,
+      'platform_boundary',
+    );
+  }
 
   const isAuthStatus =
     commandPath === 'auth.status' &&
@@ -279,21 +299,24 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
     );
   }
 
-  // 已复核的上游 schema 异常和旧版 CLI 别名优先于 manifest；其余命令不再维护路径表。
+  // 仅已复核的同名查询可先于 destructive 路径检查；所有其他平台边界均先于 manifest。
   if (DWS_READ_COMMAND_OVERRIDES.has(commandPath)) {
     return { module, commandPath, risk: 'read', policySource: 'legacy_read_table' };
   }
-
-  const manifestPolicyCode = DWS_COMMAND_POLICY_BY_PATH[commandPath];
-  if (manifestPolicyCode) {
-    return manifestPolicy(manifestPolicyCode, module, commandPath, pathTokens);
-  }
-  if ([...pathTokens, ...flagNameTokens].some((token) => DESTRUCTIVE_VERBS.has(token))) {
+  if (pathTokens.some((token) => DESTRUCTIVE_VERBS.has(token))) {
     throw new DwsCommandPolicyError(
       'DWS 破坏性或高影响动作本阶段未开放',
       commandPath,
       'platform_boundary',
     );
+  }
+  if (DWS_WRITE_COMMAND_OVERRIDES.has(commandPath)) {
+    return { module, commandPath, risk: 'write', policySource: 'legacy_write_table' };
+  }
+
+  const manifestPolicyCode = DWS_ACTIVE_COMMAND_POLICY[commandPath];
+  if (manifestPolicyCode) {
+    return manifestPolicy(manifestPolicyCode, module, commandPath, pathTokens);
   }
   if (
     trailingArgs.length > 0 &&

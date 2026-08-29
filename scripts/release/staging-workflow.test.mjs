@@ -100,6 +100,13 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /sandboxImageDigest/u);
   assert.match(deploy, /rollback_root/u);
   assert.match(deploy, /deployment_committed=true/u);
+  assert.match(deploy, /if \[ -L "\$current" \]; then/u);
+  assert.match(deploy, /readlink -f -- "\$current"/u);
+  assert.match(deploy, /had_previous_release=false/u);
+  assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
+  assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
+  assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
@@ -117,6 +124,14 @@ test('resource plan records provisioned resources ready for first deployment', a
   assert.equal(plan.resources.acs.status, 'applied');
   assert.equal(plan.resources.acs.clusterId, 'c819935b09a7d4a2a844561ef22a17448');
   assert.equal(plan.resources.acs.sharedComputePool, true);
+  assert.deepEqual(plan.resources.acs.egressNat, {
+    mode: 'shared-cidr',
+    regionId: 'cn-shenzhen',
+    snatTableId: 'stb-wz94jmf2krggpzh4jek3p',
+    publicIp: '120.77.218.94',
+    isolationLevel: 'shared-production-egress-control-plane',
+    configurationStatus: 'applied-and-live-readback-verified',
+  });
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
   assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');

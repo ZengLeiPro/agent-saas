@@ -55,6 +55,19 @@ export function isTerminalRuntimeStatus(status: string | undefined): status is T
   return !!status && TERMINAL_RUNTIME_STATUSES.has(status);
 }
 
+/** Session-less done must match the current binding instead of tearing down an unrelated active run. */
+export function sessionlessDoneBelongsToRuntime(
+  event: { sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string },
+  binding: { streamId?: string | null; runId?: string | null; clientMsgId?: string },
+): boolean {
+  if (event.sessionId) return true;
+  const hasCorrelation = Boolean(event.streamId || event.runId || event.client_msg_id);
+  if (!hasCorrelation) return true;
+  return Boolean((event.streamId && event.streamId === binding.streamId)
+    || (event.runId && event.runId === binding.runId)
+    || (event.client_msg_id && event.client_msg_id === binding.clientMsgId));
+}
+
 export function runtimeStatusFromSessionStatus(
   status: string,
 ): "queued" | "running" | "waiting_hand" | "waiting_approval" | "waiting_user" | null {

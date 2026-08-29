@@ -130,7 +130,7 @@ function emit(data: unknown): void {
 beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
-  harness.sends.mockClear();
+  harness.sends.mockReset().mockResolvedValue(true);
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;
@@ -146,9 +146,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// TASK-312 回归：终态必须「最终清除、不刷新页面」，但不得在 terminal -> next-run
-// handoff 空窗立即清 Map（侧边栏转圈闪断/列表回跳）。收敛由 750ms 延迟探活配合
-// /stream-status 权威结果完成；version 仲裁让下一 run lifecycle 的旧终态探活失效。
+// TASK-312/332 回归：终态必须最终清除，但 terminal -> next-run handoff 期间
+// 输入框与侧边栏共用同一 active latch；750ms 探活或下一 run lifecycle 再权威收敛。
 describe("useChatAppState sidebar spinner terminal convergence", () => {
   function startRunningSession(result: { current: ReturnType<typeof useChatAppState> }) {
     act(() => result.current.selectSession("session-a"));
@@ -175,8 +174,8 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     startRunningSession(result);
 
     emitTerminalSequence();
-    expect(result.current.loading).toBe(false);
-    // handoff 空窗：done 不得立即清 active latch（否则列表转圈闪断/回跳旧时间）。
+    // handoff 空窗：输入框与侧边栏都必须继续使用 active latch，不能提前闪回发送/旧时间。
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
     harness.authFetch.mockImplementation(async (url: string) => (
@@ -194,7 +193,30 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it("keeps the spinner through done when the probe confirms the next run is active", async () => {
+  it("converges a matching run-only done through the authoritative probe", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+
+    act(() => emit({ type: "done", runId: "run-a" }));
+    expect(result.current.loading).toBe(true);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(result.current.loading).toBe(false);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(false);
+  });
+
+  it("keeps the spinner active when the probe confirms the next run", async () => {
     vi.useFakeTimers();
     harness.session.sessionId = "session-a";
     harness.session.isNewSession = false;
@@ -202,6 +224,7 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     startRunningSession(result);
 
     emitTerminalSequence();
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
     harness.authFetch.mockImplementation(async (url: string) => (
@@ -215,9 +238,94 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
       await Promise.resolve();
     });
 
-    // 有下一 run：handoff 期间 runningSessionIds 不变 false，最终收敛为下一 run 的精确 active status。
+    // 有下一 run：输入框与列表持续运行，并收敛为下一 run 的精确 active status。
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("waiting_user");
+  });
+
+  it("invalidates the older resume response when the terminal probe finds a new binding", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    await act(async () => { await result.current.resumeCurrentStream(); });
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    expect(oldResume?.requestId).toBeTypeOf("string");
+    emitTerminalSequence();
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "running", streamId: "stream-next", runId: "run-next" })
+        : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: false,
+      requestId: oldResume?.requestId,
+    }));
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+  });
+
+  it("rejects stale correlated and legacy inactive responses after switching away", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    await act(async () => { await result.current.resumeCurrentStream(); });
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    emitTerminalSequence();
+    act(() => result.current.selectSession("session-b"));
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "running", streamId: "stream-next", runId: "run-next" })
+        : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve(); await Promise.resolve();
+    });
+    act(() => {
+      emit({ type: "active_stream", sessionId: "session-a", active: false, requestId: oldResume?.requestId });
+      emit({ type: "active_stream", sessionId: "session-a", active: false });
+    });
+
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+  });
+
+  it("rejects stale correlated and terminal events after a background binding change", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    await act(async () => { await result.current.resumeCurrentStream(); });
+    const oldResume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    act(() => result.current.selectSession("session-b"));
+    act(() => {
+      emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-next", runId: "run-next" });
+      emit({ type: "active_stream", sessionId: "session-a", active: false, requestId: oldResume?.requestId });
+      emit({ type: "session_status", sessionId: "session-a", status: "completed", streamId: "stream-a", runId: "run-a" });
+    });
+
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
   });
 
   it("lets a next-run lifecycle invalidate the stale terminal probe via version arbitration", async () => {
@@ -228,6 +336,7 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     startRunningSession(result);
 
     emitTerminalSequence();
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
     // 下一 run lifecycle 在探活窗口内到达：version 仲裁必须让旧终态探活失效。
@@ -244,7 +353,120 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
       await Promise.resolve();
     });
 
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+  });
+
+  it("sends a fresh resume after the previous correlated response was consumed", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => result.current.selectSession("session-a"));
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "running", streamId: "stream-a", runId: "run-a" })
+        : response({}, 404)
+    ));
+
+    await act(async () => { await result.current.resumeCurrentStream(); });
+    const resumePayloads = () => harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .filter((payload) => payload.action === "resume");
+    expect(resumePayloads()).toHaveLength(1);
+    act(() => emit({
+      type: "active_stream",
+      sessionId: "session-a",
+      active: true,
+      streamId: "stream-a",
+      runId: "run-a",
+      requestId: resumePayloads()[0].requestId,
+    }));
+
+    await act(async () => { await result.current.resumeCurrentStream(); });
+
+    expect(resumePayloads()).toHaveLength(2);
+  });
+
+  it("clears a previous stopping state when HTTP finds a new run but resume fails", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => {
+      result.current.selectSession("session-a");
+      emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-old", runId: "run-old" });
+    });
+    act(() => result.current.stopGeneration());
+    expect(result.current.stopping).toBe(true);
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status")
+        ? response({ active: true, status: "running", streamId: "stream-http", runId: "run-http" })
+        : response({}, 404)
+    ));
+    harness.sends.mockResolvedValue(false);
+    await act(async () => { await result.current.resumeCurrentStream(); });
+
+    expect(harness.sends.mock.calls.some(([payload]) => (payload as { action?: string }).action === "resume")).toBe(true);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.stopping).toBe(false);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(false);
+  });
+
+  it("projects optimistic current-session loading into the sidebar before lifecycle events arrive", async () => {
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    act(() => result.current.selectSession("session-a"));
+    act(() => result.current.setInput("开始处理"));
+
+    await act(async () => { await result.current.sendMessage(); });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+  });
+
+  it("lets a non-queued stream binding invalidate the previous run's terminal probe", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    emitTerminalSequence();
+
+    act(() => emit({ type: "stream_id", sessionId: "session-a", streamId: "stream-next", runId: "run-next" }));
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve(); await Promise.resolve();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+  });
+
+  it("ignores an old active probe result that resolves after the next run lifecycle", async () => {
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    emitTerminalSequence();
+
+    let resolveStatus: (() => void) | undefined;
+    harness.authFetch.mockImplementation(async (url: string) => {
+      if (!url.endsWith("/stream-status")) return response({}, 404);
+      return new Promise<Response>((resolve) => {
+        resolveStatus = () => resolve(response({ active: true, status: "waiting_user", streamId: "stream-a", runId: "run-a" }));
+      });
+    });
+    await act(async () => { vi.advanceTimersByTime(750); await Promise.resolve(); });
+    expect(resolveStatus).toBeTypeOf("function");
+
+    act(() => emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-next", runId: "run-next" }));
+    await act(async () => { resolveStatus?.(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(result.current.loading).toBe(true);
     expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
   });
 
@@ -270,13 +492,15 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     expect(result.current.runningSessionIds.has("session-a")).toBe(false);
   });
 
-  it("keeps an active run when a sessionId-less reject done arrives", () => {    harness.session.sessionId = "session-a";
+  it("keeps an active run when an unbound sessionless reject done arrives", () => {
+    harness.session.sessionId = "session-a";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.selectSession("session-a"));
 
     act(() => {
       emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-a", runId: "run-a" });
+      emit({ type: "active_stream", sessionId: "session-a", active: true, status: "running", streamId: "stream-a", runId: "run-a" });
     });
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
@@ -285,7 +509,86 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
       emit({ type: "done", client_msg_id: "cm-1", error: "rejected" });
     });
 
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+  });
+
+  it("marks an interjection failed without ending the active run on sessionless done error", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+    act(() => result.current.setInput("排队插话"));
+    await act(async () => { await result.current.sendMessage(); });
+    const queuedClientId = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; client_msg_id?: string })
+      .find((payload) => payload.action === "chat")?.client_msg_id;
+    expect(queuedClientId).toBeTypeOf("string");
+    expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === queuedClientId)?.status).toBe("sending");
+
+    act(() => emit({ type: "done", client_msg_id: queuedClientId, error: "queue rejected" }));
+
+    expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === queuedClientId)).toMatchObject({
+      status: "failed",
+      reason: "queue rejected",
+    });
+    expect(result.current.loading).toBe(true);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+  });
+
+  it("resets stopping without letting an old abort timeout clear a handoff run", () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => {
+      result.current.selectSession("session-a");
+      emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-a", runId: "run-old" });
+    });
+    expect(result.current.loading).toBe(true);
+
+    vi.useFakeTimers();
+    act(() => result.current.stopGeneration());
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+      streamId: "stream-a",
+      runId: "run-new",
+    }));
+    act(() => vi.advanceTimersByTime(10_000));
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.stopping).toBe(false);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
+  });
+
+  it("ignores an inactive watchdog response resolved after a new run lifecycle", async () => {
+    const { result } = renderHook(() => useChatAppState());
+    act(() => {
+      result.current.selectSession("session-a");
+      emit({ type: "session_status", sessionId: "session-a", status: "running", streamId: "stream-old", runId: "run-old" });
+      emit({ type: "active_stream", sessionId: "session-a", active: true, status: "running", streamId: "stream-old", runId: "run-old" });
+    });
+    expect(result.current.loading).toBe(true);
+
+    let resolveWatchdog!: (value: Response) => void;
+    harness.authFetch.mockImplementation((url: string) => (
+      url.endsWith("/stream-status")
+        ? new Promise<Response>((resolve) => { resolveWatchdog = resolve; })
+        : Promise.resolve(response({}, 404))
+    ));
+    vi.useFakeTimers();
+    act(() => emit({ type: "block_start", blockType: "text", runId: "run-old" }));
+    await act(async () => { vi.advanceTimersByTime(45_000); await Promise.resolve(); });
+    expect(resolveWatchdog).toBeTypeOf("function");
+
+    act(() => emit({
+      type: "session_status",
+      sessionId: "session-a",
+      status: "running",
+      streamId: "stream-new",
+      runId: "run-new",
+    }));
+    await act(async () => { resolveWatchdog(response({ active: false })); await Promise.resolve(); });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBe("running");
   });
 
   it("still converges the terminal when the user switches away inside the probe window", async () => {
@@ -298,13 +601,14 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     startRunningSession(result);
 
     emitTerminalSequence();
-    expect(result.current.loading).toBe(false);
+    expect(result.current.loading).toBe(true);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
     // 探活窗口内切到 session-b（触发 cancelActiveStream/dump）。
     act(() => {
       result.current.selectSession("session-b");
     });
+    expect(result.current.loading).toBe(false);
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
 
     harness.authFetch.mockImplementation(async (url: string) => (

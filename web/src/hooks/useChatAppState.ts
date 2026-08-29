@@ -71,7 +71,7 @@ import {
 } from '@agent/shared';
 import {
   activeRuntimePatchFromStreamStatus, fetchSessionStreamStatus, isActiveRuntimeStatus, isTerminalRuntimeStatus,
-  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
+  reconnectAfterServerDrain, runtimeStatusFromSessionStatus, sessionlessDoneBelongsToRuntime, type LastRunState, type TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 
 export type { ChatAppState, ChatAppStateOptions } from "./useChatAppStateTypes";
 import type {
@@ -334,7 +334,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   // ---- Refs for unstable values ----
   const inputRef = useRef(input); inputRef.current = input;
-  const loadingRef = useRef(loading); loadingRef.current = loading;
+  const loadingRef = useRef(loading);
   const stoppingRef = useRef(stopping); stoppingRef.current = stopping;
   const uploadedFilesRef = useRef(fileUpload.uploadedFiles); uploadedFilesRef.current = fileUpload.uploadedFiles;
   const uploadingRef = useRef(fileUpload.uploading); uploadingRef.current = fileUpload.uploading;
@@ -349,18 +349,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const releaseAllInteractionResponses = useCallback((error: string) => { for (const [id, { generation }] of pendingInteractionResponsesRef.current) releaseInteractionResponse(id, generation, error); }, [releaseInteractionResponse]);
   // 同步更新的 sessionId ref（解决 React 批量更新时 sessionIdRef 延迟问题）
   const immediateSessionIdRef = useRef<string | null>(urlState.sessionId);
+  const currentRuntimeSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+  const effectiveLoading = loading || Boolean(currentRuntimeSessionId && runningSessionIds.has(currentRuntimeSessionId)); loadingRef.current = effectiveLoading;
+  const effectiveRunningSessionIds = effectiveLoading && currentRuntimeSessionId && !runningSessionIds.has(currentRuntimeSessionId) ? new Set(runningSessionIds).add(currentRuntimeSessionId) : runningSessionIds;
+  const effectiveSessionRuntimeStatuses = effectiveLoading && currentRuntimeSessionId && !sessionRuntimeStatuses.has(currentRuntimeSessionId) ? new Map(sessionRuntimeStatuses).set(currentRuntimeSessionId, 'running') : sessionRuntimeStatuses;
   const { sandboxProfile, sandboxProfileRef, setSandboxProfile, startNewSandboxProfile, hydrateSandboxProfile } = useSandboxProfile(immediateSessionIdRef, sessionIdRef, loadingRef, urlState.sessionId ? "coding" : "daily");
   const trashPreviewSessionIdRef = useRef<string | null>(trashPreviewSessionId);
   trashPreviewSessionIdRef.current = trashPreviewSessionId;
   const refreshTokenUsageRef = useRef<() => void>(() => { });
   const loadSessionDetailRef = useRef<(id: string) => Promise<void>>(async () => { });
   // ---- SW 更新协作（lib/swUpdate.ts）----
-  // 守门：上传中 / 消息在途（outbox 未清）/ **当前会话** run 处于进行态 → 导航时不强刷。
-  //
-  // 只守当前会话（2026-08-02）：后台会话的 run 跑在服务端，整页跳转不会打断它，回来照样
-  // resume。原实现遍历 activeRunsBySession 的所有会话，长期挂着后台任务的用户会被永久守门
-  // ——tab 锁死在旧 bundle，前端修复永远送不到他手上（曾磊因此仍在复现 d181ca3 已修的
-  // 跨会话残留 bug）。
+  // 上传/outbox/当前会话 active 时不强刷；后台 run 不阻塞更新，回来后继续 resume。
   useEffect(() => {
     const unregisterGuard = registerUpdateGuard(() => {
       if (uploadingRef.current) return true;
@@ -618,7 +617,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     // steer 乐观撤销，最终以 steering_cancelled/detail 快照为准。
     mutateQueuedInterjections(markSteeringCancelledForStop);
 
-    // 安全超时：10 秒内 done 未到达则强制恢复
     const nonceAtAbort = streamNonceRef.current;
     setTimeout(() => {
       const existingRuntime = targetSessionId ? activeRunsBySession.current.get(targetSessionId) : undefined;
@@ -627,7 +625,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         && (!existingRuntime || isActiveRuntimeStatus(existingRuntime.status))
         && (
           !existingRuntime
-          || ((!rid || existingRuntime.runId === rid) || (!sid || existingRuntime.streamId === sid))
+          || ((!rid || existingRuntime.runId === rid) && (!sid || existingRuntime.streamId === sid))
         ),
       );
       if (shouldClearRuntime && targetSessionId) {
@@ -639,7 +637,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           attached: false,
         });
       }
-      if (streamNonceRef.current === nonceAtAbort && streamIdRef.current === sid) {
+      if (streamNonceRef.current === nonceAtAbort && (!sid || streamIdRef.current === sid) && (!rid || runIdRef.current === rid)) {
         streamIdRef.current = null;
         runIdRef.current = null;
         streamNonceRef.current += 1;
@@ -757,7 +755,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
   const {
     streamBindingGenerationRef, advanceStreamBindingGenerationIfChanged,
-    sendCorrelatedResume, shouldApplyActiveStreamResponse,
+    sendCorrelatedResume, invalidateResumeRequests, shouldApplyActiveStreamResponse,
   } = useChatStreamCorrelation({ streamIdRef, runIdRef, immediateSessionIdRef, wsAttachedRef, loadingRef, sessionRef });
 
   const attachmentsHydratedRef = useRef(false);
@@ -1217,7 +1215,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
   }, [session.sessionId, activeTab, settingsOpen, settingsSection, adminSettings, governanceRouteState, platformAdminSection, platformAdminEntityId, tenantAdminSection, pendingCanonicalPath, mutateQueuedInterjections]);
 
-  // ---- Loading watchdog：超时保护，防止 done 事件丢失时 loading 永久锁定 ----
+  // ---- 运行态 watchdog：防止 done 丢失时 loading 永久锁定 ----
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastStreamEventAtRef = useRef(0);
 
@@ -1235,20 +1233,23 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (!loadingRef.current) return;
       const sid = sessionIdRef.current;
       const watchdogNonce = streamNonceRef.current;
+      const watchdogRuntimeVersion = sid ? runtimeVersionBySessionRef.current.get(sid) ?? 0 : 0;
+      const watchdogIsStale = () => sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce || Boolean(sid && (runtimeVersionBySessionRef.current.get(sid) ?? 0) !== watchdogRuntimeVersion);
       if (sid) {
         try {
           const res = await authFetch(`/api/sessions/${sid}/stream-status`);
-          if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
+          if (watchdogIsStale()) return;
           if (res.ok) {
             const { active } = await res.json() as { active: boolean };
+            if (watchdogIsStale()) return;
             if (active) { resetWatchdog(); return; } // Agent 还活着
           }
         } catch {
-          if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
+          if (watchdogIsStale()) return;
         }
       }
-      if (sessionIdRef.current !== sid || streamNonceRef.current !== watchdogNonce) return;
-      // 超时恢复
+      if (watchdogIsStale()) return;
+      if (sid) patchSessionRuntime(sid, { status: 'idle', streamId: null, runId: null, lastEventId: null, attached: false });
       finalizeStreamingMessages(msgRef.current);
       finalizeRunningSubagents(msgRef.current);
       wsAttachedRef.current = false;
@@ -1257,7 +1258,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       dispatchConnection('complete');
       sessionRef.current.refreshCurrentSession();
     }, timeout);
-  }, [dispatchConnection]);
+  }, [dispatchConnection, patchSessionRuntime]);
 
   const finalizeTerminalRuntime = useCallback((args: {
     sessionId: string;
@@ -1306,14 +1307,36 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     setStopping(false);
     sessionRef.current.setContextUsage(null);
 
-    // run 终态只拥有流状态，不拥有随后提交的消息传输。ACK 丢失时仍须保留 outbox/timer，
-    // 由 chat_ack、chat_rejected 或权威状态查询按 clientMsgId 收敛。
+    // run 终态不拥有随后提交的传输；ACK 丢失时 outbox/timer 仍由 chat_ack、chat_rejected 或权威查询收敛。
 
     dispatchConnection('complete');
     if (args.refresh !== false) {
       sessionRef.current.refreshCurrentSession();
     }
   }, [clearWatchdog, dispatchConnection, patchSessionRuntime]);
+  const terminalProbeVersionBySessionRef = useRef(new Map<string, number>());
+  const scheduleTerminalRuntimeProbe = useCallback((args: Parameters<typeof finalizeTerminalRuntime>[0]) => {
+    const version = runtimeVersionBySessionRef.current.get(args.sessionId) ?? 0;
+    if (terminalProbeVersionBySessionRef.current.get(args.sessionId) === version) return;
+    terminalProbeVersionBySessionRef.current.set(args.sessionId, version);
+    setTimeout(() => {
+      if (version !== (runtimeVersionBySessionRef.current.get(args.sessionId) ?? 0)) return;
+      void (async () => {
+        const runtime = activeRunsBySession.current.get(args.sessionId);
+        const idMismatched = Boolean((args.runId && runtime?.runId && args.runId !== runtime.runId) || (args.streamId && runtime?.streamId && args.streamId !== runtime.streamId));
+        const status = await fetchSessionStreamStatus(args.sessionId);
+        if (version !== (runtimeVersionBySessionRef.current.get(args.sessionId) ?? 0)) return;
+        if (status?.active) {
+          invalidateResumeRequests(args.sessionId); if (args.sessionId === immediateSessionIdRef.current) advanceStreamBindingGenerationIfChanged({ streamId: status.streamId, runId: status.runId });
+          patchSessionRuntime(args.sessionId, { ...activeRuntimePatchFromStreamStatus(status), attached: true });
+          if (args.sessionId === immediateSessionIdRef.current) { stoppingRef.current = false; setLoading(true); setStopping(false); dispatchConnection('connect'); resetWatchdog(); }
+          return;
+        }
+        if (idMismatched && status?.active !== false) { terminalProbeVersionBySessionRef.current.delete(args.sessionId); return; }
+        finalizeTerminalRuntime(args);
+      })();
+    }, 750);
+  }, [advanceStreamBindingGenerationIfChanged, dispatchConnection, finalizeTerminalRuntime, invalidateResumeRequests, patchSessionRuntime, resetWatchdog]);
   const reconcileLastRunState = useCallback(async (sessionId: string, lastRunState: LastRunState) => {
     if (!isTerminalRuntimeStatus(lastRunState.status)) return;
     if (sessionId !== immediateSessionIdRef.current) {
@@ -1527,15 +1550,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
 
-      // active_stream（服务端权威信号：该会话当前是否有 active run）
-      // 进入 reducer 而非被吞掉：总是更新 Map（per-session 持久态）;
-      // 若是当前会话,sync 到 ref + UI（loading/停止按钮）。
-      // 这是 2026-06-25 切会话架构改造的关键修复：原实现 `return` 让全局信号
-      // 被静默丢弃,只有 subscribeToActiveStream 内 oneshot 临时 handler 才接住,
-      // 而该临时 handler 在 HTTP inactive 早 return 时根本没注册。
       if (data.type === 'active_stream') {
         const a = data as Extract<WsEvent, { type: 'active_stream' }>;
+        const sessionRuntime = activeRunsBySession.current.get(a.sessionId);
+        if (!a.requestId && a.sessionId !== immediateSessionIdRef.current && isActiveRuntimeStatus(sessionRuntime?.status) && (!a.active || Boolean((a.streamId && sessionRuntime?.streamId && a.streamId !== sessionRuntime.streamId) || (a.runId && sessionRuntime?.runId && a.runId !== sessionRuntime.runId)))) return;
         if (!shouldApplyActiveStreamResponse(a)) return;
+        const activeStreamBindingChanged = a.active && a.sessionId === immediateSessionIdRef.current && ((a.streamId && a.streamId !== streamIdRef.current) || (a.runId && a.runId !== runIdRef.current));
         patchSessionRuntime(
           a.sessionId,
           a.active
@@ -1552,11 +1572,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 attached: false,
               },
         );
-        // immediateSessionIdRef 与点击切换同帧更新；React sessionId 在切换提交前可能仍是旧值。
-        // 当前会话必须显式恢复 refs，否则后续 text/done/error 会被未挂载守卫吞掉。
         if (a.sessionId === immediateSessionIdRef.current) {
           if (a.active) {
-            // 旧服务端可能只返回 active 或只返回一个标识；缺省字段不是清空指令。
+            if (activeStreamBindingChanged && stoppingRef.current) { stoppingRef.current = false; setStopping(false); }
             if (a.streamId) streamIdRef.current = a.streamId;
             if (a.runId) runIdRef.current = a.runId;
             wsAttachedRef.current = true;
@@ -1570,7 +1588,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
               dispatchConnection('connect');
             }
           } else {
-            // 服务端权威说没在跑了 → refs/UI 一致清理，避免旧流事件串入当前会话。
             streamIdRef.current = null;
             runIdRef.current = null;
             wsAttachedRef.current = false;
@@ -1719,24 +1736,23 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
 
       // ── session_status（Agent/run 生命周期）──
-      // 架构改造（2026-06-25）：摘掉"d.sessionId === sessionIdRef.current"守卫,
-      // 总是更新 activeRunsBySession Map（per-session 持久态）。后台会话的状态变更
-      // 仍能反映在 Map 里,切回时直接派生 UI,不再丢状态。
-      //
-      // PR #26 的 750ms + HTTP 二次确认 + system-error banner 注入仍保留,
-      // 但仅对当前选中会话生效（banner UI 是会话级独立 alert）。
+      // 后台会话同样写入 activeRunsBySession，切回时直接派生 UI。
       if (data.type === 'session_status') {
         const d = data as Extract<WsEvent, { type: 'session_status' }>;
 
-        // 当前会话每个 run 生命周期信号都建立一道相关性边界。active/terminal 即使
-        // 尚未携带 runId/streamId，也必须让更早 resume 的迟到响应失效。
         const lifecycleSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+        const previousRuntime = activeRunsBySession.current.get(d.sessionId);
+        const lifecycleBindingChanged = Boolean((d.streamId && d.streamId !== previousRuntime?.streamId) || (d.runId && d.runId !== previousRuntime?.runId));
+        // 后台会话迟到的旧终态不得覆盖已知的新 active binding。
+        const staleTerminalBinding = isTerminalRuntimeStatus(d.status) && isActiveRuntimeStatus(previousRuntime?.status) && Boolean((d.streamId && previousRuntime?.streamId && d.streamId !== previousRuntime.streamId) || (d.runId && previousRuntime?.runId && d.runId !== previousRuntime.runId));
+        if (staleTerminalBinding) return;
+        const currentActiveBindingChanged = isActiveRuntimeStatus(d.status) && d.sessionId === lifecycleSessionId && lifecycleBindingChanged;
+        if (lifecycleBindingChanged) invalidateResumeRequests(d.sessionId);
         if (d.sessionId === lifecycleSessionId
           && (isActiveRuntimeStatus(d.status) || isTerminalRuntimeStatus(d.status))) {
           streamBindingGenerationRef.current += 1;
         }
 
-        // 当前会话终态先保留 active latch，等下方探活确认；否则 run 交接空窗会让列表先闪回旧时间。
         const deferCurrentTerminal = isTerminalRuntimeStatus(d.status)
           && d.sessionId === immediateSessionIdRef.current
           && loadingRef.current;
@@ -1749,15 +1765,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
 
-        // ② tracking 集合仅用于关联运行态；未读状态由服务端事件同步。
         if (isActiveRuntimeStatus(d.status)) {
           trackedAiReplyStreamsRef.current.add(d.sessionId);
         } else if (isTerminalRuntimeStatus(d.status)) {
           trackedAiReplyStreamsRef.current.delete(d.sessionId);
         }
 
-        // ③ 仅当事件属于当前选中会话,才动 UI（loading/banner/outbox）
         if (isActiveRuntimeStatus(d.status) && d.sessionId === sessionIdRef.current) {
+          if (stoppingRef.current && currentActiveBindingChanged) { stoppingRef.current = false; setStopping(false); }
           if (d.streamId) streamIdRef.current = d.streamId;
           if (d.runId) runIdRef.current = d.runId;
           wsAttachedRef.current = true;
@@ -1776,33 +1791,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }
 
         if (isTerminalRuntimeStatus(d.status) && d.sessionId === sessionIdRef.current && loadingRef.current) {
-          const terminalStatus = d.status, statusRunId = d.runId, statusStreamId = d.streamId;
-          const terminalRuntimeVersion = runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0;
-          setTimeout(() => {
-            // TASK-312：done 清掉 loading 或用户切走都不能放弃探活；version 未变 = 仍是原 active binding，由 /stream-status 权威结果决定收敛（终态不再永久残留）或保活（run 交接空窗不闪断）。
-            if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
-            void (async () => {
-              const idMismatched = Boolean(
-                (statusRunId && runIdRef.current && statusRunId !== runIdRef.current)
-                || (statusStreamId && streamIdRef.current && statusStreamId !== streamIdRef.current),
-              );
-              const status = await fetchSessionStreamStatus(d.sessionId);
-              const active = status?.active ?? null;
-              if (status?.active) {
-                patchSessionRuntime(d.sessionId, { ...activeRuntimePatchFromStreamStatus(status), attached: true });
-                return;
-              }
-              if (terminalRuntimeVersion !== (runtimeVersionBySessionRef.current.get(d.sessionId) ?? 0)) return;
-              if (idMismatched && active !== false) return;
-              finalizeTerminalRuntime({
-                sessionId: d.sessionId,
-                status: terminalStatus,
-                ...(statusRunId ? { runId: statusRunId } : {}),
-                ...(statusStreamId ? { streamId: statusStreamId } : {}),
-                ...(d.reason ? { reason: d.reason } : {}), ...(d.failureKind ? { failureKind: d.failureKind } : {}), ...(d.recoveryAction ? { recoveryAction: d.recoveryAction } : {}),
-              });
-            })();
-          }, 750);
+          scheduleTerminalRuntimeProbe({
+            sessionId: d.sessionId, status: d.status,
+            ...(d.runId ? { runId: d.runId } : {}), ...(d.streamId ? { streamId: d.streamId } : {}),
+            ...(d.reason ? { reason: d.reason } : {}), ...(d.failureKind ? { failureKind: d.failureKind } : {}), ...(d.recoveryAction ? { recoveryAction: d.recoveryAction } : {}),
+          });
         }
         return;
       }
@@ -1828,14 +1821,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         return;
       }
 
-      // 其他设备发起的流：自动订阅（多设备实时同步）
       if (data.type === 'stream_started') {
         trackedAiReplyStreamsRef.current.add(data.sessionId);
         const currentSid = immediateSessionIdRef.current;
         const bindingChanged = data.sessionId === currentSid
           ? advanceStreamBindingGenerationIfChanged({ streamId: data.streamId, runId: data.runId })
           : false;
-        // 总是更新 Map（per-session 持久态）,即使不是当前会话。当前会话的标识已先切代。
+        const runtimeBindingChanged = data.streamId !== activeRunsBySession.current.get(data.sessionId)?.streamId || Boolean(data.runId && data.runId !== activeRunsBySession.current.get(data.sessionId)?.runId); if (runtimeBindingChanged) invalidateResumeRequests(data.sessionId);
+        if (bindingChanged && stoppingRef.current) { stoppingRef.current = false; setStopping(false); }
         patchSessionRuntime(data.sessionId, {
           status: 'running', source: 'ws',
           streamId: data.streamId,
@@ -1992,10 +1985,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         const belongsToCurrent = !data.sessionId || !expectedSessionId || data.sessionId === expectedSessionId;
         if (belongsToCurrent) {
           // processWsEvent 会把缺省 runId 规范化为 null，因此比较同样的实际写入值。
-          advanceStreamBindingGenerationIfChanged({
+          const bindingChanged = advanceStreamBindingGenerationIfChanged({
             streamId: data.streamId,
             runId: data.runId ?? null,
           });
+          if (bindingChanged && stoppingRef.current) { stoppingRef.current = false; setStopping(false); }
+          const runtimeSessionId = data.sessionId ?? expectedSessionId;
+          if (runtimeSessionId) patchSessionRuntime(runtimeSessionId, { status: 'running', streamId: data.streamId, runId: data.runId ?? null, attached: true });
         }
       }
 
@@ -2024,6 +2020,16 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         }),
       };
 
+      let currentDoneBelongsToRuntime = true;
+      if (data.type === 'done' && loadingRef.current) {
+        const currentSid = immediateSessionIdRef.current ?? sessionIdRef.current;
+        const runtime = currentSid ? activeRunsBySession.current.get(currentSid) : undefined;
+        const currentUser = wsUserMsgIndexRef.current >= 0 ? msgRef.current.messagesRef.current[wsUserMsgIndexRef.current] : undefined;
+        const activeSubmission = outboxRef.current.find((entry) => !entry.preserveActiveStream && submissionBelongsToCurrentSession(entry));
+        const currentClientMsgId = currentUser?.type === 'user' || currentUser?.type === 'user-voice' ? currentUser.clientMsgId : activeSubmission?.clientMsgId;
+        currentDoneBelongsToRuntime = sessionlessDoneBelongsToRuntime(data, { streamId: streamIdRef.current ?? runtime?.streamId, runId: runIdRef.current ?? runtime?.runId, clientMsgId: currentClientMsgId });
+        if (!currentDoneBelongsToRuntime) { if (data.error && data.client_msg_id) ctx.onChatRejected?.(data.client_msg_id, 'enqueue_failed', data.error); else ctx.onChatDone?.(data.client_msg_id, data.error); return; }
+      }
 
       if ((data.type === 'permission_request' || data.type === 'ask_user') && sessionIdRef.current) {
         patchSessionRuntime(sessionIdRef.current, {
@@ -2077,6 +2083,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       }
 
       if (result === 'done') {
+        const doneEvent = data as Extract<WsEvent, { type: 'done' }>;
         const latestSid = wsLatestSessionIdRef.current.value || sessionIdRef.current;
         if (latestSid === sessionIdRef.current) {
           sessionRef.current.setContextUsage(null);
@@ -2087,10 +2094,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           return;
         }
         clearWatchdog();
-        dispatchConnection('complete');
+        const runtimeStillActive = Boolean(latestSid && isActiveRuntimeStatus(activeRunsBySession.current.get(latestSid)?.status));
+        if (!runtimeStillActive) dispatchConnection('complete');
         if (latestSid) {
           trackedAiReplyStreamsRef.current.delete(latestSid);
-          const doneEvent = data as Extract<WsEvent, { type: 'done' }>;
           if (doneEvent.error) {
             // done.error：本轮 run 失败,必须把失败明确地呈现给用户,而不是只静默清 loading。
             // 用户侧通俗文案;原始 doneEvent.error（model error）仅保留在 server.log + PG runtime_events。
@@ -2149,6 +2156,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // 实时流构建的消息可能缺少这些转换，需要用服务端数据替换。
           sessionRef.current.refreshCurrentSession();
         }
+        if (latestSid && runtimeStillActive && currentDoneBelongsToRuntime) {
+          scheduleTerminalRuntimeProbe({ sessionId: latestSid, status: doneEvent.error ? 'failed' : stoppingRef.current ? 'cancelled' : 'completed', ...(doneEvent.runId ? { runId: doneEvent.runId } : {}), ...(doneEvent.streamId ? { streamId: doneEvent.streamId } : {}), ...(doneEvent.error ? { reason: doneEvent.error } : {}), ...(doneEvent.failureKind ? { failureKind: doneEvent.failureKind } : {}), ...(doneEvent.recoveryAction ? { recoveryAction: doneEvent.recoveryAction } : {}) });
+        }
         finalizeRunningSubagents(msgRef.current);
         wsAttachedRef.current = false;
         setLoading(false);
@@ -2161,7 +2171,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
 
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dispatchConnection]);
+  }, [dispatchConnection, scheduleTerminalRuntimeProbe]);
 
   /** 内部：标记 bubble 为 failed（按 clientMsgId 或回退到 userMsgIndex） */
   const markBubbleFailed = useCallback((clientMsgId: string | undefined, fallbackIndex: number, reason: string) => {
@@ -2620,19 +2630,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const sendMessage = useCallback(() => submitCurrentMessage('queue'), [submitCurrentMessage]);
   const interjectMessage = useCallback(() => submitCurrentMessage('steer'), [submitCurrentMessage]);
 
-  // ---- 自动订阅活跃会话的事件流（架构改造,2026-06-25）----
-  //
-  // 改造点（对应曾磊 + GPT 共同盘出的根因）：
-  // 1. 入口先从 Map 加载该 session 的运行态到 ref（streamId/runId/lastEventId/lastEventCursor）,
-  //    切回时不再 zero-base resume。
-  // 2. HTTP /stream-status 改为"信号源之一"而非唯一决策：
-  //    - HTTP active=true → 乐观 setLoading（与原行为一致）
-  //    - HTTP active=false 也**不再 early return** —— 仍发 resume,
-  //      等服务端权威 active_stream 兜底纠正（由全局 reducer 处理）。
-  //    这条修复对应 "runStore 知道还在跑但 HTTP buffer 信号已死" 的窗口。
-  // 3. shouldSkipReplay 改成基于 cursor 是否存在：有 cursor → 走增量 replay（skipReplay:false）,
-  //    没 cursor（首次进入,只有 transcript）→ skipReplay:true。
-  //    原实现固定看 lastEventIdRef===null,在 cursor 被切走清掉时永远走 skipReplay 那条死路。
+  // ---- 活跃会话事件流订阅 ----
   const subscribeToActiveStream = useCallback(async (
     targetSessionId: string,
     options?: { skipReplay?: boolean },
@@ -2648,8 +2646,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     let httpStreamId: string | undefined;
     let httpRunId: string | undefined;
     let httpStatus: SessionRuntimeStatus | undefined;
-    // HTTP 响应只能描述请求发起时的 binding。等待期间任何当前会话生命周期
-    // 信号都会推进 generation；此时迟到 HTTP 结果不得覆盖新 binding。
     const httpRequestGeneration = streamBindingGenerationRef.current;
     try {
       const statusRes = await authFetch(`/api/sessions/${targetSessionId}/stream-status`);
@@ -2667,8 +2663,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const httpResultStale = httpRequestGeneration !== streamBindingGenerationRef.current;
     if (!httpResultStale) {
       // HTTP 探活补回权威 runId / streamId；恢复不同 binding 时先切代，挡住旧 resume 响应。
-      if (httpActive !== false) advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId });
-      // HTTP inactive 不推翻列表已经确认的 active latch；继续 resume，等关联的 WS 响应收口。
+      if (httpActive !== false && advanceStreamBindingGenerationIfChanged({ streamId: httpStreamId, runId: httpRunId }) && stoppingRef.current) { stoppingRef.current = false; setStopping(false); }
       const existingRuntime = activeRunsBySession.current.get(targetSessionId);
       if (httpActive === false && !isActiveRuntimeStatus(existingRuntime?.status)) {
         patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
@@ -2689,8 +2684,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       if (httpActive === true) {
         // HTTP 已确认活跃 → 先恢复精确状态，人工等待不能降级成“思考中”。
         const restoredStatus = httpStatus ?? 'running';
-        patchSessionRuntime(targetSessionId, { status: restoredStatus, attached: true });
-        wsAttachedRef.current = true;
+        patchSessionRuntime(targetSessionId, { status: restoredStatus, attached: false });
+        wsAttachedRef.current = false;
         const visibleStatus = runtimeStatusFromSessionStatus(restoredStatus);
         if (visibleStatus) {
           upsertRuntimeStatusMessage(msgRef.current, visibleStatus, {
@@ -2726,15 +2721,20 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       skipReplay: shouldSkipReplay,
     });
 
-    if (!ok && loadingRef.current && !wsAttachedRef.current && sessionIdRef.current === targetSessionId) {
-      // resume 发送失败,回退乐观 loading
+    if (!ok && !wsAttachedRef.current && sessionIdRef.current === targetSessionId) {
+      patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
+      streamIdRef.current = null; runIdRef.current = null;
+      stoppingRef.current = false; setStopping(false);
       setLoading(false);
     }
 
-    // 安全超时：30 秒内若 active_stream 仍未到达且仍未 attach,清掉乐观 loading
+    const resumeRuntimeVersion = runtimeVersionBySessionRef.current.get(targetSessionId) ?? 0;
     setTimeout(() => {
-      if (sessionIdRef.current !== targetSessionId) return;
+      if (sessionIdRef.current !== targetSessionId || resumeRuntimeVersion !== (runtimeVersionBySessionRef.current.get(targetSessionId) ?? 0)) return;
       if (loadingRef.current && !wsAttachedRef.current) {
+        patchSessionRuntime(targetSessionId, { status: 'idle', streamId: null, runId: null, attached: false });
+        streamIdRef.current = null; runIdRef.current = null;
+        stoppingRef.current = false; setStopping(false);
         setLoading(false);
         sessionRef.current.refreshCurrentSession();
       }
@@ -2976,7 +2976,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   return {
     messages: msg.messages,
     input,
-    loading, sandboxProfile, setSandboxProfile,
+    loading: effectiveLoading, sandboxProfile, setSandboxProfile,
     sessionId: session.sessionId,
     sessions: session.sessions,
     activeTab,
@@ -3056,8 +3056,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     lastMemoryRecall,
     dismissMemoryRecall,
     pluginInstallStatus,
-    runningSessionIds,
-    sessionRuntimeStatuses,
+    runningSessionIds: effectiveRunningSessionIds,
+    sessionRuntimeStatuses: effectiveSessionRuntimeStatuses,
     connectionState,
     refreshCurrentSession: session.refreshCurrentSession,
     resumeCurrentStream,

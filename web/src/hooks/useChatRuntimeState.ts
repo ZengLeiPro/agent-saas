@@ -127,7 +127,7 @@ interface ChatStreamCorrelationOptions {
   sessionRef: RefLike<{ refreshCurrentSession: () => unknown }>;
 }
 
-/** Correlates resume requests with the current run/stream binding generation. */
+/** Validates resume requests and responses against the current run/stream binding generation. */
 export function useChatStreamCorrelation({
   streamIdRef,
   runIdRef,
@@ -193,16 +193,28 @@ export function useChatStreamCorrelation({
     );
   }, []);
 
+  const invalidateResumeRequests = useCallback((sessionId: string) => {
+    for (const [requestId, request] of resumeRequestsRef.current) {
+      if (request.sessionId === sessionId) resumeRequestsRef.current.delete(requestId);
+    }
+    if (resumeDedupRef.current?.sessionId === sessionId) resumeDedupRef.current = null;
+  }, []);
+
   const shouldApplyActiveStreamResponse = useCallback((
     response: Extract<WsEvent, { type: "active_stream" }>,
   ): boolean => {
     if (response.requestId) {
       const request = resumeRequestsRef.current.get(response.requestId);
-      return Boolean(
+      const accepted = Boolean(
         request
         && request.sessionId === response.sessionId
         && request.generation === bindingGenerationRef.current,
       );
+      if (accepted && request) {
+        const dedup = resumeDedupRef.current;
+        if (dedup?.sessionId === request.sessionId && dedup.generation === request.generation) resumeDedupRef.current = null;
+      }
+      return accepted;
     }
 
     // Legacy servers may omit requestId. Never let an inactive or mismatched late
@@ -227,6 +239,7 @@ export function useChatStreamCorrelation({
     streamBindingGenerationRef: bindingGenerationRef,
     advanceStreamBindingGenerationIfChanged: advanceBindingGenerationIfChanged,
     sendCorrelatedResume,
+    invalidateResumeRequests,
     shouldApplyActiveStreamResponse,
   };
 }

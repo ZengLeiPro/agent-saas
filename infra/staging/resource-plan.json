@@ -92,7 +92,14 @@
           "version": "3.4.2",
           "size": 93146374,
           "digest": "sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4",
-          "status": "installed-and-production-byte-identical"
+          "status": "installed-and-production-byte-identical",
+          "authentication": {
+            "mode": "EcsRamRole",
+            "roleName": "AgentSaasAcsSnatRole",
+            "instanceAttachment": "verified",
+            "serviceHome": "/var/lib/agent-saas-staging/acs",
+            "profileStatus": "configured-and-live-snat-readback-verified"
+          }
         }
       },
       "serviceUnits": "installed-enabled-inactive-until-first-rc",

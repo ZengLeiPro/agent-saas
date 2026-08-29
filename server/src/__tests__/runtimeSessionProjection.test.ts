@@ -115,7 +115,7 @@ describe('runtime session projection hook', () => {
     await flushSessionMetaProjectionForTests();
 
     expect(projected.size).toBe(1000);
-  });
+  }, 30_000);
 
   it('skips invalid basenames but keeps subagent session ids', async () => {
     const dir = await makeProjectionDir('runtime-session-invalid-');

@@ -143,12 +143,7 @@ const updatePreferencesSchema = z.object({
 });
 
 const updatePhoneSchema = z.object({
-  phone: z
-    .string()
-    .refine(
-      (v) => v === "" || PHONE_PATTERN.test(v),
-      "请输入有效的 11 位手机号",
-    ),
+  phone: z.string().refine((v) => v === "" || PHONE_PATTERN.test(v), "请输入有效的 11 位手机号"),
 });
 
 const updateUserSchema = z.object({

@@ -3486,10 +3486,7 @@ export class WebChannel implements BaseChannel {
         }
         if (
           event.type === 'permission_request'
-          && approvalPolicy?.autoApproveTools === true
-          // 「低风险常开」档（TASK-256）：到达通道交互的只剩 dangerous/neverAutoApprove，
-          // 必须落回人工批准卡片，不允许通道静默放行。
-          && approvalPolicy?.lowRiskOnly !== true
+          && approvalPolicy?.autoApproveTools === true && approvalPolicy?.lowRiskOnly !== true
           && user?.role === 'admin'
           && user.tenantId === DEFAULT_TENANT_ID
           && event.toolName
@@ -3504,9 +3501,7 @@ export class WebChannel implements BaseChannel {
           event.type === 'permission_request'
           && user
           && !(user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID)
-          && approvalPolicy?.autoApproveTools === true
-          // 同上：低风险档不在这里做通道级自动裁决，dangerous 一律人工批准。
-          && approvalPolicy?.lowRiskOnly !== true
+          && approvalPolicy?.autoApproveTools === true && approvalPolicy?.lowRiskOnly !== true
         ) {
           // 安全工具：无路径风险，直接放行
           const safeTools = new Set([

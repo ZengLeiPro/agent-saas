@@ -42,7 +42,12 @@ const harness = vi.hoisted(() => {
       loadMoreSessions: vi.fn(async () => {}),
       loadSessionDetail: vi.fn(async () => {}),
       newSession: vi.fn(),
-      selectSession: vi.fn(),
+      selectSession: vi.fn((id: string) => {
+        // TASK-312 review#2：真实 useSession.selectSession 会先 cancelActiveStream（detach/dump），harness 必须具备该切换语义。
+        harness.sessionCallbacks?.cancelActiveStream?.();
+        harness.session.sessionId = id;
+        harness.session.isNewSession = false;
+      }),
       confirmDeleteSession: vi.fn(),
       confirmDeleteSessions: vi.fn(),
       cancelDeleteSession: vi.fn(),
@@ -265,8 +270,7 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     expect(result.current.runningSessionIds.has("session-a")).toBe(false);
   });
 
-  it("keeps an active run when a sessionId-less reject done arrives", () => {
-    harness.session.sessionId = "session-a";
+  it("keeps an active run when a sessionId-less reject done arrives", () => {    harness.session.sessionId = "session-a";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.selectSession("session-a"));
@@ -282,5 +286,38 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     });
 
     expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+  });
+
+  it("still converges the terminal when the user switches away inside the probe window", async () => {
+    // TASK-312 review#2 缺口：terminal/done 之后、750ms 探活之前切换会话，
+    // 真实切换语义（selectSession -> cancelActiveStream -> detach -> dump）不得取消旧会话终态探活。
+    vi.useFakeTimers();
+    harness.session.sessionId = "session-a";
+    harness.session.isNewSession = false;
+    const { result } = renderHook(() => useChatAppState());
+    startRunningSession(result);
+
+    emitTerminalSequence();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    // 探活窗口内切到 session-b（触发 cancelActiveStream/dump）。
+    act(() => {
+      result.current.selectSession("session-b");
+    });
+    expect(result.current.runningSessionIds.has("session-a")).toBe(true);
+
+    harness.authFetch.mockImplementation(async (url: string) => (
+      url.endsWith("/stream-status") ? response({ active: false }) : response({}, 404)
+    ));
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // dump 只是 ref->Map 同步，不能让唯一终态探活失效：旧会话 spinner 必须收敛清除。
+    expect(result.current.runningSessionIds.has("session-a")).toBe(false);
+    expect(result.current.sessionRuntimeStatuses.get("session-a")).toBeUndefined();
   });
 });

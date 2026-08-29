@@ -38,6 +38,11 @@ export const ADMIN_RUNNER_ENTRIES = Object.freeze([
     description: 'runtime session 背填到 PG；默认 dry-run，--execute 写入',
   },
   {
+    command: 'repair-runtime-session-statuses',
+    source: 'scripts/repair-runtime-session-statuses.mts',
+    description: '按 runtime_runs 真源修复会话目录假 active；默认 dry-run，--execute 幂等写入',
+  },
+  {
     command: 'repair-taskboard-workflow',
     source: 'scripts/repairTaskboardWorkflow.ts',
     description: 'taskboard workflow 状态修复；默认 dry-run，--apply 写入',

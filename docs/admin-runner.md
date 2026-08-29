@@ -27,6 +27,7 @@ migration / backfill / repair / maintenance 类一次性运维脚本（`server/s
 | `migrate-events-file-to-pg`        | `server/scripts/migrate-events-file-to-pg.mts`        | `pnpm -C server run migrate:events-file-to-pg`        | dry-run；`--execute` 写入                |
 | `migrate-platform-tenant-pantheon` | `server/scripts/migrate-platform-tenant-pantheon.mts` | `pnpm -C server run migrate:platform-tenant-pantheon` | dry-run；`--apply` 写入                  |
 | `backfill-runtime-sessions`        | `server/scripts/backfill-runtime-sessions.mts`        | `pnpm -C server run backfill:runtime-sessions`        | dry-run；`--execute` 写入                |
+| `repair-runtime-session-statuses`  | `server/scripts/repair-runtime-session-statuses.mts`  | `pnpm -C server run repair:runtime-session-statuses`  | dry-run；`--execute` 幂等修复            |
 | `repair-taskboard-workflow`        | `server/scripts/repairTaskboardWorkflow.ts`           | `pnpm -C server run repair:taskboard-workflow`        | dry-run；`--apply` 写入                  |
 | `runtime-events-maintenance`       | `server/src/scripts/runtime-events-maintenance.mts`   | `pnpm -C server maintenance:runtime-events`           | 严格只读；写操作需 `--authorization-ref` |
 | `context-derived-replay`           | `server/scripts/context-derived-replay.mts`           | `pnpm -C server run context:derived-replay`           | dry-run；`--apply` 写入                  |

@@ -19,6 +19,7 @@ const workerUnitPath = new URL(
 const serverPackagePath = new URL('../../server/package.json', import.meta.url);
 const scenarioRoutesPath = new URL('../../server/src/routes/scenarios.ts', import.meta.url);
 const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', import.meta.url);
+const e2eHelpersPath = new URL('../../e2e/staging/helpers.ts', import.meta.url);
 
 function runScriptLines(text) {
   const output = [];
@@ -111,6 +112,14 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   const e2eIndex = workflow.indexOf('Run real browser and ACS E2E');
   assert.ok(deployIndex > 0 && deployIndex < migrationIndex && migrationIndex < e2eIndex);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('Staging browser login selects only the password-login submit button', async () => {
+  const helpers = await readFile(e2eHelpersPath, 'utf8');
+  assert.match(
+    helpers,
+    /getByRole\('button', \{ name: '登录', exact: true \}\)\.click\(\)/u,
+  );
 });
 
 test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {

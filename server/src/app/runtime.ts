@@ -27,6 +27,7 @@ import { appendTenantPlatformEvent, createRuntimeEventStoreFactory } from './run
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
+import { createPgRuntimeSessionStatusReconciler, createRuntimeSessionLock } from '../runtime/runtimeSessionStatusReconciler.js';
 import { PgTerminalEventOutboxRunStore, startTerminalEventOutboxDispatcher } from '../runtime/runTerminalOutboxDispatcher.js';
 import { PgHandStore } from '../runtime/handStore.js';
 import { PgSessionProjectionStore } from '../runtime/sessionProjectionStore.js';
@@ -1324,15 +1325,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // PG backend：session single-writer 从常驻 advisory connection 迁到短查询表租约。
   // dual 是滚动升级兼容态；全量跑过 dual 后，生产配置切 lease 才真正去掉旧连接。
   if (pgEventStore) {
-    sessionLock = new PgSessionLock({
-      pool: pgEventStore.pool,
-      tablePrefix: config.runtimeEventStore?.backend === 'pg'
-        ? config.runtimeEventStore.tablePrefix
-        : undefined,
-      mode: sessionLockMode,
-      logger: serverLogger.child('PgSessionLock'),
-    });
-    await sessionLock.init();
+    sessionLock = await createRuntimeSessionLock(
+      pgEventStore.pool, config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined,
+      sessionLockMode, serverLogger.child('PgSessionLock'),
+    );
   }
   const skillsDispatchConfig: SkillsDispatchConfig | undefined = (() => {
     if (!skillConfigStore) return undefined;
@@ -1880,6 +1876,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const memoryPressureGuard = new MemoryPressureGuard({
       logger: serverLogger.child('MemoryPressureGuard'),
     });
+    const sessionStatusReconciler = sessionLock
+      ? createPgRuntimeSessionStatusReconciler(pgEventStore.pool, pgSessionProjectionStore!.sessionsTable, pgRunStore.runsTable, sessionLock, sessionCatalog, serverLogger.child('RuntimeSessionStatus'))
+      : undefined;
     runtimeAdmissionGuard = memoryPressureGuard;
     runtimeScheduler = new RuntimeScheduler({
       runStore: pgRunStore,
@@ -1912,6 +1911,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         : undefined,
       beforeTick: async () => {
         taskboardExecutionCoordinator?.wakeReconciliation();
+        await sessionStatusReconciler?.runIfDue();
         await rawRuntimeConfig.backgroundTasks!.reconcileWakeDeliveries();
         await governanceProjectionReconciler?.reconcileBatch();
       },

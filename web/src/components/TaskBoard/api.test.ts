@@ -12,10 +12,12 @@ import {
   fetchBoardMembers,
   fetchTaskboardUsers,
   fetchIntegrationSources,
+  moveTask,
   patchTask,
   resumeTask,
   setTaskWatch,
   TaskBoardConflictError,
+  TaskBoardInvalidMoveError,
   upsertBoardMember,
 } from "./api";
 
@@ -270,6 +272,22 @@ describe("任务看板 API 错误对象", () => {
         body: JSON.stringify({ expectedVersion: task.version }),
       }),
     );
+  });
+
+  it("移动邻居失效时保留结构化错误，供 hooks 自动重算", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      error: "Move neighbor is not an active task in the target column",
+      code: "TASKBOARD_INVALID_MOVE",
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }));
+
+    await expect(moveTask(task.id, {
+      status: "backlog",
+      nextTaskId: "stale-peer",
+      expectedVersion: task.version,
+    })).rejects.toBeInstanceOf(TaskBoardInvalidMoveError);
   });
 
   it("409 保留服务端 current，供 hooks 立即同步最新版本", async () => {

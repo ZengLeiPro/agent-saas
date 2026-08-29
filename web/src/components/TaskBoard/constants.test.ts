@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TaskBoardTask } from "@agent/shared";
-import { canUserMoveTask, canUserTransitionTask, isTaskPlanningTransition } from "./constants";
+import {
+  canUserMoveTask,
+  canUserTransitionTask,
+  isTaskPlanningTransition,
+  sortTaskBoardTasks,
+} from "./constants";
 
 function task(overrides: Partial<TaskBoardTask> = {}): TaskBoardTask {
   return {
@@ -37,6 +42,23 @@ describe("canUserMoveTask", () => {
     expect(canUserMoveTask(task({ status: "backlog" }), "backlog", "todo", true, false)).toBe(true);
     expect(canUserMoveTask(task({ status: "canceled" }), "canceled", "backlog", true, false)).toBe(false);
     expect(canUserMoveTask(task({ status: "canceled" }), "canceled", "todo", false, true)).toBe(true);
+  });
+});
+
+describe("sortTaskBoardTasks", () => {
+  it("手动排序同序值依次使用 createdAt 和 id 兜底", () => {
+    const later = task({ id: "task-a", identifier: "TASK-A", status: "todo", createdAt: "2026-08-28T00:00:00.000Z" });
+    const earlier = task({ id: "task-z", identifier: "TASK-Z", status: "todo", createdAt: "2026-08-27T00:00:00.000Z" });
+    expect(sortTaskBoardTasks([later, earlier], "todo").map((item) => item.id)).toEqual([
+      earlier.id,
+      later.id,
+    ]);
+    const sameTimeB = task({ id: "task-b", identifier: "TASK-A", status: "todo" });
+    const sameTimeA = task({ id: "task-a", identifier: "TASK-Z", status: "todo" });
+    expect(sortTaskBoardTasks([sameTimeB, sameTimeA], "todo").map((item) => item.id)).toEqual([
+      sameTimeA.id,
+      sameTimeB.id,
+    ]);
   });
 });
 

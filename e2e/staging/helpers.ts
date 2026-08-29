@@ -19,7 +19,7 @@ export async function login(page: Page): Promise<string> {
   await page.goto('/');
   await page.getByLabel('账号').fill(required('STAGING_E2E_USERNAME'));
   await page.getByLabel('密码').fill(required('STAGING_E2E_PASSWORD'));
-  await page.getByRole('button', { name: '登录' }).click();
+  await page.getByRole('button', { name: '登录', exact: true }).click();
   await expect(page.getByPlaceholder('输入消息...')).toBeVisible();
   const token = await page.evaluate(() => localStorage.getItem('agentChat.authToken'));
   if (!token) throw new Error('Login did not persist an authentication token');

@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TaskBoard, TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
-import { TaskBoardConflictError } from "./api";
+import { TaskBoardConflictError, TaskBoardInvalidMoveError } from "./api";
 import { useBoardTasks, useTaskBoards, useTaskComments, useTaskExecutions } from "./hooks";
 
 const mocks = vi.hoisted(() => ({
@@ -324,6 +324,91 @@ describe("任务看板 hooks 并发一致性", () => {
 
     expect(result.current.tasks).toEqual([originalTask]);
     expect(mocks.fetchTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["需求池到待推进", "backlog", "todo"],
+    ["待推进到需求池", "todo", "backlog"],
+  ] as const)("%s 的目标邻居并发离列时，保留原插入位次并自动重试", async (_label, from, to) => {
+    const source = { ...originalTask, status: from };
+    const stalePeer = {
+      ...originalTask,
+      id: "stale-peer",
+      identifier: "TASK-STALE",
+      status: to,
+      sortOrder: 2_000,
+    };
+    const stablePeer = {
+      ...stalePeer,
+      id: "stable-peer",
+      identifier: "TASK-STABLE",
+      sortOrder: 3_000,
+    };
+    const latestSource = { ...source, version: source.version + 1 };
+    const latestPeer = { ...stalePeer, status: "in_progress" as const, version: 8 };
+    const moved = { ...latestSource, status: to, sortOrder: 1_024, version: latestSource.version + 1 };
+    mocks.fetchTasks
+      .mockReset()
+      .mockResolvedValueOnce([source, stalePeer, stablePeer])
+      .mockResolvedValueOnce([latestSource, latestPeer, stablePeer])
+      .mockResolvedValueOnce([moved, latestPeer, stablePeer]);
+    mocks.moveTask
+      .mockRejectedValueOnce(new TaskBoardInvalidMoveError())
+      .mockResolvedValueOnce(moved);
+    const { result } = renderHook(() => useBoardTasks(source.boardId));
+    await waitFor(() => expect(result.current.tasks).toEqual([source, stalePeer, stablePeer]));
+
+    await act(async () => {
+      await result.current.optimisticMove(
+        source,
+        { status: to, nextTaskId: stalePeer.id },
+        [moved, stalePeer, stablePeer],
+      );
+    });
+
+    expect(mocks.moveTask).toHaveBeenNthCalledWith(1, source.id, {
+      status: to,
+      nextTaskId: stalePeer.id,
+      expectedVersion: source.version,
+    });
+    expect(mocks.moveTask).toHaveBeenNthCalledWith(2, source.id, {
+      status: to,
+      previousTaskId: undefined,
+      nextTaskId: stablePeer.id,
+      expectedVersion: latestSource.version,
+    });
+    expect(result.current.tasks[0]).toEqual(moved);
+  });
+
+  it("邻居刷新期间切换看板再切回时不继续第二次移动写入", async () => {
+    const retryFetch = deferred<TaskBoardTask[]>();
+    mocks.fetchTasks.mockResolvedValueOnce([originalTask]).mockReturnValueOnce(retryFetch.promise);
+    mocks.moveTask.mockRejectedValueOnce(new TaskBoardInvalidMoveError());
+    const { result, rerender } = renderHook(
+      ({ boardId }) => useBoardTasks(boardId),
+      { initialProps: { boardId: originalTask.boardId } },
+    );
+    await waitFor(() => expect(result.current.tasks).toEqual([originalTask]));
+
+    let movePromise!: Promise<TaskBoardTask>;
+    await act(async () => {
+      movePromise = result.current.optimisticMove(
+        originalTask,
+        { status: "todo", nextTaskId: "stale-peer" },
+        [{ ...originalTask, status: "todo" }],
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.fetchTasks).toHaveBeenCalledTimes(2));
+    rerender({ boardId: "board-2" });
+    rerender({ boardId: originalTask.boardId });
+
+    await act(async () => {
+      retryFetch.resolve([originalTask]);
+      await movePromise;
+    });
+
+    expect(mocks.moveTask).toHaveBeenCalledTimes(1);
   });
 
   it("任务写入会使先前的慢 GET 失效，不允许旧响应覆盖新任务", async () => {

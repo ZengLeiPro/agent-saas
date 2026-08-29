@@ -176,6 +176,7 @@ import { deriveStableWorkspaceId } from './workspaceIdentity.js';
 // 注意：subagent/agentToolProvider.js 反向 import 本文件的装配小件（ESM 循环依赖，
 // 仅函数级引用、无模块求值期访问，安全）。
 import { AgentToolProvider } from './subagent/agentToolProvider.js';
+import { orphanUnrecoverableSubagentWake } from './subagent/orphanUnrecoverableSubagentWake.js';
 import { reconcileInterruptedForegroundToolCalls } from './subagent/recovery.js';
 import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.js';
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
@@ -2769,27 +2770,22 @@ export async function wakeRuntimeSession(
     await config.backgroundTasks.execute(run, options.lease);
     return;
   }
-  // 子 agent run 守卫（2026-07-06）：MVP 是父死子亡语义，子 run 绝不允许 scheduler
-  // 恢复重放（重放 = 双份模型执行 + 双份计费）。正常路径下 subagentRunner 持有
-  // lease 让 listRecoverable 捡不到执行中的子 run；这里兜底进程崩溃后 lease 过期
-  // 的残留——直接判 orphaned，不做任何模型/工具调用。
   if (session.kind === 'subagent' || run.metadata?.subagent === true) {
-    await options.lease?.release('orphaned', 'subagent_run_not_recoverable');
-    await markRunState(
-      config.runStore,
-      new RunStateTrackingEventStore(
+    await orphanUnrecoverableSubagentWake({
+      runStore: config.runStore,
+      eventStore: new RunStateTrackingEventStore(
         createEventStoreForSession(config, session),
         config.runStore,
         eventTenantId,
         config.logger ?? logger,
       ),
-      run.sessionId,
-      run.runId,
-      'orphaned',
-      'subagent_run_not_recoverable',
-      undefined,
-      { tenantId: eventTenantId },
-    ).catch(() => undefined);
+      sessionCatalog,
+      lease: options.lease,
+      sessionId: run.sessionId,
+      runId: run.runId,
+      tenantId: eventTenantId,
+      logger: config.logger ?? logger,
+    });
     return;
   }
   const baseEventStore = createEventStoreForSession(config, session);

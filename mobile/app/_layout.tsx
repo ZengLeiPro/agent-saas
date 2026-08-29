@@ -1,14 +1,14 @@
 // Platform init must be the very first import
 import "../src/platform/init";
 
-import React, { useEffect } from "react";
-import { Stack, useRouter, useSegments } from "expo-router";
+import React from "react";
+import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { View } from "react-native";
 import { ShareIntentProvider } from "expo-share-intent";
-import { AuthProvider, useAuth } from "../src/contexts/AuthContext";
+import { AuthProvider } from "../src/contexts/AuthContext";
 import { ChatAppStateProvider } from "../src/contexts/ChatAppStateContext";
 import { PendingSharedFilesProvider } from "../src/contexts/PendingSharedFilesContext";
 import { useActivityReporter } from "../src/hooks/useActivityReporter";
@@ -16,6 +16,7 @@ import { useForegroundRefresh } from "../src/hooks/useForegroundRefresh";
 import { useUpdateChecker } from "../src/hooks/useUpdateChecker";
 import { useShareIntentBridge } from "../src/hooks/useShareIntentBridge";
 import { AppErrorBoundary } from "../src/components/ErrorBoundary";
+import { V1RouteGate } from "../src/app/V1RouteGate";
 
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import {
@@ -27,32 +28,16 @@ import {
 import { PromptHost } from "../src/components/overlays/PromptHost";
 
 function AuthGate() {
-  const { user, loading } = useAuth();
   const colors = useColors();
-  const segments = useSegments();
-  const router = useRouter();
   useActivityReporter();
   useForegroundRefresh();
   useUpdateChecker();
   useShareIntentBridge();
 
-  useEffect(() => {
-    if (loading) return;
-
-    const inAuthGroup = segments[0] === "login";
-    // SPIKE: webview-spike 走 Web 端自己的登录，不需要原生登录态
-    const inSpike = segments[0] === "webview-spike";
-
-    if (!user && !inAuthGroup && !inSpike) {
-      router.replace("/login");
-    } else if (user && inAuthGroup) {
-      router.replace("/(tabs)/chat");
-    }
-  }, [user, loading, segments, router]);
-
   return (
-    <ChatAppStateProvider>
-      <Stack
+    <V1RouteGate>
+      <ChatAppStateProvider>
+        <Stack
         screenOptions={
           {
             headerShown: false,
@@ -111,10 +96,10 @@ function AuthGate() {
           }}
         />
         <Stack.Screen name="login" />
-        <Stack.Screen name="webview-spike" />
         <Stack.Screen name="index" />
       </Stack>
-    </ChatAppStateProvider>
+      </ChatAppStateProvider>
+    </V1RouteGate>
   );
 }
 

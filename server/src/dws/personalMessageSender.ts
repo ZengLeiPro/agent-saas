@@ -39,8 +39,8 @@ export interface DwsPersonalMessageSenderLike {
 
 /**
  * Sends a current-user DWS message from the Agent's isolated workspace.
- * The supplied idempotency key is passed unchanged to DWS as --uuid; DWS
- * provides the corresponding 24-hour message idempotency window.
+ * The supplied idempotency key is passed unchanged to the v1.0.60 subcommand-specific
+ * flag (`reply --uuid`, `send --idempotency-key`) for the 24-hour DWS window.
  */
 export class DwsPersonalMessageSender implements DwsPersonalMessageSenderLike {
   constructor(private readonly options: DwsPersonalMessageSenderOptions) {}
@@ -114,20 +114,21 @@ export function buildDwsPersonalMessageCommand(
   const conversationId = optionalText(event.conversationId);
   const messageId = optionalText(event.messageId);
   const senderOpenDingtalkId = optionalText(event.senderOpenDingtalkId);
-  const commonArgs = `--text ${shellQuote(safeText)} --uuid ${shellQuote(uuid)} --profile ${shellQuote(profileId)} --format json`;
+  const profileArgs = `--profile ${shellQuote(profileId)} --format json`;
 
   if (conversationId && messageId && senderOpenDingtalkId) {
-    return `dws chat message reply --conversation-id ${shellQuote(conversationId)} --ref-msg-id ${shellQuote(messageId)} --ref-sender ${shellQuote(senderOpenDingtalkId)} ${commonArgs}`;
+    return `dws chat message reply --group ${shellQuote(conversationId)} --ref-msg-id ${shellQuote(messageId)} --ref-sender ${shellQuote(senderOpenDingtalkId)} --content ${shellQuote(safeText)} --uuid ${shellQuote(uuid)} ${profileArgs}`;
   }
 
+  const sendArgs = `--content ${shellQuote(safeText)} --idempotency-key ${shellQuote(uuid)} ${profileArgs}`;
   if (event.type === 'user_im_message_receive_at') {
     if (!conversationId) throw new Error('Agent DWS 群消息目标 conversationId 缺失');
-    return `dws chat message send --group ${shellQuote(conversationId)} ${commonArgs}`;
+    return `dws chat message send --conversation-id ${shellQuote(conversationId)} ${sendArgs}`;
   }
 
   if (event.type === 'user_im_message_receive_o2o_all') {
     if (!senderOpenDingtalkId) throw new Error('Agent DWS 单聊目标 senderOpenDingtalkId 缺失');
-    return `dws chat message send --open-dingtalk-id ${shellQuote(senderOpenDingtalkId)} ${commonArgs}`;
+    return `dws chat message send --open-dingtalk-id ${shellQuote(senderOpenDingtalkId)} ${sendArgs}`;
   }
 
   throw new Error(`Agent DWS 消息缺少回复引用字段，且事件类型不支持发送：${safeErrorLabel(event.type)}`);

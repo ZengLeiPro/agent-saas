@@ -57,8 +57,9 @@ export interface DwsCliContextClientOptions {
 
 const DEFAULT_MAX_TRANSCRIPT_PAGES = 1_000;
 const DEFAULT_MAX_TRANSCRIPT_CHARACTERS = 100_000;
+const MAX_MINUTES_LIST_PAGES = 100;
 
-/** Deterministic argv builder/parser for the real DWS v1.0.55 read commands. */
+/** Deterministic argv builder/parser for the pinned DWS v1.0.60 read commands. */
 export class DwsCliContextClient implements DwsContextClient {
   private readonly maxTranscriptPages: number;
   private readonly maxTranscriptCharacters: number;
@@ -87,21 +88,27 @@ export class DwsCliContextClient implements DwsContextClient {
       '--cursor', input.cursor ?? '0',
     ], input.scope.profileId);
     const payload = await this.execute(args, input.scope, 'chat.list');
-    const page = parsePage(payload, ['items', 'messages', 'list', 'records']);
+    const page = parsePage(payload, ['conversationMessagesList', 'items', 'messages', 'list', 'records']);
     const selected = input.conversationIds ? new Set(input.conversationIds) : undefined;
     const items: DwsChatMessage[] = [];
     let unreadable = false;
     for (const raw of page.items) {
-      const rawConversationId = chatConversationId(raw);
-      const addressed = (!input.conversationId || rawConversationId === input.conversationId)
-        && (!selected || (rawConversationId ? selected.has(rawConversationId) : true));
-      if (!addressed) continue;
-      const item = parseChatMessage(raw);
-      if (!item) {
-        unreadable = true;
-        continue;
+      const container = asRecord(raw);
+      const nestedMessages = Array.isArray(container.messages) ? container.messages : undefined;
+      const candidates = nestedMessages ?? [raw];
+      const inheritedConversationId = chatConversationId(raw);
+      for (const candidate of candidates) {
+        const rawConversationId = chatConversationId(candidate) ?? inheritedConversationId;
+        const addressed = (!input.conversationId || rawConversationId === input.conversationId)
+          && (!selected || (rawConversationId ? selected.has(rawConversationId) : true));
+        if (!addressed) continue;
+        const item = parseChatMessage(candidate, rawConversationId);
+        if (!item) {
+          unreadable = true;
+          continue;
+        }
+        items.push(item);
       }
-      items.push(item);
     }
     return pageResult(items, { ...page, truncated: page.truncated || unreadable });
   }
@@ -239,12 +246,13 @@ export class DwsCliContextClient implements DwsContextClient {
     cursor?: string;
     pageSize: number;
   }): Promise<DwsPage<DwsMinutesRecord>> {
+    if (input.cursor) throw new Error('DWS v1.0.60 minutes +list-all 完整读取不接受外部 cursor');
     const args = withProfile([
       'dws', 'minutes', '+list-all', '--limit', String(input.pageSize),
-      ...(input.cursor ? ['--cursor', input.cursor] : []),
+      '--page-all', '--page-limit', String(MAX_MINUTES_LIST_PAGES),
     ], input.scope.profileId);
     const payload = await this.execute(args, input.scope, 'minutes.list');
-    const page = parsePage(payload, ['items', 'minutes', 'tasks', 'list', 'records']);
+    const page = parsePage(payload, ['minutes', 'itemList', 'items', 'tasks', 'list', 'records']);
     const from = Date.parse(input.window.from);
     const to = Date.parse(input.window.to);
     const parsed = page.items.map(parseMinutesRecord);
@@ -271,7 +279,7 @@ export class DwsCliContextClient implements DwsContextClient {
     if (typeof payload === 'string') return { content: payload };
     const record = payloadRecord(payload);
     return {
-      content: contentField(record, ['content', 'summary', 'markdown', 'text']),
+      content: contentField(record, ['fullSummary', 'content', 'summary', 'markdown', 'text']),
       ...(truncatedField(record) ? { truncated: true } : {}),
     };
   }
@@ -297,7 +305,7 @@ export class DwsCliContextClient implements DwsContextClient {
         ...(cursor ? ['--cursor', cursor] : []),
       ], input.scope.profileId);
       const payload = await this.execute(args, input.scope, 'minutes.transcript');
-      const page = parsePage(payload, ['items', 'paragraphs', 'sentences', 'transcriptions', 'records']);
+      const page = parsePage(payload, ['paragraphList', 'items', 'paragraphs', 'sentences', 'transcriptions', 'records']);
       const chunk = transcriptContent(payload, page.items);
       const chunkCharacters = Array.from(chunk).length;
       if (characters + chunkCharacters > this.maxTranscriptCharacters) {
@@ -362,17 +370,27 @@ interface ParsedPage {
 
 function parsePage(payload: unknown, itemKeys: string[]): ParsedPage {
   if (Array.isArray(payload)) return { items: payload, truncated: false };
+  const root = asRecord(payload);
+  const directItems = [root.data, root.result].find(Array.isArray) as unknown[] | undefined;
+  if (directItems) return { items: directItems, truncated: false };
+
   const records = objectCandidates(payload);
   const container = records.find(record => itemKeys.some(key => Array.isArray(record[key]))) ?? records[0] ?? {};
   const items = itemKeys.map(key => container[key]).find(Array.isArray) as unknown[] | undefined;
-  const hasMore = optionalBoolean(container, ['hasMore', 'has_more', 'more']);
+  const pagination = asRecord(asRecord(root.meta).pagination);
+  const endpointExhausted = optionalBoolean(pagination, ['endpoint_exhausted', 'endpointExhausted']);
+  const declaredHasMore = optionalBoolean(container, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more']);
+  const hasMore = declaredHasMore ?? (endpointExhausted === undefined ? undefined : !endpointExhausted);
   const nextCursor = optionalString(container, [
-    'nextCursor', 'next_cursor', 'nextPageToken', 'next_page_token', 'pageToken',
-  ]);
+    'nextCursor', 'next_cursor', 'nextToken', 'next_token', 'nextPageToken', 'next_page_token', 'pageToken',
+  ]) ?? optionalString(pagination, ['next_token', 'nextToken', 'next_cursor', 'nextCursor']);
+  const complete = optionalBoolean(container, ['complete']);
   return {
     items: items ?? [],
     ...(hasMore === false ? {} : nextCursor ? { nextCursor } : {}),
-    truncated: truncatedField(container) || (hasMore === true && !nextCursor),
+    truncated: truncatedField(container)
+      || (hasMore === true && !nextCursor)
+      || (complete === false && !nextCursor),
   };
 }
 
@@ -390,14 +408,22 @@ function chatConversationId(value: unknown): string | undefined {
   ]);
 }
 
-function parseChatMessage(value: unknown): DwsChatMessage | null {
+function parseChatMessage(value: unknown, inheritedConversationId?: string): DwsChatMessage | null {
   const record = asRecord(value);
-  const messageId = optionalString(record, ['messageId', 'msgId', 'message_id', 'msg_id', 'id']);
+  const messageId = optionalString(record, [
+    'openMessageId', 'messageId', 'msgId', 'message_id', 'msg_id', 'id',
+  ]);
   const conversationId = optionalString(record, [
     'conversationId', 'conversation_id', 'openConversationId', 'open_conversation_id', 'cid',
-  ]);
+  ]) ?? inheritedConversationId;
   const createdAt = optionalTimestamp(record, ['createdAt', 'createTime', 'create_time', 'sendTime', 'timestamp']);
   if (!messageId || !conversationId || !createdAt) return null;
+  const senderId = optionalString(record, [
+    'senderId', 'sender_id', 'senderUserId', 'sender_user_id', 'senderOpenDingTalkId',
+    'senderOpenDingtalkId', 'sender_open_dingtalk_id',
+  ]) ?? optionalString(asRecord(record.sender), [
+    'userId', 'user_id', 'openDingTalkId', 'openDingtalkId', 'open_dingtalk_id', 'id',
+  ]);
   return {
     messageId,
     conversationId,
@@ -405,8 +431,7 @@ function parseChatMessage(value: unknown): DwsChatMessage | null {
     createdAt,
     ...(optionalTimestamp(record, ['updatedAt', 'updateTime', 'modifiedAt'])
       ? { updatedAt: optionalTimestamp(record, ['updatedAt', 'updateTime', 'modifiedAt']) } : {}),
-    ...(optionalString(record, ['senderId', 'sender_id', 'senderUserId', 'sender_user_id'])
-      ? { senderId: optionalString(record, ['senderId', 'sender_id', 'senderUserId', 'sender_user_id']) } : {}),
+    ...(senderId ? { senderId } : {}),
     ...(optionalString(record, ['url', 'messageUrl']) ? { url: optionalString(record, ['url', 'messageUrl']) } : {}),
     ...(truncatedField(record) ? { truncated: true } : {}),
   };
@@ -465,8 +490,16 @@ function transcriptContent(payload: unknown, items: unknown[]): string {
   if (items.length > 0) {
     return items.map(item => {
       const record = asRecord(item);
-      const text = contentField(record, ['text', 'content', 'sentence', 'transcription']);
-      const speaker = optionalString(record, ['speakerName', 'speaker_name', 'speaker']);
+      const parts = [contentField(record, ['paragraph', 'text', 'content', 'sentence', 'transcription'])];
+      if (Array.isArray(record.sentences)) {
+        parts.push(...record.sentences.map(sentence => (
+          contentField(asRecord(sentence), ['text', 'content', 'sentence', 'transcription'])
+        )));
+      }
+      const text = [...new Set(parts.filter(Boolean))].join(' ');
+      const speaker = optionalString(record, [
+        'speakerName', 'speaker_name', 'speakerNick', 'speaker_nick', 'speaker',
+      ]);
       return speaker && text ? `${speaker}: ${text}` : text;
     }).filter(Boolean).join('\n');
   }

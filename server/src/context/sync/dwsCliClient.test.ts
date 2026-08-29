@@ -14,17 +14,22 @@ function setup(outputs: unknown[]) {
 }
 
 describe('DwsCliContextClient', () => {
-  it('locks chat list-all argv, parses the real cursor envelope, and filters selected conversations in one scan', async () => {
+  it('locks chat list-all argv, parses the v1.0.60 nested cursor envelope, and filters selected conversations', async () => {
     const { client, json } = setup([{
-      data: {
-        messages: [
+      result: {
+        conversationMessagesList: [
           {
-            msgId: 'message-a', openConversationId: 'conversation-a', content: { text: 'hello' },
-            createTime: 1_777_075_000_000, senderUserId: 'user-a',
+            openConversationId: 'conversation-a',
+            messages: [{
+              openMessageId: 'message-a', content: { text: 'hello' },
+              createTime: 1_777_075_000_000, sender: { openDingTalkId: 'user-a' },
+            }],
           },
           {
-            msgId: 'message-b', openConversationId: 'conversation-b', content: 'other',
-            createTime: 1_777_075_100_000,
+            openConversationId: 'conversation-b',
+            messages: [{
+              openMessageId: 'message-b', content: 'other', createTime: 1_777_075_100_000,
+            }],
           },
         ],
         hasMore: true,
@@ -163,23 +168,23 @@ describe('DwsCliContextClient', () => {
     const { client, json } = setup([
       {
         data: {
-          items: [
+          minutes: [
             { taskUuid: 'minutes-a', title: '周会', startTime: '2026-08-22T00:10:00Z', duration: 600 },
             { taskUuid: 'minutes-old', title: '旧会', startTime: '2026-08-21T00:10:00Z' },
           ],
-          hasMore: true,
-          nextCursor: 'minutes-cursor-2',
+          complete: true,
         },
+        meta: { pagination: { endpoint_exhausted: true, pages: 2, items: 2 } },
       },
-      { data: { summary: '核心结论' } },
+      { result: { fullSummary: '核心结论' } },
       {
-        data: {
-          items: [{ speakerName: '甲', text: '第一段' }],
-          hasMore: true,
-          nextCursor: 'transcript-cursor-2',
+        result: {
+          paragraphList: [{ speakerNick: '甲', paragraph: '第一段', sentences: [{ text: '补充' }] }],
+          hasNext: true,
+          nextToken: 'transcript-cursor-2',
         },
       },
-      { data: { items: [{ speakerName: '乙', text: '第二段' }], hasMore: false } },
+      { result: { paragraphList: [{ speakerNick: '乙', paragraph: '第二段' }], hasNext: false } },
     ]);
 
     const list = await client.listMinutes({ scope, window, pageSize: 20 });
@@ -188,6 +193,7 @@ describe('DwsCliContextClient', () => {
 
     expect(json.mock.calls[0]![0]).toEqual([
       'dws', 'minutes', '+list-all', '--limit', '20',
+      '--page-all', '--page-limit', '100',
       '--profile', 'corp:user', '--format', 'json',
     ]);
     expect(list).toEqual({
@@ -195,7 +201,6 @@ describe('DwsCliContextClient', () => {
         minutesId: 'minutes-a', title: '周会', startedAt: '2026-08-22T00:10:00.000Z',
         durationSeconds: 600,
       }],
-      nextCursor: 'minutes-cursor-2',
     });
     expect(json.mock.calls[1]![0]).toEqual([
       'dws', 'minutes', 'get', 'summary', '--id', 'minutes-a',
@@ -203,12 +208,22 @@ describe('DwsCliContextClient', () => {
     ]);
     expect(summary).toEqual({ content: '核心结论' });
     expect(json.mock.calls[3]![0]).toContain('transcript-cursor-2');
-    expect(transcript).toEqual({ content: '甲: 第一段\n乙: 第二段' });
+    expect(transcript).toEqual({ content: '甲: 第一段 补充\n乙: 第二段' });
+  });
+
+  it('fails closed when a v1.0.60 minutes inventory is not complete and has no safe cursor', async () => {
+    const { client } = setup([{
+      data: { minutes: [], complete: false },
+      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } },
+    }]);
+
+    await expect(client.listMinutes({ scope, window, pageSize: 20 }))
+      .resolves.toEqual({ items: [], truncated: true });
   });
 
   it('marks transcript clipping explicit when the adapter character bound is reached', async () => {
     const json = vi.fn().mockResolvedValue({
-      data: { items: [{ text: 'abcdefghij' }], hasMore: true, nextCursor: 'next' },
+      result: { paragraphList: [{ paragraph: 'abcdefghij' }], hasNext: true, nextToken: 'next' },
     });
     const client = new DwsCliContextClient({ executor: { json }, maxTranscriptCharacters: 5 });
 

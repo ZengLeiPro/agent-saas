@@ -79,7 +79,7 @@ result = subprocess.run(
 )
 ```
 
-**官方 38 个脚本不 import 本 helper**——它们依赖 shell/subprocess 环境继承，ACS 容器里因 §1.1 天然生效；本地开发时必须先按 §1.2 source。**不要在 `dws_runtime.py` 里加 subprocess 猴子补丁**——那会跟官方 skill 的假设分叉、维护性极差；warm sandbox 隔离的单一真相源是 Dockerfile `ENV` 层。
+**官方 31 个 Python 脚本不 import 本 helper**——它们依赖 shell/subprocess 环境继承，ACS 容器里因 §1.1 天然生效；本地开发时必须先按 §1.2 source。**不要在 `dws_runtime.py` 里加 subprocess 猴子补丁**——那会跟官方 skill 的假设分叉、维护性极差；warm sandbox 隔离的单一真相源是 Dockerfile `ENV` 层。
 
 ## 2. 首次授权流程
 
@@ -124,15 +124,16 @@ Agent 调用业务命令遇到 `not authenticated` 时，只需告诉用户：**
 # Source env（每个 bash session 一次）
 . .dws/env.sh
 
-# 命令与参数以当前 1.0.51 二进制的 --help 为事实源
+# 命令存在性与 Cobra flags 以当前 1.0.60 二进制的 --help 为事实源
 dws chat --help
 dws calendar event list --help
 
-# dws schema 在静态端点模式下只用于 helper-only 命令
-dws schema "dev app create"
+# 基础命令与内建 shortcut 的参数、约束和安全语义读取 leaf Schema
+dws schema "calendar event create" --compact --format json
+dws schema --cli-path "minutes +list-all" --compact --format json
 
 # 实际调用都加 --format json
-dws contact user search --keyword "张三" --format json
+dws contact user search --query "张三" --format json
 dws calendar event list --format json --jq '.events[] | {summary, start, end}'
 
 # 危险操作先 dry-run 再加 --yes
@@ -155,13 +156,13 @@ dws aitable record delete --base-id xxx --table-id yyy --record-id zzz --yes
 | **连接器页长期停在等待授权** | 用户未在 15 分钟内确认，或 ACS 授权任务异常退出 | 等连接器页显示过期/失败后点击「重新连接」；平台管理员再查服务端授权任务日志 |
 | **API 报 `code: 300000` 类业务错误** | 不是认证问题，是参数错误 | 用对应层级的 `dws <command-path> --help` 查必填参数，补齐重试；helper-only 命令再用 `dws schema` |
 | **`token` 拿到了但调 API 返回 `permission_denied`** | 当前账号对该资源无权限，或 dws 内置应用 scope 不够 | 换登录账号、或考虑迁到自定义应用模式 |
-| **API 返回 `PAT_NO_PERMISSION` / `PAT_LOW_RISK_NO_PERMISSION` / `PAT_MEDIUM_RISK_NO_PERMISSION` / `PAT_HIGH_RISK_NO_PERMISSION`** | **预期机制**，不是 bug。钉钉对涉及个人敏感数据的 API 要求用户单独按 scope 同意一次行为 | 详见下方「PAT 行为授权机制」段；把 `authorizationUrl` 原样转给用户，说明风险等级和授权时长选项，让用户自行选择 |
-| **API 返回 `PAT_SCOPE_AUTH_REQUIRED`（附 `missingScope`）** | OAuth access_token 本身缺该 scope（不是 PAT 行为同意问题） | 跑 `dws auth login --scope <missingScope>` 重走授权加 scope，与上面 PAT_*_RISK 机制不同 |
+| **API 返回 `PAT_NO_PERMISSION` / `PAT_LOW_RISK_NO_PERMISSION` / `PAT_MEDIUM_RISK_NO_PERMISSION` / `PAT_HIGH_RISK_NO_PERMISSION`** | **预期机制**，不是 bug。钉钉对涉及个人敏感数据的 API 要求用户单独按 scope 同意一次行为 | 先读结构化错误的 `hint`、`actions` 与 `data.uri`；需要人工授权时原样转交 URI，说明风险等级和授权时长 |
+| **API 返回 `PAT_SCOPE_AUTH_REQUIRED`（附 `missingScope`）** | OAuth access_token 本身缺该 scope（不是 PAT 行为同意问题） | SaaS 会话引导用户到连接器页重新连接并补 scope；仅平台外本地调试可运行 `dws auth login --scope <missingScope>` |
 | **API 返回 `AGENT_CODE_NOT_EXISTS`** | 服务端自动建了 CLI 应用，需 host 处理 agentCode | host application（平台侧）介入；当前 PoC 阶段如撞到，向平台管理员汇报，不要自行重试 |
 
 ### Token 寿命与永久性（重要）
 
-dws 是 **sliding window** 设计——`internal/auth/oauth_helpers.go:252,294` 每次 token exchange 都把 `RefreshExpAt` 重置为 `now + 30 天`。意味着：
+dws 是 **sliding window** 设计：v1.0.60 的 token exchange 每次成功解析刷新响应时都会把 `RefreshExpAt` 重置为 `now + 30 天`。意味着：
 
 - **access_token 2h**：dws 自动刷新，用户无感
 - **refresh_token 30d**：但**每次自动刷新 access_token 时也会重置 refresh_token 的过期时间为 now + 30d**
@@ -219,17 +220,17 @@ Agent 引导用户时必须解释授权时长差异和风险等级，让用户�
 
 ```bash
 # 1. 不要重试，不要修改命令——这不是参数错误
-# 2. 从错误 JSON 提取 authorizationUrl
+# 2. 从错误 JSON 提取 data.uri（兼容旧字段 authUrl / authorizationUrl）
 # 3. 原样转给用户，明确告知：
 echo "钉钉对【$API 名】这类 API 要求你单独授权一次。请在你自己的手机或电脑浏览器打开："
-echo "  <authorizationUrl 原文>"
+echo "  <data.uri 原文>"
 echo "页面会让你选择授权时长。请根据页面说明自行选择；完成后告诉我，我重新尝试调用。"
 # 4. 等用户告知完成后，重跑原命令
 ```
 
 **禁止**：
 - 自行重试（钉钉服务端没拿到同意，重试只会再得同样错误）
-- 把 `authorizationUrl` 重组、转码、缩短（源码 `PATAuthorizationURL()` 已做了 hash 路由的特殊处理，URL 必须原样转给用户）
+- 把 `data.uri` 重组、转码、缩短（CLI 已规范化已知 hash 路由，URI 必须原样转给用户）
 - 代用户完成授权（同 device flow，授权页面跑在钉钉服务器，用户用自己设备打开）
 
 ### PAT vs OAuth：别混
@@ -239,35 +240,27 @@ echo "页面会让你选择授权时长。请根据页面说明自行选择；�
 | 何时发生 | 工作区**首次**接入 dws | 调到中/高风险 API 且用户没授权过 |
 | 拿到什么 | access_token + refresh_token | 让该 scope 行为可调（无新 token） |
 | 由谁触发 | 主动跑 `dws auth login --device` | 被动：API 报错 PAT_*_NO_PERMISSION |
-| 用户操作 | 浏览器输 user_code → 选组织 → 同意 | 浏览器开 authorizationUrl → 选时长 → 同意 |
+| 用户操作 | 浏览器输 user_code → 选组织 → 同意 | 浏览器开 `data.uri` → 选时长 → 同意 |
 | 寿命 | refresh_token sliding window 月用一次=永久 | 选 permanent 后永久；选 once/session 下次还要 |
 | 错误码 | `auth status: not authenticated` | `PAT_*_RISK_NO_PERMISSION` 或 `PAT_SCOPE_AUTH_REQUIRED` |
 
 ### 还有两类特殊错误码
 
-- **`PAT_SCOPE_AUTH_REQUIRED`**（附 `missingScope`）：OAuth access_token 本身缺该 scope，不是 PAT 行为同意问题。**解决路径不同**：跑 `dws auth login --scope <missingScope>` 重走 device flow 加上该 scope，**不是开 authorizationUrl 这一套**
+- **`PAT_SCOPE_AUTH_REQUIRED`**（附 `missingScope`）：OAuth access_token 本身缺该 scope，不是 PAT 行为同意问题。SaaS 会话应引导用户到连接器页重新连接并补 scope；仅平台外本地调试可运行 `dws auth login --scope <missingScope>`，**不是打开 PAT URI 这一套**
 - **`AGENT_CODE_NOT_EXISTS`**：服务端自动建了 CLI 应用，需 host application 处理 agentCode。当前 PoC 阶段如撞到，向平台管理员汇报，不要自行重试
 
-### 进阶：预先批量授权（host application 用）
+### 进阶：预先批量授权（高影响操作）
 
-`dws pat chmod <scope>...` 可以在 CLI 端预先授权某些 scope，跳过"撞墙再授权"流程。语法：
-
-```bash
-dws pat chmod chat.message:list aitable.record:read \
-  --agentCode <agent-code> \
-  --grant-type permanent
-```
-
-但这需要 `--agentCode`（环境变量 `DINGTALK_DWS_AGENTCODE`）参数，是给平台 host application 用的，**普通用户不需要也不能跑**——当前阶段 agent 不要主动调这个命令。
+`dws pat chmod <scope>...` 可以预先授权 scope，但会扩大 Agent 的可执行范围。必须先 `--dry-run --format json` 展示 scope 与授权类型，取得用户明确确认后才加 `--yes`；`session` 模式还必须提供 `--session-id`。普通业务任务不要为了绕过一次 PAT 错误而擅自批量或永久授权，完整参数与边界以 [pat.md](./products/pat.md) 和当前 `--help` 为准。
 
 ## 8. 多组织（profile）注意事项（v1.0.45+）
 
-dws v1.0.45 起支持在同一 workspace 同时登录多个钉钉组织（`dws profile list/switch/use` + 全局 `--profile <name|corpId>`）。多租户 SaaS 场景下：
+dws v1.0.45 起支持在同一 workspace 保存多个组织/账号；v1.0.60 以 `corpId:userId` 作为稳定 profile 标识。多租户 SaaS 场景下：
 
-- 单组织租户：不需要额外操作，dws 自动把首次登录的组织标记为 primary 与 current
-- 多组织租户：可能需要在同一 workspace 依次跑多次 `dws auth login --device`，每次授权后自动追加为新 profile
-- **找群/找人/找数据在当前组织没命中，且 `dws profile list --format json` 显示 ≥2 个组织时**：对每个组织带一次性 `--profile <corpId>` 各搜一遍；命中即用，全部组织都没有才追问用户。**禁止**在当前组织搜不到就判定「不存在」或直接甩给用户选
-- 平台侧不代替用户在多个组织间自动切换 primary（`profile switch` 是持久化操作，会改默认组织）；一次性跨组织读用 `--profile` 单次覆盖
+- 自动化先运行 `dws profile list --format json`，使用返回的精确 `profile=corpId:userId`；不要自行拼接名称或选择列表第一项
+- 只指定组织时，只有该组织唯一的 `isOrgCurrent=true` 账号可作为默认；同组织多账号且没有默认账号时必须让用户指定
+- **跨组织读/搜**：按 `corpId` 去重并使用各组织唯一的 `isOrgCurrent=true` profile；有歧义就停止并询问，不得以最近登录/最近使用代替用户选择
+- 平台侧不代替用户执行持久化 `profile switch`；一次性调用使用 `--profile <corpId:userId>` 覆盖
 
 profile 元数据（不含 token）写在 `.dws/config/profiles.json`；token 仍走 keychain 抽象（在我们 warm sandbox 里被 `DWS_KEYCHAIN_DIR` 重定向到 workspace 内）。这意味着 profile 机制与我们 §1 env 注入约定完全兼容，不需要额外配置。
 
@@ -275,4 +268,4 @@ profile 元数据（不含 token）写在 `.dws/config/profiles.json`；token �
 
 本文件**仅追加平台运行时约定**，不重复 dws 官方 SKILL.md / references/ 已经讲过的内容。任何与官方文档冲突的描述，以本文件为准（特指 env 注入、账号绑定、PAT 处理规则、多组织行为）。其他产品细节、命令参数、schema 用法、错误码——以 `dws schema` 实时输出和官方 references 为准。
 
-本 skill 基于官方 **v1.0.51**（static-endpoint baseline）；skills-pool 维护「官方 baseline + 本文件 overlay」的组合快照，CLI 升级时由维护者手动 rsync 官方 tree 覆盖 + 保留本文件。**不要在容器里自动跑 `dws skill setup`**——那会用官方原始 skill 冲掉本 overlay。
+本 skill 基于官方 **v1.0.60** mono release tag；skills-pool 维护「官方 baseline + 本文件 overlay」的组合快照，CLI 升级时由维护者按同一稳定 tag 同步官方 tree 并保留本文件。**不要在容器里自动运行 `dws skill setup/upgrade`**——那会用官方原始 skill 覆盖本 overlay。

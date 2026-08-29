@@ -6,11 +6,18 @@ const governanceError = Object.assign(new Error("private backend detail"), { sta
 const governanceApi = vi.hoisted(() => ({ listOAuthGrants: vi.fn(), previewOAuthGrantRevocation: vi.fn(), revokeOAuthGrant: vi.fn() }));
 const authApi = vi.hoisted(() => ({ authFetch: vi.fn() }));
 const authState = vi.hoisted(() => ({
-  user: null as { tenantId: string; debugMode?: boolean; tenantFeatures?: { debugModeAllowed: boolean; debugModeEnabled?: boolean } } | null,
+  user: null as {
+    tenantId: string;
+    debugMode?: boolean;
+    preferences?: { authorizationModeEnabled?: boolean; lowRiskToolsAutoApproveEnabled?: boolean };
+    tenantFeatures?: { debugModeAllowed: boolean; debugModeEnabled?: boolean };
+  } | null,
   updateDebugMode: vi.fn(),
+  updatePreferences: vi.fn(),
 }));
 const sharedApi = vi.hoisted(() => ({
   startGoogleWorkspaceOAuth: vi.fn(),
+  saveUserPreferences: vi.fn(),
   isDebugModeAvailable: vi.fn((tenantId: string, features?: { debugModeAllowed: boolean; debugModeEnabled?: boolean }) => (
     tenantId === "pantheon" || (features?.debugModeAllowed === true && features.debugModeEnabled === true)
   )),
@@ -89,6 +96,9 @@ describe("连接与授权", () => {
     governanceApi.previewOAuthGrantRevocation.mockReset();
     governanceApi.revokeOAuthGrant.mockReset();
     sharedApi.startGoogleWorkspaceOAuth.mockReset();
+    sharedApi.saveUserPreferences.mockReset();
+    authState.updatePreferences.mockReset();
+    authState.user = null;
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -172,5 +182,49 @@ describe("连接与授权", () => {
     fireEvent.click(await screen.findByRole("button", { name: "确认撤销" }));
     expect(await screen.findByText("撤销执行失败")).toBeTruthy();
     expect(screen.queryByText("OAuth 授权撤销回执")).toBeNull();
+  });
+
+  // TASK-256：运行时工具批准三档选择。
+  it("运行时工具批准默认档与服务端默认一致，切换低风险常开后持久化偏好", async () => {
+    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [] });
+    // 服务端对缺失 authorizationModeEnabled 默认按开启处理，UI 必须显示「全部自动批准」。
+    authState.user = { tenantId: "tenant-a", preferences: {} };
+    render(<ConnectionsSection />);
+    const checked = screen.getAllByRole("radio").find(radio => radio.getAttribute("aria-checked") === "true");
+    expect(checked?.textContent).toContain("全部自动批准");
+
+    // 切到低风险常开：写入两个偏好字段。
+    sharedApi.saveUserPreferences.mockResolvedValue({
+      authorizationModeEnabled: false,
+      lowRiskToolsAutoApproveEnabled: true,
+    });
+    fireEvent.click(screen.getByRole("radio", { name: /低风险常开/ }));
+    await waitFor(() => expect(sharedApi.saveUserPreferences).toHaveBeenCalledWith({
+      authorizationModeEnabled: false,
+      lowRiskToolsAutoApproveEnabled: true,
+    }));
+    expect(authState.updatePreferences).toHaveBeenCalledWith({
+      authorizationModeEnabled: false,
+      lowRiskToolsAutoApproveEnabled: true,
+    });
+    expect(await screen.findByText("已保存")).toBeTruthy();
+  });
+
+  it("偏好保存失败时回滚到原档位并展示错误", async () => {
+    governanceApi.listOAuthGrants.mockResolvedValue({ grants: [] });
+    authState.user = {
+      tenantId: "tenant-a",
+      preferences: { authorizationModeEnabled: false, lowRiskToolsAutoApproveEnabled: false },
+    };
+    render(<ConnectionsSection />);
+    sharedApi.saveUserPreferences.mockResolvedValue(null);
+    fireEvent.click(screen.getByRole("radio", { name: /低风险常开/ }));
+    await waitFor(() => expect(sharedApi.saveUserPreferences).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    // 回滚：写回原偏好值。
+    expect(authState.updatePreferences).toHaveBeenLastCalledWith({
+      authorizationModeEnabled: false,
+      lowRiskToolsAutoApproveEnabled: false,
+    });
   });
 });

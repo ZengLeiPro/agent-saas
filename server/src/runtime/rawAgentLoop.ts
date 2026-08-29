@@ -2674,9 +2674,14 @@ export class RawAgentLoop implements AgentLoop {
           || (approvalPolicy as { autoApproveRunShell?: unknown }).autoApproveRunShell === true
         ),
       );
+      // 「低风险常开」档（TASK-256）：重建时保留 lowRiskOnly，dangerous 仍人工批准。
+      const lowRiskOnly = autoApproveTools
+        && (approvalPolicy as { lowRiskOnly?: unknown } | undefined)?.lowRiskOnly === true;
       return {
         ...context,
-        approvalPolicy: autoApproveTools ? { autoApproveTools: true } : undefined,
+        approvalPolicy: autoApproveTools
+          ? { autoApproveTools: true, ...(lowRiskOnly ? { lowRiskOnly: true } : {}) }
+          : undefined,
       };
     } catch {
       return context;

@@ -135,6 +135,7 @@ const updatePreferencesSchema = z.object({
   sidebarLayout: z.enum(["double", "single"]).optional(),
   businessStepDisplayMode: z.enum(["auto", "collapsed", "expanded"]).optional(),
   authorizationModeEnabled: z.boolean().optional(),
+  lowRiskToolsAutoApproveEnabled: z.boolean().optional(),
   showSessionListAvatar: z.boolean().optional(),
   defaultModel: z.string().min(1).optional(),
   activeRoleId: z.string().min(1).optional(),

@@ -1693,6 +1693,17 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (!user) return undefined;
       return user.preferences?.authorizationModeEnabled ?? true;
     },
+    // 2026-08-29（TASK-256）：个人「低风险常开」档。仅在「全部授权」关闭时生效：
+    // 自动批准 safe + workspace_write，dangerous 仍人工批准；用户不存在则 fail-closed。
+    resolveUserLowRiskAutoApprove: ({ userId, username }: { userId?: string; username?: string }) => {
+      const user = userId
+        ? userStore?.findById(userId)
+        : username
+          ? userStore?.findByUsername(username)
+          : undefined;
+      if (!user) return undefined;
+      return user.preferences?.lowRiskToolsAutoApproveEnabled === true;
+    },
     // scheduler wake 不经过 Web channel，需要从账户资料恢复系统提示语使用的全名。
     resolveUserRealName: ({ userId, username }: { userId?: string; username?: string }) => {
       const user = userId

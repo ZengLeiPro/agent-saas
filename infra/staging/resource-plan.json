@@ -86,6 +86,15 @@
       "stateRoot": "/var/lib/agent-saas-staging",
       "configRoot": "/etc/agent-saas-staging",
       "lockRoot": "/run/lock/agent-saas-staging",
+      "dependencies": {
+        "aliyunCli": {
+          "path": "/usr/local/bin/aliyun",
+          "version": "3.4.2",
+          "size": 93146374,
+          "digest": "sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4",
+          "status": "installed-and-production-byte-identical"
+        }
+      },
       "serviceUnits": "installed-enabled-inactive-until-first-rc",
       "configurationStatus": "schema-and-fail-closed-safety-verified",
       "accountSeed": "production-users-and-tenants-only-plus-dedicated-staging-e2e-admin"

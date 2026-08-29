@@ -169,26 +169,26 @@ export async function runTaskboardV2Schema(
   `);
   await client.query(`
     UPDATE ${options.tasksTable} task
-       SET status_changed_at=COALESCE((
-         SELECT max(status_change.created_at)
-           FROM ${options.changesTable} status_change
-          WHERE status_change.task_id=task.id AND (
-            status_change.change_type='task.created'
-            OR (status_change.payload ? 'from' AND status_change.payload ? 'to'
-                AND status_change.payload->>'from' IS DISTINCT FROM status_change.payload->>'to')
-            OR (status_change.payload ? 'fromStatus' AND status_change.payload ? 'status'
-                AND status_change.payload->>'fromStatus' IS DISTINCT FROM status_change.payload->>'status')
-            OR (status_change.payload ? 'previousStatus' AND status_change.payload ? 'status'
-                AND status_change.payload->>'previousStatus' IS DISTINCT FROM status_change.payload->>'status')
-            OR status_change.change_type IN (
-              'task.resume_requested','integration.resume_requested','integration.agent.resumed',
-              'integration.agent.finished','integration.agent.canceled','integration.canceled',
-              'merge.succeeded.v2','integration.agent.merge.succeeded',
-              'workflow.remediation_completed_after_merge'
+       SET status_changed_at=CASE
+         -- completed_at is preserved across merge receipt replays, so it is the reliable done watermark.
+         WHEN task.status='done' AND task.completed_at IS NOT NULL THEN task.completed_at
+         -- Legacy direct status writes were not always audited. updated_at is an explicit conservative
+         -- upper bound for those rows; audited events participate only when their payload proves a change.
+         ELSE GREATEST(task.created_at, task.updated_at, COALESCE((
+           SELECT max(status_change.created_at)
+             FROM ${options.changesTable} status_change
+            WHERE status_change.task_id=task.id AND (
+              (status_change.payload ? 'from' AND status_change.payload ? 'to'
+               AND status_change.payload->>'from' IS DISTINCT FROM status_change.payload->>'to')
+              OR (status_change.payload ? 'fromStatus' AND status_change.payload ? 'status'
+                  AND status_change.payload->>'fromStatus' IS DISTINCT FROM status_change.payload->>'status')
+              OR (status_change.payload ? 'previousStatus' AND status_change.payload ? 'status'
+                  AND status_change.payload->>'previousStatus' IS DISTINCT FROM status_change.payload->>'status')
             )
-          )
-       ), task.created_at)
+         ), task.created_at))
+       END
      WHERE task.status_changed_at IS NULL;
+    SET CONSTRAINTS ${options.statusNotificationOutboxTable}_trigger IMMEDIATE;
     ALTER TABLE ${options.tasksTable}
       ALTER COLUMN status_changed_at SET DEFAULT now(),
       ALTER COLUMN status_changed_at SET NOT NULL;

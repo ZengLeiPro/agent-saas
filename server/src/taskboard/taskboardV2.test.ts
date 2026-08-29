@@ -201,6 +201,13 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain("NEW.status IN ('blocked','done','canceled')");
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');
+    const statusBackfill = ddl.slice(
+      ddl.indexOf('UPDATE tb_tasks task'),
+      ddl.indexOf('ALTER TABLE tb_tasks\n      ALTER COLUMN status_changed_at'),
+    );
+    expect(statusBackfill).toContain("WHEN task.status='done' AND task.completed_at IS NOT NULL");
+    expect(statusBackfill).toContain('GREATEST(task.created_at, task.updated_at');
+    expect(statusBackfill).not.toContain('change_type IN');
     expect(ddl).toContain('ALTER COLUMN status_changed_at SET NOT NULL');
     expect(ddl).toContain('NEW.status IS DISTINCT FROM OLD.status');
     expect(ddl).toContain('CREATE TRIGGER tb_tasks_status_time');

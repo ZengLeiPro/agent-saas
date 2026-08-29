@@ -12,6 +12,7 @@ Environment=ACS_NAMESPACE=agent-saas-coding
 Environment=ACS_ORCH_RUNTIME_CONFIG_FILE=/var/lib/agent-saas/acs-orchestrator-runtime.json
 Environment=ACS_RELEASE_IDENTITY_FILE=/etc/agent-saas/acs-release-identity.json
 EnvironmentFile=/etc/agent-saas/acs-orchestrator.env
+ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs --manifest=runtime-dependencies.json --component=acsOrchestrator --production=true
 ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=on-failure
 RestartSec=5

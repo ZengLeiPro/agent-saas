@@ -32,6 +32,9 @@ on:
       - 'scripts/apply-orchestrator-env.py'
       - 'scripts/deploy-acs-orchestrator.sh'
       - 'scripts/release/upload-oss-object-immutable.sh'
+      - 'scripts/release/runtime-dependency.mjs'
+      - 'scripts/release/artifact-lib.mjs'
+      - 'config/runtime-dependency-contract.json'
       - 'scripts/acs-browser-lease-e2e.mjs'
       - 'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py'
       - 'scripts/acs-verify-per-session.py'
@@ -45,7 +48,7 @@ on:
         default: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
   ACR_REGISTRY: agentsaasacrprod-registry-vpc.cn-shenzhen.cr.aliyuncs.com
   ACR_REPOSITORY: agent-saas/acs-sandbox
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
@@ -643,6 +646,11 @@ jobs:
           rm -rf "$stage/acs-orchestrator/dist" "$stage/acs-orchestrator/descriptions"
           cp -R acs-orchestrator/dist acs-orchestrator/descriptions \
             "$stage/acs-orchestrator/"
+          node scripts/release/runtime-dependency.mjs \
+            --create=true --contract=config/runtime-dependency-contract.json \
+            --source-sha="$GITHUB_SHA" --output="$stage/acs-orchestrator/runtime-dependencies.json"
+          install -m 0444 scripts/release/runtime-dependency.mjs \
+            scripts/release/artifact-lib.mjs "$stage/acs-orchestrator/dist/"
           mkdir -p "$stage/acs-orchestrator/config"
           install -m 0444 acs-orchestrator/config/production.env \
             "$stage/acs-orchestrator/config/production.env"

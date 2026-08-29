@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM docker.io/library/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605
 
 WORKDIR /opt/agent-daemon
 
@@ -31,7 +31,7 @@ ENV CLIENT_DAEMON_WORKSPACE_ID=""
 
 VOLUME ["/workspace"]
 
-# Drop privileges. The node user comes from node:22-alpine. Workspace mount
+# Drop privileges. The node user comes from the digest-pinned Node Alpine image. Workspace mount
 # permission is the operator's job.
 USER node
 

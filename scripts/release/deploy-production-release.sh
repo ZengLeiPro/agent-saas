@@ -6,7 +6,14 @@ set -euo pipefail
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
-case "$PHASE" in acs|app) ;; *) echo 'PHASE must be acs or app' >&2; exit 1 ;; esac
+case "$PHASE" in
+  acs) : "${ACS_UNIT_TEMPLATE:?ACS_UNIT_TEMPLATE is required}" ;;
+  app)
+    : "${SERVER_UNIT_TEMPLATE:?SERVER_UNIT_TEMPLATE is required}"
+    : "${WORKER_UNIT_TEMPLATE:?WORKER_UNIT_TEMPLATE is required}"
+    ;;
+  *) echo 'PHASE must be acs or app' >&2; exit 1 ;;
+esac
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -41,7 +48,7 @@ NODE
 }
 
 deploy_acs() {
-  local digest target previous main_pid identity_backup env_backup had_previous_identity candidate
+  local digest target previous main_pid rollback_root unit_path had_previous_identity candidate
   local acs_committed=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
@@ -70,13 +77,16 @@ deploy_acs() {
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
     mv "$candidate" "$target"
   fi
-  env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id"
-  identity_backup="/etc/agent-saas/acs-release-identity.json.before-$release_id"
-  [ -e "$env_backup" ] || cp -a /etc/agent-saas/acs-orchestrator.env "$env_backup"
+  rollback_root="/tmp/agent-saas-acs-rollback-$release_id-$GITHUB_RUN_ID"
+  rm -rf "$rollback_root"
+  mkdir -p "$rollback_root"
+  unit_path=/etc/systemd/system/agent-saas-acs-orchestrator.service
+  cp -a /etc/agent-saas/acs-orchestrator.env "$rollback_root/acs-orchestrator.env"
+  cp -a "$unit_path" "$rollback_root/acs-orchestrator.service"
   had_previous_identity=false
   if [ -e /etc/agent-saas/acs-release-identity.json ]; then
     had_previous_identity=true
-    [ -e "$identity_backup" ] || cp -a /etc/agent-saas/acs-release-identity.json "$identity_backup"
+    cp -a /etc/agent-saas/acs-release-identity.json "$rollback_root/acs-release-identity.json"
   fi
   cleanup_acs_failure() {
     if [ "$acs_committed" = false ]; then
@@ -85,17 +95,22 @@ deploy_acs() {
       else
         rm -f /opt/agent-saas/acs-current
       fi
-      cp -a "$env_backup" /etc/agent-saas/acs-orchestrator.env
+      cp -a "$rollback_root/acs-orchestrator.env" /etc/agent-saas/acs-orchestrator.env
       if [ "$had_previous_identity" = true ]; then
-        cp -a "$identity_backup" /etc/agent-saas/acs-release-identity.json
+        cp -a "$rollback_root/acs-release-identity.json" /etc/agent-saas/acs-release-identity.json
       else
         rm -f /etc/agent-saas/acs-release-identity.json
       fi
+      cp -a "$rollback_root/acs-orchestrator.service" "$unit_path"
+      systemctl daemon-reload
       systemctl restart agent-saas-acs-orchestrator.service || true
     fi
+    rm -rf "$rollback_root"
   }
   trap cleanup_acs_failure EXIT
   trap 'exit 130' HUP INT TERM
+  install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"
+  systemctl daemon-reload
   node - "$MANIFEST_PATH" /etc/agent-saas/acs-orchestrator.env <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
@@ -153,6 +168,7 @@ NODE
   fi
   acs_committed=true
   trap - EXIT HUP INT TERM
+  rm -rf "$rollback_root"
 }
 
 other_color() { [ "$1" = blue ] && echo green || echo blue; }
@@ -201,6 +217,10 @@ deploy_app() {
     had_worker_env=true
     cp -a "$worker_env" "$rollback_root/worker.release.env"
   fi
+  server_unit=/etc/systemd/system/agent-saas-server@.service
+  worker_unit=/etc/systemd/system/agent-saas-runtime-worker@.service
+  cp -a "$server_unit" "$rollback_root/server@.service"
+  cp -a "$worker_unit" "$rollback_root/runtime-worker@.service"
   cleanup_app_failure() {
     if [ "$app_committed" = false ]; then
       systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
@@ -231,12 +251,18 @@ deploy_app() {
         cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
         nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
       fi
+      cp -a "$rollback_root/server@.service" "$server_unit"
+      cp -a "$rollback_root/runtime-worker@.service" "$worker_unit"
+      systemctl daemon-reload
       systemctl enable --now "agent-saas-server@$api_active" >/dev/null 2>&1 || true
       systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
     fi
   }
   trap cleanup_app_failure EXIT
   trap 'exit 130' HUP INT TERM
+  install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"
+  install -m 0644 "$WORKER_UNIT_TEMPLATE" "$worker_unit"
+  systemctl daemon-reload
   ln -sfn "$target" "/opt/agent-saas-app/color/$api_idle"
   ln -sfn "$target" "/opt/agent-saas-app/worker/$worker_idle"
   upsert_env "$MANIFEST_PATH" "$api_env" api
@@ -296,6 +322,7 @@ EOF
   systemctl disable "agent-saas-server@$api_active" "agent-saas-runtime-worker@$worker_active"
   app_committed=true
   trap - EXIT HUP INT TERM
+  rm -rf "$rollback_root"
 }
 
 if [ "$PHASE" = acs ]; then deploy_acs; else deploy_app; fi

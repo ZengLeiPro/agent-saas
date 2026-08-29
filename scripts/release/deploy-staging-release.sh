@@ -83,30 +83,6 @@ for directory in "$runtime_dir" "$artifact_dir"; do
     }
   done
 done
-install_staging_unit \
-  "$UNIT_DIR/agent-saas-server-staging.service.template" \
-  /etc/systemd/system/agent-saas-server-staging.service
-install_staging_unit \
-  "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" \
-  /etc/systemd/system/agent-saas-runtime-worker-staging.service
-install_staging_unit \
-  "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" \
-  /etc/systemd/system/agent-saas-acs-orchestrator-staging.service
-systemctl daemon-reload
-
-for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
-  test "$(systemctl show "$service_name" --property WorkingDirectory --value)" = \
-    "$runtime_dir" || {
-    echo "$service_name does not use the persistent Staging runtime directory" >&2
-    exit 1
-  }
-  systemctl show "$service_name" --property ExecStart --value \
-    | grep -Fq '/opt/agent-saas-staging/current/server/dist/index.js' || {
-    echo "$service_name does not execute the immutable Staging server entrypoint" >&2
-    exit 1
-  }
-done
-
 previous=''
 had_previous_release=false
 if [ -L "$current" ]; then
@@ -158,8 +134,21 @@ if [ -e "$acs_identity" ]; then
   had_previous_identity=true
   cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
 fi
+server_unit=/etc/systemd/system/agent-saas-server-staging.service
+worker_unit=/etc/systemd/system/agent-saas-runtime-worker-staging.service
+acs_unit=/etc/systemd/system/agent-saas-acs-orchestrator-staging.service
+cp -a "$server_unit" "$rollback_root/server.service"
+cp -a "$worker_unit" "$rollback_root/runtime-worker.service"
+cp -a "$acs_unit" "$rollback_root/acs-orchestrator.service"
+units_updated=false
 deployment_committed=false
 rollback() {
+  if [ "$units_updated" = true ]; then
+    cp -a "$rollback_root/server.service" "$server_unit"
+    cp -a "$rollback_root/runtime-worker.service" "$worker_unit"
+    cp -a "$rollback_root/acs-orchestrator.service" "$acs_unit"
+    systemctl daemon-reload
+  fi
   cp -a "$rollback_root/server.env" "$server_env"
   cp -a "$rollback_root/config.json" "$server_config"
   cp -a "$rollback_root/acs-orchestrator.env" "$acs_env"
@@ -196,6 +185,47 @@ finish() {
 }
 trap finish EXIT
 trap 'exit 130' HUP INT TERM
+
+units_updated=true
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-server-staging.service.template" "$server_unit"
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" "$worker_unit"
+install_staging_unit \
+  "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" "$acs_unit"
+systemctl daemon-reload
+
+for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
+  test "$(systemctl show "$service_name" --property WorkingDirectory --value)" = \
+    "$runtime_dir" || {
+    echo "$service_name does not use the persistent Staging runtime directory" >&2
+    exit 1
+  }
+  systemctl show "$service_name" --property ExecStart --value \
+    | grep -Fq '/opt/agent-saas-staging/current/server/dist/index.js' || {
+    echo "$service_name does not execute the immutable Staging server entrypoint" >&2
+    exit 1
+  }
+done
+worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
+printf '%s\n' "$worker_unit_environment" \
+  | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
+    exit 1
+  }
+api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
+printf '%s\n' "$api_unit_environment" \
+  | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
+    exit 1
+  }
+for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
+  printf '%s\n' "$unit_environment" \
+    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json' || {
+      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
+      exit 1
+    }
+done
 
 node - "$server_config" <<'NODE'
 const crypto = require('node:crypto');

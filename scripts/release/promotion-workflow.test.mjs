@@ -88,7 +88,7 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
     '- name: Read authoritative production baseline before any write',
-    '- name: Prefetch and verify all selected artifacts',
+    '- name: Prefetch and verify built evidence plus selected artifacts',
     '- name: Mark and persist promotion started before any production write',
     '- name: Upload immutable deploy payload and managed units',
     '- name: Deploy exact ACS Orchestrator and Sandbox digest first',
@@ -113,6 +113,11 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.match(workflow, /sha256sum/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
+  assert.match(workflow, /runtimeDependencies\.path/u);
+  assert.match(
+    workflow,
+    /artifacts\.runtimeDependencies\.(?:digest|dependencyDigest|contractDigest)/u,
+  );
   assert.match(workflow, /\.artifacts\[\] \| \.path/u);
   assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
   assert.match(workflow, /release-identity\.json/u);
@@ -155,6 +160,15 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.ok(
+    deploy.indexOf('trap cleanup_acs_failure EXIT') <
+      deploy.indexOf('install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"'),
+  );
+  assert.ok(
+    deploy.indexOf('trap cleanup_app_failure EXIT') <
+      deploy.indexOf('install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"'),
+  );
+  assert.doesNotMatch(deploy, /\.before-\$release_id/u);
   assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.doesNotMatch(

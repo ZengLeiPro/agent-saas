@@ -76,6 +76,13 @@
       "required": false,
       "repository": "agent-saas/acs-sandbox",
       "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "runtimeDependencies": {
+      "uri": "oss://agent-saas-release-records/releases/example/runtime-dependencies.json",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "size": 4567,
+      "dependencyDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contractDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
     }
   },
   "checks": {

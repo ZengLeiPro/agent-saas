@@ -61,6 +61,13 @@ export function validManifestContent() {
         size: 123,
       },
       webAssets: { uri: 'oss://release-records/releases/web.tgz', digest: WEB_DIGEST, size: 456 },
+      runtimeDependencies: {
+        uri: 'oss://release-records/releases/runtime-dependencies.json',
+        digest: `sha256:${'8'.repeat(64)}`,
+        size: 512,
+        dependencyDigest: `sha256:${'9'.repeat(64)}`,
+        contractDigest: `sha256:${'a'.repeat(64)}`,
+      },
       acsOrchestrator: {
         required: false,
         uri: 'oss://release-records/releases/acs.tgz',

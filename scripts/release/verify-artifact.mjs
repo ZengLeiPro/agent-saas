@@ -8,6 +8,7 @@ import {
   DIGEST_PATTERN,
   SHA_PATTERN,
 } from './artifact-lib.mjs';
+import { verifyRuntimeDependencyIdentity } from './runtime-dependency.mjs';
 
 function safePath(root, relativePath) {
   if (!relativePath || relativePath.startsWith('/') || relativePath.includes('..'))
@@ -29,7 +30,11 @@ export async function verifyArtifactIndex(indexPath, expectedSha) {
   if (digestBuffer(Buffer.from(canonicalJson(body))) !== aggregateDigest)
     throw new Error('Artifact index aggregate digest mismatch');
   const root = dirname(absolute);
-  const entries = [...Object.values(index.artifacts ?? {}), index.sbom].filter(Boolean);
+  const entries = [
+    ...Object.values(index.artifacts ?? {}),
+    index.sbom,
+    index.runtimeDependencies,
+  ].filter(Boolean);
   for (const entry of entries) {
     if (
       !DIGEST_PATTERN.test(entry.digest ?? '') ||
@@ -41,6 +46,35 @@ export async function verifyArtifactIndex(indexPath, expectedSha) {
     if (actual.digest !== entry.digest || actual.size !== entry.size)
       throw new Error(`Artifact verification failed: ${entry.path}`);
   }
+  if (!index.sbom) throw new Error('SBOM is missing');
+  if (!index.runtimeDependencies) throw new Error('Runtime dependency identity is missing');
+  if (
+    !DIGEST_PATTERN.test(index.runtimeDependencies.contractDigest ?? '') ||
+    !DIGEST_PATTERN.test(index.runtimeDependencies.dependencyDigest ?? '')
+  )
+    throw new Error('Artifact index runtime dependency digests are missing or invalid');
+  const sbom = JSON.parse(await readFile(safePath(root, index.sbom.path), 'utf8'));
+  if (sbom.schemaVersion !== 1 || sbom.sourceSha !== index.sourceSha)
+    throw new Error('SBOM source identity conflicts with artifact index');
+  if (
+    !DIGEST_PATTERN.test(sbom.runtimeDependencies?.contractDigest ?? '') ||
+    !DIGEST_PATTERN.test(sbom.runtimeDependencies?.dependencyDigest ?? '') ||
+    sbom.runtimeDependencies.contractDigest !== index.runtimeDependencies.contractDigest ||
+    sbom.runtimeDependencies.dependencyDigest !== index.runtimeDependencies.dependencyDigest
+  )
+    throw new Error('SBOM runtime dependency identity conflicts with artifact index');
+  const runtimeIdentity = verifyRuntimeDependencyIdentity(
+    JSON.parse(await readFile(safePath(root, index.runtimeDependencies.path), 'utf8')),
+    {
+      sourceSha: index.sourceSha,
+      contractDigest: index.runtimeDependencies.contractDigest,
+    },
+  );
+  if (
+    runtimeIdentity.contractDigest !== index.runtimeDependencies.contractDigest ||
+    runtimeIdentity.dependencyDigest !== index.runtimeDependencies.dependencyDigest
+  )
+    throw new Error('Runtime dependency identity conflicts with artifact index');
   if (index.acsImage) {
     if (index.acsImage.sourceSha !== index.sourceSha || !DIGEST_PATTERN.test(index.acsImage.digest))
       throw new Error('ACS image is not bound to the release SHA');

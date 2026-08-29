@@ -2,6 +2,9 @@
   "name": "agent-saas",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.23.1"
+  },
   "packageManager": "pnpm@10.18.3+sha512.bbd16e6d7286fd7e01f6b3c0b3c932cda2965c06a908328f74663f10a9aea51f1129eea615134bf992831b009eabe167ecb7008b597f40ff9bc75946aadfb08d",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
@@ -26,6 +29,7 @@
     "typecheck:staged": "node scripts/typecheck-staged.mjs",
     "preflight:pr": "bash scripts/pr-preflight.sh",
     "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs scripts/pr-preflight-contract.test.mjs scripts/config/effective-config.test.mjs",
+    "check:runtime-dependencies": "node --test scripts/release/runtime-dependency.test.mjs scripts/release/build-release.test.mjs scripts/release/admin-runner.test.mjs scripts/release/verify-artifact.test.mjs scripts/release/assemble-release-evidence.test.mjs scripts/release/publish-release-record.test.mjs",
     "check:ratchets": "pnpm test:ratchets && node scripts/check-max-lines-ratchet.mjs && node scripts/check-env-var-count.mjs",
     "check:web-startup-budget": "node scripts/check-web-startup-budget.mjs",
     "config:export": "node scripts/config/export-effective-config.mjs",

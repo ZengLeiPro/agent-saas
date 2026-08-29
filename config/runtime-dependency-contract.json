@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "kind": "agent-saas-runtime-dependency-contract",
+  "node": {
+    "version": "22.23.1",
+    "platform": "linux",
+    "architectures": ["x64"],
+    "components": ["server", "runtimeWorker", "acsOrchestrator", "adminRunner", "acsSandbox"]
+  },
+  "baseImages": [
+    {
+      "name": "node-alpine",
+      "reference": "docker.io/library/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605",
+      "architecture": "x64",
+      "components": ["server", "webBuild"]
+    },
+    {
+      "name": "node-bookworm",
+      "reference": "docker.io/library/node@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27",
+      "architecture": "x64",
+      "components": ["acsSandbox"]
+    },
+    {
+      "name": "python-bookworm",
+      "reference": "docker.io/library/python@sha256:4427763a1ba36f5aa8f656a03e5d00f3b8d61f5dd950c73df6c14f8c7640f8ab",
+      "architecture": "x64",
+      "components": ["acsSandbox"]
+    }
+  ],
+  "tools": [
+    {
+      "name": "git",
+      "version": "2.49.1",
+      "architecture": "x64",
+      "components": ["server"],
+      "probe": ["git", "--version"]
+    },
+    {
+      "name": "bird",
+      "version": "0.8.0",
+      "architecture": "x64",
+      "components": ["server"],
+      "probe": ["bird", "--version"]
+    },
+    {
+      "name": "git",
+      "version": "2.39.5",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["git", "--version"]
+    },
+    {
+      "name": "python",
+      "version": "3.12.14",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["python3", "--version"]
+    },
+    {
+      "name": "gh",
+      "version": "2.96.0",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["gh", "--version"]
+    },
+    {
+      "name": "aliyun",
+      "version": "3.4.4",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["aliyun", "version"]
+    },
+    {
+      "name": "gws",
+      "version": "0.22.5",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["gws", "--version"]
+    },
+    {
+      "name": "ntn",
+      "version": "0.21.6",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["ntn", "--version"]
+    },
+    {
+      "name": "bird",
+      "version": "0.8.0",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["bird", "--version"]
+    },
+    {
+      "name": "dws",
+      "version": "1.0.55",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["dws", "--version"]
+    },
+    {
+      "name": "lark-cli",
+      "version": "1.0.90",
+      "architecture": "x64",
+      "components": ["acsSandbox"],
+      "probe": ["lark-cli", "--version"]
+    }
+  ]
+}

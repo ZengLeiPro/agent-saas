@@ -13,6 +13,11 @@ interface ArtifactEntry {
   size: number;
 }
 
+interface RuntimeDependencyArtifact extends ArtifactEntry {
+  dependencyDigest: string;
+  contractDigest: string;
+}
+
 export interface ReleaseCandidateEvidence {
   releaseId: string;
   releaseSha: string;
@@ -28,6 +33,7 @@ export interface ReleaseCandidateEvidence {
   builtArtifacts: {
     serverBundle: ArtifactEntry;
     webAssets: ArtifactEntry;
+    runtimeDependencies: RuntimeDependencyArtifact;
     acsOrchestrator?: ArtifactEntry;
     acsImage?: { repository: string; digest: string };
   };
@@ -105,6 +111,7 @@ export function createReleaseCandidate(evidence: ReleaseCandidateEvidence): Rele
     artifacts: {
       serverBundle: serverArtifact,
       webAssets: webArtifact,
+      runtimeDependencies: evidence.builtArtifacts.runtimeDependencies,
       acsOrchestrator: { ...acsArtifact, required: affected.has('acs') },
       acsImage: { ...acsImage, required: affected.has('acs') },
     },

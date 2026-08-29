@@ -9,6 +9,9 @@ const WEB = `sha256:${'2'.repeat(64)}`;
 const ORCH = `sha256:${'3'.repeat(64)}`;
 const IMAGE = `sha256:${'4'.repeat(64)}`;
 const changedServer = `sha256:${'5'.repeat(64)}`;
+const RUNTIME_ARTIFACT = `sha256:${'8'.repeat(64)}`;
+const DEPENDENCY = `sha256:${'9'.repeat(64)}`;
+const CONTRACT = `sha256:${'a'.repeat(64)}`;
 
 function evidence(): ReleaseCandidateEvidence {
   const productionBaseline = {
@@ -45,6 +48,13 @@ function evidence(): ReleaseCandidateEvidence {
         size: 10,
       },
       webAssets: { uri: 'oss://agent-saas-releases/web.tgz', digest: WEB, size: 10 },
+      runtimeDependencies: {
+        uri: 'oss://agent-saas-releases/runtime-dependencies.json',
+        digest: RUNTIME_ARTIFACT,
+        size: 10,
+        dependencyDigest: DEPENDENCY,
+        contractDigest: CONTRACT,
+      },
     },
     baselineArtifacts: {
       serverBundle: { uri: 'oss://agent-saas-releases/base-server.tgz', digest: SERVER, size: 10 },
@@ -75,6 +85,7 @@ describe('createReleaseCandidate', () => {
       artifactDigest: WEB,
     });
     expect(manifest.artifacts.acsOrchestrator.required).toBe(false);
+    expect(manifest.artifacts.runtimeDependencies.dependencyDigest).toBe(DEPENDENCY);
   });
 
   it('rejects API and Worker action divergence', () => {

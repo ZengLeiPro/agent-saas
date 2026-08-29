@@ -32,11 +32,13 @@
 #   --override-os linux --override-arch amd64 重新同步后再改此文件。
 # ─────────────────────────────────────────────────────────────
 ARG BASE_REGISTRY=docker.io/library
+# Production base images are pinned to exact linux/amd64 manifests. Mirrors must preserve
+# these OCI digests; changing a digest requires updating config/runtime-dependency-contract.json.
 
 # ─────────────────────────────────────────────────────────────
 # Stage: deps — pnpm install（共用底层缓存）
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-alpine AS deps
+FROM ${BASE_REGISTRY}/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605 AS deps
 WORKDIR /app
 
 # corepack 从 root package.json 获取 pnpm 版本，并校验 packageManager 的 SHA-512。
@@ -63,12 +65,12 @@ RUN pnpm install --frozen-lockfile \
 # ─────────────────────────────────────────────────────────────
 # Stage: node-bookworm — 给 Python 3.12 Debian 运行时复制 Node 22
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-bookworm-slim AS node-bookworm
+FROM ${BASE_REGISTRY}/node@sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27 AS node-bookworm
 
 # ─────────────────────────────────────────────────────────────
 # Stage: acs-base — production Agent hand runtime
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/python:3.12-slim-bookworm AS acs-base
+FROM ${BASE_REGISTRY}/python@sha256:4427763a1ba36f5aa8f656a03e5d00f3b8d61f5dd950c73df6c14f8c7640f8ab AS acs-base
 WORKDIR /app
 
 # 这是用户代码执行环境，不是控制面。保留通用 Agent 生产任务常用工具。
@@ -331,7 +333,7 @@ RUN playwright_requirement="$(grep -E '^playwright==[^[:space:]]+$' acs-orchestr
 # ─────────────────────────────────────────────────────────────
 # Stage: web-build — 仅产出 web/dist 给 server target COPY
 # ─────────────────────────────────────────────────────────────
-FROM ${BASE_REGISTRY}/node:22-alpine AS web-build
+FROM ${BASE_REGISTRY}/node@sha256:b74031e546d7f4faf561d797ac1b76beccac856a042815ca77db4fd047581605 AS web-build
 WORKDIR /app
 COPY package.json ./
 RUN corepack enable \
@@ -412,6 +414,15 @@ WORKDIR /app
 COPY shared ./shared
 COPY server ./server
 COPY acs-orchestrator ./acs-orchestrator
+COPY config/runtime-dependency-contract.json /opt/ky-agent/runtime-identity/contract.json
+COPY scripts/release/runtime-dependency.mjs scripts/release/artifact-lib.mjs /opt/ky-agent/runtime-identity/
+RUN node /opt/ky-agent/runtime-identity/runtime-dependency.mjs \
+      --create=true --contract=/opt/ky-agent/runtime-identity/contract.json \
+      --source-sha=0000000000000000000000000000000000000000 \
+      --output=/tmp/runtime-dependencies.json \
+    && node /opt/ky-agent/runtime-identity/runtime-dependency.mjs \
+      --manifest=/tmp/runtime-dependencies.json --component=acsSandbox --production=true \
+    && rm -f /tmp/runtime-dependencies.json
 
 # sandboxRunner 预编译（2026-08-10，A 方案批次 3）
 #

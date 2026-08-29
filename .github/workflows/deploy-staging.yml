@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
   ACR_REGION_ID: cn-shenzhen

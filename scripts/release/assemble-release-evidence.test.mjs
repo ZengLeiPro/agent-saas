@@ -9,6 +9,10 @@ import {
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
 } from './release-evidence-fixture.test-helper.mjs';
+import {
+  createRuntimeDependencyIdentity,
+  loadRuntimeDependencyContract,
+} from './runtime-dependency.mjs';
 
 const SHA = RELEASE_EVIDENCE_SHA;
 
@@ -16,7 +20,23 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'release-evidence-'));
   await writeFile(join(root, 'server.tgz'), 'server');
   await writeFile(join(root, 'web.tgz'), 'web');
-  await writeFile(join(root, 'sbom.json'), '{}');
+  const runtimeIdentity = createRuntimeDependencyIdentity(
+    await loadRuntimeDependencyContract(),
+    SHA,
+  );
+  await writeFile(
+    join(root, 'sbom.json'),
+    `${canonicalJson({
+      schemaVersion: 1,
+      sourceSha: SHA,
+      runtimeDependencies: {
+        contractDigest: runtimeIdentity.contractDigest,
+        dependencyDigest: runtimeIdentity.dependencyDigest,
+      },
+      packages: [],
+    })}\n`,
+  );
+  await writeFile(join(root, 'runtime-dependencies.json'), `${canonicalJson(runtimeIdentity)}\n`);
   const body = {
     schemaVersion: 1,
     sourceSha: SHA,
@@ -25,6 +45,12 @@ async function fixture() {
       webAssets: { path: 'web.tgz', ...(await digestFile(join(root, 'web.tgz'))) },
     },
     sbom: { path: 'sbom.json', ...(await digestFile(join(root, 'sbom.json'))) },
+    runtimeDependencies: {
+      path: 'runtime-dependencies.json',
+      ...(await digestFile(join(root, 'runtime-dependencies.json'))),
+      contractDigest: runtimeIdentity.contractDigest,
+      dependencyDigest: runtimeIdentity.dependencyDigest,
+    },
     acsImage: null,
   };
   const index = { ...body, aggregateDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
@@ -51,6 +77,14 @@ test('binds built artifact URIs to the internally selected release', async () =>
     'oss://agent-saas-releases/rc-20260826-22/server.tgz',
   );
   assert.equal(value.migrationPlan.contract, 'separate_release');
+  assert.equal(
+    value.builtArtifacts.runtimeDependencies.uri,
+    'oss://agent-saas-releases/rc-20260826-22/runtime-dependencies.json',
+  );
+  assert.equal(
+    value.builtArtifacts.runtimeDependencies.dependencyDigest,
+    createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA).dependencyDigest,
+  );
 });
 
 test('fails closed on an unknown production baseline', async () => {

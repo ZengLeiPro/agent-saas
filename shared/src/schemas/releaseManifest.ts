@@ -86,6 +86,12 @@ const fileArtifactSchema = z
   .strict();
 
 const optionalFileArtifactSchema = fileArtifactSchema.extend({ required: z.boolean() }).strict();
+const runtimeDependencyArtifactSchema = fileArtifactSchema
+  .extend({
+    dependencyDigest: sha256DigestSchema,
+    contractDigest: sha256DigestSchema,
+  })
+  .strict();
 const imageArtifactSchema = z
   .object({
     required: z.boolean(),
@@ -98,6 +104,7 @@ export const releaseArtifactsSchema = z
   .object({
     serverBundle: fileArtifactSchema,
     webAssets: fileArtifactSchema,
+    runtimeDependencies: runtimeDependencyArtifactSchema,
     acsOrchestrator: optionalFileArtifactSchema,
     acsImage: imageArtifactSchema,
   })

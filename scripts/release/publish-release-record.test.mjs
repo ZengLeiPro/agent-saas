@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { canonicalJson, digestBuffer, digestFile } from './artifact-lib.mjs';
 import { publishReleaseRecord } from './publish-release-record.mjs';
+import {
+  createRuntimeDependencyIdentity,
+  loadRuntimeDependencyContract,
+} from './runtime-dependency.mjs';
 
 const SHA = 'b'.repeat(40);
 
@@ -13,12 +17,35 @@ test('publishes once and makes the same operation idempotent', async () => {
   const artifact = join(root, 'server.tgz');
   const sbom = join(root, 'sbom.json');
   await writeFile(artifact, 'server');
-  await writeFile(sbom, '{}');
+  const runtimeIdentity = createRuntimeDependencyIdentity(
+    await loadRuntimeDependencyContract(),
+    SHA,
+  );
+  await writeFile(
+    sbom,
+    `${canonicalJson({
+      schemaVersion: 1,
+      sourceSha: SHA,
+      runtimeDependencies: {
+        contractDigest: runtimeIdentity.contractDigest,
+        dependencyDigest: runtimeIdentity.dependencyDigest,
+      },
+      packages: [],
+    })}\n`,
+  );
+  const runtimeDependencies = join(root, 'runtime-dependencies.json');
+  await writeFile(runtimeDependencies, `${canonicalJson(runtimeIdentity)}\n`);
   const body = {
     schemaVersion: 1,
     sourceSha: SHA,
     artifacts: { serverBundle: { path: 'server.tgz', ...(await digestFile(artifact)) } },
     sbom: { path: 'sbom.json', ...(await digestFile(sbom)) },
+    runtimeDependencies: {
+      path: 'runtime-dependencies.json',
+      ...(await digestFile(runtimeDependencies)),
+      contractDigest: runtimeIdentity.contractDigest,
+      dependencyDigest: runtimeIdentity.dependencyDigest,
+    },
     acsImage: null,
   };
   const index = { ...body, aggregateDigest: digestBuffer(Buffer.from(canonicalJson(body))) };

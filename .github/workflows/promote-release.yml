@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
   PRODUCTION_WEB_OSS_URI: oss://agent-saas-web
   ACR_INSTANCE_ID: cri-tapxtcyd6odwj3m4
   ACR_REPO_ID: crr-csx99pbexlsw5qqv
@@ -244,7 +244,7 @@ jobs:
           test "$(jq -r .artifactDigest "$RUNNER_TEMP/oss-record/record.json")" = \
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
-      - name: Prefetch and verify all selected artifacts
+      - name: Prefetch and verify built evidence plus selected artifacts
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
@@ -258,6 +258,9 @@ jobs:
           sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/built/artifact-index.json")"
           [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
           fetch "$built_base/$sbom_path" "$RUNNER_TEMP/built/$sbom_path"
+          runtime_path="$(jq -r .runtimeDependencies.path "$RUNNER_TEMP/built/artifact-index.json")"
+          [[ "$runtime_path" =~ ^[A-Za-z0-9._-]+$ ]]
+          fetch "$built_base/$runtime_path" "$RUNNER_TEMP/built/$runtime_path"
           node scripts/release/verify-artifact.mjs \
             "$RUNNER_TEMP/built/artifact-index.json" "$RELEASE_SHA"
           for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
@@ -267,6 +270,17 @@ jobs:
             fetch "$uri" "$RUNNER_TEMP/selected/$2"
             test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
+          runtime_uri="$(jq -r .artifacts.runtimeDependencies.uri "$RUNNER_TEMP/manifest.json")"
+          test "$runtime_uri" = "$built_base/$runtime_path"
+          test "$(jq -r .artifacts.runtimeDependencies.size "$RUNNER_TEMP/manifest.json")" = \
+            "$(jq -r .runtimeDependencies.size "$RUNNER_TEMP/built/artifact-index.json")"
+          test "$(jq -r .artifacts.runtimeDependencies.digest "$RUNNER_TEMP/manifest.json")" = \
+            "$(jq -r .runtimeDependencies.digest "$RUNNER_TEMP/built/artifact-index.json")"
+          test "$(jq -r .artifacts.runtimeDependencies.dependencyDigest "$RUNNER_TEMP/manifest.json")" = \
+            "$(jq -r .runtimeDependencies.dependencyDigest "$RUNNER_TEMP/built/artifact-index.json")"
+          test "$(jq -r .artifacts.runtimeDependencies.contractDigest "$RUNNER_TEMP/manifest.json")" = \
+            "$(jq -r .runtimeDependencies.contractDigest "$RUNNER_TEMP/built/artifact-index.json")"
+
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"
@@ -329,11 +343,6 @@ jobs:
             daemon-packaging/systemd/agent-saas-runtime-worker@.service.template \
             daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template \
             "$ECS_USER@$ECS_HOST:$remote/"
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo install -m 0644 '$remote/agent-saas-server@.service.template' /etc/systemd/system/agent-saas-server@.service && \
-             sudo install -m 0644 '$remote/agent-saas-runtime-worker@.service.template' /etc/systemd/system/agent-saas-runtime-worker@.service && \
-             sudo install -m 0644 '$remote/agent-saas-acs-orchestrator.service.template' /etc/systemd/system/agent-saas-acs-orchestrator.service && \
-             sudo systemctl daemon-reload"
 
       - name: Persist ACS operation start receipt
         id: start_acs
@@ -368,7 +377,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -429,7 +438,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app

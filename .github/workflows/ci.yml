@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -549,6 +549,11 @@ jobs:
           rm -rf "$stage/server/dist" "$stage/server/descriptions"
           cp -R server/dist "$stage/server/dist"
           cp -R server/src/agent/descriptions "$stage/server/descriptions"
+          node scripts/release/runtime-dependency.mjs \
+            --create=true --contract=config/runtime-dependency-contract.json \
+            --source-sha="$GITHUB_SHA" --output="$stage/server/runtime-dependencies.json"
+          install -m 0444 scripts/release/runtime-dependency.mjs \
+            scripts/release/artifact-lib.mjs "$stage/server/dist/"
           cp -R daemon-packaging "$stage/daemon-packaging"
           install -m 0444 scripts/release/artifact-lib.mjs \
             scripts/release/read-live-production-components.mjs \

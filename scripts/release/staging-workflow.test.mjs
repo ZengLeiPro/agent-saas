@@ -107,6 +107,11 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
+  assert.match(deploy, /command -v aliyun >\/dev\/null/u);
+  assert.match(
+    deploy,
+    /Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing/u,
+  );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
@@ -134,6 +139,13 @@ test('resource plan records provisioned resources ready for first deployment', a
   });
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
+  assert.deepEqual(plan.resources.runtime.dependencies.aliyunCli, {
+    path: '/usr/local/bin/aliyun',
+    version: '3.4.2',
+    size: 93146374,
+    digest: 'sha256:e633bd422cecab86a4a33cd4f60b8497a5e000e6286ccc84778f868207bca9f4',
+    status: 'installed-and-production-byte-identical',
+  });
   assert.equal(plan.resources.releaseEvidence.status, 'active-authenticated-and-readback-verified');
   assert.equal(plan.resources.egressProxy.listen, '127.0.0.1:3128');
   assert.equal(plan.resources.e2eIdentity.status, 'created-password-hash-verified');

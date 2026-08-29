@@ -126,7 +126,6 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
           retentionMetric,
           generatedAt,
           Math.max((retentionConfig?.sweepIntervalMinutes ?? 10) * 2 * 60_000, 30 * 60_000),
-          (retentionConfig?.sweepIntervalMinutes ?? 10) * 60_000,
         ),
         capacity: serializeCapacity(
           options.eventsTable,
@@ -362,11 +361,10 @@ function unavailableRetention(base: RetentionBase) {
   };
 }
 
-function neverRunRetention(base: RetentionBase, nextScheduledAt: string | null) {
+function neverRunRetention(base: RetentionBase) {
   return {
     ...unavailableRetention(base),
     status: 'never_run' as const,
-    nextScheduledAt,
   };
 }
 
@@ -375,14 +373,8 @@ function serializeRetentionStatus(
   metric: SystemMetricRecord | null,
   now: Date,
   staleAfterMs: number,
-  sweepIntervalMs: number,
 ) {
-  if (!metric) {
-    const nextScheduledAt = base.enabled
-      ? new Date(now.getTime() + sweepIntervalMs).toISOString()
-      : null;
-    return neverRunRetention(base, nextScheduledAt);
-  }
+  if (!metric) return neverRunRetention(base);
   const detail = metric.detailJson;
   if (!detail || detail.schemaVersion !== 1) return unavailableRetention(base);
   const sampledMs = Date.parse(metric.sampledAt);

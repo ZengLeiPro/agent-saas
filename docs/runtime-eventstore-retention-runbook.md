@@ -100,8 +100,8 @@ pnpm -C server maintenance:runtime-events -- \
 
 平台管理员可只读调用 `GET /api/admin/system/event-store?hours=24`（`hours` 范围 1–720，默认 24）。接口只读取既有 `system_metrics`，不会触发 retention、DELETE、billing projection、索引操作或扫描 `runtime_events`。响应固定为 `schemaVersion: 1`、`available`、`generatedAt`、`retention`、`capacity`。
 
-- retention 快照追加写入 `metric=runtime_event_retention,label=status`。worker 在每轮开始、成功、门禁阻断和失败时更新；重复调用正在执行的 worker 不会覆盖 `running`。有 Store 但尚无快照时，接口派生 `never_run` 和下一轮调度时间；已有快照不会因进程重启被覆盖。状态包括 `never_run/running/dry_run_succeeded/execute_succeeded/blocked/failed`，接口还会派生 `stale/unavailable`。
-- 快照字段包括 mode、最近开始/完成/成功时间、duration、nextScheduledAt、legal/billing/effective watermarks、max global sequence，以及每类别 eligible/deleted。错误只保存稳定 `errorCategory`（例如 `authorization_missing`、`legal_watermark_invalid`、`partial_failure`、`execution_failed`）；不保存错误 message、authorizationRef、SQL 参数或事件内容。快照写入失败只记固定告警，不改变 retention 成败。
+- retention 快照追加写入 `metric=runtime_event_retention,label=status`。worker 在每轮开始、成功、门禁阻断和失败时更新；重复调用正在执行的 worker 不会覆盖 `running`。有 Store 但尚无快照时，接口派生 `never_run`，未知的下一轮时间保持 `null`；已有快照不会因进程重启被覆盖。状态包括 `never_run/running/dry_run_succeeded/execute_succeeded/blocked/failed`，接口还会派生 `stale/unavailable`。
+- 快照字段包括 mode、最近开始/完成/成功时间、duration、nextScheduledAt、legal/billing/effective watermarks、max global sequence，以及每类别 eligible/deleted；调度时间只来自 worker 快照，不按请求时间猜测。错误只保存稳定 `errorCategory`（例如 `authorization_missing`、`legal_watermark_invalid`、`partial_failure`、`execution_failed`）；不保存错误 message、authorizationRef、SQL 参数或事件内容。快照写入失败只记固定告警，不改变 retention 成败。
 - retention 过期阈值为 `max(2 × sweepInterval, 30 分钟)`；容量过期阈值为 30 分钟。有 Store 但无运行快照时显示 `never_run`，Store 缺失或快照契约不可识别时显示 `unavailable`；未知数值保持 `null`，不得解释成健康或 0。
 - 容量继续复用 `metric=pg_table_size` 历史序列；每个 PG 表的 `valueNum=totalBytes`，`detailJson` 至少含 `tableBytes/indexBytes/totalBytes`。`capacity.series` 仅映射真实 events table 的既有采样。
 - 性能边界：一次接口请求为 system_metrics 上的最新值与时间窗查询，走既有 `(metric,label,sampled_at)` 索引；不做 runtime_events 的 COUNT/MAX，不启动采样或维护任务。

@@ -651,7 +651,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
 
-  // System diagnostics remain read-only and consume persisted metrics only.
   app.use(
     '/api/admin/system',
     requireAdmin,
@@ -666,7 +665,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       eventsTable: runtime.runtimePgEventStore?.eventsTable,
     }),
   );
-
   app.use(
     '/api/internal',
     createInternalAcsAlertsRouter({
@@ -674,7 +672,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       inboundToken: process.env.ACS_ALERT_INBOUND_TOKEN,
     }),
   );
-
   app.use(
     '/api',
     createGroupsRouter({

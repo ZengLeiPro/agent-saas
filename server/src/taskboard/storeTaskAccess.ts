@@ -6,7 +6,7 @@ import type {
   TaskBoardTask,
 } from '../../../shared/src/types/taskboard.js';
 import { boardRepositoryFragment, parseStageModels, rowToBoard } from './boardFields.js';
-import { rowToTask, toIso, visibleCommentPredicate } from './storeHelpers.js';
+import { latestTaskActivityProjection, rowToTask, toIso, visibleCommentPredicate } from './storeHelpers.js';
 import { TaskboardNotFoundError, type TaskboardIdentity } from './types.js';
 
 const { Pool } = pg;
@@ -89,6 +89,7 @@ export async function requireTaskWithBoard(
             b.model AS board_model, b.stage_models AS board_stage_models, b.repository AS board_repository,
             b.owner_user_id AS board_owner_user_id, m.role AS board_member_role,
             (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count,
+            ${latestTaskActivityProjection('t', store.commentsTable, store.changesTable)} AS latest_activity_at,
             COALESCE(
               (SELECT s.id FROM ${store.integrationSourcesTable} s WHERE s.delivery_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1),
               (SELECT s.id FROM ${store.remediationAttemptsTable} a JOIN ${store.integrationSourcesTable} s ON s.id=a.integration_source_id WHERE a.remediation_task_id=t.id ORDER BY s.updated_at DESC LIMIT 1)

@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -23,13 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { FloatingPanel } from "@/components/ui/floating-panel";
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
@@ -643,20 +637,48 @@ export function TaskDetail({
     }
   };
 
+  useEffect(() => {
+    if (!active || !open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || saving) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('[role="listbox"], [data-radix-popper-content-wrapper]')) return;
+      setDetailsExpanded(false);
+      onOpenChange(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [active, onOpenChange, open, saving]);
+
+  if (!active || !open || !task) return null;
+
   return (
-    <Sheet
-      open={active && open && !!task}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen && saving) return;
-        if (!nextOpen) setDetailsExpanded(false); onOpenChange(nextOpen);
-      }}
+    <FloatingPanel
+      role="dialog"
+      aria-modal={false}
+      aria-labelledby="task-detail-title"
+      data-testid="task-detail-panel"
+      className="absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-1/2 md:min-w-[26rem] md:max-w-[40rem] md:shrink-0"
     >
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-[1040px]">
         {currentTask ? (
           <>
-            <SheetHeader className="pr-12">
+            <div className="relative flex flex-col space-y-1.5 border-b px-4 py-3 pr-12">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute right-3 top-3 size-8"
+                aria-label="关闭任务详情"
+                disabled={saving}
+                onClick={() => {
+                  setDetailsExpanded(false);
+                  onOpenChange(false);
+                }}
+              >
+                <X className="size-4" />
+              </Button>
               <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle className="mr-auto min-w-0 truncate">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</SheetTitle>
+                <h2 id="task-detail-title" className="mr-auto min-w-0 truncate text-lg font-semibold">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</h2>
                 <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                 <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
                 <Badge variant="outline">{PRIORITY_LABELS[priority]}</Badge>
@@ -695,8 +717,8 @@ export function TaskDetail({
                   <span className="sr-only">{detailsExpanded ? "收起任务详情" : "展开任务详情"}</span>
                 </Button>
               </div>
-              <SheetDescription className="sr-only">任务详情</SheetDescription>
-            </SheetHeader>
+              <p className="sr-only">任务详情</p>
+            </div>
             {!detailsExpanded && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
@@ -770,26 +792,6 @@ export function TaskDetail({
                     ) : null}
                   </div>
                 ) : null}
-                {currentTask.resumeContext ? (
-                  <div aria-label="最近恢复决策" className="space-y-1 rounded-md border border-blue-200 bg-blue-50 p-3 text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
-                    <p className="font-medium">最近恢复决策与后续要求</p>
-                    <p className="whitespace-pre-wrap">{currentTask.resumeContext.decision}</p>
-                    <p className="text-xs opacity-80">
-                      恢复目标：{taskKind === "integration" ? "集成" : currentTask.resumeContext.purpose === "review" ? "复核" : "实施"} Agent
-                      {currentTask.resumeContext.sourceIds.length
-                        ? ` · ${currentTask.resumeContext.sourceIds.length} 个来源`
-                        : ""}
-                      {` · 提交于 ${new Date(currentTask.resumeContext.requestedAt).toLocaleString("zh-CN")}`}
-                    </p>
-                    <p className="text-xs opacity-80">
-                      {currentTask.resumeContext.consumedAt
-                        ? `已交给 Agent · ${new Date(currentTask.resumeContext.consumedAt).toLocaleString("zh-CN")}`
-                        : taskKind === "integration"
-                          ? "等待系统自动恢复同一个 Integration Agent"
-                          : "尚未交给 Agent，需另行启动"}
-                    </p>
-                  </div>
-                ) : null}
                 {taskKind === "remediation" ? <p className="text-amber-700 dark:text-amber-300">{currentTask.status === "done" ? "修复已验收，等待来源继续集成。" : "自动修复任务：完成后会回到来源复核流程，不作为独立交付合并。"}</p> : null}
                 {currentTask.rootDeliveryTaskId && taskKind === "remediation" ? (
                   <p>
@@ -851,15 +853,15 @@ export function TaskDetail({
                     </div>
                   </>
                 ) : null}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
+                <div role="group" aria-label="任务选项" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                  <div className="min-w-0 space-y-2">
                     <Label>状态</Label>
                     <Select
                       value={currentTask.status}
                       onValueChange={(value) => void changeStatus(value as TaskBoardStatus)}
                       disabled={!canTransitionCurrentTask || saving}
                     >
-                      <SelectTrigger aria-label="任务状态"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="任务状态" className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {TASKBOARD_STATUSES.map((status) => (
                           <SelectItem
@@ -871,7 +873,7 @@ export function TaskDetail({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
+                  <div className="min-w-0 space-y-2">
                     <Label>优先级</Label>
                     <Select
                       value={priority}
@@ -881,7 +883,7 @@ export function TaskDetail({
                       }}
                       disabled={editReadOnly || saving}
                     >
-                      <SelectTrigger aria-label="任务优先级"><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label="任务优先级" className="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {TASKBOARD_PRIORITIES.map((value) => (
                           <SelectItem key={value} value={value}>{PRIORITY_LABELS[value]}</SelectItem>
@@ -889,31 +891,24 @@ export function TaskDetail({
                       </SelectContent>
                     </Select>
                   </div>
+                  {TASK_MODEL_PURPOSES.map((purpose) => (
+                    <div className="min-w-0 space-y-2" key={purpose}>
+                      <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
+                      <ModelSelect
+                        modelList={modelList}
+                        value={stageModels[purpose] ?? null}
+                        onChange={(next) => {
+                          dirtyFieldsRef.current.add("stageModels");
+                          setStageModels((current) => ({ ...current, [purpose]: next ?? undefined }));
+                        }}
+                        inheritLabel="继承看板对应阶段模型"
+                        ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
+                        disabled={editReadOnly || saving}
+                      />
+                      <p className="text-[11px] text-muted-foreground">{inheritedModelHint(board, purpose)}</p>
+                    </div>
+                  ))}
                 </div>
-                <section aria-label="分阶段运行模型" className="space-y-3 rounded-lg border bg-muted/20 p-3">
-                  <div>
-                    <h3 className="text-sm font-medium">运行模型</h3>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {TASK_MODEL_PURPOSES.map((purpose) => (
-                      <div className="space-y-2" key={purpose}>
-                        <Label>{EXECUTION_PURPOSE_LABELS[purpose]}</Label>
-                        <ModelSelect
-                          modelList={modelList}
-                          value={stageModels[purpose] ?? null}
-                          onChange={(next) => {
-                            dirtyFieldsRef.current.add("stageModels");
-                            setStageModels((current) => ({ ...current, [purpose]: next ?? undefined }));
-                          }}
-                          inheritLabel="继承看板对应阶段模型"
-                          ariaLabel={`${EXECUTION_PURPOSE_LABELS[purpose]}运行模型`}
-                          disabled={editReadOnly || saving}
-                        />
-                        <p className="text-[11px] text-muted-foreground">{inheritedModelHint(board, purpose)}</p>
-                      </div>
-                    ))}
-                  </div>
-                </section>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
                 {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
                 <div aria-label="任务操作" className="flex flex-wrap gap-2 border-t pt-4">
@@ -994,7 +989,6 @@ export function TaskDetail({
             </div>
           </>
         ) : null}
-      </SheetContent>
-    </Sheet>
+    </FloatingPanel>
   );
 }

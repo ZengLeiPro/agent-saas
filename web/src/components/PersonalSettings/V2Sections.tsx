@@ -14,6 +14,7 @@ import { authFetch } from "@/lib/authFetch";
 import { useEffectiveResources } from "@/hooks/useEffectiveResources";
 import { navigateSettingsRoute } from "@/lib/urlSync";
 import { EntityIcons } from "@/lib/icons";
+import { resolveApprovalTier } from "@/lib/approvalTier";
 import { governanceRoute, parseGovernanceUrl } from "@/lib/governanceNavigation";
 import { isDebugModeAvailable, saveUserPreferences, startGoogleWorkspaceOAuth, type GoogleWorkspaceOAuthStartResponse } from "@agent/shared";
 import { governanceAccessApi, type OAuthGrantResponse, type OAuthRevocationPreview, type OAuthRevocationResult } from "@agent/shared/lib/governanceApi";
@@ -150,21 +151,21 @@ const approvalActionLabel: Record<OAuthGrantView['approvals'][number]['action'],
 
 export function ConnectionsSection() {
   const { user, updatePreferences } = useAuth();
-  // 服务端 resolveUserAutoApproveTools 对缺失字段默认开启（?? true），UI 必须同语义，
-  // 否则出现“设置显示每次询问、运行时却自动放行”的状态不一致（TASK-256）。
-  const authorizationModeEnabled = user ? user.preferences?.authorizationModeEnabled !== false : false;
-  const lowRiskToolsAutoApproveEnabled = user?.preferences?.lowRiskToolsAutoApproveEnabled === true;
-  const approvalTier: "ask" | "low-risk" | "full" = authorizationModeEnabled
-    ? "full"
-    : lowRiskToolsAutoApproveEnabled
-      ? "low-risk"
-      : "ask";
+  // TASK-256：统一走 resolveApprovalTier（与服务端 ?? true 默认一致），
+  // 与聊天 hook / Desktop / Mobile 使用同一有效策略模型；未登录时显示 ask。
+  const approvalTier: "ask" | "low-risk" | "full" = user
+    ? resolveApprovalTier(user.preferences)
+    : "ask";
   const [approvalSaving, setApprovalSaving] = useState(false);
   const [approvalSaved, setApprovalSaved] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
 
   const handleApprovalTierChange = useCallback(async (next: "ask" | "low-risk" | "full") => {
     if (next === approvalTier || approvalSaving) return;
+    const previousPreferences = {
+      authorizationModeEnabled: approvalTier === "full",
+      lowRiskToolsAutoApproveEnabled: approvalTier === "low-risk",
+    };
     const nextPreferences = {
       authorizationModeEnabled: next === "full",
       lowRiskToolsAutoApproveEnabled: next === "low-risk",
@@ -180,15 +181,12 @@ export function ConnectionsSection() {
       setApprovalSaved(true);
       window.setTimeout(() => setApprovalSaved(false), 2000);
     } catch (error) {
-      updatePreferences({
-        authorizationModeEnabled,
-        lowRiskToolsAutoApproveEnabled,
-      });
+      updatePreferences(previousPreferences);
       setApprovalError(error instanceof Error ? error.message : "保存失败");
     } finally {
       setApprovalSaving(false);
     }
-  }, [approvalSaving, approvalTier, authorizationModeEnabled, lowRiskToolsAutoApproveEnabled, updatePreferences]);
+  }, [approvalSaving, approvalTier, updatePreferences]);
 
   const [grants, setGrants] = useState<OAuthGrantView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -432,7 +430,11 @@ export function ConnectionsSection() {
           {approvalError ? <div className="mt-3 text-sm text-destructive" role="alert">{approvalError}</div> : null}
           <div className="mt-4 flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-            <span>破坏性动作（删除、撤销、审批裁决等）在任何档位下都保持人工确认，不会自动放行。</span>
+            <span>
+              安全边界：「每次询问」与「低风险常开」档下，删除、撤销、审批裁决等高风险动作始终人工确认。
+              「全部自动批准」档只保留对明确要求人工确认的动作（如钉钉写操作的二次确认）的人工闸门，
+              其余动作（包括部分删除/撤销类高风险工具）都会自动放行，请谨慎选择。
+            </span>
           </div>
         </section>
       </div>

@@ -66,7 +66,7 @@ function timestamp(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** 需求池与待推进保留手动顺序，其余状态按最近更新时间倒序展示。 */
+/** 需求池与待推进按服务端顺序展示，其余状态按最近更新时间倒序展示。 */
 export function taskStatusUsesUpdatedTime(status: TaskBoardStatus): boolean {
   return UPDATED_TIME_SORT_STATUSES.has(status);
 }
@@ -84,7 +84,9 @@ export function sortTaskBoardTasks(tasks: TaskBoardTask[], status: TaskBoardStat
           || right.sortOrder - left.sortOrder
           || right.identifier.localeCompare(left.identifier);
       }
-      return left.sortOrder - right.sortOrder || left.identifier.localeCompare(right.identifier);
+      return left.sortOrder - right.sortOrder
+        || left.createdAt.localeCompare(right.createdAt)
+        || left.id.localeCompare(right.id);
     });
 }
 

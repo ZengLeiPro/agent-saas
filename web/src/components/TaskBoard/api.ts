@@ -36,6 +36,13 @@ export class TaskBoardConflictError<T = TaskBoard | TaskBoardTask> extends Error
   }
 }
 
+export class TaskBoardInvalidMoveError extends Error {
+  constructor(message = "任务位置已变化") {
+    super(message);
+    this.name = "TaskBoardInvalidMoveError";
+  }
+}
+
 function entityFrom<T>(data: unknown, key: string): T {
   if (data && typeof data === "object" && key in data) {
     return (data as Record<string, T>)[key];
@@ -229,6 +236,17 @@ export async function moveTask(
     `${API_BASE}/tasks/${encodeURIComponent(id)}/move`,
     jsonRequest("POST", input),
   );
+  if (!response.ok && response.status !== 409) {
+    const failure = await response.clone().json().catch(() => null) as {
+      error?: unknown;
+      code?: unknown;
+    } | null;
+    if (failure?.code === "TASKBOARD_INVALID_MOVE") {
+      throw new TaskBoardInvalidMoveError(
+        typeof failure.error === "string" ? failure.error : undefined,
+      );
+    }
+  }
   return parseEntity<TaskBoardTask>(response, "移动任务", "task");
 }
 

@@ -285,6 +285,9 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
+    const taskOptions = screen.getByRole("group", { name: "任务选项" });
+    expect(taskOptions.className).toContain("md:grid-cols-4");
+    expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
     for (const purpose of ["实施阶段", "复核阶段"]) {
       await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` })); await user.click(screen.getByRole("option", { name: "模型 C" }));
     }
@@ -707,7 +710,8 @@ describe("TaskDetail 草稿隔离", () => {
       integrationTask.id, integrationTask.version, "按当前批次继续处理",
     ));
     expect(prompt).toHaveBeenCalled();
-    expect(await screen.findByText("等待系统自动恢复同一个 Integration Agent")).toBeTruthy();
+    expect(screen.queryByLabelText("最近恢复决策")).toBeNull();
+    expect(screen.queryByText("按当前批次继续处理")).toBeNull();
   });
 
   it("复核中任务可以启动独立 review Agent", async () => {
@@ -759,10 +763,8 @@ describe("TaskDetail 草稿隔离", () => {
     ));
     expect(onExecute).not.toHaveBeenCalled();
     expect(onTaskLoaded).toHaveBeenCalledWith(resumedTask);
-    expect(await screen.findByText("最近恢复决策与后续要求")).toBeTruthy();
-    expect(screen.getByText("依赖已解除，恢复实施")).toBeTruthy();
-    expect(screen.getByText(/恢复目标：实施 Agent/)).toBeTruthy();
-    expect(screen.getByText("尚未交给 Agent，需另行启动")).toBeTruthy();
+    expect(screen.queryByLabelText("最近恢复决策")).toBeNull();
+    expect(screen.queryByText("依赖已解除，恢复实施")).toBeNull();
   });
 
   it("确认后删除任务并关闭详情", async () => {

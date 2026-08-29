@@ -6,7 +6,7 @@ import { TOKEN_KEY } from './constants';
 import { authFetch, setOnUnauthorized } from './authFetch';
 
 // ── 构造一个最小可用的 platform，用真实的 initPlatform 注入 ──────────────
-// secureStorage 用 in-memory 版，platformConfig.getBaseUrl 固定域名。
+// secureStorage 用 in-memory 版，platformConfig 可注入最终传输策略。
 function makePlatform(): {
   platform: PlatformDeps;
   store: Map<string, string>;
@@ -175,5 +175,30 @@ describe('authFetch', () => {
     );
 
     await expect(authFetch('/api/foo')).rejects.toThrow('network down');
+  });
+
+  it('M10-01: policy rejection happens before token read or HTTP transport', async () => {
+    const built = makePlatform();
+    built.store.set(TOKEN_KEY, 'must-not-leave-storage');
+    const tokenRead = vi.spyOn(built.platform.secureStorage, 'getItem');
+    const policyGuard = vi.fn(() => {
+      throw new Error('untrusted origin');
+    });
+    built.platform.platformConfig.assertTrustedUrl = policyGuard;
+    initPlatform(built.platform);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(authFetch('https://attacker.test/api/upload', {
+      method: 'POST',
+      body: 'user-content',
+    })).rejects.toThrow('untrusted origin');
+
+    expect(policyGuard).toHaveBeenCalledWith(
+      'https://attacker.test/api/upload',
+      'http',
+    );
+    expect(tokenRead).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

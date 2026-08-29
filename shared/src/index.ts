@@ -1,16 +1,17 @@
 export * from './types/correlation';
 
-// Platform abstraction
+// Platform abstraction and transport policy
 export { initPlatform, getPlatform } from './platform/context';
 export type {
   IStorage,
   ISecureStorage,
   IMessageCache,
   IPlatformConfig,
+  TrustedUrlKind,
   PlatformDeps,
 } from './platform/types';
 
-// Types - re-export everything from types/index
+// Types - re-export the public type surface
 export {
   ACTIVITY_TYPES,
   formatTokenCount,

@@ -12,13 +12,20 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { authFetch } from "@agent/shared";
 import { useAuth } from "../src/contexts/AuthContext";
+import { showTextPrompt } from "../src/lib/prompt";
 import { useColors, spacing, typography } from "../src/theme";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 export default function LoginScreen() {
   const colors = useColors();
-  const { login, loginWithSms } = useAuth();
+  const {
+    login,
+    loginWithSms,
+    serviceConfig,
+    changeServiceOrigin,
+    reloadServiceConfig,
+  } = useAuth();
   const [mode, setMode] = useState<"password" | "sms">("password");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -27,6 +34,7 @@ export default function LoginScreen() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [checkingConfig, setCheckingConfig] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -55,7 +63,49 @@ export default function LoginScreen() {
           ...typography.body,
           textAlign: "center",
           color: colors.mutedForeground,
-          marginBottom: spacing["4xl"],
+          marginBottom: spacing.xl,
+        },
+        serviceCard: {
+          backgroundColor: colors.card,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: 10,
+          padding: spacing.md,
+          marginBottom: spacing.xl,
+        },
+        serviceHeader: {
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: spacing.xs,
+        },
+        serviceLabel: {
+          ...typography.bodySmall,
+          color: colors.foreground,
+          fontWeight: "600",
+        },
+        serviceProfile: {
+          ...typography.caption,
+          color: colors.mutedForeground,
+        },
+        serviceValue: {
+          ...typography.caption,
+          color: colors.mutedForeground,
+        },
+        serviceIssue: {
+          ...typography.caption,
+          color: colors.destructive,
+          marginTop: spacing.xs,
+        },
+        serviceActions: {
+          flexDirection: "row",
+          gap: spacing.lg,
+          marginTop: spacing.sm,
+        },
+        serviceActionText: {
+          ...typography.bodySmall,
+          color: colors.primary,
+          fontWeight: "600",
         },
         input: {
           backgroundColor: colors.card,
@@ -149,6 +199,41 @@ export default function LoginScreen() {
     if (timerRef.current) clearInterval(timerRef.current);
   }, []);
 
+  const handleReloadServiceConfig = async () => {
+    setCheckingConfig(true);
+    setError("");
+    try {
+      const config = await reloadServiceConfig();
+      if (!config.ready) {
+        setError(config.issue?.message ?? "可信服务配置尚未就绪");
+      }
+    } finally {
+      setCheckingConfig(false);
+    }
+  };
+
+  const handleChangeServiceOrigin = () => {
+    const allowed = serviceConfig.apiAllowlist.join("\n");
+    showTextPrompt({
+      title: "选择可信服务",
+      message: allowed
+        ? `仅可使用此构建允许的地址：\n${allowed}`
+        : "此构建没有可选择的可信服务地址",
+      defaultValue: serviceConfig.apiOrigin ?? "",
+      placeholder: "https://...",
+      confirmText: "确认",
+      keyboardType: "url",
+      onConfirm: async (value) => {
+        const result = await changeServiceOrigin(value.trim());
+        if (!result.ok) {
+          setError(result.error ?? "服务地址不可用");
+        } else if (result.changed) {
+          setError("服务已切换，请重新登录");
+        }
+      },
+    });
+  };
+
   const startCountdown = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     setCountdown(60);
@@ -164,17 +249,24 @@ export default function LoginScreen() {
   };
 
   const handleSendSmsCode = async () => {
+    if (!serviceConfig.ready) {
+      setError(serviceConfig.issue?.message ?? "可信服务配置尚未就绪");
+      return;
+    }
     if (!PHONE_PATTERN.test(phone)) {
       setError("请输入有效的 11 位手机号");
       return;
     }
     setError("");
     setSendingCode(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       const res = await authFetch("/api/auth/sms/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone }),
+        signal: controller.signal,
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
@@ -183,13 +275,18 @@ export default function LoginScreen() {
       }
       startCountdown();
     } catch {
-      setError("网络错误，请检查服务器地址");
+      setError("无法连接可信服务，请检查网络或 TLS 配置后重试");
     } finally {
+      clearTimeout(timeout);
       setSendingCode(false);
     }
   };
 
   const handleLogin = async () => {
+    if (!serviceConfig.ready) {
+      setError(serviceConfig.issue?.message ?? "可信服务配置尚未就绪");
+      return;
+    }
     if (mode === "password" && (!username.trim() || !password.trim())) {
       setError("请输入用户名和密码");
       return;
@@ -227,6 +324,40 @@ export default function LoginScreen() {
         <View style={styles.form}>
           <Text style={styles.title}>Agent SaaS</Text>
           <Text style={styles.subtitle}>AI 智能助手</Text>
+
+          <View style={styles.serviceCard}>
+            <View style={styles.serviceHeader}>
+              <Text style={styles.serviceLabel}>服务确认</Text>
+              <Text style={styles.serviceProfile}>
+                {serviceConfig.profile === "production"
+                  ? "生产"
+                  : serviceConfig.profile === "preview"
+                    ? "预览"
+                    : "开发"}
+              </Text>
+            </View>
+            <Text style={styles.serviceValue} numberOfLines={2}>
+              {serviceConfig.apiOrigin ?? "未配置可信服务"}
+            </Text>
+            {serviceConfig.issue ? (
+              <Text style={styles.serviceIssue}>{serviceConfig.issue.message}</Text>
+            ) : null}
+            <View style={styles.serviceActions}>
+              <TouchableOpacity
+                onPress={() => void handleReloadServiceConfig()}
+                disabled={checkingConfig}
+              >
+                <Text style={styles.serviceActionText}>
+                  {checkingConfig ? "检查中…" : "重新检查"}
+                </Text>
+              </TouchableOpacity>
+              {serviceConfig.editable ? (
+                <TouchableOpacity onPress={handleChangeServiceOrigin}>
+                  <Text style={styles.serviceActionText}>切换服务</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
 
           <View style={styles.segmented}>
             <TouchableOpacity
@@ -299,10 +430,10 @@ export default function LoginScreen() {
                 <TouchableOpacity
                   style={[
                     styles.codeButton,
-                    (sendingCode || countdown > 0 || loading) && styles.codeButtonDisabled,
+                    (sendingCode || countdown > 0 || loading || !serviceConfig.ready) && styles.codeButtonDisabled,
                   ]}
                   onPress={handleSendSmsCode}
-                  disabled={sendingCode || countdown > 0 || loading}
+                  disabled={sendingCode || countdown > 0 || loading || !serviceConfig.ready}
                   activeOpacity={0.7}
                 >
                   {sendingCode ? (
@@ -320,9 +451,9 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, (loading || !serviceConfig.ready) && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || !serviceConfig.ready}
             activeOpacity={0.7}
           >
             {loading ? (

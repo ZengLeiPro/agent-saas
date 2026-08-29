@@ -71,7 +71,7 @@ class FakeWebSocket {
   }
 }
 
-// ── 最小 platform：secureStorage 提供 token，platformConfig 提供 URL ──
+// ── 最小 platform：secureStorage 提供 token，platformConfig 提供 URL/策略 ──
 function makePlatform(token: string | null = 'tok', authEnabled = true): PlatformDeps {
   const store = new Map<string, string>();
   if (token) store.set(TOKEN_KEY, token);
@@ -198,6 +198,30 @@ describe('wsClient - 建立连接', () => {
     await wsClient.connect();
     expect(FakeWebSocket.instances.length).toBe(countBefore);
   });
+  it('M10-01: untrusted WS is rejected before token read or socket creation', async () => {
+    const platform = makePlatform('must-not-leave-storage');
+    const tokenRead = vi.spyOn(platform.secureStorage, 'getItem');
+    const policyGuard = vi.fn(() => {
+      throw new Error('untrusted websocket origin');
+    });
+    platform.platformConfig.assertTrustedUrl = policyGuard;
+    initPlatform(platform);
+
+    const connectPromise = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(policyGuard).toHaveBeenCalledWith(
+      'wss://api.example.com/ws',
+      'websocket',
+    );
+    expect(tokenRead).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    // Settle the intentionally pending reconnect promise without waiting for
+    // its normal connect timeout.
+    wsClient.disconnect();
+    await expect(connectPromise).resolves.toBeUndefined();
+  });
 });
 
 describe('wsClient - 消息收发与分发', () => {
@@ -280,6 +304,27 @@ describe('wsClient - 发送', () => {
     // 未 connect，无 open 的 ws
     const ok = wsClient.send({ action: 'abort' });
     expect(ok).toBe(false);
+  });
+
+  it('M10-01: re-checks policy before sending user content on an open WS', async () => {
+    let trusted = true;
+    const platform = makePlatform();
+    platform.platformConfig.assertTrustedUrl = vi.fn(() => {
+      if (!trusted) throw new Error('origin changed');
+    });
+    initPlatform(platform);
+
+    const connection = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen();
+    await connection;
+    const sentBefore = ws.sent.length;
+
+    trusted = false;
+    expect(wsClient.send({ action: 'chat', message: 'private user content' })).toBe(false);
+    expect(ws.sent).toHaveLength(sentBefore);
+    expect(ws.closeCalls.some((call) => call.reason === 'Client disconnect')).toBe(true);
   });
 
   it('ensureConnectedSend() 未连接时先建连再发送', async () => {

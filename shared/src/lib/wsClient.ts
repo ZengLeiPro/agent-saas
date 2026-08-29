@@ -175,11 +175,16 @@ class WsClient {
     private consecutiveFailures = 0;
     private onAuthFailureFn: (() => void) | null = null;
 
+    private assertTrustedWsUrl(url: string): void {
+        getPlatform().platformConfig.assertTrustedUrl?.(url, 'websocket');
+    }
+
     /** Resolve endpoint and credential separately so JWT never enters URLs/logs. */
     private async getConnectionParams(): Promise<{ url: string; token?: string }> {
         const platform = getPlatform();
-        const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
         const url = platform.platformConfig.getWsUrl();
+        this.assertTrustedWsUrl(url);
+        const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
         if (!authEnabled) return { url };
         const token = await platform.secureStorage.getItem(TOKEN_KEY);
         if (!token) throw new Error('Missing authentication token');
@@ -298,6 +303,23 @@ class WsClient {
 
         ws.onopen = () => {
             if (this.ws !== ws) return; // stale — a newer connection has replaced us
+            // Re-check at the exact credential boundary in case policy changed while
+            // the socket upgrade was in flight.
+            try {
+                this.assertTrustedWsUrl(url);
+            } catch {
+                ws.close(1008, 'Untrusted WebSocket origin');
+                if (this.ws === ws) this.ws = null;
+                this.setState('disconnected');
+                this.connectPromiseReject?.(new Error('Untrusted WebSocket origin'));
+                this.connectPromiseResolve = null;
+                this.connectPromiseReject = null;
+                if (this.connectTimeoutTimer) {
+                    clearTimeout(this.connectTimeoutTimer);
+                    this.connectTimeoutTimer = null;
+                }
+                return;
+            }
             // Auth-enabled deployments require auth as the first client frame. In no-auth
             // mode the server sends auth_ok immediately, so the client must stay silent.
             if (token) ws.send(JSON.stringify({ action: 'auth', token }));
@@ -406,12 +428,14 @@ class WsClient {
     private async checkAuthStatus(): Promise<void> {
         try {
             const platform = getPlatform();
+            const baseUrl = platform.platformConfig.getBaseUrl();
+            const authUrl = `${baseUrl}/api/auth/me`;
+            platform.platformConfig.assertTrustedUrl?.(authUrl, 'http');
             const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
             if (!authEnabled) return;
             const token = await platform.secureStorage.getItem(TOKEN_KEY);
             if (!token) { this.triggerAuthFailure(); return; }
-            const baseUrl = platform.platformConfig.getBaseUrl();
-            const res = await fetch(`${baseUrl}/api/auth/me`, {
+            const res = await fetch(authUrl, {
                 headers: { 'Authorization': `Bearer ${token}` },
             });
             if (res.status === 401) this.triggerAuthFailure();
@@ -500,6 +524,13 @@ class WsClient {
     /** Send message, returns whether successful */
     send(msg: WsOutboundMessage): boolean {
         if (this.state === 'connected' && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+                this.assertTrustedWsUrl(this.ws.url);
+            } catch {
+                console.warn('[WS] Refusing send to an untrusted origin');
+                this.disconnect();
+                return false;
+            }
             // wsClient 持有从 sync/真实事件得到的最新 epoch，覆盖调用方可能滞后的副本。
             const outbound = msg.action === 'sync' && this.serverEpoch
                 ? { ...msg, epoch: this.serverEpoch }

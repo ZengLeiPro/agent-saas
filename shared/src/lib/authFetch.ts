@@ -7,18 +7,30 @@ export function setOnUnauthorized(fn: () => void) {
   onUnauthorized = fn;
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  if (typeof input === 'object' && input !== null && 'url' in input) {
+    return String(input.url);
+  }
+  return String(input);
+}
+
 export async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const platform = getPlatform();
+
+  // Prepend baseUrl for relative paths (RN needs absolute URLs), then enforce
+  // the final transport policy before even reading a credential.
+  let url: RequestInfo | URL = input;
+  if (typeof input === 'string' && input.startsWith('/')) {
+    url = platform.platformConfig.getBaseUrl() + input;
+  }
+  platform.platformConfig.assertTrustedUrl?.(requestUrl(url), 'http');
+
   const token = await platform.secureStorage.getItem(TOKEN_KEY);
   const headers = new Headers(init?.headers);
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
-  }
-
-  // Prepend baseUrl for relative paths (RN needs absolute URLs)
-  let url: RequestInfo | URL = input;
-  if (typeof input === 'string' && input.startsWith('/')) {
-    url = platform.platformConfig.getBaseUrl() + input;
   }
 
   const response = await fetch(url, { ...init, headers });

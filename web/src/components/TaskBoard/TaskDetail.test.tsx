@@ -285,9 +285,7 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
-    const taskOptions = screen.getByRole("group", { name: "任务选项" });
-    expect(taskOptions.className).toContain("md:grid-cols-4");
-    expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
+    expect(screen.getByRole("group", { name: "任务选项" }).className).toContain("md:grid-cols-4"); expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
     for (const purpose of ["实施阶段", "复核阶段"]) {
       await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` })); await user.click(screen.getByRole("option", { name: "模型 C" }));
     }

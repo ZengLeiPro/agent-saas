@@ -140,4 +140,27 @@ describe('Taskboard service hardening', () => {
     await expect(service.resumeBlockedTask(identity, 'task-1', input)).resolves.toBe(resumed);
     expect(resumeBlockedTask).toHaveBeenCalledWith(identity, 'task-1', input);
   });
+
+  it('通过可重试包装层完整转发 workflow cancellation outbox', async () => {
+    const cancellation = { id: 'cancel-1', runId: 'run-1', reason: 'operator_cancelled' };
+    const terminalFact = { runId: 'run-1', status: 'completed' as const };
+    const claimWorkflowCancellations = vi.fn().mockResolvedValue([cancellation]);
+    const finishWorkflowCancellation = vi.fn().mockResolvedValue(undefined);
+    const reconcileWorkflowCancellationTerminal = vi.fn().mockResolvedValue(undefined);
+    const target = {
+      init: vi.fn().mockResolvedValue(undefined),
+      claimWorkflowCancellations,
+      finishWorkflowCancellation,
+      reconcileWorkflowCancellationTerminal,
+    } as unknown as InitializableTaskboardService;
+    const service = new RetryableTaskboardService(target);
+
+    await expect(service.claimWorkflowCancellations(7)).resolves.toEqual([cancellation]);
+    await service.finishWorkflowCancellation('cancel-1', 'retryable');
+    await service.reconcileWorkflowCancellationTerminal('cancel-1', terminalFact);
+
+    expect(claimWorkflowCancellations).toHaveBeenCalledWith(7);
+    expect(finishWorkflowCancellation).toHaveBeenCalledWith('cancel-1', 'retryable');
+    expect(reconcileWorkflowCancellationTerminal).toHaveBeenCalledWith('cancel-1', terminalFact);
+  });
 });

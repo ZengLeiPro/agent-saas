@@ -382,9 +382,13 @@ jobs:
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-staging-release.sh scripts/release/verify-installed-release.mjs \
-            scripts/release/artifact-lib.mjs "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
+            scripts/release/artifact-lib.mjs \
+            daemon-packaging/systemd/agent-saas-server-staging.service.template \
+            daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template \
+            daemon-packaging/systemd/agent-saas-acs-orchestrator-staging.service.template \
+            "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "RELEASE_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
+            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
 
       - name: Publish exact Staging Web artifact last
         run: |

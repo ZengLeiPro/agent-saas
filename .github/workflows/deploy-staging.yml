@@ -345,7 +345,7 @@ jobs:
             echo "STAGING_SSH_SECURITY_GROUP_ID=$security_group_id"
             echo "STAGING_SSH_SOURCE_CIDR=$source_cidr"
           } >> "$GITHUB_ENV"
-          aliyun ecs AuthorizeSecurityGroup \
+          aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup \
             --RegionId cn-shenzhen --SecurityGroupId "$security_group_id" \
             --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$source_cidr" \
             --Policy accept --Priority 1 \
@@ -502,7 +502,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5; do
-            if aliyun ecs RevokeSecurityGroup \
+            if aliyun --region cn-shenzhen ecs RevokeSecurityGroup \
               --RegionId cn-shenzhen --SecurityGroupId "$STAGING_SSH_SECURITY_GROUP_ID" \
               --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$STAGING_SSH_SOURCE_CIDR" \
               --Policy accept --Priority 1 >/dev/null; then

@@ -23,6 +23,7 @@
     "coverage:summary": "node scripts/coverage-summary.mjs",
     "coverage:diff": "node scripts/coverage-diff.mjs",
     "typecheck": "pnpm -r --parallel run --if-present typecheck",
+    "typecheck:staged": "node scripts/typecheck-staged.mjs",
     "preflight:pr": "bash scripts/pr-preflight.sh",
     "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs",
     "check:ratchets": "pnpm test:ratchets && node scripts/check-max-lines-ratchet.mjs && node scripts/check-env-var-count.mjs",
@@ -56,8 +57,8 @@
   },
   "lint-staged": {
     "*.{js,cjs,mjs,jsx,ts,cts,mts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
+      "eslint",
+      "node scripts/format-new-staged-files.mjs"
     ],
     "*.{json,md}": "prettier --write"
   },

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 import test from 'node:test';
 
-import { assembleIsolationEvidence } from './collect-isolation-evidence.mjs';
+import { assembleIsolationEvidence, readJsonStandardInput } from './collect-isolation-evidence.mjs';
 import { assertIsolationEvidence, SHARED_NAS_RESIDUAL_RISK } from './assert-isolation.mjs';
 
 const OBSERVED_AT = '2026-08-29T16:00:00.000Z';
@@ -93,4 +94,14 @@ test('rejects incomplete host evidence before publishing an RC result', () => {
     () => assembleIsolationEvidence(incomplete, { responseStatus: 403 }),
     /Host isolation evidence is incomplete/u,
   );
+});
+
+test('reads JSON credentials from a chunked standard input stream', async () => {
+  const credentials = await readJsonStandardInput(
+    Readable.from(['{"accessKeyId":"staging-', 'id","accessKeySecret":"secret"}']),
+  );
+  assert.deepEqual(credentials, {
+    accessKeyId: 'staging-id',
+    accessKeySecret: 'secret',
+  });
 });

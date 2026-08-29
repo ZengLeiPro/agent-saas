@@ -51,6 +51,12 @@ export function assembleIsolationEvidence(hostEvidence, ossObserved) {
   };
 }
 
+export async function readJsonStandardInput(input = process.stdin) {
+  const chunks = [];
+  for await (const chunk of input) chunks.push(Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
 async function verifyProductionOssWriteDenied(resourcePlan, credentials) {
   const targets = resourcePlan.resources?.isolationTargets;
   if (!targets) throw new Error('Production OSS isolation target is missing');
@@ -102,7 +108,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const [resourcePlan, hostEvidence, credentials] = await Promise.all([
     readFile(args['resource-plan'], 'utf8').then(JSON.parse),
     readFile(args['host-evidence'], 'utf8').then(JSON.parse),
-    readFile(0, 'utf8').then(JSON.parse),
+    readJsonStandardInput(),
   ]);
   if (!credentials.accessKeyId || !credentials.accessKeySecret) {
     throw new Error('Staging OSS credentials are required on standard input');

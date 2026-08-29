@@ -74,6 +74,7 @@ export async function requestAcsOrchestrator(args: {
   config: AppConfig;
   secretVault?: SecretVault;
   fetchImpl: typeof fetch;
+  loopbackFetchImpl?: typeof fetch;
   timeoutMs: number;
   path: string;
   method: 'GET' | 'PATCH' | 'POST' | 'DELETE';
@@ -82,7 +83,9 @@ export async function requestAcsOrchestrator(args: {
   const hand = findAcsHand(args.config);
   if (!hand) return { status: 404, body: { error: 'ACS hand not configured' } };
   const authToken = await resolveHandToken(hand, args.secretVault);
-  const handFetch = isLoopbackControlPlane(hand.baseUrl) ? directLoopbackFetch : args.fetchImpl;
+  const handFetch = isLoopbackControlPlane(hand.baseUrl)
+    ? args.loopbackFetchImpl ?? directLoopbackFetch
+    : args.fetchImpl;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs);
   timer.unref?.();

@@ -26,7 +26,9 @@ import { TaskDialog } from "./TaskDialog";
 
 interface TaskBoardViewProps {
   headerActionsTarget?: HTMLElement | null;
+  detailPanelTarget?: HTMLElement | null;
   active?: boolean;
+  onDetailOpenChange?: (open: boolean) => void;
 }
 
 type BoardDialogMode = "create" | "edit" | null;
@@ -66,7 +68,12 @@ function optimisticOrder(
   });
 }
 
-export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardViewProps) {
+export function TaskBoardView({
+  headerActionsTarget,
+  detailPanelTarget,
+  active = true,
+  onDetailOpenChange,
+}: TaskBoardViewProps) {
   const {
     boards,
     loading: boardsLoading,
@@ -192,6 +199,11 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
     () => tasks.find((task) => task.id === selectedTaskId) ?? null,
     [selectedTaskId, tasks],
   );
+  const detailVisible = active && detailOpen && selectedTask !== null;
+
+  useEffect(() => {
+    onDetailOpenChange?.(detailVisible);
+  }, [detailVisible, onDetailOpenChange]);
 
   const submitters = useMemo(() => {
     const byId = new Map<string, { id: string; label: string }>();
@@ -489,6 +501,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
               canCancelExecution={canCancelExecution}
               canCancelIntegration={canCancelIntegration}
               modelList={modelList}
+              portalTarget={detailPanelTarget}
               onOpenChange={setDetailOpen}
               onTaskLoaded={syncTask}
               onConfigureCiPolicy={() => {

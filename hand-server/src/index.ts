@@ -163,7 +163,11 @@ server.listen(config.port, config.host, () => {
 /**
  * SIGTERM/SIGINT drain（TASK-316）：不再 5 秒强退。
  * - 停止接新流量；draining 期间新 invocation 返回 503（brain 侧按连接类失败安全退避重试）。
- * - 等待在途 invocation 收尾（结果先落 journal 再 ack），最长 HAND_DRAIN_TIMEOUT_MS。
+ * - 等待在途 invocation 完整收尾（activeInvocations 从请求被接受一直跟踪到
+ *   结果落盘 + 响应写出），最长 HAND_DRAIN_TIMEOUT_MS。
+ * - 退出条件统一由 drain poll 决定：server.close 完成（所有连接收尾，含
+ *   provision 等非 invocation 端点）且 activeInvocations 清空才 exit(0)；
+ *   close 回调本身不再直接退出，避免绕过在途状态。
  * - 超时仍有在途 invocation 时以非零码退出，把"副作用可能未收尾"暴露给 systemd 日志。
  */
 let shutdownStarted = false;
@@ -174,9 +178,13 @@ const shutdown = (sig: NodeJS.Signals) => {
   logger.info(
     `received ${sig}, draining (in-flight invocations=${activeInvocations.size}, timeout=${config.drainTimeoutMs}ms)`,
   );
-  server.close(() => process.exit(0));
+  let serverClosed = false;
+  server.close(() => {
+    serverClosed = true;
+    logger.info('server closed; all connections finished');
+  });
   const drainPoll = setInterval(() => {
-    if (activeInvocations.size === 0) {
+    if (serverClosed && activeInvocations.size === 0) {
       clearInterval(drainPoll);
       logger.info('drain complete; exiting');
       process.exit(0);

@@ -89,10 +89,30 @@ export class FileHandInvocationStore implements HandInvocationStore {
   private readonly dir: string;
   private readonly retentionMs: number;
   private writeSeq = 0;
+  /**
+   * 单 invocationId 的写串行化（TASK-316 返工）：complete 与 markCancelled 都是
+   * read-modify-rename，无锁并发时后写会基于旧 running 记录覆盖前写，
+   * 已完成的 response 会被迟到 cancel 的 tombstone 整体抹掉。
+   * 进程内按 id 排队所有状态变更，保证任意交错下首个终态及其数据不丢。
+   */
+  private readonly mutations = new Map<string, Promise<unknown>>();
 
   constructor(dir: string, options?: { retentionMs?: number }) {
     this.dir = dir;
     this.retentionMs = options?.retentionMs ?? SWEEP_DEFAULT_RETENTION_MS;
+  }
+
+  /** 按 invocationId 串行执行 journal 变更；前序失败不阻塞后续（各自独立落盘）。 */
+  private withMutationLock<T>(invocationId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.mutations.get(invocationId) ?? Promise.resolve();
+    const run = previous.then(fn, fn);
+    this.mutations.set(invocationId, run);
+    run
+      .finally(() => {
+        if (this.mutations.get(invocationId) === run) this.mutations.delete(invocationId);
+      })
+      .catch(() => {});
+    return run;
   }
 
   async ensureDir(): Promise<void> {
@@ -124,22 +144,24 @@ export class FileHandInvocationStore implements HandInvocationStore {
   }
 
   async registerRunning(invocationId: string): Promise<RegisterRunningOutcome> {
-    const existing = await this.readRecord(invocationId);
-    if (existing) {
-      if (existing.response) return { outcome: 'replay', record: existing };
-      if (existing.state === 'cancelled')
-        return { outcome: 'cancelled_tombstone', record: existing };
-      return { outcome: 'already_running', record: existing };
-    }
-    const now = new Date().toISOString();
-    const record: StoredInvocationRecord = {
-      invocationId,
-      state: 'running',
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.atomicWrite(record);
-    return { outcome: 'created', record };
+    return await this.withMutationLock(invocationId, async () => {
+      const existing = await this.readRecord(invocationId);
+      if (existing) {
+        if (existing.response) return { outcome: 'replay', record: existing };
+        if (existing.state === 'cancelled')
+          return { outcome: 'cancelled_tombstone', record: existing };
+        return { outcome: 'already_running', record: existing };
+      }
+      const now = new Date().toISOString();
+      const record: StoredInvocationRecord = {
+        invocationId,
+        state: 'running',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await this.atomicWrite(record);
+      return { outcome: 'created', record };
+    });
   }
 
   async get(invocationId: string): Promise<StoredInvocationRecord | undefined> {
@@ -150,45 +172,50 @@ export class FileHandInvocationStore implements HandInvocationStore {
     invocationId: string,
     response: ToolInvocationResponse,
   ): Promise<StoredInvocationRecord | undefined> {
-    const existing = await this.readRecord(invocationId);
-    const now = new Date().toISOString();
-    // 首个终态胜出：重复 complete（如 cancel 后 execute 收尾又落一次）不覆盖结果。
-    if (existing) {
-      if (existing.response) return existing;
-      // state 一并转 completed；cancelledAt 等历史字段保留，供结果对账区分取消路径。
-      return await this.writeTerminal(existing, { state: 'completed', response, updatedAt: now });
-    }
-    const record: StoredInvocationRecord = {
-      invocationId,
-      state: 'completed',
-      createdAt: now,
-      updatedAt: now,
-      response,
-    };
-    await this.atomicWrite(record);
-    return record;
+    return await this.withMutationLock(invocationId, async () => {
+      const existing = await this.readRecord(invocationId);
+      const now = new Date().toISOString();
+      // 首个终态胜出：重复 complete（如 cancel 后 execute 收尾又落一次）不覆盖结果。
+      if (existing) {
+        if (existing.response) return existing;
+        // state 一并转 completed；cancelledAt 等历史字段保留，供结果对账区分取消路径。
+        return await this.writeTerminal(existing, { state: 'completed', response, updatedAt: now });
+      }
+      const record: StoredInvocationRecord = {
+        invocationId,
+        state: 'completed',
+        createdAt: now,
+        updatedAt: now,
+        response,
+      };
+      await this.atomicWrite(record);
+      return record;
+    });
   }
 
   async markCancelled(invocationId: string): Promise<StoredInvocationRecord | undefined> {
-    const existing = await this.readRecord(invocationId);
-    const now = new Date().toISOString();
-    if (existing) {
-      if (existing.cancelledAt || existing.response) return existing;
-      return await this.writeTerminal(existing, {
+    return await this.withMutationLock(invocationId, async () => {
+      const existing = await this.readRecord(invocationId);
+      const now = new Date().toISOString();
+      if (existing) {
+        // 已有终态结果：cancel 迟到时不覆盖（invocation 已完成，无需 tombstone）。
+        if (existing.cancelledAt || existing.response) return existing;
+        return await this.writeTerminal(existing, {
+          state: 'cancelled',
+          cancelledAt: now,
+          updatedAt: now,
+        });
+      }
+      const record: StoredInvocationRecord = {
+        invocationId,
         state: 'cancelled',
-        cancelledAt: now,
+        createdAt: now,
         updatedAt: now,
-      });
-    }
-    const record: StoredInvocationRecord = {
-      invocationId,
-      state: 'cancelled',
-      createdAt: now,
-      updatedAt: now,
-      cancelledAt: now,
-    };
-    await this.atomicWrite(record);
-    return record;
+        cancelledAt: now,
+      };
+      await this.atomicWrite(record);
+      return record;
+    });
   }
 
   private async writeTerminal(

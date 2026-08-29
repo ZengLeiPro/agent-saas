@@ -15,7 +15,11 @@ import {
   handleGetInvocationResult,
   type HandlerDeps,
 } from './handlers.js';
-import { FileHandInvocationStore, type HandInvocationStore } from './invocationStore.js';
+import {
+  FileHandInvocationStore,
+  type HandInvocationStore,
+  type RegisterRunningOutcome,
+} from './invocationStore.js';
 
 /**
  * Durable Tool Invocation（TASK-316）行为测试：
@@ -303,7 +307,7 @@ describe('drain 与失败路径', () => {
     expect(handlerDeps.logger.error).toHaveBeenCalled();
   });
 
-  it('journal 完成落盘失败不吞掉已算出的执行结果', async () => {
+  it('journal 完成落盘失败（ENOSPC）：结果仍返回但显式标记 durablePersistFailed，不确认 durable 成功', async () => {
     const handlerDeps = deps({
       registerRunning: vi.fn(async () => ({
         outcome: 'created',
@@ -315,15 +319,82 @@ describe('drain 与失败路径', () => {
         },
       })),
       complete: vi.fn(async () => {
-        throw new Error('ENOSPC');
+        const err = new Error('ENOSPC: no space left on device');
+        (err as NodeJS.ErrnoException).code = 'ENOSPC';
+        throw err;
       }),
     } as unknown as HandInvocationStore);
     const executed = responseCapture();
     await handleExecute(executeRequest('inv-persist-error'), executed.response, handlerDeps);
     expect(executed.result()).toEqual({
       statusCode: 200,
-      body: { status: 'success', content: 'executed' },
+      body: {
+        status: 'success',
+        content: 'executed',
+        metadata: { durablePersistFailed: true },
+      },
     });
+    expect(handlerDeps.logger.error).toHaveBeenCalled();
+  });
+
+  it('complete 落盘失败后同进程重派：从内存重放（不二次执行、不 409 卡死）', async () => {
+    let registerCalls = 0;
+    const handlerDeps = deps({
+      registerRunning: vi.fn(async (): Promise<RegisterRunningOutcome> => {
+        registerCalls += 1;
+        const record = {
+          invocationId: 'inv-stuck-running',
+          state: 'running' as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        return registerCalls === 1
+          ? { outcome: 'created' as const, record }
+          : { outcome: 'already_running' as const, record };
+      }),
+      complete: vi.fn(async () => {
+        throw new Error('EIO');
+      }),
+    } as unknown as HandInvocationStore);
+    const first = responseCapture();
+    await handleExecute(executeRequest('inv-stuck-running'), first.response, handlerDeps);
+    expect(first.result().body).toEqual({
+      status: 'success',
+      content: 'executed',
+      metadata: { durablePersistFailed: true },
+    });
+
+    const second = responseCapture();
+    await handleExecute(executeRequest('inv-stuck-running'), second.response, handlerDeps);
+    expect(handlerDeps.provider.execute).toHaveBeenCalledTimes(1);
+    expect(second.result()).toEqual({
+      statusCode: 200,
+      body: {
+        status: 'success',
+        content: 'executed',
+        metadata: { durablePersistFailed: true, durableReplay: true },
+      },
+    });
+  });
+
+  it('markCancelled 落盘失败（EIO）：返回 503 而不是确认 cancelled:true', async () => {
+    const handlerDeps = deps({
+      markCancelled: vi.fn(async () => {
+        const err = new Error('EIO');
+        (err as NodeJS.ErrnoException).code = 'EIO';
+        throw err;
+      }),
+    } as unknown as HandInvocationStore);
+    const cancelled = responseCapture();
+    await handleCancelInvocation(
+      controlRequest('DELETE'),
+      cancelled.response,
+      handlerDeps,
+      'inv-cancel-persist-error',
+    );
+    expect(cancelled.result().statusCode).toBe(503);
+    expect(cancelled.result().body.status).toBe('error');
+    expect(cancelled.result().body.error).toContain('tombstone write failed');
     expect(handlerDeps.logger.error).toHaveBeenCalled();
   });
 
@@ -349,6 +420,77 @@ describe('drain 与失败路径', () => {
     resolveExecution({ status: 'success', content: 'done' });
     await pending;
     expect(handlerDeps.activeInvocations?.size).toBe(0);
+  });
+
+  it('prepare 阶段（body 未读完）收到 SIGTERM：请求全程被跟踪，二次门禁在副作用前拒绝', async () => {
+    const handlerDeps = deps(new FileHandInvocationStore(dir), {
+      activeInvocations: new Set<string>(),
+    });
+    // 不结束的请求流：handleExecute 停在 readBody
+    const request = new Readable({ read() {} });
+    Object.assign(request, {
+      method: 'POST',
+      headers: { authorization: 'Bearer token-1' },
+      socket: { remoteAddress: '127.0.0.1' },
+    });
+    const executed = responseCapture();
+    const pending = handleExecute(request as any, executed.response, handlerDeps);
+
+    // 请求已接受但 body 未到：必须在 activeInvocations 中，
+    // 否则 drain poll 会把它当作"无在途"提前 exit 杀掉。
+    expect(handlerDeps.activeInvocations?.size).toBe(1);
+
+    // SIGTERM 在 prepare 窗口内置 draining
+    handlerDeps.draining = true;
+    request.push(
+      Buffer.from(
+        JSON.stringify({
+          toolName: 'Shell',
+          input: { command: 'echo ok' },
+          context: { invocationId: 'inv-prepare-drain', workspace: { id: 'workspace-1' } },
+        }),
+      ),
+    );
+    request.push(null);
+    await pending;
+
+    expect(executed.result()).toEqual({
+      statusCode: 503,
+      body: { status: 'error', error: 'hand-server draining; retry after restart' },
+    });
+    // 拒绝发生在 journal 登记与 provider 副作用之前，可安全重试
+    expect(handlerDeps.provider.execute).not.toHaveBeenCalled();
+    expect(handlerDeps.invocations?.has('inv-prepare-drain')).toBe(false);
+    expect(handlerDeps.activeInvocations?.size).toBe(0);
+  });
+
+  it('连接断开但 provider 未收尾：drain 跟踪保留到结果持久化完成', async () => {
+    let resolveExecution: (response: ToolInvocationResponse) => void = () => {};
+    const execution = new Promise<ToolInvocationResponse>((resolve) => {
+      resolveExecution = resolve;
+    });
+    const handlerDeps = deps(new FileHandInvocationStore(dir), {
+      provider: { execute: vi.fn(() => execution) } as any,
+      activeInvocations: new Set<string>(),
+    });
+    const executed = responseCapture();
+    const pending = handleExecute(
+      executeRequest('inv-closed-provider'),
+      executed.response,
+      handlerDeps,
+    );
+    await vi.waitFor(() => expect(handlerDeps.provider.execute).toHaveBeenCalled());
+
+    // 客户端断开：abort 信号发出，但 provider 仍在执行、结果尚未持久化
+    executed.response.emit('close');
+    expect(handlerDeps.activeInvocations?.size).toBe(1);
+
+    resolveExecution({ status: 'success', content: 'late' });
+    await pending;
+    expect(handlerDeps.activeInvocations?.size).toBe(0);
+    // provider 的真实结果仍完整落盘（重启后可对账，不因断连丢失）
+    const stored = await new FileHandInvocationStore(dir).get('inv-closed-provider');
+    expect(stored?.response).toEqual({ status: 'success', content: 'late' });
   });
 
   it('未配置 journal 时保持纯内存行为（可执行、可查询、无重放）', async () => {

@@ -162,19 +162,26 @@ function storeInvocationResult(
   timer.unref?.();
 }
 
-/** Durable journal 落终态：失败只记日志，不吞掉已算出的结果（内存快路径仍可用）。 */
+/**
+ * Durable journal 落终态（TASK-316 返工）：落盘失败不得向调用方确认 durable 成功。
+ * 返回 durable=false 时调用方必须在响应上标记 `metadata.durablePersistFailed`，
+ * 让 Brain 观察到"结果已产生但未持久化"（可观察），同进程重派时从内存重放（可恢复）；
+ * Hand 重启后该记录会被对账为 interrupted/indeterminate，如实暴露副作用不确定性。
+ */
 async function persistInvocationResult(
   deps: HandlerDeps,
   invocationId: string | undefined,
   response: ToolInvocationResponse,
-): Promise<void> {
-  if (!invocationId || !deps.invocationStore) return;
+): Promise<boolean> {
+  if (!invocationId || !deps.invocationStore) return true;
   try {
     await deps.invocationStore.complete(invocationId, response);
+    return true;
   } catch (err) {
     deps.logger.error(
       `invocation store complete failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
     );
+    return false;
   }
 }
 
@@ -182,9 +189,17 @@ async function storeAndPersistInvocationResult(
   deps: HandlerDeps,
   invocationId: string | undefined,
   response: ToolInvocationResponse,
-): Promise<void> {
+): Promise<boolean> {
   storeInvocationResult(deps, invocationId, response);
-  await persistInvocationResult(deps, invocationId, response);
+  return await persistInvocationResult(deps, invocationId, response);
+}
+
+/** journal 落盘失败时的显式标记：结果仍然返回，但明确告知调用方 durability 未确认。 */
+function markPersistFailed(response: ToolInvocationResponse): ToolInvocationResponse {
+  return {
+    ...response,
+    metadata: { ...(response.metadata ?? {}), durablePersistFailed: true },
+  };
 }
 
 function markDurableReplay(response: ToolInvocationResponse): ToolInvocationResponse {
@@ -200,14 +215,20 @@ interface PreparedToolInvocation {
   invocationId?: string;
   abort: () => void;
   cleanup: () => void;
+  /** drain 跟踪 key：从请求被接受一直保留到结果持久化完成且响应写出。 */
+  trackingKey: string;
+  /** 释放 drain 跟踪（响应写出/中断后调用；fail 路径已自动释放）。 */
+  release: () => void;
 }
 
 interface ReplayedToolInvocation {
   ok: true;
   replay: ToolInvocationResponse;
+  /** 重放路径同样持有 drain 跟踪，写出响应后由调用方释放。 */
+  release: () => void;
 }
 
-let anonymousInvocationSeq = 0;
+let activeTrackingSeq = 0;
 
 /** Shared parser/executor for /execute and /execute-stream. */
 async function prepareToolInvocation(
@@ -218,80 +239,81 @@ async function prepareToolInvocation(
   | ReplayedToolInvocation
   | { ok: false; status: number; body: Record<string, unknown> }
 > {
+  // drain 跟踪从请求被接受即开始（TASK-316 返工）：body 读取/解析/workspace resolve/
+  // journal 登记的整个 prepare 窗口都计入在途，SIGTERM drain 不会把已接收请求当作
+  // "无在途"提前杀掉。所有非执行出口（含 replay/409/503）都会释放跟踪。
+  const trackingKey = `active-${(activeTrackingSeq += 1)}`;
+  deps.activeInvocations?.add(trackingKey);
+  const release = () => deps.activeInvocations?.delete(trackingKey);
+  const fail = (status: number, body: Record<string, unknown>) => {
+    release();
+    return { ok: false as const, status, body };
+  };
+
   if (req.method !== 'POST') {
-    return {
-      ok: false,
-      status: 405,
-      body: { status: 'error', error: 'method not allowed; use POST' },
-    };
+    return fail(405, { status: 'error', error: 'method not allowed; use POST' });
   }
 
-  // drain 中拒绝新 invocation：请求尚未执行任何副作用，brain 侧按 503 安全重试。
+  // 第一道 drain 门：请求尚未执行任何副作用，brain 侧按 503 安全重试。
   if (deps.draining) {
-    return {
-      ok: false,
-      status: 503,
-      body: { status: 'error', error: 'hand-server draining; retry after restart' },
-    };
+    return fail(503, { status: 'error', error: 'hand-server draining; retry after restart' });
   }
 
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (!match || match[1] !== deps.config.authToken) {
     deps.logger.warn(`auth 失败 from=${req.socket.remoteAddress ?? '-'}`);
-    return { ok: false, status: 401, body: { status: 'error', error: 'unauthorized' } };
+    return fail(401, { status: 'error', error: 'unauthorized' });
   }
 
   let bodyRaw: string;
   try {
     bodyRaw = await readBody(req, MAX_BODY_BYTES);
   } catch (err) {
-    return {
-      ok: false,
-      status: 413,
-      body: {
-        status: 'error',
-        error: `body 读取失败: ${err instanceof Error ? err.message : String(err)}`,
-      },
-    };
+    return fail(413, {
+      status: 'error',
+      error: `body 读取失败: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 
   let body: unknown;
   try {
     body = JSON.parse(bodyRaw);
   } catch {
-    return { ok: false, status: 400, body: { status: 'error', error: 'body 不是合法 JSON' } };
+    return fail(400, { status: 'error', error: 'body 不是合法 JSON' });
   }
 
   const parsed = parseWireRequest(body);
-  if (!parsed.ok) return { ok: false, status: 400, body: { status: 'error', error: parsed.error } };
+  if (!parsed.ok) return fail(400, { status: 'error', error: parsed.error });
   const wire = parsed.value;
 
   let workspaceRoot: string;
   try {
     workspaceRoot = await deps.workspaceResolver.resolveAndEnsure(wire.context.workspace.id);
   } catch (err) {
-    return {
-      ok: false,
-      status: 400,
-      body: { status: 'error', error: err instanceof Error ? err.message : String(err) },
-    };
+    return fail(400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // 第二道 drain 门（TASK-316 返工）：prepare 期间 SIGTERM 已置 draining 时，
+  // 在产生任何 journal/provider 副作用之前拒绝执行。此后到 provider 启动之间
+  // 若 draining 再翻转，本请求已在 activeInvocations 中，drain 会等它完整收尾。
+  if (deps.draining) {
+    return fail(503, { status: 'error', error: 'hand-server draining; retry after restart' });
   }
 
   const invocationId = wire.context.invocationId;
   const existingInvocation = invocationId ? deps.invocations?.get(invocationId) : undefined;
   if (invocationId && existingInvocation) {
-    return {
-      ok: false,
-      status: 409,
-      body: {
-        status: 'error',
-        error: existingInvocation.signal.aborted
-          ? 'invocation cancelled before start'
-          : 'invocation already running',
-        invocationId,
-      },
-    };
+    return fail(409, {
+      status: 'error',
+      error: existingInvocation.signal.aborted
+        ? 'invocation cancelled before start'
+        : 'invocation already running',
+      invocationId,
+    });
   }
   // 先同步占位内存 registry（进程内 single-flight），journal 异步登记失败时回滚。
   const controller = invocationId ? registerInvocation(deps, invocationId) : undefined;
@@ -307,39 +329,47 @@ async function prepareToolInvocation(
       deps.logger.error(
         `invocation store registerRunning failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return {
-        ok: false,
-        status: 503,
-        body: {
-          status: 'error',
-          error: `hand invocation store unavailable: ${err instanceof Error ? err.message : String(err)}`,
-        },
-      };
+      return fail(503, {
+        status: 'error',
+        error: `hand invocation store unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
     if (registered.outcome === 'replay') {
       deps.invocations?.delete(invocationId);
       deps.logger.info(`replaying durable invocation result invocation=${invocationId}`);
-      return { ok: true, replay: markDurableReplay(registered.record.response!) };
+      release();
+      return { ok: true, replay: markDurableReplay(registered.record.response!), release };
     }
     if (registered.outcome === 'cancelled_tombstone') {
       deps.invocations?.delete(invocationId);
-      return {
-        ok: false,
-        status: 409,
-        body: { status: 'error', error: 'invocation cancelled before start', invocationId },
-      };
+      return fail(409, {
+        status: 'error',
+        error: 'invocation cancelled before start',
+        invocationId,
+      });
     }
     if (registered.outcome === 'already_running') {
+      // journal 卡在 running 但本进程内存里已有结果（典型：complete 落盘失败后重派）：
+      // 从内存重放，既不二次执行副作用，也不会让调用方陷在 409。
+      // 重放结果同时保留 durablePersistFailed 标记（journal 仍卡在 running，未持久化）。
+      const memoryRecord = deps.invocationResults?.get(invocationId);
+      if (memoryRecord) {
+        deps.invocations?.delete(invocationId);
+        deps.logger.warn(
+          `replaying in-memory result for stuck running journal invocation=${invocationId}`,
+        );
+        release();
+        return {
+          ok: true,
+          replay: markPersistFailed(markDurableReplay(memoryRecord.response)),
+          release,
+        };
+      }
       deps.invocations?.delete(invocationId);
-      return {
-        ok: false,
-        status: 409,
-        body: { status: 'error', error: 'invocation already running', invocationId },
-      };
+      return fail(409, { status: 'error', error: 'invocation already running', invocationId });
     }
   }
 
-  const trackingKey = invocationId ?? `anon-${(anonymousInvocationSeq += 1)}`;
   let completed = false;
   const abort = () => {
     if (completed || !controller) return;
@@ -368,16 +398,16 @@ async function prepareToolInvocation(
       ...(controller ? { signal: controller.signal } : {}),
     },
   };
-  deps.activeInvocations?.add(trackingKey);
   return {
     ok: true,
     toolRequest,
     ...(invocationId ? { invocationId } : {}),
     abort,
+    trackingKey,
+    release,
     cleanup: () => {
       completed = true;
       req.off('aborted', abort);
-      deps.activeInvocations?.delete(trackingKey);
       if (invocationId && !controller?.signal.aborted) deps.invocations?.delete(invocationId);
     },
   };
@@ -396,9 +426,18 @@ async function executePreparedTool(
       error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
+  const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
   prepared.cleanup();
-  return response;
+  return durable ? response : markPersistFailed(response);
+}
+
+/** 响应已写出（或连接已断）后释放 drain 跟踪；真实 res 走 finish 事件，mock 同步收尾。 */
+function releaseTrackingOnResponseDone(
+  res: ServerResponse,
+  prepared: PreparedToolInvocation,
+): void {
+  if (res.writableEnded || res.destroyed) prepared.release();
+  else res.once('finish', prepared.release);
 }
 
 /**
@@ -411,7 +450,10 @@ export async function handleExecute(
 ): Promise<void> {
   const prepared = await prepareToolInvocation(req, deps);
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body);
-  if ('replay' in prepared) return sendJson(res, 200, prepared.replay);
+  if ('replay' in prepared) {
+    prepared.release();
+    return sendJson(res, 200, prepared.replay);
+  }
   const abortOnResponseClose = () => {
     if (!res.writableEnded) prepared.abort();
   };
@@ -421,6 +463,9 @@ export async function handleExecute(
     return sendJson(res, 200, response);
   } finally {
     res.off('close', abortOnResponseClose);
+    // 结果已持久化（或已标记 durablePersistFailed），响应写出后再释放 drain 跟踪；
+    // 连接已断（destroyed）时在持久化完成后立即释放。
+    releaseTrackingOnResponseDone(res, prepared);
   }
 }
 
@@ -432,6 +477,7 @@ export async function handleExecuteStream(
   const prepared = await prepareToolInvocation(req, deps);
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body);
   if ('replay' in prepared) {
+    prepared.release();
     // 重复派发：直接以 SSE 重放持久化终态，不触碰 provider。
     res.writeHead(200, {
       'content-type': 'text/event-stream; charset=utf-8',
@@ -507,7 +553,12 @@ export async function handleExecuteStream(
       for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
         if (chunk.type === 'completed') {
           sawCompleted = true;
-          await storeAndPersistInvocationResult(deps, prepared.invocationId, chunk.response);
+          const durable = await storeAndPersistInvocationResult(
+            deps,
+            prepared.invocationId,
+            chunk.response,
+          );
+          if (!durable) chunk.response = markPersistFailed(chunk.response);
         }
         const written = await writeChunk(chunk);
         if (!written) break;
@@ -522,9 +573,12 @@ export async function handleExecuteStream(
       status: 'error',
       error: `hand-server provider.executeStream throw: ${err instanceof Error ? err.message : String(err)}`,
     };
-    await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
+    const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
     sawCompleted = true;
-    await writeChunk({ type: 'completed', response });
+    await writeChunk({
+      type: 'completed',
+      response: durable ? response : markPersistFailed(response),
+    });
   } finally {
     clearInterval(heartbeat);
     if (!sawCompleted) {
@@ -532,12 +586,17 @@ export async function handleExecuteStream(
         status: 'error',
         error: 'provider stream ended without completed chunk',
       };
-      await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
-      await writeChunk({ type: 'completed', response });
+      const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
+      await writeChunk({
+        type: 'completed',
+        response: durable ? response : markPersistFailed(response),
+      });
     }
     res.off('close', markClosed);
     prepared.cleanup();
     if (!res.destroyed && !res.writableEnded) res.end();
+    // SSE：结果已持久化、流已收尾后释放 drain 跟踪（连接早已断开则立即释放）。
+    releaseTrackingOnResponseDone(res, prepared);
   }
 }
 
@@ -558,6 +617,9 @@ export async function handleCancelInvocation(
   retainCancelledInvocation(deps, invocationId, controller);
   // Durable cancel tombstone（TASK-316）：cancel 意图落盘，Hand 重启后
   // 重复派发同一 invocationId 仍会被拒绝，cancel-before-start 语义不丢。
+  // 落盘失败（EIO/ENOSPC 等）不得向调用方确认 cancelled:true（TASK-316 返工）--
+  // tombstone 丢失后重启过的 cancel 语义就是假的。返回 503 让调用方知道
+  // "abort 信号已发，但 cancel 未持久化"，可安全重试（DELETE 幂等）。
   if (deps.invocationStore) {
     try {
       await deps.invocationStore.markCancelled(invocationId);
@@ -565,6 +627,11 @@ export async function handleCancelInvocation(
       deps.logger.error(
         `invocation store markCancelled failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return sendJson(res, 503, {
+        status: 'error',
+        error: `cancel signalled but durable tombstone write failed: ${err instanceof Error ? err.message : String(err)}`,
+        invocationId,
+      });
     }
   }
   return sendJson(res, 200, { status: 'ok', invocationId, cancelled: true });

@@ -157,3 +157,42 @@ describe('FileHandInvocationStore', () => {
     expect(stats.isDirectory()).toBe(true);
   });
 });
+
+describe('complete 与 markCancelled 并发竞态（TASK-316 返工：写串行化）', () => {
+  it('并发发起 complete 与 markCancelled：已完成的 response 不会被迟到 cancel 的 tombstone 覆盖', async () => {
+    const s = store();
+    await s.registerRunning('inv-race');
+    await Promise.all([
+      s.complete('inv-race', { status: 'success', content: 'done' }),
+      s.markCancelled('inv-race'),
+    ]);
+    const final = await store().get('inv-race');
+    expect(final?.state).toBe('completed');
+    expect(final?.response).toEqual({ status: 'success', content: 'done' });
+  });
+
+  it('cancel 先落盘、complete 后补写：response 写入且 cancelledAt 保留（取消路径可对账）', async () => {
+    const s = store();
+    await s.registerRunning('inv-cancel-first');
+    await s.markCancelled('inv-cancel-first');
+    await s.complete('inv-cancel-first', { status: 'success', content: 'late' });
+    const final = await store().get('inv-cancel-first');
+    expect(final?.state).toBe('completed');
+    expect(final?.response).toEqual({ status: 'success', content: 'late' });
+    expect(final?.cancelledAt).toBeTruthy();
+  });
+
+  it('并发交错 20 轮：任意顺序下已完成的 response 永不丢失', async () => {
+    const s = store();
+    for (let i = 0; i < 20; i += 1) {
+      const id = `inv-race-loop-${i}`;
+      await s.registerRunning(id);
+      await Promise.all([
+        s.complete(id, { status: 'success', content: `done-${i}` }),
+        s.markCancelled(id),
+      ]);
+      const final = await store().get(id);
+      expect(final?.response).toEqual({ status: 'success', content: `done-${i}` });
+    }
+  });
+});

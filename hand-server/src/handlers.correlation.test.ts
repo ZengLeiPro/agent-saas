@@ -47,6 +47,17 @@ describe('hand correlation parser', () => {
     }
   });
 
+  it('rejects non-string legacy invocation and hand identities at the wire boundary', () => {
+    for (const invalid of [123, null, { nested: true }]) {
+      expect(parseWireRequest({
+        toolName: 'Write', input: {}, context: { invocationId: invalid, workspace },
+      })).toMatchObject({ ok: false });
+      expect(parseWireRequest({
+        toolName: 'Write', input: {}, context: { handId: invalid, workspace },
+      })).toMatchObject({ ok: false });
+    }
+  });
+
   it('uses a correlation-only invocation as the journal/cancel identity', () => {
     expect(parseWireRequest({
       toolName: 'Shell', input: {},

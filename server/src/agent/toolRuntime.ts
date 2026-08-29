@@ -1001,7 +1001,7 @@ class WorkspaceToolProvider implements ToolProvider {
     };
     let response: ToolInvocationResponse;
     try {
-      response = routed.transport.invokeStream && call.toolId === 'Shell' && !isBackgroundShellStart && context.invocationId
+      response = routed.transport.invokeStream && call.toolId === 'Shell' && !isBackgroundShellStart && (context.invocationId ?? context.correlation?.invocationId)
         ? await consumeToolStream(routed.transport.invokeStream(request), context.onStreamChunk)
         : await routed.transport.invoke(request);
     } catch (err) {

@@ -46,7 +46,7 @@ const CORRELATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/;
  */
 export function parseCorrelationContext(
   raw: unknown,
-  legacy: Pick<CorrelationContext, 'invocationId' | 'handId'> = {},
+  legacy: { invocationId?: unknown; handId?: unknown } = {},
 ): CorrelationParseResult {
   if (raw === undefined) return fromLegacy(legacy);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -54,10 +54,10 @@ export function parseCorrelationContext(
   }
   const value = raw as Record<string, unknown>;
   for (const key of Object.keys(value)) {
-    if (!ALLOWED_FIELDS.has(key)) return { ok: false, error: `context.correlation 不支持字段 ${key}` };
+    if (!ALLOWED_FIELDS.has(key)) return { ok: false, error: 'context.correlation 包含不支持字段' };
   }
   if (value.version !== CORRELATION_CONTEXT_VERSION) {
-    return { ok: false, error: `context.correlation.version 不支持: ${String(value.version)}` };
+    return { ok: false, error: 'context.correlation.version 不支持' };
   }
 
   const parsed: CorrelationContext = { version: CORRELATION_CONTEXT_VERSION };
@@ -70,26 +70,31 @@ export function parseCorrelationContext(
     parsed[field] = candidate;
   }
   for (const field of ['invocationId', 'handId'] as const) {
-    if (legacy[field] !== undefined && !CORRELATION_ID_PATTERN.test(legacy[field])) {
+    const candidate = legacy[field];
+    if (candidate === undefined) continue;
+    if (typeof candidate !== 'string' || !CORRELATION_ID_PATTERN.test(candidate)) {
       return { ok: false, error: `context.${field} 格式非法` };
     }
-    if (legacy[field] !== undefined && parsed[field] && legacy[field] !== parsed[field]) {
+    if (parsed[field] && candidate !== parsed[field]) {
       return { ok: false, error: `context.${field} 与 context.correlation.${field} 冲突` };
     }
-    if (!parsed[field] && legacy[field] !== undefined) parsed[field] = legacy[field];
+    if (!parsed[field]) parsed[field] = candidate;
   }
   return { ok: true, value: parsed };
 }
 
-function fromLegacy(legacy: Pick<CorrelationContext, 'invocationId' | 'handId'>): CorrelationParseResult {
-  const entries = Object.entries(legacy).filter((entry): entry is [CorrelationIdField, string] => typeof entry[1] === 'string');
-  if (entries.length === 0) return { ok: true };
-  const value: CorrelationContext = { version: CORRELATION_CONTEXT_VERSION };
-  for (const [field, candidate] of entries) {
-    if (!CORRELATION_ID_PATTERN.test(candidate)) return { ok: false, error: `context.${field} 格式非法` };
+function fromLegacy(legacy: { invocationId?: unknown; handId?: unknown }): CorrelationParseResult {
+  let value: CorrelationContext | undefined;
+  for (const field of ['invocationId', 'handId'] as const) {
+    const candidate = legacy[field];
+    if (candidate === undefined) continue;
+    if (typeof candidate !== 'string' || !CORRELATION_ID_PATTERN.test(candidate)) {
+      return { ok: false, error: `context.${field} 格式非法` };
+    }
+    value ??= { version: CORRELATION_CONTEXT_VERSION };
     value[field] = candidate;
   }
-  return { ok: true, value };
+  return { ok: true, ...(value ? { value } : {}) };
 }
 
 /** Build the only correlation fields allowed to be attached to logs. */

@@ -1,11 +1,15 @@
 import http from 'http';
-import { describe, expect, it } from 'vitest';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { ClientDaemonGateway, type ClientDaemonGatewayOptions } from '../runtime/clientDaemonGateway.js';
+import { ClientDaemonRunner } from '../runtime/clientDaemonRunner.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
-import { parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
+import { deriveClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
 import type { HandRecord, HandStatus, HandStore, RegisterHandInput } from '../runtime/handStore.js';
-import type { ToolInvocationRequest } from '../runtime/handProtocol.js';
+import type { ToolInvocationRequest, ToolInvocationResponse } from '../runtime/handProtocol.js';
 
 class MemoryHandStore implements HandStore {
   records = new Map<string, HandRecord>();
@@ -43,7 +47,8 @@ class MemoryHandStore implements HandStore {
   async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return [...this.records.values()].filter((r) => r.workspaceId === workspaceId); }
 }
 
-type GatewayOverrides = Partial<Pick<ClientDaemonGatewayOptions, 'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'logger'>>;
+type GatewayOverrides = Partial<Pick<ClientDaemonGatewayOptions,
+  'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'>>;
 
 async function withGateway<T>(
   fn: (args: { url: string; transport: ClientDaemonTransport; handStore: MemoryHandStore; gateway: ClientDaemonGateway }) => Promise<T>,
@@ -114,22 +119,72 @@ describe('ClientDaemonGateway', () => {
     });
   });
 
-  it('streams invoke chunks through ClientDaemonTransport and delivers cancel requests', async () => {
+  it('keeps derived hand and request identities within the wire limit', async () => {
+    await withGateway(async ({ url, transport }) => {
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      const daemonId = 'd'.repeat(256);
+      ws.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId, capabilities: [],
+      }));
+      const registered = await waitMessage(ws);
+      expect(registered).toMatchObject({ type: 'daemon_registered', handId: deriveClientDaemonHandId(daemonId) });
+      if (registered.type !== 'daemon_registered') throw new Error('daemon did not register');
+      let requestId: string | undefined;
+      ws.on('message', (raw) => {
+        const message = parseClientDaemonMessage(raw.toString());
+        if (message.type !== 'invoke_request') return;
+        requestId = message.requestId;
+        ws.send(serializeClientDaemonMessage({
+          type: 'invoke_completed', protocolVersion: 1,
+          requestId: message.requestId, invocationId: message.invocationId,
+          response: { status: 'success', content: 'done' },
+        }));
+      });
+
+      await expect(transport.invoke({
+        toolName: 'Read', input: {},
+        context: {
+          handId: registered.handId,
+          invocationId: 'logical-long-id',
+          workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+        },
+      })).resolves.toMatchObject({ status: 'success', content: 'done' });
+      expect(requestId?.length).toBeLessThanOrEqual(256);
+      ws.close();
+    });
+  });
+
+  it('streams and cancels with legacy or correlation-only invocation identities', async () => {
     await withGateway(async ({ url, transport }) => {
       const ws = new WebSocket(url);
       await waitOpen(ws);
       ws.send(serializeClientDaemonMessage({ type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-b', handId: 'hand-b', capabilities: [] }));
       await waitMessage(ws);
       const receivedCancels: string[] = [];
+      let invokeCount = 0;
+      let pendingCorrelationInvoke: Extract<ClientDaemonMessage, { type: 'invoke_request' }> | undefined;
       ws.on('message', (raw) => {
         const msg = parseClientDaemonMessage(raw.toString());
         if (msg.type === 'invoke_request') {
+          invokeCount += 1;
           expect((msg.request as ToolInvocationRequest).toolName).toBe('Shell');
+          if (msg.invocationId === 'inv-correlation') {
+            pendingCorrelationInvoke = msg;
+            return;
+          }
           ws.send(serializeClientDaemonMessage({ type: 'invoke_chunk', protocolVersion: 1, requestId: msg.requestId, invocationId: msg.invocationId, chunk: { type: 'output', channel: 'stdout', content: 'hello' } }));
-          ws.send(serializeClientDaemonMessage({ type: 'invoke_completed', protocolVersion: 1, requestId: msg.requestId, invocationId: msg.invocationId, response: { status: 'success', content: 'done' } }));
+          ws.send(serializeClientDaemonMessage({ type: 'invoke_chunk', protocolVersion: 1, requestId: msg.requestId, invocationId: msg.invocationId, chunk: { type: 'completed', response: { status: 'success', content: 'done' } } }));
         } else if (msg.type === 'cancel_request') {
           receivedCancels.push(msg.invocationId);
           ws.send(serializeClientDaemonMessage({ type: 'cancel_ack', protocolVersion: 1, requestId: msg.requestId, invocationId: msg.invocationId, accepted: true }));
+          if (pendingCorrelationInvoke?.invocationId === msg.invocationId) {
+            ws.send(serializeClientDaemonMessage({
+              type: 'invoke_completed', protocolVersion: 1,
+              requestId: pendingCorrelationInvoke.requestId, invocationId: msg.invocationId,
+              response: { status: 'error', error: 'cancelled' },
+            }));
+          }
         }
       });
 
@@ -144,10 +199,137 @@ describe('ClientDaemonGateway', () => {
         { type: 'completed', response: { status: 'success', content: 'done' } },
       ]);
 
-      await transport.cancel('hand-b', 'inv-b');
-      expect(receivedCancels).toEqual(['inv-b']);
+      const controller = new AbortController();
+      const correlationChunksPromise = (async () => {
+        const correlationChunks = [];
+        for await (const chunk of transport.invokeStream({
+          toolName: 'Shell', input: { command: 'sleep 10' },
+          context: {
+            signal: controller.signal,
+            correlation: { version: 1, handId: 'hand-b', invocationId: 'inv-correlation', attemptId: 'attempt-1' },
+            workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+          },
+        })) correlationChunks.push(chunk);
+        return correlationChunks;
+      })();
+      await waitUntil(() => Boolean(pendingCorrelationInvoke));
+      controller.abort();
+      expect(await correlationChunksPromise).toEqual([
+        { type: 'completed', response: { status: 'error', error: 'cancelled' } },
+      ]);
+      expect(receivedCancels).toEqual(['inv-correlation']);
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      expect(await transport.invoke({
+        toolName: 'Shell', input: { command: 'should-not-run' },
+        context: {
+          signal: preAborted.signal,
+          correlation: { version: 1, handId: 'hand-b', invocationId: 'inv-pre-aborted', attemptId: 'attempt-pre' },
+          workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+        },
+      })).toMatchObject({ status: 'error', error: 'client daemon invocation aborted before dispatch' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(invokeCount).toBe(2);
+      expect(receivedCancels).toEqual(['inv-correlation']);
       ws.close();
     });
+  });
+
+  it('rejects unsafe hello identities without echoing them into gateway logs', async () => {
+    const warnings: string[] = [];
+    await withGateway(async ({ url }) => {
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      const secret = 'secret-token\n[FORGED]';
+      const closed = new Promise<void>((resolve) => ws.once('close', () => resolve()));
+      ws.send(JSON.stringify({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: secret, handId: secret, capabilities: [],
+      }));
+      await closed;
+      expect(warnings).toEqual(['Client daemon hello rejected']);
+      expect(JSON.stringify(warnings)).not.toContain(secret);
+    }, { logger: { warn: (message) => warnings.push(message) } });
+  });
+
+  it('sanitizes remote cancel errors before logging them', async () => {
+    const warnings: string[] = [];
+    await withGateway(async ({ url, transport }) => {
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      ws.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-cancel-log', handId: 'hand-cancel-log', capabilities: [],
+      }));
+      await waitMessage(ws);
+      const secret = 'secret-token\n[FORGED]';
+      let cancelCount = 0;
+      ws.on('message', (raw) => {
+        const message = parseClientDaemonMessage(raw.toString());
+        if (message.type !== 'cancel_request') return;
+        cancelCount += 1;
+        if (cancelCount === 1) {
+          ws.send(serializeClientDaemonMessage({
+            type: 'cancel_ack', protocolVersion: 1,
+            requestId: message.requestId, invocationId: 'wrong-invocation',
+            accepted: true, message: secret,
+          }));
+        } else {
+          ws.send(serializeClientDaemonMessage({
+            type: 'daemon_error', protocolVersion: 1,
+            requestId: message.requestId, invocationId: 'wrong-invocation',
+            message: secret,
+          }));
+        }
+      });
+
+      await transport.cancel('hand-cancel-log', 'invocation-1');
+      await transport.cancel('hand-cancel-log', 'invocation-2');
+      expect(warnings).toEqual([
+        'Client daemon cancel delivery failed',
+        'Client daemon cancel delivery failed',
+      ]);
+      expect(JSON.stringify(warnings)).not.toContain(secret);
+      ws.close();
+    }, { logger: { warn: (message) => warnings.push(message) } });
+  });
+
+  it('does not echo malformed correlation keys or versions into gateway logs or responses', async () => {
+    const warnings: string[] = [];
+    await withGateway(async ({ url }) => {
+      const ws = new WebSocket(url);
+      await waitOpen(ws);
+      ws.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1, daemonId: 'daemon-safe-log', handId: 'hand-safe-log', capabilities: [],
+      }));
+      await waitMessage(ws);
+
+      const secret = 'secret-token\\n[FORGED]';
+      const keyResponsePromise = waitMessage(ws);
+      ws.send(JSON.stringify({
+        type: 'invoke_request', protocolVersion: 1, requestId: 'malformed-1', invocationId: 'logical-1',
+        request: {
+          toolName: 'Read', input: {},
+          context: { correlation: { version: 1, [secret]: 'value' }, workspace: {} },
+        },
+      }));
+      const keyResponse = await keyResponsePromise;
+      expect(keyResponse).toEqual({ type: 'daemon_error', protocolVersion: 1, message: 'invalid client daemon message' });
+
+      const versionSecret = 'version-secret\n[FORGED]';
+      const versionResponsePromise = waitMessage(ws);
+      ws.send(JSON.stringify({
+        type: 'invoke_request', protocolVersion: 1, requestId: 'malformed-2', invocationId: 'logical-2',
+        request: {
+          toolName: 'Read', input: {},
+          context: { correlation: { version: versionSecret }, workspace: {} },
+        },
+      }));
+      const versionResponse = await versionResponsePromise;
+      expect(versionResponse).toEqual({ type: 'daemon_error', protocolVersion: 1, message: 'invalid client daemon message' });
+      expect(JSON.stringify({ warnings, keyResponse, versionResponse })).not.toMatch(/secret-token|version-secret|FORGED/);
+      expect(warnings).toEqual(['Client daemon message rejected', 'Client daemon message rejected']);
+      ws.close();
+    }, { logger: { warn: (message) => warnings.push(message) } });
   });
 
   it('forces close on heartbeat timeout, fails pending invokes, and marks hand unhealthy with reason', async () => {
@@ -258,6 +440,122 @@ describe('ClientDaemonGateway', () => {
       gateway.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+
+  it('replaces a duplicate live socket without corrupting the latest grace generation', async () => {
+    await withGateway(async ({ url, transport }) => {
+      const ws1 = new WebSocket(url);
+      await waitOpen(ws1);
+      ws1.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1,
+        daemonId: 'daemon-generation', handId: 'hand-generation', capabilities: [],
+      }));
+      await waitMessage(ws1);
+      const firstRequest = new Promise<void>((resolve) => ws1.on('message', (raw) => {
+        if (parseClientDaemonMessage(raw.toString()).type === 'invoke_request') resolve();
+      }));
+      const firstPending = transport.invoke({
+        toolName: 'Write', input: {},
+        context: {
+          handId: 'hand-generation', invocationId: 'logical-generation-old',
+          workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+        },
+      });
+      await firstRequest;
+
+      const firstRejected = expect(firstPending).rejects.toThrow('connection replaced');
+      const ws2 = new WebSocket(url);
+      await waitOpen(ws2);
+      ws2.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1,
+        daemonId: 'daemon-generation', handId: 'hand-generation', capabilities: [],
+      }));
+      await waitMessage(ws2);
+      await firstRejected;
+
+      let secondRequest: Extract<ClientDaemonMessage, { type: 'invoke_request' }> | undefined;
+      const sawSecondRequest = new Promise<void>((resolve) => ws2.on('message', (raw) => {
+        const message = parseClientDaemonMessage(raw.toString());
+        if (message.type === 'invoke_request') {
+          secondRequest = message;
+          resolve();
+        }
+      }));
+      const secondPending = transport.invoke({
+        toolName: 'Write', input: {},
+        context: {
+          handId: 'hand-generation', invocationId: 'logical-generation-new',
+          workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+        },
+      });
+      await sawSecondRequest;
+      ws2.terminate();
+
+      const ws3 = new WebSocket(url);
+      await waitOpen(ws3);
+      ws3.send(serializeClientDaemonMessage({
+        type: 'daemon_hello', protocolVersion: 1,
+        daemonId: 'daemon-generation', handId: 'hand-generation', capabilities: [],
+        resumeInvocations: [{ invocationId: 'logical-generation-new' }],
+      }));
+      await waitMessage(ws3);
+      ws3.send(serializeClientDaemonMessage({
+        type: 'invoke_completed', protocolVersion: 1,
+        requestId: secondRequest!.requestId,
+        invocationId: secondRequest!.invocationId,
+        response: { status: 'success', content: 'latest-generation' },
+      }));
+      await expect(secondPending).resolves.toMatchObject({ status: 'success', content: 'latest-generation' });
+      ws3.close();
+    }, { disconnectGracePeriodMs: 2_000 });
+  });
+
+  it('resumes a built-in runner invocation across a grace-period reconnect', async () => {
+    await withGateway(async ({ url, transport }) => {
+      let resolveExecution: ((response: ToolInvocationResponse) => void) | undefined;
+      let executionSignal: AbortSignal | undefined;
+      const provider = {
+        execute: vi.fn(async (request: ToolInvocationRequest) => new Promise<ToolInvocationResponse>((resolve) => {
+          executionSignal = request.context.signal;
+          resolveExecution = resolve;
+        })),
+        listInternalTools: () => [],
+      };
+      const runner = new ClientDaemonRunner({
+        url,
+        daemonId: 'daemon-grace-runner',
+        handId: 'hand-grace-runner',
+        workspaceRoot: await mkdtemp(join(tmpdir(), 'client-daemon-grace-runner-')),
+        reconnectDelayMs: 50,
+        provider,
+      });
+      const run = runner.runForever();
+      try {
+        await waitUntil(() => transport.has('hand-grace-runner'));
+        const pending = transport.invoke({
+          toolName: 'Write', input: {},
+          context: {
+            handId: 'hand-grace-runner', invocationId: 'logical-grace-runner',
+            correlation: { version: 1, handId: 'hand-grace-runner', invocationId: 'logical-grace-runner', attemptId: 'attempt-grace-runner' },
+            workspace: { id: 'w', root: '/tmp', executionTarget: 'client' },
+          },
+        });
+        await waitUntil(() => provider.execute.mock.calls.length === 1);
+        const internal = runner as unknown as { ws?: WebSocket };
+        const disconnectedSocket = internal.ws!;
+        disconnectedSocket.terminate();
+        await waitUntil(() => executionSignal?.aborted === true);
+        await waitUntil(() => internal.ws !== disconnectedSocket && internal.ws?.readyState === WebSocket.OPEN);
+
+        resolveExecution?.({ status: 'success', content: 'resumed' });
+        await expect(pending).resolves.toMatchObject({ status: 'success', content: 'resumed' });
+        expect(provider.execute).toHaveBeenCalledTimes(1);
+      } finally {
+        resolveExecution?.({ status: 'error', error: 'test cleanup' });
+        await runner.stop();
+        await run;
+      }
+    }, { disconnectGracePeriodMs: 2_000 });
   });
 
   // C2: grace-period reconnect — when the socket drops with pending invokes
@@ -502,6 +800,7 @@ describe('ClientDaemonGateway', () => {
         handId: 'hand-c3',
         capabilities: changedCapabilities, // would be wrong to apply
         capabilitiesVersion: 'cap-A',     // …but version matches, so keep old
+        resumeInvocations: [{ invocationId: 'inv-c3' }],
       }));
       await waitMessage(ws2);
 
@@ -589,10 +888,12 @@ describe('ClientDaemonGateway', () => {
         handId: 'hand-c3b',
         capabilities: [{ name: 'workspace', description: 'v2', tools: [], constraints: [], risk: 'dangerous' }],
         capabilitiesVersion: 'cap-v2',
+        resumeInvocations: [{ invocationId: 'inv-c3b' }],
       }));
       await waitMessage(ws2);
       expect(handStore.records.get('hand-c3b')?.metadata.capabilityResync).toBe('updated');
       expect(handStore.records.get('hand-c3b')?.metadata.capabilitiesVersion).toBe('cap-v2');
+      expect(handStore.records.get('hand-c3b')?.capabilities[0]?.risk).toBe('dangerous');
       ws2.send(serializeClientDaemonMessage({
         type: 'invoke_completed',
         protocolVersion: 1,

@@ -184,11 +184,18 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     ? pickHandEnv(rawEnv as Record<string, string | undefined>)
     : {};
   const envKeys = Object.keys(env);
-  const invocationId = typeof context?.invocationId === 'string' ? context.invocationId : undefined;
-  const handId = typeof context?.handId === 'string' ? context.handId : undefined;
+  const invocationId = context?.invocationId;
+  const handId = context?.handId;
+  if (invocationId !== undefined && typeof invocationId !== 'string') {
+    return { ok: false, error: 'context.invocationId 格式非法' };
+  }
+  if (handId !== undefined && typeof handId !== 'string') {
+    return { ok: false, error: 'context.handId 格式非法' };
+  }
   const correlation = parseCorrelationContext(context?.correlation, { invocationId, handId });
   if (!correlation.ok) return correlation;
   const effectiveInvocationId = correlation.value?.invocationId ?? invocationId;
+  const effectiveHandId = correlation.value?.handId ?? handId;
 
   return {
     ok: true,
@@ -197,7 +204,7 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
       input: b.input,
       context: {
         ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
-        ...(handId ? { handId } : {}),
+        ...(effectiveHandId ? { handId: effectiveHandId } : {}),
         ...(correlation.value ? { correlation: correlation.value } : {}),
         workspace: {
           id,

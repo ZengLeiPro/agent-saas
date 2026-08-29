@@ -53,6 +53,19 @@ describe('parseWireRequest', () => {
     })).toMatchObject({ ok: false });
   });
 
+  it('rejects non-string legacy invocation and hand identities at the wire boundary', () => {
+    for (const invalid of [123, null, { nested: true }]) {
+      expect(parseWireRequest({
+        toolName: 'Shell', input: {},
+        context: { invocationId: invalid, workspace: { id: 'ws_1', sessionId: 'session-1' } },
+      })).toMatchObject({ ok: false });
+      expect(parseWireRequest({
+        toolName: 'Shell', input: {},
+        context: { handId: invalid, workspace: { id: 'ws_1', sessionId: 'session-1' } },
+      })).toMatchObject({ ok: false });
+    }
+  });
+
   it('uses correlation-only invocation identity for ACS cancel/single-flight', () => {
     expect(parseWireRequest({
       toolName: 'Shell', input: {},

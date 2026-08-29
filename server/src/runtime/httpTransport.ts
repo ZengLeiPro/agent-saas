@@ -245,6 +245,13 @@ export class HttpTransport implements ExecutionTransport {
   }
 
   async invoke(request: ToolInvocationRequest): Promise<ToolInvocationResponse> {
+    if (request.context.signal?.aborted) {
+      return {
+        status: 'error',
+        error: 'hand-server 调用在派发前已被调用方 abort',
+        metadata: { aborted: true },
+      };
+    }
     if (this.shouldUseStreaming(request)) {
       let finalResponse: ToolInvocationResponse | null = null;
       for await (const chunk of this.invokeStream(request)) {
@@ -344,6 +351,17 @@ export class HttpTransport implements ExecutionTransport {
   }
 
   private async *invokeStreamInternal(request: ToolInvocationRequest): ToolInvocationStream {
+    if (request.context.signal?.aborted) {
+      yield {
+        type: 'completed',
+        response: {
+          status: 'error',
+          error: 'hand-server stream 在派发前已被调用方 abort',
+          metadata: { aborted: true },
+        },
+      };
+      return;
+    }
     const wireRequest = this.buildWireRequest(request);
     const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
     const upstreamSignal = request.context.signal;

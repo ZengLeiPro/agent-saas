@@ -142,6 +142,18 @@ describe('durable tool invocation replay', () => {
     });
   });
 
+  it('日志仅记录缩短后的长 invocationId', async () => {
+    const invocationId = `inv-${'a'.repeat(252)}`;
+    const first = deps(new FileHandInvocationStore(dir));
+    await handleExecute(executeRequest(invocationId), responseCapture().response, first);
+
+    const second = deps(new FileHandInvocationStore(dir));
+    await handleExecute(executeRequest(invocationId), responseCapture().response, second);
+    const logs = JSON.stringify((second.logger.info as ReturnType<typeof vi.fn>).mock.calls);
+    expect(logs).toContain(`${invocationId.slice(0, 12)}…${invocationId.slice(-8)}`);
+    expect(logs).not.toContain(invocationId);
+  });
+
   it('重启后 execute-stream 重复派发以 SSE 重放终态', async () => {
     const store = new FileHandInvocationStore(dir);
     const first = deps(store);

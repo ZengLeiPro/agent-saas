@@ -36,6 +36,20 @@ describe('CorrelationContext', () => {
     )).toMatchObject({ ok: false });
   });
 
+  it('rejects non-string legacy identities without echoing untrusted keys or versions', () => {
+    for (const invocationId of [123, null, { nested: true }]) {
+      expect(parseCorrelationContext(undefined, { invocationId })).toMatchObject({ ok: false });
+      expect(parseCorrelationContext({ version: 1 }, { invocationId })).toMatchObject({ ok: false });
+    }
+
+    const secret = 'secret-token\n[FORGED]';
+    const unknownField = parseCorrelationContext({ version: 1, [secret]: 'value' });
+    const unsupportedVersion = parseCorrelationContext({ version: secret });
+    expect(unknownField).toEqual({ ok: false, error: 'context.correlation 包含不支持字段' });
+    expect(unsupportedVersion).toEqual({ ok: false, error: 'context.correlation.version 不支持' });
+    expect(JSON.stringify([unknownField, unsupportedVersion])).not.toContain(secret);
+  });
+
   it('keeps logs limited to shortened correlation ids', () => {
     const fields = correlationLogFields({
       version: 1,

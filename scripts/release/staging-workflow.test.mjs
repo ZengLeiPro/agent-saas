@@ -105,6 +105,7 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /had_previous_release=false/u);
   assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /systemctl reset-failed agent-saas-runtime-worker-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
   assert.match(deploy, /aliyun_cli="\$\(command -v aliyun\)"/u);
@@ -130,6 +131,13 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /Staging database runtime preflight failed/u);
   assert.ok(
     deploy.indexOf('Staging database runtime preflight failed') <
+      deploy.indexOf('ln -sfn "$target" "$current"'),
+  );
+  assert.match(deploy, /Staging runtime profile preflight failed/u);
+  assert.match(deploy, /dispatch\.env must be empty/u);
+  assert.match(deploy, /memory\.index must be absent/u);
+  assert.ok(
+    deploy.indexOf('Staging runtime profile preflight failed') <
       deploy.indexOf('ln -sfn "$target" "$current"'),
   );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);

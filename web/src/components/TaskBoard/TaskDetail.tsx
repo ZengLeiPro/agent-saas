@@ -63,7 +63,6 @@ function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecution
   const model = board?.stageModels?.[purpose] ?? board?.model;
   return model ?? "未指定时继承看板默认模型";
 }
-
 interface TaskDetailProps {
   open: boolean;
   active?: boolean;
@@ -965,8 +964,8 @@ export function TaskDetail({
                   ) : null}
                 </div>
               </form>
-                  </div>
                 </div>
+              </div>
 
               <TaskDetailComments
                 comments={comments}

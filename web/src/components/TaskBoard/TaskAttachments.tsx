@@ -20,10 +20,11 @@ interface TaskAttachmentFieldProps {
   taskId?: string;
   disabled?: boolean;
   className?: string;
+  hideHint?: boolean;
   onFilesChanged?: () => void;
 }
 
-export function TaskAttachmentField({ upload, taskId, disabled, className, onFilesChanged }: TaskAttachmentFieldProps) {
+export function TaskAttachmentField({ upload, taskId, disabled, className, hideHint = false, onFilesChanged }: TaskAttachmentFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className={cn("space-y-1", className)}>
@@ -49,7 +50,7 @@ export function TaskAttachmentField({ upload, taskId, disabled, className, onFil
         <Paperclip />
         添加附件
       </Button>
-      <span className="ml-2 text-xs text-muted-foreground">可多选，也可直接粘贴图片、视频或文件</span>
+      {!hideHint ? <span className="ml-2 text-xs text-muted-foreground">可多选，也可直接粘贴图片、视频或文件</span> : null}
       <FileUpload
         uploadedFiles={upload.uploadedFiles}
         uploading={upload.uploading}

@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelList, TaskBoardComment, TaskBoardExecution, TaskBoardTask } from "@agent/shared";
@@ -126,9 +126,10 @@ describe("TaskDetail 草稿隔离", () => {
   it("任务详情使用圆角半宽侧栏与单栏评论主区，附加信息默认折叠", async () => {
     const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("md:basis-1/2"); expect(screen.getByRole("dialog").className).toContain("md:min-w-[26rem]"); expect(screen.getByRole("dialog").className).toContain("rounded-xl"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
-    expect(screen.queryByTestId("task-detail-information")).toBeNull(); expect(screen.queryByText("编辑任务并补充评论")).toBeNull();
-    expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
-    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true"); await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
+    const information = screen.getByTestId("task-detail-information"); const headerActions = screen.getByTestId("task-detail-actions"); expect(information.getAttribute("aria-hidden")).toBe("true"); expect(information.className).toContain("max-h-0"); expect(screen.queryByText("编辑任务并补充评论")).toBeNull(); expect(within(headerActions).queryByText("交付任务")).toBeNull(); expect(within(headerActions).queryByText("需求池")).toBeNull(); expect(within(headerActions).queryByText("无")).toBeNull();
+    const close = screen.getByRole("button", { name: "关闭任务详情" }); expect(close.parentElement?.nextElementSibling).toBe(headerActions); expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.textContent).toContain("讨论（0）"); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
+    expect(information.className).toContain("max-h-[52vh]"); expect(information.getAttribute("aria-hidden")).toBe("false"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true"); const actions = screen.getByRole("group", { name: "任务操作" }); const save = within(actions).getByRole("button", { name: "保存任务" }); const archive = within(actions).getByRole("button", { name: "归档任务" }); expect(save.textContent).toBe("保存"); expect(archive.textContent).toContain("归档"); expect(save.className).toContain("w-[4.5rem]"); expect(archive.className).toContain("w-[4.5rem]");
+    await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {
@@ -160,12 +161,12 @@ describe("TaskDetail 草稿隔离", () => {
     ];
     const { container } = render(<TaskDetail {...props()} />);
 
-    expect(await screen.findAllByText("实施阶段")).toHaveLength(1);
+    const discussion = await screen.findByRole("region", { name: "任务讨论" }); expect(within(discussion).getAllByText("实施阶段")).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: "打开会话" })).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "打开会话" })[0]?.getAttribute("href")).toBe("/chat/session-work");
     expect(screen.queryByText("支持 Markdown 格式")).toBeNull();
     expect(screen.getByText("用户补充意见").closest("[class*='bg-user-bubble']")).toBeTruthy();
-    expect(container.querySelector("[aria-label='任务评论'] .size-8")).toBeNull();
+    expect(container.querySelector("[aria-label='任务讨论'] .size-8")).toBeNull();
   });
 
   it("执行开始后隐藏正文，并将正文作为评论区首条消息", async () => {
@@ -187,7 +188,7 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.getByText("任务正文")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "标题" })).toBeNull();
     expect(screen.queryByRole("textbox", { name: "正文" })).toBeNull();
-    expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).disabled).toBe(false);
 
     mocks.executions = [];
     mocks.fetchTask.mockResolvedValue(taskTwo);
@@ -203,7 +204,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(taskOne)); expandTaskDetails();
 
     const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
-    const comment = screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement;
+    const comment = screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement;
     fireEvent.change(description, { target: { value: "未保存的新正文" } });
     fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
 
@@ -217,11 +218,11 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "正文" })).toBeNull());
     rerender(<TaskDetail {...initialProps} active />);
     expect((await screen.findByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("未保存的新正文");
-    expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿");
+    expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿");
 
     rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
     await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
-    expect((screen.getByRole("textbox", { name: "发表评论" }) as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).value).toBe("");
   }, 10_000);
 
   it("旧任务保存返回时不会覆盖刚切换的新任务", async () => {
@@ -317,9 +318,8 @@ describe("TaskDetail 草稿隔离", () => {
 
     await waitFor(() => expect(onUpdate).toHaveBeenCalledWith(advisory, { kind: "delivery" }));
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("不能改回 advisory"));
-    expect(await screen.findByText("交付任务")).toBeTruthy();
-    expect(screen.getAllByText("待推进").length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "升级为交付任务" })).toBeNull(); expect(onExecute).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "开始实施" })).toBeTruthy(); const headerActions = screen.getByTestId("task-detail-actions"); expect(within(headerActions).queryByText("交付任务")).toBeNull();
+    expect(within(headerActions).queryByText("待推进")).toBeNull(); expect(screen.queryByRole("button", { name: "升级为交付任务" })).toBeNull(); expect(onExecute).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
 
@@ -340,8 +340,8 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props()} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    const pickers = screen.getAllByLabelText("选择附件");
-    fireEvent.change(pickers[0], {
+    const picker = within(screen.getByRole("region", { name: "任务讨论" })).getByLabelText("选择附件");
+    fireEvent.change(picker, {
       target: { files: [new File(["record"], uploaded.originalName, { type: uploaded.mimeType })] },
     });
     await waitFor(() => expect(screen.getByText(uploaded.originalName)).toBeTruthy());
@@ -353,7 +353,7 @@ describe("TaskDetail 草稿隔离", () => {
     }));
   });
 
-  it("发表评论后可复用任务会话继续执行", async () => {
+  it("发表讨论后可复用任务会话继续执行", async () => {
     const user = userEvent.setup();
     const published = {
       id: "comment-continue",
@@ -386,8 +386,8 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: todoTask, onTaskLoaded })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
+    await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
 
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledWith(taskOne.id, published.id));
@@ -429,8 +429,8 @@ describe("TaskDetail 草稿隔离", () => {
 
     expect(screen.getByText(/一个持久 Integration Agent 自主完成组合/)).toBeTruthy();
     expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
-    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
+    await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
 
     await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body: published.body }));
@@ -470,10 +470,10 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: todoTask })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
 
-    await user.type(screen.getByRole("textbox", { name: "发表评论" }), published.body);
-    await user.click(screen.getByRole("checkbox", { name: "发表后继续实施" }));
+    await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
+    await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
-    await screen.findByText(/评论已发表，但继续执行失败，可重试/);
+    await screen.findByText(/讨论已发表，但继续执行失败，可重试/);
 
     await user.click(screen.getByRole("button", { name: "重试继续执行" }));
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledTimes(2));
@@ -482,7 +482,7 @@ describe("TaskDetail 草稿隔离", () => {
   });
 
   it.each(["ready_to_merge", "done", "canceled"] as const)(
-    "不可创建 Execution 的 %s 任务仍可单独发表评论",
+    "不可创建 Execution 的 %s 任务仍可单独发表讨论",
     async (status) => {
       const user = userEvent.setup();
       const current = { ...taskOne, status };
@@ -491,8 +491,8 @@ describe("TaskDetail 草稿隔离", () => {
       render(<TaskDetail {...props({ task: current })} />);
       await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
 
-      expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
-      await user.type(screen.getByRole("textbox", { name: "发表评论" }), body);
+      expect(screen.queryByRole("checkbox", { name: /直接/ })).toBeNull();
+      await user.type(screen.getByRole("textbox", { name: "发表讨论" }), body);
       await user.click(screen.getByRole("button", { name: "发表" }));
 
       await waitFor(() => expect(mocks.addComment).toHaveBeenCalledWith({ body }));
@@ -606,7 +606,7 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ task: stuckTask, onExecute })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(stuckTask.id));
 
-    expect(screen.queryByRole("checkbox", { name: /发表后继续/ })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /直接/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "恢复实施" }));
     await waitFor(() => expect(onExecute).toHaveBeenCalledWith(stuckTask, "work"));
   });
@@ -650,7 +650,7 @@ describe("TaskDetail 草稿隔离", () => {
     ]);
     render(<TaskDetail {...props({ task: integrationTask })} />); expandTaskDetails();
 
-    expect(await screen.findByText("集成批次")).toBeTruthy();
+    expect(screen.queryByText("集成批次")).toBeNull();
     expect(await screen.findAllByText("1/2 已合并")).toHaveLength(2);
     expect(screen.getByText("处理中")).toBeTruthy();
     expect(screen.queryByText(/等待修复|重新复核|等待重试/)).toBeNull();

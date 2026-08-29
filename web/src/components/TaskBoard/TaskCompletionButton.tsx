@@ -32,12 +32,14 @@ export function TaskCompletionButton({
   return (
     <Button
       type="button"
+      size="sm"
       variant="outline"
+      aria-label="完成任务"
       onClick={onComplete}
       disabled={saving}
-      className="text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
+      className="w-[4.5rem] text-emerald-700 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-400"
     >
-      <CircleCheckBig />完成任务
+      <CircleCheckBig />完成
     </Button>
   );
 }

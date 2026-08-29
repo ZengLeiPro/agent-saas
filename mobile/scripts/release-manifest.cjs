@@ -675,6 +675,10 @@ function createExpoConfig(staticExpoConfig, options = {}) {
     },
     android: {
       ...(staticExpoConfig.android ?? {}),
+      // Non-production origins may deliberately use HTTP for local development.
+      // Production is always explicit and fail-closed at the native manifest layer.
+      usesCleartextTraffic: context.profile !== 'production',
+      allowBackup: false,
       permissions,
       package: manifest.identity.androidPackage,
       ...androidVersion,
@@ -765,6 +769,16 @@ function assertExpoIdentityMatchesManifest(expoConfig, manifest, context) {
   if (distributionConfig?.enterpriseUpdaterEnabled !== updaterEnabled) {
     mismatches.push(
       'extra.androidDistribution.enterpriseUpdaterEnabled does not match build policy',
+    );
+  }
+
+  if (expoConfig.android?.allowBackup !== false) {
+    mismatches.push('android.allowBackup must be false');
+  }
+  const expectedCleartext = context.profile !== 'production';
+  if (expoConfig.android?.usesCleartextTraffic !== expectedCleartext) {
+    mismatches.push(
+      `android.usesCleartextTraffic expected ${expectedCleartext}, got ${String(expoConfig.android?.usesCleartextTraffic)}`,
     );
   }
 

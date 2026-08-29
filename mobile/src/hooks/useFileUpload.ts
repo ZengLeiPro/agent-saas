@@ -1,7 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
+import {
+  launchCameraForUserAction,
+  launchPhotoLibraryForUserAction,
+} from '../platform/jitMediaPermissions';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
 import type { UploadedFile } from '@agent/shared';
@@ -119,7 +122,7 @@ export function useFileUpload(): FileUploadState {
 
   const pickImage = useCallback(async () => {
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const result = await launchPhotoLibraryForUserAction({
         mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: true,
         quality: 0.8,
@@ -155,18 +158,12 @@ export function useFileUpload(): FileUploadState {
 
   const takePhoto = useCallback(async () => {
     try {
-      const { status } = await ImagePicker.getCameraPermissionsAsync();
-      if (status !== 'granted') {
-        const { status: newStatus } = await ImagePicker.requestCameraPermissionsAsync();
-        if (newStatus !== 'granted') return;
-      }
-
-      const result = await ImagePicker.launchCameraAsync({
+      const result = await launchCameraForUserAction({
         mediaTypes: ['images'],
         quality: 0.8,
       });
 
-      if (result.canceled || !result.assets?.length) return;
+      if (!result || result.canceled || !result.assets?.length) return;
 
       const asset = result.assets[0];
       let uri = asset.uri;

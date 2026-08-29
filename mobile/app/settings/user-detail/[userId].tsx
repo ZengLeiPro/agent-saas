@@ -13,7 +13,7 @@ import {
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Camera, ChevronRight, FileText, Lock, SquarePen, X, type LucideIcon } from 'lucide-react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { launchPhotoLibraryForUserAction } from '../../../src/platform/jitMediaPermissions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { authFetch } from '@agent/shared';
 import type { UserInfo } from '@agent/shared';
@@ -247,7 +247,7 @@ export default function UserDetailScreen() {
   const secondaryName = user.realName ? user.username : null;
 
   const handleAvatarUpload = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await launchPhotoLibraryForUserAction({
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],

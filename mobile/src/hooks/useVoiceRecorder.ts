@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useAudioRecorder, AudioModule, setAudioModeAsync, type RecordingOptions } from 'expo-audio';
+import { useAudioRecorder, setAudioModeAsync, type RecordingOptions } from 'expo-audio';
 import { File } from 'expo-file-system';
+import { requestMicrophoneForUserAction } from '../platform/jitMediaPermissions';
 
 const MIN_DURATION_MS = 1000;
 const MAX_DURATION_MS = 1800000;
@@ -67,12 +68,13 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort }: UseVoiceRecorderOp
     if (isRecording && duration >= MAX_DURATION_MS / 1000) {
       void stopAndSend();
     }
-  }, [isRecording, duration]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isRecording, duration]);
 
   const startRecording = useCallback(async () => {
     try {
-      const status = await AudioModule.requestRecordingPermissionsAsync();
-      if (!status.granted) return;
+      // This function is invoked only from the user's microphone control.
+      const granted = await requestMicrophoneForUserAction();
+      if (!granted) return;
 
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();

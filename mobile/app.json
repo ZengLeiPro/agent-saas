@@ -21,12 +21,16 @@
       "infoPlist": {
         "CFBundleDevelopmentRegion": "zh_CN",
         "CFBundleLocalizations": ["zh_CN", "zh"],
-        "NSMicrophoneUsageDescription": "用于发送语音消息",
-        "NSCameraUsageDescription": "用于拍照上传",
-        "NSPhotoLibraryUsageDescription": "用于从系统图库选择图片或视频作为附件、头像",
-        "NSLocationWhenInUseUsageDescription": "用于操作日志中的位置记录",
-        "ITSAppUsesNonExemptEncryption": false,
-        "LSApplicationQueriesSchemes": ["iosamap"]
+        "NSMicrophoneUsageDescription": "用于录制并发送语音消息",
+        "NSCameraUsageDescription": "用于在用户选择拍照时拍摄并上传附件",
+        "NSPhotoLibraryUsageDescription": "用于在用户选择图库时选取图片或视频作为附件、头像",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [],
+        "NSPrivacyCollectedDataTypes": [],
+        "NSPrivacyTracking": false,
+        "NSPrivacyTrackingDomains": []
       }
     },
     "android": {
@@ -38,16 +42,34 @@
           "category": ["BROWSABLE", "DEFAULT"]
         }
       ],
-      "permissions": [
-        "RECORD_AUDIO",
-        "CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+      "permissions": ["android.permission.RECORD_AUDIO", "android.permission.CAMERA"],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CAMERA",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.FOREGROUND_SERVICE_HEALTH",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+        "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+        "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ],
+      "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -57,15 +79,29 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
-      "expo-audio",
       [
-        "expo-location",
+        "expo-secure-store",
         {
-          "locationWhenInUsePermission": "用于操作日志中的位置记录"
+          "faceIDPermission": false,
+          "configureAndroidBackup": false
         }
       ],
-      "expo-video",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "用于录制并发送语音消息",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
       "expo-sharing",
       [
         "expo-share-intent",
@@ -82,7 +118,8 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "./plugins/withAndroidSigningConfig"
+      "./plugins/withAndroidSigningConfig",
+      "./plugins/withMobilePrivacyControls"
     ],
     "extra": {
       "router": {}

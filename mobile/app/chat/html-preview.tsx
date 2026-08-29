@@ -174,19 +174,7 @@ export default function HtmlPreviewScreen() {
             if (request.url.startsWith('data:')) return true;
             // 允许 about:blank
             if (request.url === 'about:blank') return true;
-            // 高德地图链接：优先唤起 App，失败则 Safari 打开
-            if (request.url.includes('uri.amap.com/marker')) {
-              try {
-                const pos = new URL(request.url).searchParams.get('position');
-                if (pos) {
-                  const [lng, lat] = pos.split(',');
-                  const nativeUrl = `iosamap://viewMap?sourceApplication=album&poiname=Photo&lat=${lat}&lon=${lng}&dev=0`;
-                  void Linking.openURL(nativeUrl).catch(() => Linking.openURL(request.url));
-                  return false;
-                }
-              } catch { /* fall through */ }
-            }
-            // 外部链接用系统浏览器打开
+            // 外部链接统一交给系统浏览器，不提供定位或地图原生能力
             void Linking.openURL(request.url);
             return false;
           }}

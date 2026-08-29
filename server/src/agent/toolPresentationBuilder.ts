@@ -417,19 +417,31 @@ const METADATA_RULES: Record<string, MetadataRule> = {
     const occurrences = num(metadata.occurrences);
     const before = num(metadata.bytesBefore);
     const after = num(metadata.bytesAfter);
+    const editCount = num(metadata.editCount);
+    const fuzzyMatches = num(metadata.fuzzyMatches);
+    const firstChangedLine = num(metadata.firstChangedLine);
+    const diffUnavailable = metadata.diffUnavailable === true;
 
     const detail: PresentationDetailLine[] = [{ k: '路径', v: filePath }];
     if (replacements !== undefined) {
       // 命中多处但只替换一处时把两个数都写出来——这正是 replace_all 语义最容易看漏的地方
       const hint = occurrences !== undefined && occurrences !== replacements ? `（命中 ${occurrences} 处）` : '';
-      detail.push({ tree: '├', k: '替换', v: `${replacements} 处${hint}` });
+      const batch = editCount !== undefined && editCount > 1 ? `，${editCount} 个 edit` : '';
+      detail.push({ tree: '├', k: '替换', v: `${replacements} 处${hint}${batch}` });
+    }
+    if (fuzzyMatches !== undefined && fuzzyMatches > 0) {
+      detail.push({ tree: '├', k: '容错匹配', v: `${fuzzyMatches} 处` });
+    }
+    if (firstChangedLine !== undefined) {
+      detail.push({ tree: '├', k: '首个变更', v: `第 ${firstChangedLine} 行` });
     }
     if (before !== undefined && after !== undefined) {
       const delta = after - before;
       const sign = delta > 0 ? '+' : delta < 0 ? '−' : '±';
       detail.push({ tree: '└', k: '体积变化', v: `${sign}${formatBytes(Math.abs(delta))}` });
     }
-    return { title: `修改 ${basename(filePath)}`, detail, status: 'ok' };
+    if (diffUnavailable) detail.push({ warn: '文件已修改，但 unified diff 生成失败' });
+    return { title: `修改 ${basename(filePath)}`, detail, status: diffUnavailable ? 'warn' : 'ok' };
   },
 };
 
@@ -458,7 +470,11 @@ const RULES: Record<string, Rule> = {
     const filePath = str(input.file_path);
     if (!filePath) return null;
     const detail: ToolPresentation['detail'] = [{ k: '路径', v: filePath }];
-    if (input.replace_all === true) detail.push({ tree: '└', k: '模式', v: '全部替换' });
+    const edits = Array.isArray(input.edits) ? input.edits : undefined;
+    if (edits) detail.push({ tree: '├', k: '批量', v: `${edits.length} 个 edit` });
+    if (input.replace_all === true || edits?.some((edit) => Boolean(edit && typeof edit === 'object' && !Array.isArray(edit) && (edit as Record<string, unknown>).replace_all === true))) {
+      detail.push({ tree: '└', k: '模式', v: '含全部替换' });
+    }
     return { title: `修改 ${basename(filePath)}`, detail };
   },
 
@@ -662,18 +678,22 @@ const RESULT_METADATA_FIELDS: Record<string, readonly string[]> = {
   ],
   Read: ['linesRead', 'fileBytes', 'shownBytes', 'truncated', 'ranged'],
   Write: ['bytesWritten'],
-  Edit: ['replacements', 'occurrences', 'bytesBefore', 'bytesAfter'],
+  Edit: [
+    'replacements', 'occurrences', 'editCount', 'fuzzyMatches', 'bomPreserved', 'lineEnding',
+    'bytesBefore', 'bytesAfter', 'diff', 'diffTruncated', 'diffUnavailable', 'firstChangedLine',
+  ],
 };
 
-/** metadata 里的字符串值上限——signal 之类的短枚举，超长即视为脏数据丢弃 */
+/** 常规字符串是短枚举；Edit.diff 是唯一例外，已在生成端按 UTF-8 64KiB 截断。 */
 const RESULT_METADATA_TEXT_LIMIT = 120;
+const EDIT_DIFF_METADATA_TEXT_LIMIT = 64 * 1024;
 
 /**
  * 从 provider 的截断前 metadata 里挑出可长期落库的结构化事实。
  *
- * 只收标量（number/boolean/短 string）：durable 事件要能被 SQL 直接过滤统计，
- * 嵌套对象会立刻退化成「又一段需要正则的文本」。未登记的工具返回 undefined，
- * 与 presentation 同一条原则——宁可没有，不可编造。
+ * 默认只收标量（number/boolean/短 string）：durable 事件要能被 SQL 直接过滤统计。
+ * Edit.diff 是显式登记且在生成端硬截断的审计载荷例外；嵌套对象仍一律拒绝。
+ * 未登记的工具返回 undefined，与 presentation 同一条原则——宁可没有，不可编造。
  */
 export function extractToolResultMetadata(
   toolName: string,
@@ -691,7 +711,10 @@ export function extractToolResultMetadata(
       picked[key] = value;
     } else if (typeof value === 'string') {
       const trimmed = value.trim();
-      if (trimmed && trimmed.length <= RESULT_METADATA_TEXT_LIMIT) picked[key] = trimmed;
+      const limit = toolName === 'Edit' && key === 'diff'
+        ? EDIT_DIFF_METADATA_TEXT_LIMIT
+        : RESULT_METADATA_TEXT_LIMIT;
+      if (trimmed && Buffer.byteLength(trimmed, 'utf8') <= limit) picked[key] = trimmed;
     }
   }
   return Object.keys(picked).length > 0 ? picked : undefined;

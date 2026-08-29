@@ -37,6 +37,7 @@ import {
   type ToolRuntime,
   type WorkspaceProvider,
 } from '../agent/toolRuntime.js';
+import { parseToolInput } from '../agent/toolRuntimePaths.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
 import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { standardizeToolError } from './agentPlanDefense.js';
@@ -2312,7 +2313,13 @@ export class RawAgentLoop implements AgentLoop {
     if (INTERACTIVE_TOOL_NAMES.has(call.name)) return false;
     const descriptor = descriptorsByName.get(call.name);
     if (!descriptor) return true;
-    const input = parseToolArguments(call.arguments);
+    const rawInput = parseToolArguments(call.arguments);
+    let input: unknown;
+    try {
+      input = parseToolInput(descriptor, rawInput);
+    } catch {
+      return true;
+    }
     const policyContext = await this.refreshApprovalPolicy(context);
     const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
     return decision.type !== 'requires_approval';
@@ -2691,13 +2698,13 @@ export class RawAgentLoop implements AgentLoop {
     prepared?: PreparedParallelToolCall,
   ): Promise<ToolExecutionOutcome> {
     const descriptor = prepared?.descriptor ?? descriptorsByName.get(call.name);
-    const input = prepared?.input ?? parseToolArguments(call.arguments);
+    const rawInput = prepared?.input ?? parseToolArguments(call.arguments);
     if (!descriptor) {
       // D4 + G1：工具名不在当前 turn 的 tools[] 白名单内（descriptorsByName 来自当前 turn descriptors）。
       // 错误措辞标准化避免 deepseek 字面执行"try different approach"陷入循环。
       return {
         call,
-        input,
+        input: rawInput,
         result: { content: standardizeToolError(unavailableToolMessage(call.name)) },
         isError: true,
       };
@@ -2708,7 +2715,7 @@ export class RawAgentLoop implements AgentLoop {
         return {
           call,
           descriptor,
-          input,
+          input: rawInput,
           result: {
             content: standardizeToolError(
               `MCP namespace mismatch: ${call.name}（期望 ${expectedNamespace}，实际 ${call.namespace ?? '未提供'}）`,
@@ -2723,12 +2730,27 @@ export class RawAgentLoop implements AgentLoop {
       return {
         call,
         descriptor,
-        input,
+        input: rawInput,
         result: {
           content: standardizeToolError(
             `${this.webFetchSynthesisReason}；本次调用未出网，请基于已有材料收束回答`,
           ),
         },
+        isError: true,
+      };
+    }
+
+    // 审批、风险分档、展示与最终执行必须看到同一份已校验参数；否则
+    // prepareInput 会让用户批准原始形态，却执行归一化后的另一份写操作。
+    let input: unknown;
+    try {
+      input = parseToolInput(descriptor, rawInput);
+    } catch (err) {
+      return {
+        call,
+        descriptor,
+        input: rawInput,
+        result: { content: standardizeToolError(err instanceof Error ? err.message : String(err)) },
         isError: true,
       };
     }

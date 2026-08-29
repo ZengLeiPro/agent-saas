@@ -6,6 +6,7 @@ import {
   UnsafeFilePathError,
   copyTrustedFile,
   openTrustedFile,
+  openTrustedFileForUpdate,
   readTrustedFile,
   relativeToTrustedRoot,
   removeTrustedPath,
@@ -78,6 +79,28 @@ describe('trusted descriptor-relative file operations', () => {
       await opened.handle.close();
     }
     await expect(readTrustedFile(root, 'safe/inside.txt', 'utf8')).rejects.toBeInstanceOf(UnsafeFilePathError);
+  });
+
+  it('updates the opened inode without overwriting a path replacement', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'inside.txt');
+    const original = join(root, 'safe', 'nested', 'inside-original.txt');
+    const opened = await openTrustedFileForUpdate(root, 'safe/nested/inside.txt');
+    expect(await opened.handle.readFile('utf8')).toBe('inside');
+
+    await rename(target, original);
+    await writeFile(target, 'concurrent replacement');
+    try {
+      const updated = Buffer.from('edited');
+      await opened.handle.write(updated, 0, updated.length, 0);
+      await opened.handle.truncate(updated.length);
+      await opened.handle.sync();
+    } finally {
+      await opened.handle.close();
+    }
+
+    await expect(readFile(target, 'utf8')).resolves.toBe('concurrent replacement');
+    await expect(readFile(original, 'utf8')).resolves.toBe('edited');
   });
 
   it('rejects cross-root reads, writes, and deletes before filesystem I/O', async () => {

@@ -219,7 +219,7 @@ describe('PlatformToolRuntime', () => {
         expect(response.content).toContain('Output bytes: stdout=');
         expect(response.content).toContain('Full output files: stdout=tmp/tool-results/');
         expect(response.content).toContain('[stdout]');
-        expect(response.content).toContain('truncated');
+        expect(response.content).toContain('exceeded the in-memory capture window');
         expect(response.content.length).toBeLessThan(70 * 1024);
         const match = /stdout=(tmp\/tool-results\/[^ ]+\.txt)/.exec(response.content);
         expect(match?.[1]).toBeTruthy();

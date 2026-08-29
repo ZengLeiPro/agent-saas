@@ -92,14 +92,14 @@ async function invokeOrThrow(
   toolName: string,
   input: unknown,
   signal?: AbortSignal,
-): Promise<{ content: string; audit?: ExecutionInvocationAudit[] }> {
+): Promise<Extract<ToolInvocationResponse, { status: 'success' }>> {
   const response = await invoke(provider, ws, toolName, input, signal);
   if (response.status === 'error') {
     const err = new Error(response.error) as Error & { audit?: ExecutionInvocationAudit[] };
     err.audit = response.audit;
     throw err;
   }
-  return { content: response.content, audit: response.audit };
+  return response;
 }
 
 describeIfDocker('ContainerExecutionProvider', () => {
@@ -243,6 +243,8 @@ describeIfDocker('ContainerExecutionProvider', () => {
     });
     expect(editResp.content).toMatch(/Edited src\/a\.txt/);
     expect(editResp.audit?.[0]).toMatchObject({ provider: 'server-container', operation: 'edit' });
+    expect(editResp.metadata).toMatchObject({ replacements: 1, editCount: 1, firstChangedLine: 1 });
+    expect(editResp.metadata?.diff).toContain('-old value');
     expect(readFileSync(join(root, 'src', 'a.txt'), 'utf-8')).toBe('new value');
 
     const artifactResp = await invoke(provider, workspace(root), 'CreateArtifact', {

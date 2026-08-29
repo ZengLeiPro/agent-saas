@@ -4,7 +4,7 @@ import type { ToolInvocationResponse } from '../runtime/handProtocol.js';
 import type { ExecutionTargetKind, ToolDescriptor, WorkspaceRef } from './toolRuntime.js';
 
 export function parseToolInput<TInput>(descriptor: ToolDescriptor<TInput>, input: unknown): TInput {
-  return descriptor.schema.parse(input) as TInput;
+  return descriptor.schema.parse(descriptor.prepareInput ? descriptor.prepareInput(input) : input) as TInput;
 }
 
 export function isInside(baseDir: string, candidate: string): boolean {

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW;
+const UPDATE_FLAGS = constants.O_RDWR | constants.O_NOFOLLOW;
 const WRITE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW;
 
 export class UnsafeFilePathError extends Error {
@@ -136,6 +137,28 @@ export async function openTrustedFile(root: string, relativePath: string): Promi
     let handle: FileHandle;
     try {
       handle = await open(procPath(parent, leaf), READ_FLAGS);
+    } catch (error) {
+      asUnsafe(error);
+    }
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile()) throw Object.assign(new Error('Not a file'), { code: 'EISDIR' });
+      return { handle, stats, fdPath: procPath(handle) };
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      throw error;
+    }
+  } finally {
+    await parent.close();
+  }
+}
+
+export async function openTrustedFileForUpdate(root: string, relativePath: string): Promise<TrustedFile> {
+  const { parent, leaf } = await bindParent(root, relativePath);
+  try {
+    let handle: FileHandle;
+    try {
+      handle = await open(procPath(parent, leaf), UPDATE_FLAGS);
     } catch (error) {
       asUnsafe(error);
     }

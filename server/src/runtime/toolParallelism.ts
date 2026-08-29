@@ -2,6 +2,7 @@ import type {
   ToolAuthorization,
   ToolDescriptor,
 } from '../agent/toolRuntime.js';
+import { parseToolInput } from '../agent/toolRuntimePaths.js';
 import { isParallelSafeToolCall, parseToolArguments } from './rawAgentLoopHelpers.js';
 import type {
   ModelToolCall,
@@ -52,7 +53,13 @@ async function prepareParallelToolCall(
 ): Promise<PreparedParallelToolCall | undefined> {
   const descriptor = args.descriptorsByName.get(call.name);
   if (!descriptor) return undefined;
-  const input = parseToolArguments(call.arguments);
+  const rawInput = parseToolArguments(call.arguments);
+  let input: unknown;
+  try {
+    input = parseToolInput(descriptor, rawInput);
+  } catch {
+    return undefined;
+  }
   let dynamicallyEligible = false;
   try {
     dynamicallyEligible = descriptor.resolveConcurrency?.(input) === 'parallel';

@@ -11,6 +11,7 @@ import type {
   WorkspaceRef,
 } from './toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from './toolRuntime.js';
+import { createEditDiff } from './editOperations.js';
 import {
   MAX_ARTIFACT_PAYLOAD_BYTES,
   MAX_READ_IMAGE_SOURCE_BYTES,
@@ -236,15 +237,38 @@ export class ContainerExecutionProvider implements ExecutionProvider {
               : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata };
         }
         case 'Edit': {
-          const args = input as { file_path: string; old_string: string; new_string: string; replace_all?: boolean };
+          const args = input as {
+            file_path: string;
+            old_string?: string;
+            new_string?: string;
+            replace_all?: boolean;
+            edits?: Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
+          };
           const result = await this.runNodeHelper(workspace, {
             op: 'edit',
             file_path: workspaceRelativeInputPath(workspace.root, args.file_path),
             old_string: args.old_string,
             new_string: args.new_string,
             replace_all: args.replace_all,
-          }, audit);
-          return { status: 'success', content: result.content, audit };
+            edits: args.edits,
+          }, audit, { stdoutLimit: MAX_CONTAINER_HELPER_OUTPUT });
+          const { beforeContent, afterContent, ...metadata } = result.metadata ?? {};
+          if (typeof beforeContent !== 'string' || typeof afterContent !== 'string') {
+            throw new Error('Container Edit helper omitted diff source content.');
+          }
+          let diff: Record<string, unknown>;
+          try {
+            diff = createEditDiff(String(metadata.path ?? args.file_path), beforeContent, afterContent);
+          } catch {
+            // 编辑已经由 helper 通过同一 fd 提交；可选 diff 生成失败不能把成功写入伪报成失败。
+            diff = { diffUnavailable: true };
+          }
+          return {
+            status: 'success',
+            content: result.content,
+            audit,
+            metadata: { ...metadata, ...diff },
+          };
         }
         case 'CreateArtifact': {
           const args = input as {
@@ -841,7 +865,235 @@ function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
   return relativeWorkspacePath(cwd, fullPath);
 }
 
-const CONTAINER_FILE_HELPER_SCRIPT = `
+const CONTAINER_EDIT_HELPER_SCRIPT = String.raw`
+const editGraphemeSegmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+function editStripBom(content) {
+  return content.startsWith('\uFEFF')
+    ? { bom: '\uFEFF', text: content.slice(1) }
+    : { bom: '', text: content };
+}
+function editDetectLineEnding(content) {
+  const crlfCount = (content.match(/\r\n/g) || []).length;
+  const lfCount = (content.match(/\n/g) || []).length - crlfCount;
+  if (crlfCount === 0) return '\n';
+  if (crlfCount !== lfCount) return crlfCount > lfCount ? '\r\n' : '\n';
+  const firstNewline = content.indexOf('\n');
+  return firstNewline > 0 && content[firstNewline - 1] === '\r' ? '\r\n' : '\n';
+}
+function editNormalizeToLf(text) {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+function editRestoreLineEndings(text, ending) {
+  return ending === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
+}
+function editNormalizeFuzzy(text) {
+  return text
+    .normalize('NFKC')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, ' ');
+}
+function editNormalizeCodePoint(value) {
+  return value
+    .normalize('NFKC')
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, ' ');
+}
+function editAppendMappedSegment(segment, segmentOffset, output, starts, ends) {
+  const units = [];
+  for (const grapheme of editGraphemeSegmenter.segment(segment)) {
+    const start = segmentOffset + grapheme.index;
+    const end = start + grapheme.segment.length;
+    const normalized = editNormalizeCodePoint(grapheme.segment);
+    for (let i = 0; i < normalized.length; i++) {
+      units.push({ value: normalized[i], start, end });
+    }
+  }
+  while (units.length > 0 && /\s/u.test(units[units.length - 1].value)) units.pop();
+  for (const unit of units) {
+    output.push(unit.value);
+    starts.push(unit.start);
+    ends.push(unit.end);
+  }
+}
+function editCreateFuzzyView(content) {
+  const output = [];
+  const starts = [];
+  const ends = [];
+  let lineStart = 0;
+  while (lineStart < content.length) {
+    const newline = content.indexOf('\n', lineStart);
+    const lineEnd = newline === -1 ? content.length : newline;
+    editAppendMappedSegment(content.slice(lineStart, lineEnd), lineStart, output, starts, ends);
+    if (newline === -1) break;
+    output.push('\n');
+    starts.push(newline);
+    ends.push(newline + 1);
+    lineStart = newline + 1;
+  }
+  return { text: output.join(''), starts, ends };
+}
+function editCreateLineEndingView(content) {
+  const output = [];
+  const starts = [];
+  const ends = [];
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '\r') {
+      const end = content[i + 1] === '\n' ? i + 2 : i + 1;
+      output.push('\n');
+      starts.push(i);
+      ends.push(end);
+      if (end === i + 2) i++;
+      continue;
+    }
+    output.push(content[i]);
+    starts.push(i);
+    ends.push(i + 1);
+  }
+  return { text: output.join(''), starts, ends };
+}
+function editMapViewRanges(view, ranges) {
+  return ranges.map((range) => ({
+    start: view.starts[range.start],
+    end: view.ends[range.end - 1]
+  }));
+}
+function editFindAllRanges(content, needle) {
+  if (needle.length === 0) return [];
+  const ranges = [];
+  let from = 0;
+  while (from <= content.length - needle.length) {
+    const start = content.indexOf(needle, from);
+    if (start === -1) break;
+    ranges.push({ start, end: start + needle.length });
+    if (ranges.length > maxEditReplacements) {
+      throw new Error('Edit: match count exceeds ' + maxEditReplacements + '; use Write or Shell for a bulk rewrite.');
+    }
+    from = start + needle.length;
+  }
+  return ranges;
+}
+function editFuzzyRanges(view, oldText) {
+  const fuzzyOldText = editNormalizeFuzzy(oldText);
+  if (fuzzyOldText.length === 0) return [];
+  return editFindAllRanges(view.text, fuzzyOldText)
+    .filter((range) => {
+      const startsInsideMappedUnit = range.start > 0 && view.starts[range.start] === view.starts[range.start - 1];
+      const endsInsideMappedUnit = range.end < view.text.length && view.ends[range.end - 1] === view.ends[range.end];
+      return !startsInsideMappedUnit && !endsInsideMappedUnit;
+    })
+    .map((range) => ({
+      start: view.starts[range.start],
+      end: view.ends[range.end - 1]
+    }));
+}
+function editCollectOperations(request) {
+  const operations = [];
+  const hasLegacy = request.old_string !== undefined || request.new_string !== undefined;
+  if (hasLegacy) {
+    if (typeof request.old_string !== 'string' || typeof request.new_string !== 'string') {
+      throw new Error('Edit: legacy input requires string old_string and new_string.');
+    }
+    operations.push({
+      old_string: request.old_string,
+      new_string: request.new_string,
+      replace_all: request.replace_all
+    });
+  }
+  if (Array.isArray(request.edits)) operations.push(...request.edits);
+  if (operations.length === 0) throw new Error('Edit: at least one edit is required.');
+  return operations;
+}
+function editApplyOperations(content, operations, relPath) {
+  const stripped = editStripBom(content);
+  const lineEnding = editDetectLineEnding(stripped.text);
+  const lineEndingView = editCreateLineEndingView(stripped.text);
+  const fuzzyView = editCreateFuzzyView(lineEndingView.text);
+  const planned = [];
+  let occurrences = 0;
+  let fuzzyMatches = 0;
+  operations.forEach((operation, editIndex) => {
+    if (!operation || typeof operation.old_string !== 'string' || typeof operation.new_string !== 'string') {
+      throw new Error('Edit: edits[' + editIndex + '] requires string old_string and new_string.');
+    }
+    const oldIncludesBom = operation.old_string.startsWith('\uFEFF');
+    const oldText = editNormalizeToLf(oldIncludesBom ? operation.old_string.slice(1) : operation.old_string);
+    const newText = editRestoreLineEndings(editNormalizeToLf(operation.new_string), lineEnding);
+    const label = operations.length === 1 ? 'old_string' : 'edits[' + editIndex + '].old_string';
+    if (oldText.length === 0) throw new Error('Edit: ' + label + ' is empty; use Write for new files.');
+    if (oldText === newText) throw new Error('Edit: ' + label + ' equals new_string; no-op.');
+    let fuzzy = false;
+    let viewRanges = editFindAllRanges(lineEndingView.text, oldText);
+    if (viewRanges.length === 0) {
+      fuzzy = true;
+      viewRanges = editFuzzyRanges(fuzzyView, oldText);
+    }
+    if (oldIncludesBom) {
+      viewRanges = stripped.bom ? viewRanges.filter((range) => range.start === 0) : [];
+    }
+    if (viewRanges.length === 0) {
+      throw new Error('Edit: ' + label + ' not found. It must match including whitespace and newlines; fuzzy quote/space normalization also found no match.');
+    }
+    if (!operation.replace_all && viewRanges.length > 1) {
+      throw new Error('Edit: ' + label + ' matched ' + viewRanges.length + ' times; supply more surrounding context or set replace_all=true.');
+    }
+    occurrences += viewRanges.length;
+    const selectedViewRanges = operation.replace_all ? viewRanges : viewRanges.slice(0, 1);
+    const selected = editMapViewRanges(lineEndingView, selectedViewRanges);
+    if (planned.length + selected.length > maxEditReplacements) {
+      throw new Error('Edit: total replacement count exceeds ' + maxEditReplacements + '; split the operation or use Write/Shell.');
+    }
+    if (fuzzy) fuzzyMatches += selected.length;
+    for (const range of selected) {
+      const replacementText = stripped.bom && range.start === 0 && newText.startsWith('\uFEFF')
+        ? newText.slice(1)
+        : newText;
+      planned.push({ editIndex, start: range.start, end: range.end, newText: replacementText });
+    }
+  });
+  planned.sort((a, b) => a.start - b.start || a.end - b.end || a.editIndex - b.editIndex);
+  for (let i = 1; i < planned.length; i++) {
+    const previous = planned[i - 1];
+    const current = planned[i];
+    if (previous.end > current.start) {
+      throw new Error('Edit: edits[' + previous.editIndex + '] and edits[' + current.editIndex + '] overlap in ' + relPath + '; merge them into one edit or target disjoint regions.');
+    }
+  }
+  const chunks = [];
+  let cursor = 0;
+  for (const replacement of planned) {
+    chunks.push(stripped.text.slice(cursor, replacement.start), replacement.newText);
+    cursor = replacement.end;
+  }
+  chunks.push(stripped.text.slice(cursor));
+  const updated = chunks.join('');
+  if (updated === stripped.text) {
+    throw new Error('Edit: no changes made to ' + relPath + '; the replacement produced identical content.');
+  }
+  const updatedContent = stripped.bom + updated;
+  const updatedBytes = Buffer.byteLength(updatedContent, 'utf8');
+  if (updatedBytes > maxEditFileBytes) {
+    throw new Error('Edit: result too large (' + updatedBytes + 'B > ' + maxEditFileBytes + 'B); use Write for intentional full-file rewrites.');
+  }
+  return {
+    updatedContent,
+    replacements: planned.length,
+    occurrences,
+    editCount: operations.length,
+    fuzzyMatches,
+    bomPreserved: stripped.bom.length > 0,
+    lineEnding: lineEnding === '\r\n' ? 'CRLF' : 'LF'
+  };
+}
+`;
+
+export const CONTAINER_FILE_HELPER_SCRIPT = `
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const path = require('path');
@@ -851,6 +1103,8 @@ const maxFileBytes = ${MAX_FILE_BYTES};
 const maxReadLines = ${MAX_READ_LINES};
 const maxReadOutputBytes = ${MAX_READ_OUTPUT_BYTES};
 const maxEditFileBytes = 1000000;
+const maxEditReplacements = 10000;
+const maxContainerHelperOutputBytes = ${MAX_CONTAINER_HELPER_OUTPUT};
 const maxArtifactPayloadBytes = ${MAX_ARTIFACT_PAYLOAD_BYTES};
 const maxReadImageSourceBytes = ${MAX_READ_IMAGE_SOURCE_BYTES};
 const readImagePayloadMetadataKey = ${JSON.stringify(WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY)};
@@ -865,6 +1119,17 @@ function resolveWorkspacePath(inputPath) {
     throw new Error('Access denied: path outside workspace (' + inputPath + ')');
   }
   return fullPath;
+}
+async function assertNoSymlinkPath(fullPath, operation) {
+  const relPath = path.relative(root, fullPath);
+  let current = root;
+  for (const part of relPath.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    const stats = await fs.lstat(current);
+    if (stats.isSymbolicLink()) {
+      throw new Error(operation + ': refused symlink path ' + relativeWorkspacePath(current));
+    }
+  }
 }
 function relativeWorkspacePath(fullPath) {
   return path.relative(root, fullPath) || '.';
@@ -956,6 +1221,7 @@ async function readLineRange(fullPath, relPath, options) {
     : '\\n...[EOF: showing ' + relPath + ' lines ' + offset + '-' + endLine + '; total lines=' + lineNo + ']';
   return lines.join('\\n') + suffix;
 }
+${CONTAINER_EDIT_HELPER_SCRIPT}
 (async () => {
   try {
     const request = JSON.parse(await readStdin() || '{}');
@@ -1012,32 +1278,56 @@ async function readLineRange(fullPath, relPath, options) {
       const fullPath = resolveWorkspacePath(request.file_path);
       const relPath = relativeWorkspacePath(fullPath);
       assertNotDenied(relPath, editDenyPatterns, 'Edit: path "' + relPath + '" is in the deny list (sensitive config / credentials). Ask the admin via console if a change is genuinely required.');
-      let st;
+      await assertNoSymlinkPath(fullPath, 'Edit');
+      let handle;
       try {
-        st = await fs.stat(fullPath);
-      } catch (err) {
-        throw new Error('Edit: cannot stat ' + relPath + ' (' + (err && err.message ? err.message : String(err)) + ')');
+        handle = await fs.open(fullPath, fsSync.constants.O_RDWR | fsSync.constants.O_NOFOLLOW);
+        const openedPath = await fs.realpath('/proc/self/fd/' + handle.fd);
+        if (!isInside(root, openedPath)) throw new Error('Edit: opened file escapes workspace (' + relPath + ')');
+        const openedRelPath = relativeWorkspacePath(openedPath);
+        assertNotDenied(openedRelPath, editDenyPatterns, 'Edit: opened path "' + openedRelPath + '" is in the deny list (sensitive config / credentials).');
+        const st = await handle.stat();
+        if (!st.isFile()) throw new Error('Edit: path is not a file (' + relPath + ')');
+        if (st.size > maxEditFileBytes) throw new Error('Edit: file too large (' + st.size + 'B > ' + maxEditFileBytes + 'B); use Write to rewrite.');
+        const content = await handle.readFile('utf-8');
+        const applied = editApplyOperations(content, editCollectOperations(request), relPath);
+        const updatedBytes = Buffer.from(applied.updatedContent, 'utf8');
+        const bytesBefore = Buffer.byteLength(content, 'utf8');
+        const bytesAfter = updatedBytes.length;
+        const responseJson = JSON.stringify({
+          ok: true,
+          content: 'Edited ' + relPath + ' (' + applied.replacements + ' replacement' + (applied.replacements === 1 ? '' : 's') + ' across ' + applied.editCount + ' edit' + (applied.editCount === 1 ? '' : 's') + ', ' + bytesAfter + ' bytes).',
+          metadata: {
+            path: relPath,
+            replacements: applied.replacements,
+            occurrences: applied.occurrences,
+            editCount: applied.editCount,
+            fuzzyMatches: applied.fuzzyMatches,
+            bomPreserved: applied.bomPreserved,
+            lineEnding: applied.lineEnding,
+            bytesBefore,
+            bytesAfter,
+            beforeContent: content,
+            afterContent: applied.updatedContent
+          }
+        });
+        const responseBytes = Buffer.byteLength(responseJson, 'utf8');
+        if (responseBytes > maxContainerHelperOutputBytes) {
+          throw new Error('Edit: prepared helper response too large (' + responseBytes + 'B > ' + maxContainerHelperOutputBytes + 'B).');
+        }
+        let written = 0;
+        while (written < updatedBytes.length) {
+          const result = await handle.write(updatedBytes, written, updatedBytes.length - written, written);
+          if (result.bytesWritten <= 0) throw new Error('Edit: short write while updating ' + relPath + '.');
+          written += result.bytesWritten;
+        }
+        await handle.truncate(updatedBytes.length);
+        await handle.sync();
+        process.stdout.write(responseJson);
+        return;
+      } finally {
+        if (handle) await handle.close();
       }
-      if (st.size > maxEditFileBytes) throw new Error('Edit: file too large (' + st.size + 'B > ' + maxEditFileBytes + 'B); use Write to rewrite.');
-      let content;
-      try {
-        content = await fs.readFile(fullPath, 'utf-8');
-      } catch (err) {
-        throw new Error('Edit: cannot read ' + relPath + ' (' + (err && err.message ? err.message : String(err)) + ')');
-      }
-      const oldString = String(request.old_string ?? '');
-      const newString = String(request.new_string ?? '');
-      if (oldString === newString) throw new Error('Edit: old_string equals new_string; no-op.');
-      if (oldString === '') throw new Error('Edit: empty old_string not allowed; use Write for new files.');
-      const parts = content.split(oldString);
-      const occurrences = parts.length - 1;
-      if (occurrences === 0) throw new Error('Edit: old_string not found.');
-      if (!request.replace_all && occurrences > 1) throw new Error('Edit: old_string matched ' + occurrences + ' times; supply more surrounding context or set replace_all=true.');
-      const updated = parts.join(newString);
-      const replacements = request.replace_all ? occurrences : 1;
-      await fs.writeFile(fullPath, updated, 'utf-8');
-      process.stdout.write(JSON.stringify({ ok: true, content: 'Edited ' + relPath + ' (' + replacements + ' replacement' + (replacements === 1 ? '' : 's') + ', ' + updated.length + ' bytes).' }));
-      return;
     }
     if (request.op === 'artifactCreate') {
       const fullPath = resolveWorkspacePath(request.file_path);

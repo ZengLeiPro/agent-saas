@@ -178,6 +178,13 @@ export interface ToolDescriptor<TInput = unknown> {
   description: string;
   schema: z.ZodObject;
   /**
+   * 可选：在 schema 校验前修复模型常见的可逆参数形态错误。审批、风险分档、
+   * 展示与执行均使用 prepare + schema 后的同一份参数。
+   * 只允许做别名归一化、JSON 字符串解析、单对象转数组等无歧义转换；
+   * 不得补猜业务值或绕过 schema 校验。
+   */
+  prepareInput?: (input: unknown) => unknown;
+  /**
    * 可选：直接提供 JSON Schema 作为模型可见的 parameters。优先级高于
    * schema.toJSONSchema()。MCP 工具用它把 server 上报的 inputSchema 完整透传
    * 给模型——否则只能用 z.object({}).passthrough() 落到空 properties，模型

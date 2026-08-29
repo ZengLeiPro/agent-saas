@@ -224,7 +224,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: changes
-    if: needs.changes.outputs.publish != 'true' && needs.changes.outputs.contract_check == 'true'
+    if: needs.changes.outputs.contract_check == 'true'
 
     steps:
       - name: Checkout code

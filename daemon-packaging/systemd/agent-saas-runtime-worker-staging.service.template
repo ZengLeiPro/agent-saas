@@ -11,7 +11,7 @@ Group=agent-saas-staging
 RuntimeDirectory=agent-saas-staging
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
-WorkingDirectory=/opt/agent-saas-staging/current/server
+WorkingDirectory=/mnt/agent-saas-staging/runtime/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker

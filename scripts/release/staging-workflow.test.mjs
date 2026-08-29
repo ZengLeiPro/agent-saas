@@ -120,6 +120,12 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /"\$aliyun_cli" vpc DescribeSnatTableEntries/u);
   assert.match(deploy, /Staging ACS SNAT runtime identity cannot read the configured SNAT table/u);
   assert.match(deploy, /STAGING_RELEASE_ROOT="\$target"/u);
+  assert.match(
+    deploy,
+    /systemctl show agent-saas-runtime-worker-staging\.service --property Environment --value/u,
+  );
+  assert.match(deploy, /AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u);
+  assert.match(deploy, /does not publish the canonical readyfile/u);
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
@@ -227,4 +233,11 @@ test('Staging API and Worker keep mutable runtime data under the isolated NAS ro
     assert.match(unit, /WorkingDirectory=\/mnt\/agent-saas-staging\/runtime\/server/u);
     assert.match(unit, /ExecStart=.*\/opt\/agent-saas-staging\/current\/server\/dist\/index\.js/u);
   }
+
+  const workerUnit = await readFile(workerUnitPath, 'utf8');
+  assert.match(
+    workerUnit,
+    /Environment=AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
+  );
+  assert.doesNotMatch(workerUnit, /AGENT_SAAS_WORKER_READY_FILE/u);
 });

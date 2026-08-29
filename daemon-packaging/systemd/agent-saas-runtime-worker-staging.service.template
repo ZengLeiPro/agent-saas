@@ -17,7 +17,7 @@ Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_PROCESS_ROLE=runtime-worker
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/runtime-worker.pid
-Environment=AGENT_SAAS_WORKER_READY_FILE=/run/agent-saas-staging/runtime-worker.ready
+Environment=AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready
 EnvironmentFile=/etc/agent-saas-staging/server.env
 ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js
 ExecStop=/bin/kill -USR2 $MAINPID

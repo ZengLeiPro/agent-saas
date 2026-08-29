@@ -22,7 +22,23 @@ mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
 
-previous="$(readlink -f "$current" 2>/dev/null || true)"
+previous=''
+had_previous_release=false
+if [ -L "$current" ]; then
+  previous="$(readlink -f -- "$current")" || {
+    echo 'Staging current symlink cannot be resolved' >&2
+    exit 1
+  }
+  case "$previous" in
+    "$root/releases/"*) ;;
+    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
+  esac
+  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
+  had_previous_release=true
+elif [ -e "$current" ]; then
+  echo 'Staging current path exists but is not a symlink' >&2
+  exit 1
+fi
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
@@ -45,14 +61,17 @@ rollback() {
   else
     rm -f "$acs_identity"
   fi
-  if [ -n "$previous" ] && [ -d "$previous" ]; then
+  if [ "$had_previous_release" = true ]; then
     ln -sfn "$previous" "$current"
+    systemctl restart agent-saas-acs-orchestrator-staging.service || true
+    systemctl restart agent-saas-server-staging.service || true
+    systemctl restart agent-saas-runtime-worker-staging.service || true
   else
     rm -f "$current"
+    systemctl stop agent-saas-runtime-worker-staging.service || true
+    systemctl stop agent-saas-server-staging.service || true
+    systemctl stop agent-saas-acs-orchestrator-staging.service || true
   fi
-  systemctl restart agent-saas-acs-orchestrator-staging.service || true
-  systemctl restart agent-saas-server-staging.service || true
-  systemctl restart agent-saas-runtime-worker-staging.service || true
 }
 finish() {
   status=$?
@@ -63,6 +82,29 @@ finish() {
 }
 trap finish EXIT
 trap 'exit 130' HUP INT TERM
+
+node - "$acs_env" <<'NODE'
+const fs = require('node:fs');
+const envPath = process.argv[2];
+const values = Object.fromEntries(
+  fs.readFileSync(envPath, 'utf8')
+    .split(/\r?\n/u)
+    .filter((line) => line && !line.startsWith('#') && line.includes('='))
+    .map((line) => {
+      const separator = line.indexOf('=');
+      return [line.slice(0, separator), line.slice(separator + 1).trim()];
+    }),
+);
+const mode = values.ACS_SNAT_MODE || 'disabled';
+if (mode !== 'disabled') {
+  for (const key of ['ACS_SNAT_REGION_ID', 'ACS_SNAT_TABLE_ID', 'ACS_SNAT_IP']) {
+    if (!values[key]) throw new Error(`Staging ACS configuration is missing ${key}`);
+  }
+}
+if (mode === 'shared-cidr' && !(values.ACS_SNAT_SHARED_CIDRS || values.ACS_SNAT_SHARED_CIDR)) {
+  throw new Error('Staging ACS shared-cidr mode has no configured CIDR');
+}
+NODE
 
 if [ -d "$target" ]; then
   node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server

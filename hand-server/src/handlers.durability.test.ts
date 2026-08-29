@@ -337,6 +337,94 @@ describe('drain 与失败路径', () => {
     expect(handlerDeps.logger.error).toHaveBeenCalled();
   });
 
+  it('complete 落盘失败后 GET 对账仍保留 durablePersistFailed（不误报 durable success）', async () => {
+    const handlerDeps = deps({
+      registerRunning: vi.fn(async () => ({
+        outcome: 'created',
+        record: {
+          invocationId: 'inv-persist-get',
+          state: 'running' as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      })),
+      complete: vi.fn(async () => {
+        const err = new Error('ENOSPC: no space left on device');
+        (err as NodeJS.ErrnoException).code = 'ENOSPC';
+        throw err;
+      }),
+    } as unknown as HandInvocationStore);
+    const executed = responseCapture();
+    await handleExecute(executeRequest('inv-persist-get'), executed.response, handlerDeps);
+    expect(executed.result().body.metadata).toEqual({ durablePersistFailed: true });
+
+    // 网络丢包后 Brain 走 GET 恢复：必须看到同一份带标记的结果
+    const queried = responseCapture();
+    await handleGetInvocationResult(
+      controlRequest('GET'),
+      queried.response,
+      handlerDeps,
+      'inv-persist-get',
+    );
+    expect(queried.result().statusCode).toBe(200);
+    expect(queried.result().body.completed).toBe(true);
+    expect(queried.result().body.response).toEqual({
+      status: 'success',
+      content: 'executed',
+      metadata: { durablePersistFailed: true },
+    });
+  });
+
+  it('SSE 路径 complete 落盘失败：completed 帧与 GET 对账同源保留 durablePersistFailed', async () => {
+    const handlerDeps = deps({
+      registerRunning: vi.fn(async () => ({
+        outcome: 'created',
+        record: {
+          invocationId: 'inv-sse-persist-error',
+          state: 'running' as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      })),
+      complete: vi.fn(async () => {
+        throw new Error('EIO');
+      }),
+    } as unknown as HandInvocationStore);
+    handlerDeps.provider = {
+      executeStream: async function* () {
+        yield { type: 'progress' as const, message: 'running' };
+        yield {
+          type: 'completed' as const,
+          response: { status: 'success' as const, content: 'streamed' },
+        };
+      },
+    } as any;
+
+    const sse = sseCapture();
+    await handleExecuteStream(executeRequest('inv-sse-persist-error'), sse.response, handlerDeps);
+    const frames = sse.frames();
+    const completed = frames.find((frame) => frame.type === 'completed') as
+      { response: ToolInvocationResponse } | undefined;
+    expect(completed?.response).toEqual({
+      status: 'success',
+      content: 'streamed',
+      metadata: { durablePersistFailed: true },
+    });
+
+    const queried = responseCapture();
+    await handleGetInvocationResult(
+      controlRequest('GET'),
+      queried.response,
+      handlerDeps,
+      'inv-sse-persist-error',
+    );
+    expect(queried.result().body.response).toEqual({
+      status: 'success',
+      content: 'streamed',
+      metadata: { durablePersistFailed: true },
+    });
+  });
+
   it('complete 落盘失败后同进程重派：从内存重放（不二次执行、不 409 卡死）', async () => {
     let registerCalls = 0;
     const handlerDeps = deps({

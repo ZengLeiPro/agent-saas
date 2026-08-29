@@ -163,35 +163,34 @@ function storeInvocationResult(
 }
 
 /**
- * Durable journal 落终态（TASK-316 返工）：落盘失败不得向调用方确认 durable 成功。
- * 返回 durable=false 时调用方必须在响应上标记 `metadata.durablePersistFailed`，
- * 让 Brain 观察到"结果已产生但未持久化"（可观察），同进程重派时从内存重放（可恢复）；
- * Hand 重启后该记录会被对账为 interrupted/indeterminate，如实暴露副作用不确定性。
+ * Durable journal 落终态（TASK-316 返工）：落盘失败不得向调用方确认 durable 成功，
+ * 且内存快路径必须保存同一份带标记的结果——先 journal 后内存，失败时
+ * `invocationResults` 里存的就是 `markPersistFailed()` 之后的 response，
+ * 使首次响应、同进程重放、GET 对账三者返回完全一致的结果，
+ * 不会出现"execute 标了 durablePersistFailed，GET 恢复却报 durable success"的分叉。
+ * 重启后该记录会被对账为 interrupted/indeterminate，如实暴露副作用不确定性。
  */
-async function persistInvocationResult(
-  deps: HandlerDeps,
-  invocationId: string | undefined,
-  response: ToolInvocationResponse,
-): Promise<boolean> {
-  if (!invocationId || !deps.invocationStore) return true;
-  try {
-    await deps.invocationStore.complete(invocationId, response);
-    return true;
-  } catch (err) {
-    deps.logger.error(
-      `invocation store complete failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return false;
-  }
-}
-
 async function storeAndPersistInvocationResult(
   deps: HandlerDeps,
   invocationId: string | undefined,
   response: ToolInvocationResponse,
-): Promise<boolean> {
+): Promise<ToolInvocationResponse> {
+  if (invocationId && deps.invocationStore) {
+    try {
+      await deps.invocationStore.complete(invocationId, response);
+      storeInvocationResult(deps, invocationId, response);
+      return response;
+    } catch (err) {
+      deps.logger.error(
+        `invocation store complete failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      const marked = markPersistFailed(response);
+      storeInvocationResult(deps, invocationId, marked);
+      return marked;
+    }
+  }
   storeInvocationResult(deps, invocationId, response);
-  return await persistInvocationResult(deps, invocationId, response);
+  return response;
 }
 
 /** journal 落盘失败时的显式标记：结果仍然返回，但明确告知调用方 durability 未确认。 */
@@ -426,9 +425,10 @@ async function executePreparedTool(
       error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
+  // 返回值即（可能带 durablePersistFailed 标记的）持久化结果，与内存/GET 完全同源。
+  const persisted = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
   prepared.cleanup();
-  return durable ? response : markPersistFailed(response);
+  return persisted;
 }
 
 /** 响应已写出（或连接已断）后释放 drain 跟踪；真实 res 走 finish 事件，mock 同步收尾。 */
@@ -553,12 +553,12 @@ export async function handleExecuteStream(
       for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
         if (chunk.type === 'completed') {
           sawCompleted = true;
-          const durable = await storeAndPersistInvocationResult(
+          // 持久化结果（含失败标记）直接写回 chunk，SSE 与内存/GET 完全同源。
+          chunk.response = await storeAndPersistInvocationResult(
             deps,
             prepared.invocationId,
             chunk.response,
           );
-          if (!durable) chunk.response = markPersistFailed(chunk.response);
         }
         const written = await writeChunk(chunk);
         if (!written) break;
@@ -573,12 +573,9 @@ export async function handleExecuteStream(
       status: 'error',
       error: `hand-server provider.executeStream throw: ${err instanceof Error ? err.message : String(err)}`,
     };
-    const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
+    const persisted = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
     sawCompleted = true;
-    await writeChunk({
-      type: 'completed',
-      response: durable ? response : markPersistFailed(response),
-    });
+    await writeChunk({ type: 'completed', response: persisted });
   } finally {
     clearInterval(heartbeat);
     if (!sawCompleted) {
@@ -586,11 +583,12 @@ export async function handleExecuteStream(
         status: 'error',
         error: 'provider stream ended without completed chunk',
       };
-      const durable = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
-      await writeChunk({
-        type: 'completed',
-        response: durable ? response : markPersistFailed(response),
-      });
+      const persisted = await storeAndPersistInvocationResult(
+        deps,
+        prepared.invocationId,
+        response,
+      );
+      await writeChunk({ type: 'completed', response: persisted });
     }
     res.off('close', markClosed);
     prepared.cleanup();

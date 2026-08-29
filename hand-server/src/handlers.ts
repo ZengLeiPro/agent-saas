@@ -1,8 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
 
 import {
   ContainerExecutionProvider,
@@ -13,15 +9,19 @@ import {
 } from 'server/agent/toolRuntime.js';
 import { unknownNetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
 import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
-import type {
-  ToolInvocationRequest,
-  ToolInvocationResponse,
-} from 'server/runtime/handProtocol.js';
+import type { ToolInvocationRequest, ToolInvocationResponse } from 'server/runtime/handProtocol.js';
 
 import type { HandServerConfig } from './config.js';
+import type { HandInvocationStore, RegisterRunningOutcome } from './invocationStore.js';
+import { MAX_BODY_BYTES, readBody, sendJson } from './httpSupport.js';
 import type { WorkspaceResolver } from './workspaceResolver.js';
 
-const MAX_BODY_BYTES = 8 * 1024 * 1024;
+/**
+ * POST /provision 已拆到 provision.ts（TASK-316 为 handlers.ts 减行）；
+ * 这里 re-export 保持 `./handlers.js` 既有 import 兼容。
+ */
+export { handleProvision, parseProvisionRecipe } from './provision.js';
+export type { ProvisioningLogEntry, ParsedRecipe } from './provision.js';
 
 export interface Logger {
   info(msg: string): void;
@@ -38,11 +38,23 @@ export interface HandlerDeps {
   config: HandServerConfig;
   invocations?: Map<string, AbortController>;
   invocationResults?: Map<string, InvocationResultRecord>;
+  /**
+   * Durable Tool Invocation journal（TASK-316）：invocation 状态/结果/cancel tombstone
+   * 落盘，Hand 重启后仍可查询与对账。缺省 = 纯内存旧行为（测试/显式 memory 模式）。
+   */
+  invocationStore?: HandInvocationStore;
+  /**
+   * SIGTERM drain 中：新 invocation 一律 503。Brain 侧 fetchWithConnectRetry 对
+   * 裸 503（无 x-acs-error-code）有"请求未被执行"语义的安全退避重试，正好衔接。
+   */
+  draining?: boolean;
+  /** 在途 invocation 跟踪（drain 等待收尾用）；key 唯一，含无 invocationId 的请求。 */
+  activeInvocations?: Set<string>;
   workspaceResolver: WorkspaceResolver;
   provider: ExecutionProvider;
   /**
    * Hand 端内部 backend 名（写进 WorkspaceRef.executionTarget）。
-   * 注意这跟 brain 侧调用时的 `executionTarget=server-remote` 是不同维度——
+   * 注意这跟 brain 侧调用时的 `executionTarget=server-remote` 是不同维度--
    * brain 视角描述 hand 部署位置，hand 内部视角描述实际跑的 backend，
    * audit 字段需要后者作为 provider 标识。
    */
@@ -50,33 +62,43 @@ export interface HandlerDeps {
   logger: Logger;
 }
 
-
 export function buildHealthResponse(deps: HandlerDeps): Record<string, unknown> {
-  const networkPolicy = deps.provider instanceof ContainerExecutionProvider
-    ? deps.provider.networkPolicyStatus()
-    : unknownNetworkPolicyStatus(
-        deps.config.networkPolicy,
-        'Local hand backend does not enforce coding-hand networkPolicy. Use container/ACS backends for isolation.',
-      );
+  const networkPolicy =
+    deps.provider instanceof ContainerExecutionProvider
+      ? deps.provider.networkPolicyStatus()
+      : unknownNetworkPolicyStatus(
+          deps.config.networkPolicy,
+          'Local hand backend does not enforce coding-hand networkPolicy. Use container/ACS backends for isolation.',
+        );
   return {
     status: 'ok',
     backend: deps.config.backend,
     internalExecutionTarget: deps.internalExecutionTarget,
+    ...(deps.draining ? { draining: true } : {}),
+    ...(deps.activeInvocations ? { activeInvocations: deps.activeInvocations.size } : {}),
+    ...(deps.invocationStore ? { durableInvocations: true } : {}),
     networkPolicy,
-    container: deps.config.backend === 'container'
-      ? {
-          image: deps.config.container.image ?? process.env.KY_AGENT_CONTAINER_IMAGE ?? 'node:22-bookworm-slim',
-          user: deps.config.container.user ?? 'process uid/gid',
-          readOnly: deps.config.container.readOnly ?? true,
-          network: 'none',
-          networkPolicy,
-          capDrop: deps.config.container.capDrop ?? ['ALL'],
-          securityOpt: deps.config.container.securityOpt ?? ['no-new-privileges'],
-          memory: deps.config.container.memory ?? process.env.KY_AGENT_CONTAINER_MEMORY ?? '1024m',
-          cpus: deps.config.container.cpus ?? process.env.KY_AGENT_CONTAINER_CPUS ?? '1.0',
-          pidsLimit: deps.config.container.pidsLimit ?? Number.parseInt(process.env.KY_AGENT_CONTAINER_PIDS_LIMIT ?? '256', 10),
-        }
-      : undefined,
+    container:
+      deps.config.backend === 'container'
+        ? {
+            image:
+              deps.config.container.image ??
+              process.env.KY_AGENT_CONTAINER_IMAGE ??
+              'node:22-bookworm-slim',
+            user: deps.config.container.user ?? 'process uid/gid',
+            readOnly: deps.config.container.readOnly ?? true,
+            network: 'none',
+            networkPolicy,
+            capDrop: deps.config.container.capDrop ?? ['ALL'],
+            securityOpt: deps.config.container.securityOpt ?? ['no-new-privileges'],
+            memory:
+              deps.config.container.memory ?? process.env.KY_AGENT_CONTAINER_MEMORY ?? '1024m',
+            cpus: deps.config.container.cpus ?? process.env.KY_AGENT_CONTAINER_CPUS ?? '1.0',
+            pidsLimit:
+              deps.config.container.pidsLimit ??
+              Number.parseInt(process.env.KY_AGENT_CONTAINER_PIDS_LIMIT ?? '256', 10),
+          }
+        : undefined,
     tools: deps.provider.listInternalTools().map((tool) => tool.name),
   };
 }
@@ -108,11 +130,6 @@ export function createProvider(config: HandServerConfig): ExecutionProvider {
         memory: config.container.memory,
         cpus: config.container.cpus,
         pidsLimit: config.container.pidsLimit,
-        readOnly: config.container.readOnly,
-        tmpfs: config.container.tmpfs,
-        capDrop: config.container.capDrop,
-        securityOpt: config.container.securityOpt,
-        networkPolicy: config.networkPolicy,
       })
     : new ServerLocalExecutionProvider();
 }
@@ -120,381 +137,6 @@ export function createProvider(config: HandServerConfig): ExecutionProvider {
 export function backendToTarget(backend: 'local' | 'container'): ExecutionTargetKind {
   return backend === 'container' ? 'server-container' : 'server-local';
 }
-
-
-/**
- * B3 provisioning step log entry. Mirrored to the brain via the /provision
- * response and persisted there as a `hand_provisioning_log` event so audit
- * can correlate provision failures with brain-side decisions.
- */
-export interface ProvisioningLogEntry {
-  step: string;
-  command?: string;
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number;
-  durationMs?: number;
-  status: 'ok' | 'error' | 'skipped';
-  note?: string;
-}
-
-export interface ParsedRecipe {
-  workspaceId: string;
-  repo?: { url: string; ref?: string; remote?: string };
-  files?: Array<{ artifactId: string; path: string; url?: string; signedUrl?: string }>;
-  setupCommands?: string[];
-  resources?: { timeoutMs?: number };
-}
-
-const SETUP_DEFAULT_TIMEOUT_MS = 60_000;
-const SETUP_MAX_OUTPUT_BYTES = 16 * 1024;
-
-/**
- * POST /provision handler. Materializes the workspace dir, then executes recipe
- * setupCommands and returns a structured log of every step. Repo and artifact
- * hydrate are intentionally host-side operations: credentials/signed URLs are
- * consumed by the hand-server process and are never written into setup command
- * text or agent-visible recipe logs.
- */
-export async function handleProvision(
-  req: IncomingMessage,
-  res: ServerResponse,
-  deps: HandlerDeps,
-): Promise<void> {
-  if (req.method !== 'POST') {
-    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
-  }
-
-  const auth = req.headers.authorization ?? '';
-  const match = /^Bearer\s+(.+)$/i.exec(auth);
-  if (!match || match[1] !== deps.config.authToken) {
-    deps.logger.warn(`provision auth 失败 from=${req.socket.remoteAddress ?? '-'}`);
-    return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  }
-
-  let bodyRaw: string;
-  try {
-    bodyRaw = await readBody(req, MAX_BODY_BYTES);
-  } catch (err) {
-    return sendJson(res, 413, {
-      status: 'error',
-      error: `body 读取失败: ${err instanceof Error ? err.message : String(err)}`,
-    });
-  }
-
-  let body: unknown;
-  try {
-    body = JSON.parse(bodyRaw);
-  } catch {
-    return sendJson(res, 400, { status: 'error', error: 'body 不是合法 JSON' });
-  }
-
-  const recipe = parseProvisionRecipe(body);
-  if (!recipe) {
-    return sendJson(res, 400, { status: 'error', error: 'workspaceId 必须为非空字符串' });
-  }
-
-  const logs: ProvisioningLogEntry[] = [];
-  let workspacePath: string;
-  const ensureStart = Date.now();
-  try {
-    workspacePath = await deps.workspaceResolver.resolveAndEnsure(recipe.workspaceId);
-    logs.push({
-      step: 'workspace_ensure',
-      status: 'ok',
-      durationMs: Date.now() - ensureStart,
-      note: `workspace mounted at ${workspacePath}`,
-    });
-  } catch (err) {
-    logs.push({
-      step: 'workspace_ensure',
-      status: 'error',
-      durationMs: Date.now() - ensureStart,
-      stderr: err instanceof Error ? err.message : String(err),
-    });
-    return sendJson(res, 400, {
-      status: 'error',
-      error: err instanceof Error ? err.message : String(err),
-      logs,
-    });
-  }
-
-  const recipeHash = hashRecipe(recipe);
-
-  if (recipe.repo) {
-    const start = Date.now();
-    const result = await hydrateRepo(recipe.repo, workspacePath, clampTimeoutMs(recipe.resources?.timeoutMs));
-    logs.push({
-      step: 'repo_hydrate',
-      command: result.command ? redactProvisioningCommand(result.command) : undefined,
-      ...(result.stdout ? { stdout: truncate(result.stdout, SETUP_MAX_OUTPUT_BYTES) } : {}),
-      ...(result.stderr ? { stderr: truncate(result.stderr, SETUP_MAX_OUTPUT_BYTES) } : {}),
-      exitCode: result.exitCode,
-      durationMs: Date.now() - start,
-      status: result.exitCode === 0 ? 'ok' : 'error',
-      ...(result.note ? { note: result.note } : {}),
-    });
-    if (result.exitCode !== 0) {
-      return sendJson(res, 200, {
-        status: 'error',
-        error: 'repo hydrate failed; see logs[]',
-        workspaceId: recipe.workspaceId,
-        backend: deps.config.backend,
-        internalExecutionTarget: deps.internalExecutionTarget,
-        metadata: { recipeVersion: 1, recipeHash, retryPolicy: defaultRetryPolicy('repo_hydrate') },
-        logs,
-      });
-    }
-  }
-  if (recipe.files?.length) {
-    for (let i = 0; i < recipe.files.length; i++) {
-      const file = recipe.files[i]!;
-      const start = Date.now();
-      const result = await hydrateArtifact(file, workspacePath);
-      logs.push({
-        step: `artifact_hydrate#${i}`,
-        ...(result.stdout ? { stdout: truncate(result.stdout, SETUP_MAX_OUTPUT_BYTES) } : {}),
-        ...(result.stderr ? { stderr: truncate(result.stderr, SETUP_MAX_OUTPUT_BYTES) } : {}),
-        exitCode: result.exitCode,
-        durationMs: Date.now() - start,
-        status: result.exitCode === 0 ? 'ok' : 'error',
-        note: result.note,
-      });
-      if (result.exitCode !== 0) {
-        return sendJson(res, 200, {
-          status: 'error',
-          error: 'artifact hydrate failed; see logs[]',
-          workspaceId: recipe.workspaceId,
-          backend: deps.config.backend,
-          internalExecutionTarget: deps.internalExecutionTarget,
-          metadata: { recipeVersion: 1, recipeHash, retryPolicy: defaultRetryPolicy('artifact_hydrate') },
-          logs,
-        });
-      }
-    }
-  }
-
-  const overallTimeoutMs = clampTimeoutMs(recipe.resources?.timeoutMs);
-  let sawFailure = false;
-  if (recipe.setupCommands?.length) {
-    for (let i = 0; i < recipe.setupCommands.length; i++) {
-      const command = recipe.setupCommands[i]!;
-      const start = Date.now();
-      const result = await runSetupCommand(command, workspacePath, overallTimeoutMs);
-      logs.push({
-        step: `setup_command#${i}`,
-        command,
-        ...(result.stdout ? { stdout: truncate(result.stdout, SETUP_MAX_OUTPUT_BYTES) } : {}),
-        ...(result.stderr ? { stderr: truncate(result.stderr, SETUP_MAX_OUTPUT_BYTES) } : {}),
-        exitCode: result.exitCode,
-        durationMs: Date.now() - start,
-        status: result.exitCode === 0 ? 'ok' : 'error',
-        ...(result.timedOut ? { note: `command timed out after ${overallTimeoutMs}ms` } : {}),
-      });
-      if (result.exitCode !== 0) {
-        sawFailure = true;
-        break; // stop on first failure — brain can decide whether to retry
-      }
-    }
-  }
-
-  if (sawFailure) {
-    return sendJson(res, 200, {
-      status: 'error',
-      error: 'setup command failed; see logs[]',
-      workspaceId: recipe.workspaceId,
-      backend: deps.config.backend,
-      internalExecutionTarget: deps.internalExecutionTarget,
-      metadata: { recipeVersion: 1, recipeHash, retryPolicy: defaultRetryPolicy('setup_command') },
-      logs,
-    });
-  }
-
-  return sendJson(res, 200, {
-    status: 'ok',
-    workspaceId: recipe.workspaceId,
-    backend: deps.config.backend,
-    internalExecutionTarget: deps.internalExecutionTarget,
-    metadata: { recipeVersion: 1, recipeHash },
-    logs,
-  });
-}
-
-export function parseProvisionRecipe(body: unknown): ParsedRecipe | null {
-  if (!body || typeof body !== 'object') return null;
-  const obj = body as Record<string, unknown>;
-  const recipeRaw = obj.recipe && typeof obj.recipe === 'object'
-    ? obj.recipe as Record<string, unknown>
-    : undefined;
-  const workspaceId = obj.workspaceId ?? recipeRaw?.workspaceId;
-  const id = typeof workspaceId === 'string' && workspaceId.trim() ? workspaceId.trim() : null;
-  if (!id) return null;
-  const parsed: ParsedRecipe = { workspaceId: id };
-  const repo = recipeRaw?.repo;
-  if (repo && typeof repo === 'object' && typeof (repo as { url?: unknown }).url === 'string') {
-    parsed.repo = {
-      url: (repo as { url: string }).url,
-      ...(typeof (repo as { ref?: unknown }).ref === 'string' ? { ref: (repo as { ref: string }).ref } : {}),
-      ...(typeof (repo as { remote?: unknown }).remote === 'string' ? { remote: (repo as { remote: string }).remote } : {}),
-    };
-  }
-  const files = recipeRaw?.files;
-  if (Array.isArray(files)) {
-    const cleaned: Array<{ artifactId: string; path: string }> = [];
-    for (const item of files) {
-      if (item && typeof item === 'object'
-          && typeof (item as { artifactId?: unknown }).artifactId === 'string'
-          && typeof (item as { path?: unknown }).path === 'string') {
-        const raw = item as { artifactId: string; path: string; url?: unknown; signedUrl?: unknown };
-        cleaned.push({
-          artifactId: raw.artifactId,
-          path: raw.path,
-          ...(typeof raw.url === 'string' ? { url: raw.url } : {}),
-          ...(typeof raw.signedUrl === 'string' ? { signedUrl: raw.signedUrl } : {}),
-        });
-      }
-    }
-    if (cleaned.length) parsed.files = cleaned;
-  }
-  const setupCommands = recipeRaw?.setupCommands;
-  if (Array.isArray(setupCommands)) {
-    const cleaned: string[] = [];
-    for (const item of setupCommands) {
-      if (typeof item === 'string' && item.trim()) cleaned.push(item);
-    }
-    if (cleaned.length) parsed.setupCommands = cleaned;
-  }
-  const resources = recipeRaw?.resources;
-  if (resources && typeof resources === 'object') {
-    const t = (resources as { timeoutMs?: unknown }).timeoutMs;
-    if (typeof t === 'number' && t > 0) parsed.resources = { timeoutMs: t };
-  }
-  return parsed;
-}
-
-
-interface HydrateResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  command?: string;
-  note?: string;
-}
-
-function hashRecipe(recipe: ParsedRecipe): string {
-  return createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
-}
-
-function defaultRetryPolicy(step: string): Record<string, unknown> {
-  return { retryable: true, step, maxAttempts: 3, backoffMs: [1000, 5000, 15000] };
-}
-
-async function hydrateRepo(repo: NonNullable<ParsedRecipe['repo']>, workspacePath: string, timeoutMs: number): Promise<HydrateResult> {
-  const remote = repo.remote?.trim() || 'origin';
-  const ref = repo.ref?.trim();
-  const entries = await readdir(workspacePath);
-  const hasGit = entries.includes('.git');
-  let command: string;
-  if (hasGit) {
-    command = `git remote set-url ${shellQuote(remote)} ${shellQuote(repo.url)} && git fetch --prune ${shellQuote(remote)}${ref ? ` ${shellQuote(ref)}` : ''}${ref ? ` && git checkout --force FETCH_HEAD` : ''}`;
-  } else {
-    if (entries.length > 0) {
-      return { stdout: '', stderr: 'workspace is not empty and is not a git repository', exitCode: 2, note: 'refusing to clone over non-git workspace' };
-    }
-    command = `git clone ${shellQuote(repo.url)} .${ref ? ` && git checkout --force ${shellQuote(ref)}` : ''}`;
-  }
-  const result = await runSetupCommand(command, workspacePath, timeoutMs);
-  return { ...result, command, note: hasGit ? 'fetched existing repository' : 'cloned repository' };
-}
-
-async function hydrateArtifact(file: NonNullable<ParsedRecipe['files']>[number], workspacePath: string): Promise<HydrateResult> {
-  const url = file.signedUrl ?? file.url;
-  if (!url) return { stdout: '', stderr: 'artifact entry is missing signedUrl/url', exitCode: 2, note: `artifactId=${file.artifactId}` };
-  const destination = resolve(workspacePath, file.path);
-  if (!destination.startsWith(resolve(workspacePath) + '/')) {
-    return { stdout: '', stderr: `artifact path escapes workspace: ${file.path}`, exitCode: 2, note: `artifactId=${file.artifactId}` };
-  }
-  const response = await fetch(url);
-  if (!response.ok) return { stdout: '', stderr: `artifact download HTTP ${response.status}`, exitCode: 1, note: `artifactId=${file.artifactId}` };
-  const bytes = Buffer.from(await response.arrayBuffer());
-  await mkdir(dirname(destination), { recursive: true });
-  const tmp = `${destination}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmp, bytes);
-  await rename(tmp, destination).catch(async (err) => { await rm(tmp, { force: true }); throw err; });
-  return { stdout: `wrote ${bytes.length} bytes to ${file.path}`, stderr: '', exitCode: 0, note: `artifactId=${file.artifactId}` };
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-function redactProvisioningCommand(command: string): string {
-  return command
-    .replace(/https:\/\/([^\s/'\"]+):([^@\s/'\"]+)@/g, 'https://$1:***@')
-    .replace(/([?&](?:token|access_token|sig|signature|X-Amz-Signature)=)[^\s'"]+/gi, '$1***');
-}
-
-interface SetupRunResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  timedOut: boolean;
-}
-
-async function runSetupCommand(
-  command: string,
-  cwd: string,
-  timeoutMs: number,
-): Promise<SetupRunResult> {
-  return await new Promise((resolveResult) => {
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } }, 2_000).unref?.();
-    }, timeoutMs);
-    timer.unref?.();
-    child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      resolveResult({
-        stdout,
-        stderr: stderr + `\n[spawn error] ${err.message}`,
-        exitCode: -1,
-        timedOut,
-      });
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolveResult({
-        stdout,
-        stderr,
-        exitCode: timedOut ? 124 : code ?? -1,
-        timedOut,
-      });
-    });
-  });
-}
-
-function clampTimeoutMs(requested: number | undefined): number {
-  if (!requested || !Number.isFinite(requested) || requested <= 0) return SETUP_DEFAULT_TIMEOUT_MS;
-  return Math.min(Math.max(1_000, Math.floor(requested)), 600_000);
-}
-
-function truncate(value: string, maxBytes: number): string {
-  const buf = Buffer.from(value, 'utf-8');
-  if (buf.length <= maxBytes) return value;
-  return buf.slice(0, maxBytes).toString('utf-8') + `\n…[truncated ${buf.length - maxBytes} bytes]`;
-}
-
 
 const INVOCATION_RESULT_TTL_MS = 10 * 60_000;
 const INVOCATION_RESULT_MAX = 10_000;
@@ -520,69 +162,213 @@ function storeInvocationResult(
   timer.unref?.();
 }
 
+/**
+ * Durable journal 落终态（TASK-316 返工）：落盘失败不得向调用方确认 durable 成功，
+ * 且内存快路径必须保存同一份带标记的结果——先 journal 后内存，失败时
+ * `invocationResults` 里存的就是 `markPersistFailed()` 之后的 response，
+ * 使首次响应、同进程重放、GET 对账三者返回完全一致的结果，
+ * 不会出现"execute 标了 durablePersistFailed，GET 恢复却报 durable success"的分叉。
+ * 重启后该记录会被对账为 interrupted/indeterminate，如实暴露副作用不确定性。
+ */
+async function storeAndPersistInvocationResult(
+  deps: HandlerDeps,
+  invocationId: string | undefined,
+  response: ToolInvocationResponse,
+): Promise<ToolInvocationResponse> {
+  if (invocationId && deps.invocationStore) {
+    try {
+      await deps.invocationStore.complete(invocationId, response);
+      storeInvocationResult(deps, invocationId, response);
+      return response;
+    } catch (err) {
+      deps.logger.error(
+        `invocation store complete failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      const marked = markPersistFailed(response);
+      storeInvocationResult(deps, invocationId, marked);
+      return marked;
+    }
+  }
+  storeInvocationResult(deps, invocationId, response);
+  return response;
+}
+
+/** journal 落盘失败时的显式标记：结果仍然返回，但明确告知调用方 durability 未确认。 */
+function markPersistFailed(response: ToolInvocationResponse): ToolInvocationResponse {
+  return {
+    ...response,
+    metadata: { ...(response.metadata ?? {}), durablePersistFailed: true },
+  };
+}
+
+function markDurableReplay(response: ToolInvocationResponse): ToolInvocationResponse {
+  return {
+    ...response,
+    metadata: { ...(response.metadata ?? {}), durableReplay: true },
+  };
+}
+
 interface PreparedToolInvocation {
   ok: true;
   toolRequest: ToolInvocationRequest;
   invocationId?: string;
   abort: () => void;
   cleanup: () => void;
+  /** drain 跟踪 key：从请求被接受一直保留到结果持久化完成且响应写出。 */
+  trackingKey: string;
+  /** 释放 drain 跟踪（响应写出/中断后调用；fail 路径已自动释放）。 */
+  release: () => void;
 }
+
+interface ReplayedToolInvocation {
+  ok: true;
+  replay: ToolInvocationResponse;
+  /** 重放路径同样持有 drain 跟踪，写出响应后由调用方释放。 */
+  release: () => void;
+}
+
+let activeTrackingSeq = 0;
 
 /** Shared parser/executor for /execute and /execute-stream. */
 async function prepareToolInvocation(
   req: IncomingMessage,
   deps: HandlerDeps,
-): Promise<PreparedToolInvocation | { ok: false; status: number; body: Record<string, unknown> }> {
+): Promise<
+  | PreparedToolInvocation
+  | ReplayedToolInvocation
+  | { ok: false; status: number; body: Record<string, unknown> }
+> {
+  // drain 跟踪从请求被接受即开始（TASK-316 返工）：body 读取/解析/workspace resolve/
+  // journal 登记的整个 prepare 窗口都计入在途，SIGTERM drain 不会把已接收请求当作
+  // "无在途"提前杀掉。所有非执行出口（含 replay/409/503）都会释放跟踪。
+  const trackingKey = `active-${(activeTrackingSeq += 1)}`;
+  deps.activeInvocations?.add(trackingKey);
+  const release = () => deps.activeInvocations?.delete(trackingKey);
+  const fail = (status: number, body: Record<string, unknown>) => {
+    release();
+    return { ok: false as const, status, body };
+  };
+
   if (req.method !== 'POST') {
-    return { ok: false, status: 405, body: { status: 'error', error: 'method not allowed; use POST' } };
+    return fail(405, { status: 'error', error: 'method not allowed; use POST' });
+  }
+
+  // 第一道 drain 门：请求尚未执行任何副作用，brain 侧按 503 安全重试。
+  if (deps.draining) {
+    return fail(503, { status: 'error', error: 'hand-server draining; retry after restart' });
   }
 
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (!match || match[1] !== deps.config.authToken) {
     deps.logger.warn(`auth 失败 from=${req.socket.remoteAddress ?? '-'}`);
-    return { ok: false, status: 401, body: { status: 'error', error: 'unauthorized' } };
+    return fail(401, { status: 'error', error: 'unauthorized' });
   }
 
   let bodyRaw: string;
   try {
     bodyRaw = await readBody(req, MAX_BODY_BYTES);
   } catch (err) {
-    return { ok: false, status: 413, body: { status: 'error', error: `body 读取失败: ${err instanceof Error ? err.message : String(err)}` } };
+    return fail(413, {
+      status: 'error',
+      error: `body 读取失败: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 
   let body: unknown;
   try {
     body = JSON.parse(bodyRaw);
   } catch {
-    return { ok: false, status: 400, body: { status: 'error', error: 'body 不是合法 JSON' } };
+    return fail(400, { status: 'error', error: 'body 不是合法 JSON' });
   }
 
   const parsed = parseWireRequest(body);
-  if (!parsed.ok) return { ok: false, status: 400, body: { status: 'error', error: parsed.error } };
+  if (!parsed.ok) return fail(400, { status: 'error', error: parsed.error });
   const wire = parsed.value;
 
   let workspaceRoot: string;
   try {
     workspaceRoot = await deps.workspaceResolver.resolveAndEnsure(wire.context.workspace.id);
   } catch (err) {
-    return { ok: false, status: 400, body: { status: 'error', error: err instanceof Error ? err.message : String(err) } };
+    return fail(400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // 第二道 drain 门（TASK-316 返工）：prepare 期间 SIGTERM 已置 draining 时，
+  // 在产生任何 journal/provider 副作用之前拒绝执行。此后到 provider 启动之间
+  // 若 draining 再翻转，本请求已在 activeInvocations 中，drain 会等它完整收尾。
+  if (deps.draining) {
+    return fail(503, { status: 'error', error: 'hand-server draining; retry after restart' });
   }
 
   const invocationId = wire.context.invocationId;
   const existingInvocation = invocationId ? deps.invocations?.get(invocationId) : undefined;
   if (invocationId && existingInvocation) {
-    return {
-      ok: false,
-      status: 409,
-      body: {
-        status: 'error',
-        error: existingInvocation.signal.aborted ? 'invocation cancelled before start' : 'invocation already running',
-        invocationId,
-      },
-    };
+    return fail(409, {
+      status: 'error',
+      error: existingInvocation.signal.aborted
+        ? 'invocation cancelled before start'
+        : 'invocation already running',
+      invocationId,
+    });
   }
+  // 先同步占位内存 registry（进程内 single-flight），journal 异步登记失败时回滚。
   const controller = invocationId ? registerInvocation(deps, invocationId) : undefined;
+
+  // Durable journal（TASK-316）：在 provider 产生任何副作用之前完成
+  // 重放/拒绝判定与 running 登记，保证"重启后重复派发不二次执行"。
+  if (invocationId && deps.invocationStore) {
+    let registered: RegisterRunningOutcome;
+    try {
+      registered = await deps.invocationStore.registerRunning(invocationId);
+    } catch (err) {
+      deps.invocations?.delete(invocationId);
+      deps.logger.error(
+        `invocation store registerRunning failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return fail(503, {
+        status: 'error',
+        error: `hand invocation store unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+    if (registered.outcome === 'replay') {
+      deps.invocations?.delete(invocationId);
+      deps.logger.info(`replaying durable invocation result invocation=${invocationId}`);
+      release();
+      return { ok: true, replay: markDurableReplay(registered.record.response!), release };
+    }
+    if (registered.outcome === 'cancelled_tombstone') {
+      deps.invocations?.delete(invocationId);
+      return fail(409, {
+        status: 'error',
+        error: 'invocation cancelled before start',
+        invocationId,
+      });
+    }
+    if (registered.outcome === 'already_running') {
+      // journal 卡在 running 但本进程内存里已有结果（典型：complete 落盘失败后重派）：
+      // 从内存重放，既不二次执行副作用，也不会让调用方陷在 409。
+      // 重放结果同时保留 durablePersistFailed 标记（journal 仍卡在 running，未持久化）。
+      const memoryRecord = deps.invocationResults?.get(invocationId);
+      if (memoryRecord) {
+        deps.invocations?.delete(invocationId);
+        deps.logger.warn(
+          `replaying in-memory result for stuck running journal invocation=${invocationId}`,
+        );
+        release();
+        return {
+          ok: true,
+          replay: markPersistFailed(markDurableReplay(memoryRecord.response)),
+          release,
+        };
+      }
+      deps.invocations?.delete(invocationId);
+      return fail(409, { status: 'error', error: 'invocation already running', invocationId });
+    }
+  }
+
   let completed = false;
   const abort = () => {
     if (completed || !controller) return;
@@ -616,6 +402,8 @@ async function prepareToolInvocation(
     toolRequest,
     ...(invocationId ? { invocationId } : {}),
     abort,
+    trackingKey,
+    release,
     cleanup: () => {
       completed = true;
       req.off('aborted', abort);
@@ -632,11 +420,24 @@ async function executePreparedTool(
   try {
     response = await deps.provider.execute(prepared.toolRequest);
   } catch (err) {
-    response = { status: 'error', error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}` };
+    response = {
+      status: 'error',
+      error: `hand-server provider.execute throw: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
-  storeInvocationResult(deps, prepared.invocationId, response);
+  // 返回值即（可能带 durablePersistFailed 标记的）持久化结果，与内存/GET 完全同源。
+  const persisted = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
   prepared.cleanup();
-  return response;
+  return persisted;
+}
+
+/** 响应已写出（或连接已断）后释放 drain 跟踪；真实 res 走 finish 事件，mock 同步收尾。 */
+function releaseTrackingOnResponseDone(
+  res: ServerResponse,
+  prepared: PreparedToolInvocation,
+): void {
+  if (res.writableEnded || res.destroyed) prepared.release();
+  else res.once('finish', prepared.release);
 }
 
 /**
@@ -649,6 +450,10 @@ export async function handleExecute(
 ): Promise<void> {
   const prepared = await prepareToolInvocation(req, deps);
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body);
+  if ('replay' in prepared) {
+    prepared.release();
+    return sendJson(res, 200, prepared.replay);
+  }
   const abortOnResponseClose = () => {
     if (!res.writableEnded) prepared.abort();
   };
@@ -658,6 +463,9 @@ export async function handleExecute(
     return sendJson(res, 200, response);
   } finally {
     res.off('close', abortOnResponseClose);
+    // 结果已持久化（或已标记 durablePersistFailed），响应写出后再释放 drain 跟踪；
+    // 连接已断（destroyed）时在持久化完成后立即释放。
+    releaseTrackingOnResponseDone(res, prepared);
   }
 }
 
@@ -668,6 +476,20 @@ export async function handleExecuteStream(
 ): Promise<void> {
   const prepared = await prepareToolInvocation(req, deps);
   if (!prepared.ok) return sendJson(res, prepared.status, prepared.body);
+  if ('replay' in prepared) {
+    prepared.release();
+    // 重复派发：直接以 SSE 重放持久化终态，不触碰 provider。
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+    });
+    res.write(
+      `data: ${JSON.stringify({ type: 'progress', message: 'hand invocation result replayed from durable journal' })}\n\n`,
+    );
+    res.end(`data: ${JSON.stringify({ type: 'completed', response: prepared.replay })}\n\n`);
+    return;
+  }
 
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -683,22 +505,34 @@ export async function handleExecuteStream(
   res.on('close', markClosed);
   const isClosed = () => closed || res.destroyed || res.writableEnded;
   let writeQueue: Promise<boolean> = Promise.resolve(true);
-  const waitForDrain = () => new Promise<void>((resolve) => {
-    if (isClosed()) { resolve(); return; }
-    const done = () => {
-      res.off('drain', done);
-      res.off('close', done);
-      res.off('error', done);
-      resolve();
-    };
-    res.once('drain', done);
-    res.once('close', done);
-    res.once('error', done);
-  });
+  const waitForDrain = () =>
+    new Promise<void>((resolve) => {
+      if (isClosed()) {
+        resolve();
+        return;
+      }
+      const done = () => {
+        res.off('drain', done);
+        res.off('close', done);
+        res.off('error', done);
+        resolve();
+      };
+      res.once('drain', done);
+      res.once('close', done);
+      res.once('error', done);
+    });
   const writeChunk = async (chunk: unknown) => {
     writeQueue = writeQueue.then(async () => {
-      if (isClosed() || (sawCompleted && (!chunk || typeof chunk !== 'object' || (chunk as { type?: unknown }).type !== 'completed'))) return false;
-      if (chunk && typeof chunk === 'object' && (chunk as { type?: unknown }).type === 'completed') sawCompleted = true;
+      if (
+        isClosed() ||
+        (sawCompleted &&
+          (!chunk ||
+            typeof chunk !== 'object' ||
+            (chunk as { type?: unknown }).type !== 'completed'))
+      )
+        return false;
+      if (chunk && typeof chunk === 'object' && (chunk as { type?: unknown }).type === 'completed')
+        sawCompleted = true;
       const ok = res.write(`data: ${JSON.stringify(chunk)}\n\n`);
       if (!ok) await waitForDrain();
       return !isClosed();
@@ -708,7 +542,9 @@ export async function handleExecuteStream(
   await writeChunk({ type: 'progress', message: 'hand invocation accepted' });
   const heartbeat = setInterval(() => {
     void writeChunk({ type: 'progress', message: 'hand invocation running' }).catch((err) => {
-      deps.logger.warn(`stream heartbeat failed invocation=${prepared.invocationId ?? '-'}: ${err instanceof Error ? err.message : String(err)}`);
+      deps.logger.warn(
+        `stream heartbeat failed invocation=${prepared.invocationId ?? '-'}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     });
   }, 10_000);
   heartbeat.unref?.();
@@ -717,7 +553,12 @@ export async function handleExecuteStream(
       for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
         if (chunk.type === 'completed') {
           sawCompleted = true;
-          storeInvocationResult(deps, prepared.invocationId, chunk.response);
+          // 持久化结果（含失败标记）直接写回 chunk，SSE 与内存/GET 完全同源。
+          chunk.response = await storeAndPersistInvocationResult(
+            deps,
+            prepared.invocationId,
+            chunk.response,
+          );
         }
         const written = await writeChunk(chunk);
         if (!written) break;
@@ -732,19 +573,28 @@ export async function handleExecuteStream(
       status: 'error',
       error: `hand-server provider.executeStream throw: ${err instanceof Error ? err.message : String(err)}`,
     };
-    storeInvocationResult(deps, prepared.invocationId, response);
+    const persisted = await storeAndPersistInvocationResult(deps, prepared.invocationId, response);
     sawCompleted = true;
-    await writeChunk({ type: 'completed', response });
+    await writeChunk({ type: 'completed', response: persisted });
   } finally {
     clearInterval(heartbeat);
     if (!sawCompleted) {
-      const response: ToolInvocationResponse = { status: 'error', error: 'provider stream ended without completed chunk' };
-      storeInvocationResult(deps, prepared.invocationId, response);
-      await writeChunk({ type: 'completed', response });
+      const response: ToolInvocationResponse = {
+        status: 'error',
+        error: 'provider stream ended without completed chunk',
+      };
+      const persisted = await storeAndPersistInvocationResult(
+        deps,
+        prepared.invocationId,
+        response,
+      );
+      await writeChunk({ type: 'completed', response: persisted });
     }
     res.off('close', markClosed);
     prepared.cleanup();
     if (!res.destroyed && !res.writableEnded) res.end();
+    // SSE：结果已持久化、流已收尾后释放 drain 跟踪（连接早已断开则立即释放）。
+    releaseTrackingOnResponseDone(res, prepared);
   }
 }
 
@@ -754,13 +604,34 @@ export async function handleCancelInvocation(
   deps: HandlerDeps,
   invocationId: string,
 ): Promise<void> {
-  if (req.method !== 'DELETE') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use DELETE' });
+  if (req.method !== 'DELETE')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use DELETE' });
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
-  if (!match || match[1] !== deps.config.authToken) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (!match || match[1] !== deps.config.authToken)
+    return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   const controller = deps.invocations?.get(invocationId) ?? new AbortController();
   controller.abort();
   retainCancelledInvocation(deps, invocationId, controller);
+  // Durable cancel tombstone（TASK-316）：cancel 意图落盘，Hand 重启后
+  // 重复派发同一 invocationId 仍会被拒绝，cancel-before-start 语义不丢。
+  // 落盘失败（EIO/ENOSPC 等）不得向调用方确认 cancelled:true（TASK-316 返工）--
+  // tombstone 丢失后重启过的 cancel 语义就是假的。返回 503 让调用方知道
+  // "abort 信号已发，但 cancel 未持久化"，可安全重试（DELETE 幂等）。
+  if (deps.invocationStore) {
+    try {
+      await deps.invocationStore.markCancelled(invocationId);
+    } catch (err) {
+      deps.logger.error(
+        `invocation store markCancelled failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return sendJson(res, 503, {
+        status: 'error',
+        error: `cancel signalled but durable tombstone write failed: ${err instanceof Error ? err.message : String(err)}`,
+        invocationId,
+      });
+    }
+  }
   return sendJson(res, 200, { status: 'ok', invocationId, cancelled: true });
 }
 
@@ -770,10 +641,12 @@ export async function handleGetInvocationResult(
   deps: HandlerDeps,
   invocationId: string,
 ): Promise<void> {
-  if (req.method !== 'GET') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
+  if (req.method !== 'GET')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use GET' });
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
-  if (!match || match[1] !== deps.config.authToken) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
+  if (!match || match[1] !== deps.config.authToken)
+    return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
   const record = deps.invocationResults?.get(invocationId);
   if (record) {
     return sendJson(res, 200, {
@@ -793,7 +666,41 @@ export async function handleGetInvocationResult(
       cancelled: invocation.signal.aborted,
     });
   }
-  return sendJson(res, 404, { status: 'error', error: 'invocation result not found', invocationId });
+  // Durable journal（TASK-316）：内存未命中（含刚重启）时查磁盘，
+  // 让 Brain 在 Hand 重启后仍能对账结果/cancel/interrupted 状态。
+  if (deps.invocationStore) {
+    const stored = await deps.invocationStore.get(invocationId).catch((err) => {
+      deps.logger.error(
+        `invocation store get failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return undefined;
+    });
+    if (stored) {
+      if (stored.response) {
+        const completedAtMs = new Date(stored.updatedAt).getTime();
+        return sendJson(res, 200, {
+          status: 'ok',
+          invocationId,
+          completed: true,
+          response: stored.response,
+          ...(Number.isFinite(completedAtMs) ? { createdAt: completedAtMs } : {}),
+          ...(stored.cancelledAt ? { cancelled: true } : {}),
+          ...(stored.interruptedAt ? { interrupted: true } : {}),
+        });
+      }
+      return sendJson(res, 200, {
+        status: 'ok',
+        invocationId,
+        completed: false,
+        cancelled: stored.state === 'cancelled',
+      });
+    }
+  }
+  return sendJson(res, 404, {
+    status: 'error',
+    error: 'invocation result not found',
+    invocationId,
+  });
 }
 
 export async function handleWorkspaceLifecycle(
@@ -803,7 +710,8 @@ export async function handleWorkspaceLifecycle(
   workspaceId: string,
   action: 'archive' | 'reset',
 ): Promise<void> {
-  if (req.method !== 'POST') return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
+  if (req.method !== 'POST')
+    return sendJson(res, 405, { status: 'error', error: 'method not allowed; use POST' });
   const auth = req.headers.authorization ?? '';
   const match = /^Bearer\s+(.+)$/i.exec(auth);
   if (!match || match[1] !== deps.config.authToken) {
@@ -819,12 +727,17 @@ export async function handleWorkspaceLifecycle(
       if (typeof body.reason === 'string' && body.reason.trim()) reason = body.reason.trim();
     }
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: `body 解析失败: ${err instanceof Error ? err.message : String(err)}` });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: `body 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+    });
   }
 
   try {
     const result = await deps.workspaceResolver.archive(workspaceId, `${action}-${reason}`);
-    deps.logger.info(`workspace_${action} workspaceId=${result.workspaceId} archived=${result.archived} archiveId=${result.archiveId ?? '-'} missing=${result.missing === true}`);
+    deps.logger.info(
+      `workspace_${action} workspaceId=${result.workspaceId} archived=${result.archived} archiveId=${result.archiveId ?? '-'} missing=${result.missing === true}`,
+    );
     return sendJson(res, 200, {
       status: 'ok',
       action,
@@ -832,12 +745,16 @@ export async function handleWorkspaceLifecycle(
       archived: result.archived,
       missing: result.missing === true,
       ...(result.archiveId ? { archiveId: result.archiveId } : {}),
-      note: action === 'reset'
-        ? 'workspace archived; next provision will create a fresh workspace directory'
-        : 'workspace archived; no files were deleted',
+      note:
+        action === 'reset'
+          ? 'workspace archived; next provision will create a fresh workspace directory'
+          : 'workspace archived; no files were deleted',
     });
   } catch (err) {
-    return sendJson(res, 400, { status: 'error', error: err instanceof Error ? err.message : String(err) });
+    return sendJson(res, 400, {
+      status: 'error',
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -908,7 +825,9 @@ interface WireRequest {
   };
 }
 
-export function parseWireRequest(body: unknown): { ok: true; value: WireRequest } | { ok: false; error: string } {
+export function parseWireRequest(
+  body: unknown,
+): { ok: true; value: WireRequest } | { ok: false; error: string } {
   if (!body || typeof body !== 'object') return { ok: false, error: 'body 必须是 object' };
   const b = body as Record<string, unknown>;
   if (typeof b.toolName !== 'string' || !b.toolName) {
@@ -920,9 +839,10 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireRequest 
     return { ok: false, error: 'context.workspace 必须是 object' };
   }
   const rawEnv = context?.env;
-  const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
-    ? pickHandEnv(rawEnv as Record<string, string | undefined>)
-    : {};
+  const env =
+    rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+      ? pickHandEnv(rawEnv as Record<string, string | undefined>)
+      : {};
   const envKeys = Object.keys(env);
 
   return {
@@ -932,38 +852,16 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireRequest 
       input: b.input ?? {},
       context: {
         invocationId: typeof context?.invocationId === 'string' ? context.invocationId : undefined,
-      workspace: {
+        workspace: {
           id: typeof workspace.id === 'string' ? workspace.id : undefined,
           userId: typeof workspace.userId === 'string' ? workspace.userId : undefined,
           username: typeof workspace.username === 'string' ? workspace.username : undefined,
           sessionId: typeof workspace.sessionId === 'string' ? workspace.sessionId : undefined,
-          executionTarget: typeof workspace.executionTarget === 'string' ? workspace.executionTarget : undefined,
+          executionTarget:
+            typeof workspace.executionTarget === 'string' ? workspace.executionTarget : undefined,
         },
         ...(envKeys.length > 0 ? { env } : {}),
       },
     },
   };
-}
-
-async function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
-  return new Promise((resolveBody, rejectBody) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    req.on('data', (chunk: Buffer) => {
-      total += chunk.length;
-      if (total > maxBytes) {
-        rejectBody(new Error(`body 超出上限 ${maxBytes} bytes`));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolveBody(Buffer.concat(chunks).toString('utf-8')));
-    req.on('error', rejectBody);
-  });
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
 }

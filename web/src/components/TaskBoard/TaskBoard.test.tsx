@@ -721,6 +721,7 @@ describe("TaskBoardView", () => {
 
     const openButtons = await screen.findAllByRole("button", { name: /打开任务 TASK-1/ });
     await user.click(openButtons[0]);
+    const detailPanel = await screen.findByTestId("task-detail-panel"); expect(detailPanel.parentElement?.className).toContain("gap-3");
     const comment = await screen.findByRole("textbox", { name: "发表评论" });
     await user.type(comment, "已完成首轮验证");
     await user.click(screen.getByRole("button", { name: "发表" }));

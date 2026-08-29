@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -23,13 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { FloatingPanel } from "@/components/ui/floating-panel";
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
@@ -643,20 +637,46 @@ export function TaskDetail({
     }
   };
 
+  useEffect(() => {
+    if (!active || !open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || saving) return;
+      setDetailsExpanded(false);
+      onOpenChange(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [active, onOpenChange, open, saving]);
+
+  if (!active || !open || !task) return null;
+
   return (
-    <Sheet
-      open={active && open && !!task}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen && saving) return;
-        if (!nextOpen) setDetailsExpanded(false); onOpenChange(nextOpen);
-      }}
+    <FloatingPanel
+      role="dialog"
+      aria-modal={false}
+      aria-labelledby="task-detail-title"
+      data-testid="task-detail-panel"
+      className="absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-1/2 md:min-w-[26rem] md:max-w-[40rem] md:shrink-0"
     >
-      <SheetContent side="right" className="w-full gap-0 overflow-hidden p-0 sm:max-w-[1040px]">
         {currentTask ? (
           <>
-            <SheetHeader className="pr-12">
+            <div className="relative flex flex-col space-y-1.5 border-b px-4 py-3 pr-12">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute right-3 top-3 size-8"
+                aria-label="关闭任务详情"
+                disabled={saving}
+                onClick={() => {
+                  setDetailsExpanded(false);
+                  onOpenChange(false);
+                }}
+              >
+                <X className="size-4" />
+              </Button>
               <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle className="mr-auto min-w-0 truncate">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</SheetTitle>
+                <h2 id="task-detail-title" className="mr-auto min-w-0 truncate text-lg font-semibold">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</h2>
                 <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
                 <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
                 <Badge variant="outline">{PRIORITY_LABELS[priority]}</Badge>
@@ -695,8 +715,8 @@ export function TaskDetail({
                   <span className="sr-only">{detailsExpanded ? "收起任务详情" : "展开任务详情"}</span>
                 </Button>
               </div>
-              <SheetDescription className="sr-only">任务详情</SheetDescription>
-            </SheetHeader>
+              <p className="sr-only">任务详情</p>
+            </div>
             {!detailsExpanded && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
@@ -831,7 +851,7 @@ export function TaskDetail({
                     </div>
                   </>
                 ) : null}
-                <div role="group" aria-label="任务选项" className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+                <div role="group" aria-label="任务选项" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
                   <div className="min-w-0 space-y-2">
                     <Label>状态</Label>
                     <Select
@@ -967,7 +987,6 @@ export function TaskDetail({
             </div>
           </>
         ) : null}
-      </SheetContent>
-    </Sheet>
+    </FloatingPanel>
   );
 }

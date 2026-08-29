@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,7 @@ import {
   todoWriteToolDescriptor,
 } from '../agent/builtinTools.js';
 import type { AuthorizedToolCall, ToolCallContext, WorkspaceRef } from '../agent/toolRuntime.js';
+import { parseToolInput } from '../agent/toolRuntimePaths.js';
 import {
   artifactCreateToolDescriptor,
   editToolDescriptor,
@@ -143,7 +144,7 @@ describe('Workspace hand tools — Edit 安全', () => {
     ).rejects.toThrow(/outside workspace/);
   });
 
-  it('正常 single match 替换成功', async () => {
+  it('正常 single match 替换成功，并返回 unified diff metadata', async () => {
     const root = await makeWorkspace();
     await writeFile(join(root, 'a.txt'), 'hello world', 'utf-8');
     const res = await runWorkspaceEdit(
@@ -155,6 +156,36 @@ describe('Workspace hand tools — Edit 安全', () => {
       makeContext(root).workspace,
     );
     expect(res.content).toMatch(/Edited a\.txt/);
+    expect(res.metadata).toMatchObject({ replacements: 1, editCount: 1, firstChangedLine: 1 });
+    expect(res.metadata?.diff).toContain('-hello world');
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('hello WORLD');
+  });
+
+  it('prepareInput 自愈 path 别名、stringified JSON、camelCase 与单对象 edits', () => {
+    const parsed = parseToolInput(editToolDescriptor, JSON.stringify({
+      path: 'a.txt',
+      edits: JSON.stringify({ oldText: 'old', newText: 'new', replaceAll: true }),
+    }));
+
+    expect(parsed).toEqual({
+      file_path: 'a.txt',
+      edits: [{ old_string: 'old', new_string: 'new', replace_all: true }],
+    });
+  });
+
+  it('批量 edits 一次写回，保留旧字段兼容', async () => {
+    const root = await makeWorkspace();
+    await writeFile(join(root, 'a.txt'), 'one two three', 'utf-8');
+    const res = await runWorkspaceEdit({
+      file_path: 'a.txt',
+      edits: [
+        { old_string: 'one', new_string: 'ONE' },
+        { old_string: 'three', new_string: 'THREE' },
+      ],
+    }, makeContext(root).workspace);
+
+    expect(res.metadata).toMatchObject({ replacements: 2, editCount: 2 });
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('ONE two THREE');
   });
 });
 

@@ -37,7 +37,9 @@ import {
   type ToolRuntime,
   type WorkspaceProvider,
 } from '../agent/toolRuntime.js';
+import { tryParseToolInput } from '../agent/toolRuntimePaths.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
+import { refreshRunApprovalPolicy } from './approvalPolicyResolution.js';
 import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
 import { standardizeToolError } from './agentPlanDefense.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
@@ -2188,7 +2190,7 @@ export class RawAgentLoop implements AgentLoop {
         descriptorsByName: args.descriptorsByName,
         context: args.context,
         toolPolicy: this.toolPolicy,
-        refreshPolicyContext: (context) => this.refreshApprovalPolicy(context),
+        refreshPolicyContext: (context) => refreshRunApprovalPolicy(this.runStore, context),
       });
 
       if (preparedCalls.length >= 2) {
@@ -2312,9 +2314,10 @@ export class RawAgentLoop implements AgentLoop {
     if (INTERACTIVE_TOOL_NAMES.has(call.name)) return false;
     const descriptor = descriptorsByName.get(call.name);
     if (!descriptor) return true;
-    const input = parseToolArguments(call.arguments);
-    const policyContext = await this.refreshApprovalPolicy(context);
-    const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
+    const parsed = tryParseToolInput(descriptor, parseToolArguments(call.arguments));
+    if (!parsed.ok) return true;
+    const policyContext = await refreshRunApprovalPolicy(this.runStore, context);
+    const decision = await this.toolPolicy.decide(descriptor, parsed.input, policyContext);
     return decision.type !== 'requires_approval';
   }
 
@@ -2656,30 +2659,6 @@ export class RawAgentLoop implements AgentLoop {
     });
   }
 
-  private async refreshApprovalPolicy(context: RunContext): Promise<RunContext> {
-    if (!this.runStore) return context;
-    try {
-      const run = await this.runStore.get(context.runId);
-      // 存量/派生 run 可能没有 approvalPolicy metadata；此时保留 dispatch 已按账户
-      // 偏好解析出的策略。metadata 显式写入 null 则表示运行中关闭授权，必须清空。
-      if (!run || !Object.prototype.hasOwnProperty.call(run.metadata ?? {}, 'approvalPolicy')) {
-        return context;
-      }
-      const policy = run.metadata?.approvalPolicy as Record<string, unknown> | null | undefined;
-      const autoApproveTools = Boolean(policy
-        && (policy.autoApproveTools === true || policy.autoApproveRunShell === true));
-      // 「低风险常开」档（TASK-256）：重建时保留 lowRiskOnly，dangerous 仍人工批准。
-      return {
-        ...context,
-        approvalPolicy: autoApproveTools
-          ? { autoApproveTools: true, ...(policy?.lowRiskOnly === true ? { lowRiskOnly: true } : {}) }
-          : undefined,
-      };
-    } catch {
-      return context;
-    }
-  }
-
   private async executeToolCall(
     call: ModelToolCall,
     descriptorsByName: Map<string, ToolDescriptor>,
@@ -2688,13 +2667,13 @@ export class RawAgentLoop implements AgentLoop {
     prepared?: PreparedParallelToolCall,
   ): Promise<ToolExecutionOutcome> {
     const descriptor = prepared?.descriptor ?? descriptorsByName.get(call.name);
-    const input = prepared?.input ?? parseToolArguments(call.arguments);
+    const rawInput = prepared?.input ?? parseToolArguments(call.arguments);
     if (!descriptor) {
       // D4 + G1：工具名不在当前 turn 的 tools[] 白名单内（descriptorsByName 来自当前 turn descriptors）。
       // 错误措辞标准化避免 deepseek 字面执行"try different approach"陷入循环。
       return {
         call,
-        input,
+        input: rawInput,
         result: { content: standardizeToolError(unavailableToolMessage(call.name)) },
         isError: true,
       };
@@ -2705,7 +2684,7 @@ export class RawAgentLoop implements AgentLoop {
         return {
           call,
           descriptor,
-          input,
+          input: rawInput,
           result: {
             content: standardizeToolError(
               `MCP namespace mismatch: ${call.name}（期望 ${expectedNamespace}，实际 ${call.namespace ?? '未提供'}）`,
@@ -2720,7 +2699,7 @@ export class RawAgentLoop implements AgentLoop {
       return {
         call,
         descriptor,
-        input,
+        input: rawInput,
         result: {
           content: standardizeToolError(
             `${this.webFetchSynthesisReason}；本次调用未出网，请基于已有材料收束回答`,
@@ -2730,8 +2709,21 @@ export class RawAgentLoop implements AgentLoop {
       };
     }
 
+    // 审批、风险分档、展示与执行必须使用同一份 prepare + schema 后的参数。
+    const parsed = tryParseToolInput(descriptor, rawInput);
+    if (!parsed.ok) {
+      return {
+        call,
+        descriptor,
+        input: rawInput,
+        result: { content: standardizeToolError(parsed.error) },
+        isError: true,
+      };
+    }
+    const input = parsed.input;
+
     if (!prepared) {
-      const policyContext = await this.refreshApprovalPolicy(context);
+      const policyContext = await refreshRunApprovalPolicy(this.runStore, context);
       const decision = await this.toolPolicy.decide(descriptor, input, policyContext);
       if (decision.type === 'requires_approval') {
         const approval = await this.approvalStore.create({

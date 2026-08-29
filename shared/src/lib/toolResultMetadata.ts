@@ -18,11 +18,13 @@ export type ToolResultMetadataValue = number | boolean | string;
 
 export type ToolResultMetadata = Record<string, ToolResultMetadataValue>;
 
-/** 键数量上限：白名单最长的一项（Shell）是 8 个，留一倍余量 */
+/** 键数量上限：当前白名单最长项低于 16 个，拒绝无界扩张。 */
 const METADATA_KEY_LIMIT = 16;
 /** 普通执行枚举/标识保持短值；文件名允许覆盖主流文件系统的 255-byte 上限。 */
 const METADATA_TEXT_LIMIT = 120;
 const ARTIFACT_FILE_NAME_LIMIT = 512;
+const EDIT_DIFF_TEXT_LIMIT_BYTES = 64 * 1024;
+const UTF8_ENCODER = new TextEncoder();
 /** 键名上限：白名单里最长的是 `outputExceeded`(14) */
 const METADATA_KEY_LENGTH_LIMIT = 40;
 
@@ -40,8 +42,13 @@ export function normalizeToolResultMetadata(raw: unknown): ToolResultMetadata | 
       result[key] = value;
     } else if (typeof value === 'string') {
       const trimmed = value.trim();
-      const textLimit = key === 'fileName' ? ARTIFACT_FILE_NAME_LIMIT : METADATA_TEXT_LIMIT;
-      if (!trimmed || trimmed.length > textLimit) continue;
+      if (!trimmed) continue;
+      if (key === 'diff') {
+        if (UTF8_ENCODER.encode(trimmed).byteLength > EDIT_DIFF_TEXT_LIMIT_BYTES) continue;
+      } else {
+        const textLimit = key === 'fileName' ? ARTIFACT_FILE_NAME_LIMIT : METADATA_TEXT_LIMIT;
+        if (trimmed.length > textLimit) continue;
+      }
       result[key] = trimmed;
     } else {
       continue;

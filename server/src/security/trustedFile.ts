@@ -260,19 +260,72 @@ export async function atomicWriteTrustedFile(
   root: string,
   relativePath: string,
   data: string | Uint8Array,
-  options: { encoding?: BufferEncoding; createParents?: boolean; mode?: number; tempSuffix?: string } = {},
+  options: {
+    encoding?: BufferEncoding;
+    createParents?: boolean;
+    mode?: number;
+    tempSuffix?: string;
+    expectedFile?: Stats;
+    expectedContent?: string | Uint8Array;
+  } = {},
 ): Promise<void> {
+  const tempLeaf = options.tempSuffix
+    ? `.ky-write-${options.tempSuffix}`
+    : `.ky-write-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (basename(tempLeaf) !== tempLeaf) throw new UnsafeFilePathError('Atomic write temp suffix must be a single path component');
   const { parent, leaf } = await bindParent(root, relativePath, options.createParents === true);
-  const tempLeaf = `${leaf}.${options.tempSuffix ?? `tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`}`;
   let handle: FileHandle | undefined;
   let published = false;
   try {
-    handle = await open(procPath(parent, tempLeaf), WRITE_FLAGS | constants.O_EXCL, options.mode ?? 0o664);
+    let targetStats: Stats | undefined;
+    try {
+      targetStats = await lstat(procPath(parent, leaf));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') asUnsafe(error);
+    }
+    // Best-effort stale-write detection for cooperative callers. POSIX rename is not a CAS:
+    // a non-cooperating external writer can still win a race after these checks.
+    if (options.expectedFile) {
+      const expected = options.expectedFile;
+      if (
+        !targetStats?.isFile()
+        || targetStats.dev !== expected.dev
+        || targetStats.ino !== expected.ino
+        || targetStats.size !== expected.size
+        || targetStats.mtimeMs !== expected.mtimeMs
+        || targetStats.ctimeMs !== expected.ctimeMs
+      ) {
+        throw Object.assign(new Error(`Atomic write target changed before commit: ${relativePath}`), { code: 'ESTALE' });
+      }
+    }
+    if (options.expectedContent !== undefined) {
+      let current: FileHandle | undefined;
+      try {
+        current = await open(procPath(parent, leaf), READ_FLAGS);
+        const actual = await current.readFile();
+        const expected = typeof options.expectedContent === 'string'
+          ? Buffer.from(options.expectedContent, options.encoding ?? 'utf8')
+          : Buffer.from(options.expectedContent);
+        if (!actual.equals(expected)) {
+          throw Object.assign(new Error(`Atomic write target content changed before commit: ${relativePath}`), { code: 'ESTALE' });
+        }
+      } finally {
+        await current?.close().catch(() => undefined);
+      }
+    }
+    // Preserve regular permission bits, but intentionally clear setuid/setgid/sticky on replacement.
+    // New files keep normal open(2) semantics: the process umask narrows the default mode.
+    const mode = options.mode
+      ?? (targetStats?.isFile() ? targetStats.mode & 0o777 : (0o664 & ~process.umask()));
+    handle = await open(procPath(parent, tempLeaf), WRITE_FLAGS | constants.O_EXCL, mode);
     await handle.writeFile(data, options.encoding ? { encoding: options.encoding } : undefined);
+    await handle.chmod(mode);
+    await handle.sync();
     await handle.close();
     handle = undefined;
     await rename(procPath(parent, tempLeaf), procPath(parent, leaf));
     published = true;
+    await parent.sync();
   } catch (error) {
     asUnsafe(error);
   } finally {

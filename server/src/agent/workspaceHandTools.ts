@@ -3,7 +3,9 @@ import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 
 import type { ArtifactKind } from '../runtime/artifactStore.js';
-import { openTrustedFile, writeTrustedFile } from '../security/trustedFile.js';
+import { atomicWriteTrustedFile, openTrustedFile } from '../security/trustedFile.js';
+import { applyWorkspaceEdits, type EditOperation } from './editOperations.js';
+import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
 import { loadToolDescription } from './tools/descriptionLoader.js';
 import type { ToolDescriptor, ToolResult, WorkspaceRef } from './toolRuntime.js';
 
@@ -25,9 +27,10 @@ const ARTIFACT_DENY_PATTERNS: RegExp[] = EDIT_DENY_PATTERNS;
 
 export type EditInput = {
   file_path: string;
-  old_string: string;
-  new_string: string;
+  old_string?: string;
+  new_string?: string;
   replace_all?: boolean;
+  edits?: EditOperation[];
 };
 
 export type CreateArtifactInput = {
@@ -86,17 +89,95 @@ export function detectWorkspaceImageMime(
 
 type PathGuard = (fullPath: string) => void;
 
+const editOperationSchema = z.object({
+  old_string: z.string().describe('要查找的文本；精确匹配失败后会尝试安全的空白与 Unicode 标点归一化。'),
+  new_string: z.string().describe('替换后的文本。'),
+  replace_all: z.boolean().optional().describe('替换该 edit 的全部匹配项。'),
+});
+
+const editInputSchema = z.object({
+  file_path: z.string().min(1).describe('工作区相对路径，或工作区内的绝对路径。'),
+  old_string: z.string().optional().describe('兼容单 edit 调用：要查找的文本。'),
+  new_string: z.string().optional().describe('兼容单 edit 调用：替换后的文本。'),
+  replace_all: z.boolean().optional().describe('兼容单 edit 调用：替换全部匹配项。'),
+  edits: z.array(editOperationSchema).min(1).max(100).optional().describe('一次原子应用的 edit 数组；全部针对原始文件匹配。'),
+}).superRefine((input, context) => {
+  const hasLegacyField = input.old_string !== undefined || input.new_string !== undefined;
+  if (!hasLegacyField && !input.edits) {
+    context.addIssue({ code: 'custom', message: 'Edit requires old_string/new_string or a non-empty edits array.' });
+  }
+  if (hasLegacyField && (input.old_string === undefined || input.new_string === undefined)) {
+    context.addIssue({ code: 'custom', message: 'Edit legacy input requires both old_string and new_string.' });
+  }
+});
+
+function parseJsonString(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function normalizeEditOperation(value: unknown): unknown {
+  const parsed = parseJsonString(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return parsed;
+  const record = parsed as Record<string, unknown>;
+  const oldString = record.old_string ?? record.oldText;
+  const newString = record.new_string ?? record.newText;
+  const replaceAll = record.replace_all ?? record.replaceAll;
+  return {
+    ...record,
+    ...(oldString !== undefined ? { old_string: oldString } : {}),
+    ...(newString !== undefined ? { new_string: newString } : {}),
+    ...(replaceAll !== undefined ? { replace_all: replaceAll } : {}),
+  };
+}
+
+export function prepareEditInput(value: unknown): unknown {
+  const parsed = parseJsonString(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return parsed;
+  const record = parsed as Record<string, unknown>;
+  const editsValue = parseJsonString(record.edits);
+  const edits = editsValue === undefined
+    ? undefined
+    : (Array.isArray(editsValue) ? editsValue : [editsValue]).map(normalizeEditOperation);
+  const filePath = record.file_path ?? record.path;
+  const oldString = record.old_string ?? record.oldText;
+  const newString = record.new_string ?? record.newText;
+  const replaceAll = record.replace_all ?? record.replaceAll;
+  return {
+    ...record,
+    ...(filePath !== undefined ? { file_path: filePath } : {}),
+    ...(oldString !== undefined ? { old_string: oldString } : {}),
+    ...(newString !== undefined ? { new_string: newString } : {}),
+    ...(replaceAll !== undefined ? { replace_all: replaceAll } : {}),
+    ...(edits ? { edits } : {}),
+  };
+}
+
+function collectEditOperations(input: EditInput): EditOperation[] {
+  const operations: EditOperation[] = [];
+  if (input.old_string !== undefined && input.new_string !== undefined) {
+    operations.push({
+      old_string: input.old_string,
+      new_string: input.new_string,
+      ...(input.replace_all !== undefined ? { replace_all: input.replace_all } : {}),
+    });
+  }
+  if (input.edits) operations.push(...input.edits);
+  return operations;
+}
+
 export const editToolDescriptor: ToolDescriptor<EditInput> = {
   id: 'Edit',
   name: 'Edit',
   displayName: 'Edit',
   description: loadToolDescription('Edit'),
-  schema: z.object({
-    file_path: z.string().min(1).describe('工作区相对路径，或工作区内的绝对路径。'),
-    old_string: z.string().describe('要查找的精确文本。'),
-    new_string: z.string().describe('替换后的文本。'),
-    replace_all: z.boolean().optional().describe('替换所有匹配项，而不是在多处匹配时报错。'),
-  }),
+  descriptionInvariants: ['批量', 'CRLF/LF', '10000', '原子 rename', 'unified diff', '1MB'],
+  schema: editInputSchema,
+  prepareInput: prepareEditInput,
   risk: 'workspace_write',
   approvalMode: 'web',
   auditCategory: 'filesystem.edit',
@@ -157,50 +238,52 @@ export async function runWorkspaceEdit(
   assertNotDenied(relPath, EDIT_DENY_PATTERNS, (path) =>
     `Edit: path "${path}" is in the deny list (sensitive config / credentials). Ask the admin via console if a change is genuinely required.`);
 
-  let content: string;
-  try {
-    const opened = await openTrustedFile(workspace.root, relPath);
+  return await withWorkspaceFileMutationQueue(workspace.root, relPath, async () => {
+    let opened: Awaited<ReturnType<typeof openTrustedFile>>;
+    try {
+      opened = await openTrustedFile(workspace.root, relPath);
+    } catch (err) {
+      throw new Error(`Edit: cannot open ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+    }
     try {
       if (opened.stats.size > MAX_EDIT_FILE_BYTES) {
         throw new Error(`Edit: file too large (${opened.stats.size}B > ${MAX_EDIT_FILE_BYTES}B); use Write to rewrite.`);
       }
-      content = await opened.handle.readFile('utf-8');
+      let content: string;
+      try {
+        content = await opened.handle.readFile('utf-8');
+      } catch (err) {
+        throw new Error(`Edit: cannot read ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+      }
+      const applied = applyWorkspaceEdits(content, collectEditOperations(input), relPath);
+      const updatedBytes = Buffer.from(applied.updatedContent, 'utf8');
+      await atomicWriteTrustedFile(workspace.root, relPath, updatedBytes, {
+        expectedFile: opened.stats,
+        expectedContent: Buffer.from(content, 'utf8'),
+      });
+      const bytesBefore = Buffer.byteLength(content, 'utf8');
+      const bytesAfter = updatedBytes.length;
+      return {
+        content: `Edited ${relPath} (${applied.replacements} replacement${applied.replacements === 1 ? '' : 's'} across ${applied.editCount} edit${applied.editCount === 1 ? '' : 's'}, ${bytesAfter} bytes).`,
+        metadata: {
+          path: relPath,
+          replacements: applied.replacements,
+          occurrences: applied.occurrences,
+          editCount: applied.editCount,
+          fuzzyMatches: applied.fuzzyMatches,
+          bomPreserved: applied.bomPreserved,
+          lineEnding: applied.lineEnding === '\r\n' ? 'CRLF' : 'LF',
+          bytesBefore,
+          bytesAfter,
+          diff: applied.diff,
+          diffTruncated: applied.diffTruncated,
+          firstChangedLine: applied.firstChangedLine,
+        },
+      };
     } finally {
       await opened.handle.close();
     }
-  } catch (err) {
-    throw new Error(`Edit: cannot read ${relPath} (${err instanceof Error ? err.message : String(err)})`);
-  }
-  if (input.old_string === input.new_string) {
-    throw new Error('Edit: old_string equals new_string; no-op.');
-  }
-  if (input.old_string === '') {
-    throw new Error('Edit: empty old_string not allowed; use Write for new files.');
-  }
-
-  const parts = content.split(input.old_string);
-  const occurrences = parts.length - 1;
-  if (occurrences === 0) {
-    throw new Error('Edit: old_string not found.');
-  }
-  if (!input.replace_all && occurrences > 1) {
-    throw new Error(`Edit: old_string matched ${occurrences} times; supply more surrounding context or set replace_all=true.`);
-  }
-  const updated = parts.join(input.new_string);
-  const replacements = input.replace_all ? occurrences : 1;
-
-  await writeTrustedFile(workspace.root, relPath, updated, { encoding: 'utf-8' });
-  return {
-    content: `Edited ${relPath} (${replacements} replacement${replacements === 1 ? '' : 's'}, ${updated.length} bytes).`,
-    // 摘要要说清「实际替换了几处」——replace_all 时 1 处与 37 处在审计上完全不同
-    metadata: {
-      path: relPath,
-      replacements,
-      occurrences,
-      bytesBefore: content.length,
-      bytesAfter: updated.length,
-    },
-  };
+  });
 }
 
 export async function createWorkspaceArtifactPayload(

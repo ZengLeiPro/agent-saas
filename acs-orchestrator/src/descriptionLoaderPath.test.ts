@@ -11,6 +11,6 @@ describe('shared server tool descriptions', () => {
   it('resolves descriptions from the server package while cwd is acs-orchestrator', () => {
     expect(basename(process.cwd())).toBe('acs-orchestrator');
     expect(existsSync(join(DESCRIPTIONS_DIR_PATH, 'Edit.md'))).toBe(true);
-    expect(loadToolDescription('Edit')).toContain('对工作区文本文件执行精确字符串替换');
+    expect(loadToolDescription('Edit')).toContain('对工作区文本文件执行一个或多个文本替换');
   });
 });

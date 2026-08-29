@@ -16,6 +16,9 @@ const workerUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template',
   import.meta.url,
 );
+const serverPackagePath = new URL('../../server/package.json', import.meta.url);
+const scenarioRoutesPath = new URL('../../server/src/routes/scenarios.ts', import.meta.url);
+const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', import.meta.url);
 
 function runScriptLines(text) {
   const output = [];
@@ -232,12 +235,12 @@ test('Evidence Service dependencies suppress their standalone CLIs when bundled'
   }
 });
 
-test('Staging API and Worker run immutable code while mutable paths stay in isolated configuration', async () => {
+test('Staging API and Worker keep mutable process data isolated while executing immutable code', async () => {
   for (const path of [serverUnitPath, workerUnitPath]) {
     const unit = await readFile(path, 'utf8');
     assert.match(unit, /User=agent-saas-staging/u);
     assert.match(unit, /Group=agent-saas-staging/u);
-    assert.match(unit, /WorkingDirectory=\/opt\/agent-saas-staging\/current\/server/u);
+    assert.match(unit, /WorkingDirectory=\/mnt\/agent-saas-staging\/runtime\/server/u);
     assert.match(unit, /ExecStart=.*\/opt\/agent-saas-staging\/current\/server\/dist\/index\.js/u);
     assert.match(unit, /Environment=KB_PREVIEW_AUTO_GENERATE=false/u);
   }
@@ -254,4 +257,17 @@ test('Staging API and Worker run immutable code while mutable paths stay in isol
     serverUnit,
     /Environment=AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
   );
+});
+
+test('Server build ships scenario libraries beside the bundle without depending on process cwd', async () => {
+  const packageJson = JSON.parse(await readFile(serverPackagePath, 'utf8'));
+  const routes = await readFile(scenarioRoutesPath, 'utf8');
+  const copyScript = await readFile(staticDataCopyPath, 'utf8');
+
+  assert.match(packageJson.scripts.build, /node scripts\/copy-static-data\.mjs/u);
+  assert.match(routes, /basename\(import\.meta\.dirname\) === "dist"/u);
+  assert.doesNotMatch(routes, /process\.cwd\(\)[\s\S]*workflow-library-v3\.json/u);
+  assert.match(copyScript, /scenario-library-v1\.json/u);
+  assert.match(copyScript, /workflow-library-v3\.json/u);
+  assert.match(copyScript, /dist['"], 'data', 'scenarios/u);
 });

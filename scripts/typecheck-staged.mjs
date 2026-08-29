@@ -49,6 +49,7 @@ for (const [packageDir, files] of [...packageFiles].sort(([a], [b]) => a.localeC
     .split('\0')
     .filter((path) => path.endsWith('.d.ts'))
     .map((path) => relative(packageRoot, join(root, path)).split(sep).join('/'));
+  const serverGlobalTypeFiles = ['src/auth/types.ts'];
   const chunkSize = 4;
   for (let index = 0; index < relativeFiles.length; index += chunkSize) {
     const chunk = relativeFiles.slice(index, index + chunkSize);
@@ -71,6 +72,7 @@ for (const [packageDir, files] of [...packageFiles].sort(([a], [b]) => a.localeC
       '--strict',
       '--skipLibCheck',
       ...declarationFiles,
+      ...serverGlobalTypeFiles,
       ...chunk,
     ]);
   }

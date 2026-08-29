@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assertProductionBuildPlatform,
   packArgs,
+  packRootedArgs,
   productionDeployArgs,
   sbomListArgs,
 } from './build-release.mjs';
@@ -30,6 +31,25 @@ test('release archives omit host extended attributes', () => {
     '-C',
     '/tmp/stage/server',
     '.',
+  ]);
+});
+
+test('server and ACS release archives retain their component root directory', () => {
+  assert.deepEqual(packRootedArgs('/tmp/stage', 'server', '/tmp/release/server.tgz'), [
+    '--no-xattrs',
+    '-czf',
+    '/tmp/release/server.tgz',
+    '-C',
+    '/tmp/stage',
+    'server',
+  ]);
+  assert.deepEqual(packRootedArgs('/tmp/stage', 'acs-orchestrator', '/tmp/release/acs.tgz'), [
+    '--no-xattrs',
+    '-czf',
+    '/tmp/release/acs.tgz',
+    '-C',
+    '/tmp/stage',
+    'acs-orchestrator',
   ]);
 });
 

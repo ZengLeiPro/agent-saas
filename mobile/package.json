@@ -12,7 +12,9 @@
     "build:ios:only": "./scripts/build.sh ios --build",
     "submit:ios": "./scripts/build.sh ios --submit",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js",
+    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js scripts/release-manifest.test.mjs",
+    "test:release-manifest": "node --test scripts/release-manifest.test.mjs",
+    "verify:release-manifest": "node scripts/verify-release-manifest.mjs --profile preview",
     "test:android-signing": "node --test plugins/withAndroidSigningConfig.test.js && node scripts/verify-android-signing.mjs --source-only && expo prebuild --clean --no-install --platform android && node scripts/verify-android-signing.mjs android/app/build.gradle",
     "test:android-signing:gradle": "node scripts/assert-android-release-fail-closed.mjs"
   },

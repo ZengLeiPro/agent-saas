@@ -49,6 +49,24 @@ if ! $PLATFORM_IOS && ! $PLATFORM_ANDROID; then
   PLATFORM_ANDROID=true
 fi
 
+# M10-03：所有 production 构建/提交先验证唯一 release manifest。
+# 当前外部 identity / 最高商店版本或 Android versionCode 未确认时，这里应 fail closed。
+if ! SOURCE_GIT_SHA="$(git -C "$MOBILE_DIR" rev-parse --verify HEAD 2>/dev/null)"; then
+  echo "[M10-03] 无法读取当前 Git SHA，拒绝 production 构建。" >&2
+  exit 1
+fi
+export MOBILE_RELEASE_PROFILE=production
+export MOBILE_SOURCE_GIT_SHA="$SOURCE_GIT_SHA"
+if ! MANIFEST_VERSION="$(
+  node "$MOBILE_DIR/scripts/verify-release-manifest.mjs" \
+    --profile production \
+    --git-sha "$SOURCE_GIT_SHA" \
+    --print-marketing-version
+)"; then
+  echo "[M10-03] release manifest 未满足 production 门禁，构建未启动。" >&2
+  exit 1
+fi
+
 # ─── 清理函数 ───
 
 cleanup_build_cache() {
@@ -199,7 +217,7 @@ if $PLATFORM_ANDROID; then
     echo "  上传 Android APK 到 OSS..."
     echo "========================================"
     OSS_BUCKET="oss://agent-saas-releases"
-    VERSION=$(python3 -c "import json; print(json.load(open('$MOBILE_DIR/app.json'))['expo']['version'])")
+    VERSION="$MANIFEST_VERSION"
     APK_SIZE=$(stat -f%z "$APK_PATH")
     OSS_APK_KEY="android/AgentSaaS-${VERSION}.apk"
     OSS_ENDPOINT="oss-cn-shenzhen.aliyuncs.com"

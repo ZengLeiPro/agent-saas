@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "displayName": "Agent SaaS",
+    "slug": "ky-agent",
+    "scheme": "agent-saas",
+    "iosBundleIdentifier": "com.agentsaas.mobile",
+    "androidPackage": "com.agentsaas.mobile",
+    "easProjectId": "c5c346ce-795f-4dae-9570-b7e937028923",
+    "easOwner": "zengleipro"
+  },
+  "version": {
+    "marketingVersion": "1.9.5",
+    "iosBuildNumber": 85,
+    "androidVersionCode": null,
+    "latestPublished": {
+      "marketingVersion": null,
+      "iosBuildNumber": null,
+      "androidVersionCode": null
+    }
+  },
+  "target": {
+    "profile": null,
+    "gitSha": null
+  },
+  "verification": {
+    "identity": "pending-external-verification",
+    "versions": "pending-external-verification"
+  }
+}

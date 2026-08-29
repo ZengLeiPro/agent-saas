@@ -15,6 +15,58 @@ import type {
 } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import * as api from "./api";
+import { sortTaskBoardTasks } from "./constants";
+
+function moveInputForLatestTasks(
+  tasks: TaskBoardTask[],
+  originalTasks: TaskBoardTask[],
+  taskId: string,
+  input: Omit<TaskBoardTaskMoveInput, "expectedVersion">,
+): Omit<TaskBoardTaskMoveInput, "expectedVersion"> {
+  const peers = sortTaskBoardTasks(tasks, input.status)
+    .filter((task) => task.id !== taskId);
+  const nextIndex = input.nextTaskId
+    ? peers.findIndex((task) => task.id === input.nextTaskId)
+    : -1;
+  if (nextIndex >= 0) {
+    return {
+      status: input.status,
+      previousTaskId: peers[nextIndex - 1]?.id,
+      nextTaskId: peers[nextIndex]?.id,
+    };
+  }
+  const previousIndex = input.previousTaskId
+    ? peers.findIndex((task) => task.id === input.previousTaskId)
+    : -1;
+  if (previousIndex >= 0) {
+    return {
+      status: input.status,
+      previousTaskId: peers[previousIndex]?.id,
+      nextTaskId: peers[previousIndex + 1]?.id,
+    };
+  }
+  const originalPeers = sortTaskBoardTasks(originalTasks, input.status)
+    .filter((task) => task.id !== taskId);
+  const originalNextIndex = input.nextTaskId
+    ? originalPeers.findIndex((task) => task.id === input.nextTaskId)
+    : -1;
+  const originalPreviousIndex = input.previousTaskId
+    ? originalPeers.findIndex((task) => task.id === input.previousTaskId)
+    : -1;
+  const insertAt = Math.min(
+    originalNextIndex >= 0
+      ? originalNextIndex
+      : originalPreviousIndex >= 0
+        ? originalPreviousIndex + 1
+        : originalPeers.length,
+    peers.length,
+  );
+  return {
+    status: input.status,
+    previousTaskId: peers[insertAt - 1]?.id,
+    nextTaskId: peers[insertAt]?.id,
+  };
+}
 
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -149,8 +201,14 @@ export function useBoardTasks(boardId: string | null) {
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const boardIdRef = useRef(boardId);
+  const boardEpochRef = useRef(0);
+  const previousBoardIdRef = useRef(boardId);
   const requestRef = useRef(0);
   const tasksRef = useRef<TaskBoardTask[]>([]);
+  if (previousBoardIdRef.current !== boardId) {
+    previousBoardIdRef.current = boardId;
+    boardEpochRef.current += 1;
+  }
   boardIdRef.current = boardId;
 
   useEffect(() => {
@@ -356,12 +414,28 @@ export function useBoardTasks(boardId: string | null) {
     optimisticTasks: TaskBoardTask[],
   ) => {
     const mutationBoardId = boardId;
+    const mutationBoardEpoch = boardEpochRef.current;
     const snapshot = tasksRef.current;
     invalidateRefresh();
     tasksRef.current = optimisticTasks;
     setTasks(optimisticTasks);
     try {
-      const next = await api.moveTask(task.id, { ...input, expectedVersion: task.version });
+      let next: TaskBoardTask;
+      try {
+        next = await api.moveTask(task.id, { ...input, expectedVersion: task.version });
+      } catch (caught) {
+        if (!(caught instanceof api.TaskBoardInvalidMoveError) || !mutationBoardId) throw caught;
+        const latestTasks = await api.fetchTasks(mutationBoardId);
+        const latestTask = latestTasks.find((candidate) => candidate.id === task.id);
+        if (!mountedRef.current
+          || mutationBoardId !== boardIdRef.current
+          || mutationBoardEpoch !== boardEpochRef.current) return latestTask ?? task;
+        if (!latestTask) throw caught;
+        next = await api.moveTask(task.id, {
+          ...moveInputForLatestTasks(latestTasks, snapshot, task.id, input),
+          expectedVersion: latestTask.version,
+        });
+      }
       if (!mountedRef.current || mutationBoardId !== boardIdRef.current) return next;
       invalidateRefresh();
       syncTask(next);

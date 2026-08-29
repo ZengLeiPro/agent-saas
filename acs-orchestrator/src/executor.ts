@@ -13,6 +13,7 @@ import { PersistentSandboxRunner } from './persistentRunner.js';
 import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sandboxManager.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { sandboxResourceOverride } from './provision.js';
+import { summarizeRunnerStderr } from './runnerLog.js';
 
 interface InvocationEntry {
   controller: AbortController;
@@ -84,10 +85,14 @@ export class AcsExecutor {
       // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
       // 拿到 AZEROTH_TOKEN 等凭据。env 为空则不写字段（wire 更紧凑，与协议一致）。
       const wireEnv = request.context.env;
+      const runnerCorrelation = request.context.correlation
+        ? { ...request.context.correlation, sandboxId: ref.name }
+        : undefined;
       const runnerInput: SandboxRunnerInput = {
         toolName: toolNameForSandboxRunner(request.toolName),
         input: request.input,
         invocationId,
+        ...(runnerCorrelation ? { correlation: runnerCorrelation } : {}),
         workspace: {
           id: workspace.id,
           userId: workspace.userId,
@@ -325,7 +330,7 @@ export class AcsExecutor {
     });
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf-8').trim();
-      if (text) this.logger.warn(`kubectl_exec_stderr sandbox=${ref.name}: ${text}`);
+      if (text) this.logger.warn(`kubectl_exec_stderr sandbox=${ref.name} ${summarizeRunnerStderr(text)}`);
     });
     return child;
   }

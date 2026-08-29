@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { parseCorrelationContext, type CorrelationContext } from '@agent/shared';
 
 import {
   ContainerExecutionProvider,
@@ -10,6 +11,7 @@ import {
 import { unknownNetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
 import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from 'server/runtime/handProtocol.js';
+import { iterateWithInvocationCorrelation, runWithInvocationCorrelation } from 'server/runtime/invocationCorrelation.js';
 
 import type { HandServerConfig } from './config.js';
 import type { HandInvocationStore, RegisterRunningOutcome } from './invocationStore.js';
@@ -322,7 +324,7 @@ async function prepareToolInvocation(
   if (invocationId && deps.invocationStore) {
     let registered: RegisterRunningOutcome;
     try {
-      registered = await deps.invocationStore.registerRunning(invocationId);
+      registered = await deps.invocationStore.registerRunning(invocationId, wire.context.correlation?.attemptId);
     } catch (err) {
       deps.invocations?.delete(invocationId);
       deps.logger.error(
@@ -392,6 +394,7 @@ async function prepareToolInvocation(
     input: wire.input,
     context: {
       ...(invocationId ? { invocationId } : {}),
+      ...(wire.context.correlation ? { correlation: wire.context.correlation } : {}),
       workspace,
       ...(wire.context.env ? { env: wire.context.env } : {}),
       ...(controller ? { signal: controller.signal } : {}),
@@ -418,7 +421,10 @@ async function executePreparedTool(
 ): Promise<ToolInvocationResponse> {
   let response: ToolInvocationResponse;
   try {
-    response = await deps.provider.execute(prepared.toolRequest);
+    response = await runWithInvocationCorrelation(
+      prepared.toolRequest.context.correlation,
+      () => deps.provider.execute(prepared.toolRequest),
+    );
   } catch (err) {
     response = {
       status: 'error',
@@ -550,7 +556,10 @@ export async function handleExecuteStream(
   heartbeat.unref?.();
   try {
     if (deps.provider.executeStream) {
-      for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
+      for await (const chunk of iterateWithInvocationCorrelation(
+        prepared.toolRequest.context.correlation,
+        deps.provider.executeStream(prepared.toolRequest),
+      )) {
         if (chunk.type === 'completed') {
           sawCompleted = true;
           // 持久化结果（含失败标记）直接写回 chunk，SSE 与内存/GET 完全同源。
@@ -809,6 +818,8 @@ interface WireRequest {
   input: unknown;
   context: {
     invocationId?: string;
+    handId?: string;
+    correlation?: CorrelationContext;
     workspace: {
       id?: string;
       userId?: string;
@@ -844,6 +855,11 @@ export function parseWireRequest(
       ? pickHandEnv(rawEnv as Record<string, string | undefined>)
       : {};
   const envKeys = Object.keys(env);
+  const invocationId = typeof context?.invocationId === 'string' ? context.invocationId : undefined;
+  const handId = typeof context?.handId === 'string' ? context.handId : undefined;
+  const correlation = parseCorrelationContext(context?.correlation, { invocationId, handId });
+  if (!correlation.ok) return correlation;
+  const effectiveInvocationId = correlation.value?.invocationId ?? invocationId;
 
   return {
     ok: true,
@@ -851,7 +867,9 @@ export function parseWireRequest(
       toolName: b.toolName,
       input: b.input ?? {},
       context: {
-        invocationId: typeof context?.invocationId === 'string' ? context.invocationId : undefined,
+        ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
+        ...(handId ? { handId } : {}),
+        ...(correlation.value ? { correlation: correlation.value } : {}),
         workspace: {
           id: typeof workspace.id === 'string' ? workspace.id : undefined,
           userId: typeof workspace.userId === 'string' ? workspace.userId : undefined,

@@ -23,6 +23,49 @@ describe('parseWireRequest', () => {
     }
   });
 
+  it('validates versioned correlation and legacy identity agreement', () => {
+    const parsed = parseWireRequest({
+      toolName: 'Shell', input: {},
+      context: {
+        invocationId: 'run-1:call-1',
+        correlation: { version: 1, invocationId: 'run-1:call-1', attemptId: 'attempt-1' },
+        workspace: { id: 'ws_1', sessionId: 'session-1' },
+      },
+    });
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { context: { correlation: { version: 1, attemptId: 'attempt-1' } } },
+    });
+    expect(parseWireRequest({
+      toolName: 'Shell', input: {},
+      context: {
+        invocationId: 'legacy-a',
+        correlation: { version: 1, invocationId: 'contract-b' },
+        workspace: { id: 'ws_1', sessionId: 'session-1' },
+      },
+    })).toMatchObject({ ok: false });
+    expect(parseWireRequest({
+      toolName: 'Shell', input: {},
+      context: {
+        correlation: { version: 2 },
+        workspace: { id: 'ws_1', sessionId: 'session-1' },
+      },
+    })).toMatchObject({ ok: false });
+  });
+
+  it('uses correlation-only invocation identity for ACS cancel/single-flight', () => {
+    expect(parseWireRequest({
+      toolName: 'Shell', input: {},
+      context: {
+        correlation: { version: 1, invocationId: 'correlation-only', attemptId: 'attempt-1' },
+        workspace: { id: 'ws_1', sessionId: 'session-1' },
+      },
+    })).toMatchObject({
+      ok: true,
+      value: { context: { invocationId: 'correlation-only' } },
+    });
+  });
+
   it('strictly parses an optional sandbox resource override', () => {
     expect(parseWireRequest({
       toolName: 'Shell',

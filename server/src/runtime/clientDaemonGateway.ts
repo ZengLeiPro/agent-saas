@@ -190,12 +190,24 @@ class WebSocketClientDaemonConnection implements ClientDaemonConnection {
     this.lastSeenAtMs = now;
     if (message.type === 'daemon_heartbeat') return;
     if (message.type === 'invoke_chunk') {
-      this.pendingInvokes.get(message.requestId)?.queue.push(message.chunk);
+      const pending = this.pendingInvokes.get(message.requestId);
+      if (!pending) return;
+      if (pending.invocationId !== message.invocationId) {
+        pending.queue.fail(new Error('client daemon response invocationId mismatch'));
+        this.pendingInvokes.delete(message.requestId);
+        return;
+      }
+      pending.queue.push(message.chunk);
       return;
     }
     if (message.type === 'invoke_completed') {
       const pending = this.pendingInvokes.get(message.requestId);
       if (!pending) return;
+      if (pending.invocationId !== message.invocationId) {
+        pending.queue.fail(new Error('client daemon response invocationId mismatch'));
+        this.pendingInvokes.delete(message.requestId);
+        return;
+      }
       pending.queue.push({ type: 'completed', response: message.response });
       pending.queue.close();
       this.pendingInvokes.delete(message.requestId);
@@ -237,7 +249,9 @@ class WebSocketClientDaemonConnection implements ClientDaemonConnection {
       yield { type: 'completed', response: { status: 'error', error: `client daemon hand not connected: ${this.handId}` } };
       return;
     }
-    const invocationId = request.context.invocationId ?? this.nextRequestId('invocation');
+    const invocationId = request.context.invocationId
+      ?? request.context.correlation?.invocationId
+      ?? this.nextRequestId('invocation');
     const requestId = this.nextRequestId('invoke');
     const queue = new AsyncChunkQueue();
     this.pendingInvokes.set(requestId, { invocationId, queue });

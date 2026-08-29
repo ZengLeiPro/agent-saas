@@ -29,7 +29,7 @@ export class ClientDaemonTransport implements ExecutionTransport {
   }
 
   async invoke(request: ToolInvocationRequest): Promise<ToolInvocationResponse> {
-    const handId = request.context.handId;
+    const handId = request.context.handId ?? request.context.correlation?.handId;
     if (!handId) {
       return { status: 'error', error: 'client daemon invocation requires context.handId' };
     }
@@ -61,7 +61,7 @@ export class ClientDaemonTransport implements ExecutionTransport {
     }
     let sawCompleted = false;
     const onAbort = () => {
-      const invocationId = request.context.invocationId;
+      const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
       if (invocationId) void connection.cancel?.(invocationId);
     };
     request.context.signal?.addEventListener('abort', onAbort, { once: true });

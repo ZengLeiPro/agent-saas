@@ -150,6 +150,8 @@ export interface ToolCallContext {
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
   invocationId?: string;
+  /** Versioned invocation/attempt identity propagated across execution layers. */
+  correlation?: import('@agent/shared').CorrelationContext;
   onStreamChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => Promise<void> | void;
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
@@ -982,6 +984,7 @@ class WorkspaceToolProvider implements ToolProvider {
       context: {
         ...(context.invocationId ? { invocationId: context.invocationId } : {}),
         ...(handId ? { handId } : {}),
+        ...(context.correlation ? { correlation: context.correlation } : {}),
         workspace: workspaceForHand,
         env: context.env,
         signal: context.signal,

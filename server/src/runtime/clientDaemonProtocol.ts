@@ -1,3 +1,5 @@
+import { parseCorrelationContext } from '@agent/shared';
+
 import type { ToolInvocationRequest, ToolInvocationResponse, ToolInvocationStreamChunk } from './handProtocol.js';
 import type { HandCapability } from './handStore.js';
 
@@ -126,6 +128,7 @@ function assertClientDaemonMessageShape(message: Partial<ClientDaemonMessage>): 
       requireString(message, 'requestId');
       requireString(message, 'invocationId');
       requireObject(message, 'request');
+      assertToolInvocationCorrelation(message.request, message.invocationId);
       return;
     case 'invoke_chunk':
       requireString(message, 'requestId');
@@ -172,4 +175,28 @@ function requireArray(message: Record<string, unknown>, key: string): void {
 export function serializeClientDaemonMessage(message: ClientDaemonMessage): string {
   assertClientDaemonProtocolVersion(message);
   return JSON.stringify(message);
+}
+
+
+function assertToolInvocationCorrelation(request: unknown, envelopeInvocationId: unknown): void {
+  const context = request && typeof request === 'object'
+    ? (request as { context?: unknown }).context
+    : undefined;
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    throw new Error('invalid client daemon protocol message: missing request.context');
+  }
+  const value = context as Record<string, unknown>;
+  const parsed = parseCorrelationContext(value.correlation, {
+    invocationId: typeof value.invocationId === 'string' ? value.invocationId : undefined,
+    handId: typeof value.handId === 'string' ? value.handId : undefined,
+  });
+  if (!parsed.ok) throw new Error(`invalid client daemon correlation: ${parsed.error}`);
+  const requestInvocationId = typeof value.invocationId === 'string'
+    ? value.invocationId
+    : parsed.value?.invocationId;
+  if (typeof envelopeInvocationId === 'string'
+    && requestInvocationId
+    && envelopeInvocationId !== requestInvocationId) {
+    throw new Error('invalid client daemon correlation: envelope invocationId 冲突');
+  }
 }

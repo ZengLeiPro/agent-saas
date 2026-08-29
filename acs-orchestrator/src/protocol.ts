@@ -1,3 +1,5 @@
+import { parseCorrelationContext, type CorrelationContext } from '@agent/shared';
+
 import type { ToolDescriptor } from 'server/agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from 'server/agent/toolRuntime.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
@@ -21,6 +23,8 @@ export interface WireToolInvocationRequest {
   input: unknown;
   context: {
     invocationId?: string;
+    handId?: string;
+    correlation?: CorrelationContext;
     workspace: WireWorkspaceRef;
     /**
      * 显式透传给远端 pod 的运行态 env。仅允许标准大写 env 名，并拒绝会改变
@@ -108,6 +112,7 @@ export interface SandboxRunnerInput {
   toolName: string;
   input: unknown;
   invocationId?: string;
+  correlation?: CorrelationContext;
   workspace: {
     id?: string;
     userId?: string;
@@ -179,6 +184,11 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     ? pickHandEnv(rawEnv as Record<string, string | undefined>)
     : {};
   const envKeys = Object.keys(env);
+  const invocationId = typeof context?.invocationId === 'string' ? context.invocationId : undefined;
+  const handId = typeof context?.handId === 'string' ? context.handId : undefined;
+  const correlation = parseCorrelationContext(context?.correlation, { invocationId, handId });
+  if (!correlation.ok) return correlation;
+  const effectiveInvocationId = correlation.value?.invocationId ?? invocationId;
 
   return {
     ok: true,
@@ -186,7 +196,9 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
       toolName: b.toolName,
       input: b.input,
       context: {
-        ...(typeof context?.invocationId === 'string' ? { invocationId: context.invocationId } : {}),
+        ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
+        ...(handId ? { handId } : {}),
+        ...(correlation.value ? { correlation: correlation.value } : {}),
         workspace: {
           id,
           sessionId,

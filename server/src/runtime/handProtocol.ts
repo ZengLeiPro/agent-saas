@@ -1,3 +1,5 @@
+import type { CorrelationContext } from '@agent/shared';
+
 import type { ExecutionInvocationAudit, WorkspaceRef } from '../agent/toolRuntime.js';
 
 /**
@@ -24,6 +26,8 @@ export interface ToolInvocationRequest {
 }
 
 export interface ToolInvocationContext {
+  /** Versioned cross-component correlation contract. */
+  correlation?: CorrelationContext;
   /** Durable invocation id used for streaming/cancel correlation across brain and hand. */
   invocationId?: string;
   /** Optional durable hand id for many-hands routing. */

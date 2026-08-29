@@ -1,3 +1,5 @@
+import { parseCorrelationContext, type CorrelationContext } from '@agent/shared';
+
 import { DEFAULT_SHELL_TIMEOUT_MS } from '../agent/toolOutput.js';
 import type { ToolDescriptor, WorkspaceRef } from '../agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from '../agent/toolRuntime.js';
@@ -251,13 +253,14 @@ export class HttpTransport implements ExecutionTransport {
       return finalResponse ?? { status: 'error', error: 'hand-server stream ended without completed chunk' };
     }
     const wireRequest = this.buildWireRequest(request);
+    const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
     const upstreamSignal = request.context.signal;
 
     // 用 AbortController 同时承载"调用方 abort"与"transport 超时"两个来源。
     const controller = new AbortController();
     let cancellationPromise: Promise<void> | undefined;
     const cancelOnce = () => {
-      cancellationPromise ??= this.cancelInvocation(request.context.invocationId);
+      cancellationPromise ??= this.cancelInvocation(invocationId);
       return cancellationPromise;
     };
     const onUpstreamAbort = () => {
@@ -318,7 +321,7 @@ export class HttpTransport implements ExecutionTransport {
       }
       if (controller.signal.aborted) {
         await cancelOnce();
-        const recovered = await this.waitForInvocationResult(request.context.invocationId);
+        const recovered = await this.waitForInvocationResult(invocationId);
         if (recovered) return markRemoteResultRecovered(recovered);
         return {
           status: 'error',
@@ -342,11 +345,12 @@ export class HttpTransport implements ExecutionTransport {
 
   private async *invokeStreamInternal(request: ToolInvocationRequest): ToolInvocationStream {
     const wireRequest = this.buildWireRequest(request);
+    const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
     const upstreamSignal = request.context.signal;
     const controller = new AbortController();
     let cancellationPromise: Promise<void> | undefined;
     const cancelOnce = () => {
-      cancellationPromise ??= this.cancelInvocation(request.context.invocationId);
+      cancellationPromise ??= this.cancelInvocation(invocationId);
       return cancellationPromise;
     };
     const onUpstreamAbort = () => {
@@ -392,7 +396,7 @@ export class HttpTransport implements ExecutionTransport {
         yield { type: 'completed', response: { status: 'error', error: 'hand-server stream 被调用方 abort', metadata: { aborted: true } } };
       } else if (controller.signal.aborted) {
         await cancelOnce();
-        const recovered = await this.waitForInvocationResult(request.context.invocationId);
+        const recovered = await this.waitForInvocationResult(invocationId);
         sawCompleted = true;
         yield {
           type: 'completed',
@@ -437,7 +441,7 @@ export class HttpTransport implements ExecutionTransport {
     const mode = request.input && typeof request.input === 'object'
       ? (request.input as { mode?: unknown }).mode
       : undefined;
-    return Boolean(request.context.invocationId && request.toolName === 'Shell' && mode !== 'background');
+    return Boolean((request.context.invocationId ?? request.context.correlation?.invocationId) && request.toolName === 'Shell' && mode !== 'background');
   }
 
   async cancelInvocation(invocationId: string | undefined): Promise<void> {
@@ -587,6 +591,13 @@ async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<
  * 导出供 hand-server 端测试 / parsing 对照。
  */
 export function serializeRequest(request: ToolInvocationRequest): WireToolInvocationRequest {
+  const parsedCorrelation = parseCorrelationContext(request.context.correlation, {
+    invocationId: request.context.invocationId,
+    handId: request.context.handId,
+  });
+  if (!parsedCorrelation.ok) throw new Error(parsedCorrelation.error);
+  const effectiveInvocationId = request.context.invocationId ?? parsedCorrelation.value?.invocationId;
+  const effectiveHandId = request.context.handId ?? parsedCorrelation.value?.handId;
   const ws = request.context.workspace;
   const wireWorkspace: WireWorkspaceRef = {
     id: ws.id,
@@ -602,8 +613,9 @@ export function serializeRequest(request: ToolInvocationRequest): WireToolInvoca
     toolName: request.toolName,
     input: request.input,
     context: {
-      ...(request.context.invocationId ? { invocationId: request.context.invocationId } : {}),
-      ...(request.context.handId ? { handId: request.context.handId } : {}),
+      ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
+      ...(effectiveHandId ? { handId: effectiveHandId } : {}),
+      ...(parsedCorrelation.value ? { correlation: parsedCorrelation.value } : {}),
       workspace: wireWorkspace,
     },
   };
@@ -620,6 +632,7 @@ export interface WireToolInvocationRequest {
   context: {
     invocationId?: string;
     handId?: string;
+    correlation?: CorrelationContext;
     workspace: WireWorkspaceRef;
     /**
      * 显式透传给远端 hand 的 env（K/V），仅限 {@link HAND_ENV_ALLOWLIST} 内的 key。

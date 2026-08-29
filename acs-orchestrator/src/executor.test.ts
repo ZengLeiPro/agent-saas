@@ -5,9 +5,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { AcsExecutor } from './executor.js';
+import { summarizeRunnerStderr } from './runnerLog.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
 import type { SandboxManager, SandboxRef } from './sandboxManager.js';
+
+describe('runner stderr logging', () => {
+  it('uses only byte count and digest, never stderr content', () => {
+    const summary = summarizeRunnerStderr('Bearer secret-token /private/customer.txt');
+    expect(summary).toMatch(/^bytes=\d+ digest=[a-f0-9]{12}$/);
+    expect(summary).not.toContain('secret-token');
+    expect(summary).not.toContain('/private/customer.txt');
+  });
+});
 
 describe('AcsExecutor active sandbox tracking', () => {
   it('rejects a duplicate invocation id without spawning a second runner', async () => {
@@ -108,6 +118,63 @@ describe('AcsExecutor active sandbox tracking', () => {
     await expect(result).resolves.toMatchObject({ done: true });
     expect(spawn).not.toHaveBeenCalled();
     expect(executor.cancel('inv-aborted-startup')).toBe(false);
+  });
+
+  it('adds the trusted sandbox identity to runner correlation', async () => {
+    const ref: SandboxRef = {
+      name: 'as-correlation',
+      workspaceId: 'ws_kaiyan__u-1',
+      sandboxScopeId: 'ws_kaiyan__u-1',
+      sessionId: 'session-1',
+      mountSubPath: 'workspaces/kaiyan/u-1',
+    };
+    const child = fakeChild();
+    let runnerInput = '';
+    child.stdin.on('data', (chunk) => { runnerInput += String(chunk); });
+    const sandboxManager = {
+      ref: () => ref,
+      ensureRunning: vi.fn(async () => ref),
+    } as unknown as SandboxManager;
+    let spawnInput: string | undefined;
+    const spawn = vi.fn((_args: string[], options: { input?: string }) => {
+      spawnInput = options.input;
+      return child;
+    });
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn } as unknown as Kubectl,
+      sandboxManager,
+      noopLogger,
+      undefined,
+      { persistentRunner: false },
+    );
+    const iterator = executor.executeStream({
+      toolName: 'Shell', input: { command: 'pwd' },
+      context: {
+        invocationId: 'run-1:call-1',
+        correlation: { version: 1, invocationId: 'run-1:call-1', attemptId: 'attempt-1' },
+        workspace: {
+          id: ref.workspaceId,
+          sessionId: ref.sessionId,
+          sandboxScopeId: ref.sandboxScopeId,
+          mountSubPath: ref.mountSubPath,
+        },
+      },
+    }, { stream: true })[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ value: { type: 'progress' } });
+    expect(JSON.parse(spawnInput ?? runnerInput.trim())).toMatchObject({
+      invocationId: 'run-1:call-1',
+      correlation: {
+        version: 1,
+        invocationId: 'run-1:call-1',
+        attemptId: 'attempt-1',
+        sandboxId: 'as-correlation',
+      },
+    });
+    child.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'ok' } })}\n`);
+    child.emit('close', 0, null);
+    await iterator.next();
+    await iterator.next();
   });
 
   it('releases active tracking when sandbox startup fails', async () => {

@@ -1,3 +1,5 @@
+export * from './types/correlation';
+
 // Platform abstraction
 export { initPlatform, getPlatform } from './platform/context';
 export type {

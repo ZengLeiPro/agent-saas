@@ -7,6 +7,7 @@ import {
   type ExecutionProvider,
 } from '../agent/toolRuntime.js';
 import type { HandCapability } from './handStore.js';
+import { iterateWithInvocationCorrelation, runWithInvocationCorrelation } from './invocationCorrelation.js';
 import type { ToolInvocationRequest } from './handProtocol.js';
 import {
   parseClientDaemonMessage,
@@ -165,7 +166,10 @@ export class ClientDaemonRunner {
     let sawCompleted = false;
     try {
       if (this.provider.executeStream) {
-        for await (const chunk of this.provider.executeStream(request)) {
+        for await (const chunk of iterateWithInvocationCorrelation(
+          request.context.correlation,
+          this.provider.executeStream(request),
+        )) {
           if (chunk.type === 'completed') {
             sawCompleted = true;
             this.send(ws, {
@@ -186,7 +190,10 @@ export class ClientDaemonRunner {
           }
         }
       } else {
-        const response = await this.provider.execute(request);
+        const response = await runWithInvocationCorrelation(
+          request.context.correlation,
+          () => this.provider.execute(request),
+        );
         sawCompleted = true;
         this.send(ws, {
           type: 'invoke_completed',

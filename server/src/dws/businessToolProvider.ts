@@ -71,6 +71,12 @@ const FORBIDDEN_VERBS = new Set([
   'auth', 'consume', 'credential', 'download', 'exec', 'export', 'import', 'login', 'logout',
   'pat', 'serve', 'shell', 'token', 'upload', 'watch',
 ]);
+// 命令路径级只读例外（<module>.<sub…>.<action>）：路径本身含写动词（如 doc.comment.list
+// 的 comment）但官方文档证实为纯查询，末尾 token 读判定会被全路径写扫描否决，故显式登记。
+// 新增条目必须核实 references 文档中该完整路径仅为查询命令且无写形态。
+const READ_COMMAND_PATHS = new Set([
+  'aitable.form.share.get', 'doc.comment.list', 'mail.auto-reply.get', 'todo.comment.list',
+]);
 // 2026-08-29（TASK-256）：解禁 --format/-f。skill 文档强制所有命令带 --format json，
 // 且本 Broker 的 execute() 自身追加 --format json，禁用它与自身行为矛盾，导致合法
 // 读命令被误判为 restricted-flag → dangerous。--profile 必须继续禁用（Broker 独占）。
@@ -504,7 +510,13 @@ function classifyCommand(args: string[]): ClassifiedCommand {
   if (trailingArgs.length > 0 && trailingArgs.every(token => token === '--help' || token === '-h')) {
     return { module, commandPath: normalizedCommandPath, risk: 'read' };
   }
-  if (actionTokens.some(token => WRITE_VERBS.has(token))) {
+  // 2026-08-29（TASK-256 review 返工）：写动词判定扫描完整 commandPath，防止位置参数
+  // 覆盖已出现的写动词（如 `chat message send all --group cid` 曾被末尾 all 降档为 read）。
+  // 例外：显式登记的只读命令路径不受全路径写扫描否决。
+  if (READ_COMMAND_PATHS.has(normalizedCommandPath)) {
+    return { module, commandPath: normalizedCommandPath, risk: 'read' };
+  }
+  if (pathTokens.some(token => WRITE_VERBS.has(token))) {
     return { module, commandPath: normalizedCommandPath, risk: 'write' };
   }
   if (actionTokens.some(token => READ_VERBS.has(token))) {

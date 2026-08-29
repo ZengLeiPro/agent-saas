@@ -480,12 +480,21 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$STAGING_DEPLOYMENT_ID/statuses" \
             -f state="$state" -f environment=staging -f environment_url="$STAGING_WEB_URL" >/dev/null
 
+      - name: Verify completed Staging evidence bundle
+        if: success()
+        run: |
+          set -euo pipefail
+          for evidence in manifest.json isolation-summary.json staging-e2e-summary.json \
+            staging-fixture-reset-before.json staging-fixture-reset-after.json; do
+            test -f "$RUNNER_TEMP/$evidence"
+          done
+
       - name: Upload independent Staging evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: staging-evidence-${{ env.STAGING_RELEASE_ID }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
           path: |
             test-results/

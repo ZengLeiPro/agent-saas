@@ -124,11 +124,11 @@ describe("TaskDetail 草稿隔离", () => {
   });
 
   it("任务详情使用圆角半宽侧栏与单栏评论主区，附加信息默认折叠", async () => {
-    const user = userEvent.setup(); render(<TaskDetail {...props()} />);
+    const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("md:basis-1/2"); expect(screen.getByRole("dialog").className).toContain("md:min-w-[26rem]"); expect(screen.getByRole("dialog").className).toContain("rounded-xl"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
     expect(screen.queryByTestId("task-detail-information")).toBeNull(); expect(screen.queryByText("编辑任务并补充评论")).toBeNull();
     expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
-    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true"); await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {

@@ -5,6 +5,7 @@ import { rowToBoard } from './boardFields.js';
 import {
   applyCommentAuthorDisplayName,
   commentExecutionJoin,
+  latestTaskActivityProjection,
   normalizeLabels,
   rowToComment,
   rowToTask,
@@ -157,10 +158,7 @@ export async function listTasks(
   const result = await store.pool.query(
     `SELECT t.*,
             (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count,
-            GREATEST(t.updated_at, COALESCE(
-              (SELECT max(c.created_at) FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}),
-              t.updated_at
-            )) AS latest_activity_at
+            ${latestTaskActivityProjection('t', store.commentsTable, store.changesTable)} AS latest_activity_at
             ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id
@@ -262,10 +260,7 @@ export async function searchTasks(
   const result = await store.pool.query(
     `SELECT t.*,
             (SELECT count(*)::int FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}) AS comment_count,
-            GREATEST(t.updated_at, COALESCE(
-              (SELECT max(c.created_at) FROM ${store.commentsTable} c WHERE c.task_id=t.id AND ${visibleCommentPredicate('c', store.changesTable)}),
-              t.updated_at
-            )) AS latest_activity_at
+            ${latestTaskActivityProjection('t', store.commentsTable, store.changesTable)} AS latest_activity_at
             ${taskRelationProjection(store)}
        FROM ${store.tasksTable} t
        JOIN ${store.boardsTable} b ON b.id=t.board_id

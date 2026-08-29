@@ -640,7 +640,9 @@ export function TaskDetail({
   useEffect(() => {
     if (!active || !open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || saving) return;
+      if (event.key !== "Escape" || event.defaultPrevented || saving) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('[role="listbox"], [data-radix-popper-content-wrapper]')) return;
       setDetailsExpanded(false);
       onOpenChange(false);
     };

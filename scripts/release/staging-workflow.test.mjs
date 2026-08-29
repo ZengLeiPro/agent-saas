@@ -43,9 +43,13 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /environment: staging/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
+  assert.match(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
+  assert.match(workflow, /VITE_WEB_ORIGIN: \$\{\{ env\.STAGING_WEB_URL \}\}/u);
   assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
   assert.match(workflow, /ensure-integration-fixture\.mjs/u);
   assert.match(workflow, /STAGING_E2E_INTEGRATION_TASK_ID=\$integration_task_id/u);
+  assert.match(workflow, /touch "\$RUNNER_TEMP\/staging-fixtures-touched"/u);
+  assert.match(workflow, /if \[ ! -f "\$RUNNER_TEMP\/staging-fixtures-touched" \]; then/u);
   assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
   assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
   assert.match(workflow, /blockers\.length > 0/u);

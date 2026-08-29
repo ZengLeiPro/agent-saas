@@ -45,6 +45,12 @@ printf '%s\n' "$worker_unit_environment" \
     echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
     exit 1
   }
+api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
+printf '%s\n' "$api_unit_environment" \
+  | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
+    exit 1
+  }
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
@@ -77,6 +83,10 @@ rollback() {
     systemctl stop agent-saas-runtime-worker-staging.service || true
     systemctl stop agent-saas-server-staging.service || true
     systemctl stop agent-saas-acs-orchestrator-staging.service || true
+    rm -f /run/agent-saas-staging/server.pid \
+      /run/agent-saas-staging/runtime-worker.pid \
+      /run/agent-saas-staging/runtime-worker.ready \
+      /run/agent-saas-staging/acs-orchestrator.pid
     systemctl reset-failed agent-saas-runtime-worker-staging.service \
       agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
   fi

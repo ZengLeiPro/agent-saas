@@ -105,6 +105,8 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /had_previous_release=false/u);
   assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /rm -f \/run\/agent-saas-staging\/server\.pid/u);
+  assert.match(deploy, /\/run\/agent-saas-staging\/acs-orchestrator\.pid/u);
   assert.match(deploy, /systemctl reset-failed agent-saas-runtime-worker-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
@@ -126,6 +128,11 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u);
   assert.match(deploy, /does not publish the canonical readyfile/u);
+  assert.match(
+    deploy,
+    /AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
+  );
+  assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
@@ -240,4 +247,10 @@ test('Staging API and Worker keep mutable runtime data under the isolated NAS ro
     /Environment=AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
   );
   assert.doesNotMatch(workerUnit, /AGENT_SAAS_WORKER_READY_FILE/u);
+
+  const serverUnit = await readFile(serverUnitPath, 'utf8');
+  assert.match(
+    serverUnit,
+    /Environment=AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
+  );
 });

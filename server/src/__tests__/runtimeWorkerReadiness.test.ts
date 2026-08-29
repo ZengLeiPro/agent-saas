@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   projectRuntimeWorkerReadyFile,
@@ -43,14 +43,34 @@ describe('Runtime Worker split-role readiness', () => {
     writeFileSync(paths.activeColorFile, 'blue\n');
     writeFileSync(paths.readyFileForColor('blue'), '1234\n');
 
-    expect(readActiveRuntimeWorkerAdmissionSnapshot({
-      ...paths,
-      isProcessAlive: (pid) => pid === 1234,
-      now: () => 1_000,
-    })).toEqual({
+    expect(
+      readActiveRuntimeWorkerAdmissionSnapshot({
+        ...paths,
+        isProcessAlive: (pid) => pid === 1234,
+        now: () => 1_000,
+      }),
+    ).toEqual({
       state: 'healthy',
       admitting: true,
       sampledAt: '1970-01-01T00:00:01.000Z',
+    });
+  });
+
+  it('reads an explicitly configured active worker readyfile without production blue-green state', () => {
+    const paths = fixture();
+    const activeReadyFile = join(dirname(paths.activeColorFile), 'staging.ready');
+    writeFileSync(activeReadyFile, '4321\n');
+
+    expect(
+      readActiveRuntimeWorkerAdmissionSnapshot({
+        activeReadyFile,
+        isProcessAlive: (pid) => pid === 4321,
+        now: () => 0,
+      }),
+    ).toEqual({
+      state: 'healthy',
+      admitting: true,
+      sampledAt: '1970-01-01T00:00:00.000Z',
     });
   });
 
@@ -61,13 +81,16 @@ describe('Runtime Worker split-role readiness', () => {
   ])('fails closed for %s', (_label, color, readyPid, alive) => {
     const paths = fixture();
     writeFileSync(paths.activeColorFile, `${color}\n`);
-    if (readyPid) writeFileSync(paths.readyFileForColor(color as 'blue' | 'green'), `${readyPid}\n`);
+    if (readyPid)
+      writeFileSync(paths.readyFileForColor(color as 'blue' | 'green'), `${readyPid}\n`);
 
-    expect(readActiveRuntimeWorkerAdmissionSnapshot({
-      ...paths,
-      isProcessAlive: () => alive,
-      now: () => 2_000,
-    })).toEqual({
+    expect(
+      readActiveRuntimeWorkerAdmissionSnapshot({
+        ...paths,
+        isProcessAlive: () => alive,
+        now: () => 2_000,
+      }),
+    ).toEqual({
       state: 'paused',
       admitting: false,
       sampledAt: '1970-01-01T00:00:02.000Z',
@@ -83,9 +106,11 @@ describe('Runtime Worker split-role readiness', () => {
       reason: 'runtime_worker_not_ready',
     });
 
-    expect(resolveRuntimeAdmissionSnapshotReader('ws-only', local, activeWorker)?.())
-      .toEqual(activeWorker());
-    expect(resolveRuntimeAdmissionSnapshotReader('runtime-worker', local, activeWorker)?.())
-      .toEqual(local());
+    expect(resolveRuntimeAdmissionSnapshotReader('ws-only', local, activeWorker)?.()).toEqual(
+      activeWorker(),
+    );
+    expect(
+      resolveRuntimeAdmissionSnapshotReader('runtime-worker', local, activeWorker)?.(),
+    ).toEqual(local());
   });
 });

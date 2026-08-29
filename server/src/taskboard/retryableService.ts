@@ -41,6 +41,8 @@ import type {
   TaskboardService,
   TaskboardTaskListFilter,
   TaskboardTaskSearchFilter,
+  TaskboardRuntimeTerminalFact,
+  TaskboardWorkflowCancellation,
 } from './types.js';
 import type { RepositoryProvider } from './repositoryProvider.js';
 import type { ExecutionPullRequestInspection } from './deliveryPullRequests.js';
@@ -408,6 +410,30 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {
     await this.init();
     return this.target.claimIntegrationDispatchCandidatesV2?.(limit) ?? [];
+  }
+
+  async claimWorkflowCancellations(limit?: number): Promise<TaskboardWorkflowCancellation[]> {
+    await this.init();
+    return this.target.claimWorkflowCancellations?.(limit) ?? [];
+  }
+
+  async finishWorkflowCancellation(id: string, error?: string): Promise<void> {
+    await this.init();
+    if (!this.target.finishWorkflowCancellation) {
+      throw new Error('Taskboard workflow cancellation completion unavailable');
+    }
+    await this.target.finishWorkflowCancellation(id, error);
+  }
+
+  async reconcileWorkflowCancellationTerminal(
+    id: string,
+    fact: TaskboardRuntimeTerminalFact,
+  ): Promise<void> {
+    await this.init();
+    if (!this.target.reconcileWorkflowCancellationTerminal) {
+      throw new Error('Taskboard workflow terminal reconciliation unavailable');
+    }
+    await this.target.reconcileWorkflowCancellationTerminal(id, fact);
   }
 
   async finishExecutionV2(

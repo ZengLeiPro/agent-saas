@@ -230,6 +230,23 @@ describe('authoritative governance UI routes', () => {
     expect(await partial.json()).toMatchObject({ code: 'EFFECTIVE_RESOURCES_PARTIAL' });
   });
 
+  it('effective list 忽略已删除资源的陈旧赋权引用，显式评估仍保持 404', async () => {
+    const request = await rig({
+      effective: { org_agent: ['deleted-agent'], skill: ['skill-1'] },
+    });
+    const response = await request('/api/me/effective-resources');
+    expect(response.status).toBe(200);
+    const body = effectiveResourceViewSchema.array().parse(await response.json());
+    expect(body.map(item => item.resource.id)).toEqual(['skill-1']);
+
+    const evaluate = await request('/api/access/evaluate', post({
+      action: 'use',
+      resource: { type: 'org_agent', id: 'deleted-agent', tenantId: 'tenant-a', domain: 'agent' },
+    }));
+    expect(evaluate.status).toBe(404);
+    expect(await evaluate.json()).toMatchObject({ code: 'RESOURCE_NOT_FOUND' });
+  });
+
   it('允许的个人 Agent 没有运行依赖索引时 effective list 省略 readiness 而不是 503', async () => {
     const request = await rig({ personalAgents: ['personal_agent_user-1'] });
     const response = await request('/api/me/effective-resources');

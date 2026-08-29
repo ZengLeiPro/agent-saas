@@ -123,12 +123,12 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.addComment.mockResolvedValue(undefined);
   });
 
-  it("任务详情使用单栏评论主区，附加信息默认折叠且不显示标题摘要", async () => {
-    const user = userEvent.setup(); render(<TaskDetail {...props()} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("sm:max-w-[1040px]"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
+  it("任务详情使用圆角半宽侧栏与单栏评论主区，附加信息默认折叠", async () => {
+    const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("md:basis-1/2"); expect(screen.getByRole("dialog").className).toContain("md:min-w-[26rem]"); expect(screen.getByRole("dialog").className).toContain("rounded-xl"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
     expect(screen.queryByTestId("task-detail-information")).toBeNull(); expect(screen.queryByText("编辑任务并补充评论")).toBeNull();
     expect(screen.getByRole("region", { name: "任务评论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
-    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("task-detail-information").className).toContain("overflow-y-auto"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true"); await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {
@@ -285,6 +285,7 @@ describe("TaskDetail 草稿隔离", () => {
     render(<TaskDetail {...props({ onUpdate })} modelList={modelList} />);
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expandTaskDetails();
 
+    expect(screen.getByRole("group", { name: "任务选项" }).className).toContain("xl:grid-cols-4"); expect(screen.queryByRole("region", { name: "分阶段运行模型" })).toBeNull();
     for (const purpose of ["实施阶段", "复核阶段"]) {
       await user.click(screen.getByRole("combobox", { name: `${purpose}运行模型` })); await user.click(screen.getByRole("option", { name: "模型 C" }));
     }
@@ -707,7 +708,8 @@ describe("TaskDetail 草稿隔离", () => {
       integrationTask.id, integrationTask.version, "按当前批次继续处理",
     ));
     expect(prompt).toHaveBeenCalled();
-    expect(await screen.findByText("等待系统自动恢复同一个 Integration Agent")).toBeTruthy();
+    expect(screen.queryByLabelText("最近恢复决策")).toBeNull();
+    expect(screen.queryByText("按当前批次继续处理")).toBeNull();
   });
 
   it("复核中任务可以启动独立 review Agent", async () => {
@@ -759,10 +761,8 @@ describe("TaskDetail 草稿隔离", () => {
     ));
     expect(onExecute).not.toHaveBeenCalled();
     expect(onTaskLoaded).toHaveBeenCalledWith(resumedTask);
-    expect(await screen.findByText("最近恢复决策与后续要求")).toBeTruthy();
-    expect(screen.getByText("依赖已解除，恢复实施")).toBeTruthy();
-    expect(screen.getByText(/恢复目标：实施 Agent/)).toBeTruthy();
-    expect(screen.getByText("尚未交给 Agent，需另行启动")).toBeTruthy();
+    expect(screen.queryByLabelText("最近恢复决策")).toBeNull();
+    expect(screen.queryByText("依赖已解除，恢复实施")).toBeNull();
   });
 
   it("确认后删除任务并关闭详情", async () => {

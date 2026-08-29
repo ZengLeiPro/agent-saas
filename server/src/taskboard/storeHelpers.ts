@@ -98,6 +98,7 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.deleted_at ? { deletedAt: toIso(row.deleted_at) } : {}),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
+    ...(row.latest_activity_at ? { latestActivityAt: toIso(row.latest_activity_at) } : {}),
   };
 }
 
@@ -187,6 +188,21 @@ export function visibleCommentPredicate(commentAlias: string, changesTable: stri
   ))`;
 }
 
+export function latestTaskActivityProjection(
+  taskAlias: string,
+  commentsTable: string,
+  changesTable: string,
+): string {
+  return `GREATEST(
+    COALESCE(${taskAlias}.status_changed_at, ${taskAlias}.created_at),
+    COALESCE((
+      SELECT max(activity_comment.created_at)
+        FROM ${commentsTable} activity_comment
+       WHERE activity_comment.task_id=${taskAlias}.id
+         AND ${visibleCommentPredicate('activity_comment', changesTable)}
+    ), COALESCE(${taskAlias}.status_changed_at, ${taskAlias}.created_at))
+  )`;
+}
 
 export function rowToExecution(row: Record<string, unknown>): TaskBoardExecution {
   return {

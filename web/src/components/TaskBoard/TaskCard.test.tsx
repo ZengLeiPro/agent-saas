@@ -43,15 +43,17 @@ function renderCard(current: TaskBoardTask) {
 }
 
 describe("TaskCard", () => {
-  it("紧凑展示提交人、提交日期和完成日期，并隐藏无优先级噪声", () => {
-    renderCard(task());
+  it("紧凑展示提交人、提交日期、最新动态和完成日期，并隐藏无优先级噪声", () => {
+    renderCard(task({ latestActivityAt: new Date(2026, 7, 15, 12).toISOString() }));
 
     expect(screen.getByText("曾磊 @zenglei")).toBeTruthy();
     expect(screen.getByRole("img", { name: "User" }).getAttribute("src")).toBe("/api/auth/avatar/user-1?v=7");
-    expect(screen.getByText("提交 2026-08-13")).toBeTruthy();
+    const submittedAt = screen.getByText("提交 2026-08-13");
+    const latestAt = screen.getByText("最新 2026-08-15");
+    expect(latestAt.previousElementSibling).toBe(submittedAt);
     expect(screen.getByText("完成 2026-08-14")).toBeTruthy();
     expect(screen.getByRole("button", {
-      name: /提交人 曾磊 @zenglei，提交于 2026-08-13，完成于 2026-08-14，3 条评论/,
+      name: /提交人 曾磊 @zenglei，提交于 2026-08-13，最新于 2026-08-15，完成于 2026-08-14，3 条评论/,
     })).toBeTruthy();
     expect(screen.getByLabelText("3 条评论")).toBeTruthy();
     expect(screen.queryByText("无")).toBeNull();

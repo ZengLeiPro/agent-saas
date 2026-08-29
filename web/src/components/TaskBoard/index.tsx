@@ -399,7 +399,8 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
           </div>
         </div>
       ) : selectedBoard ? (
-        <>
+        <div className="relative flex min-h-0 flex-1 gap-3">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <BoardToolbar
             boards={boards}
             board={selectedBoard}
@@ -427,7 +428,7 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
             onPriorityChange={setPriority}
           />
 
-          <div className="relative flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
+          <div className="relative flex min-h-0 flex-1 flex-col">
             {tasksLoading && tasks.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">正在加载任务...</div>
             ) : (
@@ -469,9 +470,49 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
                 onDrop={handleDrop}
               />
             )}
-
           </div>
-        </>
+          </div>
+
+            <TaskDetail
+              active={active}
+              open={detailOpen}
+              task={selectedTask}
+              board={selectedBoard}
+              boardReadOnly={boardReadOnly}
+              canUpdateTask={canUpdateTask}
+              canReorderTask={canReorderTask}
+              canTransitionTask={canTransitionTask}
+              canArchiveTask={canArchiveTask}
+              canDeleteTask={canDeleteTask}
+              canComment={canComment}
+              canExecute={canExecute}
+              canCancelExecution={canCancelExecution}
+              canCancelIntegration={canCancelIntegration}
+              modelList={modelList}
+              onOpenChange={setDetailOpen}
+              onTaskLoaded={syncTask}
+              onConfigureCiPolicy={() => {
+                setDetailOpen(false);
+                setBoardDialogMode("edit");
+              }}
+              onNavigateTask={(taskId) => {
+                if (!tasks.some((candidate) => candidate.id === taskId)) {
+                  setNotice("关联任务不可见或已归档，无法打开详情");
+                  return;
+                }
+                setSelectedTaskId(taskId);
+                setDetailOpen(true);
+              }}
+              onUpdate={async (task, input) => updateTask(task, input)}
+              onMove={moveFromDetail}
+              onCompleteTask={async (task) => completeTask(task)}
+              onSetArchived={async (task, archived) => setArchived(task, archived)}
+              onDeleteTask={async (task) => removeTask(task)}
+              onExecute={executeTask}
+              onCommentsChanged={refreshTasks}
+            />
+
+        </div>
       ) : null}
 
       <ArchivedTasksSheet
@@ -522,44 +563,6 @@ export function TaskBoardView({ headerActionsTarget, active = true }: TaskBoardV
         onCreate={async (input) => {
           await addTask(input);
         }}
-      />
-      <TaskDetail
-        active={active}
-        open={detailOpen}
-        task={selectedTask}
-        board={selectedBoard}
-        boardReadOnly={boardReadOnly}
-        canUpdateTask={canUpdateTask}
-        canReorderTask={canReorderTask}
-        canTransitionTask={canTransitionTask}
-        canArchiveTask={canArchiveTask}
-        canDeleteTask={canDeleteTask}
-        canComment={canComment}
-        canExecute={canExecute}
-        canCancelExecution={canCancelExecution}
-        canCancelIntegration={canCancelIntegration}
-        modelList={modelList}
-        onOpenChange={setDetailOpen}
-        onTaskLoaded={syncTask}
-        onConfigureCiPolicy={() => {
-          setDetailOpen(false);
-          setBoardDialogMode("edit");
-        }}
-        onNavigateTask={(taskId) => {
-          if (!tasks.some((candidate) => candidate.id === taskId)) {
-            setNotice("关联任务不可见或已归档，无法打开详情");
-            return;
-          }
-          setSelectedTaskId(taskId);
-          setDetailOpen(true);
-        }}
-        onUpdate={async (task, input) => updateTask(task, input)}
-        onMove={moveFromDetail}
-        onCompleteTask={async (task) => completeTask(task)}
-        onSetArchived={async (task, archived) => setArchived(task, archived)}
-        onDeleteTask={async (task) => removeTask(task)}
-        onExecute={executeTask}
-        onCommentsChanged={refreshTasks}
       />
     </div>
   );

@@ -93,6 +93,14 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/format-new-staged-files.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/typecheck-staged.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('docs/release-manifest-v1.md'), {
     components: [],
     blockingReason: null,

@@ -114,6 +114,15 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /install_staging_unit/u);
   assert.match(deploy, /systemctl daemon-reload/u);
   assert.match(deploy, /\/mnt\/agent-saas-staging\/runtime\/server/u);
+  assert.match(
+    deploy,
+    /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1"/u,
+  );
+  assert.doesNotMatch(
+    deploy,
+    /install -d -o agent-saas-staging -g agent-saas-staging[\s\S]*\/mnt\/agent-saas-staging\/runtime\/server/u,
+  );
+  assert.match(deploy, /Staging runtime directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
   assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);

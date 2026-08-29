@@ -24,7 +24,7 @@ server/src/__tests__/webChannelExecutionTarget.test.ts	801	test
 server/src/__tests__/webChannelReconnect.test.ts	890	test
 server/src/__tests__/workflowLibraryV3.test.ts	1062	test
 server/src/__tests__/wsEventProcessor.test.ts	830	test
-server/src/agent/toolRuntime.ts	1558	production
+server/src/agent/toolRuntime.ts	1477	production
 server/src/app/config.ts	1431	production
 server/src/app/routes.ts	1154	production
 server/src/app/runtime.ts	3096	production
@@ -37,7 +37,7 @@ server/src/routes/auth.ts	1789	production
 server/src/routes/platformObservability.ts	1276	production
 server/src/routes/sessions.ts	3339	production
 server/src/routes/skills.ts	1394	production
-server/src/runtime/rawAgentLoop.ts	3956	production
+server/src/runtime/rawAgentLoop.ts	3948	production
 server/src/runtime/rawRuntimeRunDispatch.ts	3206	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1411	production

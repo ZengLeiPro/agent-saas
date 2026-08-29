@@ -1,6 +1,8 @@
 import type { ToolApprovalPolicyOptions } from '../agent/types.js';
 
 import type { RawRuntimeRunDispatchConfig } from './rawRuntimeRunDispatchTypes.js';
+import type { RunStore } from './runStore.js';
+import type { RunContext } from './types.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('RawRuntime');
@@ -14,6 +16,24 @@ export function normalizeApprovalPolicy(value: unknown): ToolApprovalPolicyOptio
   return (value as { lowRiskOnly?: unknown }).lowRiskOnly === true
     ? { autoApproveTools: true, lowRiskOnly: true }
     : { autoApproveTools: true };
+}
+
+export async function refreshRunApprovalPolicy(
+  runStore: RunStore | undefined,
+  context: RunContext,
+): Promise<RunContext> {
+  if (!runStore) return context;
+  try {
+    const run = await runStore.get(context.runId);
+    // 存量/派生 run 无此字段时保留 dispatch 已解析的策略；显式 null 则关闭授权。
+    if (!run || !Object.prototype.hasOwnProperty.call(run.metadata ?? {}, 'approvalPolicy')) return context;
+    return {
+      ...context,
+      approvalPolicy: normalizeApprovalPolicy(run.metadata?.approvalPolicy),
+    };
+  } catch {
+    return context;
+  }
 }
 
 /**

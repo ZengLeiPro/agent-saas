@@ -52,7 +52,7 @@ describe('loadToolDescription', () => {
     // 不会有 trailing / leading 空白
     expect(desc).toBe(desc.trim());
     // 关键内容仍在
-    expect(desc).toContain('对工作区文本文件执行精确字符串替换');
+    expect(desc).toContain('对工作区文本文件执行一个或多个文本替换');
     expect(desc).toContain('.ky-agent/settings.json');
   });
 

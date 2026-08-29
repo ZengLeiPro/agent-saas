@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   UnsafeFilePathError,
+  atomicWriteTrustedFile,
   copyTrustedFile,
   openTrustedFile,
   readTrustedFile,
@@ -78,6 +79,59 @@ describe('trusted descriptor-relative file operations', () => {
       await opened.handle.close();
     }
     await expect(readTrustedFile(root, 'safe/inside.txt', 'utf8')).rejects.toBeInstanceOf(UnsafeFilePathError);
+  });
+
+  it('refuses an atomic update when the opened target path was replaced', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'inside.txt');
+    const original = join(root, 'safe', 'nested', 'inside-original.txt');
+    const opened = await openTrustedFile(root, 'safe/nested/inside.txt');
+    expect(await opened.handle.readFile('utf8')).toBe('inside');
+
+    await rename(target, original);
+    await writeFile(target, 'concurrent replacement');
+    try {
+      await expect(atomicWriteTrustedFile(root, 'safe/nested/inside.txt', 'edited', {
+        expectedFile: opened.stats,
+      })).rejects.toMatchObject({ code: 'ESTALE' });
+    } finally {
+      await opened.handle.close();
+    }
+
+    await expect(readFile(target, 'utf8')).resolves.toBe('concurrent replacement');
+    await expect(readFile(original, 'utf8')).resolves.toBe('inside');
+  });
+
+  it('refuses an atomic update after same-inode content changed', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'inside.txt');
+    const opened = await openTrustedFile(root, 'safe/nested/inside.txt');
+    await writeFile(target, 'concurrent update with another size');
+    const changedStats = await stat(target);
+    try {
+      await expect(atomicWriteTrustedFile(root, 'safe/nested/inside.txt', 'edited', {
+        expectedFile: changedStats,
+        expectedContent: 'inside',
+      })).rejects.toMatchObject({ code: 'ESTALE' });
+    } finally {
+      await opened.handle.close();
+    }
+    await expect(readFile(target, 'utf8')).resolves.toBe('concurrent update with another size');
+  });
+
+  it('applies the process umask to a newly created atomic target', async () => {
+    const { root } = await fixture();
+    const target = join(root, 'safe', 'nested', 'new.txt');
+    await atomicWriteTrustedFile(root, 'safe/nested/new.txt', 'new');
+    expect((await stat(target)).mode & 0o777).toBe(0o664 & ~process.umask());
+  });
+
+  it('rejects path separators in an atomic temp suffix', async () => {
+    const { root } = await fixture();
+    await expect(atomicWriteTrustedFile(root, 'safe/nested/inside.txt', 'edited', {
+      tempSuffix: '../escape',
+    })).rejects.toBeInstanceOf(UnsafeFilePathError);
+    await expect(readFile(join(root, 'safe', 'nested', 'inside.txt'), 'utf8')).resolves.toBe('inside');
   });
 
   it('rejects cross-root reads, writes, and deletes before filesystem I/O', async () => {

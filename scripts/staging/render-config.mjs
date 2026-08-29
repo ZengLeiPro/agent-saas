@@ -46,6 +46,22 @@ export function renderStagingConfig(source, env = process.env) {
   config.codexSubscription = { enabled: false, websocketEnabled: false };
   config.webTools = { enabled: false };
   config.imageGenTools = { enabled: false };
+  delete config.tts;
+  config.stt = { enabled: false };
+  config.memory = {
+    enabled: false,
+    injectContext: { enabled: false },
+    maintenance: { enabled: false },
+    polling: { enabled: false },
+    consolidation: { enabled: false },
+  };
+  config.systemMonitor = { enabled: false };
+  config.runtimeEventRetention = { enabled: false, executionMode: 'dry-run' };
+  config.dispatch = {
+    ...(config.dispatch ?? {}),
+    enabled: true,
+    env: {},
+  };
   config.toolControls = { ...(config.toolControls ?? {}), enabled: true };
   config.serverRemote = undefined;
   config.tenantRemoteHands = {
@@ -97,7 +113,8 @@ export function renderStagingConfig(source, env = process.env) {
     },
   };
 
-  for (const key of ['integrationV3', 'notification', 'notifications']) delete config[key];
+  for (const key of ['integrationV3', 'integrationV3ControlPlane', 'notification', 'notifications'])
+    delete config[key];
   return JSON.parse(JSON.stringify(config));
 }
 

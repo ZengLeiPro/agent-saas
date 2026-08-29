@@ -18,6 +18,7 @@ const PATH_COMPONENTS = Object.freeze([
   ['.husky/', []],
   ['docs/', []],
   ['scripts/release/', []],
+  ['scripts/staging/', []],
   ['infra/staging/', []],
   ['config/', []],
   ['mobile/', []],
@@ -35,12 +36,16 @@ const NON_RUNTIME_FILES = new Set([
   'README.md',
   'app.json',
   'config.example.json',
+  'daemon-packaging/systemd/agent-saas-server-staging.service.template',
+  'daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template',
   'docker-compose.local-db.yml',
   'docker-compose.override.ecs.yml',
   'docker-compose.yml',
   'eas.json',
   'eslint.config.mjs',
+  'scripts/format-new-staged-files.mjs',
   'scripts/test_acs_operational_scripts.py',
+  'scripts/typecheck-staged.mjs',
 ]);
 
 export function classifyPath(filePath) {

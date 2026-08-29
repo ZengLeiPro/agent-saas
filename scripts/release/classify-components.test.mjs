@@ -67,7 +67,37 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/staging/render-config.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/staging/bootstrap-config.test.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(
+    classifyPath('daemon-packaging/systemd/agent-saas-server-staging.service.template'),
+    {
+      components: [],
+      blockingReason: null,
+    },
+  );
+  assert.deepEqual(
+    classifyPath('daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template'),
+    {
+      components: [],
+      blockingReason: null,
+    },
+  );
   assert.deepEqual(classifyPath('scripts/test_acs_operational_scripts.py'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/format-new-staged-files.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/typecheck-staged.mjs'), {
     components: [],
     blockingReason: null,
   });

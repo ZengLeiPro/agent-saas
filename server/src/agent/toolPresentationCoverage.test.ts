@@ -134,6 +134,16 @@ describe('截断前 metadata 规则', () => {
     expect(result?.status).toBe('ok');
   });
 
+  it('Read 展示路径自愈结果', () => {
+    const result = buildToolPresentation(
+      'Read',
+      { path: '制度/差旅\u202F制度.md' },
+      undefined,
+      { path: '制度/差旅 制度.md', fileBytes: 800, linesRead: 12, pathRecovered: true },
+    );
+    expect(result?.detail).toContainEqual({ tree: '├', k: '路径自愈', v: '已匹配实际文件名' });
+  });
+
   it('Read 截断时标 warn 并写明只返回了多少', () => {
     const result = buildToolPresentation(
       'Read',
@@ -163,6 +173,15 @@ describe('截断前 metadata 规则', () => {
     );
     expect(all?.detail).toContainEqual({ tree: '├', k: '替换', v: '7 处' });
     expect(all?.detail).toContainEqual({ tree: '└', k: '体积变化', v: '−100 B' });
+
+    const diffUnavailable = buildToolPresentation(
+      'Edit',
+      { file_path: 'a.ts' },
+      undefined,
+      { path: 'a.ts', replacements: 1, bytesBefore: 10, bytesAfter: 11, diffUnavailable: true },
+    );
+    expect(diffUnavailable?.status).toBe('warn');
+    expect(diffUnavailable?.detail).toContainEqual({ warn: '文件已修改，但 unified diff 生成失败' });
   });
 
   it('字节与耗时的量级格式正确', () => {
@@ -422,8 +441,32 @@ describe('结构化事实（tool_result.metadata）', () => {
       .toEqual({ linesRead: 41, fileBytes: 18_600, truncated: false });
     expect(extractToolResultMetadata('Write', { path: '/w/a.md', bytesWritten: 2458 }))
       .toEqual({ bytesWritten: 2458 });
-    expect(extractToolResultMetadata('Edit', { path: '/w/a.ts', replacements: 1, occurrences: 7, bytesBefore: 1000, bytesAfter: 1128 }))
-      .toEqual({ replacements: 1, occurrences: 7, bytesBefore: 1000, bytesAfter: 1128 });
+    expect(extractToolResultMetadata('Edit', {
+      path: '/w/a.ts',
+      replacements: 1,
+      occurrences: 7,
+      editCount: 1,
+      fuzzyMatches: 1,
+      bomPreserved: true,
+      lineEnding: 'CRLF',
+      bytesBefore: 1000,
+      bytesAfter: 1128,
+      diff: '--- a.ts\n+++ a.ts\n@@ -1 +1 @@\n-old\n+new',
+      diffTruncated: false,
+      firstChangedLine: 1,
+    })).toEqual({
+      replacements: 1,
+      occurrences: 7,
+      editCount: 1,
+      fuzzyMatches: 1,
+      bomPreserved: true,
+      lineEnding: 'CRLF',
+      bytesBefore: 1000,
+      bytesAfter: 1128,
+      diff: '--- a.ts\n+++ a.ts\n@@ -1 +1 @@\n-old\n+new',
+      diffTruncated: false,
+      firstChangedLine: 1,
+    });
   });
 
   it('未登记的工具、空 metadata、全部字段落空时返回 undefined——宁可没有，不可编造', () => {
@@ -435,6 +478,8 @@ describe('结构化事实（tool_result.metadata）', () => {
   it('非有限数字与超长字符串被丢弃', () => {
     expect(extractToolResultMetadata('Shell', { exitCode: 0, durationMs: Number.NaN, signal: 'x'.repeat(200) }))
       .toEqual({ exitCode: 0 });
+    expect(extractToolResultMetadata('Edit', { replacements: 1, diff: 'x'.repeat(64 * 1024 + 1) }))
+      .toEqual({ replacements: 1 });
   });
 });
 

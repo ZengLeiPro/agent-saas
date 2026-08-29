@@ -196,7 +196,7 @@ describe('PlatformToolRuntime', () => {
       expect(boundedResp.status).toBe('success');
       if (boundedResp.status === 'success') {
         expect(Buffer.byteLength(boundedResp.content, 'utf8')).toBeLessThanOrEqual(MAX_READ_OUTPUT_BYTES);
-        expect(boundedResp.content).toContain(`Read output reached ${MAX_READ_OUTPUT_BYTES} UTF-8 bytes`);
+        expect(boundedResp.content).toContain("line 1 is 300017 UTF-8 bytes and exceeds the Read budget; use Shell: sed -n '1p'");
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -219,7 +219,7 @@ describe('PlatformToolRuntime', () => {
         expect(response.content).toContain('Output bytes: stdout=');
         expect(response.content).toContain('Full output files: stdout=tmp/tool-results/');
         expect(response.content).toContain('[stdout]');
-        expect(response.content).toContain('truncated');
+        expect(response.content).toContain('exceeded the in-memory capture window');
         expect(response.content.length).toBeLessThan(70 * 1024);
         const match = /stdout=(tmp\/tool-results\/[^ ]+\.txt)/.exec(response.content);
         expect(match?.[1]).toBeTruthy();

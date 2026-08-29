@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react
 import { Volume2, VolumeX, Loader2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { FloatingPanel, FLOATING_PANEL_SURFACE } from "@/components/ui/floating-panel";
 import { Tabs } from "@/components/ui/tabs";
 import { ChatTabContent } from "@/components/chat/ChatTabContent";
 import { useSubagentTranscript } from "@/contexts/SubagentTranscriptContext";
@@ -74,13 +75,6 @@ const SuspenseFallback = (
     <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
-
-/**
- * 浮动内容框：纯白面板浮在品牌底（--background）上，靠描边勾轮廓、双层柔和阴影撑起层次。
- * 主会话、右侧预览/文件/系统面板与能力中心共用同一档，切 tab 时外框不跳。
- */
-const FLOATING_PANEL_SURFACE =
-  "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]";
 
 export function DesktopLayout(props: LayoutProps) {
   const {
@@ -935,12 +929,8 @@ export function DesktopLayout(props: LayoutProps) {
                 onDoubleClick={onDividerDoubleClick}
               />
             </div>
-            <div
-              className={cn(
-                "min-w-0 flex-col overflow-hidden rounded-xl",
-                FLOATING_PANEL_SURFACE,
-                showRightPanel ? "flex" : "hidden",
-              )}
+            <FloatingPanel
+              className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden")}
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
               {rightPanelKind === 'subagent' && subagentTranscript ? (
@@ -982,7 +972,7 @@ export function DesktopLayout(props: LayoutProps) {
                   />
                 </Suspense>
               </div>
-            </div>
+            </FloatingPanel>
           </>
         )}
       </div>

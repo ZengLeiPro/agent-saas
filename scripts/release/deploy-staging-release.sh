@@ -105,6 +105,14 @@ if (mode === 'shared-cidr' && !(values.ACS_SNAT_SHARED_CIDRS || values.ACS_SNAT_
   throw new Error('Staging ACS shared-cidr mode has no configured CIDR');
 }
 NODE
+snat_mode="$(awk -F= '$1 == "ACS_SNAT_MODE" { print substr($0, index($0, "=") + 1) }' "$acs_env")"
+if [ -n "$snat_mode" ] && [ "$snat_mode" != disabled ]; then
+  command -v aliyun >/dev/null || {
+    echo 'Staging ACS SNAT is enabled but the aliyun CLI runtime dependency is missing' >&2
+    exit 1
+  }
+  aliyun version >/dev/null
+fi
 
 if [ -d "$target" ]; then
   node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server

@@ -265,9 +265,12 @@ jobs:
           baseline="$(jq -r .components.api.gitSha "$RUNNER_TEMP/production.json")"
           git cat-file -e "$baseline^{commit}"
           git merge-base --is-ancestor "$baseline" "$RELEASE_SHA"
-          node scripts/release/classify-components.mjs \
+          if ! node scripts/release/classify-components.mjs \
             --baseline "$baseline" --target "$RELEASE_SHA" \
-            > "$RUNNER_TEMP/classification.json"
+            > "$RUNNER_TEMP/classification.json"; then
+            cat "$RUNNER_TEMP/classification.json" >&2
+            exit 1
+          fi
           node scripts/release/migration-plan.mjs \
             --changed-paths "$RUNNER_TEMP/classification.json" --target "$RELEASE_SHA" \
             > "$RUNNER_TEMP/migration.json"

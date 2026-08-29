@@ -1,7 +1,10 @@
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createRuntimeOperationsAdminRouter } from '../routes/runtimeOperationsAdmin.js';
+import {
+  createRuntimeOperationsAdminRouter,
+  requestAcsOrchestrator,
+} from '../routes/runtimeOperationsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 const servers: Array<{ close: () => void }> = [];
@@ -45,6 +48,41 @@ async function readJson(response: Response) {
 describe('runtime operations admin router', () => {
   afterEach(() => {
     while (servers.length > 0) servers.pop()?.close();
+  });
+
+  it('keeps a loopback ACS control plane off the Staging global egress proxy', async () => {
+    const acs = express();
+    acs.get('/sandboxes', (req, res) => {
+      expect(req.headers.authorization).toBe('Bearer staging-loopback-token');
+      res.json({ status: 'ok', sandboxes: [] });
+    });
+    const server = acs.listen(0, '127.0.0.1');
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('failed to bind ACS test server');
+    const guardedFetch = vi.fn(async () => new Response('{}', { status: 403 })) as typeof fetch;
+
+    const result = await requestAcsOrchestrator({
+      config: {
+        tenantRemoteHands: {
+          hands: [{
+            id: 'agent-saas-staging-acs',
+            baseUrl: `http://127.0.0.1:${address.port}`,
+            rollout: { mode: 'all' },
+            authToken: 'staging-loopback-token',
+            networkPolicy: { mode: 'public-egress', denyPrivateNetworks: true },
+          }],
+        },
+      } as any,
+      fetchImpl: guardedFetch,
+      timeoutMs: 5_000,
+      path: '/sandboxes',
+      method: 'GET',
+    });
+
+    expect(result).toEqual({ status: 200, body: { status: 'ok', sandboxes: [] } });
+    expect(guardedFetch).not.toHaveBeenCalled();
   });
 
   it('returns runtime operations summary without leaking hand auth token', async () => {

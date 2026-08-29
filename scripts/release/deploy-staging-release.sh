@@ -71,6 +71,8 @@ rollback() {
     systemctl stop agent-saas-runtime-worker-staging.service || true
     systemctl stop agent-saas-server-staging.service || true
     systemctl stop agent-saas-acs-orchestrator-staging.service || true
+    systemctl reset-failed agent-saas-runtime-worker-staging.service \
+      agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
   fi
 }
 finish() {
@@ -130,12 +132,18 @@ if [ -d "$target" ]; then
   test "$existing" = "$manifest_digest" || { echo 'Immutable Staging release conflicts' >&2; exit 1; }
 else
   rm -rf "$candidate"
-  mkdir -p "$candidate/server" "$candidate/web" "$candidate/acs-orchestrator" "$candidate/.release"
+  mkdir -p "$candidate/web" "$candidate/.release"
   install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
   install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
-  tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate/server"
+  tar -tzf "$candidate/.release/server-bundle.tgz" \
+    | awk '$0 == "./server/dist/index.js" || $0 == "server/dist/index.js" { found = 1 } END { exit !found }' \
+    || { echo 'Staging server bundle must contain server/dist/index.js' >&2; exit 1; }
+  tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
+    | awk '$0 == "./acs-orchestrator/dist/index.js" || $0 == "acs-orchestrator/dist/index.js" { found = 1 } END { exit !found }' \
+    || { echo 'Staging ACS bundle must contain acs-orchestrator/dist/index.js' >&2; exit 1; }
+  tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate"
   tar -xzf "$RELEASE_DIR/web-assets.tgz" -C "$candidate/web"
-  tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate/acs-orchestrator"
+  tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate"
   test -s "$candidate/server/dist/index.js"
   test -s "$candidate/acs-orchestrator/dist/index.js"
   install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"
@@ -169,6 +177,29 @@ const client = new Client({
   console.error(`Staging database runtime preflight failed: ${error.message}`);
   process.exit(1);
 });
+NODE
+
+node - /etc/agent-saas-staging/config.json <<'NODE'
+const fs = require('node:fs');
+const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const failures = [];
+if (config.tts) failures.push('tts must be absent');
+if (config.stt?.enabled !== false) failures.push('stt.enabled must be false');
+for (const key of ['apiKey', 'apiKeyRef', 'ossAccessKeyId', 'ossAccessKeyIdRef', 'ossAccessKeySecret', 'ossAccessKeySecretRef']) {
+  if (config.stt?.[key]) failures.push(`stt.${key} must be absent`);
+}
+if (config.memory?.enabled !== false) failures.push('memory.enabled must be false');
+if (config.memory?.index) failures.push('memory.index must be absent');
+for (const key of ['injectContext', 'maintenance', 'polling', 'consolidation']) {
+  if (config.memory?.[key]?.enabled !== false) failures.push(`memory.${key}.enabled must be false`);
+}
+if (Object.keys(config.dispatch?.env ?? {}).length > 0) failures.push('dispatch.env must be empty');
+if (config.systemMonitor?.enabled !== false) failures.push('systemMonitor.enabled must be false');
+if (config.runtimeEventRetention?.enabled !== false) failures.push('runtimeEventRetention.enabled must be false');
+if (config.integrationV3ControlPlane) failures.push('integrationV3ControlPlane must be absent');
+if (failures.length > 0) {
+  throw new Error(`Staging runtime profile preflight failed:\n- ${failures.join('\n- ')}`);
+}
 NODE
 
 ln -sfn "$target" "$current"

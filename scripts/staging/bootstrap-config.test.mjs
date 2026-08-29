@@ -17,6 +17,31 @@ test('renders a fail-closed Staging config while retaining model configuration',
     models: { groups: [{ id: 'default', name: 'Default', models: [] }], default: 'default/model' },
     dingtalk: { enabled: true, robots: { prod: { appKey: 'x', appSecret: 'y', name: 'prod' } } },
     webPush: { enabled: true, publicKey: 'x', privateKey: 'y', subject: 'https://example.com' },
+    tts: { doubaoAppId: 'prod-app', doubaoApiKey: 'prod-key' },
+    stt: {
+      enabled: true,
+      apiKeyRef: 'production/stt-api',
+      ossAccessKeyIdRef: 'production/stt-oss-id',
+      ossAccessKeySecretRef: 'production/stt-oss-secret',
+    },
+    memory: {
+      enabled: true,
+      polling: { enabled: true },
+      consolidation: { enabled: true },
+      index: {
+        enabled: true,
+        embedding: {
+          baseUrl: 'https://prod.example.com',
+          apiKey: 'prod',
+          model: 'x',
+          dimensions: 1,
+        },
+      },
+    },
+    dispatch: { enabled: true, env: { ARK_API_KEY: 'production-key' } },
+    systemMonitor: { enabled: true, tlsCheckHosts: ['agent.kaiyan.net'] },
+    runtimeEventRetention: { enabled: true, executionMode: 'execute' },
+    integrationV3ControlPlane: { enabled: true, githubTokenMode: 'production' },
   };
   const config = renderStagingConfig(source, {
     STAGING_JWT_SECRET: 'staging-jwt-secret-that-is-at-least-32-characters',
@@ -33,6 +58,19 @@ test('renders a fail-closed Staging config while retaining model configuration',
   assert.equal(config.tenantRemoteHands.hands[0].authTokenRef, STAGING_ACS_TOKEN_REF);
   assert.equal(config.egress.server.failOpen, false);
   assert.deepEqual(config.egress.server.bypassDomains, []);
+  assert.equal(config.tts, undefined);
+  assert.deepEqual(config.stt, { enabled: false });
+  assert.deepEqual(config.memory, {
+    enabled: false,
+    injectContext: { enabled: false },
+    maintenance: { enabled: false },
+    polling: { enabled: false },
+    consolidation: { enabled: false },
+  });
+  assert.deepEqual(config.dispatch, { enabled: true, env: {} });
+  assert.deepEqual(config.systemMonitor, { enabled: false });
+  assert.deepEqual(config.runtimeEventRetention, { enabled: false, executionMode: 'dry-run' });
+  assert.equal(config.integrationV3ControlPlane, undefined);
 });
 
 test('bootstraps an EncryptedFileSecretVault-compatible namespaced ACS token', () => {

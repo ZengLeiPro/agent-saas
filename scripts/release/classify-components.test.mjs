@@ -67,6 +67,14 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/staging/render-config.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
+  assert.deepEqual(classifyPath('scripts/staging/bootstrap-config.test.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('scripts/test_acs_operational_scripts.py'), {
     components: [],
     blockingReason: null,

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ContainerExecutionProvider } from '../agent/containerExecutionProvider.js';
 import { WORKSPACE_HAND_TOOLS } from '../agent/toolRuntime.js';
@@ -109,6 +109,38 @@ describe('ContainerExecutionProvider 纯逻辑与执行前守卫（无需 Docker
 
     expect(resp.status).toBe('error');
     expect(resp.status === 'error' ? resp.error : '').toContain('unknown tool NoSuchTool');
+  });
+
+  it('流式只读 rg 与非流式路径一致，直接传 argv 而不经过 shell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'container-direct-rg-'));
+    dirs.add(root);
+    const provider = new ContainerExecutionProvider();
+    const runDocker = vi.spyOn(
+      provider as unknown as { runDocker: (...args: unknown[]) => Promise<unknown> },
+      'runDocker',
+    ).mockResolvedValue({
+      exitCode: 0,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      stdoutLines: 0,
+      stderrLines: 0,
+      durationMs: 1,
+      outputWindowTruncated: false,
+      outputQuotaTerminated: false,
+    });
+
+    for await (const _chunk of provider.executeStream({
+      toolName: 'Shell',
+      input: { command: 'rg --no-config --files .' },
+      context: { workspace: workspace(root) },
+    })) {
+      // drain stream
+    }
+
+    expect(runDocker.mock.calls[0]?.[1]).toEqual(['rg', '--no-config', '--files', '.']);
   });
 
   it('docker 可执行文件缺失时 Shell 走 classifyDockerError 的 spawnError 分支，报"failed to start"', async () => {

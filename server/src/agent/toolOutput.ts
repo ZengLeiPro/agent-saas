@@ -3,8 +3,23 @@ export const MAX_READ_LINES = 2_000;
 /** Read 单次返回给模型的 UTF-8 硬上限；完整文件仍保留在 workspace。 */
 export const MAX_READ_OUTPUT_BYTES = 64 * 1024;
 export const MAX_SHELL_RETURN_CHARS = 64 * 1024;
-export const MAX_SHELL_CAPTURE_BYTES = 4 * 1024 * 1024;
+/**
+ * Shell 内存捕获窗口（2026-08-29 P0 改造，对标 ref/pi 的 OutputAccumulator）：
+ * 单通道输出超过 head+tail 窗口后**不终止命令**，全部字节流式写入
+ * `tmp/tool-results/` 下的完整输出文件，内存只保留头/尾窗口供摘要信封使用。
+ *
+ * 尺寸约束：两通道窗口合计（2 × (HEAD+TAIL) ≈ 56KB）必须留在
+ * MAX_SHELL_RETURN_CHARS 信封预算内，否则信封的 truncateMiddle 会切碎
+ * 「完整输出文件」指引——那是大输出场景下最重要的信息。
+ */
+export const MAX_SHELL_HEAD_BYTES = 8 * 1024;
+export const MAX_SHELL_TAIL_BYTES = 20 * 1024;
+/** 单通道完整输出的磁盘配额：仅超出时才终止命令（极端保护，正常不应触发）。 */
+export const MAX_SHELL_SPILL_BYTES = 512 * 1024 * 1024;
 export const MAX_SHELL_STREAM_BYTES = 64 * 1024;
+/** 原始流式预算耗尽后，周期性尾窗快照的最小间隔与单条快照尾窗字符上限。 */
+export const SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS = 5_000;
+export const SHELL_PROGRESS_SNAPSHOT_MAX_CHARS = 1_024;
 export const MAX_SHELL_TIMEOUT_MS = 30 * 60_000;
 export const DEFAULT_SHELL_TIMEOUT_MS = MAX_SHELL_TIMEOUT_MS;
 export const MAX_BACKGROUND_SHELL_TIMEOUT_MS = 24 * 60 * 60_000;
@@ -27,7 +42,13 @@ export interface ShellOutputSummary {
   durationMs?: number;
   timedOut?: boolean;
   aborted?: boolean;
-  captureLimitExceeded?: boolean;
+  /** 输出超出内存捕获窗口：摘要只呈现头/尾窗口，完整输出保留在 outputFiles（命令未被终止）。 */
+  outputWindowTruncated?: boolean;
+  /** 输出超出磁盘配额导致命令被终止（极端保护）。 */
+  outputQuotaTerminated?: boolean;
+  /** 真实总行数。窗口化后无法从 content 数出，必须由累计器提供。 */
+  stdoutLines?: number;
+  stderrLines?: number;
   outputFiles?: ShellOutputFileRef[];
   outputFileError?: string;
   maxChars?: number;
@@ -61,8 +82,8 @@ export function truncateUtf8Prefix(text: string, maxBytes: number): { text: stri
 
 export function formatShellOutput(input: ShellOutputSummary): string {
   const maxChars = input.maxChars ?? MAX_SHELL_RETURN_CHARS;
-  const stdoutLines = countLines(input.stdout);
-  const stderrLines = countLines(input.stderr);
+  const stdoutLines = input.stdoutLines ?? countLines(input.stdout);
+  const stderrLines = input.stderrLines ?? countLines(input.stderr);
   const exit = input.exitCode === undefined && input.signal === undefined
     ? undefined
     : (input.exitCode === null || input.exitCode === undefined ? `signal ${input.signal ?? 'unknown'}` : String(input.exitCode));
@@ -77,8 +98,11 @@ export function formatShellOutput(input: ShellOutputSummary): string {
       ? `Full output files: ${input.outputFiles.map((file) => `${file.channel}=${file.path} (${file.bytes} bytes sha256=${file.sha256})`).join('; ')}`
       : undefined,
     input.outputFileError ? `Full output file write failed: ${input.outputFileError}` : undefined,
-    input.captureLimitExceeded
-      ? `Output capture exceeded ${MAX_SHELL_CAPTURE_BYTES} bytes; process was terminated after preserving captured output.`
+    input.outputWindowTruncated
+      ? 'Output exceeded the in-memory capture window; full output was streamed to the files above and the command was not terminated.'
+      : undefined,
+    input.outputQuotaTerminated
+      ? `Output exceeded the ${MAX_SHELL_SPILL_BYTES}-byte disk quota; the command was terminated after preserving captured output.`
       : undefined,
   ].filter(Boolean).join('\n');
 

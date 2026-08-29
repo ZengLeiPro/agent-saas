@@ -11,21 +11,26 @@ import type {
   WorkspaceRef,
 } from './toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from './toolRuntime.js';
+import { createEditDiff } from './editOperations.js';
 import {
-  MAX_ARTIFACT_PAYLOAD_BYTES,
-  MAX_READ_IMAGE_SOURCE_BYTES,
-  WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY,
-  WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY,
-} from './workspaceHandTools.js';
-import { persistShellOutputFiles } from './shellOutputFiles.js';
+  CONTAINER_FILE_HELPER_SCRIPT,
+  DEFAULT_CONTAINER_WORKDIR,
+  MAX_CONTAINER_HELPER_OUTPUT,
+} from './containerFileHelper.js';
+import { parseProvablyReadOnlyRgCommand } from './shellReadOnlyPolicy.js';
+import { WORKSPACE_ARTIFACT_PAYLOAD_METADATA_KEY } from './workspaceHandTools.js';
+import { persistShellOutputFiles, shellOutputBaseName } from './shellOutputFiles.js';
+import { ShellChannelAccumulator } from './shellOutputAccumulator.js';
+import { createThrottledShellProgress, LimitedUtf8Decoder } from './shellProgressEmitter.js';
+import { withWorkspaceFileMutationQueue } from './workspaceFileMutationQueue.js';
 import {
   DEFAULT_SHELL_TIMEOUT_MS,
   MAX_FILE_BYTES,
-  MAX_READ_LINES,
-  MAX_READ_OUTPUT_BYTES,
-  MAX_SHELL_CAPTURE_BYTES,
-  MAX_SHELL_STREAM_BYTES,
+  MAX_SHELL_SPILL_BYTES,
+  SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS,
+  SHELL_PROGRESS_SNAPSHOT_MAX_CHARS,
   formatShellOutput,
+  type ShellOutputFileRef,
 } from './toolOutput.js';
 import type {
   ToolInvocationRequest,
@@ -44,13 +49,9 @@ import {
 
 const execFile = promisify(execFileCb);
 
-const MAX_CONTAINER_HELPER_OUTPUT = Math.ceil(
-  Math.max(MAX_ARTIFACT_PAYLOAD_BYTES, MAX_READ_IMAGE_SOURCE_BYTES) * 1.4,
-) + 64 * 1024;
 const DEFAULT_CONTAINER_IMAGE = 'node:22-bookworm-slim';
 const DEFAULT_CONTAINER_FILE_HELPER_TIMEOUT_MS = 30_000;
 const DEFAULT_CONTAINER_SHELL_TIMEOUT_MS = DEFAULT_SHELL_TIMEOUT_MS;
-const DEFAULT_CONTAINER_WORKDIR = '/workspace';
 const DEFAULT_CONTAINER_NAME_PREFIX = 'ky-agent-exec';
 const DEFAULT_CONTAINER_NETWORK = 'none';
 const DEFAULT_CONTAINER_CAP_DROP = ['ALL'];
@@ -167,11 +168,13 @@ export class ContainerExecutionProvider implements ExecutionProvider {
         case 'Write': {
           const args = input as { path: string; content: string };
           const relPath = workspaceRelativeInputPath(workspace.root, args.path);
-          await this.runNodeHelper(workspace, {
-            op: 'writeFile',
-            path: relPath,
-            content: args.content,
-          }, audit);
+          await withWorkspaceFileMutationQueue(workspace.root, relPath, async () => {
+            await this.runNodeHelper(workspace, {
+              op: 'writeFile',
+              path: relPath,
+              content: args.content,
+            }, audit);
+          });
           return {
             status: 'success',
             content: `wrote ${relPath} (${args.content.length} chars)`,
@@ -181,25 +184,36 @@ export class ContainerExecutionProvider implements ExecutionProvider {
         }
         case 'Shell': {
           const args = input as { command: string; timeoutMs?: number };
-          const result = await this.runDocker(workspace, ['/bin/sh', '-lc', args.command], {
+          const spillBaseName = shellOutputBaseName(context.invocationId);
+          const readOnlyArgv = parseProvablyReadOnlyRgCommand(args.command);
+          const result = await this.runDocker(workspace, readOnlyArgv ?? ['/bin/sh', '-lc', args.command], {
             operation: 'runShell',
             timeoutMs: args.timeoutMs ?? this.shellTimeoutMs,
-            stdoutLimit: MAX_SHELL_CAPTURE_BYTES,
-            stderrLimit: MAX_SHELL_CAPTURE_BYTES,
+            stdoutLimit: MAX_SHELL_SPILL_BYTES,
+            stderrLimit: MAX_SHELL_SPILL_BYTES,
             signal,
             allowNonZeroExit: true,
             returnOutputOnError: true,
-            runtimeEnv: context.env,
+            runtimeEnv: readOnlyArgv
+              ? { ...context.env, PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' }
+              : context.env,
+            capture: {
+              stdout: new ShellChannelAccumulator('stdout', workspace.root, spillBaseName),
+              stderr: new ShellChannelAccumulator('stderr', workspace.root, spillBaseName),
+            },
           }, audit);
-          const { outputFiles, outputFileError } = await this.persistShellOutput(
+          const { outputFiles, outputFileError } = await this.mergeShellOutput(
             workspace,
             context.invocationId,
-            result.stdout,
-            result.stderr,
-            Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+            spillBaseName,
+            result,
           );
           const content = formatShellOutput({
             ...result,
+            stdoutLines: result.stdoutLines,
+            stderrLines: result.stderrLines,
+            outputWindowTruncated: result.outputWindowTruncated,
+            outputQuotaTerminated: result.outputQuotaTerminated,
             outputFiles,
             ...(outputFileError ? { outputFileError } : {}),
           });
@@ -212,6 +226,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
             ...(result.timedOut ? { timedOut: true } : {}),
             ...(result.aborted ? { aborted: true } : {}),
             ...(result.outputExceeded ? { outputExceeded: true } : {}),
+            ...(result.outputWindowTruncated ? { outputWindowTruncated: true } : {}),
+            ...(result.outputQuotaTerminated ? { outputQuotaTerminated: true } : {}),
             ...(outputFiles.length > 0 ? { outputFiles } : {}),
             ...(outputFileError ? { outputFileError } : {}),
           };
@@ -222,15 +238,40 @@ export class ContainerExecutionProvider implements ExecutionProvider {
               : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata };
         }
         case 'Edit': {
-          const args = input as { file_path: string; old_string: string; new_string: string; replace_all?: boolean };
-          const result = await this.runNodeHelper(workspace, {
-            op: 'edit',
-            file_path: workspaceRelativeInputPath(workspace.root, args.file_path),
-            old_string: args.old_string,
-            new_string: args.new_string,
-            replace_all: args.replace_all,
-          }, audit);
-          return { status: 'success', content: result.content, audit };
+          const args = input as {
+            file_path: string;
+            old_string?: string;
+            new_string?: string;
+            replace_all?: boolean;
+            edits?: Array<{ old_string: string; new_string: string; replace_all?: boolean }>;
+          };
+          const relPath = workspaceRelativeInputPath(workspace.root, args.file_path);
+          const result = await withWorkspaceFileMutationQueue(workspace.root, relPath, async () =>
+            await this.runNodeHelper(workspace, {
+              op: 'edit',
+              file_path: relPath,
+              old_string: args.old_string,
+              new_string: args.new_string,
+              replace_all: args.replace_all,
+              edits: args.edits,
+            }, audit, { stdoutLimit: MAX_CONTAINER_HELPER_OUTPUT }));
+          const { beforeContent, afterContent, ...metadata } = result.metadata ?? {};
+          if (typeof beforeContent !== 'string' || typeof afterContent !== 'string') {
+            throw new Error('Container Edit helper omitted diff source content.');
+          }
+          let diff: Record<string, unknown>;
+          try {
+            diff = createEditDiff(String(metadata.path ?? args.file_path), beforeContent, afterContent);
+          } catch {
+            // 编辑已经由 helper 通过同一 fd 提交；可选 diff 生成失败不能把成功写入伪报成失败。
+            diff = { diffUnavailable: true };
+          }
+          return {
+            status: 'success',
+            content: result.content,
+            audit,
+            metadata: { ...metadata, ...diff },
+          };
         }
         case 'CreateArtifact': {
           const args = input as {
@@ -290,26 +331,64 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     let done = false;
     let notify: (() => void) | undefined;
     const wake = () => { notify?.(); notify = undefined; };
-    this.runDocker(workspace, ['/bin/sh', '-lc', args.command], {
+    const push = (chunk: ToolInvocationStreamChunk) => { queue.push(chunk); wake(); };
+    const spillBaseName = shellOutputBaseName(context.invocationId);
+    const stdoutAcc = new ShellChannelAccumulator('stdout', workspace.root, spillBaseName);
+    const stderrAcc = new ShellChannelAccumulator('stderr', workspace.root, spillBaseName);
+    const startedAt = Date.now();
+    const progress = createThrottledShellProgress((message) => push({ type: 'progress', message }));
+    const stdoutDecoder = new LimitedUtf8Decoder();
+    const stderrDecoder = new LimitedUtf8Decoder();
+    const buildHeartbeatMessage = (): string => {
+      const stats = `running ${((Date.now() - startedAt) / 1000).toFixed(1)}s · stdout=${stdoutAcc.bytesReceived()} bytes · stderr=${stderrAcc.bytesReceived()} bytes`;
+      const tailBudget = Math.floor(SHELL_PROGRESS_SNAPSHOT_MAX_CHARS / 2);
+      const stdoutTail = stdoutAcc.tailSnapshot(tailBudget);
+      const stderrTail = stderrAcc.tailSnapshot(tailBudget);
+      const tails = [
+        stdoutTail ? `[stdout tail]\n${stdoutTail}` : undefined,
+        stderrTail ? `[stderr tail]\n${stderrTail}` : undefined,
+      ].filter(Boolean).join('\n');
+      return tails ? `${stats}\n${tails}` : stats;
+    };
+    const heartbeat = setInterval(() => {
+      if (!done) progress.maybeEmitSnapshot(buildHeartbeatMessage);
+    }, SHELL_PROGRESS_SNAPSHOT_INTERVAL_MS);
+    heartbeat.unref?.();
+    const readOnlyArgv = parseProvablyReadOnlyRgCommand(args.command);
+    this.runDocker(workspace, readOnlyArgv ?? ['/bin/sh', '-lc', args.command], {
       operation: 'runShell',
       timeoutMs: args.timeoutMs ?? this.shellTimeoutMs,
-      stdoutLimit: MAX_SHELL_CAPTURE_BYTES,
-      stderrLimit: MAX_SHELL_CAPTURE_BYTES,
+      stdoutLimit: MAX_SHELL_SPILL_BYTES,
+      stderrLimit: MAX_SHELL_SPILL_BYTES,
       signal,
       allowNonZeroExit: true,
       returnOutputOnError: true,
-      onOutput: createLimitedStreamForwarder((chunk) => { queue.push(chunk); wake(); }),
+      runtimeEnv: readOnlyArgv
+        ? { ...context.env, PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' }
+        : context.env,
+      capture: { stdout: stdoutAcc, stderr: stderrAcc },
+      onOutput: (channel, chunk) => {
+        const allowed = progress.allowRaw(chunk.length);
+        const decoder = channel === 'stdout' ? stdoutDecoder : stderrDecoder;
+        // allowed=0 时仍调用，用当前 chunk 补齐预算边界前未完成的 UTF-8 字符。
+        const content = decoder.decode(chunk, allowed);
+        if (content) push({ type: 'output', channel, content });
+        if (progress.isRawExhausted()) progress.notifyRawExhausted();
+      },
     }, audit)
       .then(async (result) => {
-        const { outputFiles, outputFileError } = await this.persistShellOutput(
+        const { outputFiles, outputFileError } = await this.mergeShellOutput(
           workspace,
           context.invocationId,
-          result.stdout,
-          result.stderr,
-          Boolean(result.error || result.timedOut || result.aborted || result.outputExceeded),
+          spillBaseName,
+          result,
         );
         const content = formatShellOutput({
           ...result,
+          stdoutLines: result.stdoutLines,
+          stderrLines: result.stderrLines,
+          outputWindowTruncated: result.outputWindowTruncated,
+          outputQuotaTerminated: result.outputQuotaTerminated,
           outputFiles,
           ...(outputFileError ? { outputFileError } : {}),
         });
@@ -322,10 +401,12 @@ export class ContainerExecutionProvider implements ExecutionProvider {
           ...(result.timedOut ? { timedOut: true } : {}),
           ...(result.aborted ? { aborted: true } : {}),
           ...(result.outputExceeded ? { outputExceeded: true } : {}),
+          ...(result.outputWindowTruncated ? { outputWindowTruncated: true } : {}),
+          ...(result.outputQuotaTerminated ? { outputQuotaTerminated: true } : {}),
           ...(outputFiles.length > 0 ? { outputFiles } : {}),
           ...(outputFileError ? { outputFileError } : {}),
         };
-        queue.push({
+        push({
           type: 'completed',
           response: result.error
             ? { status: 'error', error: `${result.error}\n\n${content}`, audit, metadata }
@@ -334,8 +415,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
               : { status: 'error', error: `command exited ${result.exitCode ?? result.signal}\n\n${content}`, audit, metadata },
         });
       })
-      .catch((err) => queue.push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err), audit } }))
-      .finally(() => { done = true; wake(); });
+      .catch((err) => push({ type: 'completed', response: { status: 'error', error: err instanceof Error ? err.message : String(err), audit } }))
+      .finally(() => { clearInterval(heartbeat); done = true; wake(); });
     while (!done || queue.length > 0) {
       const chunk = queue.shift();
       if (chunk) { yield chunk; continue; }
@@ -343,29 +424,46 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     }
   }
 
-  private async persistShellOutput(
+  private async mergeShellOutput(
     workspace: WorkspaceRef,
     invocationId: string | undefined,
-    stdout: string,
-    stderr: string,
-    force = false,
-  ) {
+    spillBaseName: string,
+    result: {
+      stdout: string;
+      stderr: string;
+      error?: string;
+      timedOut?: boolean;
+      aborted?: boolean;
+      outputQuotaTerminated?: boolean;
+      stdoutWindowTruncated?: boolean;
+      stderrWindowTruncated?: boolean;
+      spillFiles?: ShellOutputFileRef[];
+      spillError?: string;
+    },
+  ): Promise<{ outputFiles: ShellOutputFileRef[]; outputFileError?: string }> {
+    const spillByChannel = new Map((result.spillFiles ?? []).map((file) => [file.channel, file]));
+    let persisted: ShellOutputFileRef[] = [];
+    let persistError: string | undefined;
     try {
-      return {
-        outputFiles: await persistShellOutputFiles({
-          workspaceRoot: workspace.root,
-          invocationId,
-          stdout,
-          stderr,
-          force,
-        }),
-      };
+      persisted = await persistShellOutputFiles({
+        workspaceRoot: workspace.root,
+        invocationId,
+        baseName: spillBaseName,
+        // 已截窗的通道只能引用累加器写出的全量文件；绝不能把窗口摘要覆盖成
+        // “完整输出”。若溢出写盘失败，保留 spillError 明示失败。
+        stdout: result.stdoutWindowTruncated ? '' : result.stdout,
+        stderr: result.stderrWindowTruncated ? '' : result.stderr,
+        force: Boolean(result.error || result.timedOut || result.aborted || result.outputQuotaTerminated),
+      });
     } catch (err) {
-      return {
-        outputFiles: [],
-        outputFileError: err instanceof Error ? err.message : String(err),
-      };
+      persistError = err instanceof Error ? err.message : String(err);
     }
+    const persistedByChannel = new Map(persisted.map((file) => [file.channel, file]));
+    const outputFiles = (['stdout', 'stderr'] as const)
+      .map((channel) => spillByChannel.get(channel) ?? persistedByChannel.get(channel))
+      .filter((file): file is ShellOutputFileRef => Boolean(file));
+    const outputFileError = [result.spillError, persistError].filter(Boolean).join('; ') || undefined;
+    return { outputFiles, ...(outputFileError ? { outputFileError } : {}) };
   }
 
   private async runNodeHelper(
@@ -413,8 +511,14 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       signal?: AbortSignal;
       allowNonZeroExit?: boolean;
       returnOutputOnError?: boolean;
-      onOutput?: (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void;
+      onOutput?: (channel: 'stdout' | 'stderr', chunk: Buffer) => void;
       runtimeEnv?: Record<string, string>;
+      /**
+       * P0（2026-08-29）：Shell 专用输出累加器注入点。传入后输出不再全量驻留内存，
+       * 改为头窗口 + 滚动尾窗 + 磁盘溢出，超限不终止命令（仅磁盘配额终止）。
+       * 文件 helper（runNodeHelper）不传此参数，保持原内存捕获语义不受影响。
+       */
+      capture?: { stdout: ShellChannelAccumulator; stderr: ShellChannelAccumulator };
     },
     audit: ExecutionInvocationAudit[],
   ): Promise<{
@@ -428,7 +532,16 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     error?: string;
     timedOut?: boolean;
     aborted?: boolean;
+    /** capture 模式：窗口截断或磁盘配额终止时为 true（语义由调用方按两子字段细分）。 */
     outputExceeded?: boolean;
+    stdoutLines?: number;
+    stderrLines?: number;
+    stdoutWindowTruncated?: boolean;
+    stderrWindowTruncated?: boolean;
+    outputWindowTruncated?: boolean;
+    outputQuotaTerminated?: boolean;
+    spillFiles?: ShellOutputFileRef[];
+    spillError?: string;
   }> {
     const name = `${this.containerNamePrefix}-${randomUUID()}`;
     const dockerArgs = [
@@ -482,6 +595,8 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     let timedOut = false;
     let aborted = false;
     let outputExceeded = false;
+    let outputStorageError: string | undefined;
+    let terminationReason: 'timeout' | 'aborted' | 'quota' | 'spill' | undefined;
     let spawnError: unknown;
     let terminationStarted = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -504,42 +619,76 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
       killTimer.unref?.();
     };
+    const handleSpillFailure = (message: string) => {
+      if (outputStorageError) return;
+      outputStorageError = message;
+      terminationReason ??= 'spill';
+      terminate();
+    };
+    const removeStdoutSpillHandler = options.capture?.stdout.onSpillFailure(handleSpillFailure);
+    const removeStderrSpillHandler = options.capture?.stderr.onSpillFailure(handleSpillFailure);
 
     const timer = setTimeout(() => {
+      if (terminationStarted) return;
       timedOut = true;
+      terminationReason = 'timeout';
       terminate();
     }, options.timeoutMs);
     timer.unref();
 
     const abortListener = () => {
+      if (terminationStarted) return;
       aborted = true;
+      terminationReason = 'aborted';
       terminate();
     };
     options.signal?.addEventListener('abort', abortListener, { once: true });
     if (options.signal?.aborted) abortListener();
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes > options.stdoutLimit) {
-        outputExceeded = true;
-        terminate();
-        return;
+    const captureChunk = (
+      channel: 'stdout' | 'stderr',
+      chunk: Buffer,
+      source: NodeJS.ReadableStream & { pause(): unknown; resume(): unknown; isPaused(): boolean },
+    ) => {
+      const accumulator = channel === 'stdout' ? options.capture?.stdout : options.capture?.stderr;
+      if (channel === 'stdout') stdoutBytes += chunk.length;
+      else stderrBytes += chunk.length;
+      if (accumulator) {
+        const feedResult = accumulator.feed(chunk);
+        if (feedResult.backpressured && !source.isPaused()) {
+          source.pause();
+          void accumulator.waitUntilWritable().then(() => {
+            if (!terminationStarted && !outputStorageError) source.resume();
+          });
+        }
+        if (feedResult.spillFailed) {
+          handleSpillFailure('failed to write output spill file');
+          return;
+        }
+        if (feedResult.quotaExceeded) {
+          if (!terminationStarted) {
+            outputExceeded = true;
+            terminationReason = 'quota';
+            terminate();
+          }
+          return;
+        }
+      } else {
+        const bytes = channel === 'stdout' ? stdoutBytes : stderrBytes;
+        const limit = channel === 'stdout' ? options.stdoutLimit : options.stderrLimit;
+        if (bytes > limit) {
+          outputExceeded = true;
+          terminate();
+          return;
+        }
+        const text = chunk.toString('utf-8');
+        if (channel === 'stdout') stdout += text;
+        else stderr += text;
       }
-      const text = chunk.toString('utf-8');
-      stdout += text;
-      options.onOutput?.('stdout', text, chunk.length);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBytes += chunk.length;
-      if (stderrBytes > options.stderrLimit) {
-        outputExceeded = true;
-        terminate();
-        return;
-      }
-      const text = chunk.toString('utf-8');
-      stderr += text;
-      options.onOutput?.('stderr', text, chunk.length);
-    });
+      options.onOutput?.(channel, chunk);
+    };
+    child.stdout.on('data', (chunk: Buffer) => captureChunk('stdout', chunk, child.stdout));
+    child.stderr.on('data', (chunk: Buffer) => captureChunk('stderr', chunk, child.stderr));
 
     child.stdin.end(options.input ?? '');
 
@@ -558,17 +707,54 @@ export class ContainerExecutionProvider implements ExecutionProvider {
     }
     if (terminationStarted || spawnError) await cleanup();
 
-    const error = this.classifyDockerError({
-      exit,
-      spawnError,
-      timedOut,
-      outputExceeded,
-      aborted: aborted || options.signal?.aborted === true,
-      stdout,
-      stderr,
-      timeoutMs: options.timeoutMs,
-      allowNonZeroExit: options.allowNonZeroExit === true,
-    });
+    // capture 模式收尾：窗口内容 + 增量统计 + 溢出文件引用；未捕获通道保持内存全量。
+    let stdoutResult = stdout;
+    let stderrResult = stderr;
+    let stdoutBytesResult = stdoutBytes;
+    let stderrBytesResult = stderrBytes;
+    let stdoutLines: number | undefined;
+    let stderrLines: number | undefined;
+    let stdoutWindowTruncated = false;
+    let stderrWindowTruncated = false;
+    let windowTruncated = false;
+    const quotaTerminated = options.capture ? terminationReason === 'quota' : outputExceeded;
+    let spillFiles: ShellOutputFileRef[] | undefined;
+    let spillError: string | undefined;
+    if (options.capture) {
+      const [stdoutFinal, stderrFinal] = await Promise.all([
+        options.capture.stdout.finalize(),
+        options.capture.stderr.finalize(),
+      ]);
+      stdoutResult = stdoutFinal.content;
+      stderrResult = stderrFinal.content;
+      stdoutBytesResult = stdoutFinal.totalBytes;
+      stderrBytesResult = stderrFinal.totalBytes;
+      stdoutLines = stdoutFinal.lines;
+      stderrLines = stderrFinal.lines;
+      stdoutWindowTruncated = stdoutFinal.truncatedToWindow;
+      stderrWindowTruncated = stderrFinal.truncatedToWindow;
+      windowTruncated = stdoutWindowTruncated || stderrWindowTruncated;
+      // outputQuotaTerminated 仅表示配额是首次终止原因；收尾残余字节越线不改写原因。
+      spillFiles = [stdoutFinal.spillFile, stderrFinal.spillFile].filter((file): file is ShellOutputFileRef => Boolean(file));
+      spillError = stdoutFinal.spillError ?? stderrFinal.spillError;
+      outputStorageError = outputStorageError ?? spillError;
+    }
+    removeStdoutSpillHandler?.();
+    removeStderrSpillHandler?.();
+
+    const error = terminationReason === 'spill' && outputStorageError
+      ? `Container command full-output persistence failed: ${outputStorageError}`
+      : this.classifyDockerError({
+          exit,
+          spawnError,
+          timedOut,
+          outputExceeded: quotaTerminated,
+          aborted,
+          stdout: stdoutResult,
+          stderr: stderrResult,
+          timeoutMs: options.timeoutMs,
+          allowNonZeroExit: options.allowNonZeroExit === true,
+        });
     const durationMs = Date.now() - startedAt;
     audit.push({
       provider: 'server-container',
@@ -576,43 +762,59 @@ export class ContainerExecutionProvider implements ExecutionProvider {
       image: this.image,
       containerName: name,
       timeoutMs: options.timeoutMs,
-      stdoutBytes,
-      stderrBytes,
+      stdoutBytes: stdoutBytesResult,
+      stderrBytes: stderrBytesResult,
       exitCode: exit?.code ?? null,
       signal: exit?.signal ?? null,
       status: error ? 'error' : 'success',
       ...(timedOut ? { timedOut: true } : {}),
-      ...(outputExceeded ? { outputExceeded: true } : {}),
-      ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
+      ...(windowTruncated || quotaTerminated ? { outputExceeded: true } : {}),
+      ...(aborted ? { aborted: true } : {}),
       ...(error ? { error } : {}),
     } satisfies ExecutionInvocationAudit);
+
+    const captureExtras = options.capture
+      ? {
+          stdoutLines,
+          stderrLines,
+          stdoutWindowTruncated,
+          stderrWindowTruncated,
+          outputWindowTruncated: windowTruncated,
+          outputQuotaTerminated: quotaTerminated,
+          ...(windowTruncated || quotaTerminated ? { outputExceeded: true } : {}),
+          ...(spillFiles?.length ? { spillFiles } : {}),
+          ...(spillError ? { spillError } : {}),
+        }
+      : {};
 
     if (error) {
       if (options.returnOutputOnError) {
         return {
-          stdout,
-          stderr,
-          stdoutBytes,
-          stderrBytes,
+          stdout: stdoutResult,
+          stderr: stderrResult,
+          stdoutBytes: stdoutBytesResult,
+          stderrBytes: stderrBytesResult,
           exitCode: exit?.code ?? null,
           signal: exit?.signal ?? null,
           durationMs,
           error,
           ...(timedOut ? { timedOut: true } : {}),
-          ...(aborted || options.signal?.aborted ? { aborted: true } : {}),
-          ...(outputExceeded ? { outputExceeded: true } : {}),
+          ...(aborted ? { aborted: true } : {}),
+          ...(quotaTerminated ? { outputExceeded: true } : {}),
+          ...captureExtras,
         };
       }
       throw new Error(error);
     }
     return {
-      stdout,
-      stderr,
-      stdoutBytes,
-      stderrBytes,
+      stdout: stdoutResult,
+      stderr: stderrResult,
+      stdoutBytes: stdoutBytesResult,
+      stderrBytes: stderrBytesResult,
       exitCode: exit?.code ?? null,
       signal: exit?.signal ?? null,
       durationMs,
+      ...captureExtras,
     };
   }
 
@@ -668,256 +870,3 @@ function workspaceRelativeInputPath(cwd: string, inputPath: string): string {
   const fullPath = resolveWorkspacePath(cwd, inputPath);
   return relativeWorkspacePath(cwd, fullPath);
 }
-
-function createLimitedStreamForwarder(
-  push: (chunk: ToolInvocationStreamChunk) => void,
-): (channel: 'stdout' | 'stderr', content: string, byteLength: number) => void {
-  let streamedBytes = 0;
-  let suppressed = false;
-  return (channel, content, byteLength) => {
-    if (suppressed) return;
-    const remainingBytes = MAX_SHELL_STREAM_BYTES - streamedBytes;
-    if (remainingBytes <= 0) {
-      suppressed = true;
-      push({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
-      return;
-    }
-    if (byteLength <= remainingBytes) {
-      streamedBytes += byteLength;
-      push({ type: 'output', channel, content });
-      return;
-    }
-    streamedBytes = MAX_SHELL_STREAM_BYTES;
-    suppressed = true;
-    push({ type: 'output', channel, content: content.slice(0, remainingBytes) });
-    push({ type: 'progress', message: `Shell stream output truncated after ${MAX_SHELL_STREAM_BYTES} bytes; final result keeps a head/tail summary.` });
-  };
-}
-
-const CONTAINER_FILE_HELPER_SCRIPT = `
-const fs = require('fs/promises');
-const fsSync = require('fs');
-const path = require('path');
-const readline = require('readline');
-const root = process.env.KY_AGENT_WORKDIR || ${JSON.stringify(DEFAULT_CONTAINER_WORKDIR)};
-const maxFileBytes = ${MAX_FILE_BYTES};
-const maxReadLines = ${MAX_READ_LINES};
-const maxReadOutputBytes = ${MAX_READ_OUTPUT_BYTES};
-const maxEditFileBytes = 1000000;
-const maxArtifactPayloadBytes = ${MAX_ARTIFACT_PAYLOAD_BYTES};
-const maxReadImageSourceBytes = ${MAX_READ_IMAGE_SOURCE_BYTES};
-const readImagePayloadMetadataKey = ${JSON.stringify(WORKSPACE_READ_IMAGE_PAYLOAD_METADATA_KEY)};
-const editDenyPatterns = [/(^|\\/)\\.ky-agent\\/settings\\.json$/i, /(^|\\/)\\.claude\\/settings\\.json$/i, /(^|\\/)\\.env(\\..+)?$/i, /(^|\\/)\\.npmrc$/i, /(^|\\/)\\.netrc$/i, /(^|\\/)\\.ssh\\//i, /(^|\\/)\\.git\\//i];
-function isInside(baseDir, candidate) {
-  const rel = path.relative(baseDir, candidate);
-  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
-}
-function resolveWorkspacePath(inputPath) {
-  const fullPath = path.resolve(root, inputPath || '.');
-  if (!isInside(root, fullPath)) {
-    throw new Error('Access denied: path outside workspace (' + inputPath + ')');
-  }
-  return fullPath;
-}
-function relativeWorkspacePath(fullPath) {
-  return path.relative(root, fullPath) || '.';
-}
-function normalizePath(value) {
-  return String(value || '').split(path.sep).join('/');
-}
-function assertNotDenied(relPath, patterns, message) {
-  const normalized = normalizePath(relPath);
-  for (const re of patterns) {
-    if (re.test('/' + normalized)) throw new Error(message);
-  }
-}
-async function readStdin() {
-  let raw = '';
-  for await (const chunk of process.stdin) raw += chunk;
-  return raw;
-}
-async function readFileBufferPrefix(fullPath, maxBytes) {
-  const handle = await fs.open(fullPath, 'r');
-  try {
-    const buffer = Buffer.alloc(maxBytes);
-    const result = await handle.read(buffer, 0, maxBytes, 0);
-    return buffer.subarray(0, result.bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
-async function readFilePrefix(fullPath, maxBytes) {
-  return (await readFileBufferPrefix(fullPath, maxBytes)).toString('utf-8');
-}
-function detectImageMime(bytes) {
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  const signature = bytes.subarray(0, 6).toString('ascii');
-  if (signature === 'GIF87a' || signature === 'GIF89a') return 'image/gif';
-  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
-  return undefined;
-}
-async function readLineRange(fullPath, relPath, options) {
-  const offset = Math.max(1, Math.trunc(Number(options.offset || 1)));
-  const limit = Math.min(maxReadLines, Math.max(1, Math.trunc(Number(options.limit || maxReadLines))));
-  const stream = fsSync.createReadStream(fullPath, { encoding: 'utf-8' });
-  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  const lines = [];
-  let lineNo = 0;
-  let hasMore = false;
-  let returnedBytes = 0;
-  let byteLimitReached = false;
-  const contentByteBudget = maxReadOutputBytes - 512;
-  try {
-    for await (const line of rl) {
-      lineNo++;
-      if (lineNo < offset) continue;
-      if (lines.length >= limit) {
-        hasMore = true;
-        break;
-      }
-      const separatorBytes = lines.length > 0 ? 1 : 0;
-      const remainingBytes = contentByteBudget - returnedBytes - separatorBytes;
-      if (remainingBytes <= 0) {
-        hasMore = true;
-        byteLimitReached = true;
-        break;
-      }
-      const encoded = Buffer.from(line, 'utf8');
-      let boundedLine = line;
-      if (encoded.length > remainingBytes) {
-        boundedLine = encoded.subarray(0, remainingBytes).toString('utf8').replace(/\\uFFFD$/, '');
-        byteLimitReached = true;
-        hasMore = true;
-      }
-      lines.push(boundedLine);
-      returnedBytes += separatorBytes + Buffer.byteLength(boundedLine, 'utf8');
-      if (byteLimitReached) break;
-    }
-  } finally {
-    rl.close();
-    stream.destroy();
-  }
-  if (lines.length === 0) {
-    return '...[no content: offset ' + offset + ' is beyond EOF for ' + relPath + '; total lines=' + lineNo + ']';
-  }
-  const endLine = offset + lines.length - 1;
-  const suffix = byteLimitReached
-    ? '\\n...[truncated: Read output reached ' + maxReadOutputBytes + ' UTF-8 bytes while showing ' + relPath + ' lines ' + offset + '-' + endLine + '; narrow the line range or use Search/Shell for targeted inspection]'
-    : hasMore
-    ? '\\n...[truncated: showing ' + relPath + ' lines ' + offset + '-' + endLine + '; next Read offset=' + (endLine + 1) + ', limit=' + limit + ']'
-    : '\\n...[EOF: showing ' + relPath + ' lines ' + offset + '-' + endLine + '; total lines=' + lineNo + ']';
-  return lines.join('\\n') + suffix;
-}
-(async () => {
-  try {
-    const request = JSON.parse(await readStdin() || '{}');
-    if (request.op === 'readFile') {
-      const fullPath = resolveWorkspacePath(request.path);
-      const st = await fs.stat(fullPath);
-      if (!st.isFile()) throw new Error('Read: path is not a file (' + request.path + ')');
-      const relPath = relativeWorkspacePath(fullPath);
-      const imageMime = detectImageMime(await readFileBufferPrefix(fullPath, 32));
-      if (imageMime) {
-        if (st.size > maxReadImageSourceBytes) {
-          throw new Error('Read: image too large (' + st.size + 'B > ' + maxReadImageSourceBytes + 'B)');
-        }
-        const data = await fs.readFile(fullPath);
-        const payload = {
-          sourcePath: relPath,
-          fileName: path.basename(fullPath),
-          sizeBytes: data.byteLength,
-          dataBase64: data.toString('base64'),
-          mimeType: imageMime
-        };
-        process.stdout.write(JSON.stringify({
-          ok: true,
-          content: 'Read image ' + relPath + ' (' + imageMime + ', ' + data.byteLength + ' bytes). The image is attached as visual input.',
-          metadata: {
-            path: relPath,
-            fileBytes: st.size,
-            mimeType: imageMime,
-            [readImagePayloadMetadataKey]: payload
-          }
-        }));
-        return;
-      }
-      if (request.offset !== undefined || request.limit !== undefined) {
-        process.stdout.write(JSON.stringify({ ok: true, content: await readLineRange(fullPath, relPath, request) }));
-        return;
-      }
-      if (st.size <= maxFileBytes) {
-        process.stdout.write(JSON.stringify({ ok: true, content: await readFilePrefix(fullPath, st.size) }));
-        return;
-      }
-      const prefix = await readFilePrefix(fullPath, maxFileBytes);
-      process.stdout.write(JSON.stringify({ ok: true, content: prefix + '\\n...[truncated: file ' + relPath + ' is ' + st.size + ' bytes; showing first ' + maxFileBytes + ' bytes. Use Read with {"path":"' + relPath + '","offset":1,"limit":' + maxReadLines + '} to continue by line chunks.]' }));
-      return;
-    }
-    if (request.op === 'writeFile') {
-      const fullPath = resolveWorkspacePath(request.path);
-      await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, String(request.content ?? ''), 'utf-8');
-      process.stdout.write(JSON.stringify({ ok: true, content: '' }));
-      return;
-    }
-    if (request.op === 'edit') {
-      const fullPath = resolveWorkspacePath(request.file_path);
-      const relPath = relativeWorkspacePath(fullPath);
-      assertNotDenied(relPath, editDenyPatterns, 'Edit: path "' + relPath + '" is in the deny list (sensitive config / credentials). Ask the admin via console if a change is genuinely required.');
-      let st;
-      try {
-        st = await fs.stat(fullPath);
-      } catch (err) {
-        throw new Error('Edit: cannot stat ' + relPath + ' (' + (err && err.message ? err.message : String(err)) + ')');
-      }
-      if (st.size > maxEditFileBytes) throw new Error('Edit: file too large (' + st.size + 'B > ' + maxEditFileBytes + 'B); use Write to rewrite.');
-      let content;
-      try {
-        content = await fs.readFile(fullPath, 'utf-8');
-      } catch (err) {
-        throw new Error('Edit: cannot read ' + relPath + ' (' + (err && err.message ? err.message : String(err)) + ')');
-      }
-      const oldString = String(request.old_string ?? '');
-      const newString = String(request.new_string ?? '');
-      if (oldString === newString) throw new Error('Edit: old_string equals new_string; no-op.');
-      if (oldString === '') throw new Error('Edit: empty old_string not allowed; use Write for new files.');
-      const parts = content.split(oldString);
-      const occurrences = parts.length - 1;
-      if (occurrences === 0) throw new Error('Edit: old_string not found.');
-      if (!request.replace_all && occurrences > 1) throw new Error('Edit: old_string matched ' + occurrences + ' times; supply more surrounding context or set replace_all=true.');
-      const updated = parts.join(newString);
-      const replacements = request.replace_all ? occurrences : 1;
-      await fs.writeFile(fullPath, updated, 'utf-8');
-      process.stdout.write(JSON.stringify({ ok: true, content: 'Edited ' + relPath + ' (' + replacements + ' replacement' + (replacements === 1 ? '' : 's') + ', ' + updated.length + ' bytes).' }));
-      return;
-    }
-    if (request.op === 'artifactCreate') {
-      const fullPath = resolveWorkspacePath(request.file_path);
-      const relPath = relativeWorkspacePath(fullPath);
-      assertNotDenied(relPath, editDenyPatterns, 'CreateArtifact: refused sensitive path ' + relPath);
-      const lst = await fs.lstat(fullPath);
-      if (lst.isSymbolicLink()) throw new Error('CreateArtifact: refused symlink ' + relPath);
-      const st = await fs.stat(fullPath);
-      if (!st.isFile()) throw new Error('CreateArtifact: source must be a file');
-      if (st.size > maxArtifactPayloadBytes) throw new Error('CreateArtifact: file too large (' + st.size + 'B > ' + maxArtifactPayloadBytes + 'B)');
-      const data = await fs.readFile(fullPath);
-      process.stdout.write(JSON.stringify({
-        ok: true,
-        content: JSON.stringify({
-          sourcePath: normalizePath(relPath),
-          fileName: path.basename(fullPath),
-          sizeBytes: data.byteLength,
-          dataBase64: data.toString('base64'),
-          kind: request.kind,
-          mimeType: request.mime_type
-        })
-      }));
-      return;
-    }
-    throw new Error('Unknown container helper op: ' + request.op);
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ ok: false, error: err && err.message ? err.message : String(err) }));
-  }
-})();
-`;

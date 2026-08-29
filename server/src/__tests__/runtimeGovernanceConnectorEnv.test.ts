@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   initializeRuntimeGovernanceConnectors,
@@ -18,6 +18,11 @@ function createRoot(): string {
   roots.push(root);
   return root;
 }
+
+beforeEach(() => {
+  vi.stubEnv('NODE_ENV', 'development');
+  vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();

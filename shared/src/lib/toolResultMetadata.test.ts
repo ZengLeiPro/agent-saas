@@ -38,6 +38,13 @@ describe('normalizeToolResultMetadata', () => {
     expect(normalizeToolResultMetadata({ signal: 'x'.repeat(200), exitCode: 0 })).toEqual({ exitCode: 0 });
   });
 
+  it('Edit unified diff 使用独立的 64KiB UTF-8 边界', () => {
+    const bounded = 'x'.repeat(64 * 1024);
+    expect(normalizeToolResultMetadata({ diff: bounded })).toEqual({ diff: bounded });
+    expect(normalizeToolResultMetadata({ diff: `${bounded}x`, replacements: 1 })).toEqual({ replacements: 1 });
+    expect(normalizeToolResultMetadata({ diff: '界'.repeat(21_846), replacements: 1 })).toEqual({ replacements: 1 });
+  });
+
   it('非对象 / 数组 / 空对象一律返回 null，调用方退回既有判定链', () => {
     expect(normalizeToolResultMetadata(undefined)).toBeNull();
     expect(normalizeToolResultMetadata(null)).toBeNull();

@@ -18,6 +18,7 @@ const PATH_COMPONENTS = Object.freeze([
   ['.husky/', []],
   ['docs/', []],
   ['scripts/release/', []],
+  ['scripts/staging/', []],
   ['infra/staging/', []],
   ['config/', []],
   ['mobile/', []],

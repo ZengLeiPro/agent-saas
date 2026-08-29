@@ -45,7 +45,7 @@ import { TOKEN_KEY } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { normalizeSettingsSection } from "@/lib/urlSync";
 import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgentAvatar } from "@agent/shared";
-import type { AgentProfileDetail, BusinessStepDisplayMode, ModelList, SidebarLayoutPref } from "@agent/shared";
+import type { AgentProfileDetail, ModelList, SidebarLayoutPref } from "@agent/shared";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 import { SETTINGS_GROUP_LABELS, SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 
@@ -106,15 +106,12 @@ export function GeneralSection() {
   const { user, updatePreferences } = useAuth();
   const authorizationModeEnabled = user ? user.preferences?.authorizationModeEnabled !== false : false;
   const preferredDefaultModel = user?.preferences?.defaultModel;
-  const businessStepDisplayMode = user?.preferences?.businessStepDisplayMode ?? "auto";
   const recoveredDraft = useRef(restoreSettingsDraft<{
     defaultModel?: string;
-    businessStepDisplayMode?: BusinessStepDisplayMode;
   }>("chat-model"));
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [draftAuthorizationMode, setDraftAuthorizationMode] = useState(authorizationModeEnabled);
   const [draftDefaultModel, setDraftDefaultModel] = useState(recoveredDraft.current?.defaultModel ?? preferredDefaultModel ?? "");
-  const [draftBusinessStepDisplayMode, setDraftBusinessStepDisplayMode] = useState<BusinessStepDisplayMode>(recoveredDraft.current?.businessStepDisplayMode ?? businessStepDisplayMode);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -139,24 +136,20 @@ export function GeneralSection() {
     setDraftAuthorizationMode(authorizationModeEnabled);
     if (recoveredDraft.current && modelList) {
       setDraftDefaultModel(recoveredDraft.current.defaultModel ?? modelList.default);
-      setDraftBusinessStepDisplayMode(recoveredDraft.current.businessStepDisplayMode ?? businessStepDisplayMode);
       recoveredDraft.current = null;
     } else if (!recoveredDraft.current) {
       setDraftDefaultModel(modelList?.default ?? "");
-      setDraftBusinessStepDisplayMode(businessStepDisplayMode);
     }
     setSaved(false);
-  }, [authorizationModeEnabled, businessStepDisplayMode, modelList]);
+  }, [authorizationModeEnabled, modelList]);
 
   const currentDefaultModel = modelList?.default ?? "";
   const hasChanges = draftAuthorizationMode !== authorizationModeEnabled
-    || draftBusinessStepDisplayMode !== businessStepDisplayMode
     || (!!draftDefaultModel && draftDefaultModel !== currentDefaultModel);
 
   const handleSave = useCallback(async () => {
     const next = {
       authorizationModeEnabled: draftAuthorizationMode,
-      businessStepDisplayMode: draftBusinessStepDisplayMode,
       ...(draftDefaultModel ? { defaultModel: draftDefaultModel } : {}),
     };
     setSaving(true);
@@ -178,7 +171,6 @@ export function GeneralSection() {
     } catch (error) {
       updatePreferences({
         authorizationModeEnabled,
-        businessStepDisplayMode,
         defaultModel: preferredDefaultModel,
       });
       setDraftDefaultModel(modelList?.default ?? "");
@@ -187,14 +179,13 @@ export function GeneralSection() {
     } finally {
       setSaving(false);
     }
-  }, [authorizationModeEnabled, businessStepDisplayMode, draftAuthorizationMode, draftBusinessStepDisplayMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
+  }, [authorizationModeEnabled, draftAuthorizationMode, draftDefaultModel, modelList?.default, preferredDefaultModel, updatePreferences]);
 
   const discardDraft = useCallback(() => {
     setDraftAuthorizationMode(authorizationModeEnabled);
     setDraftDefaultModel(modelList?.default ?? "");
-    setDraftBusinessStepDisplayMode(businessStepDisplayMode);
     setSaved(false);
-  }, [authorizationModeEnabled, businessStepDisplayMode, modelList?.default]);
+  }, [authorizationModeEnabled, modelList?.default]);
 
   useSettingsDirtyEntry({
     id: "chat-model",
@@ -204,7 +195,6 @@ export function GeneralSection() {
     discard: discardDraft,
     draft: {
       defaultModel: draftDefaultModel,
-      businessStepDisplayMode: draftBusinessStepDisplayMode,
     },
   });
 
@@ -243,31 +233,6 @@ export function GeneralSection() {
                   </SelectItem>
                 );
               }))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center justify-between gap-4 border-t pt-4">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">业务步骤展示</div>
-            <div className="mt-1 text-sm leading-6 text-muted-foreground">
-              设置业务步骤的默认展开方式；会话内仍可临时展开或收起单项。
-            </div>
-          </div>
-          <Select
-            value={draftBusinessStepDisplayMode}
-            onValueChange={(value) => {
-              setDraftBusinessStepDisplayMode(value as BusinessStepDisplayMode);
-              setSaved(false);
-            }}
-            disabled={saving}
-          >
-            <SelectTrigger className="w-[180px] max-w-full" aria-label="业务步骤展示">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">智能折叠</SelectItem>
-              <SelectItem value="collapsed">始终折叠</SelectItem>
-              <SelectItem value="expanded">始终展开</SelectItem>
             </SelectContent>
           </Select>
         </div>

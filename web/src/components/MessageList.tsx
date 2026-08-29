@@ -1,12 +1,14 @@
-import { memo, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
+import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
 // 呈现块外挂层：display 缺省时直通 MessageItem，MessageItem.tsx 本身零改动
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
-import { BusinessStepFlow, BusinessStepSectionView } from './BusinessStepFlow';
-import { BusinessStepTimeline } from './BusinessStepTimeline';
+import { BusinessStepFlow, BusinessStepProcessEvent } from './BusinessStepFlow';
+import { BusinessStepTimeline, businessStepMainItems } from './BusinessStepTimeline';
+import { useBusinessStepDetail } from './useBusinessStepDetail';
 import { CompactionDivider } from './CompactionDivider';
 import { asCompactionItem } from '@/lib/compaction';
 import { cn } from '@/lib/utils';
@@ -22,8 +24,9 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type BusinessStepDisplayMode, type BusinessStepEventItem, type SessionParticipants } from '@agent/shared';
+import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type SessionParticipants } from '@agent/shared';
 
+const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160;
 // ---------------------------------------------------------------------------
@@ -89,57 +92,6 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
 
   flushGroup();
   return result;
-}
-
-interface PlannedBusinessStep {
-  id: string;
-  terminal: boolean;
-}
-
-interface BusinessPlanIndex {
-  planIdByStepId: Map<string, string>;
-  stepsByPlanId: Map<string, PlannedBusinessStep[]>;
-}
-
-function isTerminalBusinessStep(event: BusinessStepEventItem): boolean {
-  return event.kind === 'complete' || event.kind === 'fail' || event.kind === 'block' || event.kind === 'wait';
-}
-
-function indexBusinessPlans(items: BubbleRenderItem[]): BusinessPlanIndex {
-  const planIdByStepId = new Map<string, string>();
-  const stepsByPlanId = new Map<string, PlannedBusinessStep[]>();
-
-  let planId: string | undefined;
-  for (const item of items) {
-    if (item.type === 'user' || item.type === 'user-voice') {
-      planId = undefined;
-      continue;
-    }
-    const flowItems = item.type === 'ai_bubble' ? item.items : [item];
-    for (const sub of flowItems) {
-      if (sub.type === 'business_step' && sub.kind === 'plan') {
-        planId = sub.id;
-        if (!stepsByPlanId.has(planId)) stepsByPlanId.set(planId, []);
-        continue;
-      }
-      if (!planId) continue;
-      if (sub.type === 'business_step_section') {
-        planIdByStepId.set(sub.id, planId);
-        stepsByPlanId.get(planId)?.push({ id: sub.id, terminal: !!sub.terminal });
-      } else if (sub.type === 'business_step' && isTerminalBusinessStep(sub)) {
-        planIdByStepId.set(sub.id, planId);
-        stepsByPlanId.get(planId)?.push({ id: sub.id, terminal: true });
-      }
-    }
-  }
-
-  return { planIdByStepId, stepsByPlanId };
-}
-
-function defaultBusinessStepOpen(terminal: boolean, mode: BusinessStepDisplayMode): boolean {
-  if (mode === 'expanded') return true;
-  if (mode === 'collapsed') return false;
-  return !terminal;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +238,11 @@ interface MessageListProps {
   sessionParticipants?: SessionParticipants | null; sessionId?: string | null;
   /** 分享页等只读上下文可显式指定调试模式；未传时沿用当前登录用户设置。 */
   debugModeOverride?: boolean;
-  businessStepDisplayModeOverride?: BusinessStepDisplayMode; showBusinessStepOutcomeWhenCollapsed?: boolean;
+  /** 业务步骤详情展示方式；桌面端渲染到右栏 host，移动端渲染专用底部 Sheet。 */
+  businessStepDetailMode?: 'desktop' | 'mobile';
+  businessStepDetailHost?: HTMLElement | null;
+  businessStepPanelOpen?: boolean;
+  onBusinessStepPanelOpenChange?: (open: boolean) => void;
   /**
    * 空会话槽位：会话没有任何消息且不在加载中时渲染（场景推荐卡等）。
    * 注意：本组件被 memo，上层需传入引用稳定（useMemo）的节点，避免破坏 memo。
@@ -312,7 +268,11 @@ export const MessageList = memo(function MessageList({
   ttsStateMap,
   agentProfile,
   sessionParticipants, sessionId,
-  debugModeOverride, businessStepDisplayModeOverride, showBusinessStepOutcomeWhenCollapsed,
+  debugModeOverride,
+  businessStepDetailMode,
+  businessStepDetailHost,
+  businessStepPanelOpen,
+  onBusinessStepPanelOpenChange,
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
@@ -330,47 +290,31 @@ export const MessageList = memo(function MessageList({
 
   const voicePlayer = useVoicePlayer();
   const { user } = useAuth();
-  const debugMode = debugModeOverride ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures)); const businessStepDisplayMode = businessStepDisplayModeOverride ?? user?.preferences?.businessStepDisplayMode ?? 'auto';
+  const debugMode = debugModeOverride
+    ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
-  const bubbleItems = useMemo(() => groupIntoBubbles(groupedMessages), [groupedMessages]);
-  const businessPlanIndex = useMemo(() => indexBusinessPlans(bubbleItems), [bubbleItems]);
-  const [stepOpenOverrides, setStepOpenOverrides] = useState<Record<string, boolean>>({});
-  const [planOpenOverrides, setPlanOpenOverrides] = useState<Record<string, boolean>>({});
-
-  // 修改个人默认偏好后，当前会话回到新偏好的默认状态；之后的单项/批量操作仍只在本会话生效。
-  useEffect(() => {
-    setStepOpenOverrides({});
-    setPlanOpenOverrides({});
-  }, [businessStepDisplayMode]);
-
-  const isBusinessStepOpen = useCallback((stepId: string, terminal: boolean) => {
-    const stepOverride = stepOpenOverrides[stepId];
-    if (stepOverride !== undefined) return stepOverride;
-    const planId = businessPlanIndex.planIdByStepId.get(stepId);
-    const planOverride = planId ? planOpenOverrides[planId] : undefined;
-    return planOverride ?? defaultBusinessStepOpen(terminal, businessStepDisplayMode);
-  }, [businessPlanIndex.planIdByStepId, businessStepDisplayMode, planOpenOverrides, stepOpenOverrides]);
-
-  const planHasOpenStep = useCallback((planId: string) => {
-    const steps = businessPlanIndex.stepsByPlanId.get(planId) ?? [];
-    if (steps.length > 0) return steps.some((step) => isBusinessStepOpen(step.id, step.terminal));
-    return planOpenOverrides[planId] ?? businessStepDisplayMode !== 'collapsed';
-  }, [businessPlanIndex.stepsByPlanId, businessStepDisplayMode, isBusinessStepOpen, planOpenOverrides]);
-
-  const setBusinessStepOpen = useCallback((stepId: string, open: boolean) => {
-    setStepOpenOverrides((current) => ({ ...current, [stepId]: open }));
-  }, []);
-
-  const toggleBusinessPlan = useCallback((planId: string) => {
-    const nextOpen = !planHasOpenStep(planId);
-    const stepIds = businessPlanIndex.stepsByPlanId.get(planId)?.map((step) => step.id) ?? [];
-    setPlanOpenOverrides((current) => ({ ...current, [planId]: nextOpen }));
-    setStepOpenOverrides((current) => {
-      const next = { ...current };
-      for (const stepId of stepIds) delete next[stepId];
-      return next;
-    });
-  }, [businessPlanIndex.stepsByPlanId, planHasOpenStep]);
+  const mainThreadItems = useMemo(() => businessStepMainItems(groupedMessages), [groupedMessages]);
+  // 选择、跟随、历史重映射与焦点恢复由专用 hook 统一维护；详情面板仅在选中后按需加载。
+  const bubbleItems = useMemo(() => groupIntoBubbles(mainThreadItems), [mainThreadItems]);
+  const {
+    selection: businessStepSelection,
+    followMode: businessStepFollowMode,
+    selectedPlan: selectedBusinessStepPlan,
+    selectedDetail: selectedBusinessStepDetail,
+    detailsOpen: businessStepDetailsOpen,
+    selectStep: selectBusinessStep,
+    clearSelection: clearBusinessStepSelection,
+    selectRelative: selectRelativeBusinessStep,
+    returnToCurrent: returnToCurrentBusinessStep,
+  } = useBusinessStepDetail({
+    groupedMessages,
+    sessionId,
+    detailMode: businessStepDetailMode,
+    detailHost: businessStepDetailHost,
+    panelOpen: businessStepPanelOpen,
+    onPanelOpenChange: onBusinessStepPanelOpenChange,
+    scrollContainerRef: internalContainerRef,
+  });
 
   const lastRenderIdx = bubbleItems.length - 1;
   const bubbleKeys = useMemo(() => bubbleItems.map(getBubbleVirtualKey), [bubbleItems]);
@@ -685,10 +629,8 @@ export const MessageList = memo(function MessageList({
     return map;
   }, [messages]);
 
-  // 最后一个 activity_group 的 id（用于默认展开）
+  // 最后一个 activity_group 的 id（详情面板也消费完整步骤 section，不能只看主区投影）。
   const lastActivityGroupId = useMemo(() => {
-    // Search through bubble items; activity_groups can be inside ai_bubble groups
-    // and business step sections (章节化后活动组可能嵌在步骤节内).
     const findInList = (items: RenderItem[]): string | null => {
       for (let j = items.length - 1; j >= 0; j--) {
         const sub = items[j];
@@ -700,20 +642,8 @@ export const MessageList = memo(function MessageList({
       }
       return null;
     };
-    for (let i = bubbleItems.length - 1; i >= 0; i--) {
-      const item = bubbleItems[i];
-      if (item.type === 'ai_bubble') {
-        const found = findInList(item.items);
-        if (found) return found;
-      }
-      if (item.type === 'activity_group') return item.id;
-      if (item.type === 'business_step_section') {
-        const found = findInList(item.items);
-        if (found) return found;
-      }
-    }
-    return null;
-  }, [bubbleItems]);
+    return findInList(groupedMessages);
+  }, [groupedMessages]);
 
   // 第一条 user 消息的 id（不显示 fork 按钮）
   const firstUserMsgId = useMemo(() => {
@@ -746,10 +676,95 @@ export const MessageList = memo(function MessageList({
   }, [sessionParticipants?.owner, user]);
   const displayAgent = sessionParticipants?.agent ?? agentProfile;
 
+  const renderBusinessDetailItem = useCallback((item: RenderItem): React.ReactNode => {
+    if (item.type === 'business_step') {
+      return <BusinessStepProcessEvent key={item.id} event={item} />;
+    }
+    if (item.type === 'business_step_section') return null;
+    if (item.type === 'activity_group') {
+      return (
+        <ErrorBoundary key={item.id} inline>
+          <ActivityGroupBlock
+            items={item.items}
+            isActive={item.isActive}
+            isLast={item.id === lastActivityGroupId}
+            debugMode={debugMode}
+            onSwitchModel={onSwitchModel}
+          />
+        </ErrorBoundary>
+      );
+    }
+
+    const origIndex = msgIndexMap.get(item.id) ?? 0;
+    const msgKey = `msg-${origIndex}`;
+    const itemTtsState = ttsStateMap?.[msgKey] || 'idle';
+    const ttsIsActive = tts?.activeKey === msgKey;
+    const voicePlayState = item.type === 'user-voice'
+      ? voicePlayer.getState(`voice-msg-${item.id}`)
+      : undefined;
+    return (
+      <ErrorBoundary key={item.id} inline>
+        <MessageItem
+          message={item}
+          index={origIndex}
+          sessionId={sessionId}
+          onPermissionResponse={onPermissionResponse}
+          onAskUserResponse={onAskUserResponse}
+          onRetry={onRetry}
+          onSwitchModel={onSwitchModel}
+          onFork={onFork}
+          isFirstUser={false}
+          isLoading={loading}
+          tts={tts}
+          ttsState={itemTtsState}
+          ttsIsActive={ttsIsActive}
+          voicePlayer={voicePlayer}
+          voicePlayState={voicePlayState}
+          debugMode={debugMode}
+        />
+      </ErrorBoundary>
+    );
+  }, [
+    debugMode,
+    lastActivityGroupId,
+    loading,
+    msgIndexMap,
+    onAskUserResponse,
+    onFork,
+    onPermissionResponse,
+    onRetry,
+    onSwitchModel,
+    sessionId,
+    tts,
+    ttsStateMap,
+    voicePlayer,
+  ]);
+
+  const businessStepDetailProps = selectedBusinessStepDetail && selectedBusinessStepPlan ? {
+    detail: selectedBusinessStepDetail,
+    plan: selectedBusinessStepPlan,
+    followMode: businessStepFollowMode,
+    debugMode,
+    onPrevious: selectedBusinessStepDetail.stepIndex > 1
+      ? () => selectRelativeBusinessStep(-1)
+      : undefined,
+    onNext: selectedBusinessStepDetail.stepIndex < selectedBusinessStepDetail.stepCount
+      ? () => selectRelativeBusinessStep(1)
+      : undefined,
+    onReturnCurrent: selectedBusinessStepPlan.currentTodoKey
+      ? returnToCurrentBusinessStep
+      : undefined,
+    onClose: () => clearBusinessStepSelection(),
+    renderItem: renderBusinessDetailItem,
+  } : null;
+
   return (
+    <>
     <div className="chat-message-content relative flex min-h-0 flex-1 flex-col">
     <div
       ref={setContainerRef}
+      tabIndex={-1}
+      data-message-scroll-container
       onScroll={showCenterLoading ? undefined : handleScroll}
       className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain"
       style={{ overflowAnchor: 'none' }}
@@ -794,87 +809,20 @@ export const MessageList = memo(function MessageList({
           {visibleRows.map(({ item, key: virtualKey, index: ri, top }) => {
           const showHeader = headerItemIds.has(item.id);
 
-          // AI 流内子项渲染：ai_bubble 内与业务步骤节内共用（节内过程 = 完整消息渲染，非降级视图）。
           const renderFlowItem = (sub: RenderItem): React.ReactNode => {
-            if (sub.type === 'business_step_section') {
-              // 系统动作行走与过程行完全相同的渲染路径（同一个 ToolBlock），
-              // 终态后由 section 决定留哪几条——一条事实一个组件，不做第二套呈现
-              const systemActionIds = new Set(sub.systemActionIds ?? []);
-              const systemActions = systemActionIds.size
-                ? sub.items.filter((child) => systemActionIds.has(child.id)).map((child) => renderFlowItem(child))
-                : null;
-              const deliverableItems = sub.items.filter((child) => child.type === 'file_download' && !!child.artifactId);
-              const processItems = deliverableItems.length
-                ? sub.items.filter((child) => child.type !== 'file_download' || !child.artifactId) : sub.items;
-              const deliverables = deliverableItems.map((child) => renderFlowItem(child));
-              const sectionOpen = isBusinessStepOpen(sub.id, !!sub.terminal);
-              return (
-                <ErrorBoundary key={sub.id} inline>
-                  <BusinessStepSectionView
-                    section={sub}
-                    debugMode={debugMode}
-                    systemActions={systemActions} deliverables={deliverables}
-                    open={sectionOpen} onOpenChange={(open) => setBusinessStepOpen(sub.id, open)}
-                    showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
-                  >
-                    {processItems.map((child) => renderFlowItem(child))}
-                  </BusinessStepSectionView>
-                </ErrorBoundary>
-              );
-            }
             if (sub.type === 'business_step') {
-              const terminal = isTerminalBusinessStep(sub);
               return (
                 <ErrorBoundary key={sub.id} inline>
                   <BusinessStepFlow
                     event={sub}
-                    open={terminal ? isBusinessStepOpen(sub.id, true) : undefined} onOpenChange={terminal ? (open) => setBusinessStepOpen(sub.id, open) : undefined}
-                    showOutcomeWhenCollapsed={showBusinessStepOutcomeWhenCollapsed}
-                    planHasOpenStep={sub.kind === 'plan' ? planHasOpenStep(sub.id) : undefined}
-                    onTogglePlan={sub.kind === 'plan' ? () => toggleBusinessPlan(sub.id) : undefined}
+                    sessionId={sessionId}
+                    selected={businessStepSelection}
+                    onSelect={businessStepDetailMode ? selectBusinessStep : undefined}
                   />
                 </ErrorBoundary>
               );
             }
-            if (sub.type === 'activity_group') {
-              return (
-                <ErrorBoundary key={sub.id} inline>
-                  <ActivityGroupBlock
-                    items={sub.items}
-                    isActive={sub.isActive}
-                    isLast={sub.id === lastActivityGroupId}
-                    debugMode={debugMode} onSwitchModel={onSwitchModel}
-                  />
-                </ErrorBoundary>
-              );
-            }
-            const origIndex = msgIndexMap.get(sub.id) ?? 0;
-            const msgKey = `msg-${origIndex}`;
-            const ttsState = ttsStateMap?.[msgKey] || 'idle';
-            const ttsIsActive = tts?.activeKey === msgKey;
-            const voicePlayState = sub.type === 'user-voice'
-              ? voicePlayer.getState(`voice-msg-${sub.id}`)
-              : undefined;
-            return (
-              <ErrorBoundary key={sub.id} inline>
-                <MessageItem
-                  message={sub}
-                  index={origIndex} sessionId={sessionId}
-                  onPermissionResponse={onPermissionResponse}
-                  onAskUserResponse={onAskUserResponse}
-                  onRetry={onRetry} onSwitchModel={onSwitchModel}
-                  onFork={onFork}
-                  isFirstUser={false}
-                  isLoading={loading}
-                  tts={tts}
-                  ttsState={ttsState}
-                  ttsIsActive={ttsIsActive}
-                  voicePlayer={voicePlayer}
-                  voicePlayState={voicePlayState}
-                  debugMode={debugMode}
-                />
-              </ErrorBoundary>
-            );
+            return renderBusinessDetailItem(sub);
           };
 
           const rowContent = (() => {
@@ -900,8 +848,8 @@ export const MessageList = memo(function MessageList({
             );
           }
 
-          // --- Standalone business_step / section (normally grouped into an AI bubble) ---
-          if (item.type === 'business_step' || item.type === 'business_step_section') {
+          // --- Standalone business plan (normally grouped into an AI bubble) ---
+          if (item.type === 'business_step') {
             return (
               <div
                 key={item.id}
@@ -917,6 +865,9 @@ export const MessageList = memo(function MessageList({
               </div>
             );
           }
+
+          // 完整 section 只供详情目录消费，主区投影正常不会走到这里。
+          if (item.type === 'business_step_section') return null;
 
           // --- Standalone activity_group (shouldn't happen with bubble grouping, but fallback) ---
           if (item.type === 'activity_group') {
@@ -1121,5 +1072,15 @@ export const MessageList = memo(function MessageList({
       </button>
     )}
     </div>
+    <Suspense fallback={null}>{businessStepDetailMode === 'desktop'
+      && businessStepDetailHost
+      && businessStepDetailsOpen
+      && businessStepDetailProps
+      ? createPortal(<BusinessStepDetail {...businessStepDetailProps} />, businessStepDetailHost)
+      : null}
+    {businessStepDetailMode === 'mobile' && businessStepDetailProps ? (
+      <BusinessStepDetail {...businessStepDetailProps} open={businessStepDetailsOpen} />
+    ) : null}</Suspense>
+    </>
   );
 });

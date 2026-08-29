@@ -27,7 +27,7 @@ vi.mock("@/platform/webConfig", () => ({
   },
 }));
 
-describe("FilePreviewDialog", () => {
+describe("FilePreviewDialog 布局与层级", () => {
   it("标题保持在左侧，纯图标下载/打印紧挨在右侧打开按钮左边", () => {
     render(
       <FilePreviewDialog
@@ -57,6 +57,22 @@ describe("FilePreviewDialog", () => {
     expect(close.parentElement?.className).toContain("z-[101]");
     expect((close.parentElement as HTMLElement).style.top).toBe("50%");
     expect(close.parentElement?.className).not.toContain("900px");
+  });
+
+  it("嵌套预览层高于业务步骤 Sheet", () => {
+    render(
+      <FilePreviewDialog
+        open
+        filePath="assets/demo.md"
+        onClose={vi.fn()}
+        nestedLayer
+      />,
+    );
+
+    const content = screen.getByRole("dialog");
+    const overlay = content.previousElementSibling as HTMLElement;
+    expect(content.className).toContain("z-[121]");
+    expect(overlay.className).toContain("z-[120]");
   });
 
   it("视频预览点击弹窗外遮罩会关闭", () => {

@@ -321,6 +321,8 @@ export interface BusinessStepEventItem {
   id: string;
   /** 产生本事件的 TodoWrite 消息 id，决定事件在会话流中的位置。 */
   anchorMessageId: string;
+  /** 业务 Run 身份；用于历史前插后安全重映射详情选择，不参与 TodoWrite schema。 */
+  runId?: string;
   kind: BusinessStepEventKind;
   /** step 事件（start/complete/fail/block/wait）：事件发生时该步骤的快照内容。 */
   todo?: TodoItem;
@@ -341,9 +343,11 @@ export interface BusinessStepProjection {
   hiddenMessageIds: Set<string>;
 }
 
+/** 步骤差分事件沿用所属业务 Run，供渲染层建立稳定归属。 */
 interface StepEventBase {
   type: "business_step";
   anchorMessageId: string;
+  runId?: string;
   todo: TodoItem;
   stepIndex?: number;
   stepCount: number;
@@ -452,6 +456,7 @@ export function projectBusinessStepEvents(
         type: "business_step",
         id: `bs-${message.id}-plan`,
         anchorMessageId: message.id,
+        ...(message.runId ? { runId: message.runId } : {}),
         kind: "plan",
         todos: businessTodos,
         stepCount,
@@ -465,6 +470,7 @@ export function projectBusinessStepEvents(
           type: "business_step",
           id: `bs-${message.id}-${activeKey}-start`,
           anchorMessageId: message.id,
+          ...(message.runId ? { runId: message.runId } : {}),
           kind: "start",
           todo: activeTodo,
           stepIndex: indexByKey.get(activeKey),
@@ -500,6 +506,7 @@ export function projectBusinessStepEvents(
       const base: StepEventBase = {
         type: "business_step",
         anchorMessageId: message.id,
+        ...(message.runId ? { runId: message.runId } : {}),
         todo,
         stepIndex: indexByKey.get(key),
         stepCount,
@@ -525,6 +532,7 @@ export function projectBusinessStepEvents(
             type: "business_step",
             id: `bs-${message.id}-update`,
             anchorMessageId: message.id,
+            ...(message.runId ? { runId: message.runId } : {}),
             kind: "update",
             stepCount,
           }]

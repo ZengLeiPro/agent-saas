@@ -20,6 +20,7 @@ import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
+import { useChatRightPanelController } from "./useChatRightPanelController";
 import { useAuth } from "@/contexts/AuthContext";
 const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
 const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole }))); const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
@@ -149,36 +150,29 @@ export function DesktopLayout(props: LayoutProps) {
     || activeTab === "cron";
 
   const [taskDetailPanelTarget, setTaskDetailPanelTarget] = useState<HTMLDivElement | null>(null); const [taskDetailOpen, setTaskDetailOpen] = useState(false);
-  const sidePreviewOpen = !!previewFilePath && previewMode === "side";
-
-  useEffect(() => {
-    closeSubagentTranscript?.();
-  }, [closeSubagentTranscript, sessionId]);
-
-  /**
-   * 右栏是**单 slot + 优先级**，不是多个布尔的「或」。
-   *
-   * 优先级 subagent > preview > system > browser。子任务详情与文件预览都是用户显式
-   * 点开的；子任务详情是当前最新意图，system 则是自动跟随 Agent 的。
-   * 被压住的一方不卸载（走 hidden），保住滚动位置与内部状态。
-   */
-  const rightPanelKind: 'subagent' | 'preview' | 'system' | 'browser' | null =
-    subagentTranscript ? 'subagent'
-      : sidePreviewOpen ? 'preview'
-        : systemPanelOpen ? 'system'
-          : fileBrowserOpen ? 'browser'
-            : null;
+  const {
+    businessStepPanelOpen, businessStepDetailHost, setBusinessStepDetailHost,
+    rightPanelKind, rightPanelKey,
+    handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview,
+    handleDockFilePreview, handleExpandFilePreview, handleToggleFileBrowser,
+    handleCloseFileBrowser, handleCloseSubagentTranscript,
+  } = useChatRightPanelController({
+    sessionId, previewFilePath, previewMode, fileBrowserOpen,
+    subagentTranscript: subagentTranscript ?? null,
+    systemPanelOpen,
+    openFilePreview, closeFilePreview, dockFilePreview, expandFilePreview,
+    toggleFileBrowser, closeFileBrowser, closeSubagentTranscript,
+  });
   const rightPanelOpen = rightPanelKind !== null;
   const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
   const showTaskDetailPanel = !settingsMode && !analysisMode && activeTab === "cron" && taskDetailOpen;
+  // 聊天右栏与任务详情复用同一外层分栏，但各自保留独立 resize key。
   const showDockedPanel = showRightPanel || showTaskDetailPanel;
-  const rightPanelKey = rightPanelKind === 'subagent'
-    ? subagentTranscript?.childSessionId ?? null
-    : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
-  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, dockedPanelKey);
+  const initialDockedPanelRatio = !showTaskDetailPanel && rightPanelKind === "business-step" ? 0.42 : 0.5;
+  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(initialDockedPanelRatio, 0.25, 0.75, dockedPanelKey);
 
-  // 侧边栏折叠
+  // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => {
@@ -354,7 +348,7 @@ export function DesktopLayout(props: LayoutProps) {
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
             renderMcp={() => <McpAdminCatalogPanel />}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
             renderAutomation={() => <CronManager />}
             settingsOpen={false}
@@ -567,7 +561,7 @@ export function DesktopLayout(props: LayoutProps) {
                 variant="ghost"
                 size="icon"
                 className="size-7"
-                onClick={toggleFileBrowser}
+                onClick={handleToggleFileBrowser}
                 title="文件浏览器"
               >
                 <FolderOpen className={cn("size-[18px]", fileBrowserOpen ? "text-primary" : "text-muted-foreground")} />
@@ -629,6 +623,10 @@ export function DesktopLayout(props: LayoutProps) {
               modelList={modelList}
               selectedModel={selectedModel}
               sessionId={sessionId}
+              businessStepDetailMode="desktop"
+              businessStepDetailHost={businessStepDetailHost}
+              businessStepPanelOpen={businessStepPanelOpen}
+              onBusinessStepPanelOpenChange={handleBusinessStepPanelOpenChange}
               onModelChange={onModelChange}
               canAutoApproveRunShell={approvalTier === "ask"}
               autoApproveRunShell={autoApproveRunShell}
@@ -739,7 +737,7 @@ export function DesktopLayout(props: LayoutProps) {
                 renderMcp={() => <McpAdminCatalogPanel />}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
             renderFiles={() => (
-              <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
+              <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />
             )}
                 renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                 settingsOpen={false}
@@ -837,13 +835,13 @@ export function DesktopLayout(props: LayoutProps) {
               open
               filePath={previewFilePath}
               owner={previewFileOwner}
-              onClose={closeFilePreview}
-              onDock={dockFilePreview}
+              onClose={handleCloseFilePreview}
+              onDock={handleDockFilePreview}
             />
           </Suspense>
         )}
         {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
-          openFilePreview={openFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
+          openFilePreview={handleOpenFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
         {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
@@ -857,7 +855,7 @@ export function DesktopLayout(props: LayoutProps) {
                   renderMemory={() => <MemorySectionPanel />}
                   renderFiles={() => (
                     <FileBrowserLazy
-                      onPreviewFile={openFilePreview}
+                      onPreviewFile={handleOpenFilePreview}
                       owner={authUser?.username}
                       fullPage
                       reserveCloseButtonSpace
@@ -888,7 +886,7 @@ export function DesktopLayout(props: LayoutProps) {
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
                     renderMcp={() => <McpAdminCatalogPanel />}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-                    renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+                    renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                     settingsOpen={settingsTarget === "tenant"}
                     settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
@@ -939,12 +937,15 @@ export function DesktopLayout(props: LayoutProps) {
               className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden")}
               style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
             >
+              {rightPanelKind === 'business-step' ? (
+                <div ref={setBusinessStepDetailHost} className="h-full min-h-0" data-business-step-detail-host />
+              ) : null}
               {rightPanelKind === 'subagent' && subagentTranscript ? (
                 <Suspense fallback={SuspenseFallback}>
                   <SubagentTranscriptPanel
                     childSessionId={subagentTranscript.childSessionId}
                     title={subagentTranscript.title}
-                    onClose={() => closeSubagentTranscript?.()}
+                    onClose={handleCloseSubagentTranscript}
                   />
                 </Suspense>
               ) : null}
@@ -953,8 +954,8 @@ export function DesktopLayout(props: LayoutProps) {
                   <FilePreviewPanel
                     filePath={previewFilePath}
                     owner={previewFileOwner}
-                    onBack={closeFilePreview}
-                    onExpand={expandFilePreview}
+                    onBack={handleCloseFilePreview}
+                    onExpand={handleExpandFilePreview}
                   />
                 </Suspense>
               ) : null}
@@ -972,8 +973,8 @@ export function DesktopLayout(props: LayoutProps) {
               <div className={cn("flex h-full flex-col", rightPanelKind !== 'browser' && "hidden")}>
                 <Suspense fallback={SuspenseFallback}>
                   <FileBrowserLazy
-                    onClose={closeFileBrowser}
-                    onPreviewFile={openFilePreview}
+                    onClose={handleCloseFileBrowser}
+                    onPreviewFile={handleOpenFilePreview}
                     owner={authUser?.username}
                   />
                 </Suspense>

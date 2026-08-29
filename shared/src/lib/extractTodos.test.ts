@@ -28,7 +28,7 @@ function step(id: string, status: string, extra: Record<string, unknown> = {}): 
   return { id, kind: "business", content: `步骤 ${id}`, status, ...extra };
 }
 
-describe("projectBusinessStepEvents", () => {
+describe("projectBusinessStepEvents 纯函数投影", () => {
   it("emits plan followed by start for the first complete business snapshot", () => {
     const result = projectBusinessStepEvents([
       user("user-1"),
@@ -56,6 +56,20 @@ describe("projectBusinessStepEvents", () => {
     });
     expect(result.hiddenMessageIds.has("t1")).toBe(true);
     expect(result.eventsByAnchor.get("t1")).toHaveLength(2);
+  });
+
+  it("carries runId on plan and step events for stable UI ownership", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress"), step("write", "pending")]), "run-42"),
+      todo("t2", todos([step("verify", "completed"), step("write", "in_progress")]), "run-42"),
+    ], false);
+
+    expect(result.events.map((event) => event.runId)).toEqual([
+      "run-42",
+      "run-42",
+      "run-42",
+      "run-42",
+    ]);
   });
 
   it("emits only plan when the first snapshot has no in-progress step", () => {

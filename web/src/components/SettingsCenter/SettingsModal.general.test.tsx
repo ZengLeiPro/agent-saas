@@ -33,7 +33,14 @@ vi.mock("@agent/shared", async (importOriginal) => {
 import { GeneralSection } from "./SettingsModal";
 
 const modelList = {
-  groups: [{ id: "openai", name: "OpenAI", models: [{ id: "gpt-test", name: "GPT Test" }] }],
+  groups: [{
+    id: "openai",
+    name: "OpenAI",
+    models: [
+      { id: "gpt-test", name: "GPT Test" },
+      { id: "gpt-next", name: "GPT Next" },
+    ],
+  }],
   default: "openai/gpt-test",
   allowCrossGroupSwitch: true,
   showGroupNames: false,
@@ -45,39 +52,31 @@ beforeEach(() => {
   mocks.authFetch.mockReset();
   mocks.saveUserPreferences.mockReset();
   mocks.updatePreferences.mockReset();
-  mocks.authFetch.mockResolvedValue({
-    ok: true,
-    json: async () => modelList,
-  });
+  mocks.authFetch.mockResolvedValue({ ok: true, json: async () => modelList });
   mocks.saveUserPreferences.mockResolvedValue({
     authorizationModeEnabled: true,
-    defaultModel: "openai/gpt-test",
-    businessStepDisplayMode: "collapsed",
+    defaultModel: "openai/gpt-next",
   });
 });
 
-describe("通用设置的业务步骤展示偏好", () => {
-  it("提供三档选项并通过既有个人偏好接口保存", async () => {
+describe("通用设置", () => {
+  it("移除已经失效的业务步骤展开偏好，同时保留默认模型保存", async () => {
     render(<GeneralSection />);
 
-    const trigger = await screen.findByLabelText("业务步骤展示");
-    expect(trigger.textContent).toContain("智能折叠");
+    expect(screen.queryByLabelText("业务步骤展示")).toBeNull();
+    expect(screen.queryByText("智能折叠")).toBeNull();
 
+    const trigger = await screen.findByLabelText("新建会话默认模型");
     await userEvent.click(trigger);
-    expect(screen.getByRole("option", { name: "智能折叠" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "始终折叠" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "始终展开" })).toBeTruthy();
-
-    await userEvent.click(screen.getByRole("option", { name: "始终折叠" }));
+    await userEvent.click(screen.getByRole("option", { name: "GPT Next" }));
     await userEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(mocks.saveUserPreferences).toHaveBeenCalledWith(expect.objectContaining({
-        businessStepDisplayMode: "collapsed",
-      }));
+      expect(mocks.saveUserPreferences).toHaveBeenCalledWith({
+        authorizationModeEnabled: true,
+        defaultModel: "openai/gpt-next",
+      });
     });
-    expect(mocks.updatePreferences).toHaveBeenCalledWith(expect.objectContaining({
-      businessStepDisplayMode: "collapsed",
-    }));
+    expect(mocks.saveUserPreferences.mock.calls[0]?.[0]).not.toHaveProperty("businessStepDisplayMode");
   });
 });

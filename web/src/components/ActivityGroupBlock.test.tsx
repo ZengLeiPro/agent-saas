@@ -27,6 +27,11 @@ describe('ActivityGroupBlock 排版型活动行', () => {
     expect(container.querySelector('.rounded-lg.border')).toBeNull();
 
     const toggle = screen.getByRole('button', { expanded: false });
+    const statusIcon = toggle.querySelector('.lucide-circle-check') as SVGElement;
+    expect(statusIcon.classList.contains('size-3.5')).toBe(true);
+    expect(statusIcon.classList.contains('text-success')).toBe(true);
+    expect(toggle.className).toContain('gap-2');
+    expect(toggle.className).toContain('py-1');
     expect(toggle.lastElementChild?.classList.contains('lucide-chevron-right')).toBe(true);
     fireEvent.click(toggle);
     expect(screen.getAllByText('有异常').length).toBeGreaterThanOrEqual(1);

@@ -194,23 +194,13 @@ export function latestTaskActivityProjection(
   changesTable: string,
 ): string {
   return `GREATEST(
-    COALESCE((
-      SELECT max(status_change.created_at)
-        FROM ${changesTable} status_change
-       WHERE status_change.task_id=${taskAlias}.id
-         AND status_change.change_type IN (
-           'task.created','task.transitioned','task.requeued','task.resume_requested',
-           'integration.resume_requested','integration.agent.resumed',
-           'execution.claimed','execution.transitioned','execution.transitioned.v3','integration.agent.finished',
-           'integration.agent.merge.succeeded'
-         )
-    ), ${taskAlias}.created_at),
+    COALESCE(${taskAlias}.status_changed_at, ${taskAlias}.created_at),
     COALESCE((
       SELECT max(activity_comment.created_at)
         FROM ${commentsTable} activity_comment
        WHERE activity_comment.task_id=${taskAlias}.id
          AND ${visibleCommentPredicate('activity_comment', changesTable)}
-    ), ${taskAlias}.created_at)
+    ), COALESCE(${taskAlias}.status_changed_at, ${taskAlias}.created_at))
   )`;
 }
 

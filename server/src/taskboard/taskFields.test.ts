@@ -21,7 +21,9 @@ function statusCheckSql(): string {
 describe('taskboard task status DDL', () => {
   it('creates task tables with the shared eight-stage status order', () => {
     expect(TASKBOARD_STATUSES).toEqual(EXPECTED_STATUSES);
-    expect(taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards')).toContain(statusCheckSql());
+    const ddl = taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards');
+    expect(ddl).toContain(statusCheckSql());
+    expect(ddl).toContain('status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now()');
   });
 
   it('replaces the existing status CHECK without rewriting legacy statuses', () => {
@@ -34,6 +36,7 @@ describe('taskboard task status DDL', () => {
       'ALTER TABLE runtime_taskboard_tasks ADD CONSTRAINT runtime_taskboard_tasks_status_check',
     );
     expect(sql).toContain(statusCheckSql());
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ');
     expect(sql).not.toMatch(/\bUPDATE\b/i);
   });
 

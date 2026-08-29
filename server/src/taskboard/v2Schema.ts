@@ -168,6 +168,45 @@ export async function runTaskboardV2Schema(
       ON DELETE TO ${options.changesTable} DO INSTEAD NOTHING
   `);
   await client.query(`
+    UPDATE ${options.tasksTable} task
+       SET status_changed_at=COALESCE((
+         SELECT max(status_change.created_at)
+           FROM ${options.changesTable} status_change
+          WHERE status_change.task_id=task.id AND (
+            status_change.change_type='task.created'
+            OR (status_change.payload ? 'from' AND status_change.payload ? 'to'
+                AND status_change.payload->>'from' IS DISTINCT FROM status_change.payload->>'to')
+            OR (status_change.payload ? 'fromStatus' AND status_change.payload ? 'status'
+                AND status_change.payload->>'fromStatus' IS DISTINCT FROM status_change.payload->>'status')
+            OR (status_change.payload ? 'previousStatus' AND status_change.payload ? 'status'
+                AND status_change.payload->>'previousStatus' IS DISTINCT FROM status_change.payload->>'status')
+            OR status_change.change_type IN (
+              'task.resume_requested','integration.resume_requested','integration.agent.resumed',
+              'integration.agent.finished','integration.agent.canceled','integration.canceled',
+              'merge.succeeded.v2','integration.agent.merge.succeeded',
+              'workflow.remediation_completed_after_merge'
+            )
+          )
+       ), task.created_at)
+     WHERE task.status_changed_at IS NULL;
+    ALTER TABLE ${options.tasksTable}
+      ALTER COLUMN status_changed_at SET DEFAULT now(),
+      ALTER COLUMN status_changed_at SET NOT NULL;
+    CREATE OR REPLACE FUNCTION ${options.tasksTable}_status_time_fn()
+    RETURNS trigger LANGUAGE plpgsql AS $function$
+    BEGIN
+      IF NEW.status IS DISTINCT FROM OLD.status THEN
+        NEW.status_changed_at := clock_timestamp();
+      END IF;
+      RETURN NEW;
+    END
+    $function$;
+    DROP TRIGGER IF EXISTS ${options.tasksTable}_status_time ON ${options.tasksTable};
+    CREATE TRIGGER ${options.tasksTable}_status_time
+      BEFORE UPDATE OF status ON ${options.tasksTable}
+      FOR EACH ROW EXECUTE FUNCTION ${options.tasksTable}_status_time_fn()
+  `);
+  await client.query(`
     CREATE TABLE IF NOT EXISTS ${options.attemptsTable} (
       id TEXT PRIMARY KEY,
       execution_id TEXT NOT NULL REFERENCES ${options.executionsTable}(id) ON DELETE CASCADE,

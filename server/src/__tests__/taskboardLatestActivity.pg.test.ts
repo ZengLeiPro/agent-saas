@@ -42,7 +42,7 @@ describePg('任务卡片最新动态时间', () => {
     }
   }, 30_000);
 
-  it('普通编辑和 CI 字段刷新不会推进最新动态时间', async () => {
+  it('普通编辑、CI 字段刷新和同状态 execution.claimed 不会推进最新动态时间', async () => {
     const board = await store.createBoard(alice, { name: '非状态更新' });
     const task = await store.createTask(alice, board.id, { title: '原始标题', status: 'backlog' });
     const initialActivityAt = task.latestActivityAt;
@@ -60,6 +60,11 @@ describePg('任务卡片最新动态时间', () => {
         WHERE id=$1`,
       [task.id],
     );
+    await pool.query(
+      `INSERT INTO ${store.changesTable}(task_id,change_type,actor_type,actor_id,payload,created_at)
+       VALUES ($1,'execution.claimed','user',$2,$3::jsonb,'2040-01-01T00:00:00Z')`,
+      [task.id, alice.ownerUserId, JSON.stringify({ from: 'backlog', to: 'backlog' })],
+    );
     const afterCiInspection = await store.getTask(alice, task.id);
     expect(afterCiInspection.updatedAt).not.toBe(edited.updatedAt);
     expect(afterCiInspection.latestActivityAt).toBe(initialActivityAt);
@@ -72,13 +77,11 @@ describePg('任务卡片最新动态时间', () => {
       status: 'todo',
       expectedVersion: task.version,
     });
-    const event = await pool.query(
-      `SELECT created_at FROM ${store.changesTable}
-        WHERE task_id=$1 AND change_type='task.transitioned'
-        ORDER BY created_at DESC LIMIT 1`,
+    const statusClock = await pool.query(
+      `SELECT status_changed_at FROM ${store.tasksTable} WHERE id=$1`,
       [task.id],
     );
-    const transitionAt = new Date(event.rows[0].created_at).toISOString();
+    const transitionAt = new Date(statusClock.rows[0].status_changed_at).toISOString();
 
     expect(moved.latestActivityAt).toBe(transitionAt);
     expect((await store.listTasks(alice, board.id)).find((item) => item.id === task.id)?.latestActivityAt)
@@ -104,13 +107,81 @@ describePg('任务卡片最新动态时间', () => {
     expect((await store.getTask(alice, task.id)).latestActivityAt).toBe('2030-01-01T00:00:01.000Z');
     await store.deleteComment(alice, first.id, { expectedVersion: first.version });
 
-    const transition = await pool.query(
-      `SELECT created_at FROM ${store.changesTable}
-        WHERE task_id=$1 AND change_type='task.transitioned'
-        ORDER BY created_at DESC LIMIT 1`,
+    const statusClock = await pool.query(
+      `SELECT status_changed_at FROM ${store.tasksTable} WHERE id=$1`,
       [task.id],
     );
     expect((await store.getTask(alice, task.id)).latestActivityAt)
-      .toBe(new Date(transition.rows[0].created_at).toISOString());
+      .toBe(new Date(statusClock.rows[0].status_changed_at).toISOString());
+  });
+
+  it('advisory 晋级为 delivery 并回到 todo 会推进状态时间', async () => {
+    const board = await store.createBoard(alice, { name: '任务晋级' });
+    const advisory = await store.createTask(alice, board.id, {
+      title: '咨询任务',
+      kind: 'advisory',
+      status: 'backlog',
+    });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='done',version=version+1 WHERE id=$1`,
+      [advisory.id],
+    );
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status_changed_at='2020-01-01T00:00:00Z' WHERE id=$1`,
+      [advisory.id],
+    );
+    const completed = await store.getTask(alice, advisory.id);
+    const promoted = await store.updateTask(alice, advisory.id, {
+      kind: 'delivery',
+      expectedVersion: completed.version,
+    });
+
+    expect(promoted).toMatchObject({ kind: 'delivery', status: 'todo' });
+    expect(Date.parse(promoted.latestActivityAt!)).toBeGreaterThan(Date.parse('2020-01-01T00:00:00Z'));
+  });
+
+  it('数据库状态时钟覆盖 integration v2/v3 取消及三类任务合并完成', async () => {
+    const board = await store.createBoard(alice, { name: '终态迁移' });
+    const integrationV2Id = randomUUID();
+    const integrationV3Id = randomUUID();
+    const integrationDoneId = randomUUID();
+    const remediationId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tasksTable}
+         (id,board_id,identifier,kind,title,status,sort_order,workflow_version)
+       VALUES ($1,$2,'INT-V2','integration','Integration V2','in_progress',1024,2),
+              ($3,$2,'INT-V3','integration','Integration V3','in_progress',2048,3),
+              ($4,$2,'INT-DONE','integration','Integration 合并','in_progress',3072,3),
+              ($5,$2,'REM-DONE','remediation','Remediation 合并','in_progress',4096,3)`,
+      [integrationV2Id, board.id, integrationV3Id, integrationDoneId, remediationId],
+    );
+    const delivery = await store.createTask(alice, board.id, {
+      title: 'Delivery 合并', kind: 'delivery', status: 'todo',
+    });
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='ready_to_merge',version=version+1 WHERE id=$1`,
+      [delivery.id],
+    );
+    const allIds = [integrationV2Id, integrationV3Id, delivery.id, integrationDoneId, remediationId];
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status_changed_at='2020-01-01T00:00:00Z'
+        WHERE id=ANY($1::text[])`,
+      [allIds],
+    );
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='canceled',version=version+1
+        WHERE id=ANY($1::text[])`,
+      [[integrationV2Id, integrationV3Id]],
+    );
+    await pool.query(
+      `UPDATE ${store.tasksTable} SET status='done',version=version+1
+        WHERE id=ANY($1::text[])`,
+      [[delivery.id, integrationDoneId, remediationId]],
+    );
+
+    for (const id of allIds) {
+      const latest = await store.getTask(alice, id);
+      expect(Date.parse(latest.latestActivityAt!)).toBeGreaterThan(Date.parse('2020-01-01T00:00:00Z'));
+    }
   });
 });

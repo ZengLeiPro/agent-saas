@@ -201,6 +201,9 @@ describe('taskboard V2 contracts', () => {
     expect(ddl).toContain("NEW.status IN ('blocked','done','canceled')");
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_update');
     expect(ddl).toContain('CREATE OR REPLACE RULE tb_changes_no_delete');
+    expect(ddl).toContain('ALTER COLUMN status_changed_at SET NOT NULL');
+    expect(ddl).toContain('NEW.status IS DISTINCT FROM OLD.status');
+    expect(ddl).toContain('CREATE TRIGGER tb_tasks_status_time');
     expect(ddl).toContain('active_integration_task_id');
     expect(ddl).toContain("state IN ('prepared','executing','succeeded','failed','unknown','reconciled')");
     expect(ddl).toContain("trigger_mode IN ('scheduled','on_ready','manual')");

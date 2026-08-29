@@ -33,6 +33,7 @@ on:
       - 'scripts/deploy-acs-orchestrator.sh'
       - 'scripts/release/upload-oss-object-immutable.sh'
       - 'scripts/acs-browser-lease-e2e.mjs'
+      - 'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py'
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
       - 'scripts/test_acr_webhook_redelivery.py'
@@ -635,7 +636,8 @@ jobs:
           set -euo pipefail
           pnpm -F acs-orchestrator build
           stage="$RUNNER_TEMP/acs-release-stage"
-          mkdir -p "$stage/scripts/release"
+          mkdir -p "$stage/scripts/release" \
+            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts"
           pnpm --config.allowUnusedPatches=true --filter acs-orchestrator --prod deploy \
             "$stage/acs-orchestrator"
           rm -rf "$stage/acs-orchestrator/dist" "$stage/acs-orchestrator/descriptions"
@@ -648,6 +650,9 @@ jobs:
             scripts/acs-browser-lease-e2e.mjs \
             scripts/acs-tool-content-json.mjs \
             scripts/check-acs-shared-rollback-compatibility.mjs "$stage/scripts/"
+          install -m 0555 \
+            workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py \
+            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py"
           install -m 0444 scripts/release/artifact-lib.mjs \
             scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs \

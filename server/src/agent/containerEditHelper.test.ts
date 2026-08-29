@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { CONTAINER_FILE_HELPER_SCRIPT } from './containerExecutionProvider.js';
+import { CONTAINER_FILE_HELPER_SCRIPT } from './containerFileHelper.js';
 
 type HelperResult = {
   ok?: boolean;

@@ -7,6 +7,17 @@ export function parseToolInput<TInput>(descriptor: ToolDescriptor<TInput>, input
   return descriptor.schema.parse(descriptor.prepareInput ? descriptor.prepareInput(input) : input) as TInput;
 }
 
+export function tryParseToolInput<TInput>(
+  descriptor: ToolDescriptor<TInput>,
+  input: unknown,
+): { ok: true; input: TInput } | { ok: false; error: string } {
+  try {
+    return { ok: true, input: parseToolInput(descriptor, input) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function isInside(baseDir: string, candidate: string): boolean {
   const rel = relative(baseDir, candidate);
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));

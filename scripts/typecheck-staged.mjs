@@ -40,9 +40,15 @@ for (const [packageDir, files] of [...packageFiles].sort(([a], [b]) => a.localeC
     continue;
   }
 
+  const packageRoot = join(root, packageDir);
   const relativeFiles = files.map((path) =>
-    relative(join(root, packageDir), join(root, path)).split(sep).join('/'),
+    relative(packageRoot, join(root, path)).split(sep).join('/'),
   );
+  const declarationFiles = execFileSync('git', ['ls-files', '-z', `${packageDir}/src`], { cwd: root })
+    .toString('utf8')
+    .split('\0')
+    .filter((path) => path.endsWith('.d.ts'))
+    .map((path) => relative(packageRoot, join(root, path)).split(sep).join('/'));
   const chunkSize = 4;
   for (let index = 0; index < relativeFiles.length; index += chunkSize) {
     const chunk = relativeFiles.slice(index, index + chunkSize);
@@ -64,6 +70,7 @@ for (const [packageDir, files] of [...packageFiles].sort(([a], [b]) => a.localeC
       '--esModuleInterop',
       '--strict',
       '--skipLibCheck',
+      ...declarationFiles,
       ...chunk,
     ]);
   }

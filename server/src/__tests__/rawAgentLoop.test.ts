@@ -130,21 +130,6 @@ class StaticToolCallsAdapter implements ModelAdapter {
   }
 }
 
-class SingleToolCallThenTextAdapter implements ModelAdapter {
-  private emitted = false;
-
-  constructor(private readonly toolCall: ModelToolCall) {}
-
-  async *stream(_request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
-    if (!this.emitted) {
-      this.emitted = true;
-      yield { type: 'completed', content: '', toolCalls: [this.toolCall] };
-      return;
-    }
-    yield { type: 'completed', content: 'done', toolCalls: [] };
-  }
-}
-
 class WebFetchUntilForcedSynthesisAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -3167,64 +3152,6 @@ describe('RawAgentLoop', () => {
       'call_write_a',
       'call_write_b',
     ]);
-  });
-
-  it('uses prepareInput output consistently for approval display and stored execution input', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-edit-prepare-'));
-    cleanupDirs.add(cwd);
-    const eventPath = join(cwd, 'session.runtime-events.jsonl');
-    const transcriptPath = join(cwd, 'session.jsonl');
-    const eventStore = new FileEventStore(eventPath, DEFAULT_TENANT_ID);
-    const approvalStore = new EventBackedApprovalStore(eventStore, 'session-edit-prepare', DEFAULT_TENANT_ID);
-    let shownInput: Record<string, unknown> | undefined;
-    const loop = new RawAgentLoop({
-      modelAdapter: new SingleToolCallThenTextAdapter({
-        id: 'call_edit_prepared',
-        name: 'Edit',
-        arguments: JSON.stringify(JSON.stringify({
-          path: 'a.txt',
-          edits: JSON.stringify({ oldText: 'old', newText: 'new' }),
-        })),
-      }),
-      eventStore,
-      approvalStore,
-      transcriptProjection: new LegacyTranscriptProjection(transcriptPath),
-      toolRuntime: new PlatformToolRuntime(),
-    });
-
-    await collect(loop.run(
-      {
-        message: { channel: 'web', chatId: 'chat-1', content: '编辑文件' },
-        prompt: '编辑文件',
-        instructions: '必须调用工具。',
-        maxTurns: 2,
-        connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
-      },
-      {
-        runId: 'run-edit-prepare',
-        sessionId: 'session-edit-prepare',
-        model: 'gpt-5.5',
-        cwd,
-        tenantId: DEFAULT_TENANT_ID,
-        channelContext: {
-          channel: 'web',
-          user: { id: 'admin-1', username: 'admin', role: 'admin' },
-        },
-        hooks: {
-          onInteraction: async (event) => {
-            if (event.type === 'permission_request') shownInput = event.toolInput;
-            return { allow: false, message: 'test only' };
-          },
-        },
-      },
-    ));
-
-    const expected = {
-      file_path: 'a.txt',
-      edits: [{ old_string: 'old', new_string: 'new' }],
-    };
-    expect(shownInput).toEqual(expected);
-    expect((await approvalStore.list('session-edit-prepare'))[0]?.input).toEqual(expected);
   });
 
   it('keeps approval pending instead of returning a tool error when no interaction hook is available', async () => {

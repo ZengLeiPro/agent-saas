@@ -178,7 +178,7 @@ describe('失败路径的摘要与结构化事实', () => {
     const { toolResultEvent, cleanup } = await runFailing(new Error('spawn ENOENT'), 'plain');
     dirs.add(cleanup);
 
-    expect(toolResultEvent.presentation).toMatchObject({ title: '创建待办', status: 'warn' });
+    expect(toolResultEvent.presentation).toMatchObject({ title: '钉钉 · 创建待办', status: 'warn' });
     expect(toolResultEvent.metadata).toBeUndefined();
   });
 

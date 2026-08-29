@@ -433,8 +433,8 @@ describe('tool controls admin router', () => {
 
     it('replace 保留全部片段时正常保存', async () => {
       await withApp(baseRawConfig(), async ({ baseUrl, runtimeConfig }) => {
-        const text = '读取工作区 UTF-8 文本文件，超过 131072 字节时返回前 131072 字节，'
-          + '可用 offset/limit 读取指定行区间，limit 最多 2000 行。';
+        const text = '读取工作区 UTF-8 文本文件，支持 Unicode 路径；超过 131072 字节时返回前 131072 字节，'
+          + '可用 offset/limit 读取指定行区间，limit 最多 2000 行；超长单行建议 sed | head。';
         const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
@@ -460,11 +460,11 @@ describe('tool controls admin router', () => {
 
     it('未声明 invariants 的工具不受影响', async () => {
       await withApp(baseRawConfig(), async ({ baseUrl }) => {
-        const response = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
+        const response = await fetch(`${baseUrl}/api/admin/tool-controls/WaitForWorkspaceReady`, {
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            descriptionOverride: { mode: 'replace', text: '仅用于生成客户交付文档。' },
+            descriptionOverride: { mode: 'replace', text: '检查工作区是否已经就绪。' },
           }),
         });
         expect(response.status).toBe(200);
@@ -479,15 +479,15 @@ describe('tool controls admin router', () => {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          descriptionOverride: { mode: 'replace', text: '仅用于生成客户交付文档。' },
+          descriptionOverride: { mode: 'replace', text: '仅用于生成客户交付文档；写入采用原子提交、同路径串行、fsync 与 rename。' },
         }),
       });
       expect(setRes.status).toBe(200);
       const setBody = await readJson(setRes);
       const write = setBody.tools.find((tool: { id: string }) => tool.id === 'Write');
-      expect(write.descriptionOverride).toEqual({ mode: 'replace', text: '仅用于生成客户交付文档。' });
+      expect(write.descriptionOverride).toEqual({ mode: 'replace', text: '仅用于生成客户交付文档；写入采用原子提交、同路径串行、fsync 与 rename。' });
       // replace 模式：effective == override text
-      expect(write.effectiveDescription).toBe('仅用于生成客户交付文档。');
+      expect(write.effectiveDescription).toBe('仅用于生成客户交付文档；写入采用原子提交、同路径串行、fsync 与 rename。');
       // Shell 原本 enabled=false 保持不变，未被单工具 PUT 波及
       const shellAfterSet = setBody.tools.find((tool: { id: string }) => tool.id === 'Shell');
       expect(shellAfterSet.enabled).toBe(false);
@@ -514,7 +514,7 @@ describe('tool controls admin router', () => {
 
   it('保留 replace descriptionOverride 到服务重启后的新配置实例', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, processCwd }) => {
-      const override = { mode: 'replace' as const, text: '仅用于生成客户交付文档。' };
+      const override = { mode: 'replace' as const, text: '仅用于生成客户交付文档；写入采用原子提交、同路径串行、fsync 与 rename。' };
       const saveResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Write`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -552,7 +552,7 @@ describe('tool controls admin router', () => {
 
   it('single-tool PUT 以磁盘快照合并，避免旧进程覆盖其他已保存的 descriptionOverride', async () => {
     const diskConfig = baseRawConfig();
-    const existingOverride = { mode: 'replace' as const, text: '仅用于生成客户交付文档。' };
+    const existingOverride = { mode: 'replace' as const, text: '仅用于生成客户交付文档；写入采用原子提交、同路径串行、fsync 与 rename。' };
     (diskConfig.toolControls.tools as Record<string, { enabled?: boolean; descriptionOverride?: typeof existingOverride }>).Write = {
       descriptionOverride: existingOverride,
     };

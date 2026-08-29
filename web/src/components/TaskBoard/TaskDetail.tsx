@@ -12,7 +12,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bell, BellRing, Bot, ChevronDown, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -35,7 +35,6 @@ import {
   INTEGRATION_SOURCE_STATE_LABELS,
   PRIORITY_LABELS,
   STATUS_LABELS,
-  TASK_KIND_LABELS,
 } from "./constants";
 import { IntegrationSourceDetails, useIntegrationSources } from "./IntegrationSources";
 import { ModelSelect } from "./ModelSelect";
@@ -617,8 +616,8 @@ export function TaskDetail({
       if (!isCurrentOperation(requestId, operationTask.id)) return;
       const message = caught instanceof Error ? caught.message : "未知错误";
       setError(commentPublished
-        ? `${continueAfterComment ? "评论已发表，但继续执行失败，可重试" : "评论已发表，但刷新失败"}：${message}`
-        : `发表评论失败：${message}`);
+        ? `${continueAfterComment ? "讨论已发表，但继续执行失败，可重试" : "讨论已发表，但刷新失败"}：${message}`
+        : `发表讨论失败：${message}`);
     } finally {
       if (isCurrentOperation(requestId, operationTask.id)) setSaving(false);
     }
@@ -662,26 +661,13 @@ export function TaskDetail({
     >
         {currentTask ? (
           <>
-            <div className="relative flex flex-col space-y-1.5 border-b px-4 py-3 pr-12">
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="absolute right-3 top-3 size-8"
-                aria-label="关闭任务详情"
-                disabled={saving}
-                onClick={() => {
-                  setDetailsExpanded(false);
-                  onOpenChange(false);
-                }}
-              >
-                <X className="size-4" />
-              </Button>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 id="task-detail-title" className="mr-auto min-w-0 truncate text-lg font-semibold">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</h2>
-                <Badge variant={taskKind === "integration" ? "default" : "secondary"} className={taskKind === "integration" ? "bg-violet-600 hover:bg-violet-600" : ""}>{TASK_KIND_LABELS[taskKind]}</Badge>
-                <Badge variant="outline">{STATUS_LABELS[currentTask.status]}</Badge>
-                <Badge variant="outline">{PRIORITY_LABELS[priority]}</Badge>
+            <div className="space-y-2 border-b px-4 py-3">
+              <div className="flex items-center gap-2">
+                <h2 id="task-detail-title" className="min-w-0 flex-1 truncate text-lg font-semibold">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</h2>
+                <Button type="button" size="icon" variant="ghost" className="size-8 shrink-0" aria-label="关闭任务详情"
+                  disabled={saving} onClick={() => { setDetailsExpanded(false); onOpenChange(false); }}><X className="size-4" /></Button>
+              </div>
+              <div data-testid="task-detail-actions" className="flex flex-wrap items-center gap-2">
                 {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
                 {taskKind === "integration" && integrationSourcesState.sources.length > 0 ? <Badge variant="outline">{integrationMergedCount}/{integrationSourcesState.sources.length} 已合并</Badge> : null}
                 {integrationNeedsHumanCount > 0 ? <Badge variant="destructive">{integrationNeedsHumanCount} 项需人工处理</Badge> : null}
@@ -710,14 +696,7 @@ export function TaskDetail({
                     升级为交付任务
                   </Button>
                 ) : null}
-                <Button type="button" size="sm" variant="ghost" aria-expanded={detailsExpanded}
-                  aria-controls="task-detail-information" aria-label={detailsExpanded ? "收起任务详情" : "展开任务详情"}
-                  onClick={() => setDetailsExpanded((value) => !value)}>
-                  <ChevronDown className={`transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
-                  <span className="sr-only">{detailsExpanded ? "收起任务详情" : "展开任务详情"}</span>
-                </Button>
               </div>
-              <p className="sr-only">任务详情</p>
             </div>
             {!detailsExpanded && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
@@ -732,8 +711,10 @@ export function TaskDetail({
               </section>
             ) : null}
             <div data-testid="task-detail-columns" className="flex min-h-0 flex-1 flex-col">
-              {detailsExpanded ? (
-                <div id="task-detail-information" data-testid="task-detail-information" className="max-h-[52vh] shrink-0 overflow-y-auto border-b p-4 sm:p-6">
+              {/* @ts-expect-error -- inert is a valid HTML attribute, React types lag behind */}
+              <div id="task-detail-information" data-testid="task-detail-information" aria-hidden={!detailsExpanded} inert={!detailsExpanded}
+                className={`shrink-0 overflow-hidden transition-[max-height,opacity] duration-300 ease-in-out ${detailsExpanded ? "max-h-[52vh] border-b opacity-100" : "max-h-0 opacity-0"}`}>
+                <div className="max-h-[52vh] overflow-y-auto p-4 sm:p-6">
               <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">流程与执行</h3>
                 {latestExecution ? (
@@ -778,7 +759,7 @@ export function TaskDetail({
                 ) : null}
                 {currentTask.status === "blocked" && (taskKind === "integration" || currentTask.providerCiStatus !== "unconfigured") ? (
                   <div className="space-y-2 text-amber-700 dark:text-amber-300">
-                    <p>任务已阻塞；请查看最新执行错误或评论中的解除条件。</p>
+                    <p>任务已阻塞；请查看最新执行错误或讨论中的解除条件。</p>
                     {canTransitionTask ? (
                       <Button
                         type="button"
@@ -910,66 +891,86 @@ export function TaskDetail({
                   ))}
                 </div>
                 {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-                {!editReadOnly ? <Button type="submit" disabled={saving || taskAttachments.uploading}>保存任务</Button> : null}
-                <div aria-label="任务操作" className="flex flex-wrap gap-2 border-t pt-4">
+                <div role="group" aria-label="任务操作" className="flex flex-wrap items-center gap-2 border-t pt-4">
+                  {!editReadOnly ? (
+                    <Button
+                      type="submit"
+                      size="sm"
+                      className="w-[4.5rem]"
+                      aria-label="保存任务"
+                      disabled={saving || taskAttachments.uploading}
+                    >
+                      保存
+                    </Button>
+                  ) : null}
                   {!boardReadOnly && taskKind !== "integration" && canCancelExecution && latestExecutionActive ? (
                     <Button
                       type="button"
+                      size="sm"
                       variant="outline"
-                      className="text-destructive hover:text-destructive"
+                      className="w-[4.5rem] text-destructive hover:text-destructive"
+                      aria-label="终止执行"
                       onClick={() => void cancelCurrentExecution()}
                       disabled={saving}
                     >
-                      {saving ? <LoaderCircle className="animate-spin" /> : <CircleX />}终止执行
+                      {saving ? <LoaderCircle className="animate-spin" /> : <CircleX />}终止
                     </Button>
                   ) : null}
                   {!boardReadOnly && taskKind === "integration" && canCancelIntegration
                     && !["done", "canceled"].includes(currentTask.status) ? (
                     <Button
                       type="button"
+                      size="sm"
                       variant="outline"
-                      className="text-destructive hover:text-destructive"
+                      className="w-[4.5rem] text-destructive hover:text-destructive"
+                      aria-label="取消集成"
                       onClick={() => void cancelIntegration()}
                       disabled={saving}
                     >
-                      <CircleX />取消集成
+                      <CircleX />取消
                     </Button>
                   ) : null}
                   <TaskCompletionButton visible={canCompleteCurrentTask} saving={saving} onComplete={() => void completeCurrentTask()} />
                   {!boardReadOnly && canArchiveTask ? (
                     <Button
                       type="button"
+                      size="sm"
                       variant="outline"
+                      aria-label={archived ? "恢复任务" : "归档任务"}
                       onClick={() => void changeArchived()}
                       disabled={saving}
-                      className={archived ? "" : "text-destructive hover:text-destructive"}
+                      className={`w-[4.5rem] ${archived ? "" : "text-destructive hover:text-destructive"}`}
                     >
                       {archived ? <ArchiveRestore /> : <Archive />}
-                      {archived ? "恢复任务" : "归档任务"}
+                      {archived ? "恢复" : "归档"}
                     </Button>
                   ) : null}
                   {!boardReadOnly && canDeleteTask && onDeleteTask ? (
                     <Button
                       type="button"
+                      size="sm"
                       variant="outline"
+                      aria-label="删除任务"
                       onClick={() => void deleteCurrentTask()}
                       disabled={saving}
-                      className="text-destructive hover:text-destructive"
+                      className="w-[4.5rem] text-destructive hover:text-destructive"
                     >
                       <Trash2 />
-                      删除任务
+                      删除
                     </Button>
                   ) : null}
                 </div>
               </form>
+                  </div>
                 </div>
-              ) : null}
 
               <TaskDetailComments
                 comments={comments}
                 commentsLoading={commentsLoading}
                 commentsError={commentsError}
                 currentTask={currentTask}
+                detailsExpanded={detailsExpanded}
+                onToggleDetails={() => setDetailsExpanded((value) => !value)}
                 taskDescription={executionStarted ? description : null}
                 taskAttachments={executionStarted ? taskAttachments.uploadedFiles : []}
                 latestExecution={latestExecution}

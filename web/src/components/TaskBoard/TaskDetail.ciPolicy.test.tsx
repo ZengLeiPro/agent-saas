@@ -66,7 +66,7 @@ describe("TaskDetail CI 未配置闭环", () => {
     const compactStatus = await screen.findByRole("region", { name: "任务关键状态" });
     expect(compactStatus.textContent).toContain("任务已阻塞");
     expect(compactStatus.textContent).toContain("CI 门禁未配置");
-    expect(screen.queryByTestId("task-detail-information")).toBeNull();
+    expect(screen.getByTestId("task-detail-information").getAttribute("aria-hidden")).toBe("true");
     await user.click(screen.getByRole("button", { name: "展开任务详情" }));
     expect(await screen.findByLabelText("CI 门禁未配置")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "前往配置" }));

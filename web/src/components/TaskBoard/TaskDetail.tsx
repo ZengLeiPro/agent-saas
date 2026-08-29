@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   TASKBOARD_PRIORITIES,
   TASKBOARD_STATUSES,
@@ -79,6 +80,7 @@ interface TaskDetailProps {
   canCancelExecution?: boolean;
   canCancelIntegration?: boolean;
   modelList?: ModelList | null;
+  portalTarget?: HTMLElement | null;
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
   onNavigateTask?: (taskId: string) => void;
@@ -114,7 +116,7 @@ export function TaskDetail({
   canCancelExecution = false,
   canCancelIntegration = false,
   modelList = null,
-  onOpenChange,
+  portalTarget = null, onOpenChange,
   onTaskLoaded,
   onNavigateTask,
   onConfigureCiPolicy,
@@ -651,13 +653,15 @@ export function TaskDetail({
 
   if (!active || !open || !task) return null;
 
-  return (
+  const panel = (
     <FloatingPanel
       role="dialog"
       aria-modal={false}
       aria-labelledby="task-detail-title"
       data-testid="task-detail-panel"
-      className="absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-1/2 md:min-w-[26rem] md:max-w-[40rem] md:shrink-0"
+      className={portalTarget
+        ? "flex h-full min-h-0 w-full flex-col"
+        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-1/2 md:min-w-[26rem] md:max-w-[40rem] md:shrink-0"}
     >
         {currentTask ? (
           <>
@@ -992,4 +996,6 @@ export function TaskDetail({
         ) : null}
     </FloatingPanel>
   );
+
+  return portalTarget ? createPortal(panel, portalTarget) : panel;
 }

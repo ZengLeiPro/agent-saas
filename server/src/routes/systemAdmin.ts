@@ -15,7 +15,11 @@ import type { UserStore } from '../data/users/store.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
 import type { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { WorkspaceScanAlreadyRunningError } from '../runtime/systemMetricsCollector.js';
-import type { PgSystemMetricsStore, WorkspaceUsageRecord } from '../runtime/systemMetricsStore.js';
+import type {
+  PgSystemMetricsStore,
+  SystemMetricRecord,
+  WorkspaceUsageRecord,
+} from '../runtime/systemMetricsStore.js';
 import { archiveWorkspace, deleteWorkspace, isWorkspaceScanFresh } from '../runtime/workspaceArchive.js';
 
 export interface SystemAdminRouterOptions {
@@ -25,6 +29,12 @@ export interface SystemAdminRouterOptions {
   alertNotifier?: AlertNotifier;
   userStore?: UserStore;
   governanceAuditStore?: GovernanceAuditStore;
+  runtimeEventRetention?: {
+    enabled?: boolean;
+    executionMode?: 'dry-run' | 'execute';
+    sweepIntervalMinutes?: number;
+  };
+  eventsTable?: string;
 }
 
 type WorkspaceUsageResponseRecord = WorkspaceUsageRecord & {
@@ -77,6 +87,56 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
       res.json({ available: true, latest, series, generatedAt: new Date().toISOString() });
     } catch (err) {
       res.status(500).json({ error: `System metrics query failed: ${errorMessage(err)}` });
+    }
+  });
+
+  router.get('/event-store', async (req, res) => {
+    const parsed = metricsQuerySchema.safeParse(req.query);
+    if (!parsed.success) return invalidQuery(res, parsed.error);
+    const generatedAt = new Date();
+    const store = options.systemMetricsStore;
+    const retentionConfig = options.runtimeEventRetention;
+    const retentionBase = {
+      enabled: retentionConfig?.enabled === true,
+      mode: retentionConfig?.executionMode ?? 'dry-run' as const,
+    };
+    if (!store) {
+      res.json({
+        schemaVersion: 1,
+        available: false,
+        generatedAt: generatedAt.toISOString(),
+        retention: unavailableRetention(retentionBase),
+        capacity: unavailableCapacity(options.eventsTable),
+      });
+      return;
+    }
+    try {
+      const hours = parsed.data.hours ?? 24;
+      const [retentionMetric, capacityMetric, metrics] = await Promise.all([
+        store.getLatestMetric('runtime_event_retention', 'status'),
+        options.eventsTable ? store.getLatestMetric('pg_table_size', options.eventsTable) : Promise.resolve(null),
+        store.listMetricsSince(hours),
+      ]);
+      res.json({
+        schemaVersion: 1,
+        available: true,
+        generatedAt: generatedAt.toISOString(),
+        retention: serializeRetentionStatus(
+          retentionBase,
+          retentionMetric,
+          generatedAt,
+          Math.max((retentionConfig?.sweepIntervalMinutes ?? 10) * 2 * 60_000, 30 * 60_000),
+          (retentionConfig?.sweepIntervalMinutes ?? 10) * 60_000,
+        ),
+        capacity: serializeCapacity(
+          options.eventsTable,
+          capacityMetric,
+          metrics.filter((metric) => metric.metric === 'pg_table_size' && metric.label === options.eventsTable),
+          generatedAt,
+        ),
+      });
+    } catch {
+      res.status(500).json({ error: 'Event store diagnostics query failed' });
     }
   });
 
@@ -272,6 +332,158 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
   });
 
   return router;
+}
+
+type RetentionBase = { enabled: boolean; mode: 'dry-run' | 'execute' };
+
+function emptyWatermarks() {
+  return {
+    legal: null,
+    billing: null,
+    effective: null,
+    maxGlobalSequence: null,
+    lag: null,
+  };
+}
+
+function unavailableRetention(base: RetentionBase) {
+  return {
+    ...base,
+    status: 'unavailable' as const,
+    stale: false,
+    lastStartedAt: null,
+    lastCompletedAt: null,
+    lastSuccessAt: null,
+    durationMs: null,
+    errorCategory: null,
+    nextScheduledAt: null,
+    watermarks: emptyWatermarks(),
+    categories: {},
+  };
+}
+
+function neverRunRetention(base: RetentionBase, nextScheduledAt: string | null) {
+  return {
+    ...unavailableRetention(base),
+    status: 'never_run' as const,
+    nextScheduledAt,
+  };
+}
+
+function serializeRetentionStatus(
+  base: RetentionBase,
+  metric: SystemMetricRecord | null,
+  now: Date,
+  staleAfterMs: number,
+  sweepIntervalMs: number,
+) {
+  if (!metric) {
+    const nextScheduledAt = base.enabled
+      ? new Date(now.getTime() + sweepIntervalMs).toISOString()
+      : null;
+    return neverRunRetention(base, nextScheduledAt);
+  }
+  const detail = metric.detailJson;
+  if (!detail || detail.schemaVersion !== 1) return unavailableRetention(base);
+  const sampledMs = Date.parse(metric.sampledAt);
+  const stale = !Number.isFinite(sampledMs) || now.getTime() - sampledMs > staleAfterMs;
+  const persistedState = typeof detail.state === 'string' ? detail.state : 'unavailable';
+  const allowed = new Set([
+    'never_run', 'running', 'dry_run_succeeded', 'execute_succeeded', 'blocked', 'failed',
+  ]);
+  const status = stale ? 'stale' : (allowed.has(persistedState) ? persistedState : 'unavailable');
+  const persistedWatermarks = isObject(detail.watermarks) ? detail.watermarks : {};
+  const billing = nullableString(persistedWatermarks.billing);
+  const effective = nullableString(persistedWatermarks.effectiveDeleteThrough);
+  const maxGlobalSequence = nullableString(detail.maxGlobalSequence);
+  return {
+    enabled: base.enabled,
+    mode: detail.mode === 'execute' || detail.mode === 'dry-run' ? detail.mode : base.mode,
+    status,
+    stale,
+    lastStartedAt: nullableString(detail.lastStartedAt),
+    lastCompletedAt: nullableString(detail.lastCompletedAt),
+    lastSuccessAt: nullableString(detail.lastSuccessAt),
+    durationMs: nullableNumber(detail.durationMs),
+    errorCategory: nullableString(detail.errorCategory),
+    nextScheduledAt: nullableString(detail.nextScheduledAt),
+    watermarks: {
+      legal: nullableString(persistedWatermarks.legal),
+      billing,
+      effective,
+      maxGlobalSequence,
+      lag: bigintLag(maxGlobalSequence, effective),
+    },
+    categories: serializeCategories(detail.categories),
+  };
+}
+
+function unavailableCapacity(tableName?: string) {
+  return {
+    available: false,
+    tableName: tableName ?? null,
+    totalBytes: null,
+    tableBytes: null,
+    indexBytes: null,
+    sampledAt: null,
+    stale: false,
+    series: [],
+  };
+}
+
+function serializeCapacity(
+  tableName: string | undefined,
+  latest: SystemMetricRecord | null,
+  series: SystemMetricRecord[],
+  now: Date,
+) {
+  if (!tableName || !latest) return unavailableCapacity(tableName);
+  const detail = latest.detailJson;
+  const sampledMs = Date.parse(latest.sampledAt);
+  return {
+    available: true,
+    tableName,
+    totalBytes: nullableNumber(detail?.totalBytes) ?? latest.valueNum,
+    tableBytes: nullableNumber(detail?.tableBytes),
+    indexBytes: nullableNumber(detail?.indexBytes),
+    sampledAt: latest.sampledAt,
+    stale: !Number.isFinite(sampledMs) || now.getTime() - sampledMs > 30 * 60_000,
+    series: series.map((metric) => ({
+      sampledAt: metric.sampledAt,
+      totalBytes: nullableNumber(metric.detailJson?.totalBytes) ?? metric.valueNum,
+      tableBytes: nullableNumber(metric.detailJson?.tableBytes),
+      indexBytes: nullableNumber(metric.detailJson?.indexBytes),
+    })).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
+  };
+}
+
+function serializeCategories(value: unknown): Record<string, { eligible: number | null; deleted: number | null }> {
+  if (!isObject(value)) return {};
+  return Object.fromEntries(Object.entries(value).map(([key, category]) => {
+    const item = isObject(category) ? category : {};
+    return [key, {
+      eligible: nullableNumber(item.eligible),
+      deleted: nullableNumber(item.deleted),
+    }];
+  }));
+}
+
+function bigintLag(maxGlobalSequence: string | null, effective: string | null): string | null {
+  if (!maxGlobalSequence || !effective || !/^\d+$/.test(maxGlobalSequence) || !/^\d+$/.test(effective)) return null;
+  const lag = BigInt(maxGlobalSequence) - BigInt(effective);
+  return (lag > 0n ? lag : 0n).toString();
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function invalidQuery(res: Response, error: z.ZodError): void {

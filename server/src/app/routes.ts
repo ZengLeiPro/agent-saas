@@ -651,6 +651,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
 
+  // System diagnostics remain read-only and consume persisted metrics only.
   app.use(
     '/api/admin/system',
     requireAdmin,
@@ -661,6 +662,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       alertNotifier: runtime.alertNotifier,
       userStore: runtime.userStore,
       governanceAuditStore: runtime.governanceAuditStore,
+      runtimeEventRetention: config.runtimeEventRetention,
+      eventsTable: runtime.runtimePgEventStore?.eventsTable,
     }),
   );
 

@@ -96,7 +96,19 @@ pnpm -C server maintenance:runtime-events -- \
 
 `run_idx` 仅在上述全部门禁外再显式传 `--drop-run-idx`。CLI 在同一数据库 session 上按表名取得 session-level PostgreSQL advisory lock，完成整批初次取证后，仍会在**每个实际 DROP 前**重新读取数据库 `now()`/`stats_reset`、尚未执行候选的 `idx_scan` 与定义，以及已选替代索引的 validity/readiness/partial/定义；`stats_reset` 变化、窗口不足、扫描数非零、候选或替代索引缺失/失效/定义漂移时立即停止后续 DROP，并在 `finally` 解锁。`DROP INDEX CONCURRENTLY` 不能放入事务，因此该锁只串行化本维护脚本，不能阻止其他会话改 DDL/重置统计；仍须使用独占维护窗口并监控。任何 DROP 都无 SQL 回滚，不得在本任务中连接生产试跑。
 
-## 7. 生产取证清单
+## 7. 管理诊断状态与容量序列
+
+平台管理员可只读调用 `GET /api/admin/system/event-store?hours=24`（`hours` 范围 1–720，默认 24）。接口只读取既有 `system_metrics`，不会触发 retention、DELETE、billing projection、索引操作或扫描 `runtime_events`。响应固定为 `schemaVersion: 1`、`available`、`generatedAt`、`retention`、`capacity`。
+
+- retention 快照追加写入 `metric=runtime_event_retention,label=status`。worker 在每轮开始、成功、门禁阻断和失败时更新；重复调用正在执行的 worker 不会覆盖 `running`。有 Store 但尚无快照时，接口派生 `never_run` 和下一轮调度时间；已有快照不会因进程重启被覆盖。状态包括 `never_run/running/dry_run_succeeded/execute_succeeded/blocked/failed`，接口还会派生 `stale/unavailable`。
+- 快照字段包括 mode、最近开始/完成/成功时间、duration、nextScheduledAt、legal/billing/effective watermarks、max global sequence，以及每类别 eligible/deleted。错误只保存稳定 `errorCategory`（例如 `authorization_missing`、`legal_watermark_invalid`、`partial_failure`、`execution_failed`）；不保存错误 message、authorizationRef、SQL 参数或事件内容。快照写入失败只记固定告警，不改变 retention 成败。
+- retention 过期阈值为 `max(2 × sweepInterval, 30 分钟)`；容量过期阈值为 30 分钟。有 Store 但无运行快照时显示 `never_run`，Store 缺失或快照契约不可识别时显示 `unavailable`；未知数值保持 `null`，不得解释成健康或 0。
+- 容量继续复用 `metric=pg_table_size` 历史序列；每个 PG 表的 `valueNum=totalBytes`，`detailJson` 至少含 `tableBytes/indexBytes/totalBytes`。`capacity.series` 仅映射真实 events table 的既有采样。
+- 性能边界：一次接口请求为 system_metrics 上的最新值与时间窗查询，走既有 `(metric,label,sampled_at)` 索引；不做 runtime_events 的 COUNT/MAX，不启动采样或维护任务。
+
+合并后至少观察两个 sweep 周期：确认 never-run 派生、running/成功状态按时追加、失败后恢复能更新 lastSuccessAt、容量三分量和 total 对齐、stale 在采样恢复后解除；同时检查固定的状态落库告警、system_metrics 增长量、接口 P95 延迟和平台管理员 403 门禁。
+
+## 8. 生产取证清单
 
 - RDS 实例/region/数据库标识（脱敏）、规格、存储类型、已分配与可用容量
 - 7 天以上容量与 runtime_events 表/索引快照，P50/P95 日增长与 30 天 runway
@@ -105,3 +117,4 @@ pnpm -C server maintenance:runtime-events -- \
 - 隔离恢复实例/任务 ID、时间、RTO/RPO、行数/水位/抽样回放校验
 - legal/data-owner/DBA 审批单、legal watermark 来源、billing watermark 查询结果
 - 每批命令参数、开始/结束时间、分类删除数、VACUUM/REINDEX 回执
+- `/event-store` 连续两个 sweep 周期的状态快照、容量采样、stale 恢复与接口延迟证据

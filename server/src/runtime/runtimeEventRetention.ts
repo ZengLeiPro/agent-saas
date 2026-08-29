@@ -1,5 +1,32 @@
 import type pg from 'pg';
 
+export type RuntimeEventRetentionState =
+  | 'never_run'
+  | 'running'
+  | 'dry_run_succeeded'
+  | 'execute_succeeded'
+  | 'blocked'
+  | 'failed';
+
+export interface RuntimeEventRetentionStatusSnapshot {
+  schemaVersion: 1;
+  state: RuntimeEventRetentionState;
+  mode: 'dry-run' | 'execute';
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastSuccessAt: string | null;
+  durationMs: number | null;
+  errorCategory: string | null;
+  nextScheduledAt: string | null;
+  watermarks: {
+    legal: string;
+    billing: string | null;
+    effectiveDeleteThrough: string | null;
+  };
+  maxGlobalSequence: string | null;
+  categories: Record<string, { eligible: number; deleted: number }>;
+}
+
 export interface RuntimeEventRetentionOptions {
   pool: pg.Pool;
   eventsTable: string;
@@ -25,6 +52,8 @@ export interface RuntimeEventRetentionOptions {
   billingCatchupBatchLimit?: number;
   billingCatchupMaxBatches?: number;
   projectBillingRuntimeEvents?: (limit: number) => Promise<{ lastProjectedSequence: number }>;
+  /** 持久化稳定、脱敏的运行快照；首次未运行状态由只读投影在无记录时派生。 */
+  statusRecorder?: (snapshot: RuntimeEventRetentionStatusSnapshot) => Promise<void> | void;
   logger?: {
     info?: (message: string, ...args: unknown[]) => void;
     warn?: (message: string, ...args: unknown[]) => void;
@@ -81,6 +110,10 @@ export class RuntimeEventRetention {
   private readonly handEventRetentionDays: number;
   private readonly billingCatchupBatchLimit: number;
   private readonly billingCatchupMaxBatches: number;
+  private lastStartedAt: string | null = null;
+  private lastCompletedAt: string | null = null;
+  private lastSuccessAt: string | null = null;
+  private nextScheduledAt: string | null = null;
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
@@ -89,12 +122,6 @@ export class RuntimeEventRetention {
     this.executionMode = options.executionMode ?? 'dry-run';
     this.legalDeleteThroughGlobalSequence = parseWatermark(options.legalDeleteThroughGlobalSequence);
     this.authorizationRef = options.authorizationRef?.trim() || undefined;
-    if (this.executionMode === 'execute' && !this.authorizationRef) {
-      throw new Error('RuntimeEventRetention execute 模式必须提供 authorizationRef');
-    }
-    if (this.executionMode === 'execute' && this.legalDeleteThroughGlobalSequence <= 0n) {
-      throw new Error('RuntimeEventRetention execute 模式必须提供正数 legalDeleteThroughGlobalSequence');
-    }
     this.sweepIntervalMinutes = clampInt(options.sweepIntervalMinutes ?? 10, 1, 24 * 60);
     this.batchLimit = clampInt(options.batchLimit ?? 10_000, 1, 100_000);
     this.maxBatchesPerCategory = clampInt(options.maxBatchesPerCategory ?? 10, 1, 1000);
@@ -128,36 +155,52 @@ export class RuntimeEventRetention {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
+      this.nextScheduledAt = null;
     }
   }
 
   async runOnce(): Promise<RuntimeEventRetentionResult> {
-    if (this.inFlight) {
-      throw new Error('RuntimeEventRetention is already running');
-    }
+    if (this.inFlight) throw new Error('RuntimeEventRetention is already running');
     this.inFlight = true;
+    const startedMs = Date.now();
+    this.lastStartedAt = new Date(startedMs).toISOString();
+    this.lastCompletedAt = null;
+    const categories: Record<string, { eligible: number; deleted: number }> = {};
+    let billingWatermark: string | null = null;
+    let effectiveDeleteThrough: string | null = null;
+    let maxGlobalSequence: string | null = null;
+    await this.recordStatus(this.snapshot('running', { categories }));
     try {
+      if (this.executionMode === 'execute' && !this.authorizationRef) {
+        throw new RetentionGateError('authorization_missing');
+      }
+      if (this.executionMode === 'execute' && this.legalDeleteThroughGlobalSequence <= 0n) {
+        throw new RetentionGateError('legal_watermark_invalid');
+      }
       // dry-run 必须严格只读，不能为了预览推进 billing projection。
       const projection = this.executionMode === 'execute'
         ? await this.advanceBillingProjection()
         : await this.readBillingProjectionLag();
-      const effectiveDeleteThrough = minBigInt(
-        projection.billingWatermark,
-        this.legalDeleteThroughGlobalSequence,
-      );
+      billingWatermark = projection.billingWatermark.toString();
+      maxGlobalSequence = projection.maxGlobalSequence.toString();
+      const effective = minBigInt(projection.billingWatermark, this.legalDeleteThroughGlobalSequence);
+      effectiveDeleteThrough = effective.toString();
       const deletedByCategory: Record<string, number> = {};
       const eligibleByCategory: Record<string, number> = {};
       let deleted = 0;
 
-      for (const category of this.buildCategories(effectiveDeleteThrough)) {
+      for (const category of this.buildCategories(effective)) {
         if (this.executionMode === 'dry-run') {
-          eligibleByCategory[category.name] = await this.countCategory(category);
+          const eligible = await this.countCategory(category);
+          eligibleByCategory[category.name] = eligible;
           deletedByCategory[category.name] = 0;
+          categories[category.name] = { eligible, deleted: 0 };
           continue;
         }
         const categoryDeleted = await this.deleteCategory(category);
         deletedByCategory[category.name] = categoryDeleted;
         eligibleByCategory[category.name] = categoryDeleted;
+        categories[category.name] = { eligible: categoryDeleted, deleted: categoryDeleted };
         deleted += categoryDeleted;
       }
 
@@ -167,10 +210,17 @@ export class RuntimeEventRetention {
         deletedByCategory,
         eligibleByCategory,
         legalWatermark: this.legalDeleteThroughGlobalSequence.toString(),
-        billingWatermark: projection.billingWatermark.toString(),
-        effectiveDeleteThrough: effectiveDeleteThrough.toString(),
-        maxGlobalSequence: projection.maxGlobalSequence.toString(),
+        billingWatermark,
+        effectiveDeleteThrough,
+        maxGlobalSequence,
       };
+      this.lastCompletedAt = new Date().toISOString();
+      this.lastSuccessAt = this.lastCompletedAt;
+      this.prepareNextScheduledAt();
+      await this.recordStatus(this.snapshot(
+        this.executionMode === 'dry-run' ? 'dry_run_succeeded' : 'execute_succeeded',
+        { durationMs: Date.now() - startedMs, billingWatermark, effectiveDeleteThrough, maxGlobalSequence, categories },
+      ));
       this.options.logger?.info?.(
         `RuntimeEventRetention finished: mode=${result.mode} deleted=${deleted} `
         + `eligible=${JSON.stringify(eligibleByCategory)} authorizationRef=${this.authorizationRef ?? 'none'} `
@@ -178,6 +228,19 @@ export class RuntimeEventRetention {
         + `effectiveDeleteThrough=${result.effectiveDeleteThrough} maxGlobalSequence=${result.maxGlobalSequence}`,
       );
       return result;
+    } catch (err) {
+      this.lastCompletedAt = new Date().toISOString();
+      this.prepareNextScheduledAt();
+      const blocked = err instanceof RetentionGateError;
+      await this.recordStatus(this.snapshot(blocked ? 'blocked' : 'failed', {
+        durationMs: Date.now() - startedMs,
+        errorCategory: blocked ? err.category : inferErrorCategory(categories),
+        billingWatermark,
+        effectiveDeleteThrough,
+        maxGlobalSequence,
+        categories,
+      }));
+      throw err;
     } finally {
       this.inFlight = false;
     }
@@ -185,8 +248,10 @@ export class RuntimeEventRetention {
 
   private scheduleNext(): void {
     if (this.stopped) return;
+    this.nextScheduledAt = new Date(Date.now() + this.sweepIntervalMinutes * 60_000).toISOString();
     this.timer = setTimeout(() => {
       this.timer = undefined;
+      this.nextScheduledAt = null;
       void this.runOnce()
         .catch((err) => {
           this.options.logger?.warn?.(`RuntimeEventRetention failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -194,6 +259,52 @@ export class RuntimeEventRetention {
         .finally(() => this.scheduleNext());
     }, this.sweepIntervalMinutes * 60_000);
     this.timer.unref?.();
+  }
+
+  private prepareNextScheduledAt(): void {
+    if (!this.stopped && !this.nextScheduledAt) {
+      this.nextScheduledAt = new Date(Date.now() + this.sweepIntervalMinutes * 60_000).toISOString();
+    }
+  }
+
+  private snapshot(
+    state: RuntimeEventRetentionState,
+    patch: Partial<{
+      durationMs: number;
+      errorCategory: string;
+      billingWatermark: string | null;
+      effectiveDeleteThrough: string | null;
+      maxGlobalSequence: string | null;
+      categories: Record<string, { eligible: number; deleted: number }>;
+    }> = {},
+  ): RuntimeEventRetentionStatusSnapshot {
+    return {
+      schemaVersion: 1,
+      state,
+      mode: this.executionMode,
+      lastStartedAt: this.lastStartedAt,
+      lastCompletedAt: this.lastCompletedAt,
+      lastSuccessAt: this.lastSuccessAt,
+      durationMs: patch.durationMs ?? null,
+      errorCategory: patch.errorCategory ?? null,
+      nextScheduledAt: this.stopped ? null : this.nextScheduledAt,
+      watermarks: {
+        legal: this.legalDeleteThroughGlobalSequence.toString(),
+        billing: patch.billingWatermark ?? null,
+        effectiveDeleteThrough: patch.effectiveDeleteThrough ?? null,
+      },
+      maxGlobalSequence: patch.maxGlobalSequence ?? null,
+      categories: patch.categories ?? {},
+    };
+  }
+
+  private async recordStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
+    if (!this.options.statusRecorder) return;
+    try {
+      await this.options.statusRecorder(snapshot);
+    } catch {
+      this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
+    }
   }
 
   private buildCategories(billingWatermark: bigint): RetentionCategory[] {
@@ -420,6 +531,19 @@ export class RuntimeEventRetention {
       maxGlobalSequence: BigInt(maxSeq.rows[0]?.max_global_sequence ?? '0'),
     };
   }
+}
+
+class RetentionGateError extends Error {
+  constructor(readonly category: 'authorization_missing' | 'legal_watermark_invalid') {
+    super(category === 'authorization_missing'
+      ? 'RuntimeEventRetention execute 模式缺少授权'
+      : 'RuntimeEventRetention execute 模式 legal watermark 无效');
+    this.name = 'RetentionGateError';
+  }
+}
+
+function inferErrorCategory(categories: Record<string, { eligible: number; deleted: number }>): string {
+  return Object.keys(categories).length > 0 ? 'partial_failure' : 'execution_failed';
 }
 
 function sanitizeIdentifier(value: string): string {

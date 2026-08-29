@@ -1073,6 +1073,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else {
       serverLogger.info(`Billing audit worker disabled for processRole=${processRole}`);
     }
+    // Retention 状态复用 system_metrics 追加写入，并保留跨进程重启的最近成功时间。
     const retentionConfig = config.runtimeEventRetention;
     runtimeEventRetention = new RuntimeEventRetention({
       pool: pgEventStore.pool,
@@ -1081,6 +1082,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       billingProjectionStateTable: pgBillingStore.projectionStateTable,
       ...retentionWorkerOptions(retentionConfig),
       projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
+      statusRecorder: systemMetricsStore
+        ? (snapshot) => systemMetricsStore!.recordRuntimeEventRetentionStatus(snapshot)
+        : undefined,
       logger: serverLogger.child('RuntimeEventRetention'),
     });
     if (enableSingletonWorkers) {

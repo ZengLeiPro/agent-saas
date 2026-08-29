@@ -266,6 +266,64 @@ export interface WorkspaceUsageRecord {
   archivedAt: string | null;
 }
 
+export type EventStoreRetentionMode = "dry-run" | "execute";
+
+export type EventStoreRetentionStatus =
+  | "never_run"
+  | "running"
+  | "dry_run_succeeded"
+  | "execute_succeeded"
+  | "blocked"
+  | "failed"
+  | "stale"
+  | "unavailable";
+
+export interface EventStoreCategorySummary {
+  eligible: number | null;
+  deleted: number | null;
+}
+
+export interface EventStoreStatusResponse {
+  schemaVersion: 1;
+  available: boolean;
+  generatedAt: string;
+  retention: {
+    enabled: boolean;
+    mode: EventStoreRetentionMode;
+    status: EventStoreRetentionStatus;
+    stale: boolean;
+    lastStartedAt: string | null;
+    lastCompletedAt: string | null;
+    lastSuccessAt: string | null;
+    durationMs: number | null;
+    errorCategory: string | null;
+    nextScheduledAt: string | null;
+    watermarks: {
+      legal: string | null;
+      billing: string | null;
+      effective: string | null;
+      maxGlobalSequence: string | null;
+      lag: string | null;
+    };
+    categories: Record<string, EventStoreCategorySummary>;
+  };
+  capacity: {
+    available: boolean;
+    tableName: string | null;
+    totalBytes: number | null;
+    tableBytes: number | null;
+    indexBytes: number | null;
+    sampledAt: string | null;
+    stale: boolean;
+    series: Array<{
+      totalBytes: number | null;
+      tableBytes: number | null;
+      indexBytes: number | null;
+      sampledAt: string;
+    }>;
+  };
+}
+
 export interface SystemStorageResponse {
   available: boolean;
   summary: {

@@ -1,10 +1,13 @@
 import pg from 'pg';
 
+import type { RuntimeEventRetentionStatusSnapshot } from './runtimeEventRetention.js';
+
 const { Pool } = pg;
 
 type PgPool = InstanceType<typeof Pool>;
 
 export type SystemMetricName =
+  | 'runtime_event_retention'
   | 'disk_root'
   | 'disk_nas'
   | 'pg_table_size'
@@ -183,6 +186,29 @@ export class PgSystemMetricsStore {
     return result.rows[0] ? mapMetricRow(result.rows[0]) : null;
   }
 
+  async recordRuntimeEventRetentionStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
+    let lastSuccessAt = snapshot.lastSuccessAt;
+    if (!lastSuccessAt) {
+      const previousSuccess = await this.pool.query<MetricRow>(
+        `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
+         FROM ${this.systemMetricsTable}
+         WHERE metric = 'runtime_event_retention'
+           AND label = 'status'
+           AND detail_json->>'state' IN ('dry_run_succeeded', 'execute_succeeded')
+         ORDER BY sampled_at DESC
+         LIMIT 1`,
+      );
+      const persisted = previousSuccess.rows[0]?.detail_json?.lastSuccessAt;
+      if (typeof persisted === 'string') lastSuccessAt = persisted;
+    }
+    await this.insertMetric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      valueNum: snapshot.durationMs ?? 0,
+      detailJson: { ...snapshot, lastSuccessAt },
+    });
+  }
+
   async listPgTopTables(limit = 5): Promise<Array<{ table: string; bytes: number; sampledAt: string }>> {
     const result = await this.pool.query<{ label: string; value_num: number; sampled_at: Date | string }>(
       `SELECT DISTINCT ON (label) label, value_num::float8 AS value_num, sampled_at
@@ -325,16 +351,34 @@ export class PgSystemMetricsStore {
     };
   }
 
-  async queryPgRuntimeTableSizes(prefix = 'runtime'): Promise<Array<{ table: string; bytes: number }>> {
-    const result = await this.pool.query<{ table_name: string; bytes: string }>(
-      `SELECT tablename AS table_name, pg_total_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS bytes
+  async queryPgRuntimeTableSizes(prefix = 'runtime'): Promise<Array<{
+    table: string;
+    tableBytes: number;
+    indexBytes: number;
+    totalBytes: number;
+  }>> {
+    const result = await this.pool.query<{
+      table_name: string;
+      table_bytes: string;
+      index_bytes: string;
+      total_bytes: string;
+    }>(
+      `SELECT tablename AS table_name,
+              pg_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS table_bytes,
+              pg_indexes_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS index_bytes,
+              pg_total_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass)::text AS total_bytes
        FROM pg_tables
        WHERE schemaname = current_schema()
          AND tablename LIKE $1
        ORDER BY pg_total_relation_size((quote_ident(schemaname) || '.' || quote_ident(tablename))::regclass) DESC`,
       [`${prefix}_%`],
     );
-    return result.rows.map((row) => ({ table: row.table_name, bytes: Number(row.bytes) }));
+    return result.rows.map((row) => ({
+      table: row.table_name,
+      tableBytes: Number(row.table_bytes),
+      indexBytes: Number(row.index_bytes),
+      totalBytes: Number(row.total_bytes),
+    }));
   }
 
   async close(): Promise<void> {

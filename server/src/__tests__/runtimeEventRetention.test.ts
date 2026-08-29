@@ -17,6 +17,7 @@ class FakePool {
   dryRunCandidates: Partial<Record<RetentionCategory, number>> = {};
   categoryParams: Partial<Record<RetentionCategory, unknown[][]>> = {};
   queries: string[] = [];
+  failCategoryOnce?: RetentionCategory;
 
   async query(text: string, params?: unknown[]) {
     this.queries.push(text);
@@ -28,6 +29,10 @@ class FakePool {
     }
     const category = retentionCategory(text);
     if (category) {
+      if (this.failCategoryOnce === category) {
+        this.failCategoryOnce = undefined;
+        throw new Error('sensitive SQL failure');
+      }
       const calls = this.categoryParams[category] ?? [];
       calls.push(params ?? []);
       this.categoryParams[category] = calls;
@@ -93,18 +98,60 @@ describe('RuntimeEventRetention', () => {
     expect(pool.queries.some((query) => /DELETE FROM runtime_events/.test(query))).toBe(false);
   });
 
-  it('rejects execute mode without both a positive legal watermark and authorization reference', () => {
+  it('records stable blocked states when execute gates fail at run time', async () => {
     const pool = new FakePool();
+    const snapshots: any[] = [];
     const options = {
       pool: pool as any,
       eventsTable: 'runtime_events',
       toolInvocationsTable: 'runtime_tool_invocations',
       billingProjectionStateTable: 'runtime_billing_projection_state',
       executionMode: 'execute' as const,
+      statusRecorder: async (snapshot: unknown) => { snapshots.push(snapshot); },
     };
 
-    expect(() => new RuntimeEventRetention(options)).toThrow(/authorizationRef/);
-    expect(() => new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' })).toThrow(/legalDeleteThrough/);
+    const missingAuthorization = new RuntimeEventRetention(options);
+    await expect(missingAuthorization.runOnce()).rejects.toThrow(/缺少授权/);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'blocked', errorCategory: 'authorization_missing' });
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain('authorizationRef');
+
+    const invalidWatermark = new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' });
+    await expect(invalidWatermark.runOnce()).rejects.toThrow(/watermark 无效/);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'blocked', errorCategory: 'legal_watermark_invalid' });
+  });
+
+  it('records running and successful dry-run snapshots without failing on recorder errors', async () => {
+    const pool = new FakePool();
+    const snapshots: any[] = [];
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+    });
+
+    await retention.runOnce();
+    expect(snapshots.map((snapshot) => snapshot.state)).toEqual(['running', 'dry_run_succeeded']);
+    expect(snapshots.at(-1)).toMatchObject({
+      schemaVersion: 1,
+      mode: 'dry-run',
+      errorCategory: null,
+      watermarks: { legal: '0', billing: '0', effectiveDeleteThrough: '0' },
+    });
+    expect(snapshots.at(-1).lastSuccessAt).toBeTruthy();
+
+    const warn = vi.fn();
+    const recorderFailure = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      statusRecorder: async () => { throw new Error('secret database message'); },
+      logger: { warn },
+    });
+    await expect(recorderFailure.runOnce()).resolves.toBeTruthy();
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention status persistence failed');
   });
 
   it('bounds every delete by both legal and billing watermarks instead of requiring a moving target catch-up', async () => {
@@ -217,6 +264,29 @@ describe('RuntimeEventRetention', () => {
       'hand-events': 6,
     });
     expect(pool.categoryParams['tool-delta']).toHaveLength(2);
+  });
+
+  it('records partial failure and a later recovery without persisting error messages', async () => {
+    const pool = new FakePool();
+    pool.billingWatermark = '99';
+    pool.maxGlobalSequence = '99';
+    pool.deleteBatches['tool-delta'] = [1, 1];
+    pool.failCategoryOnce = 'assistant-stream';
+    const snapshots: any[] = [];
+    const retention = createRetention(pool, {
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+    });
+
+    await expect(retention.runOnce()).rejects.toThrow('sensitive SQL failure');
+    expect(snapshots.at(-1)).toMatchObject({
+      state: 'failed', errorCategory: 'partial_failure',
+      categories: { 'tool-delta': { eligible: 1, deleted: 1 } },
+    });
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain('sensitive SQL failure');
+
+    await expect(retention.runOnce()).resolves.toMatchObject({ mode: 'execute' });
+    expect(snapshots.at(-1)).toMatchObject({ state: 'execute_succeeded', errorCategory: null });
+    expect(snapshots.at(-1).lastSuccessAt).toBeTruthy();
   });
 
   it('caps each category per run even when every delete returns a full batch', async () => {

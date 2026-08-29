@@ -13,7 +13,8 @@ import { platformAdminApi } from "../api";
 import { useConfirmDialog } from "../ConfirmDialog";
 import { TENANT_LABEL, formatWorkspaceStatus } from "../displayText";
 import { formatBytes, formatNumber, formatTime } from "../format";
-import type { SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord, WorkspaceUsageStatus } from "../types";
+import type { EventStoreStatusResponse, SystemMetricsResponse, SystemStorageResponse, WorkspaceUsageRecord, WorkspaceUsageStatus } from "../types";
+import { EventStoreSection } from "./EventStoreSection";
 
 const WORKSPACE_FILTERS: Array<WorkspaceUsageStatus | "all"> = ["all", "active", "soft_deleted", "orphan_tenant", "orphan_user"];
 const WORKSPACE_FILTER_OPTIONS: AdminSelectOption[] = WORKSPACE_FILTERS.map(value => ({
@@ -27,6 +28,8 @@ export function InfraPage() {
   const { platformReadOnly } = useAuth();
   const [metrics, setMetrics] = useState<SystemMetricsResponse | null>(null);
   const [storage, setStorage] = useState<SystemStorageResponse | null>(null);
+  const [eventStore, setEventStore] = useState<EventStoreStatusResponse | null>(null);
+  const [eventStoreRefreshFailed, setEventStoreRefreshFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -39,15 +42,24 @@ export function InfraPage() {
     if (mode === "initial") setLoading(true);
     else setRefreshing(true);
     try {
-      const [nextMetrics, nextStorage] = await Promise.all([
+      const [metricsResult, storageResult, eventStoreResult] = await Promise.allSettled([
         platformAdminApi.systemMetrics(),
         platformAdminApi.systemStorage(),
+        platformAdminApi.eventStoreStatus({ hours: 24 }),
       ]);
-      setMetrics(nextMetrics);
-      setStorage(nextStorage);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (metricsResult.status === "fulfilled") setMetrics(metricsResult.value);
+      if (storageResult.status === "fulfilled") setStorage(storageResult.value);
+      if (eventStoreResult.status === "fulfilled") {
+        setEventStore(eventStoreResult.value);
+        setEventStoreRefreshFailed(false);
+      } else {
+        setEventStoreRefreshFailed(true);
+      }
+
+      const failures = [metricsResult, storageResult, eventStoreResult]
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason));
+      setError(failures.length > 0 ? failures.join(" · ") : null);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -162,7 +174,7 @@ export function InfraPage() {
     });
   }, [confirm, runDelete]);
 
-  if (loading && !metrics && !storage) {
+  if (loading && !metrics && !storage && !eventStore) {
     return (
       <div className="flex h-64 items-center justify-center rounded-lg border bg-card text-sm text-muted-foreground">
         <Loader2 className="mr-2 size-4 animate-spin" />
@@ -243,6 +255,8 @@ export function InfraPage() {
           tone={metricsUnavailable || tlsDaysLeft == null ? "default" : tlsDaysLeft < 7 ? "bad" : tlsDaysLeft < 14 ? "warn" : "good"}
         />
       </div>
+
+      <EventStoreSection data={eventStore} refreshFailed={eventStoreRefreshFailed} />
 
       <AdminEntityTable
         title="各组织文件用量"

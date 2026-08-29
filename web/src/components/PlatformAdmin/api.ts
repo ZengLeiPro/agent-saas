@@ -12,6 +12,7 @@ import type {
   SessionDetailResponse,
   AlertingStatus,
   BillingAuditTrendResponse,
+  EventStoreStatusResponse,
   SystemMetricsResponse,
   SystemStorageResponse,
   TenantOverviewResponse,
@@ -181,6 +182,9 @@ export const platformAdminApi = {
   },
   systemMetrics(query: { hours?: number } = {}): Promise<SystemMetricsResponse> {
     return getJson(buildAdminApiPath("/system/metrics", query));
+  },
+  eventStoreStatus(query: { hours?: number } = {}): Promise<EventStoreStatusResponse> {
+    return getJson(buildAdminApiPath("/system/event-store", query));
   },
   systemStorage(): Promise<SystemStorageResponse> {
     return getJson(buildAdminApiPath("/system/storage"));

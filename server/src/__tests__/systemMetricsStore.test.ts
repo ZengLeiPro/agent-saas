@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PgSystemMetricsStore, type UpsertWorkspaceUsageInput } from '../runtime/systemMetricsStore.js';
+import {
+  PgSystemMetricsStore,
+  type UpsertWorkspaceUsageInput,
+} from '../runtime/systemMetricsStore.js';
 
 interface RecordedQuery {
   text: string;
@@ -45,7 +48,8 @@ function record(path: string, bytes: number): UpsertWorkspaceUsageInput {
   };
 }
 
-describe('PgSystemMetricsStore.upsertWorkspaceUsage', () => {
+describe('PgSystemMetricsStore', () => {
+  // Retention 状态与容量都复用本 Store；测试确保不会靠进程内内存维持关键时间点。
   it('deletes rows missing from a full (non-partial) round', async () => {
     const pool = createFakePool();
     const store = new PgSystemMetricsStore({ pool: pool as never });
@@ -91,5 +95,68 @@ describe('PgSystemMetricsStore.upsertWorkspaceUsage', () => {
     const store = new PgSystemMetricsStore({ pool: pool as never });
 
     await expect(store.countWorkspaceUsage()).resolves.toBe(7);
+  });
+
+  it('preserves the latest success time when a new process records a failure', async () => {
+    const pool = createFakePool();
+    (pool as any).query = async (text: string, values: unknown[] = []) => {
+      pool.queries.push({ text, values });
+      if (text.includes("detail_json->>'state' IN")) {
+        return {
+          rows: [{
+            id: 1,
+            metric: 'runtime_event_retention',
+            label: 'status',
+            value_num: 10,
+            detail_json: { lastSuccessAt: '2026-08-29T12:00:00.000Z' },
+            sampled_at: '2026-08-29T12:00:00.000Z',
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    };
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'failed',
+      mode: 'execute',
+      lastStartedAt: '2026-08-29T13:00:00.000Z',
+      lastCompletedAt: '2026-08-29T13:00:01.000Z',
+      lastSuccessAt: null,
+      durationMs: 1000,
+      errorCategory: 'execution_failed',
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    });
+
+    const insert = pool.queries.find((query) => query.text.includes(`INSERT INTO ${store.systemMetricsTable}`));
+    expect(JSON.parse(String(insert?.values[3]))).toMatchObject({
+      state: 'failed',
+      lastSuccessAt: '2026-08-29T12:00:00.000Z',
+      errorCategory: 'execution_failed',
+    });
+  });
+
+  it('samples separate table/index/total bytes for each PG table', async () => {
+    const pool = createFakePool();
+    (pool as any).query = async (text: string, values: unknown[] = []) => {
+      pool.queries.push({ text, values });
+      return {
+        rows: [{ table_name: 'runtime_events', table_bytes: '10', index_bytes: '4', total_bytes: '14' }],
+        rowCount: 1,
+      };
+    };
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.queryPgRuntimeTableSizes()).resolves.toEqual([{
+      table: 'runtime_events', tableBytes: 10, indexBytes: 4, totalBytes: 14,
+    }]);
+    expect(pool.queries.at(-1)?.text).toContain('pg_relation_size');
+    expect(pool.queries.at(-1)?.text).toContain('pg_indexes_size');
+    expect(pool.queries.at(-1)?.text).toContain('pg_total_relation_size');
   });
 });

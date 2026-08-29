@@ -11,7 +11,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { z } from "zod";
 import type {
   ScenarioItem,
@@ -43,14 +43,12 @@ import { createLogger } from "../utils/logger.js";
 
 const logger = createLogger("scenarios");
 
-const DEFAULT_DATA_PATH = resolve(
-  process.cwd(),
-  "src/data/scenarios/scenario-library-v1.json",
+const DEFAULT_DATA_ROOT = resolve(
+  import.meta.dirname,
+  basename(import.meta.dirname) === "dist" ? "data/scenarios" : "../data/scenarios",
 );
-const DEFAULT_V3_DATA_PATH = resolve(
-  process.cwd(),
-  "src/data/scenarios/workflow-library-v3.json",
-);
+const DEFAULT_DATA_PATH = resolve(DEFAULT_DATA_ROOT, "scenario-library-v1.json");
+const DEFAULT_V3_DATA_PATH = resolve(DEFAULT_DATA_ROOT, "workflow-library-v3.json");
 
 export interface RoleKitPublicConfig {
   v2Enabled?: boolean;

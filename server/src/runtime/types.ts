@@ -911,8 +911,7 @@ export type PlatformEvent =
     invocationId: string;
     toolCallId: string;
     toolName: string;
-    executionTarget: ExecutionTargetKind;
-    attemptId?: string;
+    executionTarget: ExecutionTargetKind; attemptId?: string;
   }
   | {
     id: string;

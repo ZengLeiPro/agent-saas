@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "identity": {
     "displayName": "Agent SaaS",
     "slug": "ky-agent",
@@ -21,10 +21,12 @@
   },
   "target": {
     "profile": null,
+    "distribution": null,
     "gitSha": null
   },
   "verification": {
     "identity": "pending-external-verification",
-    "versions": "pending-external-verification"
+    "versions": "pending-external-verification",
+    "distribution": "pending-external-verification"
   }
 }

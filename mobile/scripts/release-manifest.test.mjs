@@ -39,8 +39,16 @@ function productionReadyManifest() {
     iosBuildNumber: 84,
     androidVersionCode: 85,
   };
-  manifest.target = { profile: 'production', gitSha: FULL_GIT_SHA };
-  manifest.verification = { identity: 'verified', versions: 'verified' };
+  manifest.target = {
+    profile: 'production',
+    distribution: 'enterprise',
+    gitSha: FULL_GIT_SHA,
+  };
+  manifest.verification = {
+    identity: 'verified',
+    versions: 'verified',
+    distribution: 'verified',
+  };
   return manifest;
 }
 
@@ -52,6 +60,14 @@ function cleanExpoEnvironment(profile) {
     'EAS_BUILD_PROFILE',
     'EAS_BUILD_GIT_COMMIT_HASH',
     'GITHUB_SHA',
+    'MOBILE_BUILD_PLATFORM',
+    'EAS_BUILD_PLATFORM',
+    'MOBILE_ANDROID_DISTRIBUTION',
+    'EXPO_PUBLIC_ANDROID_DISTRIBUTION',
+    'MOBILE_ENTERPRISE_UPDATER_ENABLED',
+    'MOBILE_ENTERPRISE_UPDATE_MANIFEST_URL',
+    'MOBILE_ENTERPRISE_UPDATE_PUBLIC_KEY',
+    'MOBILE_ENTERPRISE_UPDATE_KEY_ID',
   ]) {
     delete environment[name];
   }
@@ -78,6 +94,8 @@ test('M10-03 manifest schema accepts the checked-in pending-external-verificatio
   assert.equal(manifest.verification.identity, 'pending-external-verification');
   assert.equal(manifest.verification.versions, 'pending-external-verification');
   assert.equal(manifest.version.androidVersionCode, null);
+  assert.equal(manifest.target.distribution, null);
+  assert.equal(manifest.verification.distribution, 'pending-external-verification');
 });
 
 test('M10-03 manifest schema rejects missing and unexpected fields', () => {
@@ -134,10 +152,14 @@ test('M10-03 production requires verified identity/version facts and all release
     () =>
       assertProductionReady(manifest, {
         profile: 'production',
+        platform: 'android',
+        distribution: 'enterprise',
         sourceGitSha: FULL_GIT_SHA,
       }),
     (error) => {
       assert.match(error.message, /target\.profile is missing/);
+      assert.match(error.message, /target\.distribution is missing/);
+      assert.match(error.message, /distribution is pending external verification/);
       assert.match(error.message, /target\.gitSha is missing/);
       assert.match(error.message, /identity is pending external verification/);
       assert.match(error.message, /versions are pending external verification/);
@@ -153,6 +175,8 @@ test('M10-03 production target profile and Git SHA must match', () => {
   assert.doesNotThrow(() =>
     assertProductionReady(manifest, {
       profile: 'production',
+      platform: 'android',
+      distribution: 'enterprise',
       sourceGitSha: FULL_GIT_SHA,
     }),
   );
@@ -163,6 +187,8 @@ test('M10-03 production target profile and Git SHA must match', () => {
     () =>
       assertProductionReady(profileMismatch, {
         profile: 'production',
+        platform: 'android',
+        distribution: 'enterprise',
         sourceGitSha: FULL_GIT_SHA,
       }),
     /target\.profile mismatch/,
@@ -172,6 +198,8 @@ test('M10-03 production target profile and Git SHA must match', () => {
     () =>
       assertProductionReady(manifest, {
         profile: 'production',
+        platform: 'android',
+        distribution: 'enterprise',
         sourceGitSha: 'abcdef1234567890abcdef1234567890abcdef12',
       }),
     /Git SHA mismatch/,
@@ -255,7 +283,12 @@ test('M10-03 production config is fail closed with the checked-in unverified man
     () =>
       createExpoConfig(staticExpoConfig, {
         manifest,
-        context: { profile: 'production', sourceGitSha: FULL_GIT_SHA },
+        context: {
+          profile: 'production',
+          platform: 'android',
+          distribution: 'enterprise',
+          sourceGitSha: FULL_GIT_SHA,
+        },
       }),
     /Production release is blocked/,
   );
@@ -273,14 +306,15 @@ test('M10-03 production build script stops before EAS while external facts are u
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
   assert.match(output, /Production release is blocked/);
   assert.match(output, /androidVersionCode is missing/);
-  assert.match(output, /构建未启动/);
-  assert.doesNotMatch(output, /开始 iOS 本地构建/);
+  assert.match(output, /build was not started/);
+  assert.doesNotMatch(output, /Building iOS production IPA/);
 });
 
 test('M10-03 build script reads release version through the manifest verifier', () => {
   const buildScript = readFileSync(resolve(HERE, 'build.sh'), 'utf8');
   assert.match(buildScript, /verify-release-manifest\.mjs/);
   assert.match(buildScript, /--profile production/);
-  assert.match(buildScript, /VERSION="\$MANIFEST_VERSION"/);
+  assert.match(buildScript, /--print-build-values/);
+  assert.match(buildScript, /MANIFEST_VERSION ANDROID_VERSION_CODE/);
   assert.doesNotMatch(buildScript, /app\.json.*expo.*version/);
 });

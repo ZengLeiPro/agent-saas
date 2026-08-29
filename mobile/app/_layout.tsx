@@ -1,105 +1,114 @@
 // Platform init must be the very first import
-import "../src/platform/init";
+import '../src/platform/init';
 
-import React from "react";
-import { Stack } from "expo-router";
-import { StatusBar } from "expo-status-bar";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View } from "react-native";
-import { ShareIntentProvider } from "expo-share-intent";
-import { AuthProvider } from "../src/contexts/AuthContext";
-import { ChatAppStateProvider } from "../src/contexts/ChatAppStateContext";
-import { PendingSharedFilesProvider } from "../src/contexts/PendingSharedFilesContext";
-import { useActivityReporter } from "../src/hooks/useActivityReporter";
-import { useForegroundRefresh } from "../src/hooks/useForegroundRefresh";
-import { useUpdateChecker } from "../src/hooks/useUpdateChecker";
-import { useShareIntentBridge } from "../src/hooks/useShareIntentBridge";
-import { AppErrorBoundary } from "../src/components/ErrorBoundary";
-import { V1RouteGate } from "../src/app/V1RouteGate";
-
-import { KeyboardProvider } from "react-native-keyboard-controller";
+import React from 'react';
+import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { View } from 'react-native';
+import { ShareIntentProvider } from 'expo-share-intent';
+import { AuthProvider } from '../src/contexts/AuthContext';
+import { ChatAppStateProvider } from '../src/contexts/ChatAppStateContext';
+import { PendingSharedFilesProvider } from '../src/contexts/PendingSharedFilesContext';
+import { useActivityReporter } from '../src/hooks/useActivityReporter';
+import { useForegroundRefresh } from '../src/hooks/useForegroundRefresh';
+import { useEnterpriseUpdateChecker } from '../src/hooks/useUpdateChecker';
+import { useShareIntentBridge } from '../src/hooks/useShareIntentBridge';
 import {
-  ThemeProvider,
-  FontSizeProvider,
-  useTheme,
-  useColors,
-} from "../src/theme";
-import { PromptHost } from "../src/components/overlays/PromptHost";
+  readEnterpriseUpdaterRuntimeConfig,
+  type EnterpriseUpdaterRuntimeConfig,
+} from '../src/updates/enterpriseUpdaterConfig';
+import { AppErrorBoundary } from '../src/components/ErrorBoundary';
+import { V1RouteGate } from '../src/app/V1RouteGate';
+
+import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { ThemeProvider, FontSizeProvider, useTheme, useColors } from '../src/theme';
+import { PromptHost } from '../src/components/overlays/PromptHost';
+
+function EnterpriseUpdaterBootstrap({ config }: { config: EnterpriseUpdaterRuntimeConfig }) {
+  useEnterpriseUpdateChecker(config);
+  return null;
+}
 
 function AuthGate() {
   const colors = useColors();
+  const enterpriseUpdaterConfig = readEnterpriseUpdaterRuntimeConfig();
   useActivityReporter();
   useForegroundRefresh();
-  useUpdateChecker();
   useShareIntentBridge();
 
   return (
-    <V1RouteGate>
-      <ChatAppStateProvider>
-        <Stack
-        screenOptions={
-          {
-            headerShown: false,
-            headerTitleAlign: "center",
-            headerStyle: { backgroundColor: colors.background },
-            headerTintColor: colors.foreground,
-            // Runtime-supported native-stack option that expo-router types may lag.
-            fullScreenSwipeEnabled: false,
-          } as any
-        }
-      >
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="chat" />
-        <Stack.Screen name="settings" />
-        <Stack.Screen
-          name="change-password"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen
-          name="user-form"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen name="cron" />
-        <Stack.Screen
-          name="cron-form"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen
-          name="persona-editor"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen
-          name="text-editor"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen
-          name="memory-browser"
-          options={{
-            headerShown: true,
-          }}
-        />
-        <Stack.Screen
-          name="share-target"
-          options={{
-            presentation: "modal",
-          }}
-        />
-        <Stack.Screen name="login" />
-        <Stack.Screen name="index" />
-      </Stack>
-      </ChatAppStateProvider>
-    </V1RouteGate>
+    <>
+      {enterpriseUpdaterConfig ? (
+        <EnterpriseUpdaterBootstrap config={enterpriseUpdaterConfig} />
+      ) : null}
+      <V1RouteGate>
+        <ChatAppStateProvider>
+          <Stack
+            screenOptions={
+              {
+                headerShown: false,
+                headerTitleAlign: 'center',
+                headerStyle: { backgroundColor: colors.background },
+                headerTintColor: colors.foreground,
+                // Runtime-supported native-stack option that expo-router types may lag.
+                fullScreenSwipeEnabled: false,
+              } as any
+            }
+          >
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="chat" />
+            <Stack.Screen name="settings" />
+            <Stack.Screen
+              name="change-password"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen
+              name="user-form"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen name="cron" />
+            <Stack.Screen
+              name="cron-form"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen
+              name="persona-editor"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen
+              name="text-editor"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen
+              name="memory-browser"
+              options={{
+                headerShown: true,
+              }}
+            />
+            <Stack.Screen
+              name="share-target"
+              options={{
+                presentation: 'modal',
+              }}
+            />
+            <Stack.Screen name="login" />
+            <Stack.Screen name="index" />
+          </Stack>
+        </ChatAppStateProvider>
+      </V1RouteGate>
+    </>
   );
 }
 
@@ -108,7 +117,7 @@ function ThemedApp() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <StatusBar style={isDark ? "light" : "dark"} />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <AppErrorBoundary>
         {/* ShareIntentProvider 必须在所有其它 Provider 之前；PendingSharedFilesProvider
             在 ChatAppStateProvider 外侧，让 chat 页面可消费分享落地的文件 */}

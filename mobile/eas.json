@@ -28,6 +28,29 @@
         "credentialsSource": "local"
       },
       "android": {
+        "credentialsSource": "local"
+      }
+    },
+    "production-store": {
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_V1_PROFILE": "production",
+        "MOBILE_ANDROID_DISTRIBUTION": "store"
+      },
+      "android": {
+        "credentialsSource": "local",
+        "buildType": "app-bundle"
+      }
+    },
+    "production-enterprise": {
+      "distribution": "internal",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_V1_PROFILE": "production",
+        "MOBILE_ANDROID_DISTRIBUTION": "enterprise"
+      },
+      "android": {
         "credentialsSource": "local",
         "buildType": "apk"
       }

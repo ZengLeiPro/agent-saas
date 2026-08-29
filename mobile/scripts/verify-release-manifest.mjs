@@ -17,6 +17,8 @@ const {
 function parseArguments(argv) {
   const options = {
     profile: undefined,
+    platform: undefined,
+    distribution: undefined,
     gitSha: undefined,
     manifestPath: RELEASE_MANIFEST_PATH,
     expoConfigPath: undefined,
@@ -27,6 +29,8 @@ function parseArguments(argv) {
     const value = argv[index + 1];
     if (
       argument === '--profile' ||
+      argument === '--platform' ||
+      argument === '--distribution' ||
       argument === '--git-sha' ||
       argument === '--manifest' ||
       argument === '--expo-config'
@@ -34,6 +38,8 @@ function parseArguments(argv) {
       if (!value || value.startsWith('--')) throw new Error(`${argument} requires a value`);
       index += 1;
       if (argument === '--profile') options.profile = value;
+      if (argument === '--platform') options.platform = value;
+      if (argument === '--distribution') options.distribution = value;
       if (argument === '--git-sha') options.gitSha = value;
       if (argument === '--manifest') options.manifestPath = resolve(process.cwd(), value);
       if (argument === '--expo-config') options.expoConfigPath = resolve(process.cwd(), value);
@@ -45,6 +51,10 @@ function parseArguments(argv) {
     }
     if (argument === '--print-marketing-version') {
       options.output = 'marketingVersion';
+      continue;
+    }
+    if (argument === '--print-build-values') {
+      options.output = 'buildValues';
       continue;
     }
     throw new Error(`unknown argument ${argument}`);
@@ -75,6 +85,8 @@ function main() {
   const context = resolveBuildContext({
     environment: process.env,
     explicitProfile: options.profile,
+    explicitPlatform: options.platform,
+    explicitDistribution: options.distribution,
     explicitGitSha: options.gitSha,
   });
   const loadedExpoConfig = options.expoConfigPath ? readJson(options.expoConfigPath) : undefined;
@@ -91,6 +103,12 @@ function main() {
   }
   if (options.output === 'artifact') {
     process.stdout.write(`${JSON.stringify(artifactIdentity, null, 2)}\n`);
+    return;
+  }
+  if (options.output === 'buildValues') {
+    process.stdout.write(
+      `${inputs.manifest.version.marketingVersion}|${inputs.manifest.version.androidVersionCode ?? ''}\n`,
+    );
     return;
   }
   console.log(

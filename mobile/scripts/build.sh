@@ -1,121 +1,150 @@
 #!/bin/bash
-# 统一构建脚本：iOS + Android 本地构建 + 自动清理
-# 解决 EAS local build 吃掉 ~60GB 磁盘空间的问题
-#
-# iOS: 构建 IPA → 提交 TestFlight → 清理
-# Android: 构建 APK → 清理（内部分发，不走应用商店）
-#
-# 用法:
-#   ./scripts/build.sh                  # 构建双平台（iOS 含提交），清理
-#   ./scripts/build.sh ios              # 仅 iOS（构建 + 提交 + 清理）
-#   ./scripts/build.sh android          # 仅 Android（构建 + 清理）
-#   ./scripts/build.sh ios android      # 同上，显式指定双平台
-#   ./scripts/build.sh ios --build      # iOS 仅构建，不提交
-#   ./scripts/build.sh --no-clean       # 构建但不清理缓存
+# M10-04 local release build wrapper.
+# Android always requires an explicit Store or Enterprise distribution:
+#   Store      -> production-store EAS profile -> AAB, never sideload publication
+#   Enterprise -> production-enterprise profile -> APK, optional signed manifest preparation
+# Android artifacts are never uploaded here. Publication remains a separately approved operation.
 
 set -uo pipefail
 
-# 确保 Java 和 Android SDK 可用（EAS 子进程可能不加载 .zshrc）
 export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 
 MOBILE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILDS_DIR="$MOBILE_DIR/builds"
-IPA_PATH="$BUILDS_DIR/AgentSaaS.ipa"
-APK_PATH="$BUILDS_DIR/AgentSaaS.apk"
 EXIT_CODE=0
 BUILD_ATTEMPTED=false
-
-# 默认：双平台，构建+清理（iOS 含提交）
 PLATFORM_IOS=false
 PLATFORM_ANDROID=false
-DO_BUILD=true
 DO_SUBMIT=true
 DO_CLEAN=true
+PREPARE_ENTERPRISE_UPDATE=false
+ANDROID_DISTRIBUTION=""
 
-for arg in "$@"; do
-  case $arg in
-    ios)        PLATFORM_IOS=true ;;
-    android)    PLATFORM_ANDROID=true ;;
-    --build)    DO_SUBMIT=false ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    ios) PLATFORM_IOS=true ;;
+    android) PLATFORM_ANDROID=true ;;
+    --build) DO_SUBMIT=false ;;
+    --submit) DO_SUBMIT=true ;;
     --no-clean) DO_CLEAN=false ;;
+    --prepare-enterprise-update) PREPARE_ENTERPRISE_UPDATE=true ;;
+    --distribution)
+      shift
+      if [ "$#" -eq 0 ]; then
+        echo "[M10-04] --distribution requires store or enterprise." >&2
+        exit 2
+      fi
+      ANDROID_DISTRIBUTION="$1"
+      ;;
+    --distribution=*) ANDROID_DISTRIBUTION="${1#*=}" ;;
+    *)
+      echo "[M10-04] Unknown build argument: $1" >&2
+      exit 2
+      ;;
   esac
+  shift
 done
 
-# 未指定平台 = 双平台
 if ! $PLATFORM_IOS && ! $PLATFORM_ANDROID; then
   PLATFORM_IOS=true
   PLATFORM_ANDROID=true
 fi
 
-# M10-03：所有 production 构建/提交先验证唯一 release manifest。
-# 当前外部 identity / 最高商店版本或 Android versionCode 未确认时，这里应 fail closed。
+if $PLATFORM_ANDROID; then
+  case "$ANDROID_DISTRIBUTION" in
+    store|enterprise) ;;
+    "")
+      echo "[M10-04] Android production build is blocked: explicitly pass --distribution store or --distribution enterprise." >&2
+      exit 1
+      ;;
+    *)
+      echo "[M10-04] Unsupported Android distribution: $ANDROID_DISTRIBUTION" >&2
+      exit 2
+      ;;
+  esac
+  BUILD_GATE_PLATFORM=android
+elif [ -n "$ANDROID_DISTRIBUTION" ]; then
+  echo "[M10-04] --distribution is valid only when Android is selected." >&2
+  exit 2
+else
+  BUILD_GATE_PLATFORM=ios
+fi
+
+if $PREPARE_ENTERPRISE_UPDATE && { ! $PLATFORM_ANDROID || [ "$ANDROID_DISTRIBUTION" != enterprise ]; }; then
+  echo "[M10-04] Signed sideload manifest preparation is Enterprise-only." >&2
+  exit 2
+fi
+
 if ! SOURCE_GIT_SHA="$(git -C "$MOBILE_DIR" rev-parse --verify HEAD 2>/dev/null)"; then
-  echo "[M10-03] 无法读取当前 Git SHA，拒绝 production 构建。" >&2
+  echo "[M10-03] Unable to read current Git SHA; production build refused." >&2
   exit 1
 fi
 export MOBILE_RELEASE_PROFILE=production
 export MOBILE_SOURCE_GIT_SHA="$SOURCE_GIT_SHA"
-if ! MANIFEST_VERSION="$(
-  node "$MOBILE_DIR/scripts/verify-release-manifest.mjs" \
-    --profile production \
-    --git-sha "$SOURCE_GIT_SHA" \
-    --print-marketing-version
-)"; then
-  echo "[M10-03] release manifest 未满足 production 门禁，构建未启动。" >&2
+
+VERIFY_ARGS=(
+  --profile production
+  --platform "$BUILD_GATE_PLATFORM"
+  --git-sha "$SOURCE_GIT_SHA"
+  --print-build-values
+)
+if $PLATFORM_ANDROID; then
+  VERIFY_ARGS+=(--distribution "$ANDROID_DISTRIBUTION")
+fi
+if ! MANIFEST_VALUES="$(node "$MOBILE_DIR/scripts/verify-release-manifest.mjs" "${VERIFY_ARGS[@]}")"; then
+  echo "[M10-03/M10-04] Release manifest did not satisfy production gates; build was not started." >&2
+  exit 1
+fi
+IFS='|' read -r MANIFEST_VERSION ANDROID_VERSION_CODE <<<"$MANIFEST_VALUES"
+if [ -z "$MANIFEST_VERSION" ] || { $PLATFORM_ANDROID && [ -z "$ANDROID_VERSION_CODE" ]; }; then
+  echo "[M10-03] Verified release build values are incomplete." >&2
   exit 1
 fi
 
-# ─── 清理函数 ───
+IPA_PATH="$BUILDS_DIR/AgentSaaS-${MANIFEST_VERSION}.ipa"
+STORE_AAB_PATH="$BUILDS_DIR/AgentSaaS-store-${ANDROID_VERSION_CODE}.aab"
+ENTERPRISE_APK_PATH="$BUILDS_DIR/AgentSaaS-enterprise-${ANDROID_VERSION_CODE}.apk"
 
 cleanup_build_cache() {
   echo ""
   echo "========================================"
-  echo "  清理构建缓存..."
+  echo "  Cleaning local build caches..."
   echo "========================================"
-
   local freed=0
 
-  # 只清理本次构建平台的缓存，避免并行构建时互相干扰
   if $PLATFORM_IOS; then
-    # DerivedData（iOS 构建产物，通常 30-40GB）
     if [ -d "$HOME/Library/Developer/Xcode/DerivedData" ]; then
       local size
       size=$(du -sm "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null | cut -f1)
       rm -rf "$HOME/Library/Developer/Xcode/DerivedData"/*
       mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
       freed=$((freed + size))
-      echo "  ✓ DerivedData: 释放 ${size}MB"
+      echo "  DerivedData: freed ${size}MB"
     fi
-
-    # CocoaPods 缓存（通常 15-20GB）
     if [ -d "$HOME/Library/Caches/CocoaPods" ]; then
       local size
       size=$(du -sm "$HOME/Library/Caches/CocoaPods" 2>/dev/null | cut -f1)
       rm -rf "$HOME/Library/Caches/CocoaPods"
       freed=$((freed + size))
-      echo "  ✓ CocoaPods cache: 释放 ${size}MB"
+      echo "  CocoaPods cache: freed ${size}MB"
     fi
   fi
 
   if $PLATFORM_ANDROID; then
-    # 停止 Gradle daemon（防止 daemon 持有已删除缓存的文件引用）
     for gw in "$HOME"/.gradle/wrapper/dists/gradle-*/*/gradle-*/bin/gradle; do
-      [ -x "$gw" ] && "$gw" --stop 2>/dev/null && echo "  ✓ Gradle daemon 已停止" && break
+      [ -x "$gw" ] && "$gw" --stop 2>/dev/null && break
     done 2>/dev/null
-
-    # Gradle 缓存（Android 构建产物，通常 3-5GB）
     if [ -d "$HOME/.gradle/caches" ]; then
       local size
       size=$(du -sm "$HOME/.gradle/caches" 2>/dev/null | cut -f1)
       rm -rf "$HOME/.gradle/caches"
       freed=$((freed + size))
-      echo "  ✓ Gradle caches: 释放 ${size}MB"
+      echo "  Gradle caches: freed ${size}MB"
     fi
   fi
 
-  # EAS 本地构建临时目录（公共，总是清理）
   local eas_tmp
   for eas_tmp in /var/folders/*/*/eas-build-local-nodejs /tmp/eas-build-*; do
     if [ -d "$eas_tmp" ]; then
@@ -123,145 +152,88 @@ cleanup_build_cache() {
       size=$(du -sm "$eas_tmp" 2>/dev/null | cut -f1)
       rm -rf "$eas_tmp"
       freed=$((freed + size))
-      echo "  ✓ EAS temp ($eas_tmp): 释放 ${size}MB"
     fi
   done
-
-  echo ""
-  echo "  总计释放: $((freed / 1024))GB (${freed}MB)"
-  echo "========================================"
+  echo "  Total freed: ${freed}MB"
 }
 
-# ─── 退出钩子：无论成功失败，保证清理 ───
-
 on_exit() {
-  if $DO_CLEAN && $BUILD_ATTEMPTED; then
-    cleanup_build_cache
-  fi
-  if [ $EXIT_CODE -ne 0 ]; then
-    echo ""
-    echo "========================================"
-    echo "  构建流程失败 (exit $EXIT_CODE)"
-    echo "========================================"
-  fi
-  exit $EXIT_CODE
+  if $DO_CLEAN && $BUILD_ATTEMPTED; then cleanup_build_cache; fi
+  exit "$EXIT_CODE"
 }
 trap on_exit EXIT
 
-# ─── 构建 + 提交（各平台独立，互不阻塞） ───
-
 cd "$MOBILE_DIR"
-
+mkdir -p "$BUILDS_DIR"
 IOS_OK=false
 ANDROID_OK=false
+ANDROID_ARTIFACT_PATH=""
 
-# iOS: 构建 → 提交
 if $PLATFORM_IOS; then
-  if $DO_BUILD; then
-    BUILD_ATTEMPTED=true
-    mkdir -p "$BUILDS_DIR"
-    echo "========================================"
-    echo "  开始 iOS 本地构建..."
-    echo "========================================"
-    if EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p ios -e production --local --output "$IPA_PATH" --non-interactive && [ -f "$IPA_PATH" ]; then
-      echo "  ✓ iOS 构建成功: $IPA_PATH"
-      IOS_OK=true
-    else
-      echo "  ✗ iOS 构建失败"
-      EXIT_CODE=1
-    fi
+  BUILD_ATTEMPTED=true
+  echo "Building iOS production IPA..."
+  if MOBILE_BUILD_PLATFORM=ios MOBILE_ANDROID_DISTRIBUTION= EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p ios -e production --local --output "$IPA_PATH" --non-interactive && [ -f "$IPA_PATH" ]; then
+    IOS_OK=true
+    echo "iOS build complete: $IPA_PATH"
   else
-    # --submit 模式，检查已有产物
-    [ -f "$IPA_PATH" ] && IOS_OK=true
+    EXIT_CODE=1
+    echo "iOS build failed." >&2
   fi
 
   if $DO_SUBMIT && $IOS_OK; then
-    echo ""
-    echo "========================================"
-    echo "  提交 iOS 到 TestFlight..."
-    echo "========================================"
-    if eas submit -p ios --path "$IPA_PATH" --non-interactive --no-wait; then
-      echo "  ✓ iOS 提交完成"
-    else
-      echo "  ✗ TestFlight 提交失败"
+    if ! eas submit -p ios --path "$IPA_PATH" --non-interactive --no-wait; then
       EXIT_CODE=1
+      echo "TestFlight submission failed." >&2
     fi
-  elif $DO_SUBMIT && ! $IOS_OK; then
-    echo "  ✗ 跳过 iOS 提交（无可用 IPA）"
+  fi
+fi
+
+if $PLATFORM_ANDROID; then
+  BUILD_ATTEMPTED=true
+  if [ "$ANDROID_DISTRIBUTION" = store ]; then
+    ANDROID_EAS_PROFILE=production-store
+    ANDROID_ARTIFACT_PATH="$STORE_AAB_PATH"
+  else
+    ANDROID_EAS_PROFILE=production-enterprise
+    ANDROID_ARTIFACT_PATH="$ENTERPRISE_APK_PATH"
+  fi
+
+  if [ -e "$ANDROID_ARTIFACT_PATH" ]; then
+    echo "[M10-04] Refusing to overwrite existing Android versionCode ${ANDROID_VERSION_CODE} artifact: $ANDROID_ARTIFACT_PATH" >&2
     EXIT_CODE=1
   fi
+
+  echo "Building Android ${ANDROID_DISTRIBUTION} artifact with ${ANDROID_EAS_PROFILE}..."
+  if [ "$EXIT_CODE" -eq 0 ] && MOBILE_BUILD_PLATFORM=android MOBILE_ANDROID_DISTRIBUTION="$ANDROID_DISTRIBUTION" EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p android -e "$ANDROID_EAS_PROFILE" --local --output "$ANDROID_ARTIFACT_PATH" --non-interactive && [ -f "$ANDROID_ARTIFACT_PATH" ]; then
+    ANDROID_OK=true
+    echo "Android ${ANDROID_DISTRIBUTION} build complete: $ANDROID_ARTIFACT_PATH"
+  else
+    EXIT_CODE=1
+    echo "Android ${ANDROID_DISTRIBUTION} build failed." >&2
+  fi
 fi
 
-# Android: 构建 → 上传 OSS
-if $PLATFORM_ANDROID; then
-  if $DO_BUILD; then
-    BUILD_ATTEMPTED=true
-    mkdir -p "$BUILDS_DIR"
-    echo ""
-    echo "========================================"
-    echo "  开始 Android 本地构建..."
-    echo "========================================"
-    if EAS_SKIP_AUTO_FINGERPRINT=1 eas build -p android -e production --local --output "$APK_PATH" --non-interactive && [ -f "$APK_PATH" ]; then
-      echo "  ✓ Android 构建成功: $APK_PATH"
-      ANDROID_OK=true
-    else
-      echo "  ✗ Android 构建失败"
+if $PREPARE_ENTERPRISE_UPDATE && $ANDROID_OK; then
+  if [ -z "${ENTERPRISE_UPDATE_ARTIFACT_BASE_URL:-}" ]; then
+    echo "[M10-04] ENTERPRISE_UPDATE_ARTIFACT_BASE_URL is required for immutable manifest preparation." >&2
+    EXIT_CODE=1
+  else
+    APK_SHA256="$(node -e 'const fs=require("node:fs"),c=require("node:crypto");const h=c.createHash("sha256");h.update(fs.readFileSync(process.argv[1]));process.stdout.write(h.digest("hex"));' "$ANDROID_ARTIFACT_PATH")"
+    ARTIFACT_URL="${ENTERPRISE_UPDATE_ARTIFACT_BASE_URL%/}/${ANDROID_VERSION_CODE}/${SOURCE_GIT_SHA}/${APK_SHA256}.apk"
+    UPDATE_MANIFEST_PATH="$BUILDS_DIR/AgentSaaS-enterprise-${ANDROID_VERSION_CODE}-${APK_SHA256}.manifest.json"
+    if ! node "$MOBILE_DIR/scripts/prepare-enterprise-update.mjs" \
+      --apk "$ANDROID_ARTIFACT_PATH" \
+      --artifact-url "$ARTIFACT_URL" \
+      --output "$UPDATE_MANIFEST_PATH" \
+      --git-sha "$SOURCE_GIT_SHA"; then
       EXIT_CODE=1
-    fi
-  fi
-
-  # 上传 APK 到阿里云 OSS
-  if $ANDROID_OK; then
-    echo ""
-    echo "========================================"
-    echo "  上传 Android APK 到 OSS..."
-    echo "========================================"
-    OSS_BUCKET="oss://agent-saas-releases"
-    VERSION="$MANIFEST_VERSION"
-    APK_SIZE=$(stat -f%z "$APK_PATH")
-    OSS_APK_KEY="android/AgentSaaS-${VERSION}.apk"
-    OSS_ENDPOINT="oss-cn-shenzhen.aliyuncs.com"
-    OSS_DOWNLOAD_URL="https://agent-saas-releases.${OSS_ENDPOINT}/${OSS_APK_KEY}"
-
-    # 上传 APK（覆盖同版本）
-    if aliyun oss cp "$APK_PATH" "${OSS_BUCKET}/${OSS_APK_KEY}" --force; then
-      echo "  ✓ APK 已上传: ${OSS_DOWNLOAD_URL}"
-
-      # 生成并上传 latest.json
-      LATEST_JSON=$(python3 -c "
-import json, datetime
-print(json.dumps({
-    'version': '${VERSION}',
-    'size': ${APK_SIZE},
-    'url': '${OSS_DOWNLOAD_URL}',
-    'buildTime': datetime.datetime.now().astimezone().isoformat()
-}, ensure_ascii=False))
-")
-      echo "$LATEST_JSON" > /tmp/agent-saas-latest.json
-      if aliyun oss cp /tmp/agent-saas-latest.json "${OSS_BUCKET}/android/latest.json" --force \
-           --meta "Content-Type:application/json"; then
-        echo "  ✓ latest.json 已更新"
-      else
-        echo "  ✗ latest.json 上传失败"
-        EXIT_CODE=1
-      fi
-      rm -f /tmp/agent-saas-latest.json
     else
-      echo "  ✗ APK 上传失败"
-      EXIT_CODE=1
+      echo "Signed immutable Enterprise manifest prepared: $UPDATE_MANIFEST_PATH"
+      echo "No upload or overwrite was performed; publication requires separate human approval."
     fi
   fi
 fi
 
-# ─── 汇总 ───
-
-echo ""
-echo "========================================"
-if [ $EXIT_CODE -eq 0 ]; then
-  echo "  全部完成!"
-else
-  echo "  部分完成（有失败项）:"
-  $PLATFORM_IOS && echo "    iOS:     $($IOS_OK && echo '✓ 成功' || echo '✗ 失败')"
-  $PLATFORM_ANDROID && echo "    Android: $($ANDROID_OK && echo '✓ 成功' || echo '✗ 失败')"
-fi
-echo "========================================"
+if $PLATFORM_IOS && ! $IOS_OK; then EXIT_CODE=1; fi
+if $PLATFORM_ANDROID && ! $ANDROID_OK; then EXIT_CODE=1; fi
+exit "$EXIT_CODE"

@@ -11,8 +11,12 @@ const STATIC_EXPO_CONFIG_PATH = join(MOBILE_ROOT, 'app.json');
 const MOBILE_EAS_CONFIG_PATH = join(MOBILE_ROOT, 'eas.json');
 const ROOT_EAS_CONFIG_PATH = join(REPOSITORY_ROOT, 'eas.json');
 const RELEASE_PROFILES = Object.freeze(['development', 'preview', 'production']);
+const ANDROID_DISTRIBUTIONS = Object.freeze(['store', 'enterprise']);
+const BUILD_PLATFORMS = Object.freeze(['android', 'ios']);
 const VERIFICATION_STATES = Object.freeze(['pending-external-verification', 'verified']);
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const REQUEST_INSTALL_PACKAGES = 'android.permission.REQUEST_INSTALL_PACKAGES';
+const INSTALL_PERMISSION_PLUGIN = './plugins/withInstallPermission';
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
@@ -118,7 +122,7 @@ function validateManifestSchema(manifest) {
     'target',
     'verification',
   ]);
-  if (manifest.schemaVersion !== 1) fail('release manifest.schemaVersion must be 1');
+  if (manifest.schemaVersion !== 2) fail('release manifest.schemaVersion must be 2');
 
   assertExactKeys(manifest.identity, 'release manifest.identity', [
     'displayName',
@@ -208,16 +212,32 @@ function validateManifestSchema(manifest) {
     fail('androidVersionCode must be greater than latestPublished.androidVersionCode');
   }
 
-  assertExactKeys(manifest.target, 'release manifest.target', ['profile', 'gitSha']);
+  assertExactKeys(manifest.target, 'release manifest.target', [
+    'profile',
+    'distribution',
+    'gitSha',
+  ]);
   if (manifest.target.profile !== null && !RELEASE_PROFILES.includes(manifest.target.profile)) {
     fail(`release manifest.target.profile must be one of ${RELEASE_PROFILES.join(', ')} or null`);
+  }
+  if (
+    manifest.target.distribution !== null &&
+    !ANDROID_DISTRIBUTIONS.includes(manifest.target.distribution)
+  ) {
+    fail(
+      `release manifest.target.distribution must be one of ${ANDROID_DISTRIBUTIONS.join(', ')} or null`,
+    );
   }
   if (manifest.target.gitSha !== null && !GIT_SHA_PATTERN.test(manifest.target.gitSha)) {
     fail('release manifest.target.gitSha must be a full 40-character Git SHA or null');
   }
 
-  assertExactKeys(manifest.verification, 'release manifest.verification', ['identity', 'versions']);
-  for (const key of ['identity', 'versions']) {
+  assertExactKeys(manifest.verification, 'release manifest.verification', [
+    'identity',
+    'versions',
+    'distribution',
+  ]);
+  for (const key of ['identity', 'versions', 'distribution']) {
     if (!VERIFICATION_STATES.includes(manifest.verification[key])) {
       fail(`release manifest.verification.${key} must be one of ${VERIFICATION_STATES.join(', ')}`);
     }
@@ -234,6 +254,23 @@ function assertProductionReady(manifest, context) {
       `target.profile mismatch (manifest=${manifest.target.profile}, requested=${context.profile})`,
     );
   }
+
+  // Android production is deliberately ambiguous until a human selects the
+  // Store or Enterprise channel. iOS-only verification does not consume this
+  // Android fact; every other production context fails closed without it.
+  if (context.platform !== 'ios') {
+    if (!context.distribution) blockers.push('Android distribution is not explicitly selected');
+    if (manifest.target.distribution === null) blockers.push('target.distribution is missing');
+    else if (context.distribution && manifest.target.distribution !== context.distribution) {
+      blockers.push(
+        `target.distribution mismatch (manifest=${manifest.target.distribution}, requested=${context.distribution})`,
+      );
+    }
+    if (manifest.verification.distribution !== 'verified') {
+      blockers.push('distribution is pending external verification');
+    }
+  }
+
   if (manifest.target.gitSha === null) blockers.push('target.gitSha is missing');
   if (!context.sourceGitSha) blockers.push('source Git SHA is unavailable');
   else if (
@@ -261,13 +298,37 @@ function assertProductionReady(manifest, context) {
   }
 }
 
+function easBuildProfileReleaseProfile(value) {
+  if (RELEASE_PROFILES.includes(value)) return value;
+  for (const profile of RELEASE_PROFILES) {
+    for (const distribution of ANDROID_DISTRIBUTIONS) {
+      if (value === `${profile}-${distribution}`) return profile;
+    }
+  }
+  return null;
+}
+
+function easBuildProfileDistribution(value) {
+  for (const profile of RELEASE_PROFILES) {
+    for (const distribution of ANDROID_DISTRIBUTIONS) {
+      if (value === `${profile}-${distribution}`) return distribution;
+    }
+  }
+  return null;
+}
+
 function resolveRequestedProfile(environment = {}, explicitProfile) {
   const sources = [
     ['--profile', explicitProfile],
     ['MOBILE_RELEASE_PROFILE', environment.MOBILE_RELEASE_PROFILE],
-    ['EAS_BUILD_PROFILE', environment.EAS_BUILD_PROFILE],
     ['EXPO_PUBLIC_V1_PROFILE', environment.EXPO_PUBLIC_V1_PROFILE],
   ].filter(([, value]) => typeof value === 'string' && value.trim());
+  if (typeof environment.EAS_BUILD_PROFILE === 'string' && environment.EAS_BUILD_PROFILE.trim()) {
+    const easProfile = environment.EAS_BUILD_PROFILE.trim();
+    const releaseProfile = easBuildProfileReleaseProfile(easProfile);
+    if (!releaseProfile) fail(`unsupported EAS build profile ${easProfile}`);
+    sources.push([`EAS_BUILD_PROFILE=${easProfile}`, releaseProfile]);
+  }
   const normalized = sources.map(([label, value]) => [label, value.trim()]);
   const distinct = [...new Set(normalized.map(([, value]) => value))];
   if (distinct.length > 1) {
@@ -280,6 +341,109 @@ function resolveRequestedProfile(environment = {}, explicitProfile) {
     fail(`unsupported release profile ${profile}; expected ${RELEASE_PROFILES.join(', ')}`);
   }
   return profile;
+}
+
+function resolveRequestedDistribution(environment = {}, explicitDistribution) {
+  const sources = [
+    ['--distribution', explicitDistribution],
+    ['MOBILE_ANDROID_DISTRIBUTION', environment.MOBILE_ANDROID_DISTRIBUTION],
+    ['EXPO_PUBLIC_ANDROID_DISTRIBUTION', environment.EXPO_PUBLIC_ANDROID_DISTRIBUTION],
+  ].filter(([, value]) => typeof value === 'string' && value.trim());
+  if (typeof environment.EAS_BUILD_PROFILE === 'string' && environment.EAS_BUILD_PROFILE.trim()) {
+    const easProfile = environment.EAS_BUILD_PROFILE.trim();
+    const distribution = easBuildProfileDistribution(easProfile);
+    if (distribution) sources.push([`EAS_BUILD_PROFILE=${easProfile}`, distribution]);
+  }
+  const normalized = sources.map(([label, value]) => [label, value.trim().toLowerCase()]);
+  const distinct = [...new Set(normalized.map(([, value]) => value))];
+  if (distinct.length > 1) {
+    fail(
+      `Android distribution mismatch (${normalized.map(([label, value]) => `${label}=${value}`).join(', ')})`,
+    );
+  }
+  const distribution = distinct[0] ?? null;
+  if (distribution !== null && !ANDROID_DISTRIBUTIONS.includes(distribution)) {
+    fail(
+      `unsupported Android distribution ${distribution}; expected ${ANDROID_DISTRIBUTIONS.join(', ')}`,
+    );
+  }
+  return distribution;
+}
+
+function resolveBuildPlatform(environment = {}, explicitPlatform) {
+  const sources = [
+    ['--platform', explicitPlatform],
+    ['MOBILE_BUILD_PLATFORM', environment.MOBILE_BUILD_PLATFORM],
+    ['EAS_BUILD_PLATFORM', environment.EAS_BUILD_PLATFORM],
+  ].filter(([, value]) => typeof value === 'string' && value.trim());
+  const normalized = sources.map(([label, value]) => [label, value.trim().toLowerCase()]);
+  const distinct = [...new Set(normalized.map(([, value]) => value))];
+  if (distinct.length > 1) {
+    fail(
+      `build platform mismatch (${normalized.map(([label, value]) => `${label}=${value}`).join(', ')})`,
+    );
+  }
+  const platform = distinct[0] ?? null;
+  if (platform !== null && !BUILD_PLATFORMS.includes(platform)) {
+    fail(`unsupported build platform ${platform}; expected ${BUILD_PLATFORMS.join(', ')}`);
+  }
+  return platform;
+}
+
+function parseControlledBoolean(value, name) {
+  if (value === undefined || value === '') return false;
+  if (value === '1' || value === 'true') return true;
+  if (value === '0' || value === 'false') return false;
+  fail(`${name} must be one of 1, true, 0, false`);
+}
+
+function assertCanonicalPublicKey(value) {
+  assertNonEmptyString(value, 'MOBILE_ENTERPRISE_UPDATE_PUBLIC_KEY');
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) {
+    fail('MOBILE_ENTERPRISE_UPDATE_PUBLIC_KEY must be canonical base64 for a 32-byte Ed25519 key');
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.length !== 32 || decoded.toString('base64') !== value) {
+    fail('MOBILE_ENTERPRISE_UPDATE_PUBLIC_KEY must decode to exactly 32 bytes');
+  }
+}
+
+function resolveEnterpriseUpdater(environment, distribution) {
+  const enabled = parseControlledBoolean(
+    environment.MOBILE_ENTERPRISE_UPDATER_ENABLED,
+    'MOBILE_ENTERPRISE_UPDATER_ENABLED',
+  );
+  if (!enabled) return Object.freeze({ enabled: false });
+  if (distribution !== 'enterprise') {
+    fail('Enterprise updater can only be enabled for the enterprise Android distribution');
+  }
+
+  const manifestUrl = environment.MOBILE_ENTERPRISE_UPDATE_MANIFEST_URL;
+  const publicKey = environment.MOBILE_ENTERPRISE_UPDATE_PUBLIC_KEY;
+  const keyId = environment.MOBILE_ENTERPRISE_UPDATE_KEY_ID;
+  assertNonEmptyString(manifestUrl, 'MOBILE_ENTERPRISE_UPDATE_MANIFEST_URL');
+  assertCanonicalPublicKey(publicKey);
+  assertNonEmptyString(keyId, 'MOBILE_ENTERPRISE_UPDATE_KEY_ID');
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyId)) {
+    fail('MOBILE_ENTERPRISE_UPDATE_KEY_ID has an invalid key identifier');
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(manifestUrl);
+  } catch {
+    fail('MOBILE_ENTERPRISE_UPDATE_MANIFEST_URL must be a valid HTTPS URL');
+  }
+  if (
+    parsedUrl.protocol !== 'https:' ||
+    parsedUrl.username ||
+    parsedUrl.password ||
+    parsedUrl.hash
+  ) {
+    fail('MOBILE_ENTERPRISE_UPDATE_MANIFEST_URL must be credential-free HTTPS without a fragment');
+  }
+
+  return Object.freeze({ enabled: true, manifestUrl, publicKey, keyId });
 }
 
 function tryReadRepositoryGitSha(repositoryRoot) {
@@ -323,9 +487,14 @@ function resolveSourceGitSha({
 }
 
 function resolveBuildContext(options = {}) {
+  const environment = options.environment ?? {};
+  const distribution = resolveRequestedDistribution(environment, options.explicitDistribution);
   return {
-    profile: resolveRequestedProfile(options.environment, options.explicitProfile),
-    sourceGitSha: resolveSourceGitSha(options),
+    profile: resolveRequestedProfile(environment, options.explicitProfile),
+    platform: resolveBuildPlatform(environment, options.explicitPlatform),
+    distribution,
+    sourceGitSha: resolveSourceGitSha({ ...options, environment }),
+    enterpriseUpdater: resolveEnterpriseUpdater(environment, distribution),
   };
 }
 
@@ -336,6 +505,10 @@ function hasOwnPath(value, path) {
     current = current[segment];
   }
   return true;
+}
+
+function pluginReference(plugin) {
+  return Array.isArray(plugin) ? plugin[0] : plugin;
 }
 
 function assertStaticExpoConfigHasNoReleaseFields(staticExpoConfig) {
@@ -352,12 +525,25 @@ function assertStaticExpoConfigHasNoReleaseFields(staticExpoConfig) {
     ['android', 'versionCode'],
     ['extra', 'eas', 'projectId'],
     ['extra', 'releaseManifest'],
+    ['extra', 'androidDistribution'],
+    ['extra', 'enterpriseUpdater'],
   ];
   const duplicates = protectedPaths
     .filter((path) => hasOwnPath(staticExpoConfig, path))
     .map((path) => path.join('.'));
   if (duplicates.length) {
     fail(`mobile/app.json duplicates release-manifest.json fields: ${duplicates.join(', ')}`);
+  }
+  const permissions = staticExpoConfig.android?.permissions ?? [];
+  if (permissions.includes(REQUEST_INSTALL_PACKAGES)) {
+    fail('mobile/app.json must not grant REQUEST_INSTALL_PACKAGES outside an Enterprise build');
+  }
+  if (
+    (staticExpoConfig.plugins ?? []).some(
+      (plugin) => pluginReference(plugin) === INSTALL_PERMISSION_PLUGIN,
+    )
+  ) {
+    fail('mobile/app.json must not register the Enterprise install-permission plugin statically');
   }
 }
 
@@ -383,15 +569,54 @@ function assertEasVersionPolicy(easConfig, label, { requireProfiles = false } = 
       );
     }
   }
+
+  if (buildProfiles.production.env?.MOBILE_ANDROID_DISTRIBUTION) {
+    fail(`${label} build.production must remain distribution-ambiguous and fail closed`);
+  }
+  const expectedProfiles = {
+    'production-store': {
+      distribution: 'store',
+      easDistribution: 'store',
+      buildType: 'app-bundle',
+    },
+    'production-enterprise': {
+      distribution: 'enterprise',
+      easDistribution: 'internal',
+      buildType: 'apk',
+    },
+  };
+  for (const [profileName, expected] of Object.entries(expectedProfiles)) {
+    const profileConfig = buildProfiles[profileName];
+    if (!profileConfig) fail(`${label} build.${profileName} is missing`);
+    if (profileConfig.env?.EXPO_PUBLIC_V1_PROFILE !== 'production') {
+      fail(`${label} build.${profileName} must declare EXPO_PUBLIC_V1_PROFILE=production`);
+    }
+    if (profileConfig.env?.MOBILE_ANDROID_DISTRIBUTION !== expected.distribution) {
+      fail(
+        `${label} build.${profileName} must declare MOBILE_ANDROID_DISTRIBUTION=${expected.distribution}`,
+      );
+    }
+    if (profileConfig.distribution !== expected.easDistribution) {
+      fail(`${label} build.${profileName}.distribution must be ${expected.easDistribution}`);
+    }
+    if (profileConfig.android?.buildType !== expected.buildType) {
+      fail(`${label} build.${profileName}.android.buildType must be ${expected.buildType}`);
+    }
+    if (profileConfig.android?.credentialsSource !== 'local') {
+      fail(`${label} build.${profileName}.android.credentialsSource must be local`);
+    }
+  }
 }
 
 function createArtifactIdentity(manifest, context) {
   return {
     schemaVersion: manifest.schemaVersion,
     profile: context.profile,
+    distribution: context.distribution ?? 'unselected',
     sourceGitSha: context.sourceGitSha ?? 'unavailable',
     target: {
       profile: manifest.target.profile ?? 'not-set',
+      distribution: manifest.target.distribution ?? 'not-set',
       gitSha: manifest.target.gitSha ?? 'not-set',
     },
     identity: { ...manifest.identity },
@@ -399,6 +624,9 @@ function createArtifactIdentity(manifest, context) {
       marketingVersion: manifest.version.marketingVersion,
       iosBuildNumber: manifest.version.iosBuildNumber,
       androidVersionCode: manifest.version.androidVersionCode ?? 'not-set',
+    },
+    capabilities: {
+      enterpriseUpdater: context.enterpriseUpdater?.enabled === true,
     },
     verification: { ...manifest.verification },
   };
@@ -415,6 +643,23 @@ function createExpoConfig(staticExpoConfig, options = {}) {
     manifest.version.androidVersionCode === null
       ? {}
       : { versionCode: manifest.version.androidVersionCode };
+  const updater = context.enterpriseUpdater?.enabled === true ? context.enterpriseUpdater : null;
+  const permissions = (staticExpoConfig.android?.permissions ?? []).filter(
+    (permission) => permission !== REQUEST_INSTALL_PACKAGES,
+  );
+  const plugins = (staticExpoConfig.plugins ?? []).filter(
+    (plugin) => pluginReference(plugin) !== INSTALL_PERMISSION_PLUGIN,
+  );
+  if (updater) {
+    permissions.push(REQUEST_INSTALL_PACKAGES);
+    plugins.push(INSTALL_PERMISSION_PLUGIN);
+  }
+  const artifactType =
+    context.distribution === 'store'
+      ? 'aab'
+      : context.distribution === 'enterprise'
+        ? 'apk'
+        : 'none';
 
   return {
     ...staticExpoConfig,
@@ -430,15 +675,32 @@ function createExpoConfig(staticExpoConfig, options = {}) {
     },
     android: {
       ...(staticExpoConfig.android ?? {}),
+      permissions,
       package: manifest.identity.androidPackage,
       ...androidVersion,
     },
+    plugins,
     extra: {
       ...(staticExpoConfig.extra ?? {}),
       eas: {
         projectId: manifest.identity.easProjectId,
       },
       releaseManifest: artifactIdentity,
+      androidDistribution: {
+        flavor: context.distribution ?? 'unselected',
+        artifactType,
+        enterpriseUpdaterEnabled: updater !== null,
+      },
+      ...(updater
+        ? {
+            enterpriseUpdater: {
+              enabled: true,
+              manifestUrl: updater.manifestUrl,
+              publicKey: updater.publicKey,
+              keyId: updater.keyId,
+            },
+          }
+        : {}),
     },
   };
 }
@@ -480,6 +742,68 @@ function assertExpoIdentityMatchesManifest(expoConfig, manifest, context) {
   if (JSON.stringify(expoConfig.extra?.releaseManifest) !== JSON.stringify(expectedArtifact)) {
     mismatches.push('extra.releaseManifest does not match the expected artifact identity');
   }
+
+  const updaterEnabled = context.enterpriseUpdater?.enabled === true;
+  const expectedDistribution = context.distribution ?? 'unselected';
+  const expectedArtifactType =
+    context.distribution === 'store'
+      ? 'aab'
+      : context.distribution === 'enterprise'
+        ? 'apk'
+        : 'none';
+  const distributionConfig = expoConfig.extra?.androidDistribution;
+  if (distributionConfig?.flavor !== expectedDistribution) {
+    mismatches.push(
+      `extra.androidDistribution.flavor expected ${expectedDistribution}, got ${String(distributionConfig?.flavor)}`,
+    );
+  }
+  if (distributionConfig?.artifactType !== expectedArtifactType) {
+    mismatches.push(
+      `extra.androidDistribution.artifactType expected ${expectedArtifactType}, got ${String(distributionConfig?.artifactType)}`,
+    );
+  }
+  if (distributionConfig?.enterpriseUpdaterEnabled !== updaterEnabled) {
+    mismatches.push(
+      'extra.androidDistribution.enterpriseUpdaterEnabled does not match build policy',
+    );
+  }
+
+  const permissions = expoConfig.android?.permissions ?? [];
+  const installPermissionCount = permissions.filter(
+    (permission) => permission === REQUEST_INSTALL_PACKAGES,
+  ).length;
+  const installPluginCount = (expoConfig.plugins ?? []).filter(
+    (plugin) => pluginReference(plugin) === INSTALL_PERMISSION_PLUGIN,
+  ).length;
+  if (updaterEnabled) {
+    if (installPermissionCount !== 1) {
+      mismatches.push(
+        'Enterprise updater requires exactly one REQUEST_INSTALL_PACKAGES permission',
+      );
+    }
+    if (installPluginCount !== 1) {
+      mismatches.push('Enterprise updater requires exactly one install-permission plugin');
+    }
+    const expectedUpdater = {
+      enabled: true,
+      manifestUrl: context.enterpriseUpdater.manifestUrl,
+      publicKey: context.enterpriseUpdater.publicKey,
+      keyId: context.enterpriseUpdater.keyId,
+    };
+    if (JSON.stringify(expoConfig.extra?.enterpriseUpdater) !== JSON.stringify(expectedUpdater)) {
+      mismatches.push('extra.enterpriseUpdater does not match controlled build inputs');
+    }
+  } else {
+    if (installPermissionCount !== 0) {
+      mismatches.push('non-updater builds must not request REQUEST_INSTALL_PACKAGES');
+    }
+    if (installPluginCount !== 0) {
+      mismatches.push('non-updater builds must not register the install-permission plugin');
+    }
+    if (expoConfig.extra?.enterpriseUpdater !== undefined) {
+      mismatches.push('non-updater builds must not expose an Enterprise updater runtime config');
+    }
+  }
   if (mismatches.length) {
     fail(`Expo identity mismatch:\n- ${mismatches.join('\n- ')}`);
   }
@@ -514,6 +838,7 @@ function verifyRepositoryReleaseConfiguration({
 }
 
 module.exports = {
+  ANDROID_DISTRIBUTIONS,
   GIT_SHA_PATTERN,
   MOBILE_EAS_CONFIG_PATH,
   MOBILE_ROOT,
@@ -533,6 +858,9 @@ module.exports = {
   loadRepositoryInputs,
   readJson,
   resolveBuildContext,
+  resolveBuildPlatform,
+  resolveEnterpriseUpdater,
+  resolveRequestedDistribution,
   resolveRequestedProfile,
   resolveSourceGitSha,
   validateManifestSchema,

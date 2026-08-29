@@ -439,11 +439,37 @@ jobs:
         run: |
           set -euo pipefail
           : "${STAGING_ISOLATION_EVIDENCE_URL:?Missing staging variable}"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          scp -i ~/.ssh/staging_key infra/staging/resource-plan.json \
+            scripts/staging/collect-isolation-host.mjs \
+            scripts/staging/publish-isolation-evidence.mjs \
+            "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            "node '$remote/collect-isolation-host.mjs' staging '$STAGING_RELEASE_ID' '$remote/resource-plan.json'" \
+            > "$RUNNER_TEMP/isolation-host-evidence.json"
+          jq -nc --arg accessKeyId "$ALIYUN_ACCESS_KEY_ID" \
+            --arg accessKeySecret "$ALIYUN_ACCESS_KEY_SECRET" \
+            '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' | \
+            node scripts/staging/collect-isolation-evidence.mjs \
+              --release-id "$STAGING_RELEASE_ID" \
+              --resource-plan infra/staging/resource-plan.json \
+              --host-evidence "$RUNNER_TEMP/isolation-host-evidence.json" \
+              --output "$RUNNER_TEMP/isolation-evidence-input.json"
+          node scripts/staging/assert-isolation.mjs "$RUNNER_TEMP/isolation-evidence-input.json" \
+            "$RUNNER_TEMP/isolation-summary-expected.json"
+          scp -i ~/.ssh/staging_key "$RUNNER_TEMP/isolation-evidence-input.json" \
+            "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/isolation-evidence-input.json"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            "node '$remote/publish-isolation-evidence.mjs' staging '$STAGING_RELEASE_ID' '$remote/isolation-evidence-input.json'"
           curl -fsS -H "authorization: Bearer $RELEASE_EVIDENCE_TOKEN" \
             "$STAGING_ISOLATION_EVIDENCE_URL?releaseId=$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/isolation-evidence.json"
           node scripts/staging/assert-isolation.mjs "$RUNNER_TEMP/isolation-evidence.json" \
             "$RUNNER_TEMP/isolation-summary.json"
+          diff <(jq -S . "$RUNNER_TEMP/isolation-evidence-input.json") \
+            <(jq -S . "$RUNNER_TEMP/isolation-evidence.json")
+          diff <(jq -S 'del(.observedAt)' "$RUNNER_TEMP/isolation-summary-expected.json") \
+            <(jq -S 'del(.observedAt)' "$RUNNER_TEMP/isolation-summary.json")
           echo "STAGING_ISOLATION_SUMMARY=$RUNNER_TEMP/isolation-summary.json" >> "$GITHUB_ENV"
 
       - name: Run real browser and ACS E2E

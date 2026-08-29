@@ -16,6 +16,7 @@ import { parseWorkspaceId } from '../runtime/workspaceIdentity.js';
 import type { UserStore } from '../data/users/store.js';
 
 const { Client } = pg;
+const directLoopbackFetch = globalThis.fetch.bind(globalThis);
 
 export interface CreateRuntimeOperationsAdminRouterOptions {
   config: AppConfig;
@@ -51,6 +52,16 @@ function findAcsHand(config: AppConfig): TenantRemoteHand | undefined {
     ?? config.tenantRemoteHands?.hands.find((hand) => /acs/i.test(hand.id));
 }
 
+function isLoopbackControlPlane(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === 'http:'
+      && (url.hostname === '127.0.0.1' || url.hostname === '[::1]' || url.hostname === '::1');
+  } catch {
+    return false;
+  }
+}
+
 async function resolveHandToken(hand: TenantRemoteHand, vault: SecretVault | undefined): Promise<string> {
   const resolver = createTenantRemoteHandAuthTokenResolver({
     tenantRemoteHands: [hand],
@@ -63,6 +74,7 @@ export async function requestAcsOrchestrator(args: {
   config: AppConfig;
   secretVault?: SecretVault;
   fetchImpl: typeof fetch;
+  loopbackFetchImpl?: typeof fetch;
   timeoutMs: number;
   path: string;
   method: 'GET' | 'PATCH' | 'POST' | 'DELETE';
@@ -71,11 +83,14 @@ export async function requestAcsOrchestrator(args: {
   const hand = findAcsHand(args.config);
   if (!hand) return { status: 404, body: { error: 'ACS hand not configured' } };
   const authToken = await resolveHandToken(hand, args.secretVault);
+  const handFetch = isLoopbackControlPlane(hand.baseUrl)
+    ? args.loopbackFetchImpl ?? directLoopbackFetch
+    : args.fetchImpl;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs);
   timer.unref?.();
   try {
-    const response = await args.fetchImpl(`${hand.baseUrl.replace(/\/$/, '')}${args.path}`, {
+    const response = await handFetch(`${hand.baseUrl.replace(/\/$/, '')}${args.path}`, {
       method: args.method,
       headers: {
         authorization: `Bearer ${authToken}`,

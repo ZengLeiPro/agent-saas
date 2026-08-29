@@ -117,6 +117,17 @@
       "baseUrl": "https://staging-agent-api.kaiyan.net/release-evidence",
       "status": "active-authenticated-and-readback-verified"
     },
+    "isolationTargets": {
+      "productionDatabase": "agent_runtime",
+      "productionRuntimeTable": "runtime_runs",
+      "productionAcsHost": "172.16.177.80",
+      "productionAcsPort": 3400,
+      "productionNamespace": "agent-saas-coding",
+      "productionWebBucket": "agent-saas-web",
+      "productionWebSentinelKey": "index.html",
+      "productionWebSentinelUrl": "https://agent-saas-web.oss-cn-shenzhen.aliyuncs.com/index.html",
+      "productionMountPaths": ["/mnt/agent-saas", "/mnt/agent-saas-app"]
+    },
     "egressProxy": {
       "service": "squid.service",
       "listen": "127.0.0.1:3128",

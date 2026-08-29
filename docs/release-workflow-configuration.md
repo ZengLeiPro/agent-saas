@@ -63,8 +63,13 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 - `/production-observation?releaseId=<rc-id>&manifestDigest=<digest>`：绑定 RC 和 Manifest 的
   连续生产探针样本；每个样本追加保存。
 
-实际探针与专用 Evidence Writer 使用独立写身份通过 `POST` 写入；Staging 部署和 Production
-Promotion Workflow 只持有读身份并通过 `GET` 读取。两端都必须带
+Staging Workflow 会在每次 RC 部署后现场采集七项证据：六项由 Staging ECS 读取数据库权限、
+NAS mount、通知配置、生产 ACS 网络拒绝、ACK RBAC 与 PVC/PV；Production OSS 写拒绝由 GitHub
+Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无损探针。完整证据随后传回
+Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
+Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
+比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。Production
+Promotion Workflow 同样只持有读身份。两端都必须带
 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
 evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度，
 并校验生产样本的全部业务/运行检查。它不会在缺少真实探针时合成通过证据。运行参数：
@@ -88,9 +93,10 @@ task/source 快照，会作为可选审计信息写入，但不会成为准入�
 通过写 Token `POST` 到服务，再由 `publish-release-evidence.mjs` 使用只读 Token `GET` 回读并进行
 canonical JSON 比较。写 Token 不得进入任何部署或晋级 job。
 
-`STAGING_ISOLATION_EVIDENCE_URL` 应指向 `/staging-isolation`。Staging 与 Production 可部署
-相互隔离的实例和 token；反向代理必须只暴露 HTTPS，数据目录必须落在持久盘。服务落地和真实
-探针接入仍属于首次运行前的外部资源建设，不得用本地单测替代。
+`STAGING_ISOLATION_EVIDENCE_URL` 应指向 `/staging-isolation`。反向代理只暴露带读 Token 的 HTTPS
+读取端点，数据目录落在持久盘；写 Token 文件只保存在 Staging ECS 并由本机回环发布脚本读取。
+服务落地仍属于首次运行前的外部资源建设，真实探针则由每次 Staging RC Workflow 自动重采，
+不得用历史 JSON 或本地单测替代。
 
 ### GitHub PR 作为 RC 来源
 

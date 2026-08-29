@@ -117,6 +117,7 @@ async function withApp<T>(
       secretVault,
       refreshProxyCredential,
       fetchImpl,
+      loopbackFetchImpl: fetchImpl,
     }),
   );
   const server = app.listen(0);

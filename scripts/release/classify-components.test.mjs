@@ -75,6 +75,10 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('e2e/staging/helpers.ts'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(
     classifyPath('daemon-packaging/systemd/agent-saas-server-staging.service.template'),
     {

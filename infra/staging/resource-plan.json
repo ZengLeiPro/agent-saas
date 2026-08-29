@@ -34,6 +34,12 @@
       "database": "agent_saas_staging",
       "role": "agent_saas_staging",
       "networkReadback": "reachable-from-staging-ecs",
+      "transportSecurity": {
+        "endpoint": "private-vpc",
+        "rdsSslEnabled": false,
+        "clientSslMode": "disable",
+        "alignmentStatus": "matched-to-shared-rds-live-readback"
+      },
       "migrationStatus": "automated-post-api-start-with-table-readback"
     },
     "nas": {

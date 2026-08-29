@@ -118,6 +118,13 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /"\$aliyun_cli" vpc DescribeSnatTableEntries/u);
   assert.match(deploy, /Staging ACS SNAT runtime identity cannot read the configured SNAT table/u);
+  assert.match(deploy, /STAGING_RELEASE_ROOT="\$target"/u);
+  assert.match(deploy, /SELECT current_database\(\) AS database, current_user AS username/u);
+  assert.match(deploy, /Staging database runtime preflight failed/u);
+  assert.ok(
+    deploy.indexOf('Staging database runtime preflight failed') <
+      deploy.indexOf('ln -sfn "$target" "$current"'),
+  );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);
@@ -144,6 +151,12 @@ test('resource plan records provisioned resources ready for first deployment', a
     configurationStatus: 'applied-and-live-readback-verified',
   });
   assert.equal(plan.resources.database.instanceId, 'pgm-wz96n2735914490l');
+  assert.deepEqual(plan.resources.database.transportSecurity, {
+    endpoint: 'private-vpc',
+    rdsSslEnabled: false,
+    clientSslMode: 'disable',
+    alignmentStatus: 'matched-to-shared-rds-live-readback',
+  });
   assert.equal(plan.resources.nas.isolationLevel, 'logical-shared-filesystem');
   assert.deepEqual(plan.resources.runtime.dependencies.aliyunCli, {
     path: '/usr/local/bin/aliyun',

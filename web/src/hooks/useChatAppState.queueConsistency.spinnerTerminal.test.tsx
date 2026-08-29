@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    reportUploadError: vi.fn(),
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -79,6 +80,7 @@ vi.mock("@/hooks/useFileUpload", () => ({
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: harness.reportUploadError,
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -131,6 +133,7 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockReset().mockResolvedValue(true);
+  harness.reportUploadError.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;
@@ -146,7 +149,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// TASK-312/332 回归：终态必须最终清除，但 terminal -> next-run handoff 期间
+// TASK-312/332 回归：终态必须收敛清除，但 terminal -> next-run handoff 期间
 // 输入框与侧边栏共用同一 active latch；750ms 探活或下一 run lifecycle 再权威收敛。
 describe("useChatAppState sidebar spinner terminal convergence", () => {
   function startRunningSession(result: { current: ReturnType<typeof useChatAppState> }) {

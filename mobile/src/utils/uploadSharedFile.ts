@@ -11,6 +11,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import type { UploadedFile } from '@agent/shared';
 import { authFetch } from '@agent/shared';
 import type { ShareIntentFile } from 'expo-share-intent';
+import { validateMobileUploadedFiles } from '../lib/chatSubmissionAdapter';
 
 const HEIF_MIMES = new Set([
   'image/heif',
@@ -70,8 +71,11 @@ export async function uploadSharedFile(file: ShareIntentFile): Promise<UploadedF
   }
 
   const uploaded = data.files[0];
+  const validation = validateMobileUploadedFiles([uploaded]);
+  if (!validation.ok) throw new Error(validation.issue.message);
   return {
     ...uploaded,
+    attachmentId: validation.value[0].attachmentId,
     previewUrl: uploaded.isImage ? uri : undefined,
   };
 }

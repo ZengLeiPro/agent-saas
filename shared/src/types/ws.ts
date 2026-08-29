@@ -5,7 +5,7 @@ import type {
     MemoryRecallData,
     SandboxProfile,
 } from './session';
-import type { SubagentStatus } from './message';
+import type { MessageAttachmentDisplay, SubagentStatus } from './message';
 import type { TenantFeatureFlags } from './auth';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
@@ -31,6 +31,11 @@ export type ChatRejectReasonCode =
     | 'server_draining'
     | 'model_not_allowed'
     | 'duplicate_inflight'
+    | 'invalid_submission'
+    | 'attachment_id_missing'
+    | 'attachment_id_invalid'
+    | 'attachment_not_found'
+    | 'attachment_state_failed'
     | 'personal_agent_disabled'
     | 'org_agent_unavailable';
 
@@ -38,9 +43,9 @@ export type WsEvent =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
     // 统一排队区：普通 queue 与显式 steer 都由服务端 durable 快照恢复。
-    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
+    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     // 旧 steering 广播保留兼容。
-    | { type: 'steering_queued'; sessionId: string; sourceRunId: string; targetRunId: string; clientMsgId: string; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number }
+    | { type: 'steering_queued'; sessionId: string; sourceRunId: string; targetRunId: string; clientMsgId: string; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number }
     | { type: 'steering_cancelled'; sessionId: string; sourceRunId: string; clientMsgId?: string; reason: string }
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
@@ -79,7 +84,7 @@ export type WsEvent =
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
-    | { type: 'user_message'; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
+    | { type: 'user_message'; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     | { type: 'tenant_features_changed'; tenantId: string; tenantFeatures: TenantFeatureFlags; debugMode: boolean }

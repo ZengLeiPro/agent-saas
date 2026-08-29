@@ -402,6 +402,7 @@ export class UploadManager {
     }
   }
 
+  /** Resolve V1 IDs against the authenticated user's upload state. */
   async resolveAttachments(
     userCwd: string,
     attachmentIds: readonly string[],
@@ -432,6 +433,51 @@ export class UploadManager {
         await opened.handle.close();
         resolved.push({
           attachmentId,
+          originalName: state.originalName,
+          relativePath: state.relativePath,
+          size: state.size,
+          mimeType: state.mimeType,
+          isImage: isSupportedImage(state.mimeType),
+        });
+      }
+      return resolved;
+    });
+  }
+
+  /**
+   * N-1 compatibility adapter. A legacy relativePath is only an owned-state lookup hint;
+   * returned metadata/path always comes from the server attachment state. savedPath is ignored.
+   */
+  async resolveLegacyAttachments(
+    userCwd: string,
+    attachments: readonly UploadedFileInfo[],
+  ): Promise<UploadedFileInfo[]> {
+    this.knownUserCwds.add(userCwd);
+    return this.withUserMutation(userCwd, async () => {
+      const states = await this.readStates(userCwd);
+      const byId = new Map(states.map((state) => [state.attachmentId, state]));
+      const byRelativePath = new Map(states.map((state) => [state.relativePath, state]));
+      const resolved: UploadedFileInfo[] = [];
+      for (const attachment of attachments) {
+        const providedId = typeof attachment.attachmentId === 'string'
+          ? attachment.attachmentId.trim()
+          : '';
+        let state: AttachmentState | undefined;
+        if (providedId) {
+          if (!ATTACHMENT_ID_RE.test(providedId)) throw new Error('Invalid attachment id');
+          state = byId.get(providedId);
+        } else if (typeof attachment.relativePath === 'string' && attachment.relativePath) {
+          state = byRelativePath.get(attachment.relativePath);
+        }
+        if (!state) throw new Error('Attachment not found');
+        if (!ATTACHMENT_ID_RE.test(state.attachmentId) || basename(state.filename) !== state.filename) {
+          throw new Error(`Invalid attachment state: ${state.attachmentId}`);
+        }
+        validateAttachmentStatePath(userCwd, state);
+        const opened = await openTrustedFile(userCwd, state.relativePath);
+        await opened.handle.close();
+        resolved.push({
+          attachmentId: state.attachmentId,
           originalName: state.originalName,
           relativePath: state.relativePath,
           size: state.size,

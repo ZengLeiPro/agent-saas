@@ -3,6 +3,7 @@ import type { InboundMessage } from '../types/index.js';
 import type { RunRecord, RunStatus } from './runStore.js';
 import type { RuntimeSessionRecord } from './sessionCatalog.js';
 import type { PlatformEvent } from './types.js';
+import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 
 export function isTerminalRunStatus(status: RunStatus | undefined): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned';
@@ -135,6 +136,8 @@ export function restoreWakeMessage(
   session: RuntimeSessionRecord,
 ): InboundMessage {
   const metadataMessage = isWakeMessage(run.metadata?.wakeMessage) ? run.metadata.wakeMessage : null;
+  const parsedSubmission = parseCanonicalChatSubmission(run.metadata?.chatSubmission);
+  const canonicalSubmission = parsedSubmission.ok ? parsedSubmission.value : null;
   const submitted = [...events].reverse().find((event): event is Extract<PlatformEvent, { type: 'user_message_submitted' }> => (
     event.type === 'user_message_submitted'
     && (!event.sessionId || event.sessionId === run.sessionId)
@@ -147,10 +150,16 @@ export function restoreWakeMessage(
   return {
     channel: 'web',
     chatId: metadataMessage?.chatId ?? run.sessionId,
-    content: metadataMessage?.content ?? submitted?.content ?? priorUserMessage?.content ?? 'Continue the interrupted managed-agent run from durable session context.',
+    content: metadataMessage?.content ?? canonicalSubmission?.text ?? submitted?.content ?? priorUserMessage?.content ?? 'Continue the interrupted managed-agent run from durable session context.',
     senderId: metadataMessage?.senderId ?? session.userId ?? run.userId,
     senderName: metadataMessage?.senderName ?? session.username,
-    attachments: metadataMessage?.attachments,
+    attachments: metadataMessage?.attachments ?? canonicalSubmission?.attachments.map((attachment) => ({
+      attachmentId: attachment.attachmentId,
+      originalName: attachment.display.originalName,
+      size: attachment.display.size ?? 0,
+      mimeType: attachment.display.mimeType ?? 'application/octet-stream',
+      isImage: attachment.display.isImage ?? false,
+    })),
     metadata: {
       ...(metadataMessage?.metadata ?? {}),
       schedulerWake: true,

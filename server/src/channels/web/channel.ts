@@ -18,6 +18,7 @@ import type {
   WebMessageDisplayConfig,
   BaseChannel,
   InboundMessage,
+  InboundAttachmentInfo,
   ChannelContext,
   UploadedFileInfo,
   OutboundEvent,
@@ -98,6 +99,21 @@ import {
 } from './channelRuntimeHelpers.js';
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
+import {
+  adaptWebChatSubmission,
+  chatSubmissionIssueReasonCode,
+} from './chatSubmissionAdapter.js';
+import {
+  canonicalAttachmentsToInbound,
+  ChatAttachmentResolutionError,
+  resolveChatSubmissionAttachments,
+} from './chatSubmissionAttachments.js';
+import {
+  CHAT_SUBMISSION_VERSION,
+  canonicalChatAttachmentToDisplay,
+  type CanonicalChatSubmission,
+} from '@agent/shared/lib/chatSubmission';
+import type { MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
@@ -1113,7 +1129,7 @@ export class WebChannel implements BaseChannel {
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
     const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
-    const clientMsgId = msg.client_msg_id?.trim();
+    const clientMsgId = adaptWebChatSubmission(msg).clientMsgId;
     const submissionKey = clientMsgId
       ? `${client.user?.tenantId ?? 'tenant'}|${client.user?.sub ?? 'anon'}|${clientMsgId}`
       : undefined;
@@ -2297,8 +2313,16 @@ export class WebChannel implements BaseChannel {
   // ── 核心聊天处理逻辑 ──────────────────────────────────
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
-    const { message, sessionId, attachments, model, voiceFile } = msg;
-    let deliveryMode: 'queue' | 'steer' = msg.deliveryMode === 'steer' && !isCompactCommand(message)
+    const adaptedSubmission = adaptWebChatSubmission(msg);
+    const message = adaptedSubmission.text;
+    const sessionId = adaptedSubmission.sessionId;
+    const model = adaptedSubmission.model;
+    const sandboxProfile = adaptedSubmission.sandboxProfile;
+    const requestedOrgAgentId = adaptedSubmission.orgAgentId;
+    const voiceFile = msg.voiceFile;
+    let attachments: UploadedFileInfo[] | undefined;
+    let canonicalAttachments = adaptedSubmission.canonical?.attachments ?? [];
+    let deliveryMode: 'queue' | 'steer' = adaptedSubmission.deliveryMode === 'steer' && !isCompactCommand(message)
       ? 'steer'
       : 'queue';
     const ws = client.ws;
@@ -2310,7 +2334,7 @@ export class WebChannel implements BaseChannel {
       : undefined;
 
     // 读取（或为老客户端生成）客户端消息 ID —— 贯穿全链路的幂等/绑定键
-    let clientMsgId = msg.client_msg_id;
+    let clientMsgId = adaptedSubmission.clientMsgId;
     if (!clientMsgId) {
       clientMsgId = `srv-${Date.now()}-${++this.streamIdCounter}`;
       chatLogger.warn(`[chat] Legacy client without client_msg_id, generated ${clientMsgId}`);
@@ -2382,14 +2406,24 @@ export class WebChannel implements BaseChannel {
     }
 
 
+    // Canonical V1 is strict after the idempotency replay fence above: malformed new submissions fail closed.
+    if (adaptedSubmission.issue) {
+      const reasonCode = chatSubmissionIssueReasonCode(adaptedSubmission.issue);
+      this.sendChatRejected(ws, clientMsgId, reasonCode, adaptedSubmission.issue.message);
+      return;
+    }
+
     // 1) Drain 拦截（服务端优雅关闭期间）
     if (this.config.getIsDraining?.()) {
       this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
       return;
     }
 
-    // 2) 空消息校验
-    if (!message && !voiceFile) {
+    // 2) 空消息校验（canonical attachment-only submissions are valid）
+    const hasSubmittedAttachments = adaptedSubmission.protocol === 'canonical_v1'
+      ? Boolean(adaptedSubmission.canonical?.attachments.length)
+      : Boolean(adaptedSubmission.legacyAttachments?.length);
+    if (!message && !voiceFile && !hasSubmittedAttachments) {
       this.sendChatRejected(ws, clientMsgId, 'empty_message', '消息内容不能为空');
       return;
     }
@@ -2559,13 +2593,6 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // Log attachment info
-    if (attachments && attachments.length > 0) {
-      const imageCount = attachments.filter((a: UploadedFileInfo) => a.isImage).length;
-      const fileCount = attachments.length - imageCount;
-      chatLogger.info(`Attachments: ${imageCount} image(s), ${fileCount} file(s)`);
-    }
-
     // 构造 ChannelContext
     let userIdentity: ChannelContext['user'];
     if (user) {
@@ -2649,27 +2676,62 @@ export class WebChannel implements BaseChannel {
       }
     }
 
+    let submissionAttachmentRefs: InboundAttachmentInfo[] | undefined;
+    try {
+      const resolvedAttachments = await resolveChatSubmissionAttachments({
+        adapted: adaptedSubmission,
+        uploadManager: this.config.uploadManager,
+        userCwd: this.config.agentCwd
+          ? resolveUserCwd(this.config.agentCwd, userIdentity)
+          : undefined,
+      });
+      attachments = resolvedAttachments.materialized.length ? resolvedAttachments.materialized : undefined;
+      canonicalAttachments = resolvedAttachments.canonical;
+      // New V1 and safely adapted production legacy clients enter runtime/durable replay by ID only.
+      submissionAttachmentRefs = canonicalAttachments.length === resolvedAttachments.materialized.length
+        ? canonicalAttachmentsToInbound(canonicalAttachments)
+        : attachments;
+    } catch (error) {
+      const resolutionError = error instanceof ChatAttachmentResolutionError ? error : undefined;
+      const reasonCode = resolutionError?.reason === 'not_found'
+        ? 'attachment_not_found'
+        : 'attachment_state_failed';
+      const reason = resolutionError?.message ?? '附件状态读取失败，请重试';
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+      this.sendChatRejected(ws, clientMsgId, reasonCode, reason);
+      return;
+    }
+
+    const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';
+    if (!resolvedMessage && attachments?.length) resolvedMessage = AI_FALLBACK_TEXT;
+    if (attachments?.length) {
+      const imageCount = attachments.filter((attachment) => attachment.isImage).length;
+      chatLogger.info(`Attachments: ${imageCount} image(s), ${attachments.length - imageCount} file(s)`);
+    }
+
     const inbound: InboundMessage = {
       channel: 'web',
       chatId: validSessionId || '',
       content: resolvedMessage,
-      attachments,
-      ...(!validSessionId && msg.sandboxProfile !== undefined ? { metadata: { sandboxProfile: msg.sandboxProfile } } : {}),
+      ...(submissionAttachmentRefs?.length ? { attachments: submissionAttachmentRefs } : {}),
+      ...(!validSessionId && sandboxProfile !== undefined ? { metadata: { sandboxProfile } } : {}),
     };
 
     // 构建用户消息展示内容（纯文本 + 结构化附件）
-    const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';
     const userDisplayContent = (resolvedMessage === AI_FALLBACK_TEXT && attachments?.length)
       ? ''
       : resolvedMessage;
-    const attachmentMeta = attachments?.length
-      ? attachments.map((a: UploadedFileInfo) => ({
-        name: a.originalName,
-        isImage: a.isImage,
-        // 前端点击预览/下载用（走 /api/file 端点，workspace 内路径校验）
-        relativePath: a.relativePath,
-      }))
-      : undefined;
+    const attachmentMeta = canonicalAttachments.length
+      ? canonicalAttachments.map(canonicalChatAttachmentToDisplay)
+      : attachments?.length
+        ? attachments.map((attachment) => ({
+          name: attachment.originalName,
+          ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          isImage: attachment.isImage,
+        }))
+        : undefined;
 
     const context: ChannelContext = {
       channel: 'web',
@@ -2695,7 +2757,7 @@ export class WebChannel implements BaseChannel {
 
     // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次，2026-07-18 蓝图 v2 § 4.3.1 加 shadow/enforce 三档）──
     // 0) /compact 等平台命令只跳过 LLM 话题门禁，企业专家授权校验仍必须执行
-    // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 msg.orgAgentId
+    // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 canonical target
     // 2) org agent 校验：存在 + enabled + 同租户 + 被指派（admin 豁免 audience）→ 否则 org_agent_unavailable
     // 3) personalAgent gate：无 orgAgentId 且租户关闭个人 Agent 时普通用户被拒
     // 4) LLM 话题门禁三档（mode = off | shadow | enforce）：
@@ -2720,11 +2782,11 @@ export class WebChannel implements BaseChannel {
     } | undefined;
     if (validSessionId) {
       orgAgentId = gateSessionMeta?.orgAgentId;
-      if (msg.orgAgentId && msg.orgAgentId !== orgAgentId) {
-        chatLogger.warn(`[org-agent] client orgAgentId=${msg.orgAgentId} ignored, session meta wins (${orgAgentId ?? 'none'}, session=${validSessionId})`);
+      if (requestedOrgAgentId && requestedOrgAgentId !== orgAgentId) {
+        chatLogger.warn(`[org-agent] client orgAgentId=${requestedOrgAgentId} ignored, session meta wins (${orgAgentId ?? 'none'}, session=${validSessionId})`);
       }
     } else {
-      orgAgentId = msg.orgAgentId;
+      orgAgentId = requestedOrgAgentId;
     }
     const isPlatformCommand = isCompactCommand(resolvedMessage);
     if (isPlatformCommand) deliveryMode = 'queue';
@@ -2838,7 +2900,7 @@ export class WebChannel implements BaseChannel {
                 orgAgent: orgAgentRecord,
                 model,
                 executionTarget: resolvedExecutionTarget,
-                sandboxProfile: msg.sandboxProfile,
+                sandboxProfile,
                 resolvedMessage,
                 userDisplayContent,
                 attachmentMeta,
@@ -2982,7 +3044,7 @@ export class WebChannel implements BaseChannel {
           channel: 'web',
           cwd: enqueueCwd,
           modelRef: model,
-          sandboxProfile: resolveSessionSandboxProfile({ existing: existingSessionRecord, requested: msg.sandboxProfile }),
+          sandboxProfile: resolveSessionSandboxProfile({ existing: existingSessionRecord, requested: sandboxProfile }),
           executionTarget: resolvedExecutionTarget,
           workspaceId: enqueueWorkspaceId,
           status: 'running',
@@ -3042,6 +3104,19 @@ export class WebChannel implements BaseChannel {
             );
           }
         }
+        const authoritativeChatSubmission: CanonicalChatSubmission = {
+          version: CHAT_SUBMISSION_VERSION,
+          text: adaptedSubmission.canonical?.text ?? message,
+          clientMsgId,
+          target: {
+            sessionId: enqueueSessionId,
+            ...(sessionRecord.sandboxProfile ? { sandboxProfile: sessionRecord.sandboxProfile } : {}),
+            ...(orgAgentId ? { orgAgentId } : {}),
+          },
+          deliveryMode,
+          ...(model ? { model } : {}),
+          attachments: canonicalAttachments,
+        };
         const enqueuedRun = await enqueueRuntime.scheduler.enqueue({
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
@@ -3062,6 +3137,7 @@ export class WebChannel implements BaseChannel {
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
             outputTransactionMode: context.outputTransactionMode,
+            chatSubmission: authoritativeChatSubmission,
             wakeMessage: {
               channel: inbound.channel,
               chatId: enqueueSessionId,
@@ -3892,10 +3968,10 @@ export class WebChannel implements BaseChannel {
     orgAgent: OrgAgentRecord;
     model?: string;
     executionTarget: ExecutionTargetKind;
-    sandboxProfile?: WsChatMessage['sandboxProfile'];
+    sandboxProfile?: SandboxProfile;
     resolvedMessage: string;
     userDisplayContent: string;
-    attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+    attachmentMeta?: MessageAttachmentDisplay[];
     guardrailModel?: string;
     guardrailLatencyMs?: number;
     guardrailConfidence?: number;

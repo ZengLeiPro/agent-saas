@@ -3,6 +3,7 @@ import type { ChangeEvent, ClipboardEvent, DragEvent } from "react";
 import type { UploadedFile } from "@/components/types";
 import { authFetch } from "@/lib/authFetch";
 import { MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
+import { validateWebUploadedFiles } from "@/lib/chatSubmissionAdapter";
 
 function revokeFilePreviews(files: UploadedFile[]): void {
   files.forEach((file) => {
@@ -34,6 +35,7 @@ export interface FileUploadState {
   uploading: boolean;
   uploadError: string | null;
   dismissUploadError: () => void;
+  reportUploadError: (message: string) => void;
   isDragging: boolean;
   replaceFiles: (files: UploadedFile[]) => void;
   removeFile: (index: number) => void;
@@ -68,6 +70,10 @@ export function useFileUpload(
 
   const dismissUploadError = useCallback(() => {
     setUploadError(null);
+  }, []);
+
+  const reportUploadError = useCallback((message: string) => {
+    setUploadError(message);
   }, []);
 
   const replaceFiles = useCallback((files: UploadedFile[]) => {
@@ -135,20 +141,23 @@ export function useFileUpload(
         throw new Error(data.error || "Upload failed");
       }
       if (generation !== generationRef.current) return;
+      const validation = validateWebUploadedFiles(data.files as UploadedFile[]);
+      if (!validation.ok) throw new Error(validation.issue.message);
 
       const uploadedWithPreviews = data.files.map((file: UploadedFile, index: number) => {
         const sourceFile = files[index];
         if (file.isImage && sourceFile) {
           return {
             ...file,
+            attachmentId: validation.value[index].attachmentId,
             previewUrl: URL.createObjectURL(sourceFile),
           };
         }
-        return file;
+        return { ...file, attachmentId: validation.value[index].attachmentId };
       });
 
       setUploadedFiles((previous) => [...previous, ...uploadedWithPreviews]);
-      console.log("Files uploaded:", data.files);
+      console.log("Files uploaded:", uploadedWithPreviews);
     } catch (error) {
       console.error("Upload error:", error);
       if (generation === generationRef.current) {
@@ -211,7 +220,12 @@ export function useFileUpload(
         throw new Error(data.error || `Upload failed: ${response.status}`);
       }
       if (generation !== generationRef.current) return;
-      setUploadedFiles((previous) => [...previous, ...data.files!]);
+      const validation = validateWebUploadedFiles(data.files);
+      if (!validation.ok) throw new Error(validation.issue.message);
+      setUploadedFiles((previous) => [...previous, ...data.files!.map((file, index) => ({
+        ...file,
+        attachmentId: validation.value[index].attachmentId,
+      }))]);
     } catch (error) {
       if (generation === generationRef.current) {
         setUploadError(`添加资料失败：${error instanceof Error ? error.message : "未知错误"}`);
@@ -341,6 +355,7 @@ export function useFileUpload(
     uploading,
     uploadError,
     dismissUploadError,
+    reportUploadError,
     isDragging,
     replaceFiles,
     removeFile,

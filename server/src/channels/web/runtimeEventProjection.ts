@@ -119,7 +119,7 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'user_message':
-      // 队列消息在真正取得执行权时才进入时间线。带 clientMsgId 的普通 queue 与带
+      // 队列消息在真正取得执行权时才进入时间线；附件重放只投影 ID + 展示元数据。带 clientMsgId 的普通 queue 与带
       // interjectionSourceRunId 的显式插话都必须投影；客户端按 clientMsgId 幂等去重。
       if (!event.clientMsgId && !event.interjectionSourceRunId) return { events: [] };
       return {
@@ -130,8 +130,10 @@ export function projectRuntimePlatformEvent(
           ...(event.attachments?.length ? {
             attachments: event.attachments.map((attachment) => ({
               name: attachment.originalName,
+              attachmentId: attachment.attachmentId,
+              mimeType: attachment.mimeType,
+              size: attachment.sizeBytes,
               isImage: attachment.isImage,
-              relativePath: attachment.relativePath,
             })),
           } : {}),
           timestamp: Date.parse(event.timestamp) || Date.now(),

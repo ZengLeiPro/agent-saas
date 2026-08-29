@@ -5,7 +5,11 @@
  * 下行事件复用原 SSE 事件类型，包裹在带 eventId 的信封中。
  */
 
-import type { SandboxProfile } from '@agent/shared';
+import type { MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
+import type {
+    CanonicalChatSubmissionWireMessage,
+    ChatClientCapability,
+} from '@agent/shared/lib/chatSubmission';
 import type {
     UploadedFileInfo,
     ContextUsageData,
@@ -36,31 +40,17 @@ export type ChatRejectReasonCode =
     | 'server_draining'        // 服务端优雅关闭中
     | 'model_not_allowed'      // 组织模型策略不允许使用所选模型
     | 'duplicate_inflight'     // 同 client_msg_id 已在处理
+    | 'invalid_submission'     // canonical V1 结构无效
+    | 'attachment_id_missing'  // V1 附件缺 attachmentId
+    | 'attachment_id_invalid'  // V1 attachmentId 格式错误
+    | 'attachment_not_found'   // attachmentId 非本用户上传状态（含伪造）
     | 'attachment_state_failed' // 附件引用状态持久化失败
     | 'personal_agent_disabled' // 租户关闭个人 Agent，普通用户仅可用专职 Agent
     | 'org_agent_unavailable'; // 专职 Agent 不存在/已禁用/未被指派（跨租户防枚举同码）
 
 export type ChatDeliveryMode = 'queue' | 'steer';
 
-export interface WsChatMessage {
-    action: 'chat';
-    /** 普通消息默认串行排队；只有用户显式选择插话时才允许注入当前 run。 */
-    deliveryMode?: ChatDeliveryMode;
-    /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
-    clientCapabilities?: Array<'replaceable_drafts'>;
-    /** 客户端生成的 UUID，贯穿全链路；老客户端可缺省，服务端生成占位 */
-    client_msg_id?: string;
-    message: string;
-    sessionId?: string;
-    /** 仅新会话首条消息生效；续聊以持久化值为准。 */
-    sandboxProfile?: SandboxProfile;
-    /**
-     * 公司级专职 Agent 绑定。**仅新会话首条消息生效**；带 sessionId 的消息
-     * 以会话 meta 为准（不一致时 log warn 采用 meta，防伪造/串线）。
-     */
-    orgAgentId?: string;
-    attachments?: UploadedFileInfo[];
-    model?: string;
+interface WsChatControlFields {
     /** 内部管理员验收开关：选择工具执行后端。普通 UI 不暴露。 */
     executionTarget?: 'server-local' | 'server-container';
     approvalPolicy?: {
@@ -69,12 +59,31 @@ export interface WsChatMessage {
         /** 「低风险常开」档（TASK-256）：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
         lowRiskOnly?: boolean;
     };
+    /** M50-04 legacy voice channel; intentionally isolated from attachment V1. */
     voiceFile?: {
         savedPath: string;
         relativePath: string;
         duration: number;
     };
 }
+
+export type CanonicalWsChatMessage = CanonicalChatSubmissionWireMessage & WsChatControlFields;
+
+/** @deprecated N-1 flat envelope. Paths are lookup hints only and never authoritative. */
+export interface LegacyWsChatMessage extends WsChatControlFields {
+    action: 'chat';
+    deliveryMode?: ChatDeliveryMode;
+    clientCapabilities?: ChatClientCapability[];
+    client_msg_id?: string;
+    message: string;
+    sessionId?: string;
+    sandboxProfile?: SandboxProfile;
+    orgAgentId?: string;
+    attachments?: UploadedFileInfo[];
+    model?: string;
+}
+
+export type WsChatMessage = CanonicalWsChatMessage | LegacyWsChatMessage;
 
 export interface WsRespondMessage {
     action: 'respond';
@@ -187,7 +196,7 @@ export type WsDownstreamEvent =
     | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
-    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
+    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
@@ -220,7 +229,7 @@ export type WsDownstreamEvent =
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string }
-    | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }> }
+    | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: MessageAttachmentDisplay[] }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增系统事件 ──

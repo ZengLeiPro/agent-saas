@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
+import { isValidAttachmentId } from '@agent/shared/lib/chatSubmission';
 
 /** Build an agent session id -> DingTalk sender nickname index. */
 export async function buildDingtalkSessionIndex(
@@ -74,25 +75,32 @@ export async function buildCronSessionIndex(
 
 export function projectQueuedMessageAttachments(value: unknown): Array<{
   name: string;
-  attachmentId?: string;
-  savedPath?: string;
-  relativePath?: string;
+  attachmentId: string;
   size?: number;
   mimeType?: string;
   isImage?: boolean;
 }> {
   if (!Array.isArray(value)) return [];
-  return (value as Array<Record<string, unknown>>).flatMap((attachment) => (
-    typeof attachment?.originalName === 'string' ? [{
-      name: attachment.originalName,
-      ...(typeof attachment.attachmentId === 'string' ? { attachmentId: attachment.attachmentId } : {}),
-      ...(typeof attachment.savedPath === 'string' ? { savedPath: attachment.savedPath } : {}),
-      ...(typeof attachment.relativePath === 'string' ? { relativePath: attachment.relativePath } : {}),
-      ...(typeof attachment.size === 'number' ? { size: attachment.size } : {}),
-      ...(typeof attachment.mimeType === 'string' ? { mimeType: attachment.mimeType } : {}),
-      ...(typeof attachment.isImage === 'boolean' ? { isImage: attachment.isImage } : {}),
-    }] : []
-  ));
+  return (value as Array<Record<string, unknown>>).flatMap((attachment) => {
+    const attachmentId = attachment?.attachmentId;
+    if (!isValidAttachmentId(attachmentId)) return [];
+    const display = attachment.display && typeof attachment.display === 'object' && !Array.isArray(attachment.display)
+      ? attachment.display as Record<string, unknown>
+      : attachment;
+    const originalName = typeof display.originalName === 'string'
+      ? display.originalName
+      : typeof attachment.originalName === 'string'
+        ? attachment.originalName
+        : undefined;
+    if (!originalName) return [];
+    return [{
+      name: originalName,
+      attachmentId,
+      ...(typeof display.size === 'number' ? { size: display.size } : {}),
+      ...(typeof display.mimeType === 'string' ? { mimeType: display.mimeType } : {}),
+      ...(typeof display.isImage === 'boolean' ? { isImage: display.isImage } : {}),
+    }];
+  });
 }
 
 /** Strip common markdown syntax while retaining readable text. */

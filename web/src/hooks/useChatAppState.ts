@@ -12,6 +12,12 @@ import { useApprovalTierRunPolicy } from "./useApprovalTierRunPolicy";
 import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
+import {
+  buildWebChatSubmission,
+  toWebChatWireMessage,
+  validateWebUploadedFiles,
+} from "@/lib/chatSubmissionAdapter";
+import { canonicalChatAttachmentToDisplay } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -2292,11 +2298,13 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
                 content: currentEntry.input,
                 ...(currentEntry.attachments.length ? {
-                  attachments: currentEntry.attachments.map((file) => ({
+                  attachments: currentEntry.attachments.flatMap((file) => file.attachmentId ? [{
                     name: file.originalName,
+                    attachmentId: file.attachmentId,
+                    mimeType: file.mimeType,
+                    size: file.size,
                     isImage: file.isImage,
-                    relativePath: file.relativePath,
-                  })),
+                  }] : []),
                   uploadedFiles: currentEntry.attachments,
                 } : {}),
                 status: 'queued' as const,
@@ -2390,6 +2398,27 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (activeSessionId) trackedAiReplyStreamsRef.current.add(activeSessionId);
     // 生成或复用 clientMsgId（vote 重试或 voice 二次调用时复用）
     const clientMsgId = existingClientMsgId || (crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const normalized = buildWebChatSubmission({
+      text: inputText,
+      clientMsgId,
+      target: {
+        ...(activeSessionId ? { sessionId: activeSessionId } : { sandboxProfile: sandboxProfileRef.current }),
+        ...(pendingOrgAgentIdRef.current && !activeSessionId ? { orgAgentId: pendingOrgAgentIdRef.current } : {}),
+      },
+      deliveryMode,
+      model: selectedModelRef.current ?? undefined,
+      attachments,
+    });
+    if (!normalized.ok) {
+      fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
+      if (preserveActiveStream) {
+        mutateQueuedInterjections((prev) => prev.map((entry) => entry.clientMsgId === clientMsgId
+          ? { ...entry, status: 'failed' as const, reason: normalized.issue.message }
+          : entry));
+      }
+      return;
+    }
+    const submission = normalized.value;
     if (!activeSessionId) {
       pendingNewSessionClientMsgIdRef.current = clientMsgId;
       newSessionClientMsgIdsRef.current.add(clientMsgId);
@@ -2409,7 +2438,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       submittedUserMessageIndex = msgRef.current.addMessage({
         type: "user",
         content: inputText,
-        ...(attachments.length > 0 ? { attachments: attachments.map(f => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })) } : {}),
+        ...(submission.attachments.length > 0
+          ? { attachments: submission.attachments.map(canonicalChatAttachmentToDisplay) }
+          : {}),
         status: 'pending',
         timestamp: Date.now(),
         clientMsgId,
@@ -2450,7 +2481,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       ...(activeSessionId ? { sessionId: activeSessionId } : {}),
       deliveryMode,
       input: inputText,
-      attachments,
+      // Outbox is an in-memory UI/retry model. Keep local metadata here; the canonical adapter below
+      // still strips every path from the durable/wire DTO.
+      attachments: attachments.map((file) => ({ ...file })),
       ...(voiceFile ? { voiceFile } : {}),
       ...(autoApproveRunShellForMessage ? { autoApproveRunShell: true } : {}),
       preserveActiveStream,
@@ -2466,33 +2499,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
 
     const ok = await wsClient.ensureConnectedSend({
-      action: 'chat',
-      deliveryMode,
-      clientCapabilities: ['replaceable_drafts'],
-      client_msg_id: clientMsgId,
-      message: inputText || "Please check the attachments I uploaded",
-      sessionId: activeSessionId || undefined, ...(!activeSessionId ? { sandboxProfile: sandboxProfileRef.current } : {}),
-      // 专职 Agent 绑定：仅新会话首条消息带（带 sessionId 时服务端以 meta 为准）
-      ...(pendingOrgAgentIdRef.current && !activeSessionId
-        ? { orgAgentId: pendingOrgAgentIdRef.current }
-        : {}),
-      model: selectedModelRef.current || undefined,
+      ...toWebChatWireMessage(submission),
       // TASK-256：低风险档消息级显式携带 lowRiskOnly（与账户 tier 同一模型，不依赖
       // 服务端兜底）；ask 档会话开关开启时为全量自动批准（会话级升档）。
       ...(autoApproveRunShellForMessage ? {
         approvalPolicy: approvalPolicyPayloadForTier(approvalTierRef.current === "low-risk" ? "low-risk" : "full"),
       } : {}),
-      attachments: attachments.length > 0
-        ? attachments.map((file) => ({
-          ...(file.attachmentId ? { attachmentId: file.attachmentId } : {}),
-          originalName: file.originalName,
-          ...(file.savedPath ? { savedPath: file.savedPath } : {}),
-          relativePath: file.relativePath,
-          size: file.size,
-          mimeType: file.mimeType,
-          isImage: file.isImage,
-        }))
-        : undefined,
       ...(voiceFile ? { voiceFile } : {}),
     });
 
@@ -2526,12 +2538,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // 启动 ACK 超时定时器
       armAckTimeout(clientMsgId);
     }
-  }, [dispatchConnection, armAckTimeout, failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections]);
+  }, [dispatchConnection, armAckTimeout, failProvisionalBatch, markBubbleFailed, mutateQueuedInterjections, fileUpload.reportUploadError]);
 
   // 同步 sendChatViaWs 到 ref，让 flushQueuedHead / armAckTimeout 等前置 callback 可调用
   useEffect(() => { sendChatViaWsRef.current = sendChatViaWs; }, [sendChatViaWs]);
 
-  // ---- 压缩当前会话上下文 ----
+  // ---- 压缩当前会话上下文（同样走 canonical V1 chat boundary）----
   const compactSession = useCallback(async () => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId || loadingRef.current) return;
@@ -2548,12 +2560,19 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     resetWatchdog();
     dispatchConnection('connect');
 
-    const ok = await wsClient.ensureConnectedSend({
-      action: 'chat',
-      clientCapabilities: ['replaceable_drafts'],
-      message: '/compact',
-      sessionId: activeSessionId,
+    const compactSubmission = buildWebChatSubmission({
+      text: '/compact',
+      clientMsgId: crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      target: { sessionId: activeSessionId },
+      deliveryMode: 'queue',
+      attachments: [],
     });
+    if (!compactSubmission.ok) {
+      wsAttachedRef.current = false;
+      setLoading(false);
+      return;
+    }
+    const ok = await wsClient.ensureConnectedSend(toWebChatWireMessage(compactSubmission.value));
 
     if (!ok) {
       wsAttachedRef.current = false;
@@ -2571,6 +2590,12 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     try {
       const capturedInput = trimmedInput;
       const capturedAttachments = [...uploadedFilesRef.current];
+      const attachmentValidation = validateWebUploadedFiles(capturedAttachments);
+      if (!attachmentValidation.ok) {
+        fileUpload.reportUploadError(`附件不可发送：${attachmentValidation.issue.message}`);
+        return;
+      }
+      const capturedAttachmentDisplay = attachmentValidation.value.map(canonicalChatAttachmentToDisplay);
       // React state 会批量提交；refs 必须同步清空，阻断同一帧重复点击复用旧内容。
       inputRef.current = "";
       uploadedFilesRef.current = [];
@@ -2587,8 +2612,9 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           deliveryMode,
           content: capturedInput,
           ...(capturedAttachments.length > 0 ? {
-            attachments: capturedAttachments.map((f) => ({ name: f.originalName, isImage: f.isImage, relativePath: f.relativePath })),
-            uploadedFiles: capturedAttachments,
+            attachments: capturedAttachmentDisplay,
+            // Local queue editing keeps the complete UploadedFile; attachments above is the path-free DTO projection.
+            uploadedFiles: capturedAttachments.map((file) => ({ ...file })),
           } : {}),
           status: 'sending' as const,
           createdAt: Date.now(),
@@ -2603,7 +2629,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             clientMsgId,
             deliveryMode,
             input: capturedInput,
-            attachments: capturedAttachments,
+            // Provisional submissions are in-memory only and need the complete upload object for edit/retry.
+            attachments: capturedAttachments.map((file) => ({ ...file })),
             autoApproveRunShell: autoApproveRunShellRef.current,
           });
           return;
@@ -2625,7 +2652,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     } finally {
       releaseSubmissionSlot();
     }
-  }, [setInput, fileUpload.clearFiles, sendChatViaWs, mutateQueuedInterjections]);
+  }, [setInput, fileUpload.clearFiles, fileUpload.reportUploadError, sendChatViaWs, mutateQueuedInterjections]);
 
   const sendMessage = useCallback(() => submitCurrentMessage('queue'), [submitCurrentMessage]);
   const interjectMessage = useCallback(() => submitCurrentMessage('steer'), [submitCurrentMessage]);
@@ -2821,6 +2848,29 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
 
     if (message.type !== 'user' || message.status !== 'failed') return;
+    const text = typeof message.content === 'string' ? message.content : '';
+    const retryFiles: UploadedFile[] = (message.attachments ?? []).flatMap((attachment) => (
+      attachment.attachmentId
+        ? [{
+          attachmentId: attachment.attachmentId,
+          originalName: attachment.name,
+          relativePath: '',
+          size: attachment.size ?? 0,
+          mimeType: attachment.mimeType ?? 'application/octet-stream',
+          isImage: attachment.isImage ?? false,
+        }]
+        : []
+    ));
+    const retryValidation = validateWebUploadedFiles(retryFiles);
+    if ((message.attachments?.length ?? 0) !== retryFiles.length || !retryValidation.ok) {
+      fileUpload.reportUploadError('附件标识已失效，请保留文字并重新上传附件');
+      setInput(text);
+      return;
+    }
+    if (!text && retryFiles.length === 0) {
+      setInput(text);
+      return;
+    }
     const msgs = msg.messagesRef.current;
     const idx = msgs.findIndex(m => m.id === message.id);
     if (idx >= 0) removeMessageAtIndex(idx);
@@ -2829,11 +2879,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       const t = ackTimersRef.current.get(message.clientMsgId);
       if (t) { clearTimeout(t); ackTimersRef.current.delete(message.clientMsgId); }
       outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== message.clientMsgId);
-    }
-    const text = typeof message.content === 'string' ? message.content : '';
-    if (!text) {
-      setInput(text);
-      return;
     }
     // 复用原 clientMsgId（2026-08-04 P2-9 修复）：「ACK 丢失但服务端已受理」是超时的
     // 最常见成因——重发同 id 命中服务端永久幂等键并返回原 run 当前 ACK，已处理完
@@ -2853,16 +2898,20 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
             : {}),
           deliveryMode: 'queue' as const,
           content: text,
+          ...(message.attachments?.length ? {
+            attachments: message.attachments,
+            uploadedFiles: retryFiles,
+          } : {}),
           status: 'sending' as const,
           createdAt: Date.now(),
         },
       ]);
-      void sendChatViaWs(text, [], false, undefined, retryClientMsgId, autoApproveRunShellRef.current, true, 'queue');
+      void sendChatViaWs(text, retryFiles, false, undefined, retryClientMsgId, autoApproveRunShellRef.current, true, 'queue');
     } else {
       setInput("");
-      void sendChatViaWs(text, [], true, undefined, retryClientMsgId);
+      void sendChatViaWs(text, retryFiles, true, undefined, retryClientMsgId);
     }
-  }, [setInput, msg, sendChatViaWs, removeMessageAtIndex, mutateQueuedInterjections]);
+  }, [setInput, msg, sendChatViaWs, removeMessageAtIndex, mutateQueuedInterjections, fileUpload.reportUploadError]);
 
   // ---- 插话队列区操作（2026-08-04 终态设计）----
   const cancelQueuedInterjection = useCallback((clientMsgId: string) => cancelQueuedEntry({

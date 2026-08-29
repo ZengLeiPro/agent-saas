@@ -1,6 +1,7 @@
 export type {
   MessageItem,
   MessageItemInput,
+  MessageAttachmentDisplay,
   AskUserAnswerValue,
   AskUserAnswers,
   SubagentStatus,
@@ -9,6 +10,7 @@ export type {
   BusinessStepSection,
   RenderItem,
 } from "./message";
+// Message render/runtime exports.
 export { ACTIVITY_TYPES } from "./message";
 
 export type {

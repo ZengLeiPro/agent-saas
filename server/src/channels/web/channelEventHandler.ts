@@ -1,6 +1,7 @@
 import { stat } from 'fs/promises';
 import { resolve as resolvePath } from 'path';
 import type { WebSocket } from 'ws';
+import type { MessageAttachmentDisplay } from '@agent/shared';
 import { projectArtifactDelivery, shouldSendWebBlock, shouldSendWebToolResult } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
 import { parseVoiceMarkers } from '../../utils/voiceMarkers.js';
@@ -36,7 +37,7 @@ export interface WebChannelEventDependencies {
 export interface WebChannelEventTitleContext {
   userMessage: string;
   userDisplayContent?: string;
-  attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachmentMeta?: MessageAttachmentDisplay[];
   clientMsgId?: string;
   isNewSession: boolean;
   getSessionId: () => string | undefined;

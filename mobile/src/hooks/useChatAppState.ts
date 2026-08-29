@@ -36,6 +36,12 @@ import { useAuth } from "../contexts/AuthContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
 import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay } from "@agent/shared";
+import {
+  buildMobileChatSubmission,
+  toMobileChatWireMessage,
+  validateMobileUploadedFiles,
+} from "../lib/chatSubmissionAdapter";
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
@@ -844,6 +850,19 @@ export function useChatAppStateCore(): ChatAppState {
     ) => {
       const activeSessionId = sessionIdRef.current;
       const clientMsgId = existingClientMsgId || genClientMsgId();
+      const normalized = buildMobileChatSubmission({
+        text: inputText,
+        clientMsgId,
+        target: activeSessionId ? { sessionId: activeSessionId } : {},
+        deliveryMode: 'queue',
+        model: selectedModelRef.current ?? undefined,
+        attachments,
+      });
+      if (!normalized.ok) {
+        fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
+        return;
+      }
+      const submission = normalized.value;
 
       wsLatestSessionIdRef.current = { value: activeSessionId };
       wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
@@ -856,13 +875,8 @@ export function useChatAppStateCore(): ChatAppState {
         wsUserMsgIndexRef.current = msgRef.current.addMessage({
           type: "user",
           content: inputText,
-          ...(attachments.length > 0
-            ? {
-                attachments: attachments.map((f) => ({
-                  name: f.originalName,
-                  isImage: f.isImage,
-                })),
-              }
+          ...(submission.attachments.length > 0
+            ? { attachments: submission.attachments.map(canonicalChatAttachmentToDisplay) }
             : {}),
           status: "pending",
           timestamp: Date.now(),
@@ -898,7 +912,14 @@ export function useChatAppStateCore(): ChatAppState {
       outboxRef.current.push({
         clientMsgId,
         input: inputText,
-        attachments,
+        attachments: submission.attachments.map((attachment) => ({
+          attachmentId: attachment.attachmentId,
+          originalName: attachment.display.originalName,
+          relativePath: '',
+          size: attachment.display.size ?? 0,
+          mimeType: attachment.display.mimeType ?? 'application/octet-stream',
+          isImage: attachment.display.isImage ?? false,
+        })),
         ...(voiceFile ? { voiceFile } : {}),
         state: "sending",
         createdAt: Date.now(),
@@ -910,23 +931,7 @@ export function useChatAppStateCore(): ChatAppState {
       dispatchConnection("connect");
 
       const ok = await wsClient.ensureConnectedSend({
-        action: "chat",
-        client_msg_id: clientMsgId,
-        message: inputText || "Please check the attachments I uploaded",
-        sessionId: activeSessionId || undefined,
-        model: selectedModelRef.current || undefined,
-        ...(attachments.length > 0
-          ? {
-              attachments: attachments.map((file) => ({
-                originalName: file.originalName,
-                savedPath: file.savedPath,
-                relativePath: file.relativePath,
-                size: file.size,
-                mimeType: file.mimeType,
-                isImage: file.isImage,
-              })),
-            }
-          : {}),
+        ...toMobileChatWireMessage(submission),
         ...(voiceFile ? { voiceFile } : {}),
       });
 
@@ -1530,7 +1535,7 @@ export function useChatAppStateCore(): ChatAppState {
     }
   }, [session.sessionId, session.sessions, modelList]);
 
-  // ---- 压缩当前会话上下文 ----
+  // ---- 压缩当前会话上下文（同样走 canonical V1 chat boundary）----
   const compactSession = useCallback(async () => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId || loadingRef.current) return;
@@ -1547,24 +1552,40 @@ export function useChatAppStateCore(): ChatAppState {
     resetWatchdog();
     dispatchConnection("connect");
 
-    const ok = await wsClient.ensureConnectedSend({
-      action: "chat",
-      message: "/compact",
-      sessionId: activeSessionId,
+    const compactSubmission = buildMobileChatSubmission({
+      text: "/compact",
+      clientMsgId: genClientMsgId(),
+      target: { sessionId: activeSessionId },
+      deliveryMode: "queue",
+      attachments: [],
     });
+    if (!compactSubmission.ok) {
+      wsAttachedRef.current = false;
+      setLoading(false);
+      setCompacting(false);
+      return;
+    }
+    const ok = await wsClient.ensureConnectedSend(toMobileChatWireMessage(compactSubmission.value));
 
     if (!ok) {
       wsAttachedRef.current = false;
       setLoading(false);
       setCompacting(false);
     }
-  }, [dispatchConnection]);
+  }, [dispatchConnection, genClientMsgId]);
 
   // Send message (text + files)
   const sendMessage = useCallback(async () => {
     const trimmedInput = input.trim();
+    const pendingFiles = fileUpload.uploadedFiles;
+    if (!trimmedInput && pendingFiles.length === 0) return;
+    const attachmentValidation = validateMobileUploadedFiles(pendingFiles);
+    if (!attachmentValidation.ok) {
+      fileUpload.reportUploadError(`附件不可发送：${attachmentValidation.issue.message}`);
+      // Fail closed before consuming attachments or clearing the text draft.
+      return;
+    }
     const capturedFiles = fileUpload.consumeFiles();
-    if (!trimmedInput && capturedFiles.length === 0) return;
     setInput("");
 
     if (loadingRef.current) {
@@ -1573,7 +1594,14 @@ export function useChatAppStateCore(): ChatAppState {
       outboxRef.current.push({
         clientMsgId: queuedClientMsgId,
         input: trimmedInput,
-        attachments: capturedFiles,
+        attachments: attachmentValidation.value.map((attachment) => ({
+          attachmentId: attachment.attachmentId,
+          originalName: attachment.display.originalName,
+          relativePath: '',
+          size: attachment.display.size ?? 0,
+          mimeType: attachment.display.mimeType ?? 'application/octet-stream',
+          isImage: attachment.display.isImage ?? false,
+        })),
         state: "queued",
         createdAt: Date.now(),
       });
@@ -1581,13 +1609,8 @@ export function useChatAppStateCore(): ChatAppState {
       msgRef.current.addMessage({
         type: "user",
         content: trimmedInput,
-        ...(capturedFiles.length > 0
-          ? {
-              attachments: capturedFiles.map((f) => ({
-                name: f.originalName,
-                isImage: f.isImage,
-              })),
-            }
+        ...(attachmentValidation.value.length > 0
+          ? { attachments: attachmentValidation.value.map(canonicalChatAttachmentToDisplay) }
           : {}),
         status: "pending",
         timestamp: Date.now(),
@@ -1675,6 +1698,24 @@ export function useChatAppStateCore(): ChatAppState {
   const retryMessage = useCallback(
     (message: MessageItem) => {
       if (message.type !== "user" || message.status !== "failed") return;
+      const retryFiles: UploadedFile[] = (message.attachments ?? []).flatMap((attachment) => (
+        attachment.attachmentId
+          ? [{
+              attachmentId: attachment.attachmentId,
+              originalName: attachment.name,
+              relativePath: '',
+              size: attachment.size ?? 0,
+              mimeType: attachment.mimeType ?? 'application/octet-stream',
+              isImage: attachment.isImage ?? false,
+            }]
+          : []
+      ));
+      const retryValidation = validateMobileUploadedFiles(retryFiles);
+      if ((message.attachments?.length ?? 0) !== retryFiles.length || !retryValidation.ok) {
+        fileUpload.reportUploadError('附件标识已失效，请保留文字并重新上传附件');
+        setInput(typeof message.content === 'string' ? message.content : '');
+        return;
+      }
       const msgs = msg.messagesRef.current;
       const idx = msgs.findIndex((m) => m.id === message.id);
       if (idx >= 0) {
@@ -1692,34 +1733,35 @@ export function useChatAppStateCore(): ChatAppState {
         );
       }
       const text = typeof message.content === "string" ? message.content : "";
-      if (!text) {
+      if (!text && retryFiles.length === 0) {
         setInput(text);
         return;
       }
-      // 用户手动 retry：生成新 clientMsgId（避免服务端幂等返回旧结果）
+      // 用户手动 retry：生成新 clientMsgId；附件仍使用上传时的同一 attachmentId。
       if (loadingRef.current) {
         setInput("");
         const queuedClientMsgId = genClientMsgId();
         outboxRef.current.push({
           clientMsgId: queuedClientMsgId,
           input: text,
-          attachments: [],
+          attachments: retryFiles,
           state: "queued",
           createdAt: Date.now(),
         });
         msg.addMessage({
           type: "user",
           content: text,
+          ...(message.attachments?.length ? { attachments: message.attachments } : {}),
           status: "pending",
           timestamp: Date.now(),
           clientMsgId: queuedClientMsgId,
         });
       } else {
         setInput("");
-        void sendChatViaWs(text, [], true);
+        void sendChatViaWs(text, retryFiles, true);
       }
     },
-    [msg, sendChatViaWs, genClientMsgId],
+    [msg, sendChatViaWs, genClientMsgId, fileUpload],
   );
 
   const respondToInteraction = useCallback(

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
+import type { CanonicalChatSubmissionWireMessage } from "@agent/shared";
 
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
@@ -74,6 +75,7 @@ vi.mock("@/hooks/useFileUpload", () => ({
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: vi.fn(),
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -122,9 +124,9 @@ function emit(data: unknown): void {
   for (const handler of [...harness.messageHandlers]) handler({ data });
 }
 
-function chatPayloads(): Array<Record<string, unknown>> {
+function chatPayloads(): CanonicalChatSubmissionWireMessage[] {
   return harness.sends.mock.calls
-    .map(([payload]) => payload as Record<string, unknown>)
+    .map(([payload]) => payload as CanonicalChatSubmissionWireMessage)
     .filter((payload) => payload.action === "chat");
 }
 
@@ -661,25 +663,26 @@ describe("useChatAppState queue consistency lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
 
     expect(chatPayloads()).toHaveLength(1);
-    expect(chatPayloads()[0].sessionId).toBeUndefined();
+    expect(chatPayloads()[0].submission.target.sessionId).toBeUndefined();
+    expect(chatPayloads()[0].clientCapabilities).toContain("chat_submission_v1");
     expect(result.current.queuedInterjections.map((entry) => entry.content)).toEqual(["second"]);
 
     act(() => emit({
       type: "session",
       sessionId: "session-authoritative",
-      client_msg_id: chatPayloads()[0].client_msg_id,
+      client_msg_id: chatPayloads()[0].submission.clientMsgId,
     }));
 
     await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]);
-    expect(chatPayloads()[1].sessionId).toBe("session-authoritative");
+    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]);
+    expect(chatPayloads()[1].submission.target.sessionId).toBe("session-authoritative");
   });
 
   it("stops the remaining provisional flush when the user switches sessions mid-batch", async () => {
     let releaseInflight: (() => void) | undefined;
     const inflight = new Promise<void>((resolve) => { releaseInflight = resolve; });
     harness.sends.mockImplementation(async (payload: unknown) => {
-      if ((payload as { message?: string }).message === "second") await inflight;
+      if ((payload as Partial<CanonicalChatSubmissionWireMessage>).submission?.text === "second") await inflight;
       return true;
     });
     const { result } = renderHook(() => useChatAppState());
@@ -691,14 +694,14 @@ describe("useChatAppState queue consistency lifecycle", () => {
     act(() => result.current.setInput("third"));
     await act(async () => { await result.current.sendMessage(); });
 
-    const rootId = chatPayloads()[0].client_msg_id;
+    const rootId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
-    await waitFor(() => expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]));
+    await waitFor(() => expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]));
     act(() => result.current.selectSession("session-b"));
     releaseInflight?.();
     await act(async () => { await inflight; await Promise.resolve(); });
 
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "second"]);
+    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]);
     expect(harness.session.selectSession).toHaveBeenCalledWith("session-b");
   });
 
@@ -707,7 +710,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const rejectedRootId = chatPayloads()[0].client_msg_id as string;
+    const rejectedRootId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => result.current.setInput("must not leak"));
     await act(async () => { await result.current.sendMessage(); });
 
@@ -722,11 +725,11 @@ describe("useChatAppState queue consistency lifecycle", () => {
     act(() => result.current.newSession());
     act(() => result.current.setInput("next root"));
     await act(async () => { await result.current.sendMessage(); });
-    const nextRootId = chatPayloads()[1].client_msg_id as string;
+    const nextRootId = chatPayloads()[1].submission.clientMsgId as string;
     act(() => emit({ type: "session", sessionId: "session-next", client_msg_id: nextRootId }));
 
     await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.message)).toEqual(["first", "next root"]);
+    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "next root"]);
   });
 
   it("drops a provisional batch on session switch and ignores the late session confirmation", async () => {
@@ -734,7 +737,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const staleRootId = chatPayloads()[0].client_msg_id as string;
+    const staleRootId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => result.current.setInput("must stay local"));
     await act(async () => { await result.current.sendMessage(); });
 

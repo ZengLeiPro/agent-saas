@@ -78,6 +78,7 @@ import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
+import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
 import {
@@ -899,9 +900,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       content: string;
       attachments?: Array<{
         name: string;
-        attachmentId?: string;
-        savedPath?: string;
-        relativePath?: string;
+        attachmentId: string;
         size?: number;
         mimeType?: string;
         isImage?: boolean;
@@ -917,13 +916,16 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         queuedMessages = queriedPending.flatMap((run, index) => {
           if (projectedRunIds.has(run.runId)) return [];
           const wakeMessage = run.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
-          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const parsedSubmission = parseCanonicalChatSubmission(run.metadata?.chatSubmission);
+          if (!parsedSubmission.ok && (!wakeMessage || typeof wakeMessage.content !== 'string')) return [];
           const clientMsgId = typeof run.metadata?.clientMsgId === 'string' ? run.metadata.clientMsgId : undefined;
           const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const;
           const targetRunId = deliveryMode === 'steer'
             ? (typeof run.metadata?.steeringTargetRunId === 'string' ? run.metadata.steeringTargetRunId : undefined)
             : (typeof run.metadata?.queuedBehindRunId === 'string' ? run.metadata.queuedBehindRunId : undefined);
-          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
+          const attachments = projectQueuedMessageAttachments(
+            parsedSubmission.ok ? parsedSubmission.value.attachments : wakeMessage?.attachments,
+          );
           return [{
             sourceRunId: run.runId,
             runId: run.runId,
@@ -931,7 +933,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             deliveryMode,
             ...(targetRunId ? { targetRunId } : {}),
             queuePosition: index + 1,
-            content: wakeMessage.content,
+            content: parsedSubmission.ok ? parsedSubmission.value.text : wakeMessage!.content as string,
             ...(attachments.length ? { attachments } : {}),
             acceptedAt: typeof run.metadata?.acceptedAt === 'string' ? run.metadata.acceptedAt : run.requestedAt,
           }];
@@ -948,9 +950,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         const pending = filterProjectedQueuedMessages(queriedPending, [], durableProjectedSourceRunIds);
         queuedMessages = pending.flatMap((input, index) => {
           const wakeMessage = input.sourceRun.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
-          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const parsedSubmission = parseCanonicalChatSubmission(input.sourceRun.metadata?.chatSubmission);
+          if (!parsedSubmission.ok && (!wakeMessage || typeof wakeMessage.content !== 'string')) return [];
           const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string' ? input.sourceRun.metadata.clientMsgId : undefined;
-          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
+          const attachments = projectQueuedMessageAttachments(
+            parsedSubmission.ok ? parsedSubmission.value.attachments : wakeMessage?.attachments,
+          );
           return [{
             sourceRunId: input.sourceRunId,
             runId: input.sourceRunId,
@@ -958,7 +963,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             deliveryMode: 'steer' as const,
             targetRunId: input.targetRunId,
             queuePosition: index + 1,
-            content: wakeMessage.content,
+            content: parsedSubmission.ok ? parsedSubmission.value.text : wakeMessage!.content as string,
             ...(attachments.length ? { attachments } : {}),
             acceptedAt: input.acceptedAt,
           }];

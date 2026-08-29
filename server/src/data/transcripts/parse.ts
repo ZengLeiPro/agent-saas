@@ -10,6 +10,8 @@ import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
 import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
+import { isValidAttachmentId } from '@agent/shared/lib/chatSubmission';
+import type { MessageAttachmentDisplay } from '@agent/shared';
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
 import {
@@ -71,7 +73,7 @@ export interface TranscriptBlock {
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
   /** User prompt 携带的附件元数据（来自 transcript user 行顶层 attachments 字段） */
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachments?: MessageAttachmentDisplay[];
   /** 用户消息客户端幂等 ID；刷新后继续用于消息与队列精确对账。 */
   clientMsgId?: string;
   /** 插话来源 run ID；detail API 据此排除已经投影进时间线的 pending steering。 */
@@ -591,12 +593,12 @@ function toTsMs(value: unknown): number | undefined {
   return undefined;
 }
 
-/** 解析 transcript user 行顶层 attachments 字段（legacyTranscriptProjection userLine 写入） */
+/** 解析 transcript user 行顶层 attachments 字段（V1 ID metadata + N-1 legacy path display）。 */
 function parseUserAttachments(
   value: unknown,
-): Array<{ name: string; isImage?: boolean; relativePath?: string }> | undefined {
+): MessageAttachmentDisplay[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const out: Array<{ name: string; isImage?: boolean; relativePath?: string }> = [];
+  const out: MessageAttachmentDisplay[] = [];
   for (const item of value) {
     const name = typeof (item as { name?: unknown })?.name === "string"
       ? (item as { name: string }).name
@@ -605,9 +607,22 @@ function parseUserAttachments(
     const relativePath = typeof (item as { relativePath?: unknown })?.relativePath === "string"
       ? (item as { relativePath: string }).relativePath
       : undefined;
+    const attachmentId = isValidAttachmentId((item as { attachmentId?: unknown })?.attachmentId)
+      ? (item as { attachmentId: string }).attachmentId
+      : undefined;
+    const mimeType = typeof (item as { mimeType?: unknown })?.mimeType === 'string'
+      ? (item as { mimeType: string }).mimeType
+      : undefined;
+    const size = typeof (item as { size?: unknown })?.size === 'number'
+      ? (item as { size: number }).size
+      : undefined;
     out.push({
       name,
+      ...(attachmentId ? { attachmentId } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(size !== undefined ? { size } : {}),
       ...((item as { isImage?: unknown })?.isImage === true ? { isImage: true } : {}),
+      // N-1 transcript only. New projection no longer writes this field.
       ...(relativePath ? { relativePath } : {}),
     });
   }

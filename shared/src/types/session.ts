@@ -1,4 +1,5 @@
 import type { AgentProfile } from './agent';
+import type { MessageAttachmentDisplay } from './message';
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
@@ -108,11 +109,10 @@ export interface ApiSessionDetail {
     targetRunId?: string;
     queuePosition?: number;
     content: string;
+    /** Canonical queue snapshot: attachmentId + display metadata, never a path. */
     attachments?: Array<{
       name: string;
-      attachmentId?: string;
-      savedPath?: string;
-      relativePath?: string;
+      attachmentId: string;
       size?: number;
       mimeType?: string;
       isImage?: boolean;
@@ -301,7 +301,7 @@ export interface ApiTranscriptBlock {
   subagent?: ApiSubagentActivity;
   isVoiceTranscript?: boolean;
   /** prompt block：用户消息携带的附件元数据（transcript user 行结构化字段） */
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachments?: MessageAttachmentDisplay[];
   /** prompt block：用户消息客户端幂等 ID。 */
   clientMsgId?: string;
   /** prompt block：插话来源 run ID，用于与服务端队列真源对账。 */

@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    reportUploadError: vi.fn(),
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -74,6 +75,7 @@ vi.mock("@/hooks/useFileUpload", () => ({
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: harness.reportUploadError,
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -132,6 +134,7 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
+  harness.reportUploadError.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;

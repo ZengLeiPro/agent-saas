@@ -19,6 +19,8 @@ import type { PlatformDeps } from '../../platform/types';
 
 let storageSetSpy: Mock<(...a: unknown[]) => void>;
 
+const ATTACHMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
 function makePlatform(): PlatformDeps {
   storageSetSpy = vi.fn<(...a: unknown[]) => void>();
   return {
@@ -70,12 +72,18 @@ describe('sendChatViaWs — 成功路径', () => {
     // 乐观更新会话 preview
     expect(s.sessions[0].preview).toBe('问题内容');
     // 发送内容正确
-    expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({
+    expect(wsEnsureSend).toHaveBeenCalledWith({
       action: 'chat',
-      clientCapabilities: ['replaceable_drafts'],
-      message: '问题内容',
-      sessionId: 's1',
-    }));
+      clientCapabilities: ['chat_submission_v1', 'replaceable_drafts'],
+      submission: expect.objectContaining({
+        version: 1,
+        text: '问题内容',
+        clientMsgId: expect.any(String),
+        target: { sessionId: 's1' },
+        deliveryMode: 'queue',
+        attachments: [],
+      }),
+    });
   });
 
   it('connection 状态机被推进到 connected', async () => {
@@ -85,17 +93,40 @@ describe('sendChatViaWs — 成功路径', () => {
     expect(store.getState().connectionState).toBe('connected');
   });
 
-  it('空 inputText 但有附件：message 回退为占位文案，附件带上', async () => {
+  it('附件-only submission 保持 canonical text 为空且发送 attachmentId-only DTO', async () => {
     const store = getChatStore();
     store.setState({ activeSessionId: 's1' });
     await sendChatViaWs({
       inputText: '',
-      attachments: [{ originalName: 'a.png', relativePath: 'x/a.png', size: 10, mimeType: 'image/png', isImage: true }],
+      attachments: [{
+        attachmentId: ATTACHMENT_ID,
+        originalName: 'a.png',
+        savedPath: '/private/uploads/a.png',
+        relativePath: 'uploads/a.png',
+        size: 10,
+        mimeType: 'image/png',
+        isImage: true,
+      }],
     });
-    expect(wsEnsureSend).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Please check the attachments I uploaded',
-      attachments: expect.arrayContaining([expect.objectContaining({ originalName: 'a.png', isImage: true })]),
-    }));
+
+    expect(wsEnsureSend).toHaveBeenCalledWith({
+      action: 'chat',
+      clientCapabilities: ['chat_submission_v1', 'replaceable_drafts'],
+      submission: expect.objectContaining({
+        text: '',
+        target: { sessionId: 's1' },
+        attachments: [{
+          attachmentId: ATTACHMENT_ID,
+          display: {
+            originalName: 'a.png',
+            size: 10,
+            mimeType: 'image/png',
+            isImage: true,
+          },
+        }],
+      }),
+    });
+    expect(JSON.stringify(wsEnsureSend.mock.calls[0]?.[0])).not.toMatch(/savedPath|relativePath|\/private\/uploads/);
   });
 
   it('selectedModel + activeSessionId：成功后持久化模型选择', async () => {

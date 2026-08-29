@@ -15,6 +15,10 @@
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
 import type { SandboxProfile } from '../types/session';
+import type {
+    CanonicalChatSubmissionWireMessage,
+    ChatClientCapability,
+} from './chatSubmission';
 
 export type WsState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -23,33 +27,7 @@ export type WsMessageHandler = (data: any) => void;
 export type WsStateHandler = (state: WsState) => void;
 
 /** Outbound message types */
-export interface WsChatMessage {
-    action: 'chat';
-    /** 普通消息默认排队；steer 仅用于用户显式插话。 */
-    deliveryMode?: 'queue' | 'steer';
-    /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
-    clientCapabilities?: Array<'replaceable_drafts'>;
-    /** 客户端生成的 UUID，贯穿全链路，用于 ACK / 拒绝 / 幂等 / 状态机绑定 */
-    client_msg_id?: string;
-    message: string;
-    sessionId?: string;
-    /** Only honored when creating a session; persisted profile wins on continuation. */
-    sandboxProfile?: SandboxProfile;
-    /**
-     * 公司级专职 Agent 绑定（2026-07 唯恩批次）。仅新会话首条消息生效；
-     * 带 sessionId 时服务端以会话 meta 为准（忽略客户端值）。
-     */
-    orgAgentId?: string;
-    attachments?: Array<{
-        attachmentId?: string;
-        originalName: string;
-        savedPath?: string;
-        relativePath: string;
-        size: number;
-        mimeType: string;
-        isImage: boolean;
-    }>;
-    model?: string;
+interface WsChatControlFields {
     /** 内部管理员验收开关：选择工具执行后端。普通 UI 不暴露。 */
     executionTarget?: 'server-local' | 'server-container';
     approvalPolicy?: {
@@ -58,13 +36,46 @@ export interface WsChatMessage {
         /** 「低风险常开」档：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
         lowRiskOnly?: boolean;
     };
-    /** 只能使用 Demo 启动 API 返回的不透明运行绑定。 */
+    /** M50-04 范围：语音路径仍在隔离的旧通道中；M20-01 不扩大其信任。 */
     voiceFile?: {
         savedPath: string;
         relativePath: string;
         duration: number;
     };
 }
+
+/** M20-01 canonical chat wire message. Path-shaped attachment fields are not representable. */
+export type CanonicalWsChatMessage = CanonicalChatSubmissionWireMessage & WsChatControlFields;
+
+/** @deprecated N-1 only. Never construct this from the M20-01 canonical adapter. */
+export interface LegacyWsChatAttachment {
+    attachmentId?: string;
+    originalName: string;
+    /** @deprecated Server compatibility lookup only; never authoritative. */
+    savedPath?: string;
+    /** @deprecated Server compatibility lookup only; never authoritative. */
+    relativePath: string;
+    size: number;
+    mimeType: string;
+    isImage: boolean;
+}
+
+/** @deprecated N-1 chat envelope. New Mobile/Web code must use CanonicalWsChatMessage. */
+export interface LegacyWsChatMessage extends WsChatControlFields {
+    action: 'chat';
+    deliveryMode?: 'queue' | 'steer';
+    clientCapabilities?: ChatClientCapability[];
+    client_msg_id?: string;
+    message: string;
+    sessionId?: string;
+    /** Only honored when creating a session; persisted profile wins on continuation. */
+    sandboxProfile?: SandboxProfile;
+    orgAgentId?: string;
+    attachments?: LegacyWsChatAttachment[];
+    model?: string;
+}
+
+export type WsChatMessage = CanonicalWsChatMessage | LegacyWsChatMessage;
 
 export interface WsRespondMessage {
   action: 'respond';
@@ -521,11 +532,13 @@ class WsClient {
         this.connectPromiseReject = null;
     }
 
-    /** Send message, returns whether successful */
+    /** Send message, returns whether successful (and re-checks the connected socket origin). */
     send(msg: WsOutboundMessage): boolean {
         if (this.state === 'connected' && this.ws && this.ws.readyState === WebSocket.OPEN) {
             try {
-                this.assertTrustedWsUrl(this.ws.url);
+                const socketUrl = (this.ws as unknown as { url?: unknown }).url;
+                if (typeof socketUrl !== 'string') throw new Error('WebSocket URL unavailable');
+                this.assertTrustedWsUrl(socketUrl);
             } catch {
                 console.warn('[WS] Refusing send to an untrusted origin');
                 this.disconnect();

@@ -51,6 +51,7 @@ export type {
   UpdateAgentDwsContextPolicyInput,
   MessageItem,
   MessageItemInput,
+  MessageAttachmentDisplay,
   AskUserAnswerValue,
   AskUserAnswers,
   SubagentStatus,
@@ -403,6 +404,34 @@ export { parseJsonResponse } from './lib/parseJsonResponse';
 export { reportActivity } from './lib/activityReporter';
 export type { ActivityLocation } from './lib/activityReporter';
 
+// Lib - canonical, path-free chat submission V1 (M20-01)
+export {
+  ATTACHMENT_ID_PATTERN,
+  CHAT_SUBMISSION_V1_CAPABILITY,
+  CHAT_SUBMISSION_VERSION,
+  canonicalChatAttachmentToDisplay,
+  isValidAttachmentId,
+  normalizeChatSubmission,
+  normalizeChatSubmissionAttachment,
+  normalizeChatSubmissionAttachments,
+  parseCanonicalChatSubmission,
+  toCanonicalChatSubmissionWireMessage,
+} from './lib/chatSubmission';
+export type {
+  CanonicalChatAttachment,
+  CanonicalChatAttachmentDisplay,
+  CanonicalChatSubmission,
+  CanonicalChatSubmissionWireMessage,
+  CanonicalChatTarget,
+  ChatClientCapability,
+  ChatDeliveryMode as CanonicalChatDeliveryMode,
+  ChatSubmissionAttachmentInput,
+  ChatSubmissionInput,
+  ChatSubmissionIssue,
+  ChatSubmissionIssueCode,
+  ChatSubmissionResult,
+} from './lib/chatSubmission';
+
 // Lib - WebSocket client
 export { wsClient } from './lib/wsClient';
 export type {
@@ -410,6 +439,9 @@ export type {
   WsMessageHandler,
   WsStateHandler,
   WsChatMessage,
+  CanonicalWsChatMessage,
+  LegacyWsChatMessage,
+  LegacyWsChatAttachment,
   WsRespondMessage,
   WsAbortMessage,
   WsResumeMessage,

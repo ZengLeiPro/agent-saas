@@ -9,6 +9,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
 import type { UploadedFile } from '@agent/shared';
 import { authFetch } from '@agent/shared';
+import { validateMobileUploadedFiles } from '../lib/chatSubmissionAdapter';
 
 const HEIF_MIMES = new Set(['image/heif', 'image/heic', 'image/heif-sequence', 'image/heic-sequence']);
 
@@ -19,6 +20,7 @@ export interface FileUploadState {
   uploading: boolean;
   uploadError: string | null;
   dismissUploadError: () => void;
+  reportUploadError: (message: string) => void;
   pickFile: () => Promise<void>;
   pickImage: () => Promise<void>;
   takePhoto: () => Promise<void>;
@@ -42,6 +44,10 @@ export function useFileUpload(): FileUploadState {
 
   const dismissUploadError = useCallback(() => {
     setUploadError(null);
+  }, []);
+
+  const reportUploadError = useCallback((message: string) => {
+    setUploadError(message);
   }, []);
 
   const uploadFileFromUri = useCallback(async (uri: string, name: string, mimeType: string) => {
@@ -69,8 +75,11 @@ export function useFileUpload(): FileUploadState {
       const data = await response.json() as { success: boolean; error?: string; files?: UploadedFile[] };
       if (!data.success || !data.files?.[0]) throw new Error(data.error || '上传失败');
 
+      const validation = validateMobileUploadedFiles([data.files[0]]);
+      if (!validation.ok) throw new Error(validation.issue.message);
       const uploaded: UploadedFile = {
         ...data.files[0],
+        attachmentId: validation.value[0].attachmentId,
         previewUrl: data.files[0].isImage ? uri : undefined,
       };
 
@@ -206,7 +215,15 @@ export function useFileUpload(): FileUploadState {
 
   const addUploadedFiles = useCallback((files: UploadedFile[]) => {
     if (!files.length) return;
-    setUploadedFiles(prev => [...prev, ...files]);
+    const validation = validateMobileUploadedFiles(files);
+    if (!validation.ok) {
+      setUploadError(`附件不可发送：${validation.issue.message}`);
+      return;
+    }
+    setUploadedFiles(prev => [...prev, ...files.map((file, index) => ({
+      ...file,
+      attachmentId: validation.value[index].attachmentId,
+    }))]);
   }, []);
 
   return {
@@ -214,6 +231,7 @@ export function useFileUpload(): FileUploadState {
     uploading,
     uploadError,
     dismissUploadError,
+    reportUploadError,
     pickFile,
     pickImage,
     takePhoto,

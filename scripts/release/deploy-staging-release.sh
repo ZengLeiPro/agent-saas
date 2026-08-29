@@ -35,8 +35,15 @@ install_staging_unit() {
   mv -f "$candidate_path" "$destination_path"
 }
 
-install -d -o agent-saas-staging -g agent-saas-staging -m 0750 \
-  /mnt/agent-saas-staging/runtime/server
+runtime_dir=/mnt/agent-saas-staging/runtime/server
+runuser -u agent-saas-staging -- sh -c \
+  'umask 027; mkdir -p -- "$1"' sh "$runtime_dir"
+for access in r w x; do
+  runuser -u agent-saas-staging -- test "-$access" "$runtime_dir" || {
+    echo "Staging runtime directory is not ${access}-accessible to agent-saas-staging" >&2
+    exit 1
+  }
+done
 install_staging_unit \
   "$UNIT_DIR/agent-saas-server-staging.service.template" \
   /etc/systemd/system/agent-saas-server-staging.service
@@ -50,7 +57,7 @@ systemctl daemon-reload
 
 for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
   test "$(systemctl show "$service_name" --property WorkingDirectory --value)" = \
-    /mnt/agent-saas-staging/runtime/server || {
+    "$runtime_dir" || {
     echo "$service_name does not use the persistent Staging runtime directory" >&2
     exit 1
   }

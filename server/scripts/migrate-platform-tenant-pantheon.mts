@@ -10,7 +10,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -80,6 +80,10 @@ interface FileChange {
 function parseArgs(argv: string[]): CliOptions {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(scriptDir, '..', '..');
+  // Admin Runner 打包后脚本位于 <server>/dist/admin/，此时 scriptDir/../.. 就是
+  // server 根目录（release 布局）；源码运行时位于 server/scripts/，../.. 是仓库根。
+  const bundled = basename(scriptDir) === 'admin' && basename(dirname(scriptDir)) === 'dist';
+  const serverRoot = bundled ? repoRoot : resolve(repoRoot, 'server');
   function pick(name: string): string | undefined {
     const idx = argv.indexOf(name);
     if (idx >= 0) return argv[idx + 1];
@@ -89,9 +93,11 @@ function parseArgs(argv: string[]): CliOptions {
   }
   return {
     apply: argv.includes('--apply'),
-    dataDir: resolve(pick('--data-dir') ?? resolve(repoRoot, 'server/data')),
-    configDir: resolve(pick('--config-dir') ?? resolve(repoRoot, 'server/config')),
-    workspaceSharedDir: resolve(pick('--workspace-shared') ?? resolve(repoRoot, 'workspace-shared')),
+    dataDir: resolve(pick('--data-dir') ?? resolve(serverRoot, 'data')),
+    configDir: resolve(pick('--config-dir') ?? resolve(serverRoot, 'config')),
+    workspaceSharedDir: resolve(
+      pick('--workspace-shared') ?? resolve(serverRoot, '..', 'workspace-shared'),
+    ),
   };
 }
 
@@ -200,7 +206,9 @@ async function planUsers(dataDir: string): Promise<FileChange> {
       summary.push('将 admin.role 修正为 admin');
     }
     if (admin.tenantId !== DEFAULT_TENANT_ID) {
-      summary.push(`将 admin.tenantId 从 ${admin.tenantId ?? '<missing>'} 改为 ${DEFAULT_TENANT_ID}`);
+      summary.push(
+        `将 admin.tenantId 从 ${admin.tenantId ?? '<missing>'} 改为 ${DEFAULT_TENANT_ID}`,
+      );
       admin.tenantId = DEFAULT_TENANT_ID;
       admin.updatedAt = now;
       changed = true;
@@ -209,9 +217,10 @@ async function planUsers(dataDir: string): Promise<FileChange> {
 
   for (const user of users) {
     if (!user.tenantId) {
-      user.tenantId = user.username.toLowerCase() === ADMIN_USERNAME && user.role === 'admin'
-        ? DEFAULT_TENANT_ID
-        : LEGACY_TENANT_ID;
+      user.tenantId =
+        user.username.toLowerCase() === ADMIN_USERNAME && user.role === 'admin'
+          ? DEFAULT_TENANT_ID
+          : LEGACY_TENANT_ID;
       user.updatedAt = now;
       changed = true;
       summary.push(`回填 ${user.username}.tenantId=${user.tenantId}`);
@@ -219,10 +228,15 @@ async function planUsers(dataDir: string): Promise<FileChange> {
   }
 
   const nonAdminPantheon = users
-    .filter((user) => user.username.toLowerCase() !== ADMIN_USERNAME && user.tenantId === DEFAULT_TENANT_ID)
+    .filter(
+      (user) =>
+        user.username.toLowerCase() !== ADMIN_USERNAME && user.tenantId === DEFAULT_TENANT_ID,
+    )
     .map((user) => user.username);
   if (nonAdminPantheon.length > 0) {
-    summary.push(`注意：发现非 admin 用户仍在 ${DEFAULT_TENANT_ID}: ${nonAdminPantheon.join(', ')}，脚本未自动移动`);
+    summary.push(
+      `注意：发现非 admin 用户仍在 ${DEFAULT_TENANT_ID}: ${nonAdminPantheon.join(', ')}，脚本未自动移动`,
+    );
   }
 
   return {
@@ -340,7 +354,11 @@ async function main(): Promise<void> {
     await planPantheonCompany(options.workspaceSharedDir),
   ];
 
-  console.log(options.apply ? '[apply] migrate platform tenant to pantheon' : '[dry-run] migrate platform tenant to pantheon');
+  console.log(
+    options.apply
+      ? '[apply] migrate platform tenant to pantheon'
+      : '[dry-run] migrate platform tenant to pantheon',
+  );
   console.log(`dataDir=${options.dataDir}`);
   console.log(`configDir=${options.configDir}`);
   console.log(`workspaceSharedDir=${options.workspaceSharedDir}`);
@@ -366,6 +384,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+  console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
   process.exit(1);
 });

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { canonicalJson, digestBuffer, digestFile, SHA_PATTERN } from './artifact-lib.mjs';
+import { ADMIN_RUNNER_ENTRIES, MANIFEST_KIND } from '../../server/scripts/build-admin-runner.mjs';
 
 function options(argv) {
   const values = Object.fromEntries(
@@ -41,6 +42,46 @@ export function assertProductionBuildPlatform(platform = process.platform) {
     throw new Error('Production release artifacts must be built on Linux for native dependencies');
 }
 
+// 一次性运维脚本（migration/backfill/repair/maintenance）必须以 Admin Runner 形式
+// 随同一 release 交付：manifest 存在、命令集与受控清单一致、每个入口的字节摘要
+// 与 manifest 一致。任何一项缺失都拒绝出包，避免“脚本只在源码库里、生产跑不了”。
+export async function assertAdminRunnerShipped(
+  root,
+  entries = ADMIN_RUNNER_ENTRIES,
+  manifestKind = MANIFEST_KIND,
+) {
+  const serverRoot = join(root, 'server');
+  const manifestPath = join(serverRoot, 'dist', 'admin', 'manifest.json');
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  } catch {
+    throw new Error(
+      `Admin Runner manifest missing at server/dist/admin/manifest.json; one-off operations scripts must ship with every release`,
+    );
+  }
+  if (manifest.schemaVersion !== 1 || manifest.kind !== manifestKind)
+    throw new Error('Admin Runner manifest is not a recognized agent-saas-admin-runner document');
+  const commands = manifest.commands;
+  if (!Array.isArray(commands) || commands.length === 0)
+    throw new Error('Admin Runner manifest must declare at least one command');
+  const expected = entries.map((entry) => entry.command).sort();
+  const actual = commands.map((command) => command.command).sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    throw new Error(
+      `Admin Runner command set drifted: expected [${expected.join(', ')}] but built [${actual.join(', ')}]`,
+    );
+  for (const command of commands) {
+    if (command.entry !== `${command.command}.mjs`)
+      throw new Error(`Admin Runner command ${command.command} has an unexpected entry file`);
+    await stat(join(serverRoot, command.source));
+    const details = await digestFile(join(serverRoot, 'dist', 'admin', command.entry));
+    if (details.digest !== command.digest || details.size !== command.size)
+      throw new Error(`Admin Runner entry ${command.entry} does not match its manifest digest`);
+  }
+  return manifest;
+}
+
 async function pack(directory, target) {
   run('tar', packArgs(directory, target));
   return { path: basename(target), ...(await digestFile(target)) };
@@ -61,6 +102,7 @@ export async function buildRelease(argv = process.argv) {
   await mkdir(stage, { recursive: true });
 
   run('pnpm', ['-F', 'server', 'build'], root);
+  await assertAdminRunnerShipped(root);
   run('pnpm', ['-F', 'web', 'build:oss'], root);
   run('pnpm', productionDeployArgs('server', join(stage, 'server')), root);
   await rm(join(stage, 'server/dist'), { recursive: true, force: true });

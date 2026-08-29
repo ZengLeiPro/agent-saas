@@ -119,7 +119,7 @@ PGPASSWORD="$APP_PW" /opt/homebrew/opt/libpq/bin/psql \
 
 - **sslmode=require**：阿里云 RDS 默认要求 SSL，必须加，否则握手失败
 - **连接池上限（应用端）**：当前 `PgEventStore` 用 `pg.Pool` 默认（max=10）。如果未来发现 RDS 这边连接吃紧，在 `pgEventStore.ts` 加 `max: 5` 限制；现在不动
-- 切换默认 backend 之前：用 ETL `pnpm -C server run migrate:events-file-to-pg -- --connection-string "<URL>"` 先 dry-run，再 `--execute`，把现有 jsonl 历史灌过去
+- 切换默认 backend 之前：用 ETL `pnpm -C server run migrate:events-file-to-pg -- --connection-string "<URL>"` 先 dry-run，再 `--execute`，把现有 jsonl 历史灌过去（生产主机用随 release 交付的 Admin Runner：`node dist/admin/migrate-events-file-to-pg.mjs`，见 [`admin-runner.md`](admin-runner.md)）
 
 ---
 

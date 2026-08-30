@@ -963,6 +963,36 @@ export {
   renderSemanticSignature,
   selectRenderModel,
 } from './lib/renderModel';
+
+// M50-02 renderer-neutral tool/interaction card presenters
+export {
+  CARD_VIEW_MODEL_VERSION,
+  cardSemanticSignature,
+  sanitizeCardDetail,
+  selectCardViewModelFromRenderItem,
+  selectInteractionCardViewModel,
+  selectToolCardViewModel,
+  selectUnknownCardViewModel,
+} from './lib/cardViewModel';
+export type {
+  ApprovalSurface,
+  CardAccessibilityViewModel,
+  CardActionKind,
+  CardActionViewModel,
+  CardKind,
+  CardOutcomeViewModel,
+  CardQuestionOptionViewModel,
+  CardQuestionViewModel,
+  CardStatus,
+  CardTextDetail,
+  CardViewModel,
+  InteractionCardPresenterInput,
+  InteractionCardStatus,
+  InteractionQuestionInput,
+  ToolCardPresenterInput,
+  ToolCardStatus,
+} from './lib/cardViewModel';
+export { adaptLegacyInteractionState } from './lib/legacyCardAdapter';
 export type {
   RenderAccessibility,
   RenderActionCapabilities,

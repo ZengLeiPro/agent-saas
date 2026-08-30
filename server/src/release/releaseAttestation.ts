@@ -173,10 +173,25 @@ export class ReleaseAttestationLog {
 
     const current = this.currentState();
     const sequential = SEQUENTIAL_TRANSITIONS[current]?.includes(input.state) ?? false;
+    let verifiedIndex = -1;
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      if (this.entries[index]?.state === 'verified') {
+        verifiedIndex = index;
+        break;
+      }
+    }
+    const retryTail = verifiedIndex >= 0 ? this.entries.slice(verifiedIndex + 1) : [];
+    const retryAfterFailureBeforeChange =
+      current === 'failed_before_change' &&
+      input.state === 'approved' &&
+      retryTail.some((entry) => entry.state === 'approved') &&
+      retryTail.every((entry) =>
+        ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
+      );
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
     const failure =
       FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
-    if (!sequential && !revocation && !failure)
+    if (!sequential && !retryAfterFailureBeforeChange && !revocation && !failure)
       throw new Error(`Illegal or late RC attestation transition: ${current} -> ${input.state}`);
 
     const entry: ReleaseAttestation = Object.freeze({

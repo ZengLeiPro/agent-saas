@@ -145,6 +145,24 @@ class FileCacheService {
     }
   }
 
+  /** Authenticated attachmentId route; never accepts a client path or external URL. */
+  async getOrDownloadAttachment(attachmentId: string, originalName: string): Promise<string> {
+    if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) throw new Error('attachmentId is invalid');
+    this.ensureCacheDir();
+    const platform = getPlatform();
+    const baseUrl = platform.platformConfig.getBaseUrl();
+    const url = `${baseUrl}/api/attachments/${encodeURIComponent(attachmentId)}/content`;
+    platform.platformConfig.assertTrustedUrl?.(url, 'http');
+    const token = await platform.secureStorage.getItem(TOKEN_KEY);
+    const extension = originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')).replace(/[^.A-Za-z0-9]/g, '') : '';
+    const destination = new File(Paths.cache, `${CACHE_DIR}/attachment-${djb2Hash(attachmentId)}${extension}`);
+    const downloaded = await File.downloadFileAsync(url, destination, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      idempotent: true,
+    });
+    return downloaded.uri;
+  }
+
   /**
    * Clear all cached files and reset index.
    */

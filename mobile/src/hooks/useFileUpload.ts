@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -8,12 +8,18 @@ import {
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { File } from 'expo-file-system';
 import type { UploadedFile } from '@agent/shared';
-import { authFetch } from '@agent/shared';
+import { authFetch, MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILES_PER_REQUEST, validateAttachmentSelection } from '@agent/shared';
 import { validateMobileUploadedFiles } from '../lib/chatSubmissionAdapter';
+import { AttachmentPickerAdapter } from '../platform/attachmentPickerAdapter';
 
 const HEIF_MIMES = new Set(['image/heif', 'image/heic', 'image/heif-sequence', 'image/heic-sequence']);
 
-const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB
+
+function createUploadRequestId(): string {
+  const crypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (!crypto?.randomUUID) throw new Error('设备安全随机数能力不可用');
+  return crypto.randomUUID();
+}
 
 export interface FileUploadState {
   uploadedFiles: UploadedFile[];
@@ -35,12 +41,30 @@ export interface FileUploadState {
   addUploadedFiles: (files: UploadedFile[]) => void;
 }
 
-export function useFileUpload(): FileUploadState {
+export function useFileUpload(boundary?: { available: boolean; identityKey: string }): FileUploadState {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const filesRef = useRef<UploadedFile[]>([]);
+  const pickerAdapterRef = useRef(new AttachmentPickerAdapter());
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const boundaryRef = useRef(boundary);
+  const generationRef = useRef(0);
   filesRef.current = uploadedFiles;
+
+  useEffect(() => {
+    const previous = boundaryRef.current;
+    boundaryRef.current = boundary;
+    const identityChanged = !!previous && !!boundary && previous.identityKey !== boundary.identityKey;
+    if (!identityChanged && boundary?.available !== false) return;
+    const hadUpload = !!abortControllerRef.current;
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    pickerAdapterRef.current.fence();
+    setUploading(false);
+    if (hadUpload) setUploadError(identityChanged ? '身份已切换，请重新选择文件' : '应用已锁定或离线，请重新选择文件');
+  }, [boundary?.available, boundary?.identityKey]);
 
   const dismissUploadError = useCallback(() => {
     setUploadError(null);
@@ -51,23 +75,36 @@ export function useFileUpload(): FileUploadState {
   }, []);
 
   const uploadFileFromUri = useCallback(async (uri: string, name: string, mimeType: string) => {
+    if (boundaryRef.current?.available === false) {
+      setUploadError('应用已锁定或离线，无法上传');
+      return;
+    }
     setUploading(true);
     setUploadError(null);
+    const generation = generationRef.current;
+    let localIntentId = '';
     try {
-      const file = new File(uri);
-      if (file.exists && file.size && file.size > MAX_FILE_SIZE) {
-        throw new Error(`文件"${name}"超过 1GB 限制`);
-      }
+      localIntentId = createUploadRequestId();
+      pickerAdapterRef.current.select(localIntentId, { uri, name, mimeType });
+      const source = pickerAdapterRef.current.read(localIntentId);
+      const file = new File(source.uri);
+      const size = file.exists && typeof file.size === 'number' ? file.size : 0;
+      const selection = validateAttachmentSelection([{ name: source.name, size, mimeType: source.mimeType || 'application/octet-stream' }]);
+      if (!selection.ok) throw new Error(selection.issue.message);
 
       const formData = new FormData();
       formData.append('files', {
-        uri,
-        name,
-        type: mimeType || 'application/octet-stream',
+        uri: source.uri,
+        name: source.name,
+        type: source.mimeType || 'application/octet-stream',
       } as unknown as Blob);
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
       const response = await authFetch('/api/upload', {
         method: 'POST',
+        headers: { 'X-Upload-Request-Id': createUploadRequestId() },
+        signal: controller.signal,
         body: formData,
       });
 
@@ -80,17 +117,19 @@ export function useFileUpload(): FileUploadState {
       const uploaded: UploadedFile = {
         ...data.files[0],
         attachmentId: validation.value[0].attachmentId,
-        previewUrl: data.files[0].isImage ? uri : undefined,
       };
 
-      setUploadedFiles(prev => [...prev, uploaded]);
+      if (generation === generationRef.current) setUploadedFiles(prev => [...prev, uploaded]);
     } catch (error) {
-      console.error('Upload error:', error);
-      setUploadError(
+      if (generation === generationRef.current) setUploadError(
         '上传失败：' + (error instanceof Error ? error.message : '未知错误'),
       );
     } finally {
-      setUploading(false);
+      if (localIntentId) pickerAdapterRef.current.release(localIntentId);
+      if (generation === generationRef.current) {
+        abortControllerRef.current = null;
+        setUploading(false);
+      }
     }
   }, []);
 
@@ -102,6 +141,9 @@ export function useFileUpload(): FileUploadState {
       });
 
       if (result.canceled || !result.assets?.length) return;
+      if (result.assets.length > MAX_UPLOAD_FILES_PER_REQUEST) {
+        throw new Error(`单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`);
+      }
 
       for (const asset of result.assets) {
         let { uri } = asset;
@@ -122,7 +164,6 @@ export function useFileUpload(): FileUploadState {
         await uploadFileFromUri(uri, name, mime);
       }
     } catch (error) {
-      console.error('Document picker error:', error);
       const message = error instanceof Error ? error.message : '系统文件选择器打开失败';
       setUploadError(`选择文件失败：${message}`);
       Alert.alert('选择文件失败', message);
@@ -138,6 +179,9 @@ export function useFileUpload(): FileUploadState {
       });
 
       if (result.canceled || !result.assets?.length) return;
+      if (result.assets.length > MAX_UPLOAD_FILES_PER_REQUEST) {
+        throw new Error(`单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`);
+      }
 
       for (const asset of result.assets) {
         const isVideo = asset.type === 'video';
@@ -161,7 +205,6 @@ export function useFileUpload(): FileUploadState {
         await uploadFileFromUri(uri, name, mime);
       }
     } catch (error) {
-      console.error('Image picker error:', error);
     }
   }, [uploadFileFromUri]);
 
@@ -191,7 +234,6 @@ export function useFileUpload(): FileUploadState {
 
       await uploadFileFromUri(uri, name, mime);
     } catch (error) {
-      console.error('Camera error:', error);
     }
   }, [uploadFileFromUri]);
 
@@ -204,11 +246,19 @@ export function useFileUpload(): FileUploadState {
   }, []);
 
   const clearFiles = useCallback(() => {
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    pickerAdapterRef.current.fence();
     setUploadedFiles([]);
   }, []);
 
   const consumeFiles = useCallback((): UploadedFile[] => {
+    generationRef.current += 1;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     const current = filesRef.current;
+    pickerAdapterRef.current.fence();
     setUploadedFiles([]);
     return current;
   }, []);

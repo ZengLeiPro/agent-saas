@@ -42,7 +42,7 @@ vi.mock('@/lib/authFetch', () => ({
 }));
 
 function userMessage(
-  attachments: Array<{ name: string; isImage?: boolean; relativePath?: string }>,
+  attachments: Array<{ name: string; attachmentId?: string; mimeType?: string; size?: number; isImage?: boolean; relativePath?: string }>,
 ): MessageItemType {
   return { id: 'line-1', type: 'user', content: '看下附件', attachments };
 }
@@ -165,6 +165,50 @@ describe('用户消息附件 chip', () => {
     expect((await screen.findByAltText('现场图.png')).getAttribute('src')).toBe(
       'https://api.example.com/api/share/sessions/share%201/file?path=uploads%2F%E7%8E%B0%E5%9C%BA%E5%9B%BE.png',
     );
+  });
+});
+
+describe('M50-03 canonical attachment cards', () => {
+  it('uses authenticated attachmentId route, file metadata and accessible download action', async () => {
+    authFetchMock.mockResolvedValueOnce(new Response(new Blob(['pdf']), { status: 200 }));
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:attachment');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      renderMessage(userMessage([{
+        attachmentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        name: 'report.pdf', mimeType: 'application/pdf', size: 1024,
+      }]));
+      const action = screen.getByRole('button', { name: '下载附件：report.pdf' });
+      expect(action.textContent).toContain('pdf');
+      expect(action.textContent).toContain('1.0 KB');
+      fireEvent.click(action);
+      await waitFor(() => expect(authFetchMock).toHaveBeenCalledWith(
+        '/api/attachments/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/content?download=1',
+      ));
+      expect(click).toHaveBeenCalled();
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+      click.mockRestore();
+    }
+  });
+
+  it('opens safe image through attachmentId route and never restores workspace relativePath preview', async () => {
+    authFetchMock.mockResolvedValueOnce(new Response(new Blob(['png']), { status: 200 }));
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:safe-image');
+    try {
+      renderMessage(userMessage([{
+        attachmentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        name: 'photo.png', mimeType: 'image/png', size: 8, isImage: true,
+        relativePath: 'uploads/legacy-should-not-win.png',
+      }]));
+      fireEvent.click(screen.getByRole('button', { name: '查看图片：photo.png' }));
+      expect((await screen.findByAltText('photo.png')).getAttribute('src')).toBe('blob:safe-image');
+      expect(authFetchMock).toHaveBeenCalledWith('/api/attachments/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/content');
+    } finally {
+      createObjectURL.mockRestore();
+    }
   });
 });
 

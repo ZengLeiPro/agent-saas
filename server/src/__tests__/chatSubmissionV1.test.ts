@@ -126,7 +126,7 @@ describe('M20-01 server canonical chat boundary', () => {
       resolve(process.cwd(), '../web/public/favicon-32x32.png'),
       join(userCwd, 'assets', 'm20', '图片.png'),
     );
-    await writeFile(join(userCwd, 'assets', 'm20', '合同.pdf'), 'pdf');
+    await writeFile(join(userCwd, 'assets', 'm20', '合同.pdf'), '%PDF-1.4\nfixture');
     const uploads = await manager.registerAssetReferences(userCwd, [
       'assets/m20/图片.png',
       'assets/m20/合同.pdf',

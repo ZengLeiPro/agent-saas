@@ -33,6 +33,25 @@ export type {
 export { fetchAuthConnectionCapability } from './lib/capabilityApi';
 
 export {
+  assertNoLocalAttachmentReference,
+  createAttachmentUploadIntent,
+  recoverAttachmentUploadIntent,
+  reduceAttachmentUpload,
+  selectAttachmentRenderCard,
+  validateAttachmentSelection,
+} from './lib/attachmentUpload';
+export type {
+  AttachmentRenderCard,
+  AttachmentSelectionMetadata,
+  AttachmentUploadEvent,
+  AttachmentUploadFenceReason,
+  AttachmentUploadIntent,
+  AttachmentUploadStatus,
+  AttachmentValidationIssue,
+  AttachmentValidationResult,
+} from './lib/attachmentUpload';
+
+export {
   buildInteractionResponseRequest,
   canInteract,
   createInteractionReducerState,

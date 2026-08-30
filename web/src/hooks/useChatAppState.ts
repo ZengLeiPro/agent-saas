@@ -366,8 +366,11 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- Sub-hooks ----
   const msg = useMessages();
   const uploadSessionIdRef = useRef<string | null>(urlState.sessionId); const getUploadSessionId = useCallback(() => uploadSessionIdRef.current, []);
-  const fileUpload = useFileUpload(activeTab, getUploadSessionId);
   const { connectionState, dispatchConnection } = useConnectionState();
+  const fileUpload = useFileUpload(activeTab, getUploadSessionId, {
+    online: connectionState !== 'disconnected',
+    identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
+  });
 
   // ---- Refs for unstable values ----
   const inputRef = useRef(input); inputRef.current = input;

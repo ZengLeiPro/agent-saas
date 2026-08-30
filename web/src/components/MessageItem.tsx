@@ -437,57 +437,89 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
  * 存量消息无 relativePath，保持静态展示。
  */
 function UserAttachmentChip({ att, filePreview }: {
-  att: { name: string; isImage?: boolean; relativePath?: string };
+  att: { name: string; attachmentId?: string; mimeType?: string; size?: number; isImage?: boolean; relativePath?: string };
   filePreview: ReturnType<typeof useFilePreview> | null;
 }) {
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const Icon = att.isImage ? ImageIcon : Paperclip;
-  const path = att.relativePath;
-  const previewable = !att.isImage && !!getPreviewFileType(att.name) && !!filePreview;
-  const clickable = !!path;
+  const canonical = !!att.attachmentId;
+  const path = canonical ? undefined : att.relativePath;
+  const legacyPreviewable = !att.isImage && !!path && !!getPreviewFileType(att.name) && !!filePreview;
+  const clickable = canonical || !!path;
 
-  const handleClick = () => {
+  const handleClick = async () => {
+    setError(null);
+    if (att.attachmentId) {
+      try {
+        const response = await authFetch(`/api/attachments/${encodeURIComponent(att.attachmentId)}/content${att.isImage ? '' : '?download=1'}`);
+        if (!response.ok) throw new Error(response.status === 410 ? '附件已过期或删除' : '附件不可用');
+        const blobUrl = URL.createObjectURL(await response.blob());
+        if (att.isImage) {
+          setPreviewSrc(blobUrl);
+        } else {
+          const anchor = document.createElement('a');
+          anchor.href = blobUrl;
+          anchor.download = att.name;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '附件不可用');
+      }
+      return;
+    }
     if (!path) return;
     if (att.isImage) {
       if (filePreview?.shareToken) {
         setPreviewSrc(publicSessionShareFileUrl(filePreview.shareToken, path));
         return;
       }
-      void resolveImageSrc(path, filePreview?.owner)
-        .then(setPreviewSrc)
-        .catch(() => setPreviewSrc(path));
-    } else if (previewable && filePreview) {
+      void resolveImageSrc(path, filePreview?.owner).then(setPreviewSrc).catch(() => setError('附件不可用'));
+    } else if (legacyPreviewable && filePreview) {
       filePreview.openPreview(path, filePreview.owner);
+    } else if (filePreview?.shareToken) {
+      void shareFileDownload(filePreview.shareToken, path, att.name);
     } else {
-      if (filePreview?.shareToken) {
-        void shareFileDownload(filePreview.shareToken, path, att.name);
-      } else {
-        void authFetchDownload(path, att.name, filePreview?.owner);
-      }
+      void authFetchDownload(path, att.name, filePreview?.owner);
     }
   };
 
+  const label = canonical ? (att.isImage ? `查看图片：${att.name}` : `下载附件：${att.name}`) : att.name;
+  const content = (
+    <>
+      <Icon className="size-3 shrink-0" aria-hidden="true" />
+      <span className="max-w-[200px] truncate">{att.name}</span>
+      {att.mimeType && <span className="text-[10px] opacity-70">{att.mimeType.split('/').at(-1)}</span>}
+      {att.size !== undefined && <span className="text-[10px] opacity-70">{formatFileSize(att.size)}</span>}
+    </>
+  );
   return (
     <>
-      <span
-        className={cn(
-          "inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground",
-          clickable && "cursor-pointer transition-colors hover:bg-foreground/[0.12] hover:text-foreground",
-        )}
-        onClick={clickable ? handleClick : undefined}
-        role={clickable ? "button" : undefined}
-        title={clickable
-          ? (att.isImage ? "点击查看图片" : previewable ? "点击预览" : "点击下载")
-          : undefined}
-      >
-        <Icon className="size-3 shrink-0" />
-        <span className="max-w-[200px] truncate">{att.name}</span>
-      </span>
+      {clickable ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.12] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => void handleClick()}
+          aria-label={label}
+          title={label}
+        >
+          {content}
+        </button>
+      ) : (
+        <span className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground">{content}</span>
+      )}
+      {error && <span className="text-xs text-destructive" role="alert">{error}</span>}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}
           alt={att.name}
-          onClose={() => setPreviewSrc(null)}
+          onClose={() => {
+            if (previewSrc.startsWith('blob:')) URL.revokeObjectURL(previewSrc);
+            setPreviewSrc(null);
+          }}
         />
       )}
     </>

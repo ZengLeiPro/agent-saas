@@ -386,8 +386,11 @@ export function useChatAppStateCore(): ChatAppState {
     chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, { type: 'identity_boundary', identity });
     refreshSelectedQueue();
   }, [identity, refreshSelectedQueue]);
-  const fileUpload = useFileUpload();
   const { connectionState, dispatchConnection } = useConnectionState();
+  const fileUpload = useFileUpload({
+    available: !localAppLock.locked && !localAppLock.offlineShell && connectionState !== 'disconnected',
+    identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
+  });
 
   const loadingRef = useRef(loading);
   loadingRef.current = loading;

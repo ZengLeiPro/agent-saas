@@ -200,14 +200,17 @@ function fencedCode(content: string): { text: string; language?: string } | null
   return { text: match[2], ...(language ? { language } : {}) };
 }
 
+const SAFE_ATTACHMENT_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
 function attachmentSegment(attachment: MessageAttachmentDisplay): RenderContentSegment {
+  const safeImage = attachment.isImage === true && !!attachment.mimeType && SAFE_ATTACHMENT_IMAGE_MIMES.has(attachment.mimeType.toLowerCase());
   return {
     type: 'attachment',
     name: attachment.name,
     ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
-    ...(attachment.isImage !== undefined ? { isImage: attachment.isImage } : {}),
+    ...(attachment.isImage !== undefined ? { isImage: safeImage } : {}),
   };
 }
 
@@ -285,7 +288,7 @@ function messageSemantics(message: MessageItem): {
     case 'file_download': {
       const mimeType = message.mimeType ?? message.fileType;
       const safePreview = mimeType === 'application/pdf'
-        || mimeType.startsWith('image/')
+        || SAFE_ATTACHMENT_IMAGE_MIMES.has(mimeType.toLowerCase())
         || mimeType === 'text/markdown'
         || mimeType === 'text/plain'
         || /\.(pdf|png|jpe?g|gif|webp|md|txt)$/i.test(message.fileName);

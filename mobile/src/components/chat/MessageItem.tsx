@@ -498,6 +498,20 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [anchorTop, setAnchorTop] = useState(0);
+  const [attachmentPreviewUri, setAttachmentPreviewUri] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  const openAttachment = useCallback(async (attachment: NonNullable<typeof message.attachments>[number]) => {
+    if (!attachment.attachmentId) return;
+    setAttachmentError(null);
+    try {
+      const uri = await fileCacheService.getOrDownloadAttachment(attachment.attachmentId, attachment.name);
+      if (attachment.isImage) setAttachmentPreviewUri(uri);
+      else await Share.share({ url: uri, title: attachment.name });
+    } catch {
+      setAttachmentError('附件已过期、删除或无权访问');
+    }
+  }, [message.attachments]);
 
   const sections = useMemo<DropdownSection[]>(() => [{
     id: 's1',
@@ -551,12 +565,25 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
           {message.attachments && message.attachments.length > 0 && (
             <View style={[styles.attachmentChips, displayText ? { marginTop: 6 } : undefined]}>
               {message.attachments.map((att, i) => (
-                <View key={i} style={styles.attachmentChip}>
+                <Pressable
+                  key={att.attachmentId ?? i}
+                  style={styles.attachmentChip}
+                  onPress={att.attachmentId ? () => void openAttachment(att) : undefined}
+                  accessibilityRole={att.attachmentId ? 'button' : 'text'}
+                  accessibilityLabel={`${att.isImage ? '查看图片' : '下载附件'}：${att.name}${att.size !== undefined ? `，${formatFileSize(att.size)}` : ''}`}
+                >
                   {att.isImage
                     ? <ImageIcon size={12} color={colors.mutedForeground} strokeWidth={2} />
                     : <Paperclip size={12} color={colors.mutedForeground} strokeWidth={2} />}
-                  <Text style={styles.attachmentChipText} numberOfLines={1}>{att.name}</Text>
-                </View>
+                  <View style={{ maxWidth: 180 }}>
+                    <Text style={styles.attachmentChipText} numberOfLines={1}>{att.name}</Text>
+                    {(att.mimeType || att.size !== undefined) && (
+                      <Text style={[styles.attachmentChipText, { fontSize: 10 }]} numberOfLines={1}>
+                        {[att.mimeType?.split('/').at(-1), att.size !== undefined ? formatFileSize(att.size) : undefined].filter(Boolean).join(' · ')}
+                      </Text>
+                    )}
+                  </View>
+                </Pressable>
               ))}
             </View>
           )}
@@ -577,6 +604,10 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
       )}
       {message.status === 'pending' && (
         <Text style={styles.pendingText}>发送中...</Text>
+      )}
+      {attachmentError && <Text accessibilityRole="alert" style={styles.retryText}>{attachmentError}</Text>}
+      {attachmentPreviewUri && (
+        <ImageLightbox visible uri={attachmentPreviewUri} onClose={() => setAttachmentPreviewUri(null)} />
       )}
     </View>
   );

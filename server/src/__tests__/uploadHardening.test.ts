@@ -87,7 +87,7 @@ describe('attachment upload hardening', () => {
     const userCwd = join(root, USER.tenantId, USER.sub);
     const assetPath = 'assets/20260822/方案.pdf';
     await mkdir(join(userCwd, 'assets', '20260822'), { recursive: true });
-    await writeFile(join(userCwd, assetPath), 'asset-content');
+    await writeFile(join(userCwd, assetPath), '%PDF-1.4\nfixture');
     const baseUrl = await startUploadServer(root, manager);
 
     const response = await fetch(`${baseUrl}/api/upload/assets`, {
@@ -105,7 +105,7 @@ describe('attachment upload hardening', () => {
       mimeType: 'application/pdf',
       isImage: false,
     });
-    expect(await readFile(join(userCwd, assetPath), 'utf8')).toBe('asset-content');
+    expect(await readFile(join(userCwd, assetPath), 'utf8')).toBe('%PDF-1.4\nfixture');
     expect(await readdir(join(userCwd, 'uploads'))).toEqual(['.state']);
     expect((await readdir(join(userCwd, 'uploads'))).filter((name) => !name.startsWith('.'))).toEqual([]);
     expect(await manager.resolveAttachments(userCwd, [body.files[0].attachmentId])).toEqual(body.files);
@@ -158,7 +158,7 @@ describe('attachment upload hardening', () => {
       userCwd,
       [references[0].attachmentId!],
       { sessionId: 'session-a' },
-    )).rejects.toMatchObject({ code: 'ENOENT' });
+    )).rejects.toMatchObject({ code: 'ATTACHMENT_DELETED' });
   });
 
   it('cleans an unused asset reference without deleting the source asset', async () => {
@@ -643,6 +643,102 @@ describe('attachment upload hardening', () => {
 
     const usage = await manager.getUsage(userA);
     expect(usage).toMatchObject({ totalFiles: 0, totalBytes: 0, stagedFiles: 0, referencedFiles: 0, legacyFiles: 0 });
+  });
+
+  it('rejects MIME spoof, double extensions and executable SVG/HTML content with structured codes', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const baseUrl = await startUploadServer(root, manager);
+    const cases = [
+      { name: 'photo.png', type: 'image/png', body: 'not-a-png', code: 'UPLOAD_MIME_MISMATCH' },
+      { name: 'invoice.pdf.exe', type: 'application/pdf', body: '%PDF-1.4', code: 'UPLOAD_DOUBLE_EXTENSION' },
+      { name: 'diagram.svg', type: 'image/svg+xml', body: '<svg><script>alert(1)</script></svg>', code: 'UPLOAD_EXTENSION_BLOCKED' },
+      { name: 'notes.txt', type: 'text/plain', body: '<html><script>alert(1)</script></html>', code: 'UPLOAD_EXECUTABLE_CONTENT' },
+    ];
+    for (const fixture of cases) {
+      const form = new FormData();
+      form.append('files', new Blob([fixture.body], { type: fixture.type }), fixture.name);
+      const response = await fetch(`${baseUrl}/api/upload`, { method: 'POST', body: form });
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({ success: false, code: fixture.code });
+    }
+  });
+
+  it('replays the same uploadRequestId idempotently and makes completed server result win cancel', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const baseUrl = await startUploadServer(root, manager);
+    const requestId = randomUUID();
+    const upload = async () => {
+      const form = new FormData();
+      form.append('files', new Blob(['same'], { type: 'text/plain' }), 'same.txt');
+      const response = await fetch(`${baseUrl}/api/upload`, {
+        method: 'POST', headers: { 'X-Upload-Request-Id': requestId }, body: form,
+      });
+      return { response, body: await response.json() as any };
+    };
+    const first = await upload();
+    const replay = await upload();
+    expect(first.response.status).toBe(200);
+    expect(replay.body).toMatchObject({ success: true, requestId, idempotentReplay: true });
+    expect(replay.body.files[0].attachmentId).toBe(first.body.files[0].attachmentId);
+    const userCwd = join(root, USER.tenantId, USER.sub);
+    expect((await readdir(join(userCwd, 'uploads'))).filter((name) => !name.startsWith('.'))).toHaveLength(1);
+
+    const cancel = await fetch(`${baseUrl}/api/upload/${requestId}/cancel`, { method: 'POST' });
+    expect(await cancel.json()).toMatchObject({ success: true, outcome: 'uploaded' });
+  });
+
+  it('serves only owned attachmentId routes with safe headers and structured expired/deleted failures', async () => {
+    let now = Date.now();
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root, now: () => now });
+    const baseUrl = await startUploadServer(root, manager);
+    const requestId = randomUUID();
+    const form = new FormData();
+    form.append('files', new Blob(['safe'], { type: 'text/plain' }), 'safe.txt');
+    const upload = await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: { 'X-Upload-Request-Id': requestId }, body: form });
+    const body = await upload.json() as any;
+    const attachmentId = body.files[0].attachmentId as string;
+
+    const content = await fetch(`${baseUrl}/api/attachments/${attachmentId}/content`);
+    expect(content.status).toBe(200);
+    expect(content.headers.get('content-disposition')).toContain('attachment');
+    expect(content.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(content.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(content.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+
+    const forged = await fetch(`${baseUrl}/api/attachments/${randomUUID()}/content`);
+    expect(await forged.json()).toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' });
+
+    const otherCwd = join(root, 'tenant-b', 'user-2');
+    const otherRequestId = randomUUID();
+    const otherAttachmentId = randomUUID();
+    const otherPartial = await manager.beginRequest(otherCwd, otherRequestId);
+    const otherFilename = `${otherAttachmentId}_secret.txt`;
+    await writeFile(join(otherPartial, otherFilename), 'secret');
+    await manager.completeRequest(otherRequestId, [{
+      attachmentId: otherAttachmentId, filename: otherFilename,
+      partialPath: join(otherPartial, otherFilename), originalName: 'secret.txt', size: 6,
+      mimeType: 'text/plain', isImage: false, isVoiceUpload: false,
+    }]);
+    const crossTenant = await fetch(`${baseUrl}/api/attachments/${otherAttachmentId}/content`);
+    expect(crossTenant.status).toBe(404);
+    expect(await crossTenant.json()).toMatchObject({ code: 'ATTACHMENT_NOT_FOUND' });
+
+    now += DEFAULT_STAGED_RETENTION_MS + 1;
+    const expired = await fetch(`${baseUrl}/api/attachments/${attachmentId}/content`);
+    expect(expired.status).toBe(410);
+    expect(await expired.json()).toMatchObject({ code: 'ATTACHMENT_EXPIRED' });
+
+    now = Date.now();
+    const managerDeleted = new UploadManager({ agentCwd: root, now: () => now });
+    const deletedPath = join(root, USER.tenantId, USER.sub, body.files[0].relativePath);
+    await rm(deletedPath);
+    const deletedBase = await startUploadServer(root, managerDeleted);
+    const deleted = await fetch(`${deletedBase}/api/attachments/${attachmentId}/content`);
+    expect(deleted.status).toBe(410);
+    expect(await deleted.json()).toMatchObject({ code: 'ATTACHMENT_DELETED' });
   });
 
   it('ships nginx upload streaming with a NAS fallback temp path', async () => {

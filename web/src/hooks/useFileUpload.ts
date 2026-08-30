@@ -2,8 +2,9 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type { ChangeEvent, ClipboardEvent, DragEvent } from "react";
 import type { UploadedFile } from "@/components/types";
 import { authFetch } from "@/lib/authFetch";
-import { MAX_UPLOAD_FILE_SIZE, MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
+import { MAX_UPLOAD_FILES_PER_REQUEST } from "@/lib/constants";
 import { validateWebUploadedFiles } from "@/lib/chatSubmissionAdapter";
+import { validateAttachmentSelection } from "@agent/shared";
 
 function revokeFilePreviews(files: UploadedFile[]): void {
   files.forEach((file) => {
@@ -13,21 +14,17 @@ function revokeFilePreviews(files: UploadedFile[]): void {
   });
 }
 
-function findOversizedFiles(files: File[]): File[] {
-  return files.filter((file) => file.size > MAX_UPLOAD_FILE_SIZE);
-}
-
-function formatOversizedMessage(oversized: File[]): string {
-  const names = oversized.map((file) => file.name).join("、");
-  return `以下文件超过 2 GiB 限制：${names}`;
-}
-
 function validateFileBatch(files: File[]): string | null {
-  if (files.length > MAX_UPLOAD_FILES_PER_REQUEST) {
-    return `单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`;
-  }
-  const oversized = findOversizedFiles(files);
-  return oversized.length > 0 ? formatOversizedMessage(oversized) : null;
+  const result = validateAttachmentSelection(files.map((file) => ({
+    name: file.name,
+    size: file.size,
+    mimeType: file.type || 'application/octet-stream',
+  })));
+  return result.ok ? null : result.issue.message;
+}
+
+function createUploadRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? '00000000-0000-4000-8000-' + Date.now().toString().padStart(12, '0').slice(-12);
 }
 
 export interface FileUploadState {
@@ -54,6 +51,7 @@ export function useFileUpload(
   /** current active tab -- drag/drop only works on "chat" tab */
   activeTab: string,
   getSessionId?: () => string | null,
+  boundary?: { online: boolean; identityKey: string },
 ): FileUploadState {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -62,6 +60,8 @@ export function useFileUpload(
   const generationRef = useRef(0);
   const nextUploadIdRef = useRef(0);
   const activeUploadsRef = useRef(new Map<number, number>());
+  const abortControllersRef = useRef(new Map<number, AbortController>());
+  const boundaryRef = useRef(boundary);
 
   const refreshUploading = useCallback(() => {
     const currentGeneration = generationRef.current;
@@ -78,6 +78,9 @@ export function useFileUpload(
 
   const replaceFiles = useCallback((files: UploadedFile[]) => {
     generationRef.current += 1;
+    for (const controller of abortControllersRef.current.values()) controller.abort();
+    abortControllersRef.current.clear();
+    activeUploadsRef.current.clear();
     setUploadedFiles((previous) => {
       revokeFilePreviews(previous);
       return files;
@@ -98,11 +101,33 @@ export function useFileUpload(
   useEffect(() => {
     return () => {
       generationRef.current += 1;
+      for (const controller of abortControllersRef.current.values()) controller.abort();
+      abortControllersRef.current.clear();
+      activeUploadsRef.current.clear();
       revokeFilePreviews(uploadedFilesRef.current);
     };
   }, []);
 
+  useEffect(() => {
+    const previous = boundaryRef.current;
+    boundaryRef.current = boundary;
+    const identityChanged = !!previous && !!boundary && previous.identityKey !== boundary.identityKey;
+    const fenced = identityChanged || boundary?.online === false;
+    if (!fenced) return;
+    const hadActive = activeUploadsRef.current.size > 0;
+    generationRef.current += 1;
+    for (const controller of abortControllersRef.current.values()) controller.abort();
+    abortControllersRef.current.clear();
+    activeUploadsRef.current.clear();
+    setUploading(false);
+    if (hadActive) setUploadError(identityChanged ? '身份已切换，请重新选择文件' : '网络已断开，请重新选择文件');
+  }, [boundary?.identityKey, boundary?.online]);
+
   const uploadFiles = useCallback(async (files: File[]) => {
+    if (boundaryRef.current?.online === false) {
+      setUploadError('当前离线，无法上传');
+      return;
+    }
     if (files.length === 0) {
       return;
     }
@@ -114,7 +139,9 @@ export function useFileUpload(
 
     const generation = generationRef.current;
     const uploadId = ++nextUploadIdRef.current;
+    const controller = new AbortController();
     activeUploadsRef.current.set(uploadId, generation);
+    abortControllersRef.current.set(uploadId, controller);
     refreshUploading();
     setUploadError(null);
 
@@ -126,8 +153,11 @@ export function useFileUpload(
 
       const sessionId = getSessionId?.()?.trim();
       const uploadUrl = sessionId ? `/api/upload?sessionId=${encodeURIComponent(sessionId)}` : "/api/upload";
+      const requestId = createUploadRequestId();
       const response = await authFetch(uploadUrl, {
         method: "POST",
+        headers: { "X-Upload-Request-Id": requestId },
+        signal: controller.signal,
         body: formData,
       });
 
@@ -157,9 +187,7 @@ export function useFileUpload(
       });
 
       setUploadedFiles((previous) => [...previous, ...uploadedWithPreviews]);
-      console.log("Files uploaded:", uploadedWithPreviews);
     } catch (error) {
-      console.error("Upload error:", error);
       if (generation === generationRef.current) {
         setUploadError(
           "上传失败：" + (error instanceof Error ? error.message : "未知错误"),
@@ -167,6 +195,7 @@ export function useFileUpload(
       }
     } finally {
       activeUploadsRef.current.delete(uploadId);
+      abortControllersRef.current.delete(uploadId);
       refreshUploading();
     }
   }, [getSessionId, refreshUploading]);
@@ -190,6 +219,11 @@ export function useFileUpload(
   }, [uploadFiles]);
 
   const handleAssetSelect = useCallback(async (paths: string[]) => {
+    if (boundaryRef.current?.online === false) {
+      const message = '当前离线，无法上传';
+      setUploadError(message);
+      throw new Error(message);
+    }
     if (paths.length === 0) return;
     if (paths.length > MAX_UPLOAD_FILES_PER_REQUEST) {
       const message = `单次最多上传 ${MAX_UPLOAD_FILES_PER_REQUEST} 个文件`;
@@ -199,7 +233,9 @@ export function useFileUpload(
 
     const generation = generationRef.current;
     const uploadId = ++nextUploadIdRef.current;
+    const controller = new AbortController();
     activeUploadsRef.current.set(uploadId, generation);
+    abortControllersRef.current.set(uploadId, controller);
     refreshUploading();
     setUploadError(null);
 
@@ -209,6 +245,7 @@ export function useFileUpload(
       const response = await authFetch(uploadUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({ paths }),
       });
       const data = await response.json().catch(() => ({})) as {
@@ -233,6 +270,7 @@ export function useFileUpload(
       throw error;
     } finally {
       activeUploadsRef.current.delete(uploadId);
+      abortControllersRef.current.delete(uploadId);
       refreshUploading();
     }
   }, [getSessionId, refreshUploading]);
@@ -331,6 +369,9 @@ export function useFileUpload(
 
   const clearFiles = useCallback(() => {
     generationRef.current += 1;
+    for (const controller of abortControllersRef.current.values()) controller.abort();
+    abortControllersRef.current.clear();
+    activeUploadsRef.current.clear();
     setUploading(false);
     setUploadError(null);
     setUploadedFiles((previous) => {
@@ -341,6 +382,9 @@ export function useFileUpload(
 
   const consumeFiles = useCallback((): UploadedFile[] => {
     generationRef.current += 1;
+    for (const controller of abortControllersRef.current.values()) controller.abort();
+    abortControllersRef.current.clear();
+    activeUploadsRef.current.clear();
     setUploading(false);
     setUploadError(null);
     const current = uploadedFilesRef.current;

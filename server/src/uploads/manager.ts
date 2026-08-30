@@ -12,6 +12,7 @@ import type { UploadedFileInfo } from '../types/index.js';
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import { uploadLogger } from '../utils/logger.js';
 import { mimeTypeForAsset, validateAssetPath, validateAttachmentStatePath } from './assetReference.js';
+import { inspectUploadedFile } from './uploadSecurity.js';
 import {
   atomicWriteTrustedFile,
   openTrustedDirectory,
@@ -32,6 +33,15 @@ const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const ATTACHMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type UploadRequestOutcome = 'success' | 'failed' | 'aborted';
+
+export type AttachmentUnavailableCode = 'ATTACHMENT_NOT_FOUND' | 'ATTACHMENT_EXPIRED' | 'ATTACHMENT_DELETED';
+
+export class AttachmentUnavailableError extends Error {
+  constructor(readonly code: AttachmentUnavailableCode, message: string) {
+    super(message);
+    this.name = 'AttachmentUnavailableError';
+  }
+}
 
 export interface AttachmentState {
   version: 1;
@@ -63,6 +73,24 @@ export interface UploadFinalizeFile {
 export interface UploadReference {
   sessionId?: string;
   clientMessageId?: string;
+}
+
+
+interface CompletedUploadRequest {
+  version: 1;
+  requestId: string;
+  sessionId?: string;
+  completedAt: string;
+  files: UploadedFileInfo[];
+}
+
+export interface AttachmentContent {
+  attachmentId: string;
+  absolutePath: string;
+  originalName: string;
+  size: number;
+  mimeType: string;
+  isImage: boolean;
 }
 
 export interface FinalizedUpload {
@@ -214,6 +242,29 @@ export class UploadManager {
     return { activeUploads: this.activeRequests.size, ...this.metrics };
   }
 
+  async getCompletedRequest(
+    userCwd: string,
+    requestId: string,
+    sessionId?: string,
+  ): Promise<UploadedFileInfo[] | undefined> {
+    if (!isSafeTaskScopeSegment(requestId)) return undefined;
+    try {
+      const record = JSON.parse(await readTrustedFile(
+        userCwd,
+        `uploads/.requests/${requestId}.json`,
+        'utf8',
+      ) as string) as CompletedUploadRequest;
+      if (record.version !== 1 || record.requestId !== requestId || !Array.isArray(record.files)) return undefined;
+      if (sessionId !== undefined && (record.sessionId ?? '') !== sessionId) {
+        throw Object.assign(new Error('Upload request belongs to a different session'), { statusCode: 409, code: 'UPLOAD_REQUEST_SCOPE_MISMATCH' });
+      }
+      return record.files;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
   async beginRequest(userCwd: string, requestId: string): Promise<string> {
     if (this.draining) throw new UploadDrainingError();
     if (this.activeRequests.has(requestId)) throw new Error(`Duplicate upload request: ${requestId}`);
@@ -274,7 +325,14 @@ export class UploadManager {
           }
           const attachmentId = randomUUID();
           const originalName = basename(relativePath);
-          const mimeType = mimeTypeForAsset(originalName);
+          const declaredMimeType = mimeTypeForAsset(originalName);
+          const security = await inspectUploadedFile({
+            path: resolve(userCwd, relativePath),
+            originalName,
+            size,
+            mimetype: declaredMimeType,
+          });
+          const mimeType = security.mimeType;
           const state: AttachmentState = {
             version: 1,
             attachmentId,
@@ -297,7 +355,7 @@ export class UploadManager {
             relativePath,
             size,
             mimeType,
-            isImage: isSupportedImage(mimeType),
+            isImage: security.isImage,
           });
         }
         return referenced;
@@ -361,6 +419,20 @@ export class UploadManager {
         });
       }
 
+      const replay: CompletedUploadRequest = {
+        version: 1,
+        requestId,
+        ...(refs.sessionId ? { sessionId: refs.sessionId } : {}),
+        completedAt: new Date(this.now()).toISOString(),
+        files: finalized.map(({ info }) => ({ ...info, savedPath: undefined })),
+      };
+      await atomicWriteTrustedFile(
+        active.userCwd,
+        `uploads/.requests/${requestId}.json`,
+        `${JSON.stringify(replay)}
+`,
+        { encoding: 'utf8', createParents: true, mode: 0o600 },
+      );
       await this.closeActiveRequest(requestId, active, true);
       this.metrics.completedRequests += 1;
       this.metrics.uploadedBytes += files.reduce((sum, file) => sum + file.size, 0);
@@ -375,6 +447,14 @@ export class UploadManager {
       await this.finishFailedRequest(requestId, 'failed');
       throw error;
     }
+  }
+
+  async cancelRequest(userCwd: string, requestId: string): Promise<'cancelled' | 'not_found' | 'uploaded'> {
+    if (await this.getCompletedRequest(userCwd, requestId)) return 'uploaded';
+    const active = this.activeRequests.get(requestId);
+    if (!active || active.userCwd !== userCwd) return 'not_found';
+    await this.finishFailedRequest(requestId, 'aborted');
+    return 'cancelled';
   }
 
   async finishFailedRequest(requestId: string, outcome: Exclude<UploadRequestOutcome, 'success'>): Promise<void> {
@@ -418,7 +498,16 @@ export class UploadManager {
           state = JSON.parse(await readTrustedFile(userCwd, `uploads/.state/${attachmentId}.json`, 'utf8') as string) as AttachmentState;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            throw new Error(`Attachment not found: ${attachmentId}`);
+            try {
+              const tombstone = JSON.parse(await readTrustedFile(userCwd, `uploads/.tombstones/${attachmentId}.json`, 'utf8') as string) as { code?: AttachmentUnavailableCode };
+              if (tombstone.code === 'ATTACHMENT_EXPIRED' || tombstone.code === 'ATTACHMENT_DELETED') {
+                throw new AttachmentUnavailableError(tombstone.code, `${tombstone.code}: ${attachmentId}`);
+              }
+            } catch (tombstoneError) {
+              if (tombstoneError instanceof AttachmentUnavailableError) throw tombstoneError;
+              if ((tombstoneError as NodeJS.ErrnoException).code !== 'ENOENT') throw tombstoneError;
+            }
+            throw new AttachmentUnavailableError('ATTACHMENT_NOT_FOUND', `Attachment not found: ${attachmentId}`);
           }
           throw error;
         }
@@ -426,10 +515,21 @@ export class UploadManager {
           throw new Error(`Invalid attachment state: ${attachmentId}`);
         }
         validateAttachmentStatePath(userCwd, state);
+        if (state.status === 'staged' && this.now() - Date.parse(state.createdAt) >= this.stagedRetentionMs) {
+          throw new AttachmentUnavailableError('ATTACHMENT_EXPIRED', `Attachment expired: ${attachmentId}`);
+        }
         if (refs.sessionId && !state.sessionIds?.includes(refs.sessionId)) {
           throw new Error(`Attachment does not belong to session: ${attachmentId}`);
         }
-        const opened = await openTrustedFile(userCwd, state.relativePath);
+        let opened;
+        try {
+          opened = await openTrustedFile(userCwd, state.relativePath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            throw new AttachmentUnavailableError('ATTACHMENT_DELETED', `Attachment content deleted: ${attachmentId}`);
+          }
+          throw error;
+        }
         await opened.handle.close();
         resolved.push({
           attachmentId,
@@ -442,6 +542,19 @@ export class UploadManager {
       }
       return resolved;
     });
+  }
+
+  async getAttachmentContent(userCwd: string, attachmentId: string): Promise<AttachmentContent> {
+    const [resolved] = await this.resolveAttachments(userCwd, [attachmentId]);
+    if (!resolved) throw new AttachmentUnavailableError('ATTACHMENT_NOT_FOUND', 'Attachment not found');
+    return {
+      attachmentId,
+      absolutePath: resolve(userCwd, resolved.relativePath),
+      originalName: resolved.originalName,
+      size: resolved.size,
+      mimeType: resolved.mimeType,
+      isImage: resolved.isImage,
+    };
   }
 
   /**
@@ -633,7 +746,7 @@ export class UploadManager {
     const statusByFilename = new Map(
       states.filter((state) => state.source !== 'asset').map((state) => [state.filename, state.status]),
     );
-    const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
+    const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state', '.requests', '.tombstones']));
     const partialFiles = await listFilesRecursive(userCwd, 'uploads/.partial');
 
     let stagedBytes = 0;
@@ -707,6 +820,12 @@ export class UploadManager {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       }
+      await atomicWriteTrustedFile(
+        userCwd,
+        `uploads/.tombstones/${state.attachmentId}.json`,
+        `${JSON.stringify({ version: 1, attachmentId: state.attachmentId, code: olderThanMs >= this.stagedRetentionMs ? 'ATTACHMENT_EXPIRED' : 'ATTACHMENT_DELETED', at: new Date(this.now()).toISOString() })}\n`,
+        { encoding: 'utf8', createParents: true, mode: 0o600 },
+      );
       await removeTrustedPath(userCwd, `uploads/.state/${state.attachmentId}.json`).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
@@ -723,7 +842,8 @@ export class UploadManager {
   async purgeUserUploads(userCwd: string): Promise<UploadCleanupResult> {
     this.knownUserCwds.add(userCwd);
     return this.withUserMutation(userCwd, async () => {
-      const files = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
+      const states = await this.readStates(userCwd);
+      const files = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state', '.requests', '.tombstones']));
       let deletedFiles = 0;
       let deletedBytes = 0;
       for (const file of files) {
@@ -738,6 +858,17 @@ export class UploadManager {
       await removeTrustedPath(userCwd, 'uploads/.state').catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       });
+      await removeTrustedPath(userCwd, 'uploads/.requests').catch((error) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      });
+      for (const state of states) {
+        await atomicWriteTrustedFile(
+          userCwd,
+          `uploads/.tombstones/${state.attachmentId}.json`,
+          `${JSON.stringify({ version: 1, attachmentId: state.attachmentId, code: 'ATTACHMENT_DELETED', at: new Date(this.now()).toISOString() })}\n`,
+          { encoding: 'utf8', createParents: true, mode: 0o600 },
+        );
+      }
       return { deletedFiles, deletedBytes };
     });
   }

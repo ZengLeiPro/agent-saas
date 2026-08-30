@@ -72,6 +72,7 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     const dryRun = createRetention(pool);
     await dryRun.runOnce();
     const dryRunSuccessAt = (await latestDetail()).lastSuccessAt;
+
     expect((await latestDetail()).state).toBe('dry_run_succeeded');
 
     const restartedExecute = createRetention(pool, {
@@ -132,12 +133,26 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
       WHERE key = 'runtime_events';
     `);
     let assistantDeleteCalls = 0;
+    const queryWithInjectedFailure = async (
+      query: InstanceType<typeof Pool>['query'],
+      text: string,
+      params?: unknown[],
+    ) => {
+      if (text.includes('retention:assistant-stream') && ++assistantDeleteCalls === 2) {
+        throw new Error('injected database failure');
+      }
+      return query(text, params);
+    };
     const partialPool = {
-      query: async (text: string, params?: unknown[]) => {
-        if (text.includes('retention:assistant-stream') && ++assistantDeleteCalls === 2) {
-          throw new Error('injected database failure');
-        }
-        return pool.query(text, params);
+      query: (text: string, params?: unknown[]) => queryWithInjectedFailure(pool.query.bind(pool), text, params),
+      async connect() {
+        const client = await pool.connect();
+        return {
+          query: (text: string, params?: unknown[]) => (
+            queryWithInjectedFailure(client.query.bind(client), text, params)
+          ),
+          release: () => client.release(),
+        };
       },
     };
     const recoverable = createRetention(partialPool as unknown as InstanceType<typeof Pool>, {

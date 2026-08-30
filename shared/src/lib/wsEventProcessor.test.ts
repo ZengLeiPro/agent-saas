@@ -485,12 +485,12 @@ describe('processWsEvent - 流式块（block/thinking/text/tool_input）', () =>
     expect(ctrl.messages.some((message) => message.type === 'text' && message.content === '另一轮失败草稿')).toBe(false);
   });
 
-  it('block_start(tool_use) → tool_input → block_end：创建骨架、累积输入、收尾', () => {
+  it('block_start(tool_use) 缺少 runId 时继承当前绑定并创建骨架', () => {
     const ctrl = makeController();
-    const { ctx } = makeCtx(ctrl);
+    const { ctx } = makeCtx(ctrl, { runIdRef: { current: 'run-1' } });
     const block = freshBlock();
 
-    dispatch({ type: 'block_start', blockType: 'tool_use', toolName: 'Bash', toolId: 'i1', runId: 'run-1' }, ctx, block);
+    dispatch({ type: 'block_start', blockType: 'tool_use', toolName: 'Bash', toolId: 'i1' }, ctx, block);
     expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash', toolId: 'i1', runId: 'run-1', streaming: true });
 
     dispatch({ type: 'tool_input', content: '{"cmd":' }, ctx, block);
@@ -525,11 +525,11 @@ describe('processWsEvent - 流式块（block/thinking/text/tool_input）', () =>
 });
 
 describe('processWsEvent - 工具执行与结果', () => {
-  it('tool_execution(started)：无骨架时新增 running 工具', () => {
+  it('tool_execution(started)：无骨架时新增归属当前 run 的 running 工具', () => {
     const ctrl = makeController();
-    const { ctx } = makeCtx(ctrl);
+    const { ctx } = makeCtx(ctrl, { runIdRef: { current: 'run-1' } });
     dispatch({ type: 'tool_execution', phase: 'started', toolName: 'Bash', toolId: 'i1' }, ctx);
-    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash', executionStatus: 'running' });
+    expect(ctrl.messages[0]).toMatchObject({ type: 'tool_use', toolName: 'Bash', runId: 'run-1', executionStatus: 'running' });
   });
 
   it('tool_execution(completed, error)：更新既有骨架为 failed 并带 error/durationMs', () => {

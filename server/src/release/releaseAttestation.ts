@@ -202,14 +202,15 @@ export class ReleaseAttestationLog {
       retryTail[lastPromotingIndex - 1]?.state === 'approved' &&
       retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human');
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
-    const failure =
-      FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
+    const failureTransition =
+      FAILURE_STATES.has(input.state) &&
+      !['completed', 'revoked', 'rejected', 'superseded'].includes(current);
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&
       !retryAfterHumanReview &&
       !revocation &&
-      !failure
+      !failureTransition
     )
       throw new Error(`Illegal or late RC attestation transition: ${current} -> ${input.state}`);
 

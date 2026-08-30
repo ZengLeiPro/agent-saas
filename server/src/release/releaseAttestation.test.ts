@@ -273,8 +273,22 @@ describe('ReleaseAttestationLog', () => {
     });
   });
 
+  it('does not route rejected or superseded RCs through another failure outcome', () => {
+    for (const terminal of ['rejected', 'superseded'] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, terminal);
+      expect(() => append(entries, 'failed_before_change', `forged-${terminal}`)).toThrow(
+        /Illegal or late/u,
+      );
+    }
+  });
+
   it.each(['failed_before_change', 'partial_failed', 'rolled_back'] as const)(
-    'records truthful terminal promotion outcome %s without allowing later completion',
+    'keeps truthful terminal promotion outcome %s from reaching late completion',
     (outcome) => {
       const entries = log();
       append(entries, 'built');

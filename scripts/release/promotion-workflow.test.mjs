@@ -59,10 +59,8 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /tr -d '\[:space:\]'/u);
   assert.doesNotMatch(workflow, /printf[^\n]*\$\{\{ inputs\./u);
-  assert.match(
-    workflow,
-    /verified\|approved\|promoting\|failed_before_change\|partial_failed\|rolled_back\|needs_human/u,
-  );
+  assert.match(workflow, /retry_before_change/u);
+  assert.match(workflow, /retry_after_change/u);
   assert.doesNotMatch(
     workflow,
     /verified\|approved\|promoting\|rejected|verified\|approved\|promoting\|revoked/u,
@@ -104,11 +102,11 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
-test('verified evidence and safely extracted RC-bound units precede ACS, App, and Web convergence', async () => {
+test('verified evidence, selected digests, and RC-bound units precede ACS, App, and Web convergence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
     'node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"',
-    '- name: Revalidate Staging evidence and record human approval',
+    '- name: Fail-closed revalidate deterministic Staging evidence and record human approval',
     '- name: Read authoritative live production prefix before any write',
     '- name: Prefetch, verify, and safely extract selected Manifest artifacts',
     '- name: Mark and persist promotion started before any production write',
@@ -122,17 +120,17 @@ test('verified evidence and safely extracted RC-bound units precede ACS, App, an
   assert.match(workflow, /\.acsImage\.digest/u);
   assert.match(workflow, /\.acsImage\.reference/u);
   assert.match(workflow, /expected_repository@\$expected_image_digest/u);
-  assert.doesNotMatch(workflow, /wait-for-acr-image\.sh/u);
+  assert.doesNotMatch(workflow, /release\/wait-for-acr-image\.sh/u);
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
-  assert.doesNotMatch(workflow, /oss stat/u);
+  assert.match(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
   assert.match(workflow, /already equals the immutable target/u);
-  assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
-  assert.match(workflow, /sha256sum/u);
+  assert.match(workflow, /\.acsImage\.digest "\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
   assert.match(workflow, /runtimeDependencies\.path/u);
@@ -155,14 +153,12 @@ test('verified evidence and safely extracted RC-bound units precede ACS, App, an
   );
   assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /reader=read-production-state\.mjs/u);
   assert.match(
     workflow,
-    /read-live-production-components\.mjs' --output '\$remote\/production-before\.json/u,
+    /\[ "\$PROMOTION_RETRY_MODE" = retry_after_change \] && reader=read-live-production-components\.mjs/u,
   );
-  assert.doesNotMatch(
-    workflow,
-    /node '\$remote\/read-production-state\.mjs' --output '\$remote\/production-before\.json/u,
-  );
+  assert.match(workflow, /node '\$remote\/\$reader' --output '\$remote\/production-before\.json/u);
   assert.doesNotMatch(workflow, /install -m 0444 daemon-packaging\/systemd/u);
   assert.match(workflow, /extract_control_file\(\)/u);
   assert.match(workflow, /tar -xOf "\$archive" -- "\$raw" > "\$candidate"/u);
@@ -230,7 +226,7 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
     workflow.indexOf('- name: Publish Web entry last'),
     workflow.indexOf('- name: Persist Web operation receipt'),
   );
-  assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
   assert.match(
     buildRelease,
     /server\/daemon-packaging\/systemd\/agent-saas-server@\.service\.template/u,
@@ -282,7 +278,18 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
   assert.match(deploy, /rollback_app_release/u);
   assert.match(deploy, /return 70/u);
   assert.match(deploy, /cleanup_acs_failure/u);
-  assert.match(deploy, /local deploy_status=\$\? reload_status=0 restart_status=0/u);
+  assert.match(
+    deploy,
+    /rollback_acs_release\(\) \{[\s\S]*local rollback_status=0[\s\S]*return 70/u,
+  );
+  assert.match(
+    deploy,
+    /ACS deployment failed with status \$deploy_status; rollback status \$rollback_status/u,
+  );
+  assert.match(
+    deploy,
+    /if \[ "\$rollback_status" -ne 0 \]; then[\s\S]*exit "\$rollback_status"[\s\S]*fi\n  rm -rf "\$rollback_root"/u,
+  );
   assert.match(deploy, /local had_previous_unit=false/u);
   assert.match(deploy, /if \[ -f "\$unit_path" \]; then[\s\S]*had_previous_unit=true/u);
   assert.match(
@@ -316,17 +323,14 @@ test('workflow preserves exact retry matrices, locked rollback evidence, migrati
       deploy.indexOf('install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"'),
   );
   assert.doesNotMatch(deploy, /\.before-\$release_id/u);
-  assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
+  assert.match(deploy, /if \[ -L "\$ACS_CURRENT_PATH" \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.match(deploy, /Existing ACS managed unit must be absent or a regular file/u);
-  assert.match(deploy, /systemctl daemon-reload \|\| reload_status=\$\?/u);
-  assert.match(
-    deploy,
-    /systemctl restart agent-saas-acs-orchestrator\.service \|\| restart_status=\$\?/u,
-  );
+  assert.match(deploy, /systemctl daemon-reload \|\| rollback_status=1/u);
+  assert.match(deploy, /systemctl restart "\$ACS_SERVICE_NAME" \|\| rollback_status=1/u);
   assert.doesNotMatch(
     deploy,
-    /previous="\$\(readlink -f \/opt\/agent-saas\/acs-current 2>\/dev\/null \|\| true\)"/u,
+    /previous="\$\(readlink -f "\$ACS_CURRENT_PATH" 2>\/dev\/null \|\| true\)"/u,
   );
   assert.match(deploy, /verify --root "\$target" --component acs >\/dev\/null/u);
   assert.match(deploy, /verify --root "\$target" --component server >\/dev\/null/u);

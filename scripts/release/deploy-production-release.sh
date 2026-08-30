@@ -76,11 +76,64 @@ cleanup_app_failure() {
   return "$deploy_status"
 }
 
+rollback_acs_release() {
+  # current、env、identity、unit 与服务恢复全部独立尝试，失败时保留 rollback_root。
+  local rollback_status=0
+  set +e
+
+  if [ -n "$previous" ]; then
+    ln -sfn "$previous" "$ACS_CURRENT_PATH" || rollback_status=1
+  else
+    rm -f "$ACS_CURRENT_PATH" || rollback_status=1
+  fi
+  cp -a "$rollback_root/acs-orchestrator.env" "$ACS_ENV_PATH" || rollback_status=1
+  if [ "$had_previous_identity" = true ]; then
+    cp -a "$rollback_root/acs-release-identity.json" "$ACS_IDENTITY_PATH" || rollback_status=1
+  else
+    rm -f "$ACS_IDENTITY_PATH" || rollback_status=1
+  fi
+  if [ "$had_previous_unit" = true ]; then
+    cp -a "$rollback_root/acs-orchestrator.service" "$unit_path" || rollback_status=1
+  else
+    rm -f "$unit_path" || rollback_status=1
+  fi
+  systemctl daemon-reload || rollback_status=1
+  systemctl restart "$ACS_SERVICE_NAME" || rollback_status=1
+
+  if [ "$rollback_status" -ne 0 ]; then
+    echo 'ACS rollback completed with one or more recovery failures' >&2
+    return 70
+  fi
+  return 0
+}
+
+cleanup_acs_failure() {
+  local deploy_status=$?
+  local rollback_status=0
+  set +e
+  if [ "$acs_committed" = false ]; then
+    rollback_acs_release
+    rollback_status=$?
+    if [ "$rollback_status" -ne 0 ]; then
+      echo "ACS deployment failed with status $deploy_status; rollback status $rollback_status" >&2
+      trap - EXIT HUP INT TERM
+      exit "$rollback_status"
+    fi
+  fi
+  rm -rf "$rollback_root"
+  return "$deploy_status"
+}
+
 APP_COLOR_ROOT="${APP_COLOR_ROOT:-/opt/agent-saas-app/color}"
 APP_WORKER_ROOT="${APP_WORKER_ROOT:-/opt/agent-saas-app/worker}"
 ACTIVE_COLOR_PATH="${ACTIVE_COLOR_PATH:-/etc/agent-saas/active-color}"
 WORKER_ACTIVE_COLOR_PATH="${WORKER_ACTIVE_COLOR_PATH:-/etc/agent-saas/runtime-worker-active-color}"
 NGINX_UPSTREAM_PATH="${NGINX_UPSTREAM_PATH:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
+ACS_CURRENT_PATH="${ACS_CURRENT_PATH:-/opt/agent-saas/acs-current}"
+ACS_ENV_PATH="${ACS_ENV_PATH:-/etc/agent-saas/acs-orchestrator.env}"
+ACS_IDENTITY_PATH="${ACS_IDENTITY_PATH:-/etc/agent-saas/acs-release-identity.json}"
+ACS_UNIT_PATH="${ACS_UNIT_PATH:-/etc/systemd/system/agent-saas-acs-orchestrator.service}"
+ACS_SERVICE_NAME="${ACS_SERVICE_NAME:-agent-saas-acs-orchestrator.service}"
 
 case "${1:-}" in
   --test-app-rollback)
@@ -90,6 +143,15 @@ case "${1:-}" in
   --test-app-cleanup-trap)
     app_committed=false
     trap cleanup_app_failure EXIT
+    false
+    ;;
+  --test-acs-rollback)
+    rollback_acs_release
+    exit $?
+    ;;
+  --test-acs-cleanup-trap)
+    acs_committed=false
+    trap cleanup_acs_failure EXIT
     false
     ;;
 esac
@@ -191,18 +253,19 @@ NODE
 }
 
 deploy_acs() {
-  local digest target previous main_pid rollback_root unit_path had_previous_identity candidate
+  local digest target previous main_pid
+  local rollback_root unit_path had_previous_identity candidate
   local had_previous_unit=false
   local acs_committed=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
   previous=""
-  if [ -L /opt/agent-saas/acs-current ]; then
-    if ! previous="$(readlink -f /opt/agent-saas/acs-current)" || [ -z "$previous" ]; then
+  if [ -L "$ACS_CURRENT_PATH" ]; then
+    if ! previous="$(readlink -f "$ACS_CURRENT_PATH")" || [ -z "$previous" ]; then
       echo 'Existing ACS release link cannot be resolved' >&2
       exit 1
     fi
-  elif [ -e /opt/agent-saas/acs-current ]; then
+  elif [ -e "$ACS_CURRENT_PATH" ]; then
     echo 'Existing ACS release path must be a symlink' >&2
     exit 1
   fi
@@ -224,8 +287,8 @@ deploy_acs() {
   rollback_root="/tmp/agent-saas-acs-rollback-$release_id-$GITHUB_RUN_ID"
   rm -rf "$rollback_root"
   mkdir -p "$rollback_root"
-  unit_path=/etc/systemd/system/agent-saas-acs-orchestrator.service
-  cp -a /etc/agent-saas/acs-orchestrator.env "$rollback_root/acs-orchestrator.env"
+  unit_path="$ACS_UNIT_PATH"
+  cp -a "$ACS_ENV_PATH" "$rollback_root/acs-orchestrator.env"
   if [ -L "$unit_path" ] || { [ -e "$unit_path" ] && [ ! -f "$unit_path" ]; }; then
     echo "Existing ACS managed unit must be absent or a regular file: $unit_path" >&2
     exit 1
@@ -235,44 +298,15 @@ deploy_acs() {
     cp -a "$unit_path" "$rollback_root/acs-orchestrator.service"
   fi
   had_previous_identity=false
-  if [ -e /etc/agent-saas/acs-release-identity.json ]; then
+  if [ -e "$ACS_IDENTITY_PATH" ]; then
     had_previous_identity=true
-    cp -a /etc/agent-saas/acs-release-identity.json "$rollback_root/acs-release-identity.json"
+    cp -a "$ACS_IDENTITY_PATH" "$rollback_root/acs-release-identity.json"
   fi
-  cleanup_acs_failure() {
-    local deploy_status=$? reload_status=0 restart_status=0
-    set +e
-    if [ "$acs_committed" = false ]; then
-      if [ -n "$previous" ]; then
-        ln -sfn "$previous" /opt/agent-saas/acs-current
-      else
-        rm -f /opt/agent-saas/acs-current
-      fi
-      cp -a "$rollback_root/acs-orchestrator.env" /etc/agent-saas/acs-orchestrator.env
-      if [ "$had_previous_identity" = true ]; then
-        cp -a "$rollback_root/acs-release-identity.json" /etc/agent-saas/acs-release-identity.json
-      else
-        rm -f /etc/agent-saas/acs-release-identity.json
-      fi
-      if [ "$had_previous_unit" = true ]; then
-        cp -a "$rollback_root/acs-orchestrator.service" "$unit_path"
-      else
-        rm -f "$unit_path"
-      fi
-      systemctl daemon-reload || reload_status=$?
-      systemctl restart agent-saas-acs-orchestrator.service || restart_status=$?
-      if [ "$reload_status" -ne 0 ] || [ "$restart_status" -ne 0 ]; then
-        echo "ACS rollback incomplete: daemon-reload=$reload_status restart=$restart_status" >&2
-      fi
-    fi
-    rm -rf "$rollback_root"
-    return "$deploy_status"
-  }
   trap cleanup_acs_failure EXIT
   trap 'exit 130' HUP INT TERM
   install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"
   systemctl daemon-reload
-  node - "$MANIFEST_PATH" /etc/agent-saas/acs-orchestrator.env <<'NODE'
+  node - "$MANIFEST_PATH" "$ACS_ENV_PATH" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -282,10 +316,10 @@ lines.push(`ACS_SANDBOX_IMAGE=${image}`);
 fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
-  node - "$MANIFEST_PATH" /etc/agent-saas/acs-orchestrator.env <<'NODE'
+  node - "$MANIFEST_PATH" "$ACS_ENV_PATH" "$ACS_IDENTITY_PATH" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, identityPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const identity = {
   schemaVersion: 1, environment: 'production', releaseId: manifest.releaseId,
@@ -295,23 +329,23 @@ const identity = {
   namespace: 'agent-saas-coding',
   configFingerprint: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(envPath)).digest('hex')}`,
 };
-fs.writeFileSync('/etc/agent-saas/acs-release-identity.json.candidate', `${JSON.stringify(identity)}\n`, { mode: 0o444 });
-fs.renameSync('/etc/agent-saas/acs-release-identity.json.candidate', '/etc/agent-saas/acs-release-identity.json');
+fs.writeFileSync(`${identityPath}.candidate`, `${JSON.stringify(identity)}\n`, { mode: 0o444 });
+fs.renameSync(`${identityPath}.candidate`, identityPath);
 NODE
-  ln -sfn "$target" /opt/agent-saas/acs-current
-  if systemctl is-active --quiet agent-saas-acs-orchestrator.service; then
-    main_pid="$(systemctl show agent-saas-acs-orchestrator.service --property MainPID --value)"
+  ln -sfn "$target" "$ACS_CURRENT_PATH"
+  if systemctl is-active --quiet "$ACS_SERVICE_NAME"; then
+    main_pid="$(systemctl show "$ACS_SERVICE_NAME" --property MainPID --value)"
     kill -USR2 "$main_pid"
     for _ in $(seq 1 330); do
-      systemctl is-active --quiet agent-saas-acs-orchestrator.service || break
+      systemctl is-active --quiet "$ACS_SERVICE_NAME" || break
       sleep 2
     done
-    systemctl is-active --quiet agent-saas-acs-orchestrator.service && {
+    systemctl is-active --quiet "$ACS_SERVICE_NAME" && {
       echo 'Production ACS drain deadline exceeded' >&2
       exit 20
     }
   fi
-  systemctl restart agent-saas-acs-orchestrator.service
+  systemctl restart "$ACS_SERVICE_NAME"
   rm -f /tmp/acs-promotion-health.json
   for _ in $(seq 1 90); do
     curl -fsS http://127.0.0.1:3400/health >/tmp/acs-promotion-health.json && break

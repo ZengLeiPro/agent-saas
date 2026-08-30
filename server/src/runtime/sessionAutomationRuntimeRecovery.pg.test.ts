@@ -96,7 +96,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     const lockedPromise = new Promise<void>(resolve => { locked = resolve; });
     const unlockPromise = new Promise<void>(resolve => { unlock = resolve; });
     const clear = store.tx(async client => {
-      const current = await store.getLocked(client, tenantId, sessionId, setup.automationId);
+      const current = await store.getLocked(client, tenantId, setup.sessionId, setup.automationId);
       locked();
       await unlockPromise;
       await store.control(client, current!, 'clear');

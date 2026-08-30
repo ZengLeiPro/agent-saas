@@ -32,6 +32,11 @@ export function creditsToMicrocredits(value: string | number): bigint | undefine
   return match[1] === '-' ? -magnitude : magnitude;
 }
 
+function wholeNumericToBigInt(value: unknown): bigint | undefined {
+  const match = /^(\d+)(?:\.0+)?$/.exec(String(value ?? '0').trim());
+  return match ? BigInt(match[1]!) : undefined;
+}
+
 export async function resolveAutomationBudgetReason(input: {
   client: Queryable;
   tables: AutomationBudgetTables;
@@ -96,10 +101,14 @@ export async function resolveAutomationBudgetReason(input: {
 
   if (budget.expiresAt && (input.now ?? new Date()).getTime() >= new Date(budget.expiresAt).getTime()) return 'expires_at';
   if (budget.maxRuns !== undefined && BigInt(String(row.run_count)) >= BigInt(budget.maxRuns)) return 'max_runs';
-  if (budget.maxTurns !== undefined
-    && BigInt(String(totals.turns ?? 0)) + BigInt(String(reserved.turns ?? 0)) >= BigInt(budget.maxTurns)) return 'max_turns';
-  if (budget.maxTokens !== undefined
-    && BigInt(String(totals.tokens ?? 0)) + BigInt(String(reserved.tokens ?? 0)) >= BigInt(budget.maxTokens)) return 'max_tokens';
+  const usedTurns = wholeNumericToBigInt(totals.turns);
+  const reservedTurns = wholeNumericToBigInt(reserved.turns);
+  const usedTokens = wholeNumericToBigInt(totals.tokens);
+  const reservedTokens = wholeNumericToBigInt(reserved.tokens);
+  if (usedTurns === undefined || reservedTurns === undefined) return 'turns_unverifiable';
+  if (usedTokens === undefined || reservedTokens === undefined) return 'tokens_unverifiable';
+  if (budget.maxTurns !== undefined && usedTurns + reservedTurns >= BigInt(budget.maxTurns)) return 'max_turns';
+  if (budget.maxTokens !== undefined && usedTokens + reservedTokens >= BigInt(budget.maxTokens)) return 'max_tokens';
   if (budget.maxCredits !== undefined) {
     const limitMicrocredits = creditsToMicrocredits(budget.maxCredits);
     if (limitMicrocredits === undefined) return 'credits_unverifiable';

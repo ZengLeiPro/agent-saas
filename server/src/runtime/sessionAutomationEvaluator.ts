@@ -281,15 +281,15 @@ export class SessionAutomationEvaluator {
       if (unknown.rowCount) {
         await client.query(
           `UPDATE ${this.store.tables.providerAttempts} p
-              SET state='result_unknown',version=version+1,lease_token=NULL,lease_expires_at=NULL,
-                  last_error=COALESCE(last_error,'evaluator_lease_expired_after_admission'),updated_at=now()
+              SET state='result_unknown',version=p.version+1,lease_token=NULL,lease_expires_at=NULL,
+                  last_error=COALESCE(p.last_error,'evaluator_lease_expired_after_admission'),updated_at=now()
              FROM ${this.store.tables.evaluations} e
             WHERE e.provider_attempt_id=p.provider_attempt_id AND e.state='result_unknown'
               AND p.state IN ('prepared','dispatched')`,
         );
         await client.query(
           `UPDATE ${this.store.tables.budgetReservations} r
-              SET state='result_unknown',version=version+1,updated_at=now()
+              SET state='result_unknown',version=r.version+1,updated_at=now()
              FROM ${this.store.tables.providerAttempts} p,${this.store.tables.evaluations} e
             WHERE e.provider_attempt_id=p.provider_attempt_id AND e.state='result_unknown'
               AND r.tenant_id=p.tenant_id AND r.idempotency_key=p.idempotency_key AND r.state='reserved'`,

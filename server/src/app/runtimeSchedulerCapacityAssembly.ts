@@ -6,6 +6,28 @@ import {
   type RuntimeSessionLockMode,
 } from '../runtime/runtimeSchedulerConfigStore.js';
 
+export function createRuntimeRunCapacityResolver(
+  getScheduler: () => RuntimeScheduler | undefined,
+  store: PgRuntimeSchedulerConfigStore,
+  sessionLockMode: RuntimeSessionLockMode,
+  foregroundReservedRuns: number,
+) {
+  return async () => {
+    const active = getScheduler()?.getCapacitySnapshot();
+    if (active) {
+      return {
+        maxConcurrentRuns: active.maxConcurrentRuns,
+        foregroundReservedRuns: active.foregroundReservedRuns,
+      };
+    }
+    const persisted = await store.get();
+    return {
+      maxConcurrentRuns: effectiveMaxConcurrentRuns(persisted.maxConcurrentRuns, sessionLockMode),
+      foregroundReservedRuns,
+    };
+  };
+}
+
 export function createRuntimeSchedulerCapacityController(input: {
   store: PgRuntimeSchedulerConfigStore;
   scheduler: RuntimeScheduler;

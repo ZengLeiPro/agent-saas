@@ -180,7 +180,7 @@ import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
+import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -1734,23 +1734,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpClientManager,
     mcpProxy,
     ...(pgEventStore ? { eventStoreFactory: () => pgEventStore } : {}),
-    ...(pgRunStore ? {
-      runStore: pgRunStore,
-      resolveRuntimeRunCapacity: async () => {
-        const active = runtimeScheduler?.getCapacitySnapshot();
-        if (active) {
-          return {
-            maxConcurrentRuns: active.maxConcurrentRuns,
-            foregroundReservedRuns: active.foregroundReservedRuns,
-          };
-        }
-        const persisted = await runtimeSchedulerConfigStore!.get();
-        return {
-          maxConcurrentRuns: effectiveMaxConcurrentRuns(persisted.maxConcurrentRuns, sessionLockMode),
-          foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 100,
-        };
-      },
-    } : {}),
+    ...(pgRunStore ? { runStore: pgRunStore } : {}),
     ...(runPreflightService ? { runPreflightService } : {}),
     ...(runResolutionSnapshotStore ? { runResolutionSnapshotStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
@@ -1866,7 +1850,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   };
   if (pgRunStore) rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
   const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig), resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
-
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
     const schedulerConfig = await runtimeSchedulerConfigStore!.get();
@@ -2019,6 +2002,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       logger: serverLogger.child('RuntimeScheduler'),
     });
+    rawRuntimeConfig.resolveRuntimeRunCapacity = createRuntimeRunCapacityResolver(() => runtimeScheduler, runtimeSchedulerConfigStore!, sessionLockMode, config.runtimeScheduler?.foregroundReservedRuns ?? 100);
     if (taskboardStoreService && defaultModelResolver) {
       taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({ store: taskboardStoreService, scheduler: runtimeScheduler, runStore: pgRunStore, sessionCatalog,
         eventStore: pgEventStore, agentCwd, executionConfig, resolveDefaultModel: defaultModelResolver,

@@ -405,6 +405,7 @@ export function ChatInput({
             ) : (
               <textarea
                 ref={textareaRef}
+                aria-label="消息输入"
                 autoComplete="off"
                 value={input}
                 onChange={(e) => {

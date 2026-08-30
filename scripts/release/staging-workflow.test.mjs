@@ -20,6 +20,9 @@ const serverPackagePath = new URL('../../server/package.json', import.meta.url);
 const scenarioRoutesPath = new URL('../../server/src/routes/scenarios.ts', import.meta.url);
 const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', import.meta.url);
 const e2eHelpersPath = new URL('../../e2e/staging/helpers.ts', import.meta.url);
+const e2eConfigPath = new URL('../../e2e/playwright.config.ts', import.meta.url);
+const e2eGlobalSetupPath = new URL('../../e2e/staging/global-setup.ts', import.meta.url);
+const chatInputPath = new URL('../../web/src/components/ChatInput.tsx', import.meta.url);
 
 function runScriptLines(text) {
   const output = [];
@@ -114,12 +117,20 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('Staging browser login selects only the password-login submit button', async () => {
+test('Staging browser authentication is preloaded without recording the password and uses a stable composer label', async () => {
   const helpers = await readFile(e2eHelpersPath, 'utf8');
-  assert.match(
-    helpers,
-    /getByRole\('button', \{ name: '登录', exact: true \}\)\.click\(\)/u,
-  );
+  const config = await readFile(e2eConfigPath, 'utf8');
+  const globalSetup = await readFile(e2eGlobalSetupPath, 'utf8');
+  const chatInput = await readFile(chatInputPath, 'utf8');
+  assert.match(config, /globalSetup: '\.\/staging\/global-setup\.ts'/u);
+  assert.match(config, /storageState: stagingStorageStatePath/u);
+  assert.match(globalSetup, /fetch\(`\$\{apiUrl\}\/api\/auth\/login`/u);
+  assert.match(globalSetup, /writeFile\([\s\S]*\{ mode: 0o600 \}/u);
+  assert.match(globalSetup, /chromium\.launch\(\)/u);
+  assert.match(globalSetup, /getByRole\('textbox', \{ name: '消息输入' \}\)\.waitFor/u);
+  assert.doesNotMatch(helpers, /getByLabel\('密码'\)\.fill/u);
+  assert.match(helpers, /getByRole\('textbox', \{ name: '消息输入' \}\)/u);
+  assert.match(chatInput, /aria-label="消息输入"/u);
 });
 
 test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {

@@ -3,7 +3,7 @@ import { apiLogin, login, required } from './helpers';
 
 test('真实登录、Web entry、API readiness 与 WebSocket upgrade', async ({ page, request }) => {
   await login(page);
-  const token = await apiLogin(request);
+  const token = await apiLogin();
   const readiness = await request.get(`${required('STAGING_API_URL')}/api/healthz/ready`, {
     headers: { authorization: `Bearer ${token}` },
   });

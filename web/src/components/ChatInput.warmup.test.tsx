@@ -56,6 +56,7 @@ describe("ChatInput Sandbox 预热", () => {
   it("支持初始会话传入邀请式 placeholder", () => {
     render(<ControlledInput sessionId="custom-placeholder" placeholder="说清目标，我来拆解并推进" />);
     expect(screen.getByPlaceholderText("说清目标，我来拆解并推进")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "消息输入" })).toBeTruthy();
   });
 
   it("聚焦、空白输入和光标移动都不触发", async () => {

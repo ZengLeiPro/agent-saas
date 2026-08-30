@@ -334,8 +334,12 @@ export type {
   ReleaseComponentMatrix,
   ReleaseComponentsPlan,
   ReleaseArtifacts,
+  ReleaseArtifactsV2,
   ReleaseManifestContent,
+  ReleaseManifestContentV1,
+  ReleaseManifestContentV2,
   ReleaseManifest,
+  ReleaseManifestV2,
   CanonicalJsonValue,
 } from './schemas/releaseManifest';
 export type { ResolvedScenarioSlug } from './security/projectWorkflowPublic';

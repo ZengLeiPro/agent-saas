@@ -92,13 +92,27 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');
   assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
+  assert.match(workflow, /Materialize and verify selected Manifest artifacts/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
   assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\.path/u);
-  assert.match(workflow, /test "\$runtime_path" = staging-runtime-assets\.tgz/u);
+  assert.match(workflow, /test "\$staging_runtime_path" = staging-runtime-assets\.tgz/u);
   assert.match(workflow, /STAGING_RUNTIME_ASSETS_PATH='\$remote\/staging-runtime-assets\.tgz'/u);
   assert.match(workflow, /--argjson runtimeSummary/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
+  assert.ok(
+    workflow.indexOf('staging-runtime-summary.json') <
+      workflow.indexOf('publish-release-record.mjs'),
+  );
   assert.match(workflow, /\$\{\{ runner\.temp \}\}\/staging-runtime-summary\.json/u);
+  assert.match(workflow, /publish-release-record\.mjs[\s\S]*\$RUNNER_TEMP\/selected/u);
+  assert.ok(
+    workflow.indexOf('Materialize and verify selected Manifest artifacts') <
+      workflow.indexOf('Create immutable RC tag, Release and built attestation'),
+  );
+  assert.ok(
+    workflow.indexOf('verify-selected-release-artifacts.mjs') <
+      workflow.indexOf('publish-release-record.mjs'),
+  );
   assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
   assert.match(workflow, /test -f "\$RUNNER_TEMP\/\$evidence"/u);
   assert.match(workflow, /if-no-files-found: warn/u);

@@ -13,13 +13,28 @@ export const RUNTIME_COMPONENTS = Object.freeze([
   'adminRunner',
   'acsSandbox',
 ]);
+const BASE_IMAGE_COMPONENTS = new Set([...RUNTIME_COMPONENTS, 'webBuild']);
+const TOOL_PROBES = new Map([
+  ['git', ['git', '--version']],
+  ['bird', ['bird', '--version']],
+  ['python', ['python3', '--version']],
+  ['gh', ['gh', '--version']],
+  ['aliyun', ['aliyun', 'version']],
+  ['gws', ['gws', '--version']],
+  ['ntn', ['ntn', '--version']],
+  ['dws', ['dws', '--version']],
+  ['lark-cli', ['lark-cli', '--version']],
+]);
 const IMAGE_PATTERN = /^[a-z0-9./:-]+@sha256:[a-f0-9]{64}$/u;
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
-const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/u;
+const VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+const VERSION_TOKEN_PATTERN = /[vV]?[0-9][0-9A-Za-z._+-]*/gu;
+const VERSION_SHAPE_PATTERN = /^[vV]?\d+\.\d+\./u;
 const ARCHITECTURES = new Set(['x64', 'arm64']);
 const FORBIDDEN_KEY = /(secret|token|password|credential|private.?key|access.?key)/iu;
 const FORBIDDEN_VALUE =
-  /(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?:\/\/[^/\s:@]+:[^/\s@]+@|\/(?:home|Users|workspace)\/)/u;
+  /(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?:\/\/[^/\s:@]+:[^/\s@]+@|\/(?:root|tmp|home|Users|workspace)\/|authorization\s*:\s*(?:bearer|basic)\s+\S+|bearer\s+[A-Za-z0-9._~+/-]+=*)/iu;
 
 function assertKeys(value, expected, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -79,7 +94,11 @@ export function validateRuntimeDependencyContract(contract) {
       throw new Error(`Base image ${image.name} must use an immutable registry digest`);
     if (!ARCHITECTURES.has(image.architecture))
       throw new Error(`Base image ${image.name} has unsupported architecture`);
-    assertStringArray(image.components, null, `baseImage.${image.name}.components`);
+    assertStringArray(
+      image.components,
+      BASE_IMAGE_COMPONENTS,
+      `baseImage.${image.name}.components`,
+    );
   }
 
   if (!Array.isArray(contract.tools)) throw new Error('tools must be an array');
@@ -92,6 +111,10 @@ export function validateRuntimeDependencyContract(contract) {
       throw new Error(`Tool ${tool.name} has unsupported architecture`);
     assertStringArray(tool.components, new Set(RUNTIME_COMPONENTS), `tool.${tool.name}.components`);
     assertStringArray(tool.probe, null, `tool.${tool.name}.probe`);
+    const expectedProbe = TOOL_PROBES.get(tool.name);
+    if (!expectedProbe || JSON.stringify(tool.probe) !== JSON.stringify(expectedProbe)) {
+      throw new Error(`Tool ${tool.name} probe is not the supported fixed version probe`);
+    }
     const identity = `${tool.name}:${tool.architecture}:${tool.components.join(',')}`;
     if (toolIdentities.has(identity)) throw new Error(`Duplicate tool identity ${identity}`);
     toolIdentities.add(identity);
@@ -225,15 +248,16 @@ export function verifyRuntimeEnvironment({
         output = execFileSync(tool.probe[0], tool.probe.slice(1), {
           encoding: 'utf8',
           stdio: 'pipe',
+          timeout: 5_000,
+          killSignal: 'SIGKILL',
         });
       } catch {
         throw new Error(`Required runtime tool ${tool.name} is missing or not executable`);
       }
-      const exactVersion = new RegExp(
-        `(?:^|[^0-9])${tool.version.replaceAll('.', '\\.').replaceAll('+', '\\+')}(?:$|[^0-9])`,
-        'u',
+      const versionToken = (String(output).match(VERSION_TOKEN_PATTERN) ?? []).find((token) =>
+        VERSION_SHAPE_PATTERN.test(token),
       );
-      if (!exactVersion.test(String(output)))
+      if (versionToken !== tool.version || !VERSION_PATTERN.test(versionToken))
         throw new Error(`Runtime tool ${tool.name} version mismatch: expected ${tool.version}`);
     }
   }
@@ -252,6 +276,9 @@ function parseArgs(argv) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2));
   const mode = String(args.mode ?? 'enforce');
+  if (Object.hasOwn(args, 'production') && mode !== 'enforce') {
+    throw new Error('Production runtime dependency checks cannot be disabled by any flag form');
+  }
   if (args.create === 'true') {
     if (!args.contract || !args['source-sha'] || !args.output)
       throw new Error(
@@ -264,14 +291,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const { writeFile } = await import('node:fs/promises');
     await writeFile(resolve(String(args.output)), `${canonicalJson(identity)}\n`, { flag: 'wx' });
     process.stdout.write(`${identity.dependencyDigest}\n`);
-  } else if (args.production === 'true' && mode !== 'enforce')
-    throw new Error('Production runtime dependency checks cannot be disabled');
-  else if (mode === 'off') {
+  } else if (mode === 'off') {
     process.stdout.write('runtime-dependency: explicitly disabled outside production\n');
   } else {
     if (!args.manifest || !args.component)
       throw new Error(
-        'usage: runtime-dependency.mjs --manifest=<path> --component=<component> [--production=true] [--mode=enforce]',
+        'usage: runtime-dependency.mjs --manifest=<path> --component=<component> [--production] [--mode=enforce]',
       );
     const identity = JSON.parse(await readFile(resolve(String(args.manifest)), 'utf8'));
     const result = verifyRuntimeEnvironment({ identity, component: String(args.component) });

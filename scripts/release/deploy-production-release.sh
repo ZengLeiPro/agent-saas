@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${PHASE:?PHASE must be acs or app}"
+: "${PHASE:?PHASE must be acs, app or web}"
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
+: "${READ_PRODUCTION_STATE_SCRIPT:?READ_PRODUCTION_STATE_SCRIPT is required}"
+: "${VERIFY_PROMOTION_PHASE_SCRIPT:?VERIFY_PROMOTION_PHASE_SCRIPT is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+VERIFY_ONLY="${VERIFY_ONLY:-false}"
+case "$VERIFY_ONLY" in true|false) ;; *) echo 'VERIFY_ONLY must be true or false' >&2; exit 1 ;; esac
 case "$PHASE" in
   acs) : "${ACS_UNIT_TEMPLATE:?ACS_UNIT_TEMPLATE is required}" ;;
   app)
-    : "${SERVER_UNIT_TEMPLATE:?SERVER_UNIT_TEMPLATE is required}"
-    : "${WORKER_UNIT_TEMPLATE:?WORKER_UNIT_TEMPLATE is required}"
+    if [ "$VERIFY_ONLY" != true ]; then
+      : "${SERVER_UNIT_TEMPLATE:?SERVER_UNIT_TEMPLATE is required}"
+      : "${WORKER_UNIT_TEMPLATE:?WORKER_UNIT_TEMPLATE is required}"
+    fi
     ;;
-  *) echo 'PHASE must be acs or app' >&2; exit 1 ;;
+  web) ;;
+  *) echo 'PHASE must be acs, app or web' >&2; exit 1 ;;
 esac
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
@@ -26,6 +34,18 @@ lock=/run/lock/agent-saas/promotion.lock
 mkdir -p "$(dirname "$lock")"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
+
+# Promotion 的 GitHub gate 与分阶段写入之间仍可能有手工/兼容入口；每个阶段必须在
+# 同一主机锁内重新读取 live state，并只接受该阶段应看到的精确前置矩阵。
+production_now="/tmp/agent-saas-production-before-${PHASE}-${GITHUB_RUN_ID}.json"
+rm -f "$production_now"
+node "$READ_PRODUCTION_STATE_SCRIPT" --output "$production_now" >/dev/null
+node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" "$production_now" "$PHASE" >/dev/null
+rm -f "$production_now"
+if [ "$VERIFY_ONLY" = true ] || [ "$PHASE" = web ]; then
+  echo "$PHASE phase precondition verified for $release_id"
+  exit 0
+fi
 
 upsert_env() {
   local manifest="$1" target="$2" role="$3"
@@ -325,5 +345,9 @@ EOF
   rm -rf "$rollback_root"
 }
 
-if [ "$PHASE" = acs ]; then deploy_acs; else deploy_app; fi
+case "$PHASE" in
+  acs) deploy_acs ;;
+  app) deploy_app ;;
+  web) exit 0 ;;
+esac
 echo "$PHASE phase completed for $release_id"

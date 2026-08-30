@@ -27,9 +27,12 @@ async function fixture() {
   await writeFile(
     join(root, 'sbom.json'),
     `${canonicalJson({
-      schemaVersion: 1,
+      schemaVersion: 2,
       sourceSha: SHA,
+      lockfile: { digest: `sha256:${'f'.repeat(64)}`, size: 1 },
       runtimeDependencies: {
+        sourceSha: SHA,
+        identityDigest: runtimeIdentity.identityDigest,
         contractDigest: runtimeIdentity.contractDigest,
         dependencyDigest: runtimeIdentity.dependencyDigest,
       },
@@ -38,7 +41,7 @@ async function fixture() {
   );
   await writeFile(join(root, 'runtime-dependencies.json'), `${canonicalJson(runtimeIdentity)}\n`);
   const body = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSha: SHA,
     artifacts: {
       serverBundle: { path: 'server.tgz', ...(await digestFile(join(root, 'server.tgz'))) },
@@ -48,6 +51,8 @@ async function fixture() {
     runtimeDependencies: {
       path: 'runtime-dependencies.json',
       ...(await digestFile(join(root, 'runtime-dependencies.json'))),
+      sourceSha: SHA,
+      identityDigest: runtimeIdentity.identityDigest,
       contractDigest: runtimeIdentity.contractDigest,
       dependencyDigest: runtimeIdentity.dependencyDigest,
     },
@@ -59,7 +64,7 @@ async function fixture() {
   return root;
 }
 
-test('binds built artifact URIs to the internally selected release', async () => {
+test('binds strict built artifact index/SBOM URIs to the internally selected release', async () => {
   const root = await fixture();
   const value = await assembleReleaseEvidence({
     authoritative: join(root, 'authoritative.json'),
@@ -81,9 +86,10 @@ test('binds built artifact URIs to the internally selected release', async () =>
     value.builtArtifacts.runtimeDependencies.uri,
     'oss://agent-saas-releases/rc-20260826-22/runtime-dependencies.json',
   );
+  assert.equal(value.builtArtifacts.runtimeDependencies.sourceSha, SHA);
   assert.equal(
-    value.builtArtifacts.runtimeDependencies.dependencyDigest,
-    createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA).dependencyDigest,
+    value.builtArtifacts.runtimeDependencies.identityDigest,
+    createRuntimeDependencyIdentity(await loadRuntimeDependencyContract(), SHA).identityDigest,
   );
 });
 

@@ -5,6 +5,7 @@ import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+const phaseVerifierPath = new URL('./verify-promotion-phase-state.mjs', import.meta.url);
 const acsUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
   import.meta.url,
@@ -48,9 +49,10 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);
-  assert.match(workflow, /group: production-promotion/u);
+  assert.match(workflow, /group: agent-saas-production-deploy/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
+  assert.doesNotMatch(workflow, /group: (?:production-promotion|acs-production-deploy)/u);
   assert.match(workflow, /PRODUCTION_SSH_HOST_KEY_SHA256/u);
   assert.match(workflow, /RELEASE_ID_INPUT: \$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
@@ -84,11 +86,11 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
-test('all validation and prefetch precede mutation, then ACS, App, and Web converge in order', async () => {
+test('all validation and built/selected prefetch precede mutation, then ACS, App, and Web converge strictly in order', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
     '- name: Read authoritative production baseline before any write',
-    '- name: Prefetch and verify built evidence plus selected artifacts',
+    '- name: Prefetch and verify built evidence plus selected Manifest artifacts',
     '- name: Mark and persist promotion started before any production write',
     '- name: Upload immutable deploy payload and managed units',
     '- name: Deploy exact ACS Orchestrator and Sandbox digest first',
@@ -114,12 +116,27 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
   assert.match(workflow, /runtimeDependencies\.path/u);
-  assert.match(
-    workflow,
-    /artifacts\.runtimeDependencies\.(?:digest|dependencyDigest|contractDigest)/u,
-  );
   assert.match(workflow, /\.artifacts\[\] \| \.path/u);
   assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
+  assert.match(workflow, /runtimeDependencies\.server\.uri/u);
+  assert.match(workflow, /Manifest, artifact index and Release record from OSS/u);
+  assert.match(workflow, /verify-selected-release-artifacts\.mjs/u);
+  assert.ok(
+    workflow.indexOf('node scripts/release/verify-artifact.mjs') <
+      workflow.indexOf('verify-selected-release-artifacts.mjs'),
+  );
+  assert.match(workflow, /verify-release-record\.mjs/u);
+  assert.match(workflow, /oss-record\/record\.json/u);
+  assert.match(
+    workflow,
+    /READ_PRODUCTION_STATE_SCRIPT='\$PROMOTION_REMOTE\/read-production-state\.mjs'/u,
+  );
+  assert.match(workflow, /PHASE=web RELEASE_DIR=/u);
+  assert.match(
+    workflow,
+    /VERIFY_PROMOTION_PHASE_SCRIPT='\$PROMOTION_REMOTE\/verify-promotion-phase-state\.mjs'/u,
+  );
+  assert.match(workflow, /PHASE=app VERIFY_ONLY='\$verify_only'/u);
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
   assert.match(workflow, /keep without restart/u);
@@ -134,6 +151,7 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
 test('workflow preserves partial matrices, rollback evidence, migrations, and acceptance boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
+  const phaseVerifier = await readFile(phaseVerifierPath, 'utf8');
   const acsUnit = await readFile(acsUnitPath, 'utf8');
   const serverUnit = await readFile(serverUnitPath, 'utf8');
   const workerUnit = await readFile(workerUnitPath, 'utf8');
@@ -160,6 +178,12 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.match(phaseVerifier, /Production changed after promotion gate/u);
+  assert.match(phaseVerifier, /phase === 'web' && manifest\.components\.api\.action === 'deploy'/u);
+  assert.ok(deploy.indexOf('flock -n 9') < deploy.indexOf('node "$READ_PRODUCTION_STATE_SCRIPT"'));
+  assert.ok(
+    deploy.indexOf('node "$VERIFY_PROMOTION_PHASE_SCRIPT"') < deploy.indexOf('deploy_acs()'),
+  );
   assert.ok(
     deploy.indexOf('trap cleanup_acs_failure EXIT') <
       deploy.indexOf('install -m 0644 "$ACS_UNIT_TEMPLATE" "$unit_path"'),

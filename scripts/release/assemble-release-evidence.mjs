@@ -27,6 +27,8 @@ export async function assembleReleaseEvidence(options) {
     JSON.parse(await readFile(resolve(options.authoritative), 'utf8')),
     { expectedSha: options.sha },
   );
+  if (authoritative.schemaVersion !== 2)
+    throw new Error('New Release candidates require Release Evidence v2 runtime identities');
   const index = await verifyArtifactIndex(options.index, options.sha);
   const createdAt = options['created-at'];
   const expiresAt = options['expires-at'];
@@ -65,6 +67,8 @@ export async function assembleReleaseEvidence(options) {
         ),
         digest: index.runtimeDependencies.digest,
         size: index.runtimeDependencies.size,
+        sourceSha: index.sourceSha,
+        identityDigest: index.runtimeDependencies.identityDigest,
         dependencyDigest: index.runtimeDependencies.dependencyDigest,
         contractDigest: index.runtimeDependencies.contractDigest,
       },
@@ -89,7 +93,7 @@ export async function assembleReleaseEvidence(options) {
     !output.builtArtifacts.webAssets ||
     !output.builtArtifacts.runtimeDependencies
   )
-    throw new Error('Release evidence is incomplete');
+    throw new Error('Release Evidence v2 is incomplete or lacks a runtime identity');
   await writeFile(resolve(options.output), `${JSON.stringify(output, null, 2)}\n`, { flag: 'wx' });
   return output;
 }

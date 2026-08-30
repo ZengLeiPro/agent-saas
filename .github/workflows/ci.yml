@@ -566,6 +566,7 @@ jobs:
           tar --no-xattrs -czf server-bundle.tgz -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name serverBundle --file server-bundle.tgz \
+            --runtime-dependencies "$stage/server/runtime-dependencies.json" \
             --output "$RUNNER_TEMP/server-artifact-index.json"
           server_digest="$(jq -r .artifacts.serverBundle.digest "$RUNNER_TEMP/server-artifact-index.json")"
           server_size="$(jq -r .artifacts.serverBundle.size "$RUNNER_TEMP/server-artifact-index.json")"
@@ -602,6 +603,9 @@ jobs:
           destination="$RELEASE_RECORD_OSS_URI/baselines/app-${GITHUB_SHA}-${SERVER_ARTIFACT_DIGEST#sha256:}"
           bash scripts/release/upload-oss-object-immutable.sh \
             server-bundle.tgz "$destination/server-bundle.tgz"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/server-release-stage/server/runtime-dependencies.json" \
+            "$destination/runtime-dependencies.json"
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/server-artifact-index.json" "$destination/artifact-index.json"
 
@@ -751,6 +755,19 @@ jobs:
           : "${GITHUB_RUN_ID:?missing GITHUB_RUN_ID}"
           : "${GITHUB_RUN_ATTEMPT:?missing GITHUB_RUN_ATTEMPT}"
           case "$WORKER_DEPLOY_REQUIRED" in true|false) ;; *) echo "invalid WORKER_DEPLOY_REQUIRED=$WORKER_DEPLOY_REQUIRED"; exit 1 ;; esac
+          DEPLOY_LOCK_FILE="/run/lock/agent-saas/promotion.lock"
+          if ! command -v flock >/dev/null 2>&1; then
+            echo "flock is required for production deploy serialization" >&2
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
+          mkdir -p "$(dirname "$DEPLOY_LOCK_FILE")"
+          exec 9>"$DEPLOY_LOCK_FILE"
+          if ! flock -n 9; then
+            echo "another production deploy holds $DEPLOY_LOCK_FILE" >&2
+            rm -f -- "$RELEASE_TGZ"
+            exit 1
+          fi
           actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
           test "$actual_archive_digest" = "$SERVER_ARTIFACT_DIGEST"
           RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
@@ -776,7 +793,6 @@ jobs:
           WORKER_SERVICE="agent-saas-runtime-worker"
           UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
           API_SITE_CONF="/etc/nginx/conf.d/agent-api-kaiyan.conf"
-          DEPLOY_LOCK_FILE="/run/lock/agent-saas-deploy.lock"
           MAINTENANCE_SERVICE="agent-saas-deploy-maintenance.service"
           MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
 
@@ -824,20 +840,8 @@ jobs:
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
 
-          # GitHub concurrency 管整条 workflow；ECS flock 是第二道锁，覆盖手工 SSH
-          # 或其他入口。fd 9 随远端脚本退出自动释放，不依赖清理回调。
-          if ! command -v flock >/dev/null 2>&1; then
-            log "ERROR: flock is required for production deploy serialization"
-            rm -f -- "$RELEASE_TGZ"
-            exit 1
-          fi
-          mkdir -p "$(dirname "$DEPLOY_LOCK_FILE")"
-          exec 9>"$DEPLOY_LOCK_FILE"
-          if ! flock -n 9; then
-            log "ERROR: another production deploy holds $DEPLOY_LOCK_FILE"
-            rm -f -- "$RELEASE_TGZ"
-            exit 1
-          fi
+          # GitHub concurrency 管整条 workflow；共享 ECS flock 覆盖 Promotion、ACS 与手工 SSH。
+          # fd 9 自远端脚本开头持有至退出，基线探测和所有生产写入都在锁内。
           log "deploy lock acquired: $DEPLOY_LOCK_FILE"
 
           # 每小时清理被 SIGKILL、断网等硬中断遗留的超龄上传包。正常成功、

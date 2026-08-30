@@ -1,5 +1,7 @@
 name: 预发 RC 部署到生产
 
+# 与 CI/ACS 兼容直发共享互斥组，覆盖基线读取、分阶段切换和最终 readback。
+
 on:
   workflow_dispatch:
     inputs:
@@ -221,7 +223,7 @@ jobs:
           fi
           echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
 
-      - name: Verify immutable Manifest and artifact index from OSS record
+      - name: Verify immutable Manifest, artifact index and Release record from OSS
         run: |
           set -euo pipefail
           : "${RELEASE_RECORD_OSS_URI:?Missing production variable RELEASE_RECORD_OSS_URI}"
@@ -238,13 +240,18 @@ jobs:
             <(jq -S . "$RUNNER_TEMP/oss-record/manifest.json")
           diff -u <(jq -S . "$RUNNER_TEMP/release/artifact-index.json") \
             <(jq -S . "$RUNNER_TEMP/oss-record/artifact-index.json")
+          # Release record 必须与同一 immutable Manifest 和 artifact index 成组验证。
+          node scripts/release/verify-release-record.mjs \
+            "$RUNNER_TEMP/oss-record/record.json" \
+            "$RUNNER_TEMP/oss-record/manifest.json" \
+            "$RUNNER_TEMP/oss-record/artifact-index.json"
           test "$(jq -r .releaseId "$RUNNER_TEMP/oss-record/record.json")" = "$RELEASE_ID"
           test "$(jq -r .releaseSha "$RUNNER_TEMP/oss-record/record.json")" = "$RELEASE_SHA"
           test "$(jq -r .manifestDigest "$RUNNER_TEMP/oss-record/record.json")" = "$MANIFEST_DIGEST"
           test "$(jq -r .artifactDigest "$RUNNER_TEMP/oss-record/record.json")" = \
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
-      - name: Prefetch and verify built evidence plus selected artifacts
+      - name: Prefetch and verify built evidence plus selected Manifest artifacts
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
@@ -266,21 +273,17 @@ jobs:
           for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
             set -- $pair
             uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
-            digest="$(jq -r ".artifacts.$1.digest" "$RUNNER_TEMP/manifest.json")"
             fetch "$uri" "$RUNNER_TEMP/selected/$2"
-            test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
-          runtime_uri="$(jq -r .artifacts.runtimeDependencies.uri "$RUNNER_TEMP/manifest.json")"
-          test "$runtime_uri" = "$built_base/$runtime_path"
-          test "$(jq -r .artifacts.runtimeDependencies.size "$RUNNER_TEMP/manifest.json")" = \
-            "$(jq -r .runtimeDependencies.size "$RUNNER_TEMP/built/artifact-index.json")"
-          test "$(jq -r .artifacts.runtimeDependencies.digest "$RUNNER_TEMP/manifest.json")" = \
-            "$(jq -r .runtimeDependencies.digest "$RUNNER_TEMP/built/artifact-index.json")"
-          test "$(jq -r .artifacts.runtimeDependencies.dependencyDigest "$RUNNER_TEMP/manifest.json")" = \
-            "$(jq -r .runtimeDependencies.dependencyDigest "$RUNNER_TEMP/built/artifact-index.json")"
-          test "$(jq -r .artifacts.runtimeDependencies.contractDigest "$RUNNER_TEMP/manifest.json")" = \
-            "$(jq -r .runtimeDependencies.contractDigest "$RUNNER_TEMP/built/artifact-index.json")"
 
+          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/manifest.json")" = 2 ]; then
+            fetch "$(jq -r .artifacts.runtimeDependencies.server.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-server.json"
+            fetch "$(jq -r .artifacts.runtimeDependencies.acs.uri "$RUNNER_TEMP/manifest.json")" \
+              "$RUNNER_TEMP/selected/runtime-dependencies-acs.json"
+          fi
+          node scripts/release/verify-selected-release-artifacts.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/selected"
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"
@@ -336,7 +339,9 @@ jobs:
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/selected/"*.tgz "$ECS_USER@$ECS_HOST:$remote/artifacts/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
-            scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
+            scripts/release/verify-installed-release.mjs scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs scripts/release/verify-promotion-phase-state.mjs \
+            scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
           scp -i ~/.ssh/production_key \
             daemon-packaging/systemd/agent-saas-server@.service.template \
@@ -377,7 +382,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -428,17 +433,18 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+          verify_only=false
           if [ "$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
             test "$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")" = keep
-            echo 'API and Runtime Worker already equal the frozen production baseline; keep without cutover'
-            exit 0
+            echo 'API and Runtime Worker already equal the frozen production baseline; verify without cutover'
+            verify_only=true
           fi
           if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
             echo 'API and Runtime Worker already equal the immutable target; keep without cutover'
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -497,6 +503,9 @@ jobs:
             echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
+          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+          # 仅在主机侧 phase 前置校验通过后发布 OSS Web entry。
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"

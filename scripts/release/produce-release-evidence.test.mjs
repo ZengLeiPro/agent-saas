@@ -9,10 +9,20 @@ import { produceReleaseEvidence } from './produce-release-evidence.mjs';
 const RELEASE_SHA = 'a'.repeat(40);
 const BASE_SHA = 'b'.repeat(40);
 const DIGESTS = Object.fromEntries(
-  ['production', 'server', 'web', 'acs', 'image', 'review', 'migration'].map((name, index) => [
-    name,
-    `sha256:${String(index + 1).repeat(64)}`,
-  ]),
+  [
+    'production',
+    'server',
+    'web',
+    'acs',
+    'image',
+    'review',
+    'migration',
+    'runtime',
+    'dependencies',
+    'contract',
+    'identityServer',
+    'identityAcs',
+  ].map((name, index) => [name, `sha256:${(index + 1).toString(16).repeat(64)}`]),
 );
 
 function productionState() {
@@ -70,6 +80,26 @@ async function fixture(overrides = {}) {
     'baseline-artifacts': {
       serverBundle: { uri: 'oss://releases/base/server.tgz', digest: DIGESTS.server, size: 10 },
       webAssets: { uri: 'oss://releases/base/web.tgz', digest: DIGESTS.web, size: 11 },
+      runtimeDependencies: {
+        server: {
+          uri: 'oss://releases/base/server-runtime.json',
+          digest: DIGESTS.runtime,
+          size: 13,
+          sourceSha: BASE_SHA,
+          identityDigest: DIGESTS.identityServer,
+          dependencyDigest: DIGESTS.dependencies,
+          contractDigest: DIGESTS.contract,
+        },
+        acs: {
+          uri: 'oss://releases/base/acs-runtime.json',
+          digest: DIGESTS.runtime,
+          size: 13,
+          sourceSha: BASE_SHA,
+          identityDigest: DIGESTS.identityAcs,
+          dependencyDigest: DIGESTS.dependencies,
+          contractDigest: DIGESTS.contract,
+        },
+      },
       acsOrchestrator: { uri: 'oss://releases/base/acs.tgz', digest: DIGESTS.acs, size: 12 },
       acsImage: { repository: 'registry.example.com/app/image', digest: DIGESTS.image },
     },
@@ -100,12 +130,13 @@ async function fixture(overrides = {}) {
   return { root, options, documents };
 }
 
-test('produces digest-bound release evidence from independent authoritative inputs', async () => {
+test('produces digest-bound Release Evidence v2 with kept-component Runtime identities', async () => {
   const { options, documents } = await fixture();
   const evidence = await produceReleaseEvidence(options);
   const stored = JSON.parse(await readFile(options.output, 'utf8'));
 
   assert.deepEqual(stored, evidence);
+  assert.equal(evidence.schemaVersion, 2);
   assert.equal(evidence.releaseSha, RELEASE_SHA);
   assert.equal(evidence.releasePullRequest.number, documents.merge.finalPullRequest.number);
   assert.deepEqual(evidence.sourcePullRequests, [300]);
@@ -152,6 +183,48 @@ test('preserves optional Taskboard Integration audit evidence without requiring 
   const evidence = await produceReleaseEvidence(base.options);
   assert.deepEqual(evidence.sourcePullRequests, [299, 300]);
   assert.equal(evidence.integrationCandidates[0].candidateId, base.documents.merge.task.id);
+});
+
+test('rejects a baseline runtime identity bound to another component source', async () => {
+  const base = await fixture();
+  base.documents['baseline-artifacts'].runtimeDependencies.server.sourceSha = 'd'.repeat(40);
+  await writeFile(
+    base.options['baseline-artifacts'],
+    `${JSON.stringify(base.documents['baseline-artifacts'])}\n`,
+  );
+  await assert.rejects(
+    produceReleaseEvidence(base.options),
+    /Server runtime dependency is not bound/u,
+  );
+});
+
+test('allows absent baseline Runtime identities only for components classified to deploy', async () => {
+  const fullDeploy = await fixture();
+  fullDeploy.documents.classification.components = ['api', 'runtimeWorker', 'acs'];
+  delete fullDeploy.documents['baseline-artifacts'].runtimeDependencies.server;
+  delete fullDeploy.documents['baseline-artifacts'].runtimeDependencies.acs;
+  await Promise.all([
+    writeFile(
+      fullDeploy.options.classification,
+      `${JSON.stringify(fullDeploy.documents.classification)}\n`,
+    ),
+    writeFile(
+      fullDeploy.options['baseline-artifacts'],
+      `${JSON.stringify(fullDeploy.documents['baseline-artifacts'])}\n`,
+    ),
+  ]);
+  await assert.doesNotReject(produceReleaseEvidence(fullDeploy.options));
+
+  const kept = await fixture();
+  delete kept.documents['baseline-artifacts'].runtimeDependencies.server;
+  await writeFile(
+    kept.options['baseline-artifacts'],
+    `${JSON.stringify(kept.documents['baseline-artifacts'])}\n`,
+  );
+  await assert.rejects(
+    produceReleaseEvidence(kept.options),
+    /kept Server requires its baseline Runtime Dependency Identity/u,
+  );
 });
 
 test('accepts a runtime release without a separate compatibility report', async () => {

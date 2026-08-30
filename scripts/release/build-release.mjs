@@ -256,10 +256,12 @@ export async function buildRelease(argv = process.argv) {
   }
 
   const sbomBody = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSha: opts.sha,
     lockfile: await digestFile(join(root, 'pnpm-lock.yaml')),
     runtimeDependencies: {
+      sourceSha: opts.sha,
+      identityDigest: runtimeIdentity.identityDigest,
       contractDigest: dependencyContractDigest,
       dependencyDigest: runtimeIdentity.dependencyDigest,
     },
@@ -276,13 +278,15 @@ export async function buildRelease(argv = process.argv) {
   const sbomPath = join(output, 'sbom.json');
   await writeFile(sbomPath, `${canonicalJson(sbomBody)}\n`, { flag: 'wx' });
   const indexBody = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSha: opts.sha,
     artifacts,
     sbom: { path: basename(sbomPath), ...(await digestFile(sbomPath)) },
     runtimeDependencies: {
       path: basename(runtimeIdentityPath),
       ...(await digestFile(runtimeIdentityPath)),
+      sourceSha: opts.sha,
+      identityDigest: runtimeIdentity.identityDigest,
       contractDigest: dependencyContractDigest,
       dependencyDigest: runtimeIdentity.dependencyDigest,
     },

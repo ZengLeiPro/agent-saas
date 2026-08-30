@@ -15,12 +15,12 @@
 
 1. `build-release.mjs` 读取 contract，绑定完整 source SHA，生成规范化
    `runtime-dependencies.json`、仅由依赖字段计算的稳定 `dependencyDigest`，以及覆盖 source SHA 与依赖字段的 `identityDigest`。
-2. identity 作为独立 artifact 写入 artifact index，并把 contract/dependency digest 摘要写入 SBOM。
-3. Server bundle 与 ACS Orchestrator bundle 各自携带同一 identity 和校验器；Admin Runner manifest
-   同时绑定 contract digest 与启动 guard 的文件摘要。
-4. `verify-artifact.mjs` 同时校验文件摘要、identity 自摘要、source SHA、contract digest，以及 SBOM、
-   Runtime identity 与 artifact index 的字段一致性。
-5. Release evidence 只引用已验证的 dependency、contract 与 identity artifact digest，不复制一套平行事实。
+2. identity 作为独立 artifact 写入 artifact index v2，并把 source/identity/contract/dependency digest 摘要写入 SBOM v2。历史 artifact index/SBOM v1 保持无 Runtime 字段的严格旧结构；新构建不会把字段原地塞回 v1。
+3. Server bundle 与 ACS Orchestrator bundle 各自携带 identity 和校验器；Admin Runner manifest
+   同时绑定 contract digest 与启动 guard 的文件摘要。兼容部署产生的 component index 也会独立持久化同一 identity。
+4. `verify-artifact.mjs` 按版本严格校验：v1 仅接受历史应用制品与 SBOM，v2 同时校验完整制品集、文件摘要、identity 自摘要、source SHA、contract digest，以及 SBOM、Runtime identity 与 artifact index 的字段一致性。
+5. Release Manifest v2 分别选择实际 Server 与 ACS 制品对应的 identity；`keep` 使用冻结基线 identity，`deploy`
+   使用当前构建 identity。晋级还会逐字节核对所选 tgz 内嵌 identity，禁止 partial release 混用。
 
 同一依赖输入不会包含时间、source SHA 或主机路径，因此跨 Release 产生相同 dependency digest；identity digest
 仍绑定各自完整 source SHA。Node、基础镜像或受控工具任一升级都会改变 contract digest 和 dependency digest，
@@ -28,7 +28,7 @@
 
 ## 启动门禁与兼容窗口
 
-Production 与 Staging systemd unit 在 `ExecStart` 前运行：
+Production 与 Staging systemd unit 在 `ExecStart` 前运行；ACS 兼容直发入口在校验 archive digest 后先解包到 `/tmp` 执行同一 production guard，只有通过后才探写 `/etc`、创建持久 release 目录、修改 env/symlink 或替换进程。兼容直发与正式 Promotion 还共享同一 GitHub concurrency group 和主机 `flock`：
 
 ```bash
 /usr/bin/node dist/runtime-dependency.mjs \
@@ -37,8 +37,7 @@ Production 与 Staging systemd unit 在 `ExecStart` 前运行：
 ```
 
 门禁精确比较 Node version、`process.arch`、`process.platform`，并对组件声明的宿主工具执行版本 probe。
-缺文件、篡改、版本/架构不符、工具缺失或版本不符均阻断启动。`--production=true` 时禁止使用
-`--mode=off`；local/dev 只有显式传入 `--mode=off` 才能跳过。
+缺文件、篡改、版本/架构不符、工具缺失或版本不符均阻断启动。工具 probe 仅允许“可执行文件名 + `--version|version`”两段结构，带超时执行，并要求输出中的首个规范化 semver token 精确等于契约版本，不能借后续兼容版本文本蒙混过关。`--production=true`（包括 bare flag）时禁止使用 `--mode=off`；local/dev 只有显式传入 `--mode=off` 才能跳过。
 
 Node 升级采用单一兼容窗口：先更新 contract、所有 CI `NODE_VERSION` 和 Docker 基础镜像 digest，完成代码验证后
 再合并；宿主环境升级与 Staging/Production 验证在合并后部署流程执行。不得在一个 Release 内同时接受两个 Node

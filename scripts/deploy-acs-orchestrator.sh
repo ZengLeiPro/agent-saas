@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 由 ACS workflow 通过 SSH stdin 执行；保持远程部署与回滚为单一事务。
+# 由 ACS workflow 通过 SSH stdin 执行；保持依赖预检、远程部署与回滚为单一事务。
 set -euo pipefail
 : "${IMAGE:?missing IMAGE}"
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
@@ -14,6 +14,11 @@ printf '%s' "$ORCHESTRATOR_ARTIFACT_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 printf '%s' "$COMPAT_RELEASE_ID" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
 printf '%s' "$GITHUB_SHA" | grep -Eq '^[a-f0-9]{40}$'
 
+lock=/run/lock/agent-saas/promotion.lock
+mkdir -p "$(dirname "$lock")"
+exec 9>"$lock"
+flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
+
 CURRENT_LINK="$ECS_DEPLOY_ROOT/acs-current"
 if [ ! -L "$CURRENT_LINK" ]; then
   echo "ACS current release must be a symlink: $CURRENT_LINK" >&2
@@ -26,16 +31,11 @@ ENV_FILE="/etc/agent-saas/acs-orchestrator.env"
 IDENTITY_FILE="/etc/agent-saas/acs-release-identity.json"
 IDENTITY_STATE_CAPTURED=false
 RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
-test -s "$RUNTIME_IDENTITY_FILE"
-node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
-  "$RUNTIME_IDENTITY_FILE"
 RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
-cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
-runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
-printf '{}\n' > "$runtime_identity_probe.candidate"
-mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
-rm -f "$runtime_identity_probe"
 RUNTIME_IDENTITY_UPDATED=false
+RUNTIME_PREFLIGHT_DIR=""
+PRODUCTION_CLEANUP_ARMED=false
+CURRENT_LINK_UPDATED=false
 RELEASE_TGZ="/tmp/agent-saas-acs-release.tgz"
 # 07-05：SMOKE_SESSION 提前定型（改进 1A）。历史残留 CI sandbox（3d8h 前那批）
 # 是因为 SMOKE_SESSION 之前在第 5 步 smoke 阶段才赋值——provision/deploy 阶段失败时
@@ -51,6 +51,13 @@ cleanup() {
   # EXIT trap 只做资源回收，不能用清理竞态覆盖真实部署结果。
   local deploy_status=$?
   set +e
+  if [ "${PRODUCTION_CLEANUP_ARMED:-false}" != "true" ]; then
+    case "${RUNTIME_PREFLIGHT_DIR:-}" in
+      /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
+    esac
+    rm -f "$RELEASE_TGZ"
+    return "$deploy_status"
+  fi
   local sandbox_cleanup_safe=true
   if [ -n "${SMOKE_SESSION:-}" ] && command -v kubectl >/dev/null 2>&1; then
     if [ -n "${ACS_KUBECONFIG:-}" ]; then KCFG_ARGS="--kubeconfig ${ACS_KUBECONFIG}"; else KCFG_ARGS=""; fi
@@ -172,9 +179,15 @@ EOF
         rm -f "$IDENTITY_FILE"
       fi
     fi
-    ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
+    if [ "${CURRENT_LINK_UPDATED:-false}" = "true" ]; then
+      ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
+      CURRENT_LINK_UPDATED=false
+    fi
     [ -n "${SNAT_OPERATION_STATE_FILE:-}" ] && rm -f "$SNAT_OPERATION_STATE_FILE"
   fi
+  case "${RUNTIME_PREFLIGHT_DIR:-}" in
+    /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
+  esac
   rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   return "$deploy_status"
 }
@@ -183,6 +196,28 @@ trap cleanup EXIT
 # ── 1. 安装按 artifact digest 寻址的 orchestrator release（旧进程零影响）──
 actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"
 test "$actual_archive_digest" = "$ORCHESTRATOR_ARTIFACT_DIGEST"
+
+# 先在 /tmp 解包并执行 Runtime guard；失败时不得探写 /etc 或落下持久 release 目录。
+RUNTIME_PREFLIGHT_DIR="$(mktemp -d "/tmp/agent-saas-runtime-preflight-${GITHUB_RUN_ID}-XXXXXX")"
+tar -xzf "$RELEASE_TGZ" -C "$RUNTIME_PREFLIGHT_DIR"
+test -s "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json"
+node "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+  --manifest="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json" \
+  --component=acsOrchestrator --production=true
+rm -rf -- "$RUNTIME_PREFLIGHT_DIR"
+RUNTIME_PREFLIGHT_DIR=""
+PRODUCTION_CLEANUP_ARMED=true
+
+# Runtime guard 通过后才读取、备份并探测生产 identity 写入边界。
+test -s "$RUNTIME_IDENTITY_FILE"
+node -e "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))" \
+  "$RUNTIME_IDENTITY_FILE"
+cp "$RUNTIME_IDENTITY_FILE" "$RUNTIME_IDENTITY_BAK"
+runtime_identity_probe="/etc/agent-saas/.runtime-identity-write-probe-acs-${GITHUB_RUN_ID}"
+printf '{}\n' > "$runtime_identity_probe.candidate"
+mv "$runtime_identity_probe.candidate" "$runtime_identity_probe"
+rm -f "$runtime_identity_probe"
+
 if [ -d "$APP_DIR" ]; then
   node "$APP_DIR/scripts/release/verify-installed-release.mjs" \
     --action verify --root "$APP_DIR" --component acs >/dev/null
@@ -317,6 +352,7 @@ node "$APP_DIR/scripts/release/write-compatibility-acs-identity.mjs" \
   --namespace "${ACS_NAMESPACE:-agent-saas-coding}" \
   --config-fingerprint "$CONFIG_FINGERPRINT" >/dev/null
 ln -sfn "$APP_DIR" "$CURRENT_LINK"
+CURRENT_LINK_UPDATED=true
 
 # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后自退 →
 #      systemd Restart=always 5s 后自动拉起新代码+新 env ──
@@ -410,6 +446,7 @@ rollback() {
     RUNTIME_IDENTITY_UPDATED=false
   fi
   ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
+  CURRENT_LINK_UPDATED=false
   rm -f "$SNAT_OPERATION_STATE_FILE"
   systemctl restart "$ACS_SERVICE_NAME"
   for _ in $(seq 1 60); do

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "releaseId": "rc-20260826-01",
   "releaseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "tag": "rc-20260826-01",
@@ -76,6 +76,26 @@
       "required": false,
       "repository": "agent-saas/acs-sandbox",
       "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "runtimeDependencies": {
+      "server": {
+        "uri": "oss://agent-saas-release-records/releases/example/runtime-dependencies.json",
+        "digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "size": 4567,
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "identityDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+        "dependencyDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "contractDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "acs": {
+        "uri": "oss://agent-saas-release-records/baselines/acs/runtime-dependencies.json",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "size": 4568,
+        "sourceSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "identityDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "dependencyDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "contractDigest": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      }
     }
   },
   "checks": {
@@ -123,5 +143,5 @@
       "sandboxImageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     }
   },
-  "digest": "sha256:e637429d33bca79bf66d607c90f3bf9c0e753f217d07feaeec664c2014d5cf0c"
+  "digest": "sha256:3c744cdb070837e36da9f55ee02cf15afdec2c2cbd198c5940b3e5fdcef36cdb"
 }

@@ -113,7 +113,18 @@ test('exact Node version, architecture, and required tools are enforced', async 
       }),
     /tool git is missing/u,
   );
-  for (const misleadingVersion of ['git version 0.0.0', 'git version 12.49.10']) {
+  for (const misleadingVersion of [
+    'git version 0.0.0',
+    'git version 2.49.1+',
+    'git version 12.49.10',
+    'git version 2.49.1.1',
+    'git version 2.49.1-custom',
+    'git version 2.49.1rc1',
+    'git version 2.49.1-',
+    'git version v2.49.1',
+    'git version 99.0.0 (compatibility 2.49.1)',
+    'git version v99.0.0 (compatibility 2.49.1)',
+  ]) {
     assert.throws(
       () =>
         verifyRuntimeEnvironment({
@@ -181,22 +192,66 @@ test('Docker and systemd production paths consume the pinned identity and startu
   }
 });
 
-test('production mode cannot disable runtime dependency checks', () => {
-  const result = spawnSync(
+test('every production flag form forbids disabling runtime dependency checks', () => {
+  const createBypass = spawnSync(
     process.execPath,
-    ['scripts/release/runtime-dependency.mjs', '--production=true', '--mode=off'],
+    ['scripts/release/runtime-dependency.mjs', '--create=true', '--production', '--mode=off'],
     { encoding: 'utf8' },
   );
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /cannot be disabled/u);
+  assert.notEqual(createBypass.status, 0);
+  assert.match(createBypass.stderr, /cannot be disabled/u);
+
+  for (const productionFlag of [
+    '--production=true',
+    '--production=1',
+    '--production=yes',
+    '--production',
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['scripts/release/runtime-dependency.mjs', productionFlag, '--mode=off'],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /cannot be disabled/u);
+  }
 });
 
-test('contract rejects secret-like fields and sensitive local paths', async () => {
+test('contract rejects secret-like fields, sensitive values, and unbounded probes', async () => {
   const contract = await fixture();
   contract.secretToken = 'should-never-ship';
   assert.throws(() => runtimeDependencyContractDigest(contract), /is sensitive/u);
 
-  const withPath = await fixture();
-  withPath.tools[0].probe = ['/home/operator/bin/git', '--version'];
-  assert.throws(() => validateRuntimeDependencyContract(withPath), /host-specific data/u);
+  for (const invalidVersion of ['01.2.3', '1.2.3-a..b']) {
+    const withInvalidVersion = await fixture();
+    withInvalidVersion.tools[0].version = invalidVersion;
+    assert.throws(
+      () => validateRuntimeDependencyContract(withInvalidVersion),
+      /normalized name and exact version/u,
+    );
+  }
+
+  const withUnsupportedImageComponent = await fixture();
+  withUnsupportedImageComponent.baseImages[0].components.push('secret-vault');
+  assert.throws(
+    () => validateRuntimeDependencyContract(withUnsupportedImageComponent),
+    /baseImage\.node-alpine\.components contains unsupported value/u,
+  );
+
+  for (const probe of [
+    ['/home/operator/bin/git', '--version'],
+    ['/root/.ssh/id_rsa', '--version'],
+    ['/tmp/git', '--version'],
+    ['git', '--version', 'Authorization: Bearer secret-value'],
+    ['git', 'Authorization: Bearer secret-value'],
+    ['git', '--exec-path=/tmp/tools'],
+    ['arbitrary-helper', '--version'],
+  ]) {
+    const withProbe = await fixture();
+    withProbe.tools[0].probe = probe;
+    assert.throws(
+      () => validateRuntimeDependencyContract(withProbe),
+      /sensitive or host-specific data|supported fixed version probe/u,
+    );
+  }
 });

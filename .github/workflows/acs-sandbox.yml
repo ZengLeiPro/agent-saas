@@ -313,6 +313,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     needs: [changes, gate]
+    environment: production
     concurrency:
       group: production-runtime
       cancel-in-progress: false
@@ -674,6 +675,7 @@ jobs:
             --sha "$GITHUB_SHA" --name acsOrchestrator \
             --file "$RUNNER_TEMP/acs-orchestrator.tgz" \
             --image-reference "$ACS_IMAGE_REFERENCE" \
+            --runtime-dependencies "$stage/acs-orchestrator/runtime-dependencies.json" \
             --output "$RUNNER_TEMP/acs-artifact-index.json"
           orchestrator_digest="$(jq -r .artifacts.acsOrchestrator.digest "$RUNNER_TEMP/acs-artifact-index.json")"
           release_id="rc-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
@@ -692,6 +694,9 @@ jobs:
           destination="$RELEASE_RECORD_OSS_URI/baselines/acs-${GITHUB_SHA}-${ORCHESTRATOR_ARTIFACT_DIGEST#sha256:}"
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/acs-orchestrator.tgz" "$destination/acs-orchestrator.tgz"
+          bash scripts/release/upload-oss-object-immutable.sh \
+            "$RUNNER_TEMP/acs-release-stage/acs-orchestrator/runtime-dependencies.json" \
+            "$destination/runtime-dependencies.json"
           bash scripts/release/upload-oss-object-immutable.sh \
             "$RUNNER_TEMP/acs-artifact-index.json" "$destination/artifact-index.json"
 

@@ -121,8 +121,9 @@ function validateManifestSchema(manifest) {
     'version',
     'target',
     'verification',
+    'oauthCallback',
   ]);
-  if (manifest.schemaVersion !== 2) fail('release manifest.schemaVersion must be 2');
+  if (manifest.schemaVersion !== 3) fail('release manifest.schemaVersion must be 3');
 
   assertExactKeys(manifest.identity, 'release manifest.identity', [
     'displayName',
@@ -159,6 +160,25 @@ function validateManifestSchema(manifest) {
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(manifest.identity.easOwner)) {
     fail('release manifest.identity.easOwner has an invalid EAS account name');
+  }
+
+  assertExactKeys(manifest.oauthCallback, 'release manifest.oauthCallback', ['profiles']);
+  assertExactKeys(manifest.oauthCallback.profiles, 'release manifest.oauthCallback.profiles', RELEASE_PROFILES);
+  for (const profile of RELEASE_PROFILES) {
+    const entries = manifest.oauthCallback.profiles[profile];
+    if (!Array.isArray(entries) || new Set(entries).size !== entries.length) {
+      fail(`release manifest.oauthCallback.profiles.${profile} must be a unique URL array`);
+    }
+    for (const entry of entries) {
+      let callback;
+      try { callback = new URL(entry); } catch { fail(`OAuth callback ${entry} must be an absolute URL`); }
+      const https = callback.protocol === 'https:' && callback.hostname && callback.pathname === '/oauth/callback';
+      const custom = callback.protocol === `${manifest.identity.scheme}:` && callback.hostname === 'oauth' && callback.pathname === '/callback';
+      if ((!https && !custom) || callback.username || callback.password || callback.search || callback.hash) {
+        fail(`OAuth callback ${entry} must be a fixed HTTPS /oauth/callback or manifest scheme callback`);
+      }
+      if (profile === 'production' && !https) fail('production OAuth callbacks must use verified HTTPS App Links');
+    }
   }
 
   assertExactKeys(manifest.version, 'release manifest.version', [
@@ -248,6 +268,7 @@ function validateManifestSchema(manifest) {
 function assertProductionReady(manifest, context) {
   if (context.profile !== 'production') return;
   const blockers = [];
+  if (manifest.oauthCallback.profiles.production.length === 0) blockers.push('production OAuth callback domain is missing');
   if (manifest.target.profile === null) blockers.push('target.profile is missing');
   else if (manifest.target.profile !== context.profile) {
     blockers.push(
@@ -629,6 +650,7 @@ function createArtifactIdentity(manifest, context) {
       enterpriseUpdater: context.enterpriseUpdater?.enabled === true,
     },
     verification: { ...manifest.verification },
+    oauthCallback: { allowlist: [...manifest.oauthCallback.profiles[context.profile]] },
   };
 }
 
@@ -654,6 +676,17 @@ function createExpoConfig(staticExpoConfig, options = {}) {
     permissions.push(REQUEST_INSTALL_PACKAGES);
     plugins.push(INSTALL_PERMISSION_PLUGIN);
   }
+  const callbackAllowlist = manifest.oauthCallback.profiles[context.profile];
+  const httpsCallbacks = callbackAllowlist.map(value => new URL(value)).filter(url => url.protocol === 'https:');
+  const callbackIntentFilters = callbackAllowlist.map(value => {
+    const url = new URL(value);
+    return {
+      action: 'VIEW', autoVerify: url.protocol === 'https:',
+      data: [{ scheme: url.protocol.slice(0, -1), ...(url.hostname ? { host: url.hostname } : {}), pathPrefix: url.pathname }],
+      category: ['BROWSABLE', 'DEFAULT'],
+    };
+  });
+
   const artifactType =
     context.distribution === 'store'
       ? 'aab'
@@ -672,6 +705,10 @@ function createExpoConfig(staticExpoConfig, options = {}) {
       ...(staticExpoConfig.ios ?? {}),
       bundleIdentifier: manifest.identity.iosBundleIdentifier,
       buildNumber: String(manifest.version.iosBuildNumber),
+      entitlements: {
+        ...(staticExpoConfig.ios?.entitlements ?? {}),
+        ...(httpsCallbacks.length ? { 'com.apple.developer.associated-domains': httpsCallbacks.map(url => `applinks:${url.host}`) } : {}),
+      },
     },
     android: {
       ...(staticExpoConfig.android ?? {}),
@@ -680,6 +717,7 @@ function createExpoConfig(staticExpoConfig, options = {}) {
       usesCleartextTraffic: context.profile !== 'production',
       allowBackup: false,
       permissions,
+      intentFilters: callbackIntentFilters,
       package: manifest.identity.androidPackage,
       ...androidVersion,
     },
@@ -690,6 +728,7 @@ function createExpoConfig(staticExpoConfig, options = {}) {
         projectId: manifest.identity.easProjectId,
       },
       releaseManifest: artifactIdentity,
+      oauthCallback: { allowlist: [...callbackAllowlist] },
       androidDistribution: {
         flavor: context.distribution ?? 'unselected',
         artifactType,

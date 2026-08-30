@@ -980,3 +980,18 @@ export {
 } from './lib/connectorsApi';
 
 // Governance UI contract and authoritative API clients
+
+export {
+  OAUTH_CALLBACK_TRANSACTION_TTL_MS,
+  constantTimeEqual,
+  normalizeCallbackBase,
+  parseOAuthCallbackUrl,
+  validateOAuthCallback,
+} from './lib/oauthCallbackBridge';
+export type {
+  NativeOAuthStartBinding,
+  OAuthCallbackIdentity,
+  OAuthCallbackPayload,
+  OAuthCallbackTransaction,
+  OAuthCallbackValidation,
+} from './lib/oauthCallbackBridge';

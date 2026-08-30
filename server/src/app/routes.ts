@@ -135,8 +135,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     },
     enforcementMode: async () => 'enforce' as const,
   };
-  const nativeOAuthHandoff = runtime.oauthGrantStore
-    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, 'https://kaiyan.net/oauth/callback')
+  const nativeOAuthCallbackUrl = process.env.NATIVE_OAUTH_CALLBACK_URL?.trim();
+  const allowNonProductionCustomCallback = process.env.NODE_ENV !== 'production'
+    && process.env.NATIVE_OAUTH_ALLOW_CUSTOM_SCHEME === 'true';
+  const nativeOAuthHandoff = runtime.oauthGrantStore && nativeOAuthCallbackUrl
+    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, nativeOAuthCallbackUrl, {
+        allowCustomScheme: allowNonProductionCustomCallback,
+      })
     : undefined;
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));

@@ -932,7 +932,7 @@ function migrations(prefix: string): GovernanceMigration[] {
       ],
     },
     {
-      // Kept before v31: v30 owns change-job evidence/execution ordering; v31 only upgrades retention retry state.
+      // Keep before v31: v30 owns change-job evidence/execution ordering; v31 only upgrades retention retry state.
       version: 30,
       statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
     },
@@ -947,6 +947,18 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },
     { version: 34, statements: governanceV34Statements(prefix) },
+    {
+      version: 35,
+      statements: [
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS client_state TEXT`,
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS client_state_hash TEXT`,
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS pkce_challenge TEXT`,
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS callback_provider TEXT`,
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS redirect_uri TEXT`,
+        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS identity_generation BIGINT`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${nativeOAuthHandoffs}_client_state_idx ON ${nativeOAuthHandoffs}(client_state_hash) WHERE client_state_hash IS NOT NULL`,
+      ],
+    },
   ];
 }
 

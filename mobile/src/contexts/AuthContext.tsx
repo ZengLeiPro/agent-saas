@@ -18,6 +18,7 @@ import { fileCacheService } from '../services/fileCacheService';
 import { textContentCache } from '../services/textContentCache';
 import { clearFileListCache } from '../hooks/useFileList';
 import { clearPreviewTokenCache } from '../services/previewTokenCache';
+import { cancelNativeOAuthTransaction } from '../services/nativeOAuthHandoff';
 import { clearGroupsCache, getPlatform } from '@agent/shared';
 
 const CACHED_USER_KEY = 'agentChat.cachedUser';
@@ -86,6 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     wsClient.resetRecovery({ sessionId: null });
     resetChatStore();
     await mobileSecureStorage.removeItem(TOKEN_KEY);
+    await cancelNativeOAuthTransaction();
     // Clear in-memory auth immediately after the credential is gone; later
     // cache cleanup failures must not leave the UI authenticated.
     setUser(null);

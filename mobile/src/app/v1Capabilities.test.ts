@@ -75,8 +75,8 @@ describe('classifyV1Route', () => {
     expect(classifyV1Route('settings/users')).toBe('deferred');
     expect(classifyV1Route('settings/all-agents')).toBe('deferred');
     expect(classifyV1Route('chat/html-preview')).toBe('deferred');
-    expect(classifyV1Route('settings/connections')).toBe('deferred');
-    expect(classifyV1Route('oauth/callback')).toBe('deferred');
+    expect(classifyV1Route('settings/connections')).toBe('allowed');
+    expect(classifyV1Route('oauth/callback')).toBe('allowed');
   });
 
   it('未分类路由返回 unclassified（fail closed 依据）', () => {
@@ -159,9 +159,7 @@ describe('getV1VisibleTabs（生产菜单快照）', () => {
 
 describe('resolveV1GateDecision（根路由门禁决策，M00-01 返工）', () => {
   const deferredRoutes: string[][] = [
-    ['oauth', 'callback'],
     ['chat', 'html-preview'],
-    ['settings', 'connections'],
     ['cron'],
     ['settings', 'users'],
     ['webview-spike'], // 墓碑路由

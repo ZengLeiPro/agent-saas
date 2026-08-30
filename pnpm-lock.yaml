@@ -166,6 +166,9 @@ importers:
       expo-clipboard:
         specifier: ~55.0.17
         version: 55.0.17(expo@55.0.30)(react-native@0.83.10(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+      expo-constants:
+        specifier: ^55.0.17
+        version: 55.0.17(expo@55.0.30)(react-native@0.83.10(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))
       expo-document-picker:
         specifier: ~55.0.17
         version: 55.0.17(expo@55.0.30)

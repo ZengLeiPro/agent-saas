@@ -8,7 +8,8 @@ import {
 } from "@agent/shared";
 import { governanceAccessApi, type OAuthGrantResponse } from "@agent/shared/lib/governanceApi";
 
-import { getOrCreateNativeOAuthDeviceId } from "../../src/services/nativeOAuthHandoff";
+import { beginNativeOAuthTransaction, cancelNativeOAuthTransaction } from "../../src/services/nativeOAuthHandoff";
+import { useAuth } from "../../src/contexts/AuthContext";
 import { radius, spacing, typography, useColors } from "../../src/theme";
 
 function assertHttps(url: string): string {
@@ -19,6 +20,7 @@ function assertHttps(url: string): string {
 
 export default function ConnectionsScreen() {
   const colors = useColors();
+  const { identity } = useAuth();
   const [servers, setServers] = useState<McpServerSummary[]>([]);
   const [grants, setGrants] = useState<OAuthGrantResponse['grants']>([]);
   const [loading, setLoading] = useState(true);
@@ -55,17 +57,19 @@ export default function ConnectionsScreen() {
   const connectGoogle = async () => {
     setBusyId("google-workspace");
     try {
-      const deviceId = await getOrCreateNativeOAuthDeviceId();
-      const started = await startGoogleWorkspaceOAuth(deviceId);
+      if (!identity) throw new Error("必须先登录才能发起 OAuth");
+      const binding = await beginNativeOAuthTransaction("google-workspace", identity);
+      const started = await startGoogleWorkspaceOAuth(binding);
       const authorizationUrl = assertHttps(started.authorizationUrl);
       if (!started.requestedScopes.length || !started.purpose || !started.dataDestination || !started.revokeMethod) {
         throw new Error("OAuth scope 预览权威不可用");
       }
       Alert.alert("确认 Google Workspace 授权范围", `${started.purpose}\n\n风险：高影响长期授权\n数据去向：${started.dataDestination}\n撤销：${started.revokeMethod}\n\n${started.requestedScopes.join("\n")}`, [
-        { text: "取消", style: "cancel" },
+        { text: "取消", style: "cancel", onPress: () => { void cancelNativeOAuthTransaction(); } },
         { text: "前往授权", onPress: () => { void Linking.openURL(authorizationUrl); } },
       ]);
     } catch (err) {
+      await cancelNativeOAuthTransaction();
       Alert.alert("授权未启动", err instanceof Error ? err.message : "Google Workspace 授权启动失败");
     } finally {
       setBusyId(null);
@@ -75,18 +79,20 @@ export default function ConnectionsScreen() {
   const connectMcp = async (server: McpServerSummary) => {
     setBusyId(server.id);
     try {
-      const deviceId = await getOrCreateNativeOAuthDeviceId();
-      const started = await startMyMcpOAuth(server.id, "/settings/connections", deviceId);
-      if (started.status === "connected") await load();
+      if (!identity) throw new Error("必须先登录才能发起 OAuth");
+      const binding = await beginNativeOAuthTransaction(server.id, identity);
+      const started = await startMyMcpOAuth(server.id, "/settings/connections", binding);
+      if (started.status === "connected") { await cancelNativeOAuthTransaction(); await load(); }
       else if (started.authorizationUrl && started.requestedScopes?.length
         && started.purpose && started.dataDestination && started.revokeMethod) {
         const authorizationUrl = assertHttps(started.authorizationUrl);
         Alert.alert("确认授权范围", `${started.purpose}\n\n风险：高影响长期授权\n数据去向：${started.dataDestination}\n撤销：${started.revokeMethod}\n\n申请范围：\n${started.requestedScopes.join("\n")}`, [
-          { text: "取消", style: "cancel" },
+          { text: "取消", style: "cancel", onPress: () => { void cancelNativeOAuthTransaction(); } },
           { text: "前往授权", onPress: () => { void Linking.openURL(authorizationUrl); } },
         ]);
       } else throw new Error("OAuth scope 预览或 authorization URL 不可用");
     } catch (err) {
+      await cancelNativeOAuthTransaction();
       Alert.alert("授权未启动", err instanceof Error ? err.message : "连接器授权启动失败");
     } finally {
       setBusyId(null);

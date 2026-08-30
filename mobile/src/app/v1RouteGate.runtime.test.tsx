@@ -18,14 +18,10 @@ import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
-import OAuthCallbackScreen from '../../app/oauth/callback';
 import HtmlPreviewScreen from '../../app/chat/html-preview';
-import ConnectionsScreen from '../../app/settings/connections';
 import CronListScreen from '../../app/cron/index';
-import * as nativeOAuthHandoffMod from '../services/nativeOAuthHandoff';
 import * as previewTokenCacheMod from '../services/previewTokenCache';
 import * as sharedMod from '@agent/shared';
-import * as governanceApiMod from '@agent/shared/lib/governanceApi';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
 const h = vi.hoisted(() => ({
@@ -108,11 +104,12 @@ vi.mock('../contexts/ChatAppStateContext', () => ({
 }));
 
 vi.mock('../services/nativeOAuthHandoff', () => ({
-  consumeNativeOAuthHandoff: vi.fn(async () => ({
+  consumeNativeOAuthCallback: vi.fn(async () => ({
     status: 'succeeded',
     connectorId: 'google-workspace',
   })),
-  getOrCreateNativeOAuthDeviceId: vi.fn(async () => 'device-id'),
+  beginNativeOAuthTransaction: vi.fn(async () => ({})),
+  cancelNativeOAuthTransaction: vi.fn(async () => {}),
 }));
 
 vi.mock('../services/previewTokenCache', () => ({
@@ -207,31 +204,11 @@ const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
 /** 四个被 Review 点名的延期路由及其挂载期副作用 spies。 */
 const DEFERRED_CASES = [
   {
-    name: 'OAuth callback（延期）',
-    segments: ['oauth', 'callback'],
-    params: { code: OAUTH_HANDOFF_CODE },
-    screen: <OAuthCallbackScreen />,
-    getSyncSpies: () => {
-      const mod = nativeOAuthHandoffMod;
-      return [vi.mocked(mod.consumeNativeOAuthHandoff)];
-    },
-  },
-  {
     name: 'HTML preview（延期）',
     segments: ['chat', 'html-preview'],
     params: { filePath: 'reports/x.html' },
     screen: <HtmlPreviewScreen />,
     getSyncSpies: () => [vi.mocked(previewTokenCacheMod.getPreviewToken)],
-  },
-  {
-    name: 'Connections（延期）',
-    segments: ['settings', 'connections'],
-    params: {},
-    screen: <ConnectionsScreen />,
-    getSyncSpies: () => [
-      vi.mocked(sharedMod.fetchMyMcp),
-      vi.mocked(governanceApiMod.governanceAccessApi.listOAuthGrants),
-    ],
   },
   {
     name: 'Cron（延期）',

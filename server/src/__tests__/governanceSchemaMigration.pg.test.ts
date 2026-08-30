@@ -728,43 +728,46 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       ON CONFLICT (tenant_id,user_id) DO NOTHING
     `);
     const grants = new PgOAuthGrantStore({ pool, tablePrefix: prefix });
+    const nativeBinding = { clientState: 's'.repeat(64), pkceChallenge: 'p'.repeat(43),
+      provider: 'google-workspace', redirectUri: 'https://mobile.example.test/oauth/callback',
+      identityGeneration: 3, createdAt: Date.now() };
     await grants.beginNativeHandoff({
       providerState: 'provider-state-native', userId: 'user-native', tenantId: 'tenant-native',
-      connectorId: 'google-workspace', deviceId: 'device-native-1',
+      connectorId: 'google-workspace', deviceId: 'device-native-1', ...nativeBinding,
     });
     const code = await grants.completeNativeHandoff({ providerState: 'provider-state-native', status: 'succeeded' });
-    expect(code).toHaveLength(48);
+    expect(code?.code).toHaveLength(48);
     const stored = await pool.query<{ provider_state_hash: string; code_hash: string }>(
       `SELECT provider_state_hash,code_hash FROM ${prefix}_native_oauth_handoffs WHERE tenant_id='tenant-native'`,
     );
     expect(JSON.stringify(stored.rows)).not.toContain('provider-state-native');
-    expect(JSON.stringify(stored.rows)).not.toContain(code);
+    expect(JSON.stringify(stored.rows)).not.toContain(code?.code);
     await expect(grants.completeNativeHandoff({ providerState: 'provider-state-native', status: 'failed', errorCode: 'REPLAY' }))
       .resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'wrong-user', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: code!.code, userId: 'wrong-user', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'wrong-tenant', deviceId: 'device-native-1',
+      code: code!.code, userId: 'user-native', tenantId: 'wrong-tenant', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'wrong-device',
+      code: code!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'wrong-device', ...nativeBinding,
     })).resolves.toBeNull();
     const attempts = await Promise.all(Array.from({ length: 8 }, () => grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: code!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })));
     expect(attempts.filter(Boolean)).toHaveLength(1);
     expect(attempts.find(Boolean)).toMatchObject({ connectorId: 'google-workspace', status: 'succeeded' });
 
     await grants.beginNativeHandoff({
       providerState: 'provider-state-expired', userId: 'user-native', tenantId: 'tenant-native',
-      connectorId: 'google-workspace', deviceId: 'device-native-1',
+      connectorId: 'google-workspace', deviceId: 'device-native-1', ...nativeBinding,
     });
     const expiredCode = await grants.completeNativeHandoff({ providerState: 'provider-state-expired', status: 'succeeded' });
     await pool.query(`UPDATE ${prefix}_native_oauth_handoffs SET code_expires_at=NOW()-INTERVAL '1 second'
       WHERE tenant_id='tenant-native' AND connector_id='google-workspace'`);
     await expect(grants.consumeNativeHandoff({
-      code: expiredCode!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: expiredCode!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
   });
 

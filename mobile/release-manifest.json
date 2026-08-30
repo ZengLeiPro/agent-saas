@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "identity": {
     "displayName": "Agent SaaS",
     "slug": "ky-agent",
@@ -28,5 +28,16 @@
     "identity": "pending-external-verification",
     "versions": "pending-external-verification",
     "distribution": "pending-external-verification"
+  },
+  "oauthCallback": {
+    "profiles": {
+      "development": [
+        "agent-saas://oauth/callback"
+      ],
+      "preview": [
+        "agent-saas://oauth/callback"
+      ],
+      "production": []
+    }
   }
 }

@@ -44,6 +44,7 @@ function productionReadyManifest() {
     distribution: 'enterprise',
     gitSha: FULL_GIT_SHA,
   };
+  manifest.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
   manifest.verification = {
     identity: 'verified',
     versions: 'verified',
@@ -225,6 +226,8 @@ test('M10-03 development and preview configs generate without external store fac
     assert.doesNotThrow(() => assertExpoIdentityMatchesManifest(config, manifest, context));
     assert.equal(config.android.versionCode, undefined);
     assert.equal(config.extra.releaseManifest.profile, profile);
+    assert.deepEqual(config.extra.oauthCallback.allowlist, ['agent-saas://oauth/callback']);
+    assert.equal(config.android.intentFilters[0].autoVerify, false);
     assert.equal(config.extra.releaseManifest.version.androidVersionCode, 'not-set');
   }
 });

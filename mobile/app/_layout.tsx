@@ -15,6 +15,7 @@ import { useActivityReporter } from '../src/hooks/useActivityReporter';
 import { useForegroundRefresh } from '../src/hooks/useForegroundRefresh';
 import { useEnterpriseUpdateChecker } from '../src/hooks/useUpdateChecker';
 import { useShareIntentBridge } from '../src/hooks/useShareIntentBridge';
+import { useNativeOAuthCallbackBridge } from '../src/hooks/useNativeOAuthCallbackBridge';
 import {
   readEnterpriseUpdaterRuntimeConfig,
   type EnterpriseUpdaterRuntimeConfig,
@@ -37,6 +38,7 @@ function AuthGate() {
   useActivityReporter();
   useForegroundRefresh();
   useShareIntentBridge();
+  useNativeOAuthCallbackBridge();
 
   return (
     <>

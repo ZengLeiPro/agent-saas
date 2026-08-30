@@ -31,9 +31,12 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     ]);
     expect(Object.keys(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.55'])).toHaveLength(830);
     expect(Object.keys(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.60'])).toHaveLength(1234);
-    expect(countGeneratedFileFlags('1.0.55')).toBe(10);
-    expect(countGeneratedFileFlags('1.0.60')).toBe(18);
+    expect(countGeneratedFileFlags('1.0.55')).toBe(13);
+    expect(countGeneratedFileFlags('1.0.60')).toBe(19);
     expect(DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION['1.0.55']).toMatchObject({
+      'doc.create': { content: 'indirect' },
+      'doc.update': { content: 'indirect' },
+      'report.entry.submit': { contents: 'indirect' },
       'sheet.csv-put': { csv: 'indirect' },
       'sheet.range.batch-set-style': { batch: 'path' },
     });
@@ -108,6 +111,9 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '-'],
       ['sheet', 'range', 'batch-set-style', '--node', 'n1', '--batch', './styles.json'],
       ['sheet', 'range', 'batch-set-style', '--node', 'n1', '--batch=./styles.json'],
+      ['doc', 'create', '--title', 'x', '--content', '-'],
+      ['doc', 'update', '--node', 'n1', '--content', '-'],
+      ['report', 'entry', 'submit', '--template-id', 't1', '--contents', '-'],
     ];
     for (const args of rejectedCommands) {
       expectPolicyRejection(args, 'platform_boundary');
@@ -117,12 +123,16 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
         neverAutoApprove: true,
       });
     }
-    expect(
-      resolveDwsBusinessRisk({
-        args: ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', 'a,b\\n1,2'],
-        confirmed: true,
-      }),
-    ).toBe('workspace_write');
+    for (const args of [
+      ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', 'a,b\\n1,2'],
+      ['doc', 'create', '--title', 'x', '--content', '正文'],
+      ['doc', 'update', '--node', 'n1', '--content', '正文'],
+      ['report', 'entry', 'submit', '--template-id', 't1', '--contents', '[{"key":"k"}]'],
+    ]) {
+      expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe(
+        'workspace_write',
+      );
+    }
   });
 
   it('Dockerfile 实际版本、分版本 manifest 与缩进 skill metadata 必须同步', () => {

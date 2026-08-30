@@ -177,6 +177,9 @@ describe('DwsBusinessToolProvider', () => {
       ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '@data.csv'],
       ['sheet', 'range', 'batch-set-style', '--node', 'n', '--batch', './styles.json'],
+      ['doc', 'create', '--title', 'x', '--content', '-'],
+      ['doc', 'update', '--node', 'n', '--content', '-'],
+      ['report', 'entry', 'submit', '--template-id', 't', '--contents', '-'],
     ];
     for (const args of rejectedCommands) {
       const { provider, invoke, auditStore, context } = setup();
@@ -191,6 +194,11 @@ describe('DwsBusinessToolProvider', () => {
         metadata: { policySource: 'platform_boundary' },
       });
     }
+    for (const args of [
+      ['doc', 'create', '--title', 'x', '--content', '正文'],
+      ['doc', 'update', '--node', 'n', '--content', '正文'],
+      ['report', 'entry', 'submit', '--template-id', 't', '--contents', '[{"key":"k"}]'],
+    ]) expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe('workspace_write');
   });
 
   it('TASK-256 review 返工：全路径写扫描后正常只读路径仍为 safe，拒绝语义不变', () => {

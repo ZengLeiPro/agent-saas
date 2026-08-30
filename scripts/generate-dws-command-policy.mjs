@@ -23,7 +23,12 @@ function classifyFileFlag(name, parameter) {
   if (isGenericBlockedFileFlag(name)) return undefined;
   const description = typeof parameter?.description === 'string' ? parameter.description : '';
   if (!description) return undefined;
-  if (/@(?:file|文件|相对文件|工作目录)|-\s*(?:从|表示)?\s*stdin\b/i.test(description))
+  // 只识别与独立 `-` 值绑定的 stdin 描述，避免把“关闭 stdin”等普通说明误判为文件输入。
+  if (
+    /@(?:file|文件|相对文件|工作目录)|(?:^|[\s、，；(（])-\s*(?:[（(]\s*)?(?:表示\s*)?(?:从\s*)?stdin\b/i.test(
+      description,
+    )
+  )
     return 'indirect';
 
   const evidence = description;

@@ -18,6 +18,7 @@ ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
 ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
 ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
 ACS_PRODUCTION_ENV = REPO_ROOT / 'acs-orchestrator' / 'config' / 'production.env'
+DOCKERFILE = REPO_ROOT / 'Dockerfile'
 
 
 def load_script(path: Path, module_name: str):
@@ -177,6 +178,17 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
         for result in cases:
             self.assertEqual(result.returncode, 1)
             self.assertFalse(json.loads(result.stderr)['compatible'])
+
+
+class AcsDockerfileWorkspaceInjectionTest(unittest.TestCase):
+    def test_copies_complete_shared_workspace_before_injected_install(self):
+        dockerfile = DOCKERFILE.read_text(encoding='utf-8')
+        acs_base = dockerfile.split(' AS acs-base', 1)[1].split('FROM acs-base AS acs-wheel-builder', 1)[0]
+
+        shared_copy = acs_base.index('COPY shared ./shared')
+        install = acs_base.index('RUN pnpm install --frozen-lockfile')
+        self.assertLess(shared_copy, install)
+        self.assertNotIn('COPY shared/package.json ./shared/', acs_base)
 
 
 class AcsProductionSnatConfigTest(unittest.TestCase):

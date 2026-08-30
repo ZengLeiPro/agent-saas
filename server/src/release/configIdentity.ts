@@ -200,6 +200,12 @@ const OPAQUE_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
   ['tenantRemoteHands', 'hands', '*', 'recipe', 'files', '*', 'path'],
 ];
 
+/** signedUrl 的 path/query/userinfo 都可能承载 token，只保留明确安全的 origin。 */
+const SIGNED_URL_FIELDS: ReadonlyArray<PathPattern> = [
+  ['serverRemote', 'recipe', 'files', '*', 'signedUrl'],
+  ['tenantRemoteHands', 'hands', '*', 'recipe', 'files', '*', 'signedUrl'],
+];
+
 /** URL 可能携带 userinfo、token query 或签名：只保留非敏感 endpoint 形态。 */
 const URL_REDACT_FIELDS: ReadonlyArray<PathPattern> = [
   ['server', 'corsOrigins', '*'],
@@ -214,10 +220,8 @@ const URL_REDACT_FIELDS: ReadonlyArray<PathPattern> = [
   ['artifact', 'endpoint'],
   ['serverRemote', 'baseUrl'],
   ['serverRemote', 'recipe', 'files', '*', 'url'],
-  ['serverRemote', 'recipe', 'files', '*', 'signedUrl'],
   ['tenantRemoteHands', 'hands', '*', 'baseUrl'],
   ['tenantRemoteHands', 'hands', '*', 'recipe', 'files', '*', 'url'],
-  ['tenantRemoteHands', 'hands', '*', 'recipe', 'files', '*', 'signedUrl'],
   ['secretVault', 'baseUrl'],
   ['webTools', 'search', 'endpoint'],
   ['webTools', 'search', 'global', 'endpoint'],
@@ -289,14 +293,73 @@ function redactUrl(
   }
 }
 
-function redactConnectionString(
-  value: string,
-): { __db__: Record<string, string> } | typeof REDACTED_SECRET_MARKER {
+const DB_ENUM_BEHAVIOR_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  channel_binding: new Set(['disable', 'prefer', 'require']),
+  gssencmode: new Set(['disable', 'prefer', 'require']),
+  load_balance_hosts: new Set(['disable', 'random']),
+  ssl: new Set(['0', '1', 'false', 'true']),
+  sslaccept: new Set(['accept_invalid_certs', 'strict']),
+  sslmode: new Set(['allow', 'disable', 'prefer', 'require', 'verify-ca', 'verify-full']),
+  target_session_attrs: new Set(['any', 'prefer-standby', 'primary', 'read-only', 'read-write', 'standby']),
+};
+
+const DB_SCALAR_BEHAVIOR_OPTIONS = new Set([
+  'connect_timeout',
+  'idle_in_transaction_session_timeout',
+  'keepalives',
+  'keepalives_count',
+  'keepalives_idle',
+  'keepalives_interval',
+  'lock_timeout',
+  'statement_timeout',
+  'tcp_user_timeout',
+]);
+
+function redactSignedUrl(value: string): { __signedUrlOrigin__: string } | typeof REDACTED_SECRET_MARKER {
   try {
     const url = new URL(value);
-    const body: Record<string, string> = { host: url.hostname };
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return REDACTED_SECRET_MARKER;
+    return { __signedUrlOrigin__: url.origin };
+  } catch {
+    return REDACTED_SECRET_MARKER;
+  }
+}
+
+function collectDbBehaviorOptions(url: URL): Record<string, string> {
+  const options: Record<string, string> = {};
+  for (const [rawKey, rawValue] of [...url.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    const key = rawKey.toLowerCase();
+    const value = rawValue.toLowerCase();
+    const enums = DB_ENUM_BEHAVIOR_OPTIONS[key];
+    if (enums?.has(value)) options[key] = value;
+    else if (DB_SCALAR_BEHAVIOR_OPTIONS.has(key) && /^\d+(?:ms|s|min)?$/u.test(value)) {
+      options[key] = value;
+    }
+  }
+  return options;
+}
+
+
+function redactConnectionString(
+  value: string,
+  path: ReadonlyArray<string | number>,
+): { __db__: Record<string, unknown> } | typeof REDACTED_SECRET_MARKER {
+  try {
+    const url = new URL(value);
+    const parsedProtocol = url.protocol.replace(/:$/u, '');
+    const protocol = parsedProtocol === 'postgres' ? 'postgresql' : parsedProtocol;
+    const defaultPort = protocol === 'postgresql' ? '5432' : '';
+    const body: Record<string, unknown> = {
+      protocol,
+      host: url.hostname,
+      port: url.port || defaultPort,
+    };
     if (url.pathname.length > 1) body.database = url.pathname.slice(1);
-    // username/password/query（可能含 ssl 凭据）一律不进投影。
+    if (url.username) {
+      body.principal = opaqueProjectionIdentity(url.username, [...path, 'principal']);
+    }
+    const options = collectDbBehaviorOptions(url);
+    if (Object.keys(options).length > 0) body.options = options;
     return { __db__: body };
   } catch {
     return REDACTED_SECRET_MARKER;
@@ -377,6 +440,9 @@ function projectValue(
   if (pathsMatchAny(path, SECRET_VALUE_FIELDS)) {
     return value === null || value === '' ? undefined : REDACTED_SECRET_MARKER;
   }
+  if (pathsMatchAny(path, SIGNED_URL_FIELDS)) {
+    return typeof value === 'string' && value.length > 0 ? redactSignedUrl(value) : value;
+  }
   if (pathsMatchAny(path, OPAQUE_VALUE_FIELDS)) {
     return value === null || value === '' ? undefined : opaqueProjectionIdentity(value, path);
   }
@@ -392,7 +458,9 @@ function projectValue(
     return typeof value === 'string' && value.length > 0 ? redactUrl(value, path) : value;
   }
   if (pathMatches(path, ['runtimeEventStore', 'connectionString'])) {
-    return typeof value === 'string' && value.length > 0 ? redactConnectionString(value) : value;
+    return typeof value === 'string' && value.length > 0
+      ? redactConnectionString(value, path)
+      : value;
   }
 
   // 4) 递归。
@@ -477,6 +545,7 @@ export async function resolveSecretRefVersions(
         scopes: ['secret:metadata:read'],
       });
       const version =
+        !ref?.revokedAt &&
         typeof ref?.version === 'number' && Number.isSafeInteger(ref.version) && ref.version > 0
           ? ref.version
           : null;

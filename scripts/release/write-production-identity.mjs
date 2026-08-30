@@ -25,6 +25,15 @@ function unitMainPid(unit) {
 export function readExpectedConfigIdentityFromReleaseEnv(
   color,
   releaseId,
+  options = {},
+) {
+  const values = readReleaseEnvironment(color, options);
+  if (!values || values.AGENT_SAAS_RELEASE_ID !== releaseId) return undefined;
+  return parseExpectedConfigIdentity(values);
+}
+
+function readReleaseEnvironment(
+  color,
   { readFile = readFileSync, envPath = `/etc/agent-saas/server-${color}.release.env` } = {},
 ) {
   let env;
@@ -33,7 +42,7 @@ export function readExpectedConfigIdentityFromReleaseEnv(
   } catch {
     return undefined;
   }
-  const values = Object.fromEntries(
+  return Object.fromEntries(
     env
       .split(/\r?\n/u)
       .filter((line) => line && line.includes('='))
@@ -42,7 +51,9 @@ export function readExpectedConfigIdentityFromReleaseEnv(
         return [line.slice(0, separator), line.slice(separator + 1).trim()];
       }),
   );
-  if (values.AGENT_SAAS_RELEASE_ID !== releaseId) return undefined;
+}
+
+function parseExpectedConfigIdentity(values) {
   const digest = values.AGENT_SAAS_CONFIG_IDENTITY_DIGEST;
   if (!digest) {
     if (
@@ -68,6 +79,90 @@ export function readExpectedConfigIdentityFromReleaseEnv(
     ...(credentialVersionDigest ? { credentialVersionDigest } : {}),
   };
 }
+
+function validateTrustedExpectedConfigIdentity(value) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Trusted Production identity carries a malformed configIdentity');
+  }
+  const unknown = Object.keys(value).filter(
+    (key) => !['schemaVersion', 'digest', 'credentialVersionDigest'].includes(key),
+  );
+  if (unknown.length > 0) {
+    throw new Error(`Trusted Production identity configIdentity has unknown fields: ${unknown.join(',')}`);
+  }
+  if (!Number.isSafeInteger(value.schemaVersion) || value.schemaVersion <= 0) {
+    throw new Error('Trusted Production identity carries a malformed config identity schema version');
+  }
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value.digest ?? '')) {
+    throw new Error('Trusted Production identity carries a malformed config identity digest');
+  }
+  if (
+    value.credentialVersionDigest !== undefined &&
+    !/^sha256:[a-f0-9]{64}$/u.test(value.credentialVersionDigest)
+  ) {
+    throw new Error('Trusted Production identity carries a malformed config credential version digest');
+  }
+  return {
+    schemaVersion: value.schemaVersion,
+    digest: value.digest,
+    ...(value.credentialVersionDigest
+      ? { credentialVersionDigest: value.credentialVersionDigest }
+      : {}),
+  };
+}
+
+function sameExpectedConfigIdentity(left, right) {
+  return left.schemaVersion === right.schemaVersion &&
+    left.digest === right.digest &&
+    left.credentialVersionDigest === right.credentialVersionDigest;
+}
+
+/**
+ * API deploy 时绑定本次 release env；API keep 时从当前 active release env 与
+ * 已落盘 trusted identity 双向交叉校验后继承，防止 Web/ACS-only promotion
+ * 把 expected ConfigIdentity 静默清空。
+ */
+export function resolveExpectedConfigIdentityForProduction(
+  manifest,
+  color,
+  previousIdentity,
+  options = {},
+) {
+  const previous = validateTrustedExpectedConfigIdentity(previousIdentity?.configIdentity);
+  if (manifest.components.api.action === 'deploy') {
+    const deployed = readExpectedConfigIdentityFromReleaseEnv(
+      color,
+      manifest.releaseId,
+      options,
+    );
+    if (previous && !deployed) {
+      throw new Error('Deploying API would drop trusted expected configIdentity');
+    }
+    return deployed;
+  }
+
+  const values = readReleaseEnvironment(color, options);
+  const active = values ? parseExpectedConfigIdentity(values) : undefined;
+  if (!previous && !active) return undefined;
+  if (!previous || !active) {
+    throw new Error('Kept API expected configIdentity is missing from one trusted source');
+  }
+  const activeReleaseId = values?.AGENT_SAAS_RELEASE_ID;
+  const activeReleaseTarget = options.activeReleaseTarget
+    ?? previousIdentity?.topology?.api?.releaseTarget;
+  const targetReleaseId = typeof activeReleaseTarget === 'string'
+    ? activeReleaseTarget.replace(/\/+$/u, '').split('/').at(-1)
+    : undefined;
+  if (!activeReleaseId || activeReleaseId !== targetReleaseId) {
+    throw new Error('Kept API release env is not bound to the active release target');
+  }
+  if (!sameExpectedConfigIdentity(previous, active)) {
+    throw new Error('Kept API expected configIdentity disagrees across trusted sources');
+  }
+  return previous;
+}
+
 
 export function buildProductionIdentity(
   manifest,
@@ -170,7 +265,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     topology,
     new Date().toISOString(),
     previousIdentity,
-    readExpectedConfigIdentityFromReleaseEnv(apiColor, manifest.releaseId),
+    resolveExpectedConfigIdentityForProduction(manifest, apiColor, previousIdentity, {
+      activeReleaseTarget: topology.api.releaseTarget,
+    }),
   );
   writeFileSync(`${outputPath}.candidate`, `${JSON.stringify(identity, null, 2)}\n`, {
     mode: 0o444,

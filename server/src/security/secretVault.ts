@@ -11,7 +11,7 @@ export interface SecretRef {
   updatedAt: string;
   revokedAt?: string;
   /**
-   * Opaque version（TASK-318 config identity）：put=1，rotate 递增。
+   * Opaque version（TASK-318 config identity）：put=1，rotate/revoke 递增。
    * 只用于配置身份/轮换观测，不承载任何访问控制语义；旧数据缺省视为 1。
    */
   version?: number;
@@ -112,7 +112,13 @@ export class InMemorySecretVault implements SecretVault {
   async revokeSecret(ref: SecretRef | string, caller: VaultCaller): Promise<void> {
     const secret = this.read(ref);
     assertAllowed(secret, caller, 'revoke');
-    this.secrets.set(secret.id, { ...secret, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const now = new Date().toISOString();
+    this.secrets.set(secret.id, {
+      ...secret,
+      revokedAt: now,
+      updatedAt: now,
+      version: nextVersion(secret),
+    });
   }
 
   /** 只读元数据（不含明文）；供 config identity 解析 opaque version。 */
@@ -267,7 +273,7 @@ function sanitizeInspectedRef(value: unknown): SecretRef {
   return ref;
 }
 
-/** opaque version 递增：旧数据没有 version 时从 1 起步（rotate 后为 2）。 */
+/** opaque version 递增：旧数据没有 version 时从 1 起步（rotate/revoke 后为 2）。 */
 function nextVersion(secret: StoredSecret): number {
   return opaqueVersion(secret) + 1;
 }
@@ -332,7 +338,13 @@ export class EncryptedFileSecretVault implements SecretVault {
       if (idx < 0) throw new Error(`secret not found: ${refId(ref)}`);
       const current = data.secrets[idx]!;
       assertAllowed(current, caller, 'revoke');
-      data.secrets[idx] = { ...current, revokedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      const now = new Date().toISOString();
+      data.secrets[idx] = {
+        ...current,
+        revokedAt: now,
+        updatedAt: now,
+        version: nextVersion(current),
+      };
       await this.save(data);
     });
   }

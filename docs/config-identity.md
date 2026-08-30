@@ -47,7 +47,7 @@
   —— 独立 domain separator，与 Manifest digest / 组件 artifact digest 不可混用。
 - `credentialVersionDigest = sha256("agent-saas-config-credential-versions-v1\0"
   - canonicalJson({[refDigest]: version}))`
-    —— 只覆盖受管 SecretVault ref 的 **opaque version**（put=1，rotate 递增；
+    —— 只覆盖受管 SecretVault ref 的 **opaque version**（put=1，rotate/revoke 递增；
     不含任何明文）。配置语义 digest 不含 vault 版本，保证 expected（部署期可能
     无 vault 访问）与 observed 可比；轮换只改变 credentialVersionDigest。
 
@@ -91,7 +91,9 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 
 1. **脱敏硬约束**：投影、digest 输入、API 载荷、日志、页面文本中不允许出现
    secret 明文、可逆密文、连接串、token、本机绝对路径。ref 只保留
-   domain-separated sha256。
+   domain-separated sha256。signedUrl 仅保留 protocol/host/port origin，完全丢弃
+   userinfo/path/query；数据库连接只保留规范 protocol/host/port/database 与严格
+   allowlist 的枚举/数值行为参数。
 2. **Production fail closed**：
    - 部署期：`config-identity-cli --environment production` 调用
      `assertProductionManagedCredentialSafety`——已有 ref 方案的字段出现 inline
@@ -100,10 +102,11 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
      受管 ref 且版本解析非 resolved（vault 元数据不可得 / ref 缺失）则抛错拒启。
    - staging：`readRuntimeIdentity` 要求 expected config identity 必须绑定
      且 schemaVersion=1，否则启动失败（Staging 是发布链路的验证环境）。
-3. **凭据轮换可见**：rotate 递增 opaque version；EncryptedFile/InMemory 直接
+3. **凭据轮换/撤销可见**：rotate 与 revoke 都递增 opaque version；revoked ref
+   无论 version 是否可读都按 unverifiable 处理，绝不进入 consistent。EncryptedFile/InMemory 直接
    `inspectRef`，HttpSecretVault 缓存未命中时调用 metadata-only
    `POST /secrets/inspect`（只返回 `SecretRef` 元数据，不拉明文）。metadata cache
-   默认 5 秒到期重检，`invalidate` 也会立即失效，因此外部 KMS rotate 不会永久
+   默认 5 秒到期重检，`invalidate` 也会立即失效，因此外部 KMS rotate/revoke 不会永久
    复用旧 version。端点缺失、ref 缺失或版本非法都按不可验证处理，Production
    有受管 ref 时拒启/拒绝发布。resolved 版本变化会改变 observed
    credentialVersionDigest → 四态转 `drifted`。
@@ -117,8 +120,10 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
   时更新 `lastChangedAt` 并记录日志。
 - Production 在应用新配置前先跑 inline-secret 安全门禁，并异步解析候选配置中
   所有受管 ref 的 version；任一校验失败则整次重载保留旧内存配置。校验期间热路径
-  继续使用旧配置，只有通过后才原子应用各受支持配置段并触发 observed identity 重算。
-  身份重算若失败则保留上一份 observed identity 并告警，不发布半成品摘要。
+  继续使用旧配置。webTools 额外使用 prepare/commit 两阶段：SecretVault 明文解析只
+  产生无副作用 commit，候选文件仍为最新版且前置回调全部成功后，执行侧配置、AppConfig
+  与 observed identity 才在同一发布点更新。身份重算若失败则保留上一份 observed identity
+  并告警，不发布半成品摘要。
 - overview snapshot 15s 轮询读取摘要；`getSummary` 有 5s 节流，避免每次轮询
   都解密 vault 文件。
 
@@ -133,7 +138,9 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 2. digest 写入 release env（`AGENT_SAAS_CONFIG_IDENTITY_DIGEST` 等），随蓝绿
    单元注入进程环境。
 3. `readRuntimeIdentity` 读取 expected；`write-production-identity.mjs` 把
-   expected 固化进 trusted runtime identity（`configIdentity` 字段；legacy
+   expected 固化进 trusted runtime identity。Web-only / ACS-only partial promotion
+   在 API keep 时从 active release env 与上一份 trusted identity 双源交叉校验后继承，
+   任一来源缺失、冲突或未绑定 active release target 都 fail closed（`configIdentity` 字段；legacy
    `configFingerprint` 语义不变）；`read-production-state.mjs` 把 API
    `/api/healthz/ready` 返回的 observed 摘要透传进 Production State 与
    Release Evidence（`configIdentity` 字段，显式版本化新增）。

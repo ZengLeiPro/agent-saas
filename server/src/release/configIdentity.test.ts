@@ -25,6 +25,10 @@ const SYSTEM_CALLER: VaultCaller = {
   userId: '__system__',
   scopes: ['secret:tenant-hand:write', 'secret:tenant-hand:read', 'secret:tenant-hand:rotate'],
 };
+const REVOKE_CALLER: VaultCaller = {
+  actor: 'connector_proxy',
+  scopes: ['secret:tenant-hand:revoke'],
+};
 
 // rotate 在 InMemory vault 里要求 infrastructure allowlist 授权的
 // kind + rotate 组合；tenant_hand 已在 allowlist 内。
@@ -327,6 +331,50 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     expect(serialized).not.toContain('tok-123');
   });
 
+  it('signedUrl 的路径型 token 整值只进入 opaque digest', () => {
+    const withSignedUrl = (token: string) => baseConfig({
+      serverRemote: {
+        baseUrl: 'https://hand.example.com',
+        authTokenRef: 'hand-ref',
+        recipe: {
+          repo: { url: 'https://git.example.com/repo.git' },
+          files: [{ artifactId: 'a1', path: '/tmp/a', signedUrl: `https://objects.example.com/download/${token}` }],
+        },
+      },
+    });
+    const first = withSignedUrl('path-bearer-token-one');
+    const second = withSignedUrl('path-bearer-token-two');
+    const serialized = JSON.stringify(buildCanonicalConfigProjection(first).projection);
+
+    expect(serialized).not.toContain('path-bearer-token-one');
+    expect(serialized).not.toContain('/download/');
+    expect(serialized).toContain('https://objects.example.com');
+    expect(digestOf(first)).toBe(digestOf(second));
+  });
+
+  it('数据库行为字段安全进入投影：等价默认端口稳定，port/protocol/options 变化改变 identity', () => {
+    const connection = (connectionString: string) => baseConfig({
+      runtimeEventStore: { backend: 'pg' as const, connectionString },
+    });
+    const implicitDefault = connection('postgres://user:secret@db.internal/runtime?sslmode=require&connect_timeout=5&token=query-secret-one');
+    const explicitDefault = connection('postgresql://user:other-secret@db.internal:5432/runtime?connect_timeout=5&sslmode=require&token=query-secret-two');
+    const pooler = connection('postgresql://user:secret@db.internal:6432/runtime?sslmode=require&connect_timeout=5');
+    const differentTls = connection('postgresql://user:secret@db.internal:5432/runtime?sslmode=verify-full&connect_timeout=5');
+    const differentChannelBinding = connection('postgresql://user:secret@db.internal:5432/runtime?sslmode=require&connect_timeout=5&channel_binding=require');
+    const serialized = JSON.stringify(buildCanonicalConfigProjection(implicitDefault).projection);
+
+    expect(digestOf(implicitDefault)).toBe(digestOf(explicitDefault));
+    expect(digestOf(implicitDefault)).not.toBe(digestOf(pooler));
+    expect(digestOf(implicitDefault)).not.toBe(digestOf(differentTls));
+    expect(digestOf(implicitDefault)).not.toBe(digestOf(differentChannelBinding));
+    expect(serialized).toContain('postgresql');
+    expect(serialized).toContain('5432');
+    expect(serialized).not.toContain('secret');
+    expect(serialized).toContain('sslmode');
+    expect(serialized).toContain('require');
+    expect(serialized).not.toContain('query-secret');
+  });
+
   it('受管 ref id 本身不进投影（只保留不可逆摘要）', () => {
     const refId = 'tenant-hand/exact-ref-id-should-not-appear';
     const { projection } = buildCanonicalConfigProjection(
@@ -388,6 +436,38 @@ describe('Secret ref 版本与轮换（明文不可见时改变 identity）', ()
     expect(after.digest).toBe(before.digest);
     expect(after.credentialVersionDigest).not.toBe(before.credentialVersionDigest);
     expect(after.schemaVersion).toBe(before.schemaVersion);
+  });
+
+  it('revoke 后不再把 ref 判为 resolved/consistent', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('global', 'tenant-hand', 'v1-value', SYSTEM_CALLER);
+    const config = baseConfig({
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://acs.internal', authTokenRef: ref.id }],
+      },
+      runtimeEventStore: {
+        backend: 'pg' as const,
+        connectionString: 'postgresql://u:p@db.internal:5432/runtime',
+      },
+    });
+    const before = await computeObservedConfigIdentity(config, vault);
+    await vault.revokeSecret(ref.id, REVOKE_CALLER);
+    const after = await computeObservedConfigIdentity(config, vault);
+
+    expect(after.digest).toBe(before.digest);
+    expect(after.versionResolution).toBe('unavailable');
+    expect(after.credentialVersionDigest).toBeNull();
+    expect(after.unresolvedRefPaths).toContain('tenantRemoteHands.hands.*.authTokenRef');
+    expect(
+      evaluateConfigIdentityStatus(
+        {
+          schemaVersion: before.schemaVersion,
+          digest: before.digest,
+          credentialVersionDigest: before.credentialVersionDigest ?? undefined,
+        },
+        after,
+      ),
+    ).toEqual({ status: 'unverifiable', reason: 'secret_ref_version_unresolved' });
   });
 
   it('vault 不支持 inspectRef 时版本不可验证（不伪造）', async () => {

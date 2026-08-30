@@ -19,6 +19,7 @@ import type { AppConfig } from './config.js';
 import { getAppConfigPath, loadAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { applyModelsHotUpdate, type ModelsHotUpdateTarget } from './modelsHotUpdate.js';
+import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 
 /** 同一文件两次 stat 的最小间隔，避免 resolver 热路径打满 IO。 */
 const DEFAULT_MIN_STAT_INTERVAL_MS = 1000;
@@ -58,10 +59,12 @@ export function createSharedConfigRefresher(params: {
   target: ModelsHotUpdateTarget;
   onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
   /**
-   * webTools 变更回调。凭据需经 SecretVault 异步解析，实现方自行 fire-and-forget，
-   * 刷新器本身保持同步且不因解析失败中断其他配置的热更新。
+   * webTools 两阶段更新：先异步解析凭据并返回无副作用的 commit；仅当候选文件仍
+   * 是最新版且所有门禁成功时，才与 AppConfig / observed identity 同步提交。
    */
-  onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
+  prepareWebToolsUpdate?: (
+    next: AppConfig['webTools'],
+  ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
   /**
    * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
    */
@@ -84,7 +87,7 @@ export function createSharedConfigRefresher(params: {
     processCwd,
     target,
     onSystemPromptOverridesUpdated,
-    onWebToolsUpdated,
+    prepareWebToolsUpdate,
     onSttUpdated,
     onModelsUpdated,
     onConfigReloaded,
@@ -113,7 +116,13 @@ export function createSharedConfigRefresher(params: {
     );
   }
 
-  function applyConfigFile(nextConfig: AppConfig, stamp: FileStamp | undefined): void {
+  function applyConfigFile(
+    nextConfig: AppConfig,
+    stamp: FileStamp | undefined,
+    commitWebToolsUpdate?: WebToolsRuntimeUpdateCommit,
+  ): void {
+    const webToolsChanged = JSON.stringify(config.webTools ?? null)
+      !== JSON.stringify(nextConfig.webTools ?? null);
     const modelsChanged = Boolean(nextConfig.models)
       && JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models);
     const titleGeneratorChanged = JSON.stringify(config.titleGenerator ?? null)
@@ -157,23 +166,6 @@ export function createSharedConfigRefresher(params: {
       logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
     }
 
-    /**
-     * webTools 与模型同属「管理端写、执行进程读」：2026-08-16 实测把搜索源换成智谱后，
-     * ws-only 进程内存已更新、config.json 也已落盘，但 runtime-worker 仍用启动时的旧
-     * provider，真实会话持续报旧供应商的鉴权错误。凭据要经 SecretVault 解析（异步），
-     * 故这里只同步内存配置并把解析交给回调。
-     */
-    const webToolsChanged = JSON.stringify(config.webTools ?? null)
-      !== JSON.stringify(nextConfig.webTools ?? null);
-    if (webToolsChanged) {
-      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
-      else delete config.webTools;
-      onWebToolsUpdated?.(nextConfig.webTools);
-      logger?.info(
-        `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
-      );
-    }
-
     const sttChanged = JSON.stringify(config.stt ?? null)
       !== JSON.stringify(nextConfig.stt ?? null);
     if (sttChanged) {
@@ -202,6 +194,19 @@ export function createSharedConfigRefresher(params: {
       );
     }
 
+    /**
+     * webTools 的凭据已在 prepare 阶段解析；所有其他同步回调成功后才执行无失败 commit，
+     * 避免任一前置配置回调抛错时执行侧先于 AppConfig 与 observed identity 更新。
+     */
+    if (webToolsChanged) {
+      commitWebToolsUpdate?.();
+      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
+      else delete config.webTools;
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
+      );
+    }
+
     appliedConfigStamp = stamp;
     try {
       // 整体重载成功：即便逐段都没命中，身份层也需要重算。
@@ -221,21 +226,30 @@ export function createSharedConfigRefresher(params: {
 
     let nextConfig: AppConfig;
     let validation: void | Promise<void>;
+    let webToolsPreparation: WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit> | undefined;
     try {
       nextConfig = loadAppConfig(processCwd);
       validation = validateConfigReload?.(nextConfig);
+      const webToolsChanged = JSON.stringify(config.webTools ?? null)
+        !== JSON.stringify(nextConfig.webTools ?? null);
+      webToolsPreparation = webToolsChanged
+        ? prepareWebToolsUpdate?.(nextConfig.webTools)
+        : undefined;
     } catch (error) {
       warnConfigReload(error);
       return;
     }
 
-    if (validation && typeof validation.then === 'function') {
+    const validationAsync = validation && typeof validation.then === 'function';
+    const webToolsPreparationAsync = webToolsPreparation
+      && typeof (webToolsPreparation as Promise<WebToolsRuntimeUpdateCommit>).then === 'function';
+    if (validationAsync || webToolsPreparationAsync) {
       pendingConfigStamp = stamp;
-      void Promise.resolve(validation)
-        .then(() => {
-          // 校验期间文件若再次变化，丢弃旧候选；下一次热路径会读取最新版。
+      void Promise.all([Promise.resolve(validation), Promise.resolve(webToolsPreparation)])
+        .then(([, commitWebToolsUpdate]) => {
+          // 校验/凭据解析期间文件若再次变化，丢弃无副作用候选并读取最新版。
           if (!sameStamp(readStamp(configPath), stamp)) return;
-          applyConfigFile(nextConfig, stamp);
+          applyConfigFile(nextConfig, stamp, commitWebToolsUpdate);
         })
         .catch(warnConfigReload)
         .finally(() => {
@@ -243,7 +257,11 @@ export function createSharedConfigRefresher(params: {
         });
       return;
     }
-    applyConfigFile(nextConfig, stamp);
+    applyConfigFile(
+      nextConfig,
+      stamp,
+      webToolsPreparation as WebToolsRuntimeUpdateCommit | undefined,
+    );
   }
 
   function refreshTenantsFile(): void {

@@ -18,6 +18,7 @@ import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import { createSharedConfigRefresher, type SharedConfigRefresher } from './sharedConfigRefresher.js';
 import { applyModelsHotUpdate } from './modelsHotUpdate.js';
+import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 
 export type ModelResolver = (
   ref: string,
@@ -47,12 +48,16 @@ export function createModelResolvers(params: {
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
   /** config.json 中系统提示语覆盖变化后，刷新当前进程注册表。 */
   onSystemPromptOverridesUpdated: (next: NonNullable<AppConfig['systemPrompts']>) => void;
-  /** webTools 变化后重新解析凭据并替换执行进程的运行时配置。 */
-  onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
+  /** webTools 变化后准备无副作用的执行侧提交；配置候选确认后再原子应用。 */
+  prepareWebToolsUpdate?: (
+    next: AppConfig['webTools'],
+  ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
   /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
   onSttUpdated?: (next: AppConfig['stt']) => void;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
-  resolveRuntimeModels?: (next: NonNullable<AppConfig['models']>) => Promise<NonNullable<AppConfig['models']>>;
+  resolveRuntimeModels?: (
+    next: NonNullable<AppConfig['models']>,
+  ) => Promise<NonNullable<AppConfig['models']>>;
   /** config 文件重载成功后的回调（TASK-318：observed config identity 重算）。 */
   onConfigReloaded?: () => void;
   /** config 文件应用前的安全门禁（Production inline secret / ref version fail closed）。 */
@@ -78,7 +83,9 @@ export function createModelResolvers(params: {
       updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
     },
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
-    ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
+    ...(params.prepareWebToolsUpdate
+      ? { prepareWebToolsUpdate: params.prepareWebToolsUpdate }
+      : {}),
     ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
     onModelsUpdated: (next) => {
       void updateModelsConfig(next).catch((error) => logger?.warn(

@@ -179,9 +179,19 @@ import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
-import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
-import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
+import {
+  notifyBillingAuditAlerts,
+  registerSearchProviderAlerts,
+} from './registerSearchProviderAlerts.js';
+import {
+  createToolSettingsUpdater,
+  createWebToolsRuntimeUpdatePreparer,
+  createWebToolsRuntimeUpdater,
+} from './webToolsRuntimeUpdate.js';
+import {
+  createRuntimeRunCapacityResolver,
+  createRuntimeSchedulerCapacityController,
+} from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -1543,6 +1553,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   configureImageGenPricing(config.imageGenTools?.pricing);
   // 模型解析器：如果配置了 models，则绑定到 RawRuntime / WebChannel / Cron。
   // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
+  let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
@@ -1552,8 +1563,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
-    // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
-    onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
+    prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
     onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
     resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
@@ -1806,6 +1816,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
+  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };

@@ -393,7 +393,7 @@ describe('createSharedConfigRefresher', () => {
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onWebToolsUpdated: (next) => { seen.push(next?.search?.provider); },
+      prepareWebToolsUpdate: (next) => () => { seen.push(next?.search?.provider); },
       now: () => clock,
     });
 
@@ -507,7 +507,7 @@ describe('createSharedConfigRefresher', () => {
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onWebToolsUpdated: () => { calls += 1; },
+      prepareWebToolsUpdate: () => () => { calls += 1; },
       now: () => clock,
     });
 
@@ -562,7 +562,7 @@ describe('createSharedConfigRefresher', () => {
       onConfigReloaded: () => {
         reloadCalls += 1;
       },
-      onWebToolsUpdated: () => {
+      prepareWebToolsUpdate: () => () => {
         webToolsCalls += 1;
       },
       logger: { info: () => {}, warn: (message) => warns.push(message) },
@@ -593,6 +593,95 @@ describe('createSharedConfigRefresher', () => {
     expect(webToolsCalls).toBe(0);
     expect(reloadCalls).toBe(0);
     expect(warns.some((message) => message.includes('webTools.search.apiKey'))).toBe(true);
+  });
+
+  it('TASK-318：webTools 凭据准备失败时 AppConfig、执行侧与 observed identity 全部保留旧值', async () => {
+    const writeWebTools = (provider: string) => writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}` } },
+      }),
+    );
+    writeWebTools('tencent_wsa');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa' } },
+    } as unknown as AppConfig;
+    let runtimeProvider = 'tencent_wsa';
+    let reloadCalls = 0;
+    let clock = 10_000;
+    const warns: string[] = [];
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      prepareWebToolsUpdate: async (next) => {
+        await Promise.resolve();
+        if (next?.search?.provider === 'zhipu') throw new Error('SecretVault resolve failed');
+        return () => { runtimeProvider = next?.search?.provider ?? 'none'; };
+      },
+      onConfigReloaded: () => { reloadCalls += 1; },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+      now: () => clock,
+    });
+
+    writeWebTools('zhipu');
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(config.webTools?.search?.provider).toBe('tencent_wsa');
+    expect(runtimeProvider).toBe('tencent_wsa');
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('SecretVault resolve failed'))).toBe(true);
+  });
+
+  it('TASK-318：其他配置回调失败时不提交已准备的 webTools 执行配置', () => {
+    const stt = {
+      enabled: false,
+      apiKeyRef: 'vault-dashscope',
+      ossAccessKeyIdRef: 'vault-oss-id',
+      ossAccessKeySecretRef: 'vault-oss-secret',
+      model: 'fun-asr',
+      pricing: { creditsPerCall: 0, costYuanPerCall: 0.08 },
+    };
+    const writeCandidate = (provider: string, enabled: boolean) => writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({
+        agent: { cwd: '.' },
+        server: { port: 3200 },
+        models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}` } },
+        stt: { ...stt, enabled },
+      }),
+    );
+    writeCandidate('tencent_wsa', false);
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa' } },
+      stt,
+    } as unknown as AppConfig;
+    let runtimeProvider = 'tencent_wsa';
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      prepareWebToolsUpdate: (next) => () => {
+        runtimeProvider = next?.search?.provider ?? 'none';
+      },
+      onSttUpdated: () => { throw new Error('STT runtime update failed'); },
+      now: () => clock,
+    });
+
+    writeCandidate('zhipu', true);
+    clock += 5_000;
+    expect(() => refresher.refreshIfChanged()).toThrow('STT runtime update failed');
+    expect(config.webTools?.search?.provider).toBe('tencent_wsa');
+    expect(runtimeProvider).toBe('tencent_wsa');
   });
 
   it('TASK-318：异步 ref version 门禁失败时也在应用前 fail closed', async () => {

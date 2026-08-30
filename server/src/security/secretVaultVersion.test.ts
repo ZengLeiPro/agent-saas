@@ -18,6 +18,10 @@ const CALLER: VaultCaller = {
   userId: '__system__',
   scopes: ['secret:tenant-hand:read', 'secret:tenant-hand:rotate'],
 };
+const REVOKE_CALLER: VaultCaller = {
+  actor: 'connector_proxy',
+  scopes: ['secret:tenant-hand:revoke'],
+};
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -88,6 +92,18 @@ describe('EncryptedFileSecretVault opaque version migration（TASK-318）', () =
   });
 });
 
+  it('revoke 递增 opaque version、写入 revokedAt，并在重新实例化后保持', async () => {
+    const file = writeLegacyVault(undefined);
+    const vault = new EncryptedFileSecretVault(file, ENCRYPTION_KEY);
+    await vault.revokeSecret('legacy-ref-id', REVOKE_CALLER);
+
+    const reopened = new EncryptedFileSecretVault(file, ENCRYPTION_KEY);
+    const inspected = await reopened.inspectRef!('legacy-ref-id', CALLER);
+    expect(inspected?.version).toBe(2);
+    expect(inspected?.revokedAt).toBeTruthy();
+    expect(JSON.stringify(inspected)).not.toContain('legacy-plaintext-must-never-leak');
+  });
+
 describe('HttpSecretVault metadata-only version inspection（TASK-318）', () => {
   it('metadata TTL 到期或 invalidate 后重检远端 version，且不解析 secret 明文', async () => {
     let now = 10_000;
@@ -133,6 +149,70 @@ describe('HttpSecretVault metadata-only version inspection（TASK-318）', () =>
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it('远端 revoked metadata 被保留且不携带明文', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () =>
+        new Response(
+          JSON.stringify({
+            id: 'remote-ref-id',
+            ownerId: 'global',
+            kind: 'tenant-hand',
+            version: 8,
+            revokedAt: '2026-08-30T00:00:00.000Z',
+            value: 'remote-plaintext-must-be-dropped',
+            metadata: {},
+            createdAt: '2026-08-01T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )) as typeof fetch,
+    });
+
+    const inspected = await vault.inspectRef!('remote-ref-id', CALLER);
+    expect(inspected?.version).toBe(8);
+    expect(inspected?.revokedAt).toBe('2026-08-30T00:00:00.000Z');
+    expect(JSON.stringify(inspected)).not.toContain('remote-plaintext-must-be-dropped');
+  });
+
+  it('HTTP revoke 会失效 metadata cache，下一次 inspect 观测 revoked version', async () => {
+    let revoked = false;
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/secrets/remote-ref-id/revoke')) {
+        revoked = true;
+        return new Response('null', { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      expect(url).toBe('https://vault.example.com/secrets/inspect');
+      return new Response(
+        JSON.stringify({
+          id: 'remote-ref-id',
+          ownerId: 'global',
+          kind: 'tenant-hand',
+          version: revoked ? 8 : 7,
+          ...(revoked ? { revokedAt: '2026-08-30T00:00:00.000Z' } : {}),
+          metadata: {},
+          createdAt: '2026-08-01T00:00:00.000Z',
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      metadataCacheTtlMs: 60_000,
+    });
+
+    const initial = await vault.inspectRef!('remote-ref-id', CALLER);
+    expect(initial?.version).toBe(7);
+    await vault.revokeSecret(initial!, REVOKE_CALLER);
+    const after = await vault.inspectRef!('remote-ref-id', CALLER);
+    expect(after?.version).toBe(8);
+    expect(after?.revokedAt).toBeTruthy();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
   it('远端返回错误 ref id 时 fail closed', async () => {
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.example.com',
@@ -156,6 +236,19 @@ describe('HttpSecretVault metadata-only version inspection（TASK-318）', () =>
 });
 
 describe('Config identity metadata-only vault capability（TASK-318）', () => {
+  it('InMemory revoke 递增 opaque version 并暴露 revoked metadata', async () => {
+    const vault = new InMemorySecretVault();
+    const ref = await vault.putSecret('global', 'tenant-hand', 'plaintext', {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:tenant-hand:write'],
+    });
+    await vault.revokeSecret(ref.id, REVOKE_CALLER);
+    const inspected = await vault.inspectRef!(ref.id, CALLER);
+    expect(inspected?.version).toBe(2);
+    expect(inspected?.revokedAt).toBeTruthy();
+  });
+
   it('可 inspect opaque version，但不能借 metadata scope 读取明文', async () => {
     const vault = new InMemorySecretVault();
     const writer: VaultCaller = {

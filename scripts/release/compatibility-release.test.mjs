@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -154,6 +155,19 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     /failed to persist candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
   );
   assert.match(appWorkflow, /candidate config identity status=\$CONFIG_IDENTITY_STATUS/u);
+  const postReadyIdentityProbe = appWorkflow.slice(
+    appWorkflow.indexOf('if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL"'),
+    appWorkflow.indexOf('# ── 7. warmup'),
+  );
+  assert.match(postReadyIdentityProbe, /if ! CONFIG_IDENTITY_STATUS=\$\(curl[\s\S]+JSON\.parse/u);
+  assert.match(
+    postReadyIdentityProbe,
+    /failed to inspect candidate config identity after readiness[\s\S]{0,120}rollback_idle_and_exit/u,
+  );
+  assert.match(
+    postReadyIdentityProbe,
+    /candidate config identity status=\$CONFIG_IDENTITY_STATUS[\s\S]{0,120}rollback_idle_and_exit/u,
+  );
   assert.match(appWorkflow, /--config-identity-digest/u);
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
@@ -168,4 +182,30 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
+});
+
+
+test('post-ready ConfigIdentity probe sends curl, empty-body, and malformed-JSON failures to rollback', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const prefix = 'if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL" | node -e \'';
+  const start = workflow.indexOf(prefix);
+  assert.notEqual(start, -1);
+  const scriptStart = start + prefix.length;
+  const scriptEnd = workflow.indexOf("\n          '); then", scriptStart);
+  assert.notEqual(scriptEnd, -1);
+  const parser = workflow.slice(scriptStart, scriptEnd);
+
+  assert.equal(spawnSync(process.execPath, ['-e', parser], { input: '' }).status, 1);
+  assert.notEqual(spawnSync(process.execPath, ['-e', parser], { input: '{bad-json' }).status, 0);
+  const valid = spawnSync(process.execPath, ['-e', parser], {
+    input: JSON.stringify({ configIdentity: { status: 'consistent' } }),
+    encoding: 'utf8',
+  });
+  assert.equal(valid.status, 0);
+  assert.equal(valid.stdout, 'consistent');
+
+  const curlFailure = spawnSync('bash', ['-c',
+    'set -euo pipefail; rollback=0; if ! value=$( (exit 22) | cat); then rollback=1; fi; test "$rollback" -eq 1',
+  ]);
+  assert.equal(curlFailure.status, 0);
 });

@@ -8,29 +8,33 @@ interface WebToolsRuntimeTarget {
   toolControls?: AppConfig['toolControls'];
 }
 
+export type WebToolsRuntimeUpdateCommit = () => void;
+export type WebToolsRuntimeUpdatePreparer = (
+  next: AppConfig['webTools'],
+) => Promise<WebToolsRuntimeUpdateCommit>;
 export type WebToolsRuntimeUpdater = (next: AppConfig['webTools']) => Promise<void>;
 
 type ToolSettings = Pick<AppConfig, 'toolControls' | 'webTools'>;
 
 /**
- * 把 webTools 配置解析成运行时形态（apiKeyRef → 明文）后替换执行侧配置。
- *
- * 管理端直写与跨进程刷新共用这一条路径。2026-08-16 把搜索源从腾讯换成智谱时，
- * config.json 与 ws-only 进程内存都已更新，但 runtime-worker 没有这条链路，
- * 仍用启动快照里的旧 provider，真实会话持续报旧供应商的鉴权错误。
+ * 先解析 webTools 凭据、但不改执行侧；调用方确认候选配置仍有效后再同步 commit。
+ * 这样跨进程热更新可以把 AppConfig、执行配置和 observed identity 放在同一发布点。
  */
-export function createWebToolsRuntimeUpdater(deps: {
+export function createWebToolsRuntimeUpdatePreparer(deps: {
   target: WebToolsRuntimeTarget;
   secretVault: SecretVault;
   logger?: { warn: (msg: string) => void };
-}): WebToolsRuntimeUpdater {
-  return async function applyWebToolsRuntimeUpdate(next: AppConfig['webTools']): Promise<void> {
+}): WebToolsRuntimeUpdatePreparer {
+  return async function prepareWebToolsRuntimeUpdate(
+    next: AppConfig['webTools'],
+  ): Promise<WebToolsRuntimeUpdateCommit> {
     try {
       const resolved = await resolveWebToolsConfig(next, deps.secretVault);
-      if (resolved) deps.target.webTools = resolved;
-      else delete deps.target.webTools;
+      return () => {
+        if (resolved) deps.target.webTools = resolved;
+        else delete deps.target.webTools;
+      };
     } catch (err) {
-      // 保留旧配置：一次坏凭据不应让正在服务的进程失去搜索能力。
       deps.logger?.warn(
         `webTools 运行时配置刷新失败，继续使用旧配置：${err instanceof Error ? err.message : String(err)}`,
       );
@@ -39,9 +43,22 @@ export function createWebToolsRuntimeUpdater(deps: {
   };
 }
 
+/** 把准备与提交封装成管理端直写所需的一步式 updater。 */
+export function createWebToolsRuntimeUpdater(deps: {
+  target: WebToolsRuntimeTarget;
+  secretVault: SecretVault;
+  logger?: { warn: (msg: string) => void };
+}): WebToolsRuntimeUpdater {
+  const prepare = createWebToolsRuntimeUpdatePreparer(deps);
+  return async function applyWebToolsRuntimeUpdate(next: AppConfig['webTools']): Promise<void> {
+    const commit = await prepare(next);
+    commit();
+  };
+}
+
 /**
- * 管理端保存工具设置后的运行时应用：更新内存 AppConfig，再把凭据解析结果写回执行侧配置。
- * 与跨进程刷新共用同一个 updater，避免两条路径走偏。
+ * 管理端保存工具设置后的运行时应用：先完成凭据解析与执行侧提交，成功后再更新
+ * AppConfig/toolControls；失败时三者都保留旧值。
  */
 export function createToolSettingsUpdater(deps: {
   config: ToolSettings;
@@ -49,9 +66,9 @@ export function createToolSettingsUpdater(deps: {
   applyWebTools: WebToolsRuntimeUpdater;
 }): (settings: ToolSettings) => Promise<void> {
   return async function updateToolSettingsConfig(settings: ToolSettings): Promise<void> {
+    await deps.applyWebTools(settings.webTools);
     deps.config.toolControls = settings.toolControls;
     deps.config.webTools = settings.webTools;
     deps.target.toolControls = settings.toolControls;
-    await deps.applyWebTools(settings.webTools);
   };
 }

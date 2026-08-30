@@ -18,6 +18,7 @@ import { validateProductionObservations } from './read-production-state.mjs';
 import {
   buildProductionIdentity,
   readExpectedConfigIdentityFromReleaseEnv,
+  resolveExpectedConfigIdentityForProduction,
 } from './write-production-identity.mjs';
 import { validateRuntimeIdentity } from './read-runtime-identity.mjs';
 
@@ -250,6 +251,95 @@ test('write-production-identity reads expected config identity only for the matc
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('partial promotion with API keep inherits and cross-checks trusted expected configIdentity', () => {
+  const previous = baseIdentity();
+  previous.configIdentity = {
+    schemaVersion: 1,
+    digest: CONFIG_DIGEST,
+    credentialVersionDigest: `sha256:${'e'.repeat(64)}`,
+  };
+  const manifest = {
+    releaseId: 'rc-web-only',
+    digest: DIGEST,
+    components: {
+      web: { sourceSha: SHA, artifactDigest: DIGEST, action: 'deploy' },
+      api: { sourceSha: SHA, artifactDigest: DIGEST, action: 'keep' },
+      runtimeWorker: { sourceSha: SHA, artifactDigest: DIGEST, action: 'keep' },
+      acs: {
+        sourceSha: SHA,
+        orchestratorArtifactDigest: DIGEST,
+        sandboxImageDigest: DIGEST,
+        action: 'keep',
+      },
+    },
+  };
+  previous.topology.api.releaseTarget = '/opt/agent-saas-app/releases/rc-api-active';
+  const activeEnv = [
+    'AGENT_SAAS_RELEASE_ID=rc-api-active',
+    `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
+    'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=1',
+    `AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST=sha256:${'e'.repeat(64)}`,
+    '',
+  ].join('\n');
+  const expected = resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+    readFile: () => activeEnv,
+  });
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv,
+      activeReleaseTarget: '/opt/agent-saas-app/releases/different-release',
+    }),
+    /not bound to the active release target/,
+  );
+  const identity = buildProductionIdentity(
+    manifest,
+    previous.topology,
+    '2026-08-30T00:00:00.000Z',
+    previous,
+    expected,
+  );
+
+  assert.deepEqual(identity.configIdentity, previous.configIdentity);
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv.replace(CONFIG_DIGEST, `sha256:${'f'.repeat(64)}`),
+    }),
+    /disagrees across trusted sources/,
+  );
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => 'AGENT_SAAS_RELEASE_ID=rc-api-active\n',
+    }),
+    /missing from one trusted source/,
+  );
+});
+
+test('API deploy cannot silently drop an existing trusted expected configIdentity', () => {
+  const previous = baseIdentity();
+  previous.configIdentity = { schemaVersion: 1, digest: CONFIG_DIGEST };
+  const manifest = {
+    releaseId: 'rc-api-new',
+    digest: DIGEST,
+    components: {
+      web: { sourceSha: SHA, artifactDigest: DIGEST, action: 'keep' },
+      api: { sourceSha: SHA, artifactDigest: DIGEST, action: 'deploy' },
+      runtimeWorker: { sourceSha: SHA, artifactDigest: DIGEST, action: 'deploy' },
+      acs: {
+        sourceSha: SHA,
+        orchestratorArtifactDigest: DIGEST,
+        sandboxImageDigest: DIGEST,
+        action: 'keep',
+      },
+    },
+  };
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => 'AGENT_SAAS_RELEASE_ID=rc-api-new\n',
+    }),
+    /would drop trusted expected configIdentity/,
+  );
 });
 
 test('expected identity env parser handles mismatch, missing digest, and malformed digest', () => {

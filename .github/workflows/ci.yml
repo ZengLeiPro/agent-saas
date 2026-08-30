@@ -1846,6 +1846,22 @@ jobs:
             log "ready FAILED after 180s"
             rollback_idle_and_exit
           fi
+          if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL" | node -e '
+            let body = "";
+            process.stdin.setEncoding("utf8");
+            process.stdin.on("data", chunk => { body += chunk; });
+            process.stdin.on("end", () => {
+              const parsed = JSON.parse(body);
+              process.stdout.write(String(parsed.configIdentity?.status ?? "not_collected"));
+            });
+          '); then
+            log "ERROR: failed to inspect candidate config identity after readiness"
+            rollback_idle_and_exit
+          fi
+          if [ "$CONFIG_IDENTITY_STATUS" != "consistent" ]; then
+            log "ERROR: candidate config identity status=$CONFIG_IDENTITY_STATUS"
+            rollback_idle_and_exit
+          fi
 
           # ── 7. warmup 等待（软门禁：failed/超时降级为警告，dispatch 时增量同步兜底）──
           read_warmup_state() {

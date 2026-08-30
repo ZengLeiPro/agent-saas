@@ -957,6 +957,28 @@ export type {
 
 export { adaptWsEventToActivityMessageProjection } from './lib/wsActivityMessageProjection';
 
+// M50-01 renderer-neutral message timeline presenter/selectors
+export {
+  RENDER_MODEL_VERSION,
+  renderSemanticSignature,
+  selectRenderModel,
+} from './lib/renderModel';
+export type {
+  RenderAccessibility,
+  RenderActionCapabilities,
+  RenderContentSegment,
+  RenderErrorDomain,
+  RenderModel,
+  RenderModelInput,
+  RenderRetryability,
+  RenderSource,
+  RenderTimelineItem,
+  RenderTimelineItemKind,
+  RenderTimelineRole,
+  RenderTimelineStatus,
+  RuntimeTimelineProjectionItem,
+} from './lib/renderModel';
+
 // Lib - WS event processor (pure functions)
 export {
   processWsEvent,

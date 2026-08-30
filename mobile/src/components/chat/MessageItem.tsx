@@ -401,7 +401,9 @@ export const MessageItemView = React.memo(function MessageItemView({
         content = <UserMessage message={item} onRetry={onRetryMessage} onFork={onForkMessage} isFirstUser={isFirstUser} isLoading={isLoading} />;
         break;
       case 'text':
-        content = <TextMessage message={item} onPreviewMd={onPreviewMd} onTtsPlay={onTtsPlay} />;
+        content = item.moderation && item.moderation.outcome !== 'allowed'
+          ? <ModerationMessage message={item} />
+          : <TextMessage message={item} onPreviewMd={onPreviewMd} onTtsPlay={onTtsPlay} />;
         break;
       case 'thinking':
         content = <ThinkingBlock message={item} />;
@@ -430,6 +432,11 @@ export const MessageItemView = React.memo(function MessageItemView({
       case 'user-voice':
         content = <UserVoiceBlock message={item} />;
         break;
+      case 'runtime_status':
+      case 'system_event':
+      case 'system-error':
+        content = <SystemTimelineMessage message={item} />;
+        break;
       default:
         content = null;
     }
@@ -443,6 +450,37 @@ export const MessageItemView = React.memo(function MessageItemView({
     </MessageErrorBoundary>
   );
 });
+
+function SystemTimelineMessage({ message }: {
+  message: Extract<MessageItem, { type: 'runtime_status' | 'system_event' | 'system-error' }>;
+}) {
+  const colors = useColors();
+  const isError = message.type === 'system-error';
+  const text = message.type === 'runtime_status'
+    ? (message.content ?? message.status)
+    : message.type === 'system_event' ? `${message.title}：${message.content}` : message.content;
+  return (
+    <View
+      accessibilityRole={isError ? 'alert' : 'summary'}
+      accessibilityLabel={isError ? `错误：${text}` : `运行状态：${text}`}
+      accessibilityLiveRegion={isError ? 'assertive' : 'polite'}
+      style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: isError ? colors.destructive : colors.border }}
+    >
+      <Text style={{ ...typography.bodySmall, color: isError ? colors.destructive : colors.mutedForeground }}>{text}</Text>
+    </View>
+  );
+}
+
+function ModerationMessage({ message }: { message: MessageItem & { type: 'text' } }) {
+  const colors = useColors();
+  const outcome = message.moderation?.outcome ?? 'flagged';
+  const text = outcome === 'blocked' ? '内容已被安全策略拦截' : '内容已标记，等待审核';
+  return (
+    <View accessibilityRole={outcome === 'blocked' ? 'alert' : 'summary'} accessibilityLabel={text} accessibilityLiveRegion={outcome === 'blocked' ? 'assertive' : 'polite'} style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm }}>
+      <Text style={{ ...typography.bodySmall, color: outcome === 'blocked' ? colors.destructive : colors.mutedForeground }}>{text}</Text>
+    </View>
+  );
+}
 
 // --- User Message ---
 function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
@@ -818,7 +856,7 @@ function ThinkingBlock({ message }: { message: MessageItem & { type: 'thinking' 
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
+      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
         <Lightbulb size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel}>{message.streaming ? '思考中...' : '已思考'}</Text>
         <ChevronRight
@@ -873,7 +911,7 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
+      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
         {icon}
         {displayInfo.detail ? (
           <View style={{ flexDirection: 'row', flexShrink: 1, minWidth: 0, alignItems: 'baseline' }}>
@@ -969,7 +1007,7 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
+      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
         <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel} numberOfLines={1}>Result: {message.toolName}</Text>
         <ChevronRight
@@ -1436,6 +1474,7 @@ function getSummary(item: MessageItem): SummaryInfo {
     }
     case 'tool_result': return { text: `Result: ${item.toolName}`, ellipsizeMode: 'tail' };
     case 'subagent': return { text: item.status === 'running' ? `子任务 ${item.agentType}...` : `子任务 ${item.agentType}`, ellipsizeMode: 'tail' };
+    case 'runtime_status': return { text: item.content ?? item.status, ellipsizeMode: 'tail' };
     default: return { text: '', ellipsizeMode: 'tail' };
   }
 }
@@ -1446,6 +1485,7 @@ function renderActivityItem(item: MessageItem) {
     case 'tool_use': return <ToolUseBlock key={item.id} message={item as MessageItem & { type: 'tool_use' }} />;
     case 'tool_result': return <ToolResultBlock key={item.id} message={item as MessageItem & { type: 'tool_result' }} />;
     case 'subagent': return <SubagentBlock key={item.id} message={item as MessageItem & { type: 'subagent' }} />;
+    case 'runtime_status': return <SystemTimelineMessage key={item.id} message={item} />;
     default: return null;
   }
 }
@@ -1455,7 +1495,7 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
   const lastItem = group.items[group.items.length - 1];
   const summary = getSummary(lastItem);
   const hasFailure = group.items.some((item) => (
-    (item.type === 'tool_result' && /^Error:|^错误[:：]/i.test(item.result.trim()))
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
     || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
   ));
   const state: AgentActivityState = group.isActive ? 'running' : hasFailure ? 'warning' : 'completed';

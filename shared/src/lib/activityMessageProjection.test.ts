@@ -20,6 +20,14 @@ describe('canonical activity/message projection', () => {
     expect(selectProjectedMessages(state)).toMatchObject([{ id: 'block-1', content: 'hello', streaming: true }]);
   });
 
+  it('orders sequenced deltas deterministically despite replay and out-of-order delivery', () => {
+    const start: ActivityMessageProjectionEvent = { eventId: 'ordered-start', domain: 'message', kind: 'assistant_block_start', ...base, blockType: 'text' };
+    const second: ActivityMessageProjectionEvent = { eventId: 'ordered-2', domain: 'message', kind: 'assistant_block_delta', ...base, blockType: 'text', delta: 'B', sequence: 2 };
+    const first: ActivityMessageProjectionEvent = { eventId: 'ordered-1', domain: 'message', kind: 'assistant_block_delta', ...base, blockType: 'text', delta: 'A', sequence: 1 };
+    const state = reduce([start, second, second, first]);
+    expect(selectProjectedMessages(state)).toMatchObject([{ id: 'block-1', content: 'AB', streaming: true }]);
+  });
+
   it('merges out-of-order tool/subagent terminal facts and never revives them with old running events', () => {
     const events: ActivityMessageProjectionEvent[] = [
       { eventId: 'tool-end', domain: 'tool', kind: 'tool_activity', ...base, blockId: 'tool-block', toolCallId: 'same', toolName: 'Shell', status: 'failed', result: 'permission denied', resultReady: true },
@@ -66,6 +74,17 @@ describe('canonical activity/message projection', () => {
       expect.objectContaining({ id: 'other', content: 'keep' }),
       expect.objectContaining({ id: 'block-1', content: 'refreshed', streaming: false }),
     ]);
+  });
+
+  it('preserves the hydrated message anchor when a full snapshot replaces its blocks', () => {
+    const events: ActivityMessageProjectionEvent[] = [
+      { eventId: 'before', domain: 'message', kind: 'assistant_block_snapshot', ...base, blockType: 'text', content: 'before', status: 'running' },
+      { eventId: 'after', domain: 'message', kind: 'user_message', runId: 'other-run', messageId: 'after-message', content: 'after' },
+      { eventId: 'hydrate', domain: 'message', kind: 'snapshot', runId: 'run-1', snapshotId: 'hydrate-1', mode: 'full', messageId: 'assistant-run-1', events: [
+        { eventId: 'hydrated-block', domain: 'message', kind: 'assistant_block_snapshot', ...base, blockType: 'text', content: 'hydrated', status: 'completed' },
+      ] },
+    ];
+    expect(selectProjectedMessages(reduce(events)).map((item) => item.id)).toEqual(['block-1', 'after-message']);
   });
 
   it('moderation is triggered only by structured domain metadata and affects only its target', () => {

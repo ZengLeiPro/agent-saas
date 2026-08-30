@@ -58,7 +58,7 @@ export type ActivityMessageProjectionEvent =
     });
 
 interface UserProjection { eventId: string; messageId: string; runId: string; content: string; timestamp?: number; clientMsgId?: string; attachments?: MessageAttachmentDisplay[] }
-interface AssistantBlockProjection { eventId: string; messageId: string; runId: string; blockId: string; blockType: 'text' | 'thinking'; content: string; status: 'running' | 'completed'; draftId?: string; guardrailEventId?: string; timestamp?: number }
+interface AssistantBlockProjection { eventId: string; messageId: string; runId: string; blockId: string; blockType: 'text' | 'thinking'; content: string; status: 'running' | 'completed'; draftId?: string; guardrailEventId?: string; timestamp?: number; baseContent?: string; deltas?: Readonly<Record<string, { delta: string; sequence?: number }>> }
 interface ToolProjection extends Omit<Extract<ActivityMessageProjectionEvent, { kind: 'tool_activity' }>, 'kind' | 'domain'> {}
 interface SubagentProjection extends Omit<Extract<ActivityMessageProjectionEvent, { kind: 'subagent_activity' }>, 'kind' | 'domain'> {}
 export interface ModerationProjection { eventId: string; moderationId: string; runId: string; messageId: string; blockId?: string; outcome: ModerationOutcome; reasonCode?: string }
@@ -96,9 +96,15 @@ export function reduceActivityMessageProjection(
   if (!event.eventId || state.seenEventIds.has(event.eventId)) return state;
   let next: ActivityMessageProjectionState = { ...state, seenEventIds: new Set([...state.seenEventIds, event.eventId]) };
   if (event.kind === 'snapshot') {
+    let snapshotAnchorIndex: number | undefined;
     // Full snapshots are authoritative only for the explicitly named message. An unscoped
     // sparse legacy snapshot is deliberately treated as partial (fail closed: never erase).
     if (event.mode === 'full' && event.messageId) {
+      snapshotAnchorIndex = next.order.findIndex((key) => {
+        const value = next.users[key] ?? next.assistantBlocks[key] ?? next.tools[key] ?? next.subagents[key];
+        return value?.messageId === event.messageId;
+      });
+      if (snapshotAnchorIndex < 0) snapshotAnchorIndex = undefined;
       const keep = (value: { messageId: string }) => value.messageId !== event.messageId;
       const replayableSeen = new Set(next.seenEventIds);
       for (const item of event.events) replayableSeen.delete(item.eventId);
@@ -115,7 +121,17 @@ export function reduceActivityMessageProjection(
         }),
       };
     }
-    return event.events.reduce(reduceActivityMessageProjection, next);
+    const reduced = event.events.reduce(reduceActivityMessageProjection, next);
+    if (snapshotAnchorIndex === undefined || !event.messageId) return reduced;
+    const targetKeys = reduced.order.filter((key) => {
+      const value = reduced.users[key] ?? reduced.assistantBlocks[key] ?? reduced.tools[key] ?? reduced.subagents[key];
+      return value?.messageId === event.messageId;
+    });
+    if (targetKeys.length === 0) return reduced;
+    const targetSet = new Set(targetKeys);
+    const stableOrder = reduced.order.filter((key) => !targetSet.has(key));
+    stableOrder.splice(Math.min(snapshotAnchorIndex, stableOrder.length), 0, ...targetKeys);
+    return { ...reduced, order: stableOrder };
   }
   if (event.kind === 'user_message') {
     const key = identity.user(event.runId, event.messageId);
@@ -127,12 +143,24 @@ export function reduceActivityMessageProjection(
     const current = next.assistantBlocks[key];
     if (event.kind === 'assistant_block_delta') {
       if (!current) return next; // Delta must never drift to a neighbouring positional block.
-      const updated = { ...current, content: current.content + event.delta, ...(event.guardrailEventId ? { guardrailEventId: event.guardrailEventId } : {}) };
+      const deltas = {
+        ...(current.deltas ?? {}),
+        [event.eventId]: { delta: event.delta, ...(event.sequence !== undefined ? { sequence: event.sequence } : {}) },
+      };
+      const entries = Object.entries(deltas);
+      const hasSequence = entries.some(([, value]) => value.sequence !== undefined);
+      if (hasSequence) {
+        entries.sort(([leftId, left], [rightId, right]) =>
+          (left.sequence ?? Number.MAX_SAFE_INTEGER) - (right.sequence ?? Number.MAX_SAFE_INTEGER)
+          || leftId.localeCompare(rightId));
+      }
+      const baseContent = current.baseContent ?? current.content;
+      const updated = { ...current, baseContent, deltas, content: baseContent + entries.map(([, value]) => value.delta).join(''), ...(event.guardrailEventId ? { guardrailEventId: event.guardrailEventId } : {}) };
       return { ...next, assistantBlocks: { ...next.assistantBlocks, [key]: updated } };
     }
     if (event.kind === 'assistant_block_start') {
       if (current?.status === 'completed') return next;
-      const value: AssistantBlockProjection = { eventId: event.eventId, messageId: event.messageId, runId: event.runId, blockId: event.blockId, blockType: event.blockType, content: current?.content ?? '', status: 'running', ...(event.draftId ? { draftId: event.draftId } : {}) };
+      const value: AssistantBlockProjection = { eventId: event.eventId, messageId: event.messageId, runId: event.runId, blockId: event.blockId, blockType: event.blockType, content: current?.content ?? '', baseContent: current?.baseContent ?? current?.content ?? '', deltas: current?.deltas ?? {}, status: 'running', ...(event.draftId ? { draftId: event.draftId } : {}) };
       return { ...next, order: appendOrder(next.order, key), assistantBlocks: { ...next.assistantBlocks, [key]: value } };
     }
     if (event.kind === 'assistant_block_end') {
@@ -140,7 +168,7 @@ export function reduceActivityMessageProjection(
       return { ...next, assistantBlocks: { ...next.assistantBlocks, [key]: { ...current, status: 'completed' } } };
     }
     const status = current?.status === 'completed' ? 'completed' : event.status;
-    const value: AssistantBlockProjection = { ...current, eventId: event.eventId, messageId: event.messageId, runId: event.runId, blockId: event.blockId, blockType: event.blockType, content: event.content, status, ...(event.draftId ? { draftId: event.draftId } : {}), ...(event.guardrailEventId ? { guardrailEventId: event.guardrailEventId } : {}), ...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}) };
+    const value: AssistantBlockProjection = { ...current, eventId: event.eventId, messageId: event.messageId, runId: event.runId, blockId: event.blockId, blockType: event.blockType, content: event.content, baseContent: event.content, deltas: {}, status, ...(event.draftId ? { draftId: event.draftId } : {}), ...(event.guardrailEventId ? { guardrailEventId: event.guardrailEventId } : {}), ...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}) };
     return { ...next, order: appendOrder(next.order, key), assistantBlocks: { ...next.assistantBlocks, [key]: value } };
   }
   if (event.kind === 'tool_activity') {

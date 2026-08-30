@@ -23,7 +23,8 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type SessionParticipants } from '@agent/shared';
+import { isDebugModeAvailable, selectRenderModel, type AgentProfile, type AskUserAnswers, type RenderModel, type SessionParticipants } from '@agent/shared';
+import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
@@ -292,6 +293,14 @@ export const MessageList = memo(function MessageList({
   const { user } = useAuth();
   const debugMode = debugModeOverride
     ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
+  const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
+  const renderModel = useMemo(() => {
+    const next = selectRenderModel({ messages }, previousRenderModelRef.current);
+    previousRenderModelRef.current = next;
+    return next;
+  }, [messages]);
+  const timelineRows = useMemo(() => adaptRenderModelForWeb(renderModel), [renderModel]);
+  // Legacy visual blocks remain source-compatible; RenderModel owns semantic identity/a11y/actions.
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const mainThreadItems = useMemo(() => businessStepMainItems(groupedMessages), [groupedMessages]);
   // 选择、跟随、历史重映射与焦点恢复由专用 hook 统一维护；详情面板仅在选中后按需加载。
@@ -760,7 +769,7 @@ export const MessageList = memo(function MessageList({
 
   return (
     <>
-    <div className="chat-message-content relative flex min-h-0 flex-1 flex-col">
+    <div className="chat-message-content relative flex min-h-0 flex-1 flex-col" data-render-model-version={renderModel.version} data-render-model-items={timelineRows.length}>
     <div
       ref={setContainerRef}
       tabIndex={-1}

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ARTIFACT_HTML_MAX_BYTES,
   ARTIFACT_TEXT_MAX_BYTES,
   ArtifactContentViewer,
   selectArtifactPreviewKind,
@@ -63,6 +64,16 @@ describe("ArtifactContentViewer", () => {
     expect(HTML_SANDBOX_CSP).toContain("connect-src 'none'");
     expect(HTML_SANDBOX_CSP).toContain("form-action 'none'");
     expect(HTML_SANDBOX_CSP).toContain("navigate-to 'none'");
+  });
+
+  it("HTML 预览上限为 50 MB", async () => {
+    expect(ARTIFACT_HTML_MAX_BYTES).toBe(50 * 1024 * 1024);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("<html></html>", {
+      status: 200,
+      headers: { "content-length": String(ARTIFACT_HTML_MAX_BYTES + 1) },
+    }));
+    render(<ArtifactContentViewer contentUrl="/huge.html" fileName="huge.html" mimeType="text/html" />);
+    expect((await screen.findByRole("alert")).textContent).toContain("50 MB");
   });
 
   it("显示 HTTP 与文本超限错误", async () => {

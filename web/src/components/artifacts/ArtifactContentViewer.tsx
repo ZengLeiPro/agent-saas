@@ -9,7 +9,7 @@ const ReactMarkdown = lazy(() => import("react-markdown"));
 const remarkGfm = () => import("remark-gfm").then((module) => module.default);
 
 export const ARTIFACT_TEXT_MAX_BYTES = 2 * 1024 * 1024;
-export const ARTIFACT_HTML_MAX_BYTES = 5 * 1024 * 1024;
+export const ARTIFACT_HTML_MAX_BYTES = 50 * 1024 * 1024;
 
 export type ArtifactPreviewKind =
   | "html"
@@ -21,6 +21,7 @@ export type ArtifactPreviewKind =
   | "text"
   | "download";
 
+// HTML 预览在 sandbox 中渲染，大小由 ARTIFACT_HTML_MAX_BYTES 控制。
 const HTML_MIME = new Set(["text/html", "application/xhtml+xml"]);
 const MARKDOWN_MIME = new Set(["text/markdown", "text/x-markdown"]);
 const TEXT_MIME = new Set([

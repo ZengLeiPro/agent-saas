@@ -1,6 +1,18 @@
 export * from './types/correlation';
 
 export {
+  createSessionMetadataState,
+  reduceSessionMetadata,
+  sessionMetadataEventFromWs,
+} from './lib/sessionMetadataReducer';
+export type {
+  CanonicalSessionMetadata,
+  SessionMetadataAction,
+  SessionMetadataPatch,
+  SessionMetadataState,
+} from './lib/sessionMetadataReducer';
+
+export {
   buildInteractionResponseRequest,
   canInteract,
   createInteractionReducerState,

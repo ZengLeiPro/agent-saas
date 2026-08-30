@@ -806,6 +806,10 @@ export type PlatformEvent =
     sessionId: string;
     userId: string;
     hasUnreadAiReply: boolean;
+    readSeq?: number;
+    serverVersion?: number;
+    updatedAt?: string;
+    sourceSeq?: number;
   }
   | {
     id: string;

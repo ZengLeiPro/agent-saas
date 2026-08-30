@@ -625,9 +625,18 @@ export function useSession(
       setSessionOwner(null);
       setTokenUsage(null);
       isNewSessionRef.current = false;
+      setSessions((prev) => prev.map((item) => item.sessionId === id ? { ...item, hasUnreadAiReply: false } : item));
+      // Read is optimistic only until the structured server ACK. Failure rehydrates authority.
+      void authFetch(`/api/sessions/${encodeURIComponent(id)}/read`, { method: 'PUT' })
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const body = await response.json() as { ack?: { sessionId?: string; hasUnreadAiReply?: boolean } };
+          if (body.ack?.sessionId && body.ack.sessionId !== id) throw new Error('read ACK session mismatch');
+        })
+        .catch(() => { void loadSessions(true, { fresh: true }); });
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, sessionId],
+    [loadSessionDetail, loadSessions, sessionId],
   );
 
   const refreshTokenUsage = useCallback(async () => {

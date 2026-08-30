@@ -115,8 +115,8 @@ type WsEventPayload =
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }
     | { type: 'voice_transcribed'; text: string; error?: boolean }
-    | { type: 'title_updated'; sessionId: string; title: string }
-    | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean }
+    | { type: 'title_updated'; sessionId: string; title: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
+    | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
     | { type: 'error'; message: string }
@@ -127,8 +127,8 @@ type WsEventPayload =
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; status?: 'resolved' | 'rejected' | 'failed' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }
-    | { type: 'session_deleted'; sessionId: string }
-    | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
+    | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
+    | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean; readSeq?: number; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
     | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }

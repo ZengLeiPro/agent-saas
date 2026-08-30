@@ -221,6 +221,9 @@ interface EnrichedSessionListItem extends SessionListItem {
   cronJobId?: string;
   cronJobName?: string;
   hasUnreadAiReply?: boolean;
+  version?: number;
+  serverUpdatedAt?: string;
+  sourceSeq?: number;
 }
 
 interface SessionsListResponse {
@@ -1564,6 +1567,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               title,
               preview,
               createdAtMs: Number.isFinite(createdAtFromMeta)
@@ -1602,6 +1608,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               title,
               preview,
               createdAtMs: summary.createdAtMs ?? session.updatedAtMs,
@@ -1621,6 +1630,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               source,
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
@@ -2228,11 +2240,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         }
       }
 
-      const changed = await options.sessionReadStateStore.markRead({
-        tenantId: req.user.tenantId,
-        userId: req.user.sub,
-        sessionId,
-      });
+      const readScope = { tenantId: req.user.tenantId, userId: req.user.sub, sessionId };
+      const changed = await options.sessionReadStateStore.markRead(readScope);
+      const readState = await options.sessionReadStateStore.getState?.(readScope);
+      const updatedAt = readState?.updatedAt ?? new Date().toISOString();
+      const serverVersion = Math.max(readState?.attentionVersion ?? 0, readState?.readVersion ?? 0);
+      const readSeq = readState?.readVersion ?? serverVersion;
       if (changed) {
         const store = resolved
           ? options.runtimeEventStoreFor?.(resolved.transcriptPath, req.user.tenantId)
@@ -2243,12 +2256,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             sessionId,
             userId: req.user.sub,
             hasUnreadAiReply: false,
+            readSeq,
+            serverVersion,
+            updatedAt,
+            sourceSeq: readSeq,
           }, { tenantId: req.user.tenantId });
         } else {
           const readEvent = {
             type: "session_read_state_changed",
             sessionId,
             hasUnreadAiReply: false,
+            readSeq,
+            serverVersion,
+            updatedAt,
+            sourceSeq: readSeq,
           } as const;
           const eventBus = options.getEventBus?.();
           if (eventBus) {
@@ -2258,7 +2279,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           }
         }
       }
-      res.json({ ok: true, sessionId, hasUnreadAiReply: false });
+      res.json({ ok: true, sessionId, hasUnreadAiReply: false, ack: { status: changed ? "applied" : "duplicate", sessionId, hasUnreadAiReply: false, readSeq, serverVersion, updatedAt } });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         res.status(404).json({ error: "Session not found" });
@@ -2481,14 +2502,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
+      const priorVersion = Date.parse(meta?.updatedAt ?? meta?.createdAt ?? '') || 0;
+      const mutationUpdatedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
       const updated = await updateSessionMeta(transcriptPath, {
         customTitle: title.trim() || undefined,
+        updatedAt: mutationUpdatedAt,
       });
 
       if (!updated) {
         res.status(404).json({ error: "Session meta not found" });
         return;
       }
+
+      const updatedAt = updated.updatedAt ?? new Date().toISOString();
+      const serverVersion = Date.parse(updatedAt) || Date.now();
 
       // 审计：记录会话重命名
       auditLog(req, "session_renamed", `${sessionId} → ${title.trim()}`);
@@ -2502,16 +2529,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             type: "title_updated",
             sessionId,
             title: updated.customTitle || "",
+            serverVersion,
+            updatedAt,
+            sourceSeq: serverVersion,
           });
         } else {
           options.broadcastToUser?.(req.user.sub, {
             type: "title_updated",
             sessionId,
             title: updated.customTitle || "",
+            serverVersion,
+            updatedAt,
+            sourceSeq: serverVersion,
           });
         }
       }
-      res.json({ ok: true, title: updated.customTitle || null });
+      res.json({ ok: true, title: updated.customTitle || null, ack: { status: "applied", sessionId, title: updated.customTitle || null, serverVersion, updatedAt } });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {
@@ -3305,8 +3338,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
+        const priorVersion = Date.parse(currentMeta.updatedAt ?? currentMeta.createdAt) || 0;
+        const deletedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
         await updateSessionMeta(transcriptPath, {
-          deletedAt: new Date().toISOString(),
+          deletedAt,
+          updatedAt: deletedAt,
           deletedBy: req.user?.username || "anonymous",
         });
         return true;
@@ -3314,8 +3350,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
         : await applySoftDelete();
+      const deletedMeta = await readSessionMeta(transcriptPath);
+      const deletedAt = deletedMeta?.deletedAt ?? new Date().toISOString();
+      const serverVersion = Date.parse(deletedAt) || Date.now();
       if (!changed) {
-        res.json({ ok: true, softDeleted: true });
+        res.json({ ok: true, softDeleted: true, ack: { status: "duplicate", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
         return;
       }
 
@@ -3333,16 +3372,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             eventBus.emitUser(userId, {
               type: "session_deleted",
               sessionId,
+              serverVersion,
+              updatedAt: deletedAt,
+              sourceSeq: serverVersion,
             });
           } else {
             options.broadcastToUser?.(userId, {
               type: "session_deleted",
               sessionId,
+              serverVersion,
+              updatedAt: deletedAt,
+              sourceSeq: serverVersion,
             });
           }
         }
       }
-      res.json({ ok: true, softDeleted: true });
+      res.json({ ok: true, softDeleted: true, ack: { status: "applied", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {

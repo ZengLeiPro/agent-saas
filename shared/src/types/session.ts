@@ -31,6 +31,12 @@ export interface ApiSessionListItem {
   updatedAtMs: number;
   createdAtMs?: number;
   hasUnreadAiReply?: boolean;
+  /** M20-07 monotonic metadata/read ordering fields. Optional for N-1 servers. */
+  version?: number;
+  readSeq?: number;
+  readAt?: string;
+  serverUpdatedAt?: string;
+  sourceSeq?: number;
   title?: string;
   preview?: string;
   source?: { type: "web" | "dingtalk" | "cron"; label: string };

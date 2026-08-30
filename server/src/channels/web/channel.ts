@@ -935,6 +935,10 @@ export class WebChannel implements BaseChannel {
         type: 'session_read_state_changed',
         sessionId: event.sessionId,
         hasUnreadAiReply: event.hasUnreadAiReply,
+        readSeq: event.readSeq,
+        serverVersion: event.serverVersion,
+        updatedAt: event.updatedAt,
+        sourceSeq: event.sourceSeq,
       });
       return;
     }

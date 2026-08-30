@@ -296,6 +296,7 @@ export class DwsCliContextClient implements DwsContextClient {
     let characters = 0;
     let truncated = false;
 
+    // DWS 把首个空转写页定义为分页末尾，即使响应仍携带 nextToken。
     while (true) {
       if (pages >= this.maxTranscriptPages) {
         truncated = true;
@@ -308,6 +309,7 @@ export class DwsCliContextClient implements DwsContextClient {
       const payload = await this.execute(args, input.scope, 'minutes.transcript');
       const page = parsePage(payload, ['paragraphList', 'items', 'paragraphs', 'sentences', 'transcriptions', 'records']);
       const chunk = transcriptContent(payload, page.items);
+      if (!chunk) break;
       const chunkCharacters = Array.from(chunk).length;
       if (characters + chunkCharacters > this.maxTranscriptCharacters) {
         const remaining = Math.max(0, this.maxTranscriptCharacters - characters);

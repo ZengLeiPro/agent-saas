@@ -238,6 +238,32 @@ describe('DwsCliContextClient', () => {
       .resolves.toEqual({ items: [], truncated: true });
   });
 
+  it.each([
+    {
+      name: '首个空页',
+      outputs: [
+        { result: { paragraphList: [], hasNext: true, nextToken: 'cursor-2' } },
+        { result: { paragraphList: [{ paragraph: '不应读取' }], hasNext: false } },
+      ],
+      content: '', calls: 1,
+    },
+    {
+      name: '已有内容后的空页',
+      outputs: [
+        { result: { paragraphList: [{ paragraph: '已累积' }], hasNext: true, nextToken: 'cursor-2' } },
+        { result: { paragraphList: [], hasNext: true, nextToken: 'cursor-3' } },
+        { result: { paragraphList: [{ paragraph: '不应读取' }], hasNext: false } },
+      ],
+      content: '已累积', calls: 2,
+    },
+  ])('$name带 nextToken 时立即终止且不标记截断', async ({ outputs, content, calls }) => {
+    const { client, json } = setup(outputs);
+
+    await expect(client.getMinutesTranscript({ scope, minutesId: 'minutes-a' }))
+      .resolves.toEqual({ content });
+    expect(json).toHaveBeenCalledTimes(calls);
+  });
+
   it('marks transcript clipping explicit when the adapter character bound is reached', async () => {
     const json = vi.fn().mockResolvedValue({
       result: { paragraphList: [{ paragraph: 'abcdefghij' }], hasNext: true, nextToken: 'next' },
@@ -249,7 +275,7 @@ describe('DwsCliContextClient', () => {
     expect(json).toHaveBeenCalledTimes(1);
   });
 
-  it('never logs or rethrows credential values supplied to the executor environment', async () => {
+  it('redacts credential values from logs and rethrown executor errors', async () => {
     const secret = 'super-secret-client-value';
     const logger = { warn: vi.fn() };
     const executor: DwsCliJsonExecutor = {

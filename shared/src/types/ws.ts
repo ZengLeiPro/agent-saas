@@ -9,12 +9,14 @@ import type { MessageAttachmentDisplay, SubagentStatus } from './message';
 import type { TenantFeatureFlags } from './auth';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 import type { ChatQueueItem, ChatQueueSnapshot } from '../lib/chatQueue';
+import type { RunLiveness } from '../lib/runLiveness';
 
 export interface WsSyncRuntimeSnapshot {
     active: boolean;
     streamId?: string;
     runId?: string;
     status?: string;
+    liveness?: RunLiveness;
 }
 
 export interface WsSyncPendingInteractionSnapshot {
@@ -124,13 +126,13 @@ type WsEventPayload =
     | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; status?: 'resolved' | 'rejected' | 'failed' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean; readSeq?: number; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     | { type: 'tenant_features_changed'; tenantId: string; tenantFeatures: TenantFeatureFlags; debugMode: boolean }
     // ── SDK 0.2.112+ 新增事件 ──

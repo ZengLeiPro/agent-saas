@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BoundaryIdentity } from './identity';
 import type { ChatQueueItem, ChatQueueSnapshot } from './chatQueue';
+import type { RunLiveness } from './runLiveness';
 import {
   canSendChatIntent,
   captureChatClientFence,
@@ -9,6 +10,7 @@ import {
   reduceChatClientState,
   selectChatClientQueue,
   selectChatClientQueueItems,
+  selectChatClientRunLiveness,
 } from './chatClientState';
 
 const identity = (generation = 1, userId = 'a'): BoundaryIdentity => ({ userId, tenantId: 't', generation });
@@ -51,6 +53,30 @@ describe('M40-01 cross-platform authoritative chat projection', () => {
     expect(settled.status).toBe('completed');
     state = reduceChatClientState(state, { type: 'ws', generation: 1, event: { type: 'done', sessionId: 's', runId: 'r1' } });
     expect(selectChatClientQueueItems(state, 's')[0].status).toBe('completed');
+  });
+
+  it('keeps queue/runtime liveness sticky when an old busy frame arrives after stale', () => {
+    let state = createChatClientState(identity());
+    const stale: RunLiveness = { state: 'stale', recoveryActions: ['cancel'], version: 1 };
+    const busy: RunLiveness = { state: 'busy', recoveryActions: ['cancel'], version: 1 };
+    state = reduceChatClientState(state, {
+      type: 'queue', sessionId: 's', generation: 1,
+      event: { type: 'snapshot', snapshot: snapshot([{ ...item(1, 'running'), liveness: stale }]) },
+    });
+    state = reduceChatClientState(state, {
+      type: 'queue', sessionId: 's', generation: 1,
+      event: { type: 'server_upsert', item: { ...item(1, 'running'), liveness: busy } },
+    });
+    expect(selectChatClientQueueItems(state, 's')[0].liveness?.state).toBe('stale');
+    state = reduceChatClientState(state, {
+      type: 'ws', generation: 1,
+      event: { type: 'session_status', sessionId: 's', runId: 'r1', status: 'running', liveness: stale },
+    });
+    state = reduceChatClientState(state, {
+      type: 'ws', generation: 1,
+      event: { type: 'active_stream', sessionId: 's', runId: 'r1', active: true, liveness: busy },
+    });
+    expect(selectChatClientRunLiveness(state, 's', 'r1')?.state).toBe('stale');
   });
 
   it('never dispatches on done: reducer only settles the matching authority item', () => {

@@ -7,6 +7,7 @@ import {
 } from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 import type { RunRecord } from '../../runtime/runStoreTypes.js';
+import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.js';
 
 function stringMetadata(run: RunRecord, key: string): string | undefined {
   const value = run.metadata?.[key];
@@ -41,10 +42,13 @@ function projectAttachments(run: RunRecord): ChatQueueAttachment[] | undefined {
 }
 
 /** Project one durable run. Missing correlation metadata means it is not a V1 chat submission. */
+export type ServerChatQueueItem = ChatQueueItem & { liveness: RunLiveness };
+export type ServerChatQueueSnapshot = Omit<ChatQueueSnapshot, 'items'> & { items: ServerChatQueueItem[] };
+
 export function projectChatQueueItem(
   run: RunRecord,
   queuePosition?: number,
-): ChatQueueItem | undefined {
+): ServerChatQueueItem | undefined {
   const clientMsgId = stringMetadata(run, 'clientMsgId') ?? run.idempotencyKey;
   if (!clientMsgId) return undefined;
   const parsed = parseCanonicalChatSubmission(run.metadata?.chatSubmission);
@@ -74,6 +78,7 @@ export function projectChatQueueItem(
     acceptedAt: stringMetadata(run, 'acceptedAt') ?? run.requestedAt,
     updatedAt: run.updatedAt,
     ...(run.statusReason ? { reason: run.statusReason } : {}),
+    liveness: projectRunLiveness(run),
   };
 }
 
@@ -82,7 +87,7 @@ export function buildChatQueueSnapshot(
   sessionId: string,
   runs: readonly RunRecord[],
   generatedAt = new Date().toISOString(),
-): ChatQueueSnapshot {
+): ServerChatQueueSnapshot {
   let pendingPosition = 0;
   const items = runs.flatMap((run) => {
     if (run.sessionId !== sessionId) return [];

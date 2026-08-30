@@ -1,4 +1,4 @@
-import type { ChatQueueSnapshot } from '@agent/shared';
+import type { ChatQueueSnapshot, RunLiveness } from '@agent/shared';
 
 export const AUTHORITATIVE_SYNC_RECOVERY_VERSION = 1 as const;
 
@@ -7,6 +7,7 @@ export interface SyncRuntimeSnapshot {
   streamId?: string;
   runId?: string;
   status?: string;
+  liveness?: RunLiveness;
 }
 
 export interface SyncPendingInteractionSnapshot {

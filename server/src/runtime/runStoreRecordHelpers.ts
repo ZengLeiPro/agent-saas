@@ -1,6 +1,7 @@
 import type { PlatformEvent } from './types.js';
 import type { RunRecord } from './runStoreTypes.js';
 import { normalizeRunPersistenceState } from './runStoreRecord.js';
+import { recoveryActionsForLiveness, type RunLiveness, type RunLivenessState } from './runLiveness.js';
 
 export function serializeRuntimeEvent(event: PlatformEvent): string {
   const serialized = JSON.stringify(event, (_key, value) => (
@@ -26,7 +27,41 @@ export function stringMetadata(metadata: Record<string, unknown> | undefined, ke
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function optionalIso(value: unknown): string | undefined {
+  if (typeof value === 'string' || value instanceof Date) {
+    const date = new Date(value);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+  return undefined;
+}
+
+function normalizeRunLiveness(raw: any): RunLiveness | undefined {
+  if (raw.liveness && typeof raw.liveness === 'object') return raw.liveness as RunLiveness;
+  const versionValue = raw.liveness_version ?? raw.livenessVersion;
+  const version = typeof versionValue === 'number'
+    ? versionValue
+    : typeof versionValue === 'string' ? Number.parseInt(versionValue, 10) : 0;
+  if (!Number.isFinite(version) || version < 1) return undefined;
+  const state = (raw.liveness_state ?? raw.livenessState) as RunLivenessState;
+  const reasonCode = raw.liveness_reason_code ?? raw.livenessReasonCode ?? undefined;
+  const lastHeartbeatAt = optionalIso(raw.last_heartbeat_at ?? raw.lastHeartbeatAt);
+  const leaseExpiresAt = optionalIso(raw.lease_expires_at ?? raw.leaseExpiresAt);
+  const ownerId = raw.worker_id ?? raw.workerId ?? undefined;
+  const detectedAt = optionalIso(raw.liveness_detected_at ?? raw.livenessDetectedAt);
+  return {
+    state,
+    ...(lastHeartbeatAt ? { lastHeartbeatAt } : {}),
+    ...(leaseExpiresAt ? { leaseExpiresAt } : {}),
+    ...(ownerId ? { ownerId } : {}),
+    ...(reasonCode ? { reasonCode } : {}),
+    recoveryActions: recoveryActionsForLiveness(state, reasonCode),
+    ...(detectedAt ? { detectedAt } : {}),
+    version,
+  };
+}
+
 export function normalizeRunRecord(raw: any): RunRecord {
+  const liveness = normalizeRunLiveness(raw);
   return {
     runId: raw.run_id ?? raw.runId,
     sessionId: raw.session_id ?? raw.sessionId,
@@ -45,6 +80,7 @@ export function normalizeRunRecord(raw: any): RunRecord {
     cancelledAt: raw.cancelled_at ? new Date(raw.cancelled_at).toISOString() : raw.cancelledAt ?? undefined,
     workerId: raw.worker_id ?? raw.workerId ?? undefined,
     leaseExpiresAt: raw.lease_expires_at ? new Date(raw.lease_expires_at).toISOString() : raw.leaseExpiresAt ?? undefined,
+    ...(liveness ? { liveness } : {}),
     idempotencyKey: raw.idempotency_key ?? raw.idempotencyKey ?? undefined,
     executionTarget: raw.execution_target ?? raw.executionTarget ?? undefined,
     workspaceId: raw.workspace_id ?? raw.workspaceId ?? undefined,

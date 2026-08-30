@@ -1,4 +1,5 @@
 import type { MessageAttachmentDisplay } from '../types/message';
+import { mergeRunLiveness, normalizeRunLiveness, type RunLiveness } from './runLiveness';
 
 /** M20-02 wire/storage contract. This version is independent from the WS replay epoch (M20-03). */
 export const CHAT_QUEUE_SNAPSHOT_VERSION = 1 as const;
@@ -46,6 +47,8 @@ export interface ChatQueueItem {
   acceptedAt?: string;
   updatedAt?: string;
   reason?: string;
+  /** Server-owned; absent on N-1 snapshots and normalized to unknown by selectors. */
+  liveness?: RunLiveness;
 }
 
 export interface ChatQueueSnapshot {
@@ -229,6 +232,9 @@ function canonicalizeItem(
     sourceRunId,
     deliveryMode: patch.deliveryMode ?? current?.deliveryMode ?? 'queue',
     status,
+    ...(patch.liveness !== undefined || current?.liveness !== undefined
+      ? { liveness: mergeRunLiveness(current?.liveness, patch.liveness) }
+      : {}),
     // A stale lower-progress event may carry an old reason/position. Preserve only safe identity and
     // missing payload fields while keeping the current lifecycle projection sticky.
     ...(status !== patch.status && current?.reason !== undefined ? { reason: current.reason } : {}),
@@ -289,7 +295,10 @@ export function hydrateChatQueueSnapshot(
   const items: Record<string, ChatQueueItem> = {};
   const order: string[] = [];
   for (const item of snapshot.items) {
-    items[item.clientMsgId] = item;
+    const previous = state.items[item.clientMsgId];
+    items[item.clientMsgId] = previous?.runId === item.runId
+      ? { ...item, liveness: mergeRunLiveness(previous.liveness, item.liveness) }
+      : item;
     order.push(item.clientMsgId);
   }
   const localIntents = Object.fromEntries(
@@ -436,6 +445,13 @@ export function selectCancellableChatQueueItems(state: ChatQueueState): ChatQueu
 
 export function selectRunningChatQueueItem(state: ChatQueueState): ChatQueueItem | undefined {
   return selectChatQueueItems(state).find((item) => item.status === 'running');
+}
+
+export function selectChatQueueItemLiveness(
+  state: ChatQueueState,
+  aliases: { clientMsgId?: string; runId?: string; sourceRunId?: string },
+): RunLiveness {
+  return normalizeRunLiveness(selectChatQueueItem(state, aliases)?.liveness);
 }
 
 export function selectChatQueueMessageStatus(

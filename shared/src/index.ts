@@ -544,6 +544,7 @@ export {
   reduceChatQueueEvent,
   selectCancellableChatQueueItems,
   selectChatQueueItem,
+  selectChatQueueItemLiveness,
   selectChatQueueItems,
   selectChatQueueLocalIntents,
   selectChatQueueMessageStatus,
@@ -564,7 +565,30 @@ export type {
 } from './lib/chatQueue';
 export { chatQueueReducerEventsFromWsEvent } from './lib/chatQueueWs';
 
-// Lib - cross-platform authoritative chat projection (M40-01)
+// Lib - server-owned run liveness protocol/reducer/selectors (M40-02)
+export {
+  RUN_LIVENESS_VERSION,
+  UNKNOWN_RUN_LIVENESS,
+  createRunLivenessProjectionState,
+  mergeRunLiveness,
+  normalizeRunLiveness,
+  reduceRunLivenessProjection,
+  selectProjectedRunLiveness,
+  selectRunLivenessPresentation,
+  selectRunLivenessRecovery,
+} from './lib/runLiveness';
+export type {
+  RunLiveness,
+  RunLivenessPresentation,
+  RunLivenessProjectionAction,
+  RunLivenessProjectionState,
+  RunLivenessRecoveryAction,
+  RunLivenessState,
+  RunRecoveryGate,
+  RunRecoverySelection,
+} from './lib/runLiveness';
+
+// Lib - cross-platform authoritative chat projection (M40)
 export {
   canSendChatIntent,
   captureChatClientFence,
@@ -574,6 +598,7 @@ export {
   reduceChatClientState,
   selectChatClientQueue,
   selectChatClientQueueItems,
+  selectChatClientRunLiveness,
 } from './lib/chatClientState';
 export type { ChatClientAction, ChatClientState, ChatSendGate } from './lib/chatClientState';
 

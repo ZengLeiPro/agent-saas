@@ -10,6 +10,11 @@ import {
 } from './chatQueue';
 import { chatQueueReducerEventsFromWsEvent } from './chatQueueWs';
 import {
+  createRunLivenessProjectionState,
+  reduceRunLivenessProjection,
+  type RunLivenessProjectionState,
+} from './runLiveness';
+import {
   createInteractionReducerState,
   reduceInteraction,
   type InteractionEvent,
@@ -17,7 +22,7 @@ import {
 } from './interactionProtocol';
 
 /**
- * M40-01 client projection. This is the only cross-platform chat lifecycle reducer.
+ * M40 client projection. This is the only cross-platform chat lifecycle reducer.
  *
  * The reducer deliberately owns no dispatch policy. A queue item can only be created or advanced by
  * a server event/snapshot; local intents are presentation-only until an ACK supplies a canonical item.
@@ -28,17 +33,20 @@ export interface ChatClientState {
   selectedSessionId: string | null;
   queues: Readonly<Record<string, ChatQueueState>>;
   interactions: InteractionReducerState;
+  liveness: RunLivenessProjectionState;
 }
 
 export type ChatClientAction =
   | { type: 'identity_boundary'; identity: BoundaryIdentity | null }
+  | { type: 'epoch_boundary'; epoch: string | null; generation: number }
   | { type: 'select_session'; sessionId: string | null; generation: number }
   | { type: 'queue'; sessionId: string; event: ChatQueueReducerEvent; generation: number }
   | { type: 'ws'; event: WsEvent; fallbackSessionId?: string; generation: number }
   | { type: 'local_intent'; intent: ChatQueueLocalIntent; generation: number }
   | { type: 'local_intent_failed'; sessionId?: string; clientMsgId: string; reason: string; generation: number }
   | { type: 'local_intent_removed'; sessionId?: string; clientMsgId: string; generation: number }
-  | { type: 'interaction'; event: InteractionEvent; generation: number };
+  | { type: 'interaction'; event: InteractionEvent; generation: number }
+  | { type: 'liveness'; sessionId: string; runId: string; liveness?: unknown; epoch?: string | null; generation: number };
 
 const scopeOf = (identity: BoundaryIdentity | null): string | null => identity
   ? `${identity.userId}\u0000${identity.tenantId}\u0000${identity.generation}`
@@ -52,6 +60,7 @@ export function createChatClientState(identity: BoundaryIdentity | null = null):
     selectedSessionId: null,
     queues: {},
     interactions: createInteractionReducerState(generation),
+    liveness: createRunLivenessProjectionState(generation),
   };
 }
 
@@ -66,7 +75,14 @@ function applyQueue(state: ChatClientState, sessionId: string, event: ChatQueueR
   const current = state.queues[sessionId] ?? createChatQueueState(sessionId);
   const next = reduceChatQueueEvent(current, event);
   if (next === current) return state;
-  return { ...state, queues: { ...state.queues, [sessionId]: next } };
+  let liveness = state.liveness;
+  for (const item of selectChatQueueItems(next)) {
+    liveness = reduceRunLivenessProjection(liveness, {
+      type: 'observe', generation: state.generation, sessionId,
+      runId: item.runId, liveness: item.liveness,
+    });
+  }
+  return { ...state, queues: { ...state.queues, [sessionId]: next }, liveness };
 }
 
 function findIntentSession(state: ChatClientState, clientMsgId: string, preferred?: string): string | undefined {
@@ -83,6 +99,13 @@ export function reduceChatClientState(state: ChatClientState, action: ChatClient
   if (action.generation !== state.generation) return state;
 
   switch (action.type) {
+    case 'epoch_boundary':
+      return {
+        ...state,
+        liveness: reduceRunLivenessProjection(state.liveness, {
+          type: 'epoch_boundary', generation: action.generation, epoch: action.epoch,
+        }),
+      };
     case 'select_session':
       return action.sessionId === state.selectedSessionId ? state : { ...state, selectedSessionId: action.sessionId };
     case 'queue':
@@ -91,6 +114,16 @@ export function reduceChatClientState(state: ChatClientState, action: ChatClient
       const sessionId = queueSessionFromWs(action.event, action.fallbackSessionId);
       if (!sessionId) return state;
       let next = state;
+      if ((action.event.type === 'active_stream' || action.event.type === 'session_status')
+        && action.event.runId) {
+        next = {
+          ...next,
+          liveness: reduceRunLivenessProjection(next.liveness, {
+            type: 'observe', generation: action.generation, sessionId,
+            runId: action.event.runId, liveness: action.event.liveness,
+          }),
+        };
+      }
       for (const event of chatQueueReducerEventsFromWsEvent(action.event, action.fallbackSessionId)) {
         next = applyQueue(next, sessionId, event);
       }
@@ -111,6 +144,14 @@ export function reduceChatClientState(state: ChatClientState, action: ChatClient
     }
     case 'interaction':
       return { ...state, interactions: reduceInteraction(state.interactions, action.event) };
+    case 'liveness':
+      return {
+        ...state,
+        liveness: reduceRunLivenessProjection(state.liveness, {
+          type: 'observe', generation: action.generation, sessionId: action.sessionId,
+          runId: action.runId, liveness: action.liveness, ...(action.epoch !== undefined ? { epoch: action.epoch } : {}),
+        }),
+      };
   }
 }
 
@@ -124,6 +165,14 @@ export function selectChatClientQueueItems(state: ChatClientState, sessionId: st
   return selectChatQueueItems(selectChatClientQueue(state, sessionId));
 }
 
+export function selectChatClientRunLiveness(
+  state: ChatClientState,
+  sessionId: string,
+  runId: string,
+) {
+  return state.liveness.bySession[sessionId]?.[runId];
+}
+
 export function captureChatClientFence(state: ChatClientState, sessionId?: string | null): {
   generation: number;
   identityScope: string | null;
@@ -132,7 +181,7 @@ export function captureChatClientFence(state: ChatClientState, sessionId?: strin
   return { generation: state.generation, identityScope: state.identityScope, sessionId: sessionId ?? state.selectedSessionId };
 }
 
-/** HTTP/upload callbacks must pass this fence before mutating any chat projection. */
+/** HTTP/upload/recovery callbacks must pass this fence before mutating any chat projection. */
 export function isChatClientFenceCurrent(
   state: ChatClientState,
   fence: ReturnType<typeof captureChatClientFence>,

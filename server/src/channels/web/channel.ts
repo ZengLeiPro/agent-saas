@@ -75,6 +75,7 @@ import { createRuntimeSessionRecord, resolveSessionMemoryPolicy } from '../../ru
 import { resolveSessionSandboxProfile } from '../../runtime/sandboxProfile.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
+import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import { normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
@@ -254,7 +255,7 @@ export class WebChannel implements BaseChannel {
    * buffer 在 chat 流结束后会 `complete` 但 PG run 仍可能 active（多 turn 场景）,导致 HTTP
    * 误报 inactive,前端连锁忽略 active_stream 兜底,刷新才能看到新消息。
    */
-  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }> {
+  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
     try {
       const runStore = this.config.enqueueRuntime?.runStore;
       if (runStore?.getActiveBySession) {
@@ -267,6 +268,7 @@ export class WebChannel implements BaseChannel {
             ...(streamId ? { streamId } : {}),
             runId: activeRun.runId,
             status: activeRun.status,
+            liveness: projectRunLiveness(activeRun),
           };
         }
         // runStore 明确说没在跑 → 即使 buffer 还 active 也按 runStore 为准
@@ -1992,11 +1994,13 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
       return;
     }
+    // Status response carries the same server-owned liveness DTO as queue/detail/runtime snapshots.
     this.wsSend(client.ws, {
       type: 'session_status',
       sessionId: record.sessionId,
       status: record.status,
       runId: record.runId,
+      liveness: projectRunLiveness(record),
       ...(typeof record.metadata?.streamId === 'string' ? { streamId: record.metadata.streamId } : {}),
       ...(record.statusReason ? { reason: record.statusReason } : {}),
     });
@@ -2123,6 +2127,7 @@ export class WebChannel implements BaseChannel {
       streamId: resumeStreamId,
       ...(resumeRunId ? { runId: resumeRunId } : {}),
       status: durableBinding?.status ?? 'running',
+      ...(durableBinding?.liveness ? { liveness: durableBinding.liveness } : {}),
       ...(requestId ? { requestId } : {}),
     });
 
@@ -2237,6 +2242,7 @@ export class WebChannel implements BaseChannel {
       streamId,
       runId: activeRun.runId,
       status: activeRun.status,
+      liveness: projectRunLiveness(activeRun),
       ...(options.requestId ? { requestId: options.requestId } : {}),
     });
     // Capture before durable awaits so subscribeFrom recovers the replay window.

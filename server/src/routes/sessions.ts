@@ -82,6 +82,7 @@ import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 import type { ChatQueueSnapshot } from '@agent/shared';
 import { buildChatQueueSnapshot } from '../channels/web/chatQueueSnapshot.js';
 import type { RunRecord } from '../runtime/runStoreTypes.js';
+import { projectRunLiveness, type RunLiveness } from '../runtime/runLiveness.js';
 import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
 import {
@@ -562,6 +563,8 @@ export interface LastRunState {
   error?: string; failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
+  /** Server-only M40-02 projection; shared/web/mobile contracts follow in part two. */
+  liveness?: RunLiveness;
 }
 
 /**
@@ -896,7 +899,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
     }
     const parseDurationMs = Date.now() - parseStartedAt;
-    const lastRunState = await getLastRunState(detailEventStore, tenantId, sessionId);
+    let lastRunState = await getLastRunState(detailEventStore, tenantId, sessionId);
     // 尚未开始执行的用户消息不进 transcript，统一从 durable run.wakeMessage 恢复。
     let queueSnapshot: ChatQueueSnapshot = buildChatQueueSnapshot(sessionId, []);
     let queuedMessages: Array<{
@@ -918,10 +921,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }> = [];
     if (options.listUserMessagesBySession) {
       try {
-        queueSnapshot = buildChatQueueSnapshot(
-          sessionId,
-          await options.listUserMessagesBySession(sessionId),
-        );
+        const userMessageRuns = await options.listUserMessagesBySession(sessionId);
+        queueSnapshot = buildChatQueueSnapshot(sessionId, userMessageRuns);
+        if (lastRunState) {
+          const lastRun = userMessageRuns.find((run) => run.runId === lastRunState!.runId);
+          if (lastRun) lastRunState = { ...lastRunState, liveness: projectRunLiveness(lastRun) };
+        }
       } catch (err) {
         apiLogger.warn(`[sessions] queue snapshot lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
       }

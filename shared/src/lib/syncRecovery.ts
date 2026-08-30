@@ -2,6 +2,7 @@ import type { ChatQueueState } from './chatQueue';
 import { createChatQueueState, reduceChatQueueEvent } from './chatQueue';
 import { chatQueueReducerEventsFromWsEvent } from './chatQueueWs';
 import type { WsAskUserQuestion, WsEvent } from '../types/ws';
+import { mergeRunLiveness, type RunLiveness } from './runLiveness';
 
 export type SyncRecoveryPhase = 'idle' | 'syncing' | 'ready' | 'full_refresh';
 
@@ -24,6 +25,7 @@ export interface SyncRuntimeProjection {
   runId?: string;
   streamId?: string;
   status: Extract<WsEvent, { type: 'session_status' }>['status'] | 'active';
+  liveness?: RunLiveness;
   terminal: boolean;
 }
 
@@ -192,6 +194,9 @@ function runtimeProjection(
     ...(event.runId ? { runId: event.runId } : current?.runId ? { runId: current.runId } : {}),
     ...(event.streamId ? { streamId: event.streamId } : current?.streamId ? { streamId: current.streamId } : {}),
     status: event.status,
+    ...(event.liveness !== undefined || current?.liveness !== undefined
+      ? { liveness: mergeRunLiveness(current?.liveness, event.liveness) }
+      : {}),
     terminal: TERMINAL_RUNTIME_STATUSES.has(event.status),
   };
 }
@@ -238,6 +243,9 @@ function projectEvent(state: SyncRecoveryState, applied: AppliedSyncEvent): Sync
             ...(event.runId ? { runId: event.runId } : {}),
             ...(event.streamId ? { streamId: event.streamId } : {}),
             status: 'active',
+            ...(event.type === 'active_stream' && (event.liveness !== undefined || next.runtimeBySession[event.sessionId]?.liveness !== undefined)
+              ? { liveness: mergeRunLiveness(next.runtimeBySession[event.sessionId]?.liveness, event.liveness) }
+              : {}),
             terminal: false,
           },
         },

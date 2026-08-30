@@ -3,6 +3,7 @@ import type { MessageAttachmentDisplay } from './message';
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 import type { ChatQueueSnapshot } from '../lib/chatQueue';
+import type { RunLiveness } from '../lib/runLiveness';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -69,6 +70,8 @@ export interface ApiLastRunState {
   recoveryAction?: RuntimeRecoveryAction;
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
+  /** Server-owned M40-02 projection; absent means legacy unknown. */
+  liveness?: RunLiveness;
 }
 
 /** API session detail */

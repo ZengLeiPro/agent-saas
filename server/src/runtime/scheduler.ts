@@ -7,6 +7,7 @@ import {
   isBackgroundTaskRun,
 } from './background/backgroundTaskRuntime.js';
 import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
+import type { RunHeartbeatSource } from './runLiveness.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
 import type { EventStore, PlatformEvent } from './types.js';
 
@@ -24,7 +25,7 @@ export interface RunLease {
   runId: string;
   workerId: string;
   expiresAt: string;
-  renew(): Promise<void>;
+  renew(source?: RunHeartbeatSource): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
 }
 
@@ -43,6 +44,10 @@ export interface RuntimeSchedulerOptions {
   /** 仅按真实资源压力暂停领取新 run；不区分用户、租户或任务类型。 */
   admissionGuard?: RuntimeAdmissionGuard;
   approvalTimeoutMs?: number;
+  /** Grace between durable stale detection and orphan terminalization. */
+  livenessStaleGraceMs?: number;
+  /** Injectable server clock for deterministic reaper tests. */
+  now?: () => Date;
   autoWake?: boolean;
   /** acquire run lease 前先确认目标 session 当前没有被其他 brain 持有。 */
   canWake?: (record: RunRecord) => Promise<boolean>;
@@ -83,6 +88,8 @@ export class RuntimeScheduler {
   private readonly foregroundReservedRuns: number;
   private executionEnabled: boolean;
   private readonly approvalTimeoutMs: number;
+  private readonly livenessStaleGraceMs: number;
+  private readonly now: () => Date;
   private timer: NodeJS.Timeout | null = null;
   private stopped = true;
   private ticking = false;
@@ -104,6 +111,8 @@ export class RuntimeScheduler {
     this.foregroundReservedRuns = Math.max(0, Math.floor(options.foregroundReservedRuns ?? 10));
     this.executionEnabled = options.executionEnabled ?? true;
     this.approvalTimeoutMs = Math.max(0, Math.floor(options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS));
+    this.livenessStaleGraceMs = Math.max(0, Math.floor(options.livenessStaleGraceMs ?? 30_000));
+    this.now = options.now ?? (() => new Date());
   }
 
   getCapacitySnapshot(): {
@@ -287,6 +296,12 @@ export class RuntimeScheduler {
   private async tickOnce(): Promise<void> {
     try {
       try {
+        await this.reapExpiredRunLiveness();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.options.logger?.error(`Runtime scheduler liveness reaper failed: ${message}`);
+      }
+      try {
         await this.cancelStaleWaitingApprovals();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -324,7 +339,7 @@ export class RuntimeScheduler {
 
       if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
 
-      const recoverable = await this.options.runStore.listRecoverable();
+      const recoverable = await this.options.runStore.listRecoverable(this.now());
       const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
       for (const runId of this.deferredUntilByRun.keys()) {
         if (!recoverableRunIds.has(runId)) this.deferredUntilByRun.delete(runId);
@@ -464,13 +479,38 @@ export class RuntimeScheduler {
     }
   }
 
+  private async reapExpiredRunLiveness(): Promise<void> {
+    const reap = this.options.runStore.reapExpiredLiveness?.bind(this.options.runStore);
+    if (!reap) return;
+    const result = await reap(this.now(), this.livenessStaleGraceMs, 50); // one bounded CAS pass
+    if (result.orphaned.length > 0) {
+      // Durable blockers are now terminal; queued successors must not retain a contention backoff.
+      this.deferredUntilByRun.clear();
+    }
+    for (const record of result.orphaned) {
+      await this.options.eventStore.append({
+        type: 'run_state_changed',
+        runId: record.runId,
+        sessionId: record.sessionId,
+        status: 'orphaned',
+        previousStatus: 'running',
+        reason: record.statusReason ?? record.liveness?.reasonCode ?? 'lease_expired',
+      }, { tenantId: requireTenantId(record.tenantId) });
+    }
+    if (result.stale.length > 0 || result.orphaned.length > 0) {
+      this.options.logger?.warn(
+        `Runtime liveness reaper: stale=${result.stale.length} orphaned=${result.orphaned.length}`,
+      );
+    }
+  }
+
   private async cancelStaleWaitingApprovals(): Promise<void> {
     if (this.approvalTimeoutMs <= 0) return;
     const listStale = this.options.runStore.listStaleWaitingApproval?.bind(this.options.runStore);
     const cancelStale = this.options.runStore.cancelStaleWaitingApproval?.bind(this.options.runStore);
     if (!listStale || !cancelStale) return;
 
-    const cutoff = new Date(Date.now() - this.approvalTimeoutMs);
+    const cutoff = new Date(this.now().getTime() - this.approvalTimeoutMs);
     const staleRuns = await listStale(cutoff, STALE_APPROVAL_BATCH_SIZE);
     for (const record of staleRuns) {
       const events = await this.options.eventStore.list(requireTenantId(record.tenantId), record.sessionId, {
@@ -554,7 +594,7 @@ export class RuntimeScheduler {
       record.runId,
       this.workerId,
       this.leaseMs,
-      new Date(),
+      this.now(),
       this.maxConcurrentRuns,
       {
         foreground: classifyRun(record) === 'foreground',
@@ -644,10 +684,10 @@ export class RuntimeScheduler {
       get expiresAt() {
         return expiresAt;
       },
-      renew: () => {
+      renew: (source: RunHeartbeatSource = 'worker') => {
         if (renewInFlight) return renewInFlight;
         renewInFlight = (async () => {
-          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs);
+          const renewed = await this.options.runStore.renewLease?.(record.runId, this.workerId, this.leaseMs, this.now(), source);
           if (!renewed) throw new Error(`failed to renew run lease: ${record.runId}`);
           expiresAt = renewed.leaseExpiresAt ?? expiresAt;
         })().finally(() => {

@@ -28,7 +28,7 @@ function run(index: number, patch: Partial<RunRecord> = {}): RunRecord {
   };
 }
 
-describe('M20-02 durable chat queue projection', () => {
+describe('M20-02 durable chat queue projection with M40-02 server liveness', () => {
   it('projects three submissions in durable order and preserves queuePosition=0', () => {
     const snapshot = buildChatQueueSnapshot('session-queue', [run(1), run(2), run(3)]);
     expect(snapshot.items.map((item) => [item.clientMsgId, item.queuePosition])).toEqual([
@@ -64,6 +64,22 @@ describe('M20-02 durable chat queue projection', () => {
       mimeType: 'application/pdf',
       size: 42,
     }]);
+  });
+
+  it('projects server-only structured liveness while legacy rows remain unknown', () => {
+    const legacy = projectChatQueueItem(run(1));
+    const live = projectChatQueueItem(run(2, {
+      status: 'running',
+      workerId: 'worker-2',
+      leaseExpiresAt: '2026-08-30T00:02:00.000Z',
+      liveness: {
+        state: 'busy', ownerId: 'worker-2', lastHeartbeatAt: '2026-08-30T00:01:30.000Z',
+        leaseExpiresAt: '2026-08-30T00:02:00.000Z', recoveryActions: ['cancel'],
+        detectedAt: '2026-08-30T00:01:00.000Z', version: 2,
+      },
+    }));
+    expect(legacy?.liveness).toEqual({ state: 'unknown', recoveryActions: [], version: 0 });
+    expect(live?.liveness).toMatchObject({ state: 'busy', ownerId: 'worker-2', version: 2 });
   });
 
   it('omits legacy runs with no stable clientMsgId', () => {

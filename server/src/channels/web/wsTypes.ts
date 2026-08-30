@@ -5,7 +5,7 @@
  * 下行事件复用原 SSE 事件类型，包裹在带 eventId 的信封中。
  */
 
-import type { ChatQueueItem, ChatQueueSnapshot, MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
+import type { ChatQueueItem, ChatQueueSnapshot, MessageAttachmentDisplay, RunLiveness, SandboxProfile } from '@agent/shared';
 import type { SyncOverflowRecovery } from './syncProtocol.js';
 import type {
     CanonicalChatSubmissionWireMessage,
@@ -235,12 +235,12 @@ export type WsDownstreamEvent =
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: MessageAttachmentDisplay[] }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增系统事件 ──
     | { type: 'context_usage'; contextUsage: ContextUsageData }

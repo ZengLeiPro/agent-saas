@@ -710,7 +710,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
   });
 
-  it("uses a refreshed attachmentId-only snapshot as authority without local resend", async () => {
+  it("uses a refreshed attachmentId-only snapshot as authority without a local resend", async () => {
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
@@ -723,7 +723,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
       items: [{
         sessionId: "session-authoritative", sourceRunId: "queued-snapshot", runId: "queued-snapshot",
         clientMsgId: "client-snapshot", deliveryMode: "queue", status: "queued", content: "snapshot attachment",
-        attachments: [{ attachmentId: fileB.attachmentId, name: fileB.originalName }],
+        attachments: [{ attachmentId: fileB.attachmentId!, name: fileB.originalName }],
       }],
     }));
     expect(result.current.queuedInterjections[0]).toMatchObject({

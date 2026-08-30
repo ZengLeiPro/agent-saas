@@ -13,7 +13,16 @@ export function governanceV34Statements(prefix: string): string[] {
   )`;
   return [
     `ALTER TABLE ${accounts} ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ`,
-    `UPDATE ${accounts} SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL`,
+    // Before V34, runtime status/event writes advanced updated_at without changing revision. An active
+    // account at revision <= 3 can only have completed its initial authorization lifecycle; use its
+    // immutable creation time as conservative identity provenance. Higher revisions may include a
+    // reauthorization, so retain updated_at and let pre-change work fail closed.
+    `UPDATE ${accounts}
+      SET identity_updated_at=CASE
+        WHEN status='active' AND revision<=3 THEN created_at
+        ELSE updated_at
+      END
+      WHERE identity_updated_at IS NULL`,
     `ALTER TABLE ${accounts} ALTER COLUMN identity_updated_at SET DEFAULT NOW(),
       ALTER COLUMN identity_updated_at SET NOT NULL`,
     `DO $$ BEGIN

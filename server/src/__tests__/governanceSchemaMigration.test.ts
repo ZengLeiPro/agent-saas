@@ -98,7 +98,9 @@ describe('Governance schema migration SQL fixtures', () => {
     const sql = statements.join('\n');
     expect(sql).toContain("profile_id=BTRIM(account.corp_id) || ':' || BTRIM(account.dingtalk_user_id)");
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ');
-    expect(sql).toContain('SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL');
+    expect(sql).toContain("WHEN status='active' AND revision<=3 THEN created_at");
+    expect(sql).toContain('ELSE updated_at');
+    expect(sql).toContain('WHERE identity_updated_at IS NULL');
     const inboxPin = statements.find(statement => statement.includes('UPDATE safe_agent_dws_event_inbox AS inbox'));
     expect(inboxPin).toContain("inbox.state IN ('pending','processing','retry_wait','reply_pending')");
     expect(inboxPin).toContain('account.identity_updated_at <= inbox.created_at');

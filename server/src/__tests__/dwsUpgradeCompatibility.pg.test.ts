@@ -145,13 +145,13 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
     await pool.query(`ALTER TABLE ${accountsTable} ALTER COLUMN identity_updated_at DROP NOT NULL`);
     await pool.query(`INSERT INTO ${accountsTable}
       (account_id,tenant_id,agent_id,display_name,login_id,corp_id,dingtalk_user_id,profile_id,
-       status,event_policy_json,revision,created_by,identity_updated_at,updated_at,updated_by)
+       status,event_policy_json,revision,created_at,created_by,identity_updated_at,updated_at,updated_by)
       VALUES ('inbox-v1','tenant-a','agent-inbox-v1','旧 inbox 账号','inbox-v1-login',
-        'corp-v1','user-v1','corp-v1','active','{"kinds":["at_me"]}'::jsonb,
-        1,'admin',NULL,'2000-01-01T00:00:00Z','admin'),
+        'corp-v1','user-v1','corp-v1:user-v1','active','{"kinds":["at_me"]}'::jsonb,
+        3,'2025-01-01T00:00:00Z','admin',NULL,'2025-01-01T00:00:00Z','system:agent-dws-auth'),
         ('inbox-reauthed','tenant-a','agent-inbox-reauthed','已重授权账号','inbox-reauthed-login',
         'corp-current','user-current','corp-current:user-current','active','{"kinds":["at_me"]}'::jsonb,
-        5,'admin',NULL,'2026-03-01T00:00:00Z','admin')`);
+        5,'2025-01-01T00:00:00Z','admin',NULL,'2026-03-01T00:00:00Z','system:agent-dws-auth')`);
     await pool.query(`INSERT INTO ${inboxTable}
       (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
        session_id,run_id,response_text,attempt,lease_expires_at,next_attempt_at,created_at,updated_at)
@@ -205,12 +205,26 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
          "accountId":"inbox-reauthed","conversationId":"conv-old","eventType":"user_im_message_receive_o2o_all"
        }}'::jsonb)`);
 
-    await rerunV34();
     const accountStore = new PgAgentDwsAccountStore(pool, prefix);
+    await accountStore.updateRuntimeStatus('inbox-v1', 'starting', undefined, undefined, 3);
+    await expect(accountStore.claimRuntimeLease('inbox-v1', 'legacy-runtime', 60_000, 3))
+      .resolves.toBe(true);
+    await expect(accountStore.markEvent(
+      'inbox-v1', 'legacy-runtime', new Date('2026-05-01T00:00:00Z'), 3,
+    )).resolves.toBe(true);
+    await accountStore.releaseRuntimeLease('inbox-v1', 'legacy-runtime');
+    const runtimeUpdated = await pool.query<{ updated_at: Date }>(
+      `SELECT updated_at FROM ${accountsTable} WHERE account_id='inbox-v1'`,
+    );
+    expect(runtimeUpdated.rows[0]!.updated_at.getTime()).toBeGreaterThan(
+      new Date('2026-01-02T00:00:00Z').getTime(),
+    );
+
+    await rerunV34();
     const account = await accountStore.getForTenant('tenant-a', 'inbox-v1');
     expect(account).toMatchObject({
-      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1', revision: 2,
-      identityUpdatedAt: expect.any(String),
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1', revision: 3,
+      identityUpdatedAt: '2025-01-01T00:00:00.000Z',
     });
     const pinnedRun = await pool.query(`SELECT metadata FROM ${runsTable} WHERE run_id='legacy-completion'`);
     expect(pinnedRun.rows[0]?.metadata.dwsCompletionRoute).toMatchObject({
@@ -276,11 +290,11 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
        '{"backgroundTask":true,"parentRunId":"parent-same-auth","parentChannel":"dingtalk","dwsCompletionRoute":{
          "accountId":"inbox-v1","conversationId":"conv-same-run","eventType":"user_im_message_receive_o2o_all"
        }}'::jsonb)`);
-    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 2, 'admin:same-reauthorize');
-    const sameIdentity = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 3, {
+    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 3, 'admin:same-reauthorize');
+    const sameIdentity = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 4, {
       profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
     }, 'admin:same-reauthorize');
-    expect(sameIdentity).toMatchObject({ revision: 4, identityUpdatedAt: identityBeforeSameAuth });
+    expect(sameIdentity).toMatchObject({ revision: 5, identityUpdatedAt: identityBeforeSameAuth });
     await rerunV34();
     const sameAuthInbox = await pool.query(`SELECT payload_json FROM ${inboxTable}
       WHERE inbox_id='legacy-same-auth'`);
@@ -310,9 +324,9 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
     });
     await store.complete(recoveredV2!.inboxId, 'worker-v2-reply', recoveredV2!.leaseFence);
 
-    await accountStore.updateRuntimeStatus('inbox-v1', 'ready', undefined, undefined, 4);
-    await expect(accountStore.claimRuntimeLease('inbox-v1', 'runtime-v1', 60_000, 4)).resolves.toBe(true);
-    await expect(accountStore.markEvent('inbox-v1', 'runtime-v1', new Date(), 4)).resolves.toBe(true);
+    await accountStore.updateRuntimeStatus('inbox-v1', 'ready', undefined, undefined, 5);
+    await expect(accountStore.claimRuntimeLease('inbox-v1', 'runtime-v1', 60_000, 5)).resolves.toBe(true);
+    await expect(accountStore.markEvent('inbox-v1', 'runtime-v1', new Date(), 5)).resolves.toBe(true);
     await accountStore.releaseRuntimeLease('inbox-v1', 'runtime-v1');
     await pool.query(`INSERT INTO ${inboxTable}
       (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
@@ -320,8 +334,8 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
       VALUES ('legacy-runtime','tenant-a','inbox-v1','event-runtime','chatbot_message','conv-runtime',
         'runtime','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,NOW(),NOW())`);
     const runtimeOnly = await store.claimNext('worker-runtime', 60_000);
-    const policyRace = await accountStore.setEnabled('tenant-a', 'inbox-v1', true, 4, 'admin:policy-race');
-    expect(policyRace).toMatchObject({ revision: 5, identityUpdatedAt: identityBeforeSameAuth });
+    const policyRace = await accountStore.setEnabled('tenant-a', 'inbox-v1', true, 5, 'admin:policy-race');
+    expect(policyRace).toMatchObject({ revision: 6, identityUpdatedAt: identityBeforeSameAuth });
     await expect(store.pinLegacyIdentityOrTerminate(
       runtimeOnly!.inboxId, 'worker-runtime', runtimeOnly!.leaseFence, {
         profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
@@ -336,8 +350,8 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
       VALUES ('legacy-changed','tenant-a','inbox-v1','event-changed','chatbot_message','conv-changed',
         'changed','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,
         NOW()-INTERVAL '1 minute',NOW())`);
-    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 5, 'admin:reauthorize');
-    const reauthorized = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 6, {
+    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 6, 'admin:reauthorize');
+    const reauthorized = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 7, {
       profileId: 'corp-v2:user-v2', corpId: 'corp-v2', dingtalkUserId: 'user-v2',
     }, 'admin:reauthorize');
     const changed = await store.claimNext('worker-changed', 60_000);

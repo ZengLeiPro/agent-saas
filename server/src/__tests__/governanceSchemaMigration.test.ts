@@ -98,9 +98,15 @@ describe('Governance schema migration SQL fixtures', () => {
     const sql = statements.join('\n');
     expect(sql).toContain("profile_id=BTRIM(account.corp_id) || ':' || BTRIM(account.dingtalk_user_id)");
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ');
-    expect(sql).toContain("WHEN status='active' AND revision<=3 THEN created_at");
-    expect(sql).toContain('ELSE updated_at');
-    expect(sql).toContain('WHERE identity_updated_at IS NULL');
+    expect(sql).toContain("to_regclass('safe_agent_dws_auth_sessions')");
+    expect(sql).toContain('SET identity_updated_at=connected.completed_at');
+    expect(sql).toContain("connected.status='connected'");
+    expect(sql).toContain('other_connected.session_id<>connected.session_id');
+    expect(sql).toContain('later_attempt.session_id<>connected.session_id');
+    expect(sql).toContain('later_attempt.created_at>=connected.created_at');
+    expect(sql.match(/account.status IN \('active','paused'\)/g)).toHaveLength(3);
+    expect(sql).toContain('SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL');
+    expect(sql).not.toContain('revision<=3');
     const inboxPin = statements.find(statement => statement.includes('UPDATE safe_agent_dws_event_inbox AS inbox'));
     expect(inboxPin).toContain("inbox.state IN ('pending','processing','retry_wait','reply_pending')");
     expect(inboxPin).toContain('account.identity_updated_at <= inbox.created_at');

@@ -13,16 +13,39 @@ export function governanceV34Statements(prefix: string): string[] {
   )`;
   return [
     `ALTER TABLE ${accounts} ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ`,
-    // Before V34, runtime status/event writes advanced updated_at without changing revision. An active
-    // account at revision <= 3 can only have completed its initial authorization lifecycle; use its
-    // immutable creation time as conservative identity provenance. Higher revisions may include a
-    // reauthorization, so retain updated_at and let pre-change work fail closed.
-    `UPDATE ${accounts}
-      SET identity_updated_at=CASE
-        WHEN status='active' AND revision<=3 THEN created_at
-        ELSE updated_at
-      END
-      WHERE identity_updated_at IS NULL`,
+    // A sole connected authorization session proves when the current identity became usable only when
+    // no later authorization attempt exists. Runtime/configuration writes never create auth sessions;
+    // a second or interrupted reauthorization therefore remains deliberately unprovable.
+    `DO $$ BEGIN
+      IF to_regclass('${authSessions}') IS NOT NULL THEN
+        EXECUTE $migration$
+          UPDATE ${accounts} AS account
+          SET identity_updated_at=connected.completed_at
+          FROM ${authSessions} AS connected
+          WHERE account.identity_updated_at IS NULL
+            AND account.status IN ('active','paused')
+            AND connected.tenant_id=account.tenant_id
+            AND connected.user_id=account.account_id
+            AND connected.status='connected'
+            AND connected.completed_at IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM ${authSessions} AS other_connected
+              WHERE other_connected.tenant_id=connected.tenant_id
+                AND other_connected.user_id=connected.user_id
+                AND other_connected.status='connected'
+                AND other_connected.session_id<>connected.session_id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM ${authSessions} AS later_attempt
+              WHERE later_attempt.tenant_id=connected.tenant_id
+                AND later_attempt.user_id=connected.user_id
+                AND later_attempt.session_id<>connected.session_id
+                AND later_attempt.created_at>=connected.created_at
+            )
+        $migration$;
+      END IF;
+    END $$`,
+    `UPDATE ${accounts} SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL`,
     `ALTER TABLE ${accounts} ALTER COLUMN identity_updated_at SET DEFAULT NOW(),
       ALTER COLUMN identity_updated_at SET NOT NULL`,
     `DO $$ BEGIN
@@ -180,7 +203,7 @@ export function governanceV34Statements(prefix: string): string[] {
             AND inbox.state IN ('pending','processing','retry_wait','reply_pending')
             AND inbox.payload_json->>'schemaVersion'='1'
             AND NOT (inbox.payload_json ? 'accountIdentity')
-            AND account.status='active'
+            AND account.status IN ('active','paused')
             AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
             AND account.identity_updated_at <= inbox.created_at
         $migration$;
@@ -211,7 +234,7 @@ export function governanceV34Statements(prefix: string): string[] {
             AND parent_run.tenant_id=runtime_run.tenant_id
             AND parent_run.channel='dingtalk'
             AND parent_run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
-            AND account.status='active'
+            AND account.status IN ('active','paused')
             AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
             AND account.identity_updated_at <= parent_run.requested_at
         $migration$;

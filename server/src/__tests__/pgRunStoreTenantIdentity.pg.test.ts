@@ -35,6 +35,8 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
     await store.init();
     await store.createPending({ runId: 'run-a', tenantId: 'tenant-a', sessionId: 'shared-session', channel: 'web' });
     await store.createPending({ runId: 'run-b', tenantId: 'tenant-b', sessionId: 'shared-session', channel: 'web' });
+    await expect(store.getActiveBySession('tenant-a', 'shared-session')).resolves.toMatchObject({ runId: 'run-a', tenantId: 'tenant-a' });
+    await expect(store.getActiveBySession('tenant-b', 'shared-session')).resolves.toMatchObject({ runId: 'run-b', tenantId: 'tenant-b' });
 
     const leases = await Promise.all([
       store.acquireLease('run-a', 'worker-a', 60_000, new Date(), 4, undefined, { tenantId: 'tenant-a', sessionId: 'shared-session' }),

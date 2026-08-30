@@ -8,6 +8,7 @@ import {
 import { ModelGoalEvaluator, SessionAutomationEvaluator } from '../runtime/sessionAutomationEvaluator.js';
 import { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
 import { SessionAutomationTerminalProjector } from '../runtime/sessionAutomationTerminalProjector.js';
+import { SessionAutomationRuntimeGuard } from '../runtime/sessionAutomationRuntimeGuard.js';
 
 export interface SessionAutomationFlags {
   controlEnabled?: boolean;
@@ -47,7 +48,15 @@ export function createSessionAutomationWorkers(options: {
   cancelRun: (runId:string,reason:string)=>Promise<void>;
   onError: (error: unknown) => void;
 }) {
-  const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator(options.evaluator));
+  const runtimeGuard = new SessionAutomationRuntimeGuard(
+    options.store.pool,
+    options.store.tablePrefix,
+    options.store.runsTable,
+  );
+  const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator({
+    ...options.evaluator,
+    runtimeGuard,
+  }));
   return {
     evaluator,
     provider: new SessionAutomationToolProvider(new SessionAutomationTools(options.store, evaluator)),

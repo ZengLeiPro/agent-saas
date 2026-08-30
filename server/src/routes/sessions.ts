@@ -406,7 +406,7 @@ export interface SessionsRouterOptions {
   /** OrgAgentStore：会话列表按 meta.orgAgentId join 出专职 Agent 名称（徽标展示） */
   orgAgentStore?: OrgAgentStore;
   /** 查询会话流状态（由 WebChannel 提供） */
-  getStreamStatus?: (sessionId: string) => Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }>;
+  getStreamStatus?: (tenantId: string, sessionId: string) => Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }>;
   /** 广播事件到指定用户的所有 WS 连接 */
   broadcastToUser?: (userId: string, data: object) => void;
   /** 中央事件总线（优先于 broadcastToUser），延迟求值避免初始化时序问题 */
@@ -2889,7 +2889,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }
 
     return options.getStreamStatus
-      ? options.getStreamStatus(sessionId)
+      ? options.getStreamStatus(req.user?.tenantId ?? DEFAULT_TENANT_ID, sessionId)
       : { active: false };
   };
 

@@ -85,7 +85,7 @@ export interface RunContext {
   /** 每次真正发起模型请求前执行计费重检；拒绝时抛错并由 loop 正常收尾。 */
   authorizeModelTurn?: () => Promise<void>;
   /** Trusted host metadata for an automation execution; never sourced from model input. */
-  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string };
+  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootRunId?:string };
   /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */
   loadQueuedInterjections?: () => Promise<QueuedInterjection[]>;
   /**

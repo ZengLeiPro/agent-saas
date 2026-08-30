@@ -96,10 +96,11 @@ class MemoryRunStore implements RunStore {
     return [...this.records.values()].filter((record) => record.status === 'pending');
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     // active = pending / running / waiting_*；与 RunStore.getActiveBySession 语义对齐
     return [...this.records.values()].find((r) =>
-      r.sessionId === sessionId
+      (r.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && r.sessionId === sessionId
         && (r.status === 'pending' || r.status === 'running'
           || r.status === 'waiting_approval' || r.status === 'waiting_user'
           || r.status === 'waiting_hand'),

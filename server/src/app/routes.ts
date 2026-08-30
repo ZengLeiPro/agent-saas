@@ -323,7 +323,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
       agentStore: runtime.agentStore,
       orgAgentStore: runtime.orgAgentStore,
-      getStreamStatus: webChannel ? (sid) => webChannel.getStreamStatus(sid) : undefined,
+      getStreamStatus: webChannel ? (tenantId, sid) => webChannel.getStreamStatus(tenantId, sid) : undefined,
       broadcastToUser: webChannel
         ? (userId, data) => webChannel.getWsServer()?.broadcastToUser(userId, data)
         : undefined,

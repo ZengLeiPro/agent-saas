@@ -4,7 +4,8 @@ export { reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type pg from 'pg';
 import type { BillingService } from '../data/billing/service.js';
 import type { ModelProviderOptions } from '../types/index.js';
-import type { ModelAdapter, RunContext } from './types.js';
+import type { ModelAdapter, ModelUsage, RunContext } from './types.js';
+import { SessionAutomationRuntimeGuard, type AutomationAttemptHandle } from './sessionAutomationRuntimeGuard.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
 
 export interface GoalEvidence {
@@ -30,7 +31,10 @@ export interface GoalEvaluatorPort {
     specVersion: number;
     condition: string;
     evidence: GoalEvidence;
-  }): Promise<{ decision: GoalDecision; reason: string; confidence: number }>;
+    evaluatorRunId?: string;
+    executionRunId?: string;
+    onAttemptPrepared?: (providerAttemptId: string) => Promise<void>;
+  }): Promise<{ decision: GoalDecision; reason: string; confidence: number; usage?: ModelUsage }>;
 }
 
 export function passesGoalHardGates(evidence: GoalEvidence): boolean {
@@ -41,6 +45,13 @@ export function passesGoalHardGates(evidence: GoalEvidence): boolean {
     && evidence.evidenceRefs.length > 0;
 }
 
+export class GoalEvaluationResultUnknownError extends Error {
+  constructor(message: string, readonly providerAttemptId: string) {
+    super(message);
+    this.name = 'GoalEvaluationResultUnknownError';
+  }
+}
+
 /** Independent utility-model evaluator; it is not the primary automation agent. */
 export class ModelGoalEvaluator implements GoalEvaluatorPort {
   constructor(private readonly options: {
@@ -48,6 +59,7 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
     createAdapter: (connection: { apiKey?: string; baseUrl?: string } | undefined, options?: ModelProviderOptions) => ModelAdapter;
     billing: () => BillingService | undefined;
     resolveIdentity: (userId: string) => { username: string } | undefined;
+    runtimeGuard?: SessionAutomationRuntimeGuard;
   }) {}
 
   async evaluate(input: Parameters<GoalEvaluatorPort['evaluate']>[0]): Promise<{ decision: GoalDecision; reason: string; confidence: number }> {
@@ -68,7 +80,7 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
       },
     });
     const adapter = this.options.createAdapter(resolved.connection, resolved.providerOptions);
-    const evaluatorRunId = `automation-evaluator-${randomUUID()}`;
+    const evaluatorRunId = input.evaluatorRunId ?? `automation-evaluator-${randomUUID()}`;
     const context: RunContext = {
       runId: evaluatorRunId,
       sessionId: input.sessionId,
@@ -83,12 +95,17 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         specVersion: input.specVersion,
         executionId: input.executionId,
         runId: evaluatorRunId,
+        ...(input.executionRunId ? { rootRunId: input.executionRunId } : {}),
       },
       ...(billing ? { authorizeModelTurn: billing.beforeModelCall } : {}),
     };
     let text = '';
     let completed = false;
+    let usage: ModelUsage | undefined;
+    let attempt: AutomationAttemptHandle | undefined;
     try {
+      attempt = await this.options.runtimeGuard?.beforeModel(context, `goal-evaluation:${input.evaluatorRunId ?? evaluatorRunId}`);
+      if (attempt) await input.onAttemptPrepared?.(attempt.providerAttemptId);
       for await (const event of adapter.stream({
         model: resolved.model,
         messages: [
@@ -104,6 +121,7 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         if (event.type === 'completed') {
           completed = true;
           text = event.content || text;
+          usage = event.usage;
           if (event.usage && billing) await billing.recordUsage(resolved.model, event.usage);
           if (event.terminalStatus && event.terminalStatus !== 'completed') throw new Error(`result_unknown:${event.terminalStatus}`);
         }
@@ -114,11 +132,22 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         || typeof parsed.reason !== 'string' || typeof parsed.confidence !== 'number') {
         throw new Error('result_unknown:invalid_evaluator_json');
       }
+      await this.options.runtimeGuard?.finishModel(context, attempt, usage);
       return {
         decision: parsed.decision as GoalDecision,
         reason: parsed.reason,
         confidence: Math.max(0, Math.min(1, parsed.confidence)),
+        ...(usage ? { usage } : {}),
       };
+    } catch (error) {
+      if (attempt) {
+        await this.options.runtimeGuard?.finishModel(context, attempt, usage, error);
+        throw new GoalEvaluationResultUnknownError(
+          error instanceof Error ? error.message : String(error),
+          attempt.providerAttemptId,
+        );
+      }
+      throw error;
     } finally {
       await billing?.finalize();
     }
@@ -237,17 +266,95 @@ export class SessionAutomationEvaluator {
   }
 
   async reconcileUnknown(): Promise<number> {
-    const result = await this.store.pool.query(
-      `UPDATE ${this.store.tables.evaluations}
-          SET state='pending',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-        WHERE state IN ('claimed','result_unknown') AND lease_expires_at<now()
-        RETURNING evaluation_id`,
+    return this.store.tx(async client => {
+      const unknown = await client.query(
+        `UPDATE ${this.store.tables.evaluations} e
+            SET state='result_unknown',provider_attempt_id=p.provider_attempt_id,
+                lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+           FROM ${this.store.tables.providerAttempts} p
+          WHERE e.state='claimed' AND e.lease_expires_at<now()
+            AND p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
+            AND p.operation='goal-evaluation:'||e.evaluation_id::text
+            AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
+          RETURNING e.evaluation_id`,
+      );
+      if (unknown.rowCount) {
+        await client.query(
+          `UPDATE ${this.store.tables.providerAttempts} p
+              SET state='result_unknown',version=version+1,lease_token=NULL,lease_expires_at=NULL,
+                  last_error=COALESCE(last_error,'evaluator_lease_expired_after_admission'),updated_at=now()
+             FROM ${this.store.tables.evaluations} e
+            WHERE e.provider_attempt_id=p.provider_attempt_id AND e.state='result_unknown'
+              AND p.state IN ('prepared','dispatched')`,
+        );
+        await client.query(
+          `UPDATE ${this.store.tables.budgetReservations} r
+              SET state='result_unknown',version=version+1,updated_at=now()
+             FROM ${this.store.tables.providerAttempts} p,${this.store.tables.evaluations} e
+            WHERE e.provider_attempt_id=p.provider_attempt_id AND e.state='result_unknown'
+              AND r.tenant_id=p.tenant_id AND r.idempotency_key=p.idempotency_key AND r.state='reserved'`,
+        );
+        await client.query(
+          `UPDATE ${this.store.tables.automations} a
+              SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,updated_at=now()
+             FROM ${this.store.tables.evaluations} e,${this.store.tables.executions} x
+            WHERE e.execution_id=x.execution_id AND e.state='result_unknown' AND e.provider_attempt_id IS NOT NULL
+              AND a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
+              AND a.incarnation_id=e.incarnation_id AND a.generation=e.generation AND a.spec_version=e.spec_version
+              AND a.active_run_id=x.run_id AND a.status='active'`,
+        );
+      }
+      const retryable = await client.query(
+        `UPDATE ${this.store.tables.evaluations} e
+            SET state='pending',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE e.state='claimed' AND e.lease_expires_at<now()
+            AND NOT EXISTS(
+              SELECT 1 FROM ${this.store.tables.providerAttempts} p
+               WHERE p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
+                 AND p.operation='goal-evaluation:'||e.evaluation_id::text
+                 AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
+            )
+          RETURNING e.evaluation_id`,
+      );
+      return (unknown.rowCount ?? 0) + (retryable.rowCount ?? 0);
+    });
+  }
+
+  private async checkInBlocked(): Promise<number> {
+    const blocked = await this.store.pool.query(
+      `SELECT e.evaluation_id,e.tenant_id,e.session_id,e.automation_id,e.execution_id,e.incarnation_id,
+              e.generation,e.spec_version,e.evidence,x.run_id
+         FROM ${this.store.tables.evaluations} e
+         JOIN ${this.store.tables.executions} x ON x.execution_id=e.execution_id
+        WHERE e.state='blocked' AND e.decision->>'reason'='hard_gate'`,
     );
-    return result.rowCount ?? 0;
+    let restored = 0;
+    for (const job of blocked.rows) {
+      restored += await this.store.tx(async client => {
+        const current = await this.store.getLocked(client, job.tenant_id, job.session_id, job.automation_id);
+        if (!current || current.status !== 'active' || current.incarnationId !== job.incarnation_id
+          || current.generation !== Number(job.generation) || current.specVersion !== Number(job.spec_version)) return 0;
+        const gates = await this.resolveHardGates(client, {
+          tenantId: job.tenant_id, sessionId: job.session_id, automationId: job.automation_id,
+          executionId: job.execution_id, runId: job.run_id,
+        });
+        if (!passesGoalHardGates({ ...job.evidence, hardGates: gates })) return 0;
+        const updated = await client.query(
+          `UPDATE ${this.store.tables.evaluations}
+              SET state='pending',decision=NULL,updated_at=now()
+            WHERE evaluation_id=$1 AND state='blocked' AND incarnation_id=$2 AND generation=$3 AND spec_version=$4
+            RETURNING evaluation_id`,
+          [job.evaluation_id, job.incarnation_id, job.generation, job.spec_version],
+        );
+        return updated.rowCount ?? 0;
+      });
+    }
+    return restored;
   }
 
   async evaluatePending(limit = 10): Promise<number> {
     await this.reconcileUnknown();
+    await this.checkInBlocked();
     const jobs = await this.store.tx(async client => {
       const result = await client.query(
         `SELECT e.*,a.owner_user_id,x.run_id
@@ -305,13 +412,27 @@ export class SessionAutomationEvaluator {
           specVersion: Number(job.spec_version),
           condition: snapshot.spec.condition!,
           evidence,
+          evaluatorRunId: `automation-evaluator-${job.evaluation_id}`,
+          executionRunId: job.run_id,
+          onAttemptPrepared: async (providerAttemptId) => {
+            await this.store.pool.query(
+              `UPDATE ${this.store.tables.evaluations}
+                  SET provider_attempt_id=$2,updated_at=now()
+                WHERE evaluation_id=$1 AND lease_token=$3 AND state='claimed'`,
+              [job.evaluation_id, providerAttemptId, job.lease_token],
+            );
+          },
         });
       } catch (error) {
+        const resultUnknown = error instanceof GoalEvaluationResultUnknownError;
         await this.store.pool.query(
           `UPDATE ${this.store.tables.evaluations}
-              SET state='result_unknown',decision=$2,lease_expires_at=now()+interval '1 minute',updated_at=now()
-            WHERE evaluation_id=$1 AND lease_token=$3`,
-          [job.evaluation_id, JSON.stringify({ reason: error instanceof Error ? error.message : String(error) }), job.lease_token],
+              SET state=$2,decision=$3,provider_attempt_id=COALESCE($4,provider_attempt_id),
+                  lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE evaluation_id=$1 AND lease_token=$5`,
+          [job.evaluation_id, resultUnknown ? 'result_unknown' : 'pending',
+            JSON.stringify({ reason: error instanceof Error ? error.message : String(error) }),
+            resultUnknown ? error.providerAttemptId : null, job.lease_token],
         );
         continue;
       }

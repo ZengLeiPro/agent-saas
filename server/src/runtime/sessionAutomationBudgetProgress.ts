@@ -11,6 +11,7 @@ export interface AutomationBudgetTables {
   automations: string;
   specs: string;
   usage: string;
+  budgetReservations: string;
 }
 
 /** Convert the NUMERIC/JSON boundary once; all budget comparisons remain integer-only. */
@@ -56,9 +57,20 @@ export async function resolveAutomationBudgetReason(input: {
     [input.tenantId, input.automationId],
   );
   const totals = usageResult.rows[0] ?? {};
+  const reservedResult = await input.client.query(
+    `SELECT COALESCE(SUM(amount) FILTER (WHERE budget_kind='turns'),0)::text AS turns,
+            COALESCE(SUM(amount) FILTER (WHERE budget_kind='tokens'),0)::text AS tokens,
+            COALESCE(SUM(amount) FILTER (WHERE budget_kind='credits'),0)::text AS credits
+       FROM ${input.tables.budgetReservations}
+      WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('reserved','result_unknown','reconcile')`,
+    [input.tenantId, input.automationId],
+  );
+  const reserved = reservedResult.rows[0] ?? {};
   const budget = (row.spec as SessionAutomationSpec).budget ?? {};
   let usedMicrocredits = creditsToMicrocredits(String(totals.credits ?? '0'));
-  if (usedMicrocredits === undefined) return 'credits_unverifiable';
+  const reservedMicrocredits = creditsToMicrocredits(String(reserved.credits ?? '0'));
+  if (usedMicrocredits === undefined || reservedMicrocredits === undefined) return 'credits_unverifiable';
+  usedMicrocredits += reservedMicrocredits;
 
   if (budget.maxCredits !== undefined) {
     const ledger = `${input.tablePrefix}_billing_credit_ledger`;
@@ -84,8 +96,10 @@ export async function resolveAutomationBudgetReason(input: {
 
   if (budget.expiresAt && (input.now ?? new Date()).getTime() >= new Date(budget.expiresAt).getTime()) return 'expires_at';
   if (budget.maxRuns !== undefined && BigInt(String(row.run_count)) >= BigInt(budget.maxRuns)) return 'max_runs';
-  if (budget.maxTurns !== undefined && BigInt(String(totals.turns ?? 0)) >= BigInt(budget.maxTurns)) return 'max_turns';
-  if (budget.maxTokens !== undefined && BigInt(String(totals.tokens ?? 0)) >= BigInt(budget.maxTokens)) return 'max_tokens';
+  if (budget.maxTurns !== undefined
+    && BigInt(String(totals.turns ?? 0)) + BigInt(String(reserved.turns ?? 0)) >= BigInt(budget.maxTurns)) return 'max_turns';
+  if (budget.maxTokens !== undefined
+    && BigInt(String(totals.tokens ?? 0)) + BigInt(String(reserved.tokens ?? 0)) >= BigInt(budget.maxTokens)) return 'max_tokens';
   if (budget.maxCredits !== undefined) {
     const limitMicrocredits = creditsToMicrocredits(budget.maxCredits);
     if (limitMicrocredits === undefined) return 'credits_unverifiable';

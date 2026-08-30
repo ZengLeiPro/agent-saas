@@ -101,7 +101,7 @@ class MemoryRunStore implements RunStore {
     return [...this.records.values()].find((r) => r.idempotencyKey === key && (r.tenantId ?? tenantId) === tenantId && r.userId === userId) ?? null;
   }
   async listRecoverable(): Promise<RunRecord[]> { return []; }
-  async getActiveBySession(): Promise<RunRecord | null> { return null; }
+  async getActiveBySession(_tenantId: string, _sessionId: string): Promise<RunRecord | null> { return null; }
 }
 
 function fakeTenantStore(featureOverrides: Partial<TenantSettings['features']> = {}): TenantStore {

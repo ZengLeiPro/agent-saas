@@ -335,11 +335,12 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     return result.rows.length === 1 ? normalizeRunRecord(result.rows[0]!.row_json) : null;
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.runsTable} run
-      WHERE run.session_id = $1
+      WHERE run.tenant_id = $1
+        AND run.session_id = $2
         AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
         AND NOT EXISTS (
           SELECT 1
@@ -373,7 +374,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         END,
         run.updated_at DESC
       LIMIT 1
-    `, [sessionId]);
+    `, [tenantId, sessionId]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 

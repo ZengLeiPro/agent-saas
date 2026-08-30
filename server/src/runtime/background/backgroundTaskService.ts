@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-
 import { PlatformToolRuntime, type ToolCallContext, type ToolProvider } from '../../agent/toolRuntime.js';
 import { readSessionMeta } from '../../data/transcripts/meta.js';
 import {
@@ -562,7 +561,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         });
         continue;
       }
-      const activeParentRun = await runStore.getActiveBySession?.(metadata.parentSessionId);
+      if (!task.tenantId) { await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'discarded', { wakeDiscardReason: 'parent_tenant_missing' }); continue; }
+      const activeParentRun = await runStore.getActiveBySession?.(task.tenantId, metadata.parentSessionId);
       if (activeParentRun) {
         await runStore.finishBackgroundTaskWake(task.runId, claimToken, 'pending', {
           wakeDeferredReason: 'parent_session_active',

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 import {
   createDefaultExecutionTransportRegistry,
@@ -75,8 +76,7 @@ class BackgroundRunStore implements RunStore {
       runId: input.runId,
       sessionId: input.sessionId,
       userId: input.userId,
-      tenantId: input.tenantId,
-      status: 'pending',
+      tenantId: input.tenantId ?? DEFAULT_TENANT_ID, status: 'pending',
       model: input.model,
       channel: input.channel,
       requestedAt: now,
@@ -101,9 +101,10 @@ class BackgroundRunStore implements RunStore {
     return [...this.records.values()].find((record) => (record.tenantId ?? tenantId) === tenantId && record.userId === userId && record.idempotencyKey === idempotencyKey) ?? null;
   }
   async listRecoverable(): Promise<RunRecord[]> { return []; }
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) => (
-      record.sessionId === sessionId && ['pending', 'running'].includes(record.status)
+      (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && record.sessionId === sessionId && ['pending', 'running'].includes(record.status)
     )) ?? null;
   }
   async listBackgroundTasks(parentSessionId: string, options: ListBackgroundTasksOptions = {}): Promise<RunRecord[]> {
@@ -494,8 +495,7 @@ describe('DurableBackgroundTaskService', () => {
   it('defers completion wake while the parent session still has an active run', async () => {
     const { service, runStore } = fixture();
     runStore.records.set('bg-task-1', completedTask('完成'));
-    await runStore.upsertPending({ runId: 'parent-active', sessionId: 'parent-session-1' });
-
+    await runStore.upsertPending({ runId: 'parent-active', tenantId: 'tenant-1', sessionId: 'parent-session-1' });
     await service.reconcileWakeDeliveries();
 
     expect(runStore.records.get('bg-task-1')?.metadata).toMatchObject({

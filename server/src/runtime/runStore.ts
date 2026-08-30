@@ -1202,7 +1202,7 @@ export class PgRunStore implements RunStore {
   async updateApprovalPolicyForActiveByUser(userId: string, approvalPolicy: Record<string, unknown> | null): Promise<string[]> { return this.queries.updateApprovalPolicyForActiveByUser(userId, approvalPolicy); }
   async findByIdempotencyKey(tenantId:string,userId:string|undefined,key:string):Promise<RunRecord|null>{return this.queries.findByIdempotencyKey(tenantId,userId,key);} async findUniqueByIdempotencyKeyAcrossTenants(userId:string,key:string):Promise<RunRecord|null>{return this.queries.findUniqueByIdempotencyKeyAcrossTenants(userId,key);}
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(sessionId); }
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> { return this.queries.getActiveBySession(tenantId, sessionId); }
   async getActiveCounts(): Promise<ActiveRunCounts> { return this.queries.getActiveCounts(); }
   async listBySession(sessionId: string, options: { limit?: number; beforeUpdatedAt?: string } = {}): Promise<RunRecord[]> {
     return this.queries.listBySession(sessionId, options);

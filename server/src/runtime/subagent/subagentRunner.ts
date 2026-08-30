@@ -128,6 +128,18 @@ export interface SubagentOutcome {
   modelUsage?: Record<string, SdkResultModelUsage>;
 }
 
+export function deriveChildAutomationFence(
+  parentFence: ToolCallContext['automationFence'],
+  childRunId: string,
+): ToolCallContext['automationFence'] {
+  if (!parentFence) return undefined;
+  return {
+    ...parentFence,
+    rootRunId: parentFence.rootRunId ?? parentFence.runId,
+    runId: childRunId,
+  };
+}
+
 export interface RunSubagentParams {
   config: RawRuntimeRunDispatchConfig;
   executionTransportRegistry: ExecutionTransportRegistry;
@@ -264,6 +276,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const startedAt = Date.now();
   const childSessionId = `sub-${randomUUID()}`;
   const childRunId = `${Date.now()}-${randomUUID()}`;
+  const childAutomationFence = deriveChildAutomationFence(parentContext.automationFence, childRunId);
   const parentWorkspace = parentContext.workspace;
   const childRuntimeIsolationRequirement = deriveRuntimeIsolationRequirement(
     parentContext.runtimeIsolationRequirement,
@@ -326,6 +339,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentToolCallId: parentContext.toolCallId,
         agentType: agentType.id,
         description: request.description,
+        ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
         ...(parentSession?.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
         ...(parentSession?.orgAgentId ? { executionRole: 'worker' } : {}),
         ...(parentSession?.orgAgentSnapshot?.runtime.executionMode
@@ -452,6 +466,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       handStore: config.handStore,
       runtimeIsolationRequirement: childRuntimeIsolationRequirement,
       runStore: config.runStore,
+      automationGuard: config.sessionAutomationRuntimeGuard,
     });
 
     // ── 子 hooks（不透传父 hooks，防子事件泄进父通道）──
@@ -513,6 +528,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         outputTransactionMode: 'terminal_buffered',
       },
       approvalPolicy,
+      ...(childAutomationFence ? { automationFence: childAutomationFence } : {}),
       hooks: childHooks,
       signal: combinedSignal,
       ...(billing && tenantId ? {

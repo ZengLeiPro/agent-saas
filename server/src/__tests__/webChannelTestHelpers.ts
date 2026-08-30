@@ -188,9 +188,10 @@ export class MemoryRunStore implements RunStore {
     ));
   }
 
-  async getActiveBySession(sessionId: string): Promise<RunRecord | null> {
+  async getActiveBySession(tenantId: string, sessionId: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.sessionId === sessionId
+      (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId
+      && record.sessionId === sessionId
       && ['pending', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(record.status),
     ) ?? null;
   }

@@ -210,9 +210,9 @@ export class WebChannel implements BaseChannel {
     const tenantId = targetTenantId ?? ownerTenantId ?? this.userStore?.findById(client.user.sub)?.tenantId ?? client.user.tenantId;
     return tenantId && !this.sensitiveActionAccessError(client, { tenantId, ownerUserId }) ? tenantId : null;
   }
-  private findActiveStreamIdBySession(sessionId: string): string | undefined {
+  private findActiveStreamIdBySession(tenantId: string, sessionId: string): string | undefined {
     for (const [streamId, entry] of this.activeStreams) {
-      if (entry.sessionId === sessionId) return streamId;
+      if (entry.tenantId === tenantId && entry.sessionId === sessionId) return streamId;
     }
     return undefined;
   }
@@ -234,13 +234,13 @@ export class WebChannel implements BaseChannel {
    * buffer 在 chat 流结束后会 `complete` 但 PG run 仍可能 active（多 turn 场景）,导致 HTTP
    * 误报 inactive,前端连锁忽略 active_stream 兜底,刷新才能看到新消息。
    */
-  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }> {
+  async getStreamStatus(tenantId: string, sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }> {
     try {
       const runStore = this.config.enqueueRuntime?.runStore;
       if (runStore?.getActiveBySession) {
-        const activeRun = await runStore.getActiveBySession(sessionId);
+        const activeRun = await runStore.getActiveBySession(tenantId, sessionId);
         if (activeRun) {
-          const streamId = this.findActiveStreamIdBySession(sessionId)
+          const streamId = this.findActiveStreamIdBySession(tenantId, sessionId)
             ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
           return {
             active: true,
@@ -256,10 +256,9 @@ export class WebChannel implements BaseChannel {
       chatLogger.warn(`[stream-status] runStore.getActiveBySession 异常,降级查 buffer: ${err instanceof Error ? err.message : String(err)}`);
     }
     // 兜底：runStore 不可用时退化看 buffer
-    const active = this.eventBufferStore.isActive(sessionId);
-    if (!active) return { active: false };
-    const streamId = this.findActiveStreamIdBySession(sessionId);
-    return { active: true, ...(streamId ? { streamId } : {}) };
+    const streamId = this.findActiveStreamIdBySession(tenantId, sessionId);
+    if (!streamId || !this.eventBufferStore.isActive(sessionId)) return { active: false };
+    return { active: true, streamId };
   }
   private streamIdCounter = 0;
   private eventBufferStore = new EventBufferStore();
@@ -1261,7 +1260,8 @@ export class WebChannel implements BaseChannel {
     const meta = transcriptPath ? (await readSessionMeta(transcriptPath) ?? undefined) : undefined;
     const enqueueRuntime = this.config.enqueueRuntime?.enabled === false ? undefined : this.config.enqueueRuntime;
     const sessionRecord = enqueueRuntime ? await enqueueRuntime.sessionCatalog.get(sessionId).catch(() => null) : null;
-    const durableRun = enqueueRuntime ? await enqueueRuntime.runStore.getActiveBySession?.(sessionId).catch(() => null) : null;
+    const lookupTenantId = this.eventStoreTenantForClient(client, sessionRecord?.tenantId ?? meta?.tenantId, sessionRecord?.userId ?? meta?.userId);
+    const durableRun = enqueueRuntime && lookupTenantId ? await enqueueRuntime.runStore.getActiveBySession?.(lookupTenantId, sessionId).catch(() => null) : null;
     const persistedTenants = new Set([durableRun?.tenantId, sessionRecord?.tenantId, meta?.tenantId].filter((id): id is string => Boolean(id)));
     const ownerUserId = durableRun?.userId || sessionRecord?.userId || meta?.userId || undefined;
     const tenantId = persistedTenants.size <= 1 ? this.eventStoreTenantForClient(client, persistedTenants.values().next().value, ownerUserId) : null;
@@ -1950,7 +1950,7 @@ export class WebChannel implements BaseChannel {
     }
 
     const bufferEntry = this.eventBufferStore.get(sid);
-    const activeStreamId = this.findActiveStreamIdBySession(sid);
+    const clientTenantId = this.eventStoreTenantForClient(client), activeStreamId = clientTenantId ? this.findActiveStreamIdBySession(clientTenantId, sid) : undefined;
     const activeEntry = activeStreamId ? this.activeStreams.get(activeStreamId) : undefined;
     const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
     // durable runStore 是判活真源；buffer 只负责传输与同进程 WS 绑定。
@@ -1959,9 +1959,8 @@ export class WebChannel implements BaseChannel {
     if (bufferActive) {
       try {
         const runStore = this.config.enqueueRuntime?.runStore;
-        if (runStore?.getActiveBySession) durableBinding = await resolveResumeDurableBinding(
-          runStore.getActiveBySession.bind(runStore),
-          sid,
+        if (runStore?.getActiveBySession && clientTenantId) durableBinding = await resolveResumeDurableBinding(
+          runStore.getActiveBySession.bind(runStore), clientTenantId, sid,
           (run) => this.eventStoreTenantForClient(client, run.tenantId, run.userId) ?? undefined,
         );
         if (durableBinding?.active === false) {
@@ -2103,9 +2102,9 @@ export class WebChannel implements BaseChannel {
     sessionId: string,
     options: { requestId?: string; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
   ): Promise<boolean> {
-    const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore) return false;
-    const activeRun = await runStore.getActiveBySession?.(sessionId);
+    const runStore = this.config.enqueueRuntime?.runStore, lookupTenantId = this.eventStoreTenantForClient(client);
+    if (!runStore || !lookupTenantId) return false;
+    const activeRun = await runStore.getActiveBySession?.(lookupTenantId, sessionId);
     if (!activeRun) return false;
     const active = this.findActiveStreamByRunId(activeRun.runId);
     const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)

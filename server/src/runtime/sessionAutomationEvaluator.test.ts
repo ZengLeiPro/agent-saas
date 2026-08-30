@@ -32,12 +32,13 @@ describe('automation evaluator reducers', () => {
     const rows = [
       [{ run_count: '1', spec: { budget: { maxCredits: 1 } } }],
       [{ turns: '0', tokens: '0', credits: '1.000000' }],
+      [{ turns: '0', tokens: '0', credits: '0' }],
       [{ ledger: null, events: null }],
     ];
     const client = { query: async () => ({ rows: rows.shift() ?? [] }) } as never;
     const reason = await resolveAutomationBudgetReason({
       client,
-      tables: { automations: 'a', specs: 's', usage: 'u' },
+      tables: { automations: 'a', specs: 's', usage: 'u', budgetReservations: 'r' },
       tablePrefix: 'runtime',
       runsTable: 'runs',
       tenantId: 'tenant', sessionId: 'session', automationId: 'automation',

@@ -29,7 +29,7 @@ server/src/app/config.ts	1431	production
 server/src/app/routes.ts	1154	production
 server/src/app/runtime.ts	3077	production
 server/src/app/runtimeGovernanceConnectors.ts	1246	production
-server/src/channels/web/channel.ts	4379	production
+server/src/channels/web/channel.ts	4378	production
 server/src/cron/service.ts	1084	production
 server/src/data/billing/pgBillingStore.ts	2319	production
 server/src/data/transcripts/parse.ts	2019	production

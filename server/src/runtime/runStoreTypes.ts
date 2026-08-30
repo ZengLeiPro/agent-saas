@@ -291,7 +291,7 @@ export interface RunStore {
   /** Permanent message acceptance lookup, isolated by authoritative tenant and submitter. */
   findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
   findUniqueByIdempotencyKeyAcrossTenants?(userId: string, idempotencyKey: string): Promise<RunRecord | null>;
-  getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
+  getActiveBySession?(tenantId: string, sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
   listActiveByUser?(userId: string): Promise<RunRecord[]>;

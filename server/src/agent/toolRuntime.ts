@@ -144,7 +144,7 @@ export interface ToolCallContext {
   sessionId?: string;
   runId?: string;
   /** Host-derived immutable fence; present only on a matching session automation Run. */
-  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string };
+  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootRunId?:string };
   /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;

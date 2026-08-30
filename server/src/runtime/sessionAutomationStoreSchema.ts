@@ -188,9 +188,19 @@ END $$`,
  evaluation_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, execution_id UUID NOT NULL,
  incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, decision_epoch BIGINT NOT NULL,
  evidence JSONB NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','claimed','result_unknown','met','continue','blocked','unverifiable','dead')),
- decision JSONB, lease_token UUID, lease_expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- UNIQUE(tenant_id,automation_id,generation,decision_epoch), FOREIGN KEY(execution_id) REFERENCES ${t.executions}(execution_id)
+ decision JSONB, provider_attempt_id UUID, lease_token UUID, lease_expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(tenant_id,automation_id,generation,decision_epoch), FOREIGN KEY(execution_id) REFERENCES ${t.executions}(execution_id),
+ FOREIGN KEY(provider_attempt_id) REFERENCES ${t.providerAttempts}(provider_attempt_id)
 )`,
+`ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS provider_attempt_id UUID`,
+`DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='${t.evaluations}'::regclass AND conname='${t.evaluations}_provider_attempt_id_fkey') THEN
+  ALTER TABLE ${t.evaluations} ADD CONSTRAINT ${t.evaluations}_provider_attempt_id_fkey
+   FOREIGN KEY(provider_attempt_id) REFERENCES ${t.providerAttempts}(provider_attempt_id) NOT VALID;
+  ALTER TABLE ${t.evaluations} VALIDATE CONSTRAINT ${t.evaluations}_provider_attempt_id_fkey;
+ END IF;
+END $$`,
+`CREATE UNIQUE INDEX IF NOT EXISTS ${tablePrefix}_evaluation_provider_attempt ON ${t.evaluations}(provider_attempt_id) WHERE provider_attempt_id IS NOT NULL`,
 `CREATE TABLE IF NOT EXISTS ${t.events} (
  automation_event_id UUID PRIMARY KEY, event_sequence BIGSERIAL NOT NULL, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL,
  generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, control_version BIGINT NOT NULL, projection_version BIGINT NOT NULL,

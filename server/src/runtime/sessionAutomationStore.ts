@@ -58,22 +58,136 @@ export class PgSessionAutomationStore {
     const due=spec.mode==='fixed'?new Date(Date.now()+spec.intervalMs!):new Date(); await this.scheduleTx(client,{tenantId:current.tenantId,sessionId:current.sessionId,automationId:current.automationId,incarnationId,generation,specVersion,continuationEpoch:1,triggerKey:`initial:${current.automationId}:g${generation}:e1`,dueAt:due,payload:{spec}});
     return (await this.getLocked(client,current.tenantId,current.sessionId,current.automationId))!;
   }
-  private async reconcileProviderEvidence(client:Client,current:SessionAutomationSnapshot,evidence:SessionAutomationReconciliationEvidence):Promise<boolean>{
-    const attempt=await client.query(`SELECT * FROM ${this.tables.providerAttempts} WHERE provider_attempt_id=$1 AND tenant_id=$2 AND session_id=$3 AND automation_id=$4 AND state IN ('result_unknown','reconcile') FOR UPDATE`,[evidence.providerAttemptId,current.tenantId,current.sessionId,current.automationId]);
-    const row=attempt.rows[0];if(!row)throw new SessionAutomationConflictError('CONFLICT','provider attempt 不存在或无需 reconcile',current);
-    await client.query(`INSERT INTO ${this.tables.reconciliationReceipts}(reconciliation_receipt_id,provider_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,receipt_key,observed_state,receipt_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(tenant_id,receipt_key) DO NOTHING`,[randomUUID(),row.provider_attempt_id,row.tenant_id,row.session_id,row.automation_id,row.incarnation_id,row.generation,row.execution_id,row.run_id,evidence.receiptKey,evidence.observedState,JSON.stringify(evidence.receiptPayload)]);
-    const resolved=evidence.observedState==='completed'||evidence.observedState==='not_found';
-    await client.query(`UPDATE ${this.tables.providerAttempts} SET state=$2,result_payload=CASE WHEN $2='completed' THEN $3::jsonb ELSE result_payload END,last_error=CASE WHEN $2='completed' THEN NULL ELSE 'reconciliation_inconclusive' END,completed_at=CASE WHEN $2='completed' THEN now() ELSE completed_at END,version=version+1,updated_at=now() WHERE provider_attempt_id=$1`,[row.provider_attempt_id,resolved?'completed':'result_unknown',JSON.stringify({observedState:evidence.observedState,...evidence.receiptPayload})]);
-    await client.query(`UPDATE ${this.tables.budgetReservations} SET state=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND idempotency_key=$2 AND state IN ('result_unknown','reconcile','reserved')`,[row.tenant_id,row.idempotency_key,resolved?(evidence.observedState==='completed'?'settled':'released'):'result_unknown']);
-    if(resolved)await client.query(`INSERT INTO ${this.tables.budgetSettlements}(settlement_id,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,idempotency_key,amount,outcome,provider_receipt) SELECT $1,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,$2,amount,$3,$4::jsonb FROM ${this.tables.budgetReservations} WHERE tenant_id=$5 AND idempotency_key=$6 ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,[randomUUID(),`reconcile:${evidence.receiptKey}`,evidence.observedState==='completed'?'charged':'released',JSON.stringify(evidence.receiptPayload),row.tenant_id,row.idempotency_key]);
-    return resolved;
+  private async reconcileProviderEvidence(
+    client: Client,
+    current: SessionAutomationSnapshot,
+    evidence: SessionAutomationReconciliationEvidence,
+  ): Promise<'unresolved'|'generic_resolved'|'evaluation_retry'|'evaluation_completed'> {
+    const duplicate = await client.query(
+      `SELECT provider_attempt_id,observed_state,(receipt_payload=$3::jsonb) AS same_payload
+         FROM ${this.tables.reconciliationReceipts}
+        WHERE tenant_id=$1 AND receipt_key=$2 FOR UPDATE`,
+      [current.tenantId, evidence.receiptKey, JSON.stringify(evidence.receiptPayload)],
+    );
+    if (duplicate.rows[0]) {
+      const same = duplicate.rows[0].provider_attempt_id === evidence.providerAttemptId
+        && duplicate.rows[0].observed_state === evidence.observedState
+        && duplicate.rows[0].same_payload === true;
+      if (!same) throw new SessionAutomationConflictError('CONFLICT', 'receiptKey 已用于不同对账证据', current);
+      const evaluation = await client.query(
+        `SELECT state FROM ${this.tables.evaluations} WHERE provider_attempt_id=$1`,
+        [evidence.providerAttemptId],
+      );
+      if (!['completed', 'not_found'].includes(evidence.observedState)) return 'unresolved';
+      if (!evaluation.rows[0]) return 'generic_resolved';
+      return evidence.observedState === 'not_found' ? 'evaluation_retry' : 'evaluation_completed';
+    }
+
+    const attempt = await client.query(
+      `SELECT * FROM ${this.tables.providerAttempts}
+        WHERE provider_attempt_id=$1 AND tenant_id=$2 AND session_id=$3 AND automation_id=$4
+          AND state IN ('result_unknown','reconcile') FOR UPDATE`,
+      [evidence.providerAttemptId, current.tenantId, current.sessionId, current.automationId],
+    );
+    const row = attempt.rows[0];
+    if (!row) throw new SessionAutomationConflictError('CONFLICT', 'provider attempt 不存在或无需 reconcile', current);
+    await client.query(
+      `INSERT INTO ${this.tables.reconciliationReceipts}
+        (reconciliation_receipt_id,provider_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,receipt_key,observed_state,receipt_payload)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [randomUUID(), row.provider_attempt_id, row.tenant_id, row.session_id, row.automation_id,
+        row.incarnation_id, row.generation, row.execution_id, row.run_id, evidence.receiptKey,
+        evidence.observedState, JSON.stringify(evidence.receiptPayload)],
+    );
+    const resolved = evidence.observedState === 'completed' || evidence.observedState === 'not_found';
+    await client.query(
+      `UPDATE ${this.tables.providerAttempts}
+          SET state=$2,result_payload=CASE WHEN $2='completed' THEN $3::jsonb ELSE result_payload END,
+              last_error=CASE WHEN $2='completed' THEN NULL ELSE 'reconciliation_inconclusive' END,
+              completed_at=CASE WHEN $2='completed' THEN now() ELSE completed_at END,
+              version=version+1,updated_at=now()
+        WHERE provider_attempt_id=$1`,
+      [row.provider_attempt_id, resolved ? 'completed' : 'result_unknown',
+        JSON.stringify({ observedState: evidence.observedState, ...evidence.receiptPayload })],
+    );
+    await client.query(
+      `UPDATE ${this.tables.budgetReservations}
+          SET state=$3,version=version+1,updated_at=now()
+        WHERE tenant_id=$1 AND idempotency_key=$2 AND state IN ('result_unknown','reconcile','reserved')`,
+      [row.tenant_id, row.idempotency_key,
+        resolved ? (evidence.observedState === 'completed' ? 'settled' : 'released') : 'result_unknown'],
+    );
+    if (resolved) {
+      await client.query(
+        `INSERT INTO ${this.tables.budgetSettlements}
+          (settlement_id,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,idempotency_key,amount,outcome,provider_receipt)
+         SELECT $1,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,$2,amount,$3,$4::jsonb
+           FROM ${this.tables.budgetReservations} WHERE tenant_id=$5 AND idempotency_key=$6
+         ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,
+        [randomUUID(), `reconcile:${evidence.receiptKey}`,
+          evidence.observedState === 'completed' ? 'charged' : 'released',
+          JSON.stringify(evidence.receiptPayload), row.tenant_id, row.idempotency_key],
+      );
+      if (evidence.observedState === 'completed') {
+        await client.query(
+          `INSERT INTO ${this.tables.usage}
+            (usage_id,tenant_id,session_id,automation_id,execution_id,source_key,source_kind,turns,tokens,credits)
+           SELECT $1,tenant_id,session_id,automation_id,execution_id,$2,'provider_reconciliation',
+                  CASE WHEN budget_kind='turns' THEN amount ELSE 0 END,
+                  CASE WHEN budget_kind='tokens' THEN amount ELSE 0 END,
+                  CASE WHEN budget_kind='credits' THEN amount ELSE 0 END
+             FROM ${this.tables.budgetReservations} WHERE tenant_id=$3 AND idempotency_key=$4
+           ON CONFLICT(tenant_id,automation_id,source_key) DO NOTHING`,
+          [randomUUID(), `reconcile:${evidence.receiptKey}`, row.tenant_id, row.idempotency_key],
+        );
+      }
+    }
+    const evaluation = await client.query(
+      `SELECT evaluation_id FROM ${this.tables.evaluations} WHERE provider_attempt_id=$1 FOR UPDATE`,
+      [row.provider_attempt_id],
+    );
+    if (!evaluation.rows[0]) return resolved ? 'generic_resolved' : 'unresolved';
+    if (evidence.observedState === 'not_found') {
+      await client.query(
+        `UPDATE ${this.tables.evaluations}
+            SET state='pending',decision=$2,provider_attempt_id=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE evaluation_id=$1`,
+        [evaluation.rows[0].evaluation_id, JSON.stringify({ reason: 'provider_receipt_not_found', receiptKey: evidence.receiptKey })],
+      );
+      return 'evaluation_retry';
+    }
+    if (evidence.observedState === 'completed') {
+      await client.query(
+        `UPDATE ${this.tables.evaluations}
+            SET state='unverifiable',decision=$2,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE evaluation_id=$1`,
+        [evaluation.rows[0].evaluation_id, JSON.stringify({
+          decision: 'unverifiable', reason: 'provider_receipt_completed_without_trusted_decision',
+          confidence: 0, receiptKey: evidence.receiptKey,
+        })],
+      );
+      return 'evaluation_completed';
+    }
+    return 'unresolved';
   }
   async control(client:Client,current:SessionAutomationSnapshot,action:'pause'|'resume'|'run'|'clear'|'reconcile',reconciliation?:SessionAutomationReconciliationEvidence):Promise<SessionAutomationSnapshot>{
     let status=current.status, phase=current.phase, generation=current.generation, epoch=0;
     if(action==='pause'){status='paused';phase=current.activeRunId?'running':'idle';generation++;await client.query(`UPDATE ${this.tables.wakeups} SET state='superseded' WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`,[current.tenantId,current.automationId]);}
     if(action==='resume'){if(!['paused','blocked'].includes(status))throw new SessionAutomationConflictError('CONFLICT','仅 paused/blocked 可 resume',current);status='active';phase=current.activeRunId?'running':'waiting';generation++;epoch=1;if(current.activeRunId)await this.enqueueCancellationTx(client,current,current.activeRunId,'session_automation_resume_drain');}
     if(action==='clear'){status=current.activeRunId?'cancelling':'cancelled';phase=current.activeRunId?'running':'terminal';generation++;await client.query(`UPDATE ${this.tables.wakeups} SET state='superseded' WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`,[current.tenantId,current.automationId]);if(current.activeRunId)await this.enqueueCancellationTx(client,current,current.activeRunId,'session_automation_clear');}
-    if(action==='reconcile'){if(status!=='reconcile_required')throw new SessionAutomationConflictError('CONFLICT','当前无需 reconcile',current);if(!reconciliation)throw new SessionAutomationConflictError('INVALID_COMMAND','reconcile 需要 provider receipt evidence',current);const resolved=await this.reconcileProviderEvidence(client,current,reconciliation);if(resolved){status='paused';phase=current.activeRunId?'running':'idle';generation++;if(current.activeRunId)await this.enqueueCancellationTx(client,current,current.activeRunId,'session_automation_reconciled_drain');}}
+    if(action==='reconcile'){
+      if(!reconciliation)throw new SessionAutomationConflictError('INVALID_COMMAND','reconcile 需要 provider receipt evidence',current);
+      if(status!=='reconcile_required'){
+        const duplicate=await client.query(`SELECT provider_attempt_id,observed_state,(receipt_payload=$3::jsonb) AS same_payload FROM ${this.tables.reconciliationReceipts} WHERE tenant_id=$1 AND receipt_key=$2`,[current.tenantId,reconciliation.receiptKey,JSON.stringify(reconciliation.receiptPayload)]);
+        const row=duplicate.rows[0];
+        if(row&&row.provider_attempt_id===reconciliation.providerAttemptId&&row.observed_state===reconciliation.observedState&&row.same_payload===true)return current;
+        throw new SessionAutomationConflictError('CONFLICT','当前无需 reconcile',current);
+      }
+      const outcome=await this.reconcileProviderEvidence(client,current,reconciliation);
+      if(outcome==='generic_resolved'){status='paused';phase=current.activeRunId?'running':'idle';generation++;if(current.activeRunId)await this.enqueueCancellationTx(client,current,current.activeRunId,'session_automation_reconciled_drain');}
+      if(outcome==='evaluation_retry'){status='active';phase=current.activeRunId?'running':'waiting';}
+      if(outcome==='evaluation_completed'){status='blocked';phase='idle';}
+    }
     await client.query(`UPDATE ${this.tables.automations} SET status=$3,phase=$4,generation=$5,control_version=control_version+1,projection_version=projection_version+1,continuation_epoch=continuation_epoch+$6,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2`,[current.tenantId,current.automationId,status,phase,generation,epoch]);
     const next=(await this.getLocked(client,current.tenantId,current.sessionId,current.automationId))!;
     if(action==='resume'||action==='run')await this.scheduleTx(client,{tenantId:next.tenantId,sessionId:next.sessionId,automationId:next.automationId,incarnationId:next.incarnationId,generation:next.generation,specVersion:next.specVersion,continuationEpoch:epoch||Number(Date.now()),triggerKey:action==='run'?`manual:${next.automationId}:g${next.generation}:${randomUUID()}`:`initial:${next.automationId}:g${next.generation}:e${epoch}`,dueAt:new Date(),payload:{spec:next.spec}});

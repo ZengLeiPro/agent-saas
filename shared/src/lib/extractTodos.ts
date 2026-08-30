@@ -336,6 +336,8 @@ export interface BusinessStepEventItem {
   isCurrent?: boolean;
   /** plan 已被 empty/task-only 快照显式关闭；保留历史导航但不再显示运行态。 */
   isClosed?: boolean;
+  /** 同 Run 内由 reset 划分的稳定计划世代；历史前插时用于安全重映射。 */
+  generationId?: string;
 }
 
 export interface BusinessStepProjection {
@@ -400,6 +402,8 @@ export function projectBusinessStepEvents(
 
   let baseline: Map<string, TodoItem> | null = null;
   let latestActiveKey: string | null = null;
+  /** 可在边界后继续的唯一 in_progress / waiting 步骤。 */
+  let latestResumeKey: string | null = null;
   /** 当前业务 Run 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
   let currentPlanEvent: BusinessStepEventItem | null = null;
   let currentPlanRunId: string | null = null;
@@ -443,7 +447,7 @@ export function projectBusinessStepEvents(
     const hadBusinessPlan = baseline !== null;
     const resetRunId = currentPlanRunId;
     const resetPlanEvent = currentPlanEvent;
-    const previousActiveKey = latestActiveKey;
+    const previousResumeKey = latestResumeKey;
     const resumeAnchorMessageId = pendingSectionResumeAnchorId ?? message.id;
     const hasProcessAfterBoundary = pendingSectionResumeAnchorId !== null;
     const continuesCurrentRun = currentPlanRunId !== null && message.runId === currentPlanRunId;
@@ -452,6 +456,7 @@ export function projectBusinessStepEvents(
       && (pendingSectionBoundary || (currentPlanRunId !== null && message.runId !== undefined))) {
       baseline = null;
       latestActiveKey = null;
+      latestResumeKey = null;
       currentPlanEvent = null;
       currentPlanRunId = null;
       lastProgressEvent = null;
@@ -467,7 +472,10 @@ export function projectBusinessStepEvents(
       // 从业务计划退回空列表或纯 task 时，发一条仅供章节化消费的 reset：
       // groupMessages 据此关闭开放节，主区投影会忽略它，不制造第二套步骤正文。
       if (hadBusinessPlan) {
-        if (resetPlanEvent) resetPlanEvent.isClosed = true;
+        if (resetPlanEvent) {
+          resetPlanEvent.isClosed = true;
+          if (resetPlanEvent.runId) resetPlanEvent.generationId = `reset:${message.id}`;
+        }
         pushEvents(message.id, [{
           type: "business_step",
           id: `bs-${message.id}-reset`,
@@ -479,6 +487,7 @@ export function projectBusinessStepEvents(
       }
       baseline = null;
       latestActiveKey = null;
+      latestResumeKey = null;
       currentPlanEvent = null;
       currentPlanRunId = null;
       lastProgressEvent = null;
@@ -488,7 +497,11 @@ export function projectBusinessStepEvents(
     const stepCount = businessTodos.length;
     const indexByKey = new Map(businessTodos.map((todo, index) => [todoItemKey(todo), index + 1]));
     const activeTodo = businessTodos.find((todo) => todo.status === "in_progress");
+    const waitingTodos = businessTodos.filter((todo) => todo.status === "waiting");
     latestActiveKey = activeTodo ? todoItemKey(activeTodo) : null;
+    latestResumeKey = activeTodo
+      ? todoItemKey(activeTodo)
+      : waitingTodos.length === 1 ? todoItemKey(waitingTodos[0]) : null;
 
     if (baseline === null) {
       const planEvent: BusinessStepEventItem = {
@@ -497,6 +510,7 @@ export function projectBusinessStepEvents(
         anchorMessageId: message.id,
         ...(message.runId ? { runId: message.runId } : {}),
         kind: "plan",
+        ...(message.runId ? { generationId: `open:${message.runId}` } : {}),
         todos: businessTodos,
         stepCount,
       };
@@ -547,8 +561,8 @@ export function projectBusinessStepEvents(
       // 转为 in_progress 仍走常规差分，不重复发 start。
       const terminalKind = TERMINAL_KIND_BY_STATUS[todo.status];
       const resumesInterruptedActive = resumesCurrentRunAfterSectionBoundary
-        && key === previousActiveKey
-        && prevStatus === "in_progress"
+        && key === previousResumeKey
+        && (prevStatus === "in_progress" || prevStatus === "waiting")
         && (todo.status === "in_progress" || (hasProcessAfterBoundary && terminalKind !== undefined));
       if (prevStatus === todo.status && !resumesInterruptedActive) continue;
 
@@ -565,7 +579,7 @@ export function projectBusinessStepEvents(
           ...base,
           id: `bs-${resumeAnchorMessageId}-${key}-start`,
           anchorMessageId: resumeAnchorMessageId,
-          todo: prev ?? todo,
+          todo: prev?.status === "waiting" ? { ...prev, status: "in_progress" } : prev ?? todo,
           kind: "start",
         });
       }

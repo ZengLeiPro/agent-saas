@@ -116,20 +116,30 @@ export function useBusinessStepDetail({
   useEffect(() => {
     if (!selection || followMode !== 'follow') return;
     const plan = catalog.planById.get(selection.planId);
-    if (!plan?.currentTodoKey || plan.currentTodoKey === selection.todoKey) return;
-    setSelection({ ...selection, todoKey: plan.currentTodoKey });
+    if (!plan?.currentTodoKey) {
+      setFollowMode('fixed');
+      return;
+    }
+    if (plan.currentTodoKey !== selection.todoKey) {
+      setSelection({ ...selection, todoKey: plan.currentTodoKey });
+    }
   }, [catalog.planById, followMode, selection]);
+
+  useEffect(() => {
+    if (!selection || !selectedPlan) return;
+    if (selection.generationId === selectedPlan.event.generationId) return;
+    setSelection({ ...selection, generationId: selectedPlan.event.generationId });
+  }, [selectedPlan, selection]);
 
   useEffect(() => {
     if (!selection || selectedDetail) return;
     const replacementPlans = catalog.plans.filter((plan) =>
       plan.details.some((detail) => detail.todoKey === selection.todoKey)
-      && (selection.runId ? plan.event.runId === selection.runId : !plan.event.runId));
-    const replacementPlan = selection.runId || replacementPlans.length === 1
-      ? replacementPlans.at(-1)
-      : null;
-    // legacy transcript 无 runId：仅在 todoKey 命中的无 runId 计划唯一时迁移；
-    // 歧义时仍关闭详情，不能用跨 Run 错选换取“看起来没关”。
+      && (selection.runId ? plan.event.runId === selection.runId : !plan.event.runId)
+      && (!selection.generationId || plan.event.generationId === selection.generationId));
+    const replacementPlan = replacementPlans.length === 1 ? replacementPlans[0] : null;
+    // 有 runId 也必须按 reset 划分的计划世代唯一匹配；legacy 无 runId 则沿用
+    // todoKey 唯一候选。任何歧义都关闭详情，不能默认跳到最后一个计划。
     if (replacementPlan) {
       setSelection({ ...selection, planId: replacementPlan.event.id });
       return;

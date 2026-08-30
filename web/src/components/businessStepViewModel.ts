@@ -12,6 +12,7 @@ export interface BusinessStepSelection {
   sessionId: string | null;
   runId: string | null;
   planId: string;
+  generationId?: string;
   todoKey: string;
 }
 
@@ -65,8 +66,9 @@ export function detailSelection(
   runId: string | null | undefined,
   planId: string,
   todoKey: string,
+  generationId?: string,
 ): BusinessStepSelection {
-  return { sessionId: sessionId ?? null, runId: runId ?? null, planId, todoKey };
+  return { sessionId: sessionId ?? null, runId: runId ?? null, planId, todoKey, generationId };
 }
 
 export function findBusinessStepDetail(

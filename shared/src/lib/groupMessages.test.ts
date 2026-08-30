@@ -426,7 +426,7 @@ describe('groupMessages sectioning（章节化）', () => {
       item.type === 'activity_group' && item.items.some((nested) => nested.id === 'read-after'))).toBe(true);
   });
 
-  it('用户边界后先执行工具、再 completed 时，后半过程归回同一步骤详情', () => {
+  it('用户边界后先执行工具、再 completed 时，后半过程归回原步骤详情', () => {
     const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
     const completed = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }];
     const result = groupMessages([
@@ -466,6 +466,31 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(section.items.map((item) => item.id)).toEqual(['connector-after', 'artifact-after']);
     expect(section.systemActionIds).toEqual(['connector-after']);
     expect(section.terminal).toMatchObject({ kind: 'wait', anchorMessageId: 'todo-wait' });
+  });
+
+  it('waiting 后跨用户边界的 Connector 与 Artifact 在 completed 时归回步骤详情', () => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const waiting = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'waiting' }];
+    const completed = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }];
+    const result = groupMessages([
+      businessTodo('todo-start', active, 'run-1'),
+      businessTodo('todo-wait', waiting, 'run-1'),
+      user('user-resume'),
+      tool('connector-resume', {
+        toolName: 'DwsBusiness', resultReady: true,
+        presentation: { title: '钉钉续接', connector: { system: '钉钉', write: true } },
+      }),
+      {
+        id: 'artifact-resume', type: 'file_download', fileName: '续接.xlsx',
+        fileType: 'xlsx', filePath: 'assets/续接.xlsx', fileSize: 128,
+      },
+      businessTodo('todo-done', completed, 'run-1'),
+    ], false, opts);
+
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.items.map((item) => item.id)).toEqual(['connector-resume', 'artifact-resume']);
+    expect(section.systemActionIds).toEqual(['connector-resume']);
+    expect(section.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
   });
 
   it.each([

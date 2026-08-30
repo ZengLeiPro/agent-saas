@@ -244,6 +244,33 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText("等待财务确认")).toBeNull();
   });
 
+  it("waiting 后跨边界的 Connector 与 Artifact 在 completed 时归回同一步骤详情", async () => {
+    const messages: MessageItem[] = [
+      todoSnapshot("wait-start", [{ id: "verify", kind: "business", content: "等待续接步骤", status: "in_progress" }], "run-wait"),
+      todoSnapshot("wait-terminal", [{ id: "verify", kind: "business", content: "等待续接步骤", status: "waiting" }], "run-wait"),
+      { id: "wait-user", type: "user", content: "继续" },
+      {
+        id: "wait-connector", type: "tool_use", toolName: "DwsBusiness", toolId: "wait-connector",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "等待后写入", connector: { system: "钉钉", write: true } },
+      },
+      {
+        id: "wait-artifact", type: "file_download", fileName: "等待续接.xlsx", fileType: "xlsx",
+        filePath: "assets/等待续接.xlsx", fileSize: 128,
+      },
+      todoSnapshot("wait-done", [{ id: "verify", kind: "business", content: "等待续接步骤", status: "completed" }], "run-wait"),
+    ];
+    render(<Harness messages={messages} debugMode />);
+    await waitForBusinessPlan();
+    expect(screen.queryByText(/等待后写入/)).toBeNull();
+    expect(screen.queryByText("等待续接.xlsx")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /等待续接步骤/ }));
+    await waitFor(() => expect(screen.getByText("等待续接.xlsx")).toBeTruthy());
+    const processTab = screen.queryByRole("tab", { name: "过程" });
+    if (processTab) fireEvent.click(processTab);
+    await waitFor(() => expect(screen.getByText(/等待后写入/)).toBeTruthy());
+  });
+
   it("点击当前步骤默认跟随；快照推进后自动切到新的当前步骤", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(1)} />);
     await waitForBusinessPlan();
@@ -253,6 +280,22 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     rerender(<Harness messages={workflowMessages(2)} />);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：写入结果")).toBeTruthy());
     expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+  });
+
+  it("跟随中的计划发生 reset 后自动收口为固定查看", async () => {
+    const active = todoSnapshot("follow-reset-start", [
+      { id: "verify", kind: "business", content: "重置跟随步骤", status: "in_progress" },
+    ], "run-follow-reset");
+    const reset = todoSnapshot("follow-reset-end", [], "run-follow-reset");
+    const { rerender } = render(<Harness messages={[active]} />);
+    await waitForBusinessPlan();
+    fireEvent.click(screen.getByRole("button", { name: /重置跟随步骤/ }));
+    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+
+    rerender(<Harness messages={[active, reset]} />);
+
+    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
+    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
   });
 
   it("用户固定查看历史步骤后，新快照只更新数据，不强制切走", async () => {
@@ -266,6 +309,29 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.getByRole("button", { name: "返回当前步骤" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "返回当前步骤" }));
     expect(screen.getByLabelText("步骤详情：归档凭据")).toBeTruthy();
+  });
+
+  it("同 Run reset 前后复用 todo id 时，历史前插仍保持旧计划世代", async () => {
+    const oldCurrent = todoSnapshot("generation-current", [
+      { id: "same-step", kind: "business", content: "同标识步骤（旧世代）", status: "in_progress" },
+    ], "run-generation");
+    const oldEarlier = todoSnapshot("generation-earlier", [
+      { id: "same-step", kind: "business", content: "同标识步骤（旧世代）", status: "pending" },
+    ], "run-generation");
+    const reset = todoSnapshot("generation-reset", [], "run-generation");
+    const next = todoSnapshot("generation-next", [
+      { id: "same-step", kind: "business", content: "同标识步骤（新世代）", status: "in_progress" },
+    ], "run-generation");
+    const { rerender } = render(<Harness messages={[oldCurrent, reset, next]} />);
+    await waitForBusinessPlan();
+    fireEvent.click(screen.getByRole("button", { name: /同标识步骤（旧世代）/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：同标识步骤（旧世代）")).toBeTruthy());
+
+    rerender(<Harness messages={[oldEarlier, oldCurrent, reset, next]} />);
+
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：同标识步骤（旧世代）")).toBeTruthy());
+    expect(screen.getByRole("button", { name: /同标识步骤（旧世代）/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: /同标识步骤（新世代）/ }).getAttribute("aria-selected")).toBe("false");
   });
 
   it("历史前插后只在同一 Run 内重映射，避免复用 todo id 时跨 Run 错选", async () => {

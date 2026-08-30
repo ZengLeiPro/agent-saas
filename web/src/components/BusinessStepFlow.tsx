@@ -241,6 +241,7 @@ function PlanTodoRow({
   selected,
   detailPanelId,
   planClosed,
+  generationId,
   onSelect,
 }: {
   todo: TodoItem;
@@ -252,9 +253,16 @@ function PlanTodoRow({
   selected: BusinessStepSelection | null;
   detailPanelId: string;
   planClosed?: boolean;
+  generationId?: string;
   onSelect?: (selection: BusinessStepSelection) => void;
 }) {
-  const selection = detailSelection(sessionId, runId, planId, todo.id ? `id:${todo.id}` : `legacy:${todo.content}`);
+  const selection = detailSelection(
+    sessionId,
+    runId,
+    planId,
+    todo.id ? `id:${todo.id}` : `legacy:${todo.content}`,
+    generationId,
+  );
   const selectionKey = businessStepSelectionKey(selection);
   const isSelected = selected?.planId === planId && selected.todoKey === selection.todoKey;
   const endedWithoutTerminal = planClosed && todo.status === "in_progress";
@@ -334,6 +342,7 @@ export function BusinessStepFlow({
             selected={selected}
             detailPanelId={detailPanelId}
             planClosed={event.isClosed}
+            generationId={event.generationId}
             onSelect={onSelect}
           />
         ))}

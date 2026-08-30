@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { baselineFromState, validateApprovalReason } from './promotionGateCli.js';
+import {
+  baselineFromState,
+  isRecoverableProductionState,
+  validateApprovalReason,
+} from './promotionGateCli.js';
+import type { ReleaseManifest } from '@agent/shared';
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
@@ -30,6 +35,49 @@ describe('promotion gate evidence', () => {
         sandboxImageDigest: DIGEST,
       },
     });
+  });
+
+  it('accepts only a component-wise mix of the frozen baseline and immutable target for recovery', () => {
+    const oldSha = 'c'.repeat(40);
+    const oldDigest = `sha256:${'d'.repeat(64)}`;
+    const baseline = {
+      web: { sourceSha: oldSha, artifactDigest: oldDigest },
+      api: { sourceSha: oldSha, artifactDigest: oldDigest },
+      runtimeWorker: { sourceSha: oldSha, artifactDigest: oldDigest },
+      acs: {
+        sourceSha: oldSha,
+        orchestratorArtifactDigest: oldDigest,
+        sandboxImageDigest: oldDigest,
+      },
+    };
+    const manifest = {
+      productionBaseline: baseline,
+      components: {
+        web: { sourceSha: SHA, artifactDigest: DIGEST },
+        api: { sourceSha: SHA, artifactDigest: DIGEST },
+        runtimeWorker: { sourceSha: SHA, artifactDigest: DIGEST },
+        acs: {
+          sourceSha: SHA,
+          orchestratorArtifactDigest: DIGEST,
+          sandboxImageDigest: DIGEST,
+        },
+      },
+    } as ReleaseManifest;
+    const partial = {
+      components: {
+        web: { gitSha: oldSha, artifactDigest: oldDigest },
+        api: { gitSha: SHA, artifactDigest: DIGEST },
+        runtimeWorker: { gitSha: SHA, artifactDigest: DIGEST },
+        acs: {
+          gitSha: SHA,
+          orchestratorArtifactDigest: DIGEST,
+          sandboxImageDigest: DIGEST,
+        },
+      },
+    };
+    expect(isRecoverableProductionState(partial, manifest)).toBe(true);
+    partial.components.web = { gitSha: 'e'.repeat(40), artifactDigest: oldDigest };
+    expect(isRecoverableProductionState(partial, manifest)).toBe(false);
   });
 
   it('requires structured approval bound to the exact release and Manifest', () => {

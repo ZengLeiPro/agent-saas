@@ -104,6 +104,7 @@ describe('RuntimeEventRetention', () => {
       mode: fromMode,
       sweepIntervalMinutes: fromInterval,
       nextScheduledAt: expect.any(String),
+      authority: { writerId: expect.any(String), claim: true },
     })]);
     previous.stop();
 
@@ -130,7 +131,9 @@ describe('RuntimeEventRetention', () => {
       lastStartedAt: null,
       lastCompletedAt: null,
       nextScheduledAt: expect.any(String),
+      authority: { writerId: expect.any(String), claim: true },
     })]);
+    expect(currentSnapshots[0].authority.writerId).not.toBe(previousSnapshots[0].authority.writerId);
     const scheduledMs = Date.parse(currentSnapshots[0].nextScheduledAt);
     expect(scheduledMs).toBeGreaterThanOrEqual(beforeStart + toInterval * 60_000);
     expect(scheduledMs).toBeLessThanOrEqual(Date.now() + toInterval * 60_000);
@@ -565,19 +568,23 @@ describe('RuntimeEventRetention', () => {
     }
   });
 
-  it('records running and successful dry-run snapshots without failing on recorder errors', async () => {
+  it('explicitly reclaims one fenced writer across enabled dry-run snapshots', async () => {
     const pool = new FakePool();
     const snapshots: any[] = [];
     const retention = new RuntimeEventRetention({
       pool: pool as any,
       eventsTable: 'runtime_events',
       toolInvocationsTable: 'runtime_tool_invocations',
-      billingProjectionStateTable: 'runtime_billing_projection_state',
+      billingProjectionStateTable: 'runtime_billing_projection_state', enabled: true,
       statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
     });
 
     await retention.runOnce();
     expect(snapshots.map((snapshot) => snapshot.state)).toEqual(['running', 'dry_run_succeeded']);
+    expect(snapshots.map((snapshot) => snapshot.authority)).toEqual([
+      { writerId: expect.any(String), claim: false }, { writerId: expect.any(String), claim: false },
+    ]);
+    expect(snapshots[0].authority.writerId).toBe(snapshots[1].authority.writerId);
     expect(snapshots.at(-1)).toMatchObject({
       schemaVersion: 1,
       mode: 'dry-run',
@@ -585,6 +592,9 @@ describe('RuntimeEventRetention', () => {
       watermarks: { legal: '0', billing: '0', effectiveDeleteThrough: '0' },
     });
     expect(snapshots.at(-1).lastSuccessAt).toBeTruthy();
+    await retention.reassertStatusAuthority(true);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'dry_run_succeeded',
+      authority: { writerId: snapshots[0].authority.writerId, claim: true } });
 
     const warn = vi.fn();
     const recorderFailure = new RuntimeEventRetention({

@@ -411,6 +411,10 @@ export interface AppRuntime {
    * 仅 processRole=all/runtime-worker 且 cron 启用时有实际效果；替代旧的 cronService.start() 直调。
    */
   startCronCoordinator: () => void;
+  /** 蓝绿旧 worker 排空后，以 CAS 语义重新发布当前 retention status authority。 */
+  reassertRuntimeEventRetentionAuthority: () => Promise<void>;
+  /** 发布失败回退时让仍存活的旧 worker 显式重新 claim authority。 */
+  claimRuntimeEventRetentionAuthority: () => Promise<void>;
   /**
    * SIGUSR2 drain 序列（顺序敏感）：停/取消系统指标扫描 → 停 reconcile 定时器 → 停 cron 触发 →
    * 等 in-flight cron job 结清 → 释放 cron leadership（此后新实例可接管）→
@@ -421,6 +425,7 @@ export interface AppRuntime {
 }
 
 
+/** Runtime construction options. */
 export interface CreateRuntimeOptions {
   processCwd?: string;
   processRole?: AppRuntimeProcessRole;

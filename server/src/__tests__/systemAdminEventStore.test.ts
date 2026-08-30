@@ -171,7 +171,7 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
-  it('serializes persisted retention and capacity series without querying runtime_events', async () => {
+  it('serializes persisted retention and capacity series without querying live runtime_events', async () => {
     const retention = metric({
       metric: 'runtime_event_retention',
       label: 'status',
@@ -211,6 +211,30 @@ describe('GET /api/admin/system/event-store', () => {
     })]);
     expect(store.listMetricSeries).toHaveBeenCalledWith('pg_table_size', 'runtime_events', 48);
     expect(JSON.stringify(body)).not.toContain('authorizationRef');
+  });
+
+  it('keeps a cleaned EventStore successful when current max is below monotonic watermarks', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail({
+        watermarks: { legal: '100', billing: '100', effectiveDeleteThrough: '100' },
+        maxGlobalSequence: '0',
+      }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: {
+        status: 'execute_succeeded',
+        watermarks: { billing: '100', effective: '100', maxGlobalSequence: '0', lag: '0' },
+      },
+    });
   });
 
   it.each([
@@ -354,8 +378,7 @@ describe('GET /api/admin/system/event-store', () => {
     ['负耗时', { durationMs: -1 }],
     ['非法水位', { watermarks: { legal: '20', billing: 'bad', effectiveDeleteThrough: '18' } }],
     ['effective 不是双水位最小值', { watermarks: { legal: '20', billing: '18', effectiveDeleteThrough: '17' } }],
-    ['billing 超过最大序号', { maxGlobalSequence: '17' }],
-    ['非法最大序号', { maxGlobalSequence: '-1' }],
+    ['负数最大序号', { maxGlobalSequence: '-1' }],
     ['空分类', { categories: {} }],
     ['分类不完整', { categories: { 'tool-delta': { eligible: 2, deleted: 2 } } }],
     ['未知分类', { categories: retentionCategories({ future: { eligible: 0, deleted: 0 } }) }],

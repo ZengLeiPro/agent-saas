@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type pg from 'pg';
 
 export type RuntimeEventRetentionState =
@@ -27,6 +29,8 @@ export interface RuntimeEventRetentionStatusSnapshot {
   };
   maxGlobalSequence: string | null;
   categories: Record<string, { eligible: number; deleted: number }>;
+  /** Store 内部跨进程 fencing；System Admin 响应不会暴露。 */
+  authority?: { writerId: string; claim: boolean };
 }
 
 export interface RuntimeEventRetentionOptions {
@@ -123,6 +127,9 @@ export class RuntimeEventRetention {
   private nextScheduledAt: string | null = null;
   private startGeneration = 0;
   private statusPersistenceAvailable = true;
+  // 仅在串行状态写成功后更新，handoff refresh 在队列执行时读取。
+  private lastPublishedStatus: RuntimeEventRetentionStatusSnapshot | undefined;
+  private readonly statusAuthority = { writerId: randomUUID() };
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
@@ -166,11 +173,11 @@ export class RuntimeEventRetention {
       this.lastStartedAt = now;
       this.lastCompletedAt = now;
       statusRecorded = await this.recordStatus(
-        this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }), generation,
+        this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category, authorityClaim: true }), generation,
       );
       this.options.logger?.warn?.(`RuntimeEventRetention configuration blocked: category=${gateError.category}`);
     } else {
-      statusRecorded = await this.recordStatus(this.snapshot('scheduled'), generation);
+      statusRecorded = await this.recordStatus(this.snapshot('scheduled', { authorityClaim: true }), generation);
     }
     if (generation !== this.startGeneration || this.stopped) return;
     if (!statusRecorded) {
@@ -194,6 +201,31 @@ export class RuntimeEventRetention {
 
   isStatusPersistenceAvailable(): boolean {
     return this.statusPersistenceAvailable;
+  }
+
+  async reassertStatusAuthority(claim = false): Promise<void> {
+    if (this.options.enabled !== true) return;
+    const write = async (): Promise<void> => {
+      if (!this.options.statusRecorder || !this.lastPublishedStatus) {
+        throw new Error('RuntimeEventRetention has no published status to reassert');
+      }
+      const snapshot = {
+        ...this.lastPublishedStatus,
+        authority: { ...this.statusAuthority, claim },
+      };
+      await this.options.statusRecorder(snapshot);
+      this.statusPersistenceAvailable = true;
+      this.lastPublishedStatus = snapshot;
+    };
+    const completion = this.statusWriteTail.then(write, write);
+    this.statusWriteTail = completion;
+    try {
+      await completion;
+    } catch {
+      this.statusPersistenceAvailable = false;
+      this.options.logger?.warn?.('RuntimeEventRetention status authority reassertion failed');
+      throw new Error('RuntimeEventRetention failed to reassert status authority');
+    }
   }
 
   stop(): void {
@@ -364,6 +396,7 @@ export class RuntimeEventRetention {
       effectiveDeleteThrough: string | null;
       maxGlobalSequence: string | null;
       categories: Record<string, { eligible: number; deleted: number }>;
+      authorityClaim: boolean;
     }> = {},
   ): RuntimeEventRetentionStatusSnapshot {
     return {
@@ -384,6 +417,7 @@ export class RuntimeEventRetention {
       },
       maxGlobalSequence: patch.maxGlobalSequence ?? null,
       categories: patch.categories ?? {},
+      authority: { ...this.statusAuthority, claim: patch.authorityClaim === true },
     };
   }
 
@@ -404,6 +438,7 @@ export class RuntimeEventRetention {
         await this.options.statusRecorder!(snapshot);
         if (!isCurrent()) return;
         this.statusPersistenceAvailable = true;
+        this.lastPublishedStatus = snapshot;
         recorded = true;
       } catch {
         if (!isCurrent()) return;

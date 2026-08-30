@@ -2489,7 +2489,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
   };
 
-  // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释，由 index.ts 调用）
+  // SIGUSR2 drain 序列
   let runtimeDrainStarted = false;
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
@@ -3059,7 +3059,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     startCronCoordinator: () => {
       cronLeadership?.start();
     },
-    beginRuntimeDrain,
+    reassertRuntimeEventRetentionAuthority: async () => { await runtimeEventRetention?.reassertStatusAuthority(); }, claimRuntimeEventRetentionAuthority: async () => { await runtimeEventRetention?.reassertStatusAuthority(true); }, beginRuntimeDrain,
     triggerTokenUsageRebuild: businessDbHandle
       ? () =>
           rebuildTokenUsageFromJsonl(businessDbHandle!, {

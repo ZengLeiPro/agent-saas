@@ -173,12 +173,11 @@ function hasConsistentRetentionWatermarks(watermarks: {
   const effective = BigInt(watermarks.effective);
   const maxGlobalSequence = BigInt(watermarks.maxGlobalSequence);
   const lag = BigInt(watermarks.lag);
-  return effective === (legal < billing ? legal : billing)
-    && maxGlobalSequence >= billing
-    && lag === maxGlobalSequence - effective;
+  const expectedLag = maxGlobalSequence > effective ? maxGlobalSequence - effective : 0n;
+  return effective === (legal < billing ? legal : billing) && lag === expectedLag;
 }
 
-// 响应生成时间、运行时间与容量时间共享 5 分钟时钟偏差门禁。
+// 响应生成、运行与容量时间共享 5 分钟时钟偏差门禁。
 const eventStoreStatusSchema = z.object({
   schemaVersion: z.literal(1),
   available: z.boolean(),

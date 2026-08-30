@@ -73,8 +73,8 @@ function hasConsistentRetentionWatermarks(
   const values = [
     watermarks.legal,
     watermarks.billing,
-    watermarks.effective,
     watermarks.maxGlobalSequence,
+    watermarks.effective,
     watermarks.lag,
   ];
   if (values.some((value) => value === null || !/^\d+$/.test(value))) return false;
@@ -83,9 +83,8 @@ function hasConsistentRetentionWatermarks(
   const effective = BigInt(watermarks.effective!);
   const maxGlobalSequence = BigInt(watermarks.maxGlobalSequence!);
   const lag = BigInt(watermarks.lag!);
-  return effective === (legal < billing ? legal : billing)
-    && maxGlobalSequence >= billing
-    && lag === maxGlobalSequence - effective;
+  const expectedLag = maxGlobalSequence > effective ? maxGlobalSequence - effective : 0n;
+  return effective === (legal < billing ? legal : billing) && lag === expectedLag;
 }
 
 function hasSufficientCapacityTrend(data: EventStoreStatusResponse): boolean {

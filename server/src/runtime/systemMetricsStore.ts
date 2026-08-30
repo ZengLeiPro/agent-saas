@@ -245,6 +245,7 @@ export class PgSystemMetricsStore {
          FOR UPDATE`,
       );
       const current = previous.rows[0];
+      assertRuntimeEventRetentionAuthority(current?.detail_json, snapshot);
       const persisted = current?.detail_json?.lastSuccessAt;
       const lastSuccessAt = laterTimestamp(snapshot.lastSuccessAt, typeof persisted === 'string' ? persisted : null);
       const values = [snapshot.durationMs ?? 0, JSON.stringify({ ...snapshot, lastSuccessAt })];
@@ -501,6 +502,26 @@ function mapWorkspaceUsageRow(row: WorkspaceUsageRow): WorkspaceUsageRecord {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function assertRuntimeEventRetentionAuthority(
+  persisted: Record<string, unknown> | null | undefined,
+  snapshot: RuntimeEventRetentionStatusSnapshot,
+): void {
+  const current = persisted?.authority;
+  if (!isRetentionAuthority(current)) return;
+  const incoming = snapshot.authority;
+  if (!incoming || typeof incoming.writerId !== 'string' || incoming.writerId.length === 0) {
+    throw new Error('RuntimeEventRetention status writer authority missing');
+  }
+  if (incoming.writerId === current.writerId || incoming.claim === true) return;
+  throw new Error('RuntimeEventRetention status authority superseded');
+}
+
+function isRetentionAuthority(value: unknown): value is { writerId: string } {
+  return !!value && typeof value === 'object'
+    && typeof (value as { writerId?: unknown }).writerId === 'string'
+    && (value as { writerId: string }).writerId.length > 0;
 }
 
 function laterTimestamp(current: string | null, persisted: string | null): string | null {

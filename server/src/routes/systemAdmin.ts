@@ -546,14 +546,13 @@ function hasConsistentRetentionWatermarks(snapshot: {
   effective: string | null;
   maxGlobalSequence: string | null;
 }): boolean {
-  if (snapshot.billing === null || snapshot.effective === null || snapshot.maxGlobalSequence === null) {
+  if (snapshot.maxGlobalSequence === null || snapshot.billing === null || snapshot.effective === null) {
     return false;
   }
   const legal = BigInt(snapshot.legal);
   const billing = BigInt(snapshot.billing);
   const effective = BigInt(snapshot.effective);
-  const maxGlobalSequence = BigInt(snapshot.maxGlobalSequence);
-  return effective === (legal < billing ? legal : billing) && maxGlobalSequence >= billing;
+  return effective === (legal < billing ? legal : billing);
 }
 
 function unavailableCapacity(tableName?: string) {

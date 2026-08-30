@@ -111,7 +111,7 @@ describe('PgSystemMetricsStore', () => {
     expect(index?.text).toContain("WHERE metric = 'runtime_event_retention' AND label = 'status'");
   });
 
-  it('updates one indexed status row and keeps lastSuccessAt monotonic without JSON history sorting', async () => {
+  it('updates one indexed status row while keeping lastSuccessAt monotonic without JSON history sorting', async () => {
     const pool = createFakePool();
     (pool as any).connect = async () => ({
       async query(text: string, values: unknown[] = []) {
@@ -169,6 +169,48 @@ describe('PgSystemMetricsStore', () => {
     expect(compact?.text).toContain("label = 'status' AND id <> $1");
     expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
     expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('rejects a retiring worker write after another worker claims status authority', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (text.includes('FOR UPDATE')) {
+          return {
+            rows: [{ id: 1, detail_json: { authority: { writerId: 'worker-candidate', claim: true } } }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'failed',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: '2026-08-29T13:00:00.000Z',
+      lastCompletedAt: '2026-08-29T13:00:01.000Z',
+      lastSuccessAt: null,
+      durationMs: 1000,
+      errorCategory: 'execution_failed',
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+      authority: { writerId: 'worker-old', claim: false },
+    })).rejects.toThrow('authority superseded');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries.some((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`)
+      || query.text.includes(`INSERT INTO ${store.systemMetricsTable}`))).toBe(false);
+    expect(pool.queries.some((query) => query.text === 'ROLLBACK')).toBe(true);
   });
 
   it('marks status unavailable without writes when the retention authority lock is unavailable', async () => {

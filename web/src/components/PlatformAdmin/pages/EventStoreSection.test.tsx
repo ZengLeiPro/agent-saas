@@ -98,6 +98,16 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
+  it("清理最高序号后仍以 lag=0 展示健康成功状态", () => {
+    const data = fixture();
+    data.retention.watermarks.maxGlobalSequence = "0";
+    data.retention.watermarks.lag = "0";
+    render(<EventStoreSection data={data} />);
+
+    expect(screen.getAllByText("健康").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("0").length).toBeGreaterThan(0);
+  });
+
   it.each([
     ["execute_succeeded", null, "执行成功"],
     ["failed", "execution_failed", "失败"],
@@ -134,7 +144,7 @@ describe("EventStoreSection", () => {
     ["未来成功时间", (data: EventStoreStatusResponse) => { data.retention.lastSuccessAt = "2099-01-01T00:00:00.000Z"; }],
     ["负耗时", (data: EventStoreStatusResponse) => { data.retention.durationMs = -1; }],
     ["水位缺失", (data: EventStoreStatusResponse) => { data.retention.watermarks.billing = null; }],
-    ["水位顺序矛盾", (data: EventStoreStatusResponse) => { data.retention.watermarks.maxGlobalSequence = "100"; }],
+    ["effective 不是双水位最小值", (data: EventStoreStatusResponse) => { data.retention.watermarks.effective = "179"; }],
     ["lag 不一致", (data: EventStoreStatusResponse) => { data.retention.watermarks.lag = "41"; }],
     ["空分类", (data: EventStoreStatusResponse) => { data.retention.categories = {}; }],
     ["模式与状态不一致", (data: EventStoreStatusResponse) => { data.retention.mode = "dry-run"; }],

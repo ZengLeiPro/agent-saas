@@ -77,6 +77,24 @@ function removeReadyFile(): void {
   } catch { /* 不存在或不可删，忽略 */ }
 }
 
+function authorityAckFile(): string | undefined {
+  const readyFile = process.env.AGENT_SAAS_READYFILE;
+  return readyFile ? `${readyFile}.authority` : undefined;
+}
+
+function removeAuthorityAckFile(): void {
+  const ackFile = authorityAckFile();
+  if (!ackFile) return;
+  try { fs.unlinkSync(ackFile); } catch { /* 不存在或不可删，忽略 */ }
+}
+
+function writeAuthorityAckFile(): void {
+  const ackFile = authorityAckFile();
+  if (!ackFile) return;
+  fs.writeFileSync(`${ackFile}.candidate`, `${process.pid}\n`, 'utf-8');
+  fs.renameSync(`${ackFile}.candidate`, ackFile);
+}
+
 function syncRuntimeWorkerReadyFile(): void {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
   if (!readyFile) return;
@@ -109,6 +127,7 @@ async function startServer(): Promise<void> {
   // 蓝绿部署（2026-07-15）：把真实 node PID 写入 pidfile，部署脚本用
   // `kill -USR2 $(cat pidfile)` 精确送 drain 信号。不能用 systemctl kill
   // 的 cgroup 广播——SIGUSR2 对无 handler 的 SDK 子进程默认动作是终止。
+  removeAuthorityAckFile();
   writePidFile();
   runtime = await createRuntime({ processCwd: process.cwd(), processRole });
   serverLogger.info(`Process role: ${processRole}`);
@@ -312,7 +331,7 @@ startServer().catch((err) => {
   process.exit(1);
 });
 
-// ── 关停与 drain（2026-07-15 零停机部署批次重构）───────────────────
+// ── 关停、authority refresh/claim 与 drain（2026-07-15）──────────
 // 两条退出路径共用 shutdownCleanup：
 // - gracefulShutdown（SIGTERM/SIGINT）：≤30s 尽力清理后退出；systemd
 //   TimeoutStopSec=35 兜底 SIGKILL。
@@ -362,6 +381,7 @@ async function shutdownCleanup(): Promise<void> {
 
   removePidFile();
   removeReadyFile();
+  removeAuthorityAckFile();
 
   // 等待 stdout/stderr flush，避免日志丢失
   await new Promise<void>((resolve) => {
@@ -391,8 +411,24 @@ async function gracefulShutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// ── SIGUSR2: Drain 模式（蓝绿部署旧色排空后自退）──────────────────
+let authorityRefreshInFlight = false;
 let isDraining = false;
+function refreshRuntimeEventRetentionAuthority(signal: 'SIGUSR1' | 'SIGHUP', claim: boolean): void {
+  if (authorityRefreshInFlight || isDraining || shuttingDown || !runtime) return;
+  authorityRefreshInFlight = true;
+  const refresh = claim
+    ? runtime.claimRuntimeEventRetentionAuthority()
+    : runtime.reassertRuntimeEventRetentionAuthority();
+  void refresh.then(() => {
+    writeAuthorityAckFile();
+    serverLogger.info(`${signal} received — runtime retention authority refreshed`);
+  }).catch(() => serverLogger.error('Runtime retention authority refresh failed'))
+    .finally(() => { authorityRefreshInFlight = false; });
+}
+process.on('SIGUSR1', () => refreshRuntimeEventRetentionAuthority('SIGUSR1', false));
+process.on('SIGHUP', () => refreshRuntimeEventRetentionAuthority('SIGHUP', true));
+
+// ── SIGUSR2: Drain 模式（蓝绿部署旧色排空后自退）──────────────────
 
 process.on('SIGUSR2', () => {
   if (isDraining || shuttingDown) return;

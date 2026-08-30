@@ -13,7 +13,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
+describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => {
 
   const prefix = `retention_status_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const eventsTable = `${prefix}_events`;
@@ -162,6 +162,38 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     expect(await countAssistantStreamEvents()).toBe(0);
   });
 
+  it('删除当前最高序号后下一轮仍发布成功状态且 lag 语义为零', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}; DELETE FROM ${eventsTable}`);
+    const inserted = await pool.query<{ global_sequence: string }>(
+      `INSERT INTO ${eventsTable} (tenant_id, session_id, run_id, event_type, timestamp)
+       VALUES ('tenant-clean', 'session-clean', 'run-clean', 'model_request_finished', now() - interval '31 days')
+       RETURNING global_sequence::text`,
+    );
+    const sequence = inserted.rows[0]!.global_sequence;
+    await pool.query(
+      `UPDATE ${billingProjectionStateTable} SET last_global_sequence = $1 WHERE key = 'runtime_events'`,
+      [sequence],
+    );
+    const retention = createRetention(pool, {
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: sequence,
+      authorizationRef: 'CHG-clean',
+    });
+
+    expect((await retention.runOnce()).deleted).toBe(1);
+    const next = await retention.runOnce();
+    expect(next).toMatchObject({
+      billingWatermark: sequence,
+      effectiveDeleteThrough: sequence,
+      maxGlobalSequence: '0',
+    });
+    expect(await latestDetail()).toMatchObject({
+      state: 'execute_succeeded',
+      watermarks: { billing: sequence, effectiveDeleteThrough: sequence },
+      maxGlobalSequence: '0',
+    });
+  });
+
   it('状态锁被占用时启动有界降级，释放后可重试且不触发 retention 副作用', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
     const lockHolder = await pool.connect();
@@ -205,7 +237,7 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     retention.stop();
   }, 10_000);
 
-  it('按实际获锁顺序发布权威状态，并在裁剪和重启后保持 lastSuccessAt 单调', async () => {
+  it('按实际获锁顺序发布同一 authority 状态，并在裁剪和重启后保持 lastSuccessAt 单调', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
     const newerSuccess = statusSnapshot();
     const olderFailure = statusSnapshot({
@@ -275,6 +307,52 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     expect(await latestDetail()).toMatchObject({
       state: 'failed',
       lastSuccessAt: newerSuccess.lastSuccessAt,
+    });
+  });
+
+  it('拒绝 retiring worker 在候选 claim 后迟到覆盖状态', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    const oldAuthority = { writerId: 'worker-old', claim: true };
+    const candidateAuthority = { writerId: 'worker-candidate', claim: true };
+    await metricsStore.recordRuntimeEventRetentionStatus(statusSnapshot({ state: 'scheduled', authority: oldAuthority }));
+
+    let announceOldWrite!: () => void;
+    let resumeOldWrite!: () => void;
+    const oldWriteStarted = new Promise<void>((resolve) => { announceOldWrite = resolve; });
+    const oldWriteCanContinue = new Promise<void>((resolve) => { resumeOldWrite = resolve; });
+    const delayedPool = {
+      async connect() {
+        const client = await pool.connect();
+        return {
+          async query(text: string, values: unknown[] = []) {
+            if (text.includes('pg_try_advisory_xact_lock')) {
+              announceOldWrite();
+              await oldWriteCanContinue;
+            }
+            return client.query(text, values);
+          },
+          release: () => client.release(),
+        };
+      },
+    };
+    const retiringStore = new PgSystemMetricsStore({
+      pool: delayedPool as unknown as InstanceType<typeof Pool>,
+      tablePrefix: prefix,
+    });
+    const lateWrite = retiringStore.recordRuntimeEventRetentionStatus(statusSnapshot({
+      state: 'failed',
+      errorCategory: 'execution_failed',
+      authority: { ...oldAuthority, claim: false },
+    }));
+    await oldWriteStarted;
+    await metricsStore.recordRuntimeEventRetentionStatus(statusSnapshot({ state: 'scheduled', authority: candidateAuthority }));
+    resumeOldWrite();
+
+    await expect(lateWrite).rejects.toThrow('authority superseded');
+    expect(retiringStore.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(await latestDetail()).toMatchObject({
+      state: 'scheduled',
+      authority: candidateAuthority,
     });
   });
 

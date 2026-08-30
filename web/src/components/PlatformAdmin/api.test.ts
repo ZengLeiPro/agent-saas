@@ -83,6 +83,18 @@ describe("platform admin api", () => {
     });
   });
 
+  it("accepts a cleaned EventStore whose current max is below monotonic watermarks", async () => {
+    const fixture = eventStoreFixture();
+    fixture.retention.watermarks = {
+      legal: "100", billing: "100", effective: "100", maxGlobalSequence: "0", lag: "0",
+    };
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify(fixture), { status: 200 }));
+
+    await expect(platformAdminApi.eventStoreStatus()).resolves.toMatchObject({
+      retention: { watermarks: { billing: "100", maxGlobalSequence: "0", lag: "0" } },
+    });
+  });
+
   it.each([
     ["execute_succeeded", null],
     ["failed", "execution_failed"],
@@ -165,13 +177,6 @@ describe("platform admin api", () => {
         watermarks: { ...eventStoreFixture().retention.watermarks, maxGlobalSequence: "-1" },
       },
     }), "成功状态最大序号非法"],
-    [JSON.stringify({
-      ...eventStoreFixture(),
-      retention: {
-        ...eventStoreFixture().retention,
-        watermarks: { ...eventStoreFixture().retention.watermarks, maxGlobalSequence: "80" },
-      },
-    }), "成功状态水位顺序矛盾"],
     [JSON.stringify({
       ...eventStoreFixture(),
       retention: {

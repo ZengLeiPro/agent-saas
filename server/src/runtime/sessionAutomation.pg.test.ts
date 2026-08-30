@@ -50,10 +50,11 @@ describePg('session automation real PostgreSQL integration',()=>{
   const outbox=await pool.query(`SELECT state FROM ${store.tables.outbox} WHERE outbox_id=$1`,[dispatch!.outboxId]);
   expect(outbox.rows[0]?.state).toBe('dispatching');
   await pool.query(`UPDATE ${store.tables.outbox} SET state='dead' WHERE outbox_id=$1`,[dispatch!.outboxId]);
+  await runs.markStatus(blocker,'failed','test cleanup');
   await pool.query(`UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='idle' WHERE automation_id=$1`,[automation]);
  });
 
- it('resume keeps its queued generation fenced until durable cancellation completes',async()=>{
+ it('resume fences its queued generation until durable cancellation completes',async()=>{
   await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);
   await pool.query(`UPDATE ${store.tables.automations} SET generation=50,status='active',phase='idle',active_run_id=NULL,next_wakeup_at=NULL WHERE automation_id=$1`,[automation]);
   await wake('resume-drain-old',50);

@@ -2,15 +2,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { MAX_BODY_BYTES } from './protocol.js';
 import type { SandboxManager } from './sandboxManager.js';
-import { parseLifecycleIdentity, parseLifecycleUpdate } from './sandboxLifecyclePolicy.js';
+import { parseDeletionGenerationUpdate, parseLifecycleUpdate, parseScopeDeletion } from './sandboxLifecyclePolicy.js';
 import { sendSandboxError } from './sandboxHttp.js';
 
-export type SandboxLifecycleRoute = 'update' | 'delete-scope';
-// These paths are consumed by server/runtime/sandboxLifecycleService.ts.
+export type SandboxLifecycleRoute = 'update' | 'deletion-generation' | 'delete-scope';
+// These paths and generation errors are consumed by server/runtime/sandboxLifecycleService.ts.
 
 export function matchSandboxLifecycleRoute(rawUrl: string | undefined): SandboxLifecycleRoute | null {
   const path = (rawUrl ?? '').split(/[?#]/)[0] ?? '';
   if (path === '/sandboxes/lifecycle') return 'update';
+  if (path === '/sandboxes/deletion-generation') return 'deletion-generation';
   if (path === '/sandboxes/scope') return 'delete-scope';
   return null;
 }
@@ -26,7 +27,7 @@ export async function handleSandboxLifecycleRoute(
   },
 ): Promise<void> {
   if (!options.authorize(req)) return sendJson(res, 401, { status: 'error', error: 'unauthorized' });
-  const expectedMethod = route === 'update' ? 'POST' : 'DELETE';
+  const expectedMethod = route === 'delete-scope' ? 'DELETE' : 'POST';
   if (req.method !== expectedMethod) {
     return sendJson(res, 405, {
       status: 'error',
@@ -44,11 +45,19 @@ export async function handleSandboxLifecycleRoute(
       return sendJson(res, 200, { status: 'ok', ...result });
     }
 
-    const parsed = parseLifecycleIdentity(body.value);
+    if (route === 'deletion-generation') {
+      const parsed = parseDeletionGenerationUpdate(body.value);
+      if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
+      const result = await options.sandboxManager.advanceDeletionGeneration(parsed.value);
+      return sendJson(res, 200, { status: 'ok', ...result });
+    }
+
+    const parsed = parseScopeDeletion(body.value);
     if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
     const result = await options.sandboxManager.deleteByScope(parsed.value, {
       busySandboxNames: options.busySandboxNames(),
     });
+    if (result.stale) return sendJson(res, 409, { status: 'error', error: 'stale deletion generation' });
     return sendJson(res, 200, { status: 'ok', ...result });
   } catch (err) {
     return sendSandboxError(res, err);

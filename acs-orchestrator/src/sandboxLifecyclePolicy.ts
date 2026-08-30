@@ -26,6 +26,7 @@ export const TERMINAL_STATE_ANNOTATION = 'agent-saas.kaiyan.net/terminal-state';
 export const TERMINAL_AT_ANNOTATION = 'agent-saas.kaiyan.net/terminal-at';
 export const TERMINAL_OUTCOME_ANNOTATION = 'agent-saas.kaiyan.net/terminal-outcome';
 export const RETENTION_DEADLINE_ANNOTATION = 'agent-saas.kaiyan.net/retention-deadline';
+export const DELETION_GENERATION_ANNOTATION = 'agent-saas.kaiyan.net/deletion-generation';
 export const ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX = 'agent-saas.kaiyan.net/active-invocation-';
 
 export const FIVE_MINUTES_MS = 5 * 60_000;
@@ -73,6 +74,15 @@ export interface SandboxLifecycleUpdate extends SandboxLifecycleIdentity {
   retentionDeadline?: string;
 }
 
+export interface SandboxDeletionGenerationUpdate extends SandboxLifecycleIdentity {
+  deletionGeneration: string;
+  previousDeletionGeneration?: string;
+}
+
+export interface SandboxScopeDeletion extends SandboxLifecycleIdentity {
+  deletionGeneration: string;
+}
+
 export interface SandboxLifecycleState {
   workloadClass?: SandboxWorkloadClass;
   workloadDescriptor?: SandboxWorkloadDescriptor;
@@ -80,6 +90,7 @@ export interface SandboxLifecycleState {
   terminalAt?: string;
   terminalOutcome?: unknown;
   retentionDeadline?: string;
+  deletionGeneration?: string;
   activeInvocationLeaseUntil?: string;
 }
 
@@ -192,6 +203,7 @@ export function lifecycleStateFromMetadata(
     ...(typeof annotations[TERMINAL_AT_ANNOTATION] === 'string' ? { terminalAt: annotations[TERMINAL_AT_ANNOTATION] as string } : {}),
     ...(outcomeRaw === undefined ? {} : { terminalOutcome }),
     ...(typeof annotations[RETENTION_DEADLINE_ANNOTATION] === 'string' ? { retentionDeadline: annotations[RETENTION_DEADLINE_ANNOTATION] as string } : {}),
+    ...(typeof annotations[DELETION_GENERATION_ANNOTATION] === 'string' ? { deletionGeneration: annotations[DELETION_GENERATION_ANNOTATION] as string } : {}),
     ...(() => {
       const until = activeInvocationLeaseUntil(annotations);
       return until ? { activeInvocationLeaseUntil: until } : {};
@@ -307,6 +319,36 @@ export function parseLifecycleUpdate(value: unknown): { ok: true; value: Sandbox
       ...(raw.retentionDeadline === undefined ? {} : { retentionDeadline: raw.retentionDeadline as string }),
     },
   };
+}
+
+export function parseDeletionGenerationUpdate(value: unknown): { ok: true; value: SandboxDeletionGenerationUpdate } | { ok: false; error: string } {
+  const identity = parseLifecycleIdentity(value);
+  if (!identity.ok) return identity;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.deletionGeneration !== 'string' || !raw.deletionGeneration.trim()) {
+    return { ok: false, error: 'deletionGeneration 必须是非空字符串' };
+  }
+  if (raw.previousDeletionGeneration !== undefined
+    && (typeof raw.previousDeletionGeneration !== 'string' || !raw.previousDeletionGeneration.trim())) {
+    return { ok: false, error: 'previousDeletionGeneration 必须是非空字符串' };
+  }
+  return {
+    ok: true,
+    value: {
+      ...identity.value,
+      deletionGeneration: raw.deletionGeneration.trim(),
+      ...(typeof raw.previousDeletionGeneration === 'string'
+        ? { previousDeletionGeneration: raw.previousDeletionGeneration.trim() }
+        : {}),
+    },
+  };
+}
+
+export function parseScopeDeletion(value: unknown): { ok: true; value: SandboxScopeDeletion } | { ok: false; error: string } {
+  const parsed = parseDeletionGenerationUpdate(value);
+  if (!parsed.ok) return parsed;
+  const { previousDeletionGeneration: _previous, ...command } = parsed.value;
+  return { ok: true, value: command };
 }
 
 export function parseLifecycleIdentity(value: unknown): { ok: true; value: SandboxLifecycleIdentity } | { ok: false; error: string } {

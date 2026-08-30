@@ -332,11 +332,11 @@ describe('sessions routes lifecycle coverage', () => {
     expect(revokeBySession).toHaveBeenCalledWith(sessionId, OWNER.id);
     expect(sandboxSessionDeletion).toHaveBeenCalledWith(sessionId);
 
-    // 重复删除 → 幂等 200
+    // 重复删除 → 幂等 200，且不得覆盖 active cleanup claim
     const again = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(again.status).toBe(200);
     expect((await again.json() as { softDeleted: boolean }).softDeleted).toBe(true);
-    expect(sandboxSessionDeletion).toHaveBeenCalledTimes(2);
+    expect(sandboxSessionDeletion).toHaveBeenCalledTimes(1);
 
     // 他人删除本人未删除会话 → 403
     const { sessionId: mySession } = await writeSession(OWNER);

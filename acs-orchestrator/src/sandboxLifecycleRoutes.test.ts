@@ -37,8 +37,9 @@ function options(manager: Partial<SandboxManager>) {
 }
 
 describe('authenticated sandbox lifecycle routes', () => {
-  it('matches only the lifecycle update and exact scope delete endpoints', () => {
+  it('matches only the lifecycle update, deletion-generation, and exact scope delete endpoints', () => {
     expect(matchSandboxLifecycleRoute('/sandboxes/lifecycle')).toBe('update');
+    expect(matchSandboxLifecycleRoute('/sandboxes/deletion-generation')).toBe('deletion-generation');
     expect(matchSandboxLifecycleRoute('/sandboxes/scope?source=test')).toBe('delete-scope');
     expect(matchSandboxLifecycleRoute('/sandboxes/as-name')).toBeNull();
   });
@@ -78,11 +79,29 @@ describe('authenticated sandbox lifecycle routes', () => {
     });
   });
 
-  it('makes exact scope deletion missing-idempotent and maps busy/protected to 409', async () => {
+  it('advances a validated deletion generation before forwarding exact scope deletion', async () => {
+    const generation = {
+      workspaceId: 'ws_kaiyan__u1', sessionId: 'session-1', sandboxScopeId: 'scope-1',
+      previousDeletionGeneration: 'generation-1', deletionGeneration: 'generation-2',
+    };
+    const advanceDeletionGeneration = vi.fn(async () => ({ name: 'as-task', updated: true, missing: false }));
+    const reply = response();
+    await handleSandboxLifecycleRoute(
+      request('POST', '/sandboxes/deletion-generation', generation),
+      reply.res,
+      'deletion-generation',
+      options({ advanceDeletionGeneration } as Partial<SandboxManager>),
+    );
+    expect(advanceDeletionGeneration).toHaveBeenCalledWith(generation);
+    expect(reply.replies.at(-1)).toMatchObject({ status: 200, body: { updated: true } });
+  });
+
+  it('makes exact scope deletion missing-idempotent and maps stale plus busy/protected to 409', async () => {
     const identity = {
       workspaceId: 'ws_kaiyan__u1',
       sessionId: 'session-1',
       sandboxScopeId: 'scope-1',
+      deletionGeneration: 'generation-1',
     };
     const deleteByScope = vi.fn(async () => ({ name: 'as-task', deleted: false, missing: true }));
     const missing = response();
@@ -96,6 +115,19 @@ describe('authenticated sandbox lifecycle routes', () => {
     expect(missing.replies.at(-1)).toEqual({
       status: 200,
       body: { status: 'ok', name: 'as-task', deleted: false, missing: true },
+    });
+
+    deleteByScope.mockResolvedValueOnce({ name: 'as-task', deleted: false, missing: false, stale: true } as never);
+    const stale = response();
+    await handleSandboxLifecycleRoute(
+      request('DELETE', '/sandboxes/scope', identity),
+      stale.res,
+      'delete-scope',
+      options({ deleteByScope } as Partial<SandboxManager>),
+    );
+    expect(stale.replies.at(-1)).toEqual({
+      status: 409,
+      body: { status: 'error', error: 'stale deletion generation' },
     });
 
     deleteByScope.mockRejectedValueOnce(new SandboxBusyError('protected sandbox'));

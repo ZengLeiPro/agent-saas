@@ -9,10 +9,10 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
-import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
+import { deleteSandboxAndReclaimNetwork, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
 import {
-  applyBackgroundShellProtection, applyInvocationLease, applyLifecycleUpdate, applyWorkloadDescriptor,
+  applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyWorkloadDescriptor,
 } from './sandboxLifecycleMutations.js';
 import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
@@ -22,14 +22,16 @@ import {
 } from './sandboxInventoryReader.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
 import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
+import { SandboxDeletionGenerationCoordinator } from './sandboxDeletionGeneration.js';
 import {
   WORKLOAD_CLASS_LABEL,
   WORKLOAD_DESCRIPTOR_ANNOTATION,
   decideSandboxLifecycle,
   isActiveInvocationLeaseProtected,
   lifecycleStateFromMetadata,
-  type SandboxLifecycleIdentity,
+  type SandboxDeletionGenerationUpdate,
   type SandboxLifecycleUpdate,
+  type SandboxScopeDeletion,
   type SandboxWorkloadDescriptor,
 } from './sandboxLifecyclePolicy.js';
 import { hasSandboxResourceDrift, sameResourceTarget, sandboxResourceTarget } from './sandboxResourceDrift.js';
@@ -112,6 +114,7 @@ export class SandboxManager {
   private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
   /** Serializes deletion against ensureRunning; new invocations wait and recreate safely. */
   private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
+  /** Scope-delete generation/UID fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator;
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
@@ -126,6 +129,12 @@ export class SandboxManager {
   ) {
     this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
     this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
+    this.deletionGeneration = new SandboxDeletionGenerationCoordinator({
+      getStatus: (name) => this.getStatus(name), refFromStatus: (name, status) => this.refFromStatus(name, status),
+      patchGeneration: (name, generation) => applyDeletionGeneration(config, kubectl, this.resourceName(name), generation),
+      conflict: (name) => new SandboxBusyError(`ACS Sandbox ${name} deletion generation changed`),
+      deleteWhenIdle: (name, busy, canDelete, preconditions) => this.deleteWhenIdle(name, busy, canDelete, preconditions),
+    });
   }
   ref(input: {
     workspaceId: string;
@@ -657,27 +666,17 @@ export class SandboxManager {
     await applyLifecycleUpdate(this.config, this.kubectl, this.resourceName(ref.name), input);
     return { name: ref.name, ...(input.retentionDeadline ? { retentionDeadline: input.retentionDeadline } : {}) };
   }
-
-  async deleteByScope(
-    input: SandboxLifecycleIdentity,
-    options: { busySandboxNames?: Set<string> } = {},
-  ): Promise<{ name: string; deleted: boolean; missing: boolean }> {
-    const ref = this.ref(input);
-    const status = await this.getStatus(ref.name);
-    if (!status) return { name: ref.name, deleted: false, missing: true };
-    const actual = this.refFromStatus(ref.name, status);
-    if (actual.workspaceId !== input.workspaceId
-      || actual.sessionId !== input.sessionId
-      || actual.sandboxScopeId !== input.sandboxScopeId) {
-      return { name: ref.name, deleted: false, missing: true };
-    }
-    const reclaimed = await this.deleteWhenIdle(ref.name, options.busySandboxNames);
-    if (!reclaimed) throw new SandboxBusyError(`ACS Sandbox ${ref.name} is active; refuse to delete scope`);
-    return { name: ref.name, deleted: true, missing: false };
+  async advanceDeletionGeneration(input: SandboxDeletionGenerationUpdate) {
+    return await this.deletionGeneration.advance(this.ref(input), input); }
+  async deleteByScope(input: SandboxScopeDeletion, options: { busySandboxNames?: Set<string> } = {}) {
+    const result = await this.deletionGeneration.delete(this.ref(input), input, options.busySandboxNames);
+    if (result.busy) throw new SandboxBusyError(`ACS Sandbox ${result.name} is active or deletion generation changed`);
+    const { busy: _busy, ...response } = result;
+    return response;
   }
 
   private async deleteWhenIdle(name: string, busySandboxNames: Set<string> = new Set(),
-    canDelete?: (latest: ManagedSandbox) => boolean): Promise<string[] | null> {
+    canDelete?: (latest: ManagedSandbox) => boolean, preconditions?: SandboxDeletionPreconditions): Promise<string[] | null> {
     const existing = this.deleteInFlight.get(name);
     if (existing) return await existing;
     const promise = deleteSandboxWhenIdle({
@@ -687,7 +686,7 @@ export class SandboxManager {
       getStatus: () => this.getStatus(name),
       delete: async () => {
         this.invalidateEnsureFastPath(name);
-        return await this.deleteSandboxAndReclaimNetwork(name);
+        return preconditions === undefined ? await this.deleteSandboxAndReclaimNetwork(name) : await this.deleteSandboxAndReclaimNetwork(name, preconditions);
       },
     });
     this.deleteInFlight.set(name, promise);
@@ -1121,11 +1120,12 @@ export class SandboxManager {
     };
   }
 
-  /** Sandbox 消失后才允许回收 TrafficPolicy/SNAT；任何 kubectl 异常都 fail-closed。 */
-  private async deleteSandboxAndReclaimNetwork(name: string): Promise<string[]> {
+  /** Sandbox 消失后才允许回收 TrafficPolicy/SNAT；精确 scope 删除还绑定 CR UID/resourceVersion。 */
+  private async deleteSandboxAndReclaimNetwork(name: string, preconditions?: SandboxDeletionPreconditions): Promise<string[]> {
     return await deleteSandboxAndReclaimNetwork({
-      name, resource: this.resourceName(name), timeoutMs: this.config.sandboxWaitTimeoutMs,
-      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager,
+      name, resource: this.resourceName(name), apiVersion: this.config.sandboxApiVersion,
+      kind: this.config.sandboxKind, namespace: this.config.namespace, timeoutMs: this.config.sandboxWaitTimeoutMs,
+      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager, preconditions,
     });
   }
 

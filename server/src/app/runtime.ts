@@ -672,10 +672,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       channel: 'memory_embedding',
     });
   };
-  let billingAuditTimer: NodeJS.Timeout | undefined; let sandboxLifecycleService: SandboxLifecycleService | undefined;
-  let runtimeEventRetention: RuntimeEventRetention | undefined; let runtimeScheduler: RuntimeScheduler | undefined;
-  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined; // singleton worker state
-  let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let billingAuditTimer: NodeJS.Timeout | undefined; let sandboxLifecycleService: SandboxLifecycleService | undefined; let runtimeEventRetention: RuntimeEventRetention | undefined; let runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined; let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined; // singleton worker state
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );

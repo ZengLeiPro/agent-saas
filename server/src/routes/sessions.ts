@@ -3198,7 +3198,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   /**
    * DELETE /api/sessions/:sessionId
    *
-   * 软删除会话（写入 deletedAt，文件不物理删除）
+   * 软删除会话（写入 deletedAt，文件不物理删除；重复请求保持幂等）
    * 所有角色统一为软删除；非 admin 需归属校验
    */
   router.delete("/sessions/:sessionId", async (req: Request, res: Response) => {
@@ -3275,9 +3275,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
 
       const applySoftDelete = async (): Promise<boolean> => {
-        // 会话锁内重读 tombstone，避免排队期间的 restore/delete 改变被旧快照覆盖。
-        const currentMeta = await readSessionMeta(transcriptPath);
-        if (!currentMeta) throw new Error("Session not found"); await options.sandboxSessionDeletion?.(sessionId); if (currentMeta.deletedAt) return false;
+        // 锁内先重读 tombstone，再 enqueue cleanup，避免重复删除覆盖 active claim。
+        const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found");
+        if (currentMeta.deletedAt) return false; await options.sandboxSessionDeletion?.(sessionId);
         await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
           apiLogger.warn(
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,

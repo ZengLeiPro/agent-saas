@@ -1,6 +1,7 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
 import {
+  DELETION_GENERATION_ANNOTATION,
   RETENTION_DEADLINE_ANNOTATION,
   TERMINAL_AT_ANNOTATION,
   TERMINAL_OUTCOME_ANNOTATION,
@@ -35,6 +36,14 @@ export async function applyLifecycleUpdate(
     [TERMINAL_OUTCOME_ANNOTATION]: input.outcome === undefined ? null : JSON.stringify(input.outcome),
     [RETENTION_DEADLINE_ANNOTATION]: input.retentionDeadline ?? null,
   } }, '更新 Sandbox lifecycle 失败');
+}
+
+export async function applyDeletionGeneration(
+  config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string, generation: string,
+): Promise<void> {
+  await patchMetadata(config, kubectl, resourceName, {
+    annotations: { [DELETION_GENERATION_ANNOTATION]: generation },
+  }, '更新 Sandbox deletion generation 失败');
 }
 
 export async function applyInvocationLease(

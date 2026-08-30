@@ -4,7 +4,7 @@ import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxBusyError, SandboxManager } from './sandboxManager.js';
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
-import { activeInvocationLeaseAnnotationKey } from './sandboxLifecyclePolicy.js';
+import { DELETION_GENERATION_ANNOTATION, activeInvocationLeaseAnnotationKey } from './sandboxLifecyclePolicy.js';
 
 const identity = {
   workspaceId: 'ws_kaiyan__u1',
@@ -17,6 +17,8 @@ function status(extraAnnotations: Record<string, string> = {}) {
     phase: 'Running',
     raw: {
       metadata: {
+        uid: 'sandbox-uid-1',
+        resourceVersion: 'resource-version-1',
         annotations: {
           'agent-saas.kaiyan.net/workspace-id': identity.workspaceId,
           'agent-saas.kaiyan.net/session-id': identity.sessionId,
@@ -50,7 +52,7 @@ function managedStatus(input: {
 }
 
 function setup(activeRegistry?: ActiveSandboxRegistry) {
-  // Keep kubectl observable so lifecycle annotation patches can be asserted exactly.
+  // Keep kubectl observable so lifecycle patches and preconditioned deletes can be asserted exactly.
   const run = vi.fn(async (_args: string[]): Promise<KubectlResult> => ({
     stdout: '', stderr: '', exitCode: 0, signal: null,
   }));
@@ -138,32 +140,94 @@ describe('SandboxManager lifecycle mutations', () => {
     expect(enforce.remove).toHaveBeenCalledWith('as-task');
   });
 
-  it('deletes only the exact scope, is idempotent when missing, and rejects busy/protected sandboxes', async () => {
+  it('deletes only the exact fenced scope, is idempotent when missing, and rejects busy/protected sandboxes', async () => {
     const { manager } = setup();
     const name = manager.ref(identity).name;
+    const deletion = { ...identity, deletionGeneration: 'generation-1' };
+    const fencedStatus = status({ [DELETION_GENERATION_ANNOTATION]: deletion.deletionGeneration });
     const remove = vi.fn(async () => [] as string[]);
     (manager as any).deleteSandboxAndReclaimNetwork = remove;
     const getStatus = vi.spyOn(manager, 'getStatus');
 
     getStatus.mockResolvedValueOnce(null);
-    await expect(manager.deleteByScope(identity)).resolves.toEqual({ name, deleted: false, missing: true });
+    await expect(manager.deleteByScope(deletion)).resolves.toEqual({ name, deleted: false, missing: true });
 
-    getStatus.mockResolvedValueOnce(status());
-    await expect(manager.deleteByScope(identity, { busySandboxNames: new Set([name]) }))
+    getStatus.mockResolvedValue(fencedStatus);
+    await expect(manager.deleteByScope(deletion, { busySandboxNames: new Set([name]) }))
       .rejects.toBeInstanceOf(SandboxBusyError);
 
     const leasedStatus = status({
+      [DELETION_GENERATION_ANNOTATION]: deletion.deletionGeneration,
       [activeInvocationLeaseAnnotationKey('inv-1')]: JSON.stringify({
         invocationKey: 'inv-1',
         until: new Date(Date.now() + 60_000).toISOString(),
       }),
     });
-    getStatus.mockResolvedValueOnce(leasedStatus).mockResolvedValueOnce(leasedStatus);
-    await expect(manager.deleteByScope(identity)).rejects.toBeInstanceOf(SandboxBusyError);
+    getStatus.mockResolvedValue(leasedStatus);
+    await expect(manager.deleteByScope(deletion)).rejects.toBeInstanceOf(SandboxBusyError);
 
-    getStatus.mockResolvedValueOnce(status()).mockResolvedValueOnce(status());
-    await expect(manager.deleteByScope(identity)).resolves.toEqual({ name, deleted: true, missing: false });
+    getStatus.mockResolvedValue(fencedStatus);
+    await expect(manager.deleteByScope(deletion)).resolves.toEqual({ name, deleted: true, missing: false });
     expect(remove).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an old DELETE after restore advances generation while its initial status read is blocked', async () => {
+    const { manager } = setup();
+    let currentGeneration = 'generation-1';
+    let firstStatusStarted!: () => void;
+    let releaseFirstStatus!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstStatusStarted = resolve; });
+    const firstBlocked = new Promise<void>((resolve) => { releaseFirstStatus = resolve; });
+    let calls = 0;
+    vi.spyOn(manager, 'getStatus').mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        firstStatusStarted();
+        await firstBlocked;
+      }
+      return status({ [DELETION_GENERATION_ANNOTATION]: currentGeneration });
+    });
+    const remove = vi.fn(async () => [] as string[]);
+    (manager as any).deleteSandboxAndReclaimNetwork = remove;
+
+    const oldDelete = manager.deleteByScope({ ...identity, deletionGeneration: 'generation-1' });
+    await firstStarted;
+    await manager.advanceDeletionGeneration({
+      ...identity,
+      previousDeletionGeneration: 'generation-1',
+      deletionGeneration: 'generation-2',
+    });
+    currentGeneration = 'generation-2';
+    const warmupCreatedNewScope = true;
+    releaseFirstStatus();
+
+    await expect(oldDelete).resolves.toEqual({
+      name: manager.ref(identity).name,
+      deleted: false,
+      missing: false,
+      stale: true,
+    });
+    expect(warmupCreatedNewScope).toBe(true);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-newer generation on a recreated Sandbox but accepts a post-create generation', async () => {
+    const { manager } = setup();
+    const createdAt = Date.parse('2026-08-30T00:00:00.000Z');
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+      'agent-saas.kaiyan.net/created-at': new Date(createdAt).toISOString(),
+    }));
+
+    await expect(manager.advanceDeletionGeneration({
+      ...identity,
+      previousDeletionGeneration: 'generation-before-restore',
+      deletionGeneration: `${createdAt}-same-millisecond-old`,
+    })).rejects.toBeInstanceOf(SandboxBusyError);
+    await expect(manager.advanceDeletionGeneration({
+      ...identity,
+      previousDeletionGeneration: 'generation-before-restore',
+      deletionGeneration: `${createdAt + 1}-current`,
+    })).resolves.toMatchObject({ updated: true, missing: false });
   });
 
   it('rechecks process-local activity immediately before cleanup deletion', async () => {

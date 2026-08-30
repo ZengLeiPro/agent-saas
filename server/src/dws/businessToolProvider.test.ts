@@ -208,6 +208,25 @@ describe('DwsBusinessToolProvider', () => {
     }
   });
 
+  it('同步 Broker 不执行 event 长连接，即使用户已确认', async () => {
+    for (const args of [
+      ['event', '+listen-im', '--kind', 'at-me'],
+      ['event', '+listen-im', '--kind', 'at-me', '--duration', '5m'],
+    ]) {
+      const { provider, invoke, auditStore, context } = setup();
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args, credentialMode: 'agent', confirmed: true },
+        authorization: { approved: true, source: 'human_approval' },
+      }, context)).rejects.toThrow('DWS 长连接命令不支持通过同步 Broker 执行');
+      expect(invoke).not.toHaveBeenCalled();
+      expect(auditStore.events.at(-1)).toMatchObject({
+        reason: 'DWS_BUSINESS_ACTION_REJECTED',
+        metadata: { commandPath: 'event.listen-im', policySource: 'platform_boundary' },
+      });
+    }
+  });
+
   it('TASK-335 Review 返工：confirmed 也不能绕过破坏性 flag 或 catalog 文件边界', async () => {
     const rejectedCommands = [
       ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],

@@ -75,6 +75,27 @@ describe('DWS v1.0.60 skill content contract', () => {
     expect(globalLocal).toContain('dws auth reset');
   });
 
+  it('keeps SaaS event guidance within finite Broker commands', async () => {
+    const [skill, event] = await Promise.all([
+      readSkillFile('SKILL.md'),
+      readSkillFile('references', 'products', 'event.md'),
+    ]);
+    const eventSaas = event.split('## SaaS Broker 边界')[1]
+      ?.split('## 仅平台外本地开发：实时监听')[0];
+    const eventLocal = event.split('## 仅平台外本地开发：实时监听')[1];
+
+    expect(skill).toContain('同步 `DwsBusiness` Broker 暂不支持实时长连接监听');
+    expect(skill).not.toMatch(/→ `event (?:\+listen-im|consume)/);
+    expect(eventSaas).toContain('dws event list --category oa');
+    expect(eventSaas).toContain('dws event schema <event_key> --flatten');
+    expect(eventSaas).toContain('dws event status --event <event_key>');
+    expect(eventSaas).toContain('暂不支持通过 Broker 执行');
+    expect(eventSaas).not.toContain('dws event +listen-im');
+    expect(eventSaas).not.toContain('dws event consume');
+    expect(eventLocal).toContain('dws event +listen-im');
+    expect(eventLocal).toContain('dws event consume');
+  });
+
   it('does not advertise conference booking in calendar docs', async () => {
     const [calendar, intentGuide] = await Promise.all([
       readSkillFile('references', 'products', 'calendar.md'),

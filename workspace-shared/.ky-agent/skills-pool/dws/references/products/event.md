@@ -1,15 +1,25 @@
 # dws event — 个人 IM 与 OA 审批事件
 
-通过个人 Stream 长连接监听当前用户的钉钉消息接收、已读、撤回、表情回应、群生命周期，以及审批任务和审批实例事件，NDJSON 输出到 stdout，用于驱动事件触发的 Agent。普通 IM 监听默认使用 `dws event +listen-im`；OA 审批、群生命周期、显式 EventKey、Filter DSL、subscribe_id 复用或原始 envelope 使用 `dws event consume`。不要写脚本轮询消息历史或审批列表。
+## SaaS Broker 边界
 
-## 运行方式
+同步 `DwsBusiness` Broker 当前只支持 `event list`、`event schema`、`event status` 等可在单次调用内完成的有限读命令。`event +listen-im` 与 `event consume` 是持续输出 NDJSON 的长连接监听进程，当前 SaaS 没有可持久化、可取消、可观测并向 Agent 交付事件的 host 通道，因此**暂不支持通过 Broker 执行**。
+
+- 用户要求监听、订阅、实时自动回复或用事件驱动 Agent 时，明确说明 SaaS Broker 当前不支持；不要执行长连接命令，不要改用 Shell，也不要轮询消息历史或审批列表规避。
+- 可继续用 `dws event list --category oa` 查询事件目录、`dws event schema <event_key> --flatten` 查询字段、`dws event status --event <event_key>` 查询既有订阅状态。
+- 以下长连接生命周期和命令示例仅供开发者在平台外、自己控制的终端中使用，不属于 SaaS Agent 执行路径。
+
+## 仅平台外本地开发：实时监听
+
+通过个人 Stream 长连接监听当前用户的钉钉消息接收、已读、撤回、表情回应、群生命周期，以及审批任务和审批实例事件，NDJSON 输出到 stdout。普通 IM 监听使用 `dws event +listen-im`；OA 审批、群生命周期、显式 EventKey、Filter DSL、subscribe_id 复用或原始 envelope 使用 `dws event consume`。
+
+### 运行方式
 
 - bus 后台进程持有对钉钉的个人 Stream 长连；`+listen-im` 把高层意图编译为 EventKey，再复用 consume 的订阅、ready、NDJSON、取消、回滚和清理生命周期。监听本身不发消息；回复使用 `dws chat +messages-send`。
 - 没有 bus 时监听命令自动拉起；普通任务只跑 `+listen-im`。
 - 一个组织一个 bus，互不干扰、可同时跑；同组织内多个 consume 共享一个 bus。
 - 非默认组织加全局 `--profile <corpId 或 profile 名>`；漏传会退回默认 profile 而失败。
 
-## Core commands
+### Core commands
 
 | Command | Purpose |
 |---|---|
@@ -23,7 +33,7 @@
 
 注意区分两个 schema：`dws event schema <event_key>` 查事件的输出字段；`dws schema "event consume" --compact` 查 consume 命令自身的入参（统一内嵌 ToolSpec，含 parameters + 位置参数）。`source` 是 reviewed command identity 的 provenance；`event list/schema` 是 `interface_mode=local`，`event consume/status/stop` 因同时编排远端订阅控制面与本地 bus 而是 `interface_mode=composite`，不要把 identity 与实现机制混为一谈。
 
-## Event catalog
+### Event catalog
 
 | 事件码 | 场景 | 必填参数 |
 |---|---|---|
@@ -53,7 +63,7 @@
 
 只承认上表 23 个事件码。默认身份就是当前用户，使用当前用户 OAuth 登录态，不要额外加身份切换 flag。七个 OA 事件订阅当前用户相关的全部审批事件，规则均为 `all`、空 `filterRule`，不需要目标参数。
 
-## Intent mapping
+### Intent mapping
 
 | 用户说 | 下一步 |
 |---|---|
@@ -89,7 +99,7 @@
 
 “我和某人的单聊”使用 `receive_o2o`；“某人发给我的消息/某人发送的消息”使用 `receive_user`，后者覆盖该发送人的单聊和群聊消息。只有明确说“所有”时才使用 `receive_o2o_all/receive_group_all`，指定对象仍使用范围更小的事件。用户要求执行“撤回消息”时走 `dws chat`；只有“监听/订阅消息撤回”才走 `dws event`。“贴标签”表示给消息贴表情时，对应 `reaction` 表情回应事件。OA 事件不接受 `--user`、`--open-dingtalk-id`、`--group`、`--query` 或 `--filter-json`。
 
-## Call flow
+### Call flow
 
 1. 普通 IM 意图选择 `+listen-im` 的 `--kind` 与 `--events`；人名/群名直接用 `--user-query`/`--chat-query` 唯一解析。OA 审批与高级事件控制手选 EventKey。
 2. 需要了解字段时运行 `dws event schema <event_key> --flatten`，读取 `schema.properties`；此模式的 `jq_root_path` 为 `.`。
@@ -98,7 +108,7 @@
 5. 需要确认监听状态时运行 `dws event status --event <event_key>`，查看 `Subscriptions` 和 `Consumers`。
 6. 任务完成后优雅结束 consume；本次新建的订阅会自动取消。复用已有订阅或需要从外部主动取消时，先运行 `dws event stop <subscribe_id> --dry-run`，向用户确认后再以 `--yes` 执行；自测可在 consume 加 `--max-events` 或 `--duration` 自动退出。
 
-## Commands
+### Commands
 
 普通 IM 监听：
 
@@ -211,7 +221,7 @@ dws event stop --all --dry-run
 dws event stop --all --yes
 ```
 
-## Subprocess contract
+### Subprocess contract
 
 - 就绪：单事件等待 `[event] ready event_key=<key> bus_pid=<pid> subscribe_id=<id>`；多事件等待 `[event] ready event_count=<n> bus_pid=<pid>`，并保存此前每条 `[event] subscription ...` 的 subscribe ID。不要 `--quiet`。
 - 退出：末行 `[event] exited — received N event(s) in Xs (reason: limit|timeout|signal|bus_shutdown)`；受控退出码 0，失败非 0 且无 exited 行、有 Error 行。
@@ -219,7 +229,7 @@ dws event stop --all --yes
 - 订阅清理：本次新建的订阅任意退出即自动退订；`--subscribe-id` 复用的保留；`--ephemeral` 强制退订。优雅停用 SIGTERM、关 stdin，或外部先预览 `dws event stop <subscribe_id> --dry-run`、确认后加 `--yes`。不要 `kill -9`（跳过退订、泄漏服务端订阅）。
 - 一个 consume 可监听多个兼容 event key，每个事件仍有独立订阅和 consumer，共用一个 bus、远程连接及输出。`event stop <subscribe_id>` 只移除目标事件，最后一个被移除后进程退出。
 
-## 订阅创建失败与重试预算
+### 订阅创建失败与重试预算
 
 以下约束适用于上表全部 23 个公开个人事件（16 个 IM + 7 个 OA）以及多事件命令中的每一项，只治理 `[event] ready` 之前的订阅创建；ready 之后的 Stream 断线由长连接重连机制处理。
 
@@ -239,7 +249,7 @@ dws event stop --all --yes
 - 连续 24h 没有失败后失败计数重置；`terminal_hold` 持续 1h。正常处理优先等待错误中的 `next_retry_at`，不要把删状态文件当成常规重试手段。
 - 紧急恢复时，先确认该 identity 没有正在创建订阅的进程；只删除 `personal_subscription_attempts.json`，不要删除 lock 文件。删除 JSON 会清空该 identity 的全部保护记录，不只影响一个事件。
 
-## Output parsing
+### Output parsing
 
 - 推荐 `--flatten -f ndjson`：顶层业务字段，一行一个事件 JSON，适合 Agent 管道读取。
 - 人工取样可用 `--flatten -f json --max-events 1`。`--format` 只控制序列化，`--flatten` 控制数据结构。
@@ -258,14 +268,14 @@ dws event stop --all --yes
 - `--jq <表达式>` 可进一步过滤或投影扁平输出。
 - `--debug-raw-events` 仅用于服务端联调，正常消费不要使用；它和 `--flatten` 互斥，`-f raw` 也不能与 `--flatten` 同时使用。
 
-## Troubleshooting
+### Troubleshooting
 
 - consume 报 bus 启动失败：报错已带子进程真实原因。多为登录问题，`dws --profile <x> auth status` 看登录态（非默认组织带对 `--profile`），过期就 `auth login` 重登。
 - 本地日志：`~/.dws/events/<edition>/personal_stream/<hash>/bus.log`（`edition` 一般 `open`，`hash` 见 `dws event status` 的 Workdir）；极早期失败可能无日志，以 consume 报错为准。
 - 有残留 / 连不上：`dws event status` 查 stale，先用 `dws event stop --all --dry-run` 预览，确认后改用 `--yes` 清理重试。
 - 挂住无输出：多是误加 `--foreground`（跑 bus、不打印事件），去掉。
 
-## Full reference
+### Full reference
 
 - multi skill: `skills/multi/dingtalk-event/SKILL.md`
 - IM task index: `skills/multi/dingtalk-event/references/event-im.md`

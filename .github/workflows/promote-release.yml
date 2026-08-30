@@ -247,23 +247,12 @@ jobs:
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"
           expected_image_digest="$(jq -r .artifacts.acsImage.digest "$RUNNER_TEMP/manifest.json")"
-          expected_image_digest="${expected_image_digest#sha256:}"
-          page=1; image_found=false
-          while true; do
-            aliyun cr ListRepoTag --region "$ACR_REGION_ID" --InstanceId "$ACR_INSTANCE_ID" \
-              --RepoId "$ACR_REPO_ID" --PageNo "$page" --PageSize 100 \
-              > "$RUNNER_TEMP/acr-tags-$page.json"
-            if jq -e --arg digest "$expected_image_digest" \
-              '.Images[] | select(.Digest==$digest and .Status=="NORMAL")' \
-              "$RUNNER_TEMP/acr-tags-$page.json" >/dev/null; then
-              image_found=true
-              break
-            fi
-            total="$(jq -r .TotalCount "$RUNNER_TEMP/acr-tags-$page.json")"
-            [ $((page * 100)) -lt "$total" ] || break
-            page=$((page + 1))
-          done
-          test "$image_found" = true
+          RELEASE_SHA="$RELEASE_SHA" OUTPUT_FILE="$RUNNER_TEMP/promotion-acr-image.json" \
+            bash scripts/release/wait-for-acr-image.sh
+          test "$(jq -r .digest "$RUNNER_TEMP/promotion-acr-image.json")" = \
+            "$expected_image_digest"
+          test "$(jq -r .reference "$RUNNER_TEMP/promotion-acr-image.json")" = \
+            "$expected_repository@$expected_image_digest"
 
       - name: Mark and persist promotion started before any production write
         env:

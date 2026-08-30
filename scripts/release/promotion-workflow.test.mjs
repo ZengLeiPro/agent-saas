@@ -93,7 +93,10 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
     '- name: Publish Web entry last and retain prior hashed assets',
   ]);
   assert.match(workflow, /components\.acs\.sandboxImageDigest/u);
-  assert.match(workflow, /aliyun cr ListRepoTag/u);
+  assert.match(workflow, /bash scripts\/release\/wait-for-acr-image\.sh/u);
+  assert.match(workflow, /promotion-acr-image\.json/u);
+  assert.match(workflow, /expected_repository@\$expected_image_digest/u);
+  assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.match(workflow, /sha256sum/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);

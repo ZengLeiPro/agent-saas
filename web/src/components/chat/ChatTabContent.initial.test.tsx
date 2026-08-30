@@ -25,8 +25,8 @@ vi.mock("@/components/FileUpload", () => ({
   ),
 }));
 
-vi.mock("@/components/ChatInput", () => ({
-  ChatInput: ({
+vi.mock("@/components/LazyChatInput", () => ({
+  LazyChatInput: ({
     input,
     onInputChange,
     placeholder = "输入消息...",

@@ -2,7 +2,7 @@ import type pg from 'pg';
 
 type PgPool = pg.Pool;
 
-const DEFAULT_MAX_CONFIGURABLE_CONCURRENT_RUNS = 64;
+const DEFAULT_MAX_CONFIGURABLE_CONCURRENT_RUNS = 500;
 
 function sanitizeIdentifier(value: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
@@ -54,6 +54,7 @@ export function effectiveMaxConcurrentRuns(
 
 export class PgRuntimeSchedulerConfigStore {
   readonly table: string;
+  /** 部署级硬上限；生产默认与统一 Run 容量 500 对齐。 */
   readonly maxConfigurableConcurrentRuns: number;
 
   constructor(

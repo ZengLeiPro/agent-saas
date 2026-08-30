@@ -1,20 +1,17 @@
 /**
  * 子 agent 防失控限额（D6，2026-07-06）——全部硬机制，不靠 prompt 自觉。
  *
- * 三层闸门（依据见方案 D6 表格）：
- *   - Runtime Worker 进程并发 30：跨用户、会话和 run 的共享背压，满额时排队而非拒绝。
- *   - 单 run 并发 6：防单个任务独占 Worker；drainToolCalls 的并行窗靠这个信号量排队。
+ * 两层闸门：
+ *   - 单 run 并发 10：防单个任务独占容量；跨 run 总量统一由 Runtime Scheduler 的
+ *     maxConcurrentRuns 治理，不再维护一套进程级子 Agent 上限。
  *   - 硬超时 120min + maxTurns 500：给复杂调研/执行任务充分空间；上下文阈值与
  *     工具失败熔断由 RawAgentLoop 独立治理，超时 = terminate + status:timeout。
  *
  * 不限制单 run 累计派生次数：累计次数与瞬时资源压力无关，长任务可以分批派生。
- *
- * 限额值会动态渲染进 Agent 工具 description（Hermes 教训：模型看到固定文案会按
- * 默认值自我设限或幻觉能力），改这里的常量即同步改模型可见文案。
  */
 
-export const SUBAGENT_GLOBAL_MAX_CONCURRENCY = 30;
-export const SUBAGENT_PER_RUN_MAX_CONCURRENCY = 6;
+export const SUBAGENT_PER_RUN_MAX_CONCURRENCY = 10;
+export const SUBAGENT_PER_TENANT_MAX_ACTIVE = 500;
 export const SUBAGENT_HARD_TIMEOUT_MS = 120 * 60 * 1000;
 export const SUBAGENT_MAX_TURNS = 500;
 
@@ -38,10 +35,7 @@ interface Waiter {
   onAbort?: () => void;
 }
 
-/**
- * 简单异步信号量：acquire 超额时排队等待（FIFO），支持 AbortSignal 中断等待。
- * 不做公平性以外的花活——子 agent 并发数很小，链表队列足够。
- */
+/** 简单异步信号量：acquire 超额时 FIFO 排队，支持 AbortSignal 中断等待。 */
 class AsyncSemaphore {
   private active = 0;
   private readonly waiters: Waiter[] = [];
@@ -75,7 +69,6 @@ class AsyncSemaphore {
   release(): void {
     const next = this.waiters.shift();
     if (next) {
-      // 槽位直接移交给下一个等待者，active 计数不变
       if (next.signal && next.onAbort) next.signal.removeEventListener('abort', next.onAbort);
       next.resolve();
       return;
@@ -86,65 +79,55 @@ class AsyncSemaphore {
 
 interface RunEntry {
   semaphore: AsyncSemaphore;
+  inheritedParentSlotActive: boolean;
 }
 
 export interface SubagentSlot {
+  /** 同一父 run 同时最多一个子 Agent 继承父槽，避免满载时父等子自锁。 */
+  inheritsParentCapacity: boolean;
   release(): void;
 }
 
 export interface SubagentLimiterOptions {
-  globalMaxConcurrency?: number;
   perRunMaxConcurrency?: number;
 }
 
-/**
- * 进程级限额器。生产用模块底部的共享单例（限额语义是「本 Runtime Worker 进程」级）；
- * 测试可 new 独立实例注入。
- */
+/** 单父 run 限额器；跨 run 总量由 PgRunStore.acquireLease 的统一容量锁治理。 */
 export class SubagentLimiter {
-  private readonly globalSemaphore: AsyncSemaphore;
   private readonly perRunMaxConcurrency: number;
   private readonly runs = new Map<string, RunEntry>();
 
   constructor(options: SubagentLimiterOptions = {}) {
-    this.globalSemaphore = new AsyncSemaphore(options.globalMaxConcurrency ?? SUBAGENT_GLOBAL_MAX_CONCURRENCY);
     this.perRunMaxConcurrency = options.perRunMaxConcurrency ?? SUBAGENT_PER_RUN_MAX_CONCURRENCY;
   }
 
-  /**
-   * 占用一个子 agent 并发槽位：进程 / 单 run 并发满时排队等待（受 signal 中断）。
-   * 不限制累计派生次数，slot.release() 只释放本次并发占用。
-   */
+  /** 占用一个子 agent 并发槽位；单 run 满时排队，累计派生次数不限。 */
   async acquire(parentRunId: string, signal?: AbortSignal): Promise<SubagentSlot> {
     const entry = this.ensureRunEntry(parentRunId);
     await entry.semaphore.acquire(signal);
-    try {
-      await this.globalSemaphore.acquire(signal);
-    } catch (err) {
-      entry.semaphore.release();
-      throw err;
-    }
+    const inheritsParentCapacity = !entry.inheritedParentSlotActive;
+    if (inheritsParentCapacity) entry.inheritedParentSlotActive = true;
+
     let released = false;
     return {
+      inheritsParentCapacity,
       release: () => {
         if (released) return;
         released = true;
+        if (inheritsParentCapacity) entry.inheritedParentSlotActive = false;
         entry.semaphore.release();
-        this.globalSemaphore.release();
       },
     };
-  }
-
-  /** 观测用：当前全局活跃子 agent 数。 */
-  get globalActiveCount(): number {
-    return this.globalSemaphore.activeCount;
   }
 
   private ensureRunEntry(parentRunId: string): RunEntry {
     let entry = this.runs.get(parentRunId);
     if (!entry) {
       this.pruneIfNeeded();
-      entry = { semaphore: new AsyncSemaphore(this.perRunMaxConcurrency) };
+      entry = {
+        semaphore: new AsyncSemaphore(this.perRunMaxConcurrency),
+        inheritedParentSlotActive: false,
+      };
       this.runs.set(parentRunId, entry);
     }
     return entry;
@@ -160,5 +143,5 @@ export class SubagentLimiter {
   }
 }
 
-/** 进程级共享限额器（生产装配点唯一实例）。 */
+/** 进程级共享单父限额器（生产装配点唯一实例）。 */
 export const sharedSubagentLimiter = new SubagentLimiter();

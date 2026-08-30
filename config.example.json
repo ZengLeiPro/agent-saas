@@ -574,9 +574,13 @@
   // ── Runtime Scheduler / Web enqueue-only（P8）──────────────
   // 仅 PG Runtime EventStore 下生效。默认 autoWake=true：Web chat 会默认只
   // durable enqueue run，由 RuntimeScheduler acquire lease 后调用 wakeRuntimeSession
-  // 执行；如需极保守恢复策略，可显式设为 false（pending/recoverable 会被标 orphaned）。
+  // 执行；父 Run 与前台子 Agent 共用 maxConcurrentRuns，foregroundReservedRuns
+  // 只为用户前台消息保留。关闭 autoWake 时 pending/recoverable 会被标 orphaned。
   // "runtimeScheduler": {
   //   "autoWake": true,
+  //   "maxConcurrentRuns": 500,
+  //   "foregroundReservedRuns": 100,
+  //   "maxConfigurableConcurrentRuns": 500,
   //   "pollIntervalMs": 10000,
   //   "leaseMs": 60000,
   //   "renewIntervalMs": 30000,

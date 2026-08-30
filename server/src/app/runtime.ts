@@ -865,12 +865,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgRunStore.init();
-    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 16;
+    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
     runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
       tablePrefix: config.runtimeEventStore.tablePrefix,
       maxConfigurableConcurrentRuns: Math.max(
         defaultMaxConcurrentRuns,
-        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 64,
+        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 500,
       ),
     });
     await runtimeSchedulerConfigStore.init(defaultMaxConcurrentRuns);
@@ -1734,7 +1734,23 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     mcpClientManager,
     mcpProxy,
     ...(pgEventStore ? { eventStoreFactory: () => pgEventStore } : {}),
-    ...(pgRunStore ? { runStore: pgRunStore } : {}),
+    ...(pgRunStore ? {
+      runStore: pgRunStore,
+      resolveRuntimeRunCapacity: async () => {
+        const active = runtimeScheduler?.getCapacitySnapshot();
+        if (active) {
+          return {
+            maxConcurrentRuns: active.maxConcurrentRuns,
+            foregroundReservedRuns: active.foregroundReservedRuns,
+          };
+        }
+        const persisted = await runtimeSchedulerConfigStore!.get();
+        return {
+          maxConcurrentRuns: effectiveMaxConcurrentRuns(persisted.maxConcurrentRuns, sessionLockMode),
+          foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 100,
+        };
+      },
+    } : {}),
     ...(runPreflightService ? { runPreflightService } : {}),
     ...(runResolutionSnapshotStore ? { runResolutionSnapshotStore } : {}),
     ...(pgHandStore ? { handStore: pgHandStore } : {}),
@@ -1873,7 +1889,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         schedulerConfig.maxConcurrentRuns,
         sessionLockMode,
       ),
-      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 10,
+      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 100,
       executionEnabled: schedulerConfig.executionEnabled,
       resolveMaxConcurrentRuns: async () => effectiveMaxConcurrentRuns(
         (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,

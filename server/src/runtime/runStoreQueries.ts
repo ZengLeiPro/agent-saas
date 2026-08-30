@@ -533,22 +533,52 @@ export class PgRunStoreQueries {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // 固定锁顺序：全局容量 → 会话。所有 worker 都走同一顺序，避免交叉死锁。
+      // 固定锁顺序：统一父子 Run 容量 → 会话。继承父槽的子 run 在同一事务内校验亲子 metadata 与父 lease，
+      // 其他 run 统计时只把“父仍运行”的继承子视为同一个容量单元。
       if (maxConcurrentRuns !== undefined) {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
           `${this.runsTable}:scheduler-capacity`,
         ]);
-        const countResult = await client.query<{ active_count: string | number }>(`
-          SELECT COUNT(*) AS active_count
-          FROM ${this.runsTable}
-          WHERE status = 'running' AND lease_expires_at > $1::timestamptz
-        `, [nowIso]);
-        const reserved = admission?.foreground
-          ? 0
-          : Math.min(Math.max(0, admission?.foregroundReservedRuns ?? 0), Math.max(0, maxConcurrentRuns - 1));
-        if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns - reserved) {
-          await client.query('ROLLBACK');
-          return null;
+        const inheritedParentRunId = admission?.inheritFromRunId?.trim();
+        if (inheritedParentRunId) {
+          const parent = await client.query<{ active: boolean }>(`
+            SELECT TRUE AS active
+            FROM ${this.runsTable} parent_run
+            JOIN ${this.runsTable} child_run ON child_run.run_id = $3
+            WHERE parent_run.run_id = $1
+              AND parent_run.status = 'running'
+              AND parent_run.lease_expires_at > $2::timestamptz
+              AND child_run.metadata->>'subagentCapacityInherited' = 'true'
+              AND child_run.metadata->>'parentRunId' = $1
+          `, [inheritedParentRunId, nowIso, runId]);
+          if (!parent.rows[0]?.active) {
+            await client.query('ROLLBACK');
+            return null;
+          }
+        } else {
+          const countResult = await client.query<{ active_count: string | number }>(`
+            SELECT COUNT(*) AS active_count
+            FROM ${this.runsTable} active_run
+            WHERE active_run.status = 'running'
+              AND active_run.lease_expires_at > $1::timestamptz
+              AND NOT (
+                active_run.metadata->>'subagentCapacityInherited' = 'true'
+                AND EXISTS (
+                  SELECT 1
+                  FROM ${this.runsTable} parent_run
+                  WHERE parent_run.run_id = active_run.metadata->>'parentRunId'
+                    AND parent_run.status = 'running'
+                    AND parent_run.lease_expires_at > $1::timestamptz
+                )
+              )
+          `, [nowIso]);
+          const reserved = admission?.foreground
+            ? 0
+            : Math.min(Math.max(0, admission?.foregroundReservedRuns ?? 0), Math.max(0, maxConcurrentRuns - 1));
+          if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns - reserved) {
+            await client.query('ROLLBACK');
+            return null;
+          }
         }
       }
 

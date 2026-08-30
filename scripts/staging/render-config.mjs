@@ -16,7 +16,7 @@ export function renderStagingConfig(source, env = process.env) {
   config.agent = {
     ...(config.agent ?? {}),
     cwd: '/mnt/agent-saas-staging/workspaces',
-    sharedDir: '/mnt/agent-saas-staging/workspace-shared',
+    sharedDir: '/opt/agent-saas-staging/current/server/workspace-shared',
     userOverrides: {},
   };
   config.server = {

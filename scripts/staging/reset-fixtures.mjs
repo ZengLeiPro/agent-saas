@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
+import { deleteSandboxAfterBusyRelease } from './reset-fixtures-lib.mjs';
 
 const [baseUrl, releaseId] = process.argv.slice(2);
 const username = process.env.STAGING_E2E_USERNAME?.trim();
@@ -70,12 +71,7 @@ const targets = before.filter(belongsToE2eActor);
 for (const target of targets) {
   if (!/^as-[a-z0-9-]{1,60}$/u.test(String(target.name ?? '')))
     throw new Error('Staging cleanup refused an invalid sandbox identity');
-  const response = await fetch(
-    `${baseUrl}/api/admin/runtime-operations/acs/sandboxes/${encodeURIComponent(target.name)}`,
-    { method: 'DELETE', headers },
-  );
-  if (!response.ok && response.status !== 404)
-    throw new Error(`Unable to delete Staging sandbox ${target.name}: ${response.status}`);
+  await deleteSandboxAfterBusyRelease({ baseUrl, name: target.name, headers });
 }
 const cleanup = await fetch(`${baseUrl}/api/admin/runtime-operations/acs/lifecycle-cleanup`, {
   method: 'POST',

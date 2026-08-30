@@ -117,8 +117,19 @@ export function assertRuntimeEnvironmentSafety(
   const sharedDir = config.agent.sharedDir
     ? resolve(processCwd ? resolve(processCwd, '..') : '', config.agent.sharedDir)
     : resolve(agentCwd, '.shared');
-  if (stagingRoot && !isWithinRoot(stagingRoot, sharedDir))
-    failures.push('agent sharedDir/NAS must be within AGENT_SAAS_STAGING_ROOT');
+  const stagingReleaseRoot = env.AGENT_SAAS_STAGING_RELEASE_ROOT?.trim();
+  if (!stagingReleaseRoot || !isAbsolute(stagingReleaseRoot)) {
+    failures.push('AGENT_SAAS_STAGING_RELEASE_ROOT must be an absolute path');
+  }
+  if (
+    stagingRoot &&
+    !isWithinRoot(stagingRoot, sharedDir) &&
+    (!stagingReleaseRoot || !isWithinRoot(stagingReleaseRoot, sharedDir))
+  ) {
+    failures.push(
+      'agent sharedDir must be within AGENT_SAAS_STAGING_ROOT or AGENT_SAAS_STAGING_RELEASE_ROOT',
+    );
+  }
   if (
     stagingRoot &&
     config.secretVault?.backend === 'encrypted-file' &&

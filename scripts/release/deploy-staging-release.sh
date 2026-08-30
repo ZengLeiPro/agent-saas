@@ -106,9 +106,11 @@ candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
 server_env=/etc/agent-saas-staging/server.env
+server_config=/etc/agent-saas-staging/config.json
 acs_env=/etc/agent-saas-staging/acs-orchestrator.env
 acs_identity=/etc/agent-saas-staging/acs-release-identity.json
 cp -a "$server_env" "$rollback_root/server.env"
+cp -a "$server_config" "$rollback_root/config.json"
 cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
 had_previous_identity=false
 if [ -e "$acs_identity" ]; then
@@ -118,6 +120,7 @@ fi
 deployment_committed=false
 rollback() {
   cp -a "$rollback_root/server.env" "$server_env"
+  cp -a "$rollback_root/config.json" "$server_config"
   cp -a "$rollback_root/acs-orchestrator.env" "$acs_env"
   if [ "$had_previous_identity" = true ]; then
     cp -a "$rollback_root/acs-release-identity.json" "$acs_identity"
@@ -237,6 +240,17 @@ else
   mv "$candidate" "$target"
 fi
 
+for required_directory in \
+  .ky-agent/scripts \
+  .ky-agent/skills-pool \
+  prompts; do
+  installed_asset="$target/server/workspace-shared/$required_directory"
+  if [ ! -d "$installed_asset" ] || [ -L "$installed_asset" ]; then
+    echo "Staging runtime directory must be a real immutable directory: $installed_asset" >&2
+    exit 1
+  fi
+done
+
 runuser -u agent-saas-staging -- env \
   STAGING_CONFIG_PATH=/etc/agent-saas-staging/config.json STAGING_RELEASE_ROOT="$target" \
   /usr/bin/node - <<'NODE'
@@ -288,26 +302,19 @@ if (failures.length > 0) {
 NODE
 
 ln -sfn "$target" "$current"
-shared_root=/mnt/agent-saas-staging/workspace-shared
-runuser -u agent-saas-staging -- mkdir -p "$shared_root/.ky-agent"
-for shared_asset in \
-  .browser-profile-seed \
-  .ky-agent/scripts \
-  .ky-agent/skills-pool \
-  prompts \
-  MEMORY.template.md \
-  PERSONA.template.md \
-  questions.template.md; do
-  live_asset="$shared_root/$shared_asset"
-  if [ -e "$live_asset" ] && [ ! -L "$live_asset" ]; then
-    echo "Staging immutable shared asset conflicts with persistent path: $live_asset" >&2
-    exit 1
-  fi
-  runuser -u agent-saas-staging -- ln -sfn \
-    "$current/server/workspace-shared/$shared_asset" "$live_asset.candidate-$GITHUB_RUN_ID"
-  runuser -u agent-saas-staging -- mv -Tf \
-    "$live_asset.candidate-$GITHUB_RUN_ID" "$live_asset"
-done
+node - "$server_config" <<'NODE'
+const fs = require('node:fs');
+const configPath = process.argv[2];
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+config.agent = {
+  ...(config.agent || {}),
+  sharedDir: '/opt/agent-saas-staging/current/server/workspace-shared',
+};
+fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(`${configPath}.candidate`, configPath);
+NODE
+chown root:agent-saas-staging "$server_config"
+chmod 0640 "$server_config"
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);

@@ -6,7 +6,6 @@ import { MessageItem as MessageItemType, type RenderItem } from './types';
 import { MessageItemWithDisplay as MessageItem } from './MessageItemWithDisplay';
 import type { TtsProps } from './MessageItem';
 import { ActivityGroupBlock } from './ActivityGroupBlock';
-import { BusinessStepFlow, BusinessStepProcessEvent } from './BusinessStepFlow';
 import { BusinessStepTimeline, businessStepMainItems } from './BusinessStepTimeline';
 import { useBusinessStepDetail } from './useBusinessStepDetail';
 import { CompactionDivider } from './CompactionDivider';
@@ -27,11 +26,12 @@ import { AgentAvatar, UserAvatar } from './AgentAvatar';
 import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type SessionParticipants } from '@agent/shared';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
+const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
+const BusinessStepProcessEvent = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepProcessEvent })));
 const HISTORY_LOAD_TRIGGER_PX = 80;
 const HISTORY_LOAD_REARM_PX = 160;
 // ---------------------------------------------------------------------------
-// AI Bubble Grouping — mirrors mobile's groupIntoBubbles()
-// ---------------------------------------------------------------------------
+// AI 气泡分组，与移动端 groupIntoBubbles() 保持一致。
 
 interface AiBubbleGroup {
   type: 'ai_bubble';
@@ -645,7 +645,7 @@ export const MessageList = memo(function MessageList({
     return findInList(groupedMessages);
   }, [groupedMessages]);
 
-  // 第一条 user 消息的 id（不显示 fork 按钮）
+  // 首条 user 消息的 id（不显示 fork 按钮）
   const firstUserMsgId = useMemo(() => {
     for (let i = 0; i < messages.length; i++) {
       if (messages[i].type === 'user') return messages[i].id;
@@ -678,7 +678,7 @@ export const MessageList = memo(function MessageList({
 
   const renderBusinessDetailItem = useCallback((item: RenderItem): React.ReactNode => {
     if (item.type === 'business_step') {
-      return <BusinessStepProcessEvent key={item.id} event={item} />;
+      return <Suspense key={item.id} fallback={null}><BusinessStepProcessEvent event={item} /></Suspense>;
     }
     if (item.type === 'business_step_section') return null;
     if (item.type === 'activity_group') {
@@ -813,12 +813,12 @@ export const MessageList = memo(function MessageList({
             if (sub.type === 'business_step') {
               return (
                 <ErrorBoundary key={sub.id} inline>
-                  <BusinessStepFlow
+                  <Suspense fallback={<div role="status" className="px-3 py-2 text-sm text-muted-foreground">正在加载业务步骤</div>}><BusinessStepFlow
                     event={sub}
                     sessionId={sessionId}
                     selected={businessStepSelection}
                     onSelect={businessStepDetailMode ? selectBusinessStep : undefined}
-                  />
+                  /></Suspense>
                 </ErrorBoundary>
               );
             }

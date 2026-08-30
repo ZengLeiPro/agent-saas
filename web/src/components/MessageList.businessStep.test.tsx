@@ -168,9 +168,14 @@ function Harness({
   );
 }
 
+async function waitForBusinessPlan(): Promise<void> {
+  await waitFor(() => expect(document.querySelector("[data-business-step-plan]")).toBeTruthy());
+}
+
 describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离", () => {
-  it("同一 Run 的多次 TodoWrite 快照只生成一个主卡，每个步骤只出现一次", () => {
+  it("同一 Run 的多次 TodoWrite 快照只生成一个主卡，每个步骤只出现一次", async () => {
     const { container } = render(<Harness messages={workflowMessages(3)} />);
+    await waitForBusinessPlan();
 
     const planCard = container.querySelector<HTMLElement>("[data-business-step-plan]");
     expect(planCard).toBeTruthy();
@@ -186,6 +191,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("点击历史步骤后在右侧显示结果、过程、依据和交付物，主区不重复", async () => {
     render(<Harness messages={workflowMessages(2)} debugMode />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
@@ -204,6 +210,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("后续精简快照省略旧字段时仍保留历史终态详情", async () => {
     render(<Harness messages={workflowMessages(3)} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
@@ -229,6 +236,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     ];
 
     render(<Harness messages={resumedMessages} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
@@ -238,6 +246,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("点击当前步骤默认跟随；快照推进后自动切到新的当前步骤", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(1)} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
 
@@ -248,6 +257,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("用户固定查看历史步骤后，新快照只更新数据，不强制切走", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(2)} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     expect(screen.getByText("已暂停跟随")).toBeTruthy();
 
@@ -269,6 +279,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       { id: "stable-step", kind: "business", content: "稳定步骤（第二轮）", activeForm: "正在处理", status: "in_progress" },
     ], "run-2");
     const { rerender } = render(<Harness messages={[current, secondRun]} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /稳定步骤（第一轮）/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：稳定步骤（第一轮）")).toBeTruthy());
 
@@ -287,6 +298,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       { id: "legacy-step", kind: "business", content: "旧历史稳定步骤", status: "pending" },
     ], null);
     const { rerender } = render(<Harness messages={[current]} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /旧历史稳定步骤/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：旧历史稳定步骤")).toBeTruthy());
 
@@ -307,6 +319,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       { id: "legacy-step", kind: "business", content: "重复旧步骤", status: "pending" },
     ], null);
     const { rerender } = render(<Harness messages={[current]} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /重复旧步骤/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：重复旧步骤")).toBeTruthy());
 
@@ -322,6 +335,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("主卡移出虚拟化窗口后详情继续更新，关闭时焦点回退消息容器", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(2)} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
 
@@ -344,6 +358,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("切换会话会清理旧选择，关闭后焦点返回触发步骤行", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(2)} sessionId="session-a" />);
+    await waitForBusinessPlan();
     const row = screen.getByRole("button", { name: /核验订单/ });
     fireEvent.click(row);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
@@ -357,6 +372,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
   it("其他显式面板替换步骤详情时不抢回旧步骤焦点", async () => {
     render(<Harness messages={workflowMessages(2)} />);
+    await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
 
@@ -367,7 +383,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.activeElement).toBe(replacementTrigger);
   });
 
-  it("同一 Run 跨 user、system_event 与 user-voice 后收齐过程、系统动作与 Artifact", async () => {
+  it("同一 Run 跨 user、system_event、user-voice 与 system-error 后收齐完整详情", async () => {
     const active = [{ id: "verify", kind: "business", content: "跨消息核验", status: "in_progress" }];
     const messages: MessageItem[] = [
       { id: "continuation-user-1", type: "user", content: "开始核验" },
@@ -400,6 +416,13 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
         toolInput: "{}", resultReady: true, executionStatus: "completed",
         presentation: { title: "语音边界后读取" },
       },
+      { id: "continuation-error", type: "system-error", content: "系统错误后继续" },
+      todoSnapshot("continuation-error-resume", active, "run-continuation"),
+      {
+        id: "continuation-after-error", type: "tool_use", toolName: "Read", toolId: "continuation-after-error",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "错误边界后读取" },
+      },
       {
         id: "continuation-connector", type: "tool_use", toolName: "DwsBusiness", toolId: "continuation-connector",
         toolInput: "{}", resultReady: true, executionStatus: "completed",
@@ -417,10 +440,12 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     ];
 
     render(<Harness messages={messages} debugMode />);
+    await waitForBusinessPlan();
     expect(screen.queryByText(/前半段读取/)).toBeNull();
     expect(screen.queryByText(/用户边界后读取/)).toBeNull();
     expect(screen.queryByText(/系统事件后读取/)).toBeNull();
     expect(screen.queryByText(/语音边界后读取/)).toBeNull();
+    expect(screen.queryByText(/错误边界后读取/)).toBeNull();
     expect(screen.queryByText("跨消息核验结果.xlsx")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /跨消息核验/ }));
@@ -433,13 +458,14 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.getByText(/用户边界后读取/)).toBeTruthy();
     expect(screen.getByText(/系统事件后读取/)).toBeTruthy();
     expect(screen.getByText(/语音边界后读取/)).toBeTruthy();
-    expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(5);
+    expect(screen.getByText(/错误边界后读取/)).toBeTruthy();
+    expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(6);
     expect(screen.getByText(/写入核验回执/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "依据" }));
     expect(screen.getByText("receipt:continuation")).toBeTruthy();
   });
 
-  it("步骤中的真实 permission_request 仍留在主对话区域", () => {
+  it("步骤中的真实 permission_request 仍留在主对话区域", async () => {
     const messages: MessageItem[] = [
       { id: "user-permission", type: "user", content: "执行命令" },
       todoSnapshot("todo-permission", [{ id: "run", kind: "business", content: "执行命令", status: "in_progress" }]),
@@ -453,6 +479,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       },
     ];
     render(<Harness messages={messages} />);
+    await waitForBusinessPlan();
     expect(document.querySelector("[data-business-step-plan]")).toBeTruthy();
     expect(screen.getByText(/Permission: Shell/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();

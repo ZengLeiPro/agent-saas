@@ -151,10 +151,14 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     vi.mocked(fetchPublicSessionShare).mockResolvedValue(sharedResponse());
   });
 
-  it("点击主卡步骤后通过只读 Sheet 查看结果、过程、依据与 Artifact", async () => {
+  it("按需加载主卡后通过只读 Sheet 查看结果、过程、依据与 Artifact", async () => {
     render(<SessionSharePage token="share-token" />);
 
-    const stepRow = await screen.findByRole("button", { name: /核验分享步骤/ });
+    const stepRow = await screen.findByRole(
+      "button",
+      { name: /核验分享步骤/ },
+      { timeout: 5_000 },
+    );
     expect(fetchPublicSessionShare).toHaveBeenCalledWith("share-token");
     expect(stepRow.getAttribute("aria-selected")).toBe("false");
     expect(screen.queryByText("分享核验完成")).toBeNull();

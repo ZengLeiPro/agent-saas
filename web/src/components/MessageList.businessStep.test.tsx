@@ -208,7 +208,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     ["system-error", { id: "run-error", type: "system-error", content: "系统错误" } as MessageItem],
     ["取消", { id: "run-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
     ["超时", { id: "run-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
-  ])("无终态 TodoWrite 的中断 Run 显示已结束且只能固定查看：%s", async (_label, terminal) => {
+  ])("loading=false 时无终态 TodoWrite 的中断 Run 已结束且只能固定查看：%s", async (_label, terminal) => {
     render(<Harness messages={[
       todoSnapshot("interrupted-run", [
         { id: "interrupted", kind: "business", content: "中断步骤", status: "in_progress" },
@@ -224,7 +224,69 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
   });
 
-  it("同一 Run 的多次 TodoWrite 快照只生成一个主卡，每个步骤只出现一次", async () => {
+  it.each([
+    ["system-error", { id: "window-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "window-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "window-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("中断后新 TodoWrite 尚未到达时旧 Run 保持关闭：%s", async (_label, terminal) => {
+    render(<Harness messages={[
+      todoSnapshot("window-active", [
+        { id: "window-step", kind: "business", content: "过渡窗口旧步骤", status: "in_progress" },
+      ], "run-window"),
+      terminal,
+      { id: "window-user", type: "user", content: "发起新任务" },
+    ]} loading />);
+    await waitForBusinessPlan();
+    expect(screen.getByLabelText("已结束")).toBeTruthy();
+    expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /过渡窗口旧步骤/ }));
+    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
+    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
+  });
+
+  it("中断计划只有在同 Run TodoWrite 到达后恢复 current，且可重新进入 follow", async () => {
+    const active = todoSnapshot("resume-window-active", [
+      { id: "resume-step", kind: "business", content: "可恢复旧步骤", status: "in_progress" },
+    ], "run-resume-window");
+    const terminal: MessageItem = { id: "resume-window-error", type: "system-error", content: "系统错误" };
+    const boundary: MessageItem = { id: "resume-window-user", type: "user", content: "继续" };
+    const continuation = todoSnapshot("resume-window-todo", [
+      { id: "resume-step", kind: "business", content: "可恢复旧步骤", status: "in_progress" },
+    ], "run-resume-window");
+    const { rerender } = render(<Harness messages={[active, terminal, boundary]} loading />);
+    await waitForBusinessPlan();
+    expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
+
+    rerender(<Harness messages={[active, terminal, boundary, continuation]} loading />);
+
+    await waitFor(() => expect(document.querySelectorAll('[data-business-step-current="true"]')).toHaveLength(1));
+    expect(screen.queryByLabelText("已结束")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /可恢复旧步骤/ }));
+    await waitFor(() => expect(screen.getByText("正在跟随当前步骤")).toBeTruthy());
+  });
+
+  it("中断后若新 Run TodoWrite 到达，只有新 Run 保持 current", async () => {
+    const oldRun = todoSnapshot("window-old-run", [
+      { id: "old", kind: "business", content: "窗口旧 Run", status: "in_progress" },
+    ], "run-window-old");
+    const terminal: MessageItem = { id: "window-old-error", type: "system-error", content: "系统错误" };
+    const boundary: MessageItem = { id: "window-new-user", type: "user", content: "新任务" };
+    const newRun = todoSnapshot("window-new-run", [
+      { id: "new", kind: "business", content: "窗口新 Run", status: "in_progress" },
+    ], "run-window-new");
+    const { rerender } = render(<Harness messages={[oldRun, terminal, boundary]} loading />);
+    await waitForBusinessPlan();
+    expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
+
+    rerender(<Harness messages={[oldRun, terminal, boundary, newRun]} loading />);
+
+    await waitFor(() => expect(document.querySelectorAll('[data-business-step-current="true"]')).toHaveLength(1));
+    expect(screen.getByRole("button", { name: /窗口旧 Run/ }).getAttribute("data-business-step-current")).toBe("false");
+    expect(screen.getByRole("button", { name: /窗口新 Run/ }).getAttribute("data-business-step-current")).toBe("true");
+  });
+
+  it("同一 Run 的连续 TodoWrite 快照只生成一个主卡，每个步骤只出现一次", async () => {
     const { container } = render(<Harness messages={workflowMessages(3)} />);
     await waitForBusinessPlan();
 

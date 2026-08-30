@@ -517,6 +517,22 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     expect(result.hiddenMessageIds.has("reset")).toBe(true);
   });
 
+  it("keeps an interrupted old plan closed when a new Run TodoWrite arrives", () => {
+    const result = projectBusinessStepEvents([
+      todo("old-run", todos([step("a", "in_progress")]), "run-1"),
+      { id: "old-error", type: "system-error", content: "系统错误" },
+      user("new-user"),
+      todo("new-run", todos([step("a", "in_progress")]), "run-2"),
+    ], true);
+    const plans = result.events.filter((event) => event.kind === "plan");
+
+    expect(plans[0]).toMatchObject({ runId: "run-1", isClosed: true });
+    expect(plans[1]).toMatchObject({ runId: "run-2" });
+    expect(result.events.filter((event) => event.isCurrent)).toEqual([
+      expect.objectContaining({ runId: "run-2", kind: "start" }),
+    ]);
+  });
+
   it.each([
     ["无 user 边界", [] as MessageItem[]],
     ["有 user 边界", [user("next-run")] as MessageItem[]],
@@ -536,6 +552,36 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     expect(starts.filter((event) => event.isCurrent)).toEqual([
       expect.objectContaining({ runId: "run-2" }),
     ]);
+  });
+
+  it.each([
+    ["system-error", { id: "window-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "window-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "window-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("suspends an interrupted plan while the next run is loading before TodoWrite: %s", (_label, terminal) => {
+    const result = projectBusinessStepEvents([
+      todo("window-start", todos([step("a", "in_progress")]), "run-1"),
+      terminal,
+      user("window-user"),
+    ], true);
+
+    expect(result.events.find((event) => event.kind === "plan")).toMatchObject({ isClosed: true });
+    expect(result.events.every((event) => event.isCurrent !== true)).toBe(true);
+  });
+
+  it("reopens a suspended plan only when a later TodoWrite explicitly continues the same Run", () => {
+    const result = projectBusinessStepEvents([
+      todo("resume-start", todos([step("a", "in_progress")]), "run-1"),
+      { id: "resume-error", type: "system-error", content: "系统错误" },
+      user("resume-user"),
+      todo("resume-todo", todos([step("a", "in_progress")]), "run-1"),
+    ], true);
+    const plan = result.events.find((event) => event.kind === "plan");
+    const starts = result.events.filter((event) => event.kind === "start");
+
+    expect(plan?.isClosed).toBe(false);
+    expect(starts).toHaveLength(2);
+    expect(starts.at(-1)).toMatchObject({ runId: "run-1", isCurrent: true });
   });
 
   it.each([

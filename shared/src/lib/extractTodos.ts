@@ -407,11 +407,13 @@ export function projectBusinessStepEvents(
   /** 当前业务 Run 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
   let currentPlanEvent: BusinessStepEventItem | null = null;
   let currentPlanRunId: string | null = null;
+  /** system 中断边界会暂时关闭计划；同 Run 的下一份 TodoWrite 可显式恢复。 */
+  let currentPlanSuspended = false;
   /** 已进入时间线、会让 groupMessages 封闭当前步骤节的章节边界。 */
   let pendingSectionBoundary = false;
   /** 边界后首个过程消息；若下一快照仍属同 Run，用它锚定 synthetic start。 */
   let pendingSectionResumeAnchorId: string | null = null;
-  /** 最后一个承载「当前进行中」语义的事件（plan 或 start），用于 isCurrent 标注。 */
+  /** 最后一个承载「当前进行中」语义的事件（plan 或 start），仅开放计划可标记 isCurrent。 */
   let lastProgressEvent: BusinessStepEventItem | null = null;
 
   const pushEvents = (anchorId: string, batch: BusinessStepEventItem[]) => {
@@ -426,6 +428,10 @@ export function projectBusinessStepEvents(
     if (isBusinessStepSectionBoundary(message)) {
       pendingSectionBoundary = true;
       pendingSectionResumeAnchorId = null;
+      if ((message.type === "system-error" || message.type === "system_event") && currentPlanEvent) {
+        currentPlanEvent.isClosed = true;
+        currentPlanSuspended = true;
+      }
       continue;
     }
     if (message.type !== "tool_use" || message.toolName !== TODO_WRITE_TOOL_NAME) {
@@ -452,6 +458,10 @@ export function projectBusinessStepEvents(
     const hasProcessAfterBoundary = pendingSectionResumeAnchorId !== null;
     const continuesCurrentRun = currentPlanRunId !== null && message.runId === currentPlanRunId;
     const resumesCurrentRunAfterSectionBoundary = pendingSectionBoundary && continuesCurrentRun;
+    if (continuesCurrentRun && currentPlanSuspended && currentPlanEvent) {
+      currentPlanEvent.isClosed = false;
+      currentPlanSuspended = false;
+    }
     if (!continuesCurrentRun
       && (pendingSectionBoundary || (currentPlanRunId !== null && message.runId !== undefined))) {
       if (resetPlanEvent) resetPlanEvent.isClosed = true;
@@ -460,6 +470,7 @@ export function projectBusinessStepEvents(
       latestResumeKey = null;
       currentPlanEvent = null;
       currentPlanRunId = null;
+      currentPlanSuspended = false;
       lastProgressEvent = null;
     }
     pendingSectionBoundary = false;
@@ -491,6 +502,7 @@ export function projectBusinessStepEvents(
       latestResumeKey = null;
       currentPlanEvent = null;
       currentPlanRunId = null;
+      currentPlanSuspended = false;
       lastProgressEvent = null;
       continue;
     }
@@ -517,6 +529,7 @@ export function projectBusinessStepEvents(
       };
       currentPlanEvent = planEvent;
       currentPlanRunId = message.runId ?? null;
+      currentPlanSuspended = false;
       const batch: BusinessStepEventItem[] = [planEvent];
       if (activeTodo) {
         const activeKey = todoItemKey(activeTodo);
@@ -625,6 +638,7 @@ export function projectBusinessStepEvents(
 
   if (
     loading
+    && !currentPlanEvent?.isClosed
     && latestActiveKey
     && lastProgressEvent?.todo
     && todoItemKey(lastProgressEvent.todo) === latestActiveKey

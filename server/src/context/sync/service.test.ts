@@ -96,6 +96,23 @@ describe('DwsContextSyncService', () => {
     expect(store.recordRetryFailure).toHaveBeenCalledTimes(1);
   });
 
+  it('lands an unproven minutes inventory but does not advance its watermark', async () => {
+    const { service, store, client, pages } = setup();
+    vi.mocked(client.listMinutes).mockResolvedValueOnce({
+      items: [{ minutesId: 'minutes-partial', title: '未证明完整', startedAt: '2026-08-22T00:30:00.000Z' }],
+      truncated: true,
+    });
+    vi.mocked(client.getMinutesSummary).mockResolvedValueOnce({ content: '部分摘要' });
+    vi.mocked(client.getMinutesTranscript).mockResolvedValueOnce({ content: '部分转写' });
+
+    await expect(service.syncWindow({ scope, source: 'minutes', from, to }))
+      .rejects.toThrow('DWS minutes returned truncated upstream content');
+
+    expect(pages[0]).toMatchObject({ truncated: true, items: [{ sourceId: 'minutes-partial' }] });
+    expect(store.advanceWatermark).not.toHaveBeenCalled();
+    expect(store.recordRetryFailure).toHaveBeenCalledTimes(1);
+  });
+
   it('reconciles a complete wiki inventory before advancing its watermark', async () => {
     const { service, store, client } = setup();
     vi.mocked(client.listWikiDocuments)

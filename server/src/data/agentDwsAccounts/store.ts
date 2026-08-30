@@ -164,6 +164,11 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
       SET profile_id=$4,corp_id=$5,corp_name=$6,
           dingtalk_user_id=$7,dingtalk_user_name=$8,status='active',
           runtime_status='stopped',last_error=NULL,revision=revision+1,
+          identity_updated_at=CASE
+            WHEN profile_id IS DISTINCT FROM $4 OR corp_id IS DISTINCT FROM $5
+              OR dingtalk_user_id IS DISTINCT FROM $7 THEN NOW()
+            ELSE identity_updated_at
+          END,
           updated_at=NOW(),updated_by=$9
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3 AND status='authorizing'
       RETURNING *
@@ -372,6 +377,7 @@ function mapRow(row: Record<string, unknown>): AgentDwsAccountRecord {
     revision: Number(row.revision),
     createdAt: iso(row.created_at),
     createdBy: String(row.created_by),
+    ...(row.identity_updated_at ? { identityUpdatedAt: iso(row.identity_updated_at) } : {}),
     updatedAt: iso(row.updated_at),
     updatedBy: String(row.updated_by),
   };

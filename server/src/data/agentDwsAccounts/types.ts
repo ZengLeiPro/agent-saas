@@ -58,6 +58,8 @@ export interface AgentDwsAccountRecord {
   revision: number;
   createdAt: string;
   createdBy: string;
+  /** Advances only when the authenticated DingTalk identity changes. */
+  identityUpdatedAt?: string;
   updatedAt: string;
   updatedBy: string;
 }

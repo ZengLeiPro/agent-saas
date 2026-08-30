@@ -1,5 +1,7 @@
 export function governanceV34Statements(prefix: string): string[] {
   const accounts = `${prefix}_agent_dws_accounts`;
+  const inbox = `${prefix}_agent_dws_event_inbox`;
+  const runs = `${prefix}_runs`;
   const authSessions = `${prefix}_agent_dws_auth_sessions`;
   const sources = `${prefix}_context_sources`;
   const collections = `${prefix}_context_collections`;
@@ -10,6 +12,10 @@ export function governanceV34Statements(prefix: string): string[] {
     OR BTRIM(account.profile_id)<>BTRIM(account.corp_id)||':'||BTRIM(account.dingtalk_user_id)
   )`;
   return [
+    `ALTER TABLE ${accounts} ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ`,
+    `UPDATE ${accounts} SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL`,
+    `ALTER TABLE ${accounts} ALTER COLUMN identity_updated_at SET DEFAULT NOW(),
+      ALTER COLUMN identity_updated_at SET NOT NULL`,
     `DO $$ BEGIN
       IF to_regclass('${authSessions}') IS NOT NULL THEN
         EXECUTE $migration$
@@ -149,6 +155,59 @@ export function governanceV34Statements(prefix: string): string[] {
             AND BTRIM(existing.corp_id)=BTRIM(account.corp_id)
             AND BTRIM(existing.dingtalk_user_id)=BTRIM(account.dingtalk_user_id)
         )`,
+    `DO $$ BEGIN
+      IF to_regclass('${inbox}') IS NOT NULL THEN
+        EXECUTE $migration$
+          UPDATE ${inbox} AS inbox
+          SET payload_json=jsonb_set(
+                inbox.payload_json,'{accountIdentity}',jsonb_build_object(
+                  'profileId',account.profile_id,
+                  'corpId',account.corp_id,
+                  'dingtalkUserId',account.dingtalk_user_id
+                ),TRUE
+              ),updated_at=NOW()
+          FROM ${accounts} AS account
+          WHERE inbox.tenant_id=account.tenant_id AND inbox.account_id=account.account_id
+            AND inbox.state IN ('pending','processing','retry_wait','reply_pending')
+            AND inbox.payload_json->>'schemaVersion'='1'
+            AND NOT (inbox.payload_json ? 'accountIdentity')
+            AND account.status='active'
+            AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
+            AND account.identity_updated_at <= inbox.created_at
+        $migration$;
+      END IF;
+    END $$`,
+    `DO $$ BEGIN
+      IF to_regclass('${runs}') IS NOT NULL THEN
+        EXECUTE $migration$
+          UPDATE ${runs} AS runtime_run
+          SET metadata=jsonb_set(
+            runtime_run.metadata,'{dwsCompletionRoute}',
+            runtime_run.metadata->'dwsCompletionRoute' || jsonb_build_object(
+              'profileId',account.profile_id,
+              'corpId',account.corp_id,
+              'dingtalkUserId',account.dingtalk_user_id
+            ),TRUE
+          )
+          FROM ${accounts} AS account, ${runs} AS parent_run
+          WHERE runtime_run.metadata->>'backgroundTask'='true'
+            AND runtime_run.metadata->>'parentChannel'='dingtalk'
+            AND jsonb_typeof(runtime_run.metadata->'dwsCompletionRoute')='object'
+            AND NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'profileId')
+            AND NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'corpId')
+            AND NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'dingtalkUserId')
+            AND runtime_run.metadata->'dwsCompletionRoute'->>'accountId'=account.account_id
+            AND runtime_run.tenant_id=account.tenant_id
+            AND parent_run.run_id=runtime_run.metadata->>'parentRunId'
+            AND parent_run.tenant_id=runtime_run.tenant_id
+            AND parent_run.channel='dingtalk'
+            AND parent_run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
+            AND account.status='active'
+            AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
+            AND account.identity_updated_at <= parent_run.requested_at
+        $migration$;
+      END IF;
+    END $$`,
     `UPDATE ${accounts}
       SET status='error',runtime_status='error',
           last_error='dws_profile_identity_reauthorization_required',

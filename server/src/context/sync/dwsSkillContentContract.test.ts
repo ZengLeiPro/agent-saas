@@ -25,6 +25,8 @@ describe('DWS v1.0.60 skill content contract', () => {
     expect(minutes).not.toContain('`get transcription` 使用 `--next-token`');
     expect(minutes).not.toContain('正确参数名是 `--next-token`');
     expect(minutes).toContain('cursor 首次返回空响应即终止翻页，不再重试');
+    expect(minutes).toContain('首次空页即终止翻页，即使同时携带 nextToken 也不继续');
+    expect(minutes).not.toContain('如果有 nextToken 则继续翻页；如果无 nextToken 则终止');
     expect(minutes).not.toMatch(/cursor[^\n]{0,40}连续(?:返回空)?\s*2\s*次/);
     expect(liteRecipes).toContain(
       '返回 `nextToken` 时用 `--cursor <token>` 继续',
@@ -32,6 +34,28 @@ describe('DWS v1.0.60 skill content contract', () => {
     expect(liteRecipes).not.toContain(
       '返回 `nextToken` 时用 `--next-token <token>` 继续',
     );
+  });
+
+  it('uses exact profile selectors for multi-account keepalive', async () => {
+    const runtimeContext = await readSkillFile('references', 'platform-runtime-context.md');
+    const keepalive = runtimeContext.split('### Token 寿命与永久性（重要）')[1]
+      ?.split('### 进程生命周期（debug 必读）')[0];
+
+    expect(keepalive).toContain('dws profile list --format json');
+    expect(keepalive).toContain('profile=corpId:userId');
+    expect(keepalive).toContain('dws auth status --format json --profile <corpId:userId>');
+    expect(keepalive).not.toContain('--profile <corpId>');
+  });
+
+  it('keeps direct auth login out of SaaS channel troubleshooting', async () => {
+    const channelLogin = await readSkillFile('references', 'channel-login.md');
+    const saas = channelLogin.split('## SaaS 排查流程')[1]?.split('## 仅平台外本地开发')[0];
+    const localDevelopment = channelLogin.split('## 仅平台外本地开发')[1];
+
+    expect(saas).toContain('不得执行 `dws auth login`');
+    expect(saas).toContain('连接器页');
+    expect(saas).not.toContain('执行 `dws auth login --profile');
+    expect(localDevelopment).toContain('dws auth login --profile <corpId:userId> --format json');
   });
 
   it('does not advertise conference booking in calendar docs', async () => {

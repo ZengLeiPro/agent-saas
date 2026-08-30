@@ -382,6 +382,29 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     );
   });
 
+  it('v2 已持久化回复在崩溃重领后不重复 dispatch，并继续发送与完成', async () => {
+    const recovered = {
+      ...item,
+      state: 'reply_pending' as const,
+      attempt: 2,
+      sessionId: 'session-a',
+      runId: 'run-a',
+      responseText: '崩溃前已持久化回复',
+      payload: { ...item.payload, schemaVersion: 2 },
+    };
+    const { router, messageStore, dispatch, sender } = setup({ claimed: recovered });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(messageStore.saveDispatchResult).not.toHaveBeenCalled();
+    expect(messageStore.markReplyAttemptStarted).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith(
+      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复', expect.any(String),
+    );
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ['pending', { state: 'processing' as const, attempt: 1 }],
     ['retry_wait', { state: 'processing' as const, attempt: 3 }],
@@ -405,7 +428,6 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.pinLegacyIdentityOrTerminate).toHaveBeenCalledWith(
       'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
       {
-        revision: account.revision,
         profileId: account.profileId,
         corpId: account.corpId,
         dingtalkUserId: account.dingtalkUserId,

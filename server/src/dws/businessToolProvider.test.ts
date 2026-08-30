@@ -203,7 +203,7 @@ describe('DwsBusinessToolProvider', () => {
       expect(invoke).not.toHaveBeenCalled();
       expect(auditStore.events.at(-1)).toMatchObject({
         reason: 'DWS_BUSINESS_ACTION_REJECTED',
-        metadata: { commandPath: args.join('.'), policySource: 'unregistered', policyCliVersion: '1.0.55' },
+        metadata: { commandPath: args.join('.'), policySource: 'unregistered', policyCliVersion: '1.0.60' },
       });
     }
   });
@@ -277,7 +277,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(auditStore.events[0]?.metadata).toMatchObject({
       commandPath: 'calendar.event.list',
       policySource: 'cli_schema',
-      policyCliVersion: '1.0.55',
+      policyCliVersion: '1.0.60',
       delegationBindingId: 'assignment-a',
       delegationAssignmentVersion: 3,
     });

@@ -169,7 +169,7 @@ dws 是 **sliding window** 设计：v1.0.60 的 token exchange 每次成功解�
 - **实际效果**：只要月内调过一次 dws 命令，refresh_token 就被前推。**等于永不过期**
 - **唯一掉线场景**：连续 30 天工作区完全不用 dws，refresh_token 才真过期
 
-如果一个工作区超过 30 天没用，next call 会报 `refresh_token expired`，需要让用户重走 device flow。平台若要做到长期免重复登录，应在连接管理层对已绑定账号按不超过 21 天的周期执行一次 `dws auth status --format json`；该命令只检查并按需刷新凭证，不读取用户业务数据。多 profile 用户需逐个带 `--profile <corpId>` 检查。保活失败时只标记连接失效并提示重新授权，不得静默改绑其他账号。
+如果一个工作区超过 30 天没用，next call 会报 `refresh_token expired`，需要让用户重走 device flow。平台若要做到长期免重复登录，应在连接管理层对已绑定账号按不超过 21 天的周期执行一次 `dws auth status --format json`；该命令只检查并按需刷新凭证，不读取用户业务数据。多 profile 用户应先运行 `dws profile list --format json`，遍历每项返回的精确 `profile=corpId:userId`，逐个执行 `dws auth status --format json --profile <corpId:userId>`。保活失败时只标记对应连接失效并提示重新授权，不得静默改绑其他账号。
 
 ### 进程生命周期（debug 必读）
 

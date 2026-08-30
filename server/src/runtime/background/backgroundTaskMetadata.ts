@@ -209,7 +209,9 @@ export function parseDwsCompletionRoute(value: unknown): ParsedBackgroundTaskDws
       route: { accountId, profileId, corpId, dingtalkUserId, conversationId, eventType, ...optional },
     };
   }
-  if (!profileId && !corpId && !dingtalkUserId) {
+  const hasIdentityField = ['profileId', 'corpId', 'dingtalkUserId']
+    .some(key => Object.hasOwn(route, key));
+  if (!hasIdentityField) {
     return { version: 'legacy', route: { accountId, conversationId, eventType, ...optional } };
   }
   return { version: 'invalid' };

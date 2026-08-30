@@ -142,13 +142,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           LIMIT 1
         )
         UPDATE ${this.inboxTable} inbox
-        SET state=CASE
-              WHEN inbox.state='reply_pending'
-                AND inbox.payload_json->>'schemaVersion'='1'
-                AND NOT (inbox.payload_json ? 'accountIdentity')
-              THEN 'reply_pending'
-              ELSE 'processing'
-            END,
+        SET state=CASE WHEN inbox.state='reply_pending' THEN 'reply_pending' ELSE 'processing' END,
             attempt=inbox.attempt+1,lease_owner=$1,
             lease_fence=inbox.lease_fence+1,
             lease_expires_at=NOW()+($2::bigint * INTERVAL '1 millisecond'),
@@ -216,8 +210,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     assertOwnerFence(owner, fence);
     assertTexts(inboxId);
     if (candidate && (
-      !Number.isInteger(candidate.revision) || candidate.revision < 1
-      || !candidate.profileId || !candidate.corpId || !candidate.dingtalkUserId
+      !candidate.profileId || !candidate.corpId || !candidate.dingtalkUserId
     )) {
       throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
     }
@@ -227,10 +220,10 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           SELECT 1
           FROM ${this.accountsTable} account
           WHERE account.tenant_id=inbox.tenant_id AND account.account_id=inbox.account_id
-            AND account.status='active' AND account.revision=$4
-            AND account.profile_id=$5 AND account.corp_id=$6 AND account.dingtalk_user_id=$7
+            AND account.status='active'
+            AND account.profile_id=$4 AND account.corp_id=$5 AND account.dingtalk_user_id=$6
             AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
-            AND account.updated_at <= inbox.created_at
+            AND account.identity_updated_at <= inbox.created_at
         ) AS provable
         FROM ${this.inboxTable} inbox
         WHERE inbox.inbox_id=$1 AND inbox.state IN ('processing','reply_pending')
@@ -241,13 +234,13 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
       UPDATE ${this.inboxTable} inbox
       SET payload_json=CASE WHEN decision.provable THEN jsonb_set(
             inbox.payload_json,'{accountIdentity}',
-            jsonb_build_object('profileId',$5::text,'corpId',$6::text,'dingtalkUserId',$7::text),TRUE
+            jsonb_build_object('profileId',$4::text,'corpId',$5::text,'dingtalkUserId',$6::text),TRUE
           ) ELSE inbox.payload_json END,
           state=CASE WHEN decision.provable THEN inbox.state ELSE 'dead_letter' END,
           lease_owner=CASE WHEN decision.provable THEN inbox.lease_owner ELSE NULL END,
           lease_expires_at=CASE WHEN decision.provable THEN inbox.lease_expires_at ELSE NULL END,
           next_attempt_at=CASE WHEN decision.provable THEN inbox.next_attempt_at ELSE NULL END,
-          last_error=CASE WHEN decision.provable THEN inbox.last_error ELSE $8 END,
+          last_error=CASE WHEN decision.provable THEN inbox.last_error ELSE $7 END,
           completed_at=CASE WHEN decision.provable THEN inbox.completed_at ELSE NOW() END,
           updated_at=NOW()
       FROM decision
@@ -257,7 +250,6 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
       inboxId,
       owner,
       fence,
-      candidate?.revision ?? null,
       candidate?.profileId ?? null,
       candidate?.corpId ?? null,
       candidate?.dingtalkUserId ?? null,

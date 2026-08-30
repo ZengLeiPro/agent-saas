@@ -66,7 +66,7 @@ export async function deliverDwsBackgroundCompletion(input: {
   }
 
   if (!route && legacyRoute) {
-    const reconciled = await reconcileLegacyDwsCompletionRoute(config, task, legacyRoute);
+    const reconciled = await reconcileLegacyDwsCompletionRoute(config, runStore, task, metadata, legacyRoute);
     if ('reason' in reconciled) {
       return await discardUnreconciledLegacyRoute(input, reconciled.reason, 'legacy');
     }
@@ -106,7 +106,9 @@ export async function deliverDwsBackgroundCompletion(input: {
 
 async function reconcileLegacyDwsCompletionRoute(
   config: RawRuntimeRunDispatchConfig,
+  runStore: RunStore,
   task: RunRecord,
+  metadata: BackgroundTaskMetadata,
   legacyRoute: LegacyBackgroundTaskDwsCompletionRoute,
 ): Promise<{ route: BackgroundTaskDwsCompletionRoute } | { reason: string }> {
   if (!config.resolveLegacyDwsCompletionAccount) {
@@ -127,13 +129,24 @@ async function reconcileLegacyDwsCompletionRoute(
   if (!profileId || !corpId || !dingtalkUserId || profileId !== `${corpId}:${dingtalkUserId}`) {
     return { reason: 'dws_completion_legacy_account_identity_invalid' };
   }
-  const requestedAt = Date.parse(task.requestedAt);
-  const accountUpdatedAt = Date.parse(account.updatedAt);
-  if (!Number.isFinite(requestedAt) || !Number.isFinite(accountUpdatedAt)) {
+  let parentRun: RunRecord | null;
+  try {
+    parentRun = await runStore.get(metadata.parentRunId);
+  } catch {
+    return { reason: 'dws_completion_legacy_parent_run_unavailable' };
+  }
+  if (!parentRun) return { reason: 'dws_completion_legacy_parent_run_missing' };
+  if (parentRun.tenantId !== task.tenantId || parentRun.channel !== 'dingtalk'
+    || parentRun.metadata.backgroundTask === true) {
+    return { reason: 'dws_completion_legacy_parent_run_invalid' };
+  }
+  const parentRequestedAt = Date.parse(parentRun.requestedAt);
+  const identityUpdatedAt = Date.parse(account.identityUpdatedAt ?? '');
+  if (!Number.isFinite(parentRequestedAt) || !Number.isFinite(identityUpdatedAt)) {
     return { reason: 'dws_completion_legacy_identity_change_unverifiable' };
   }
-  if (accountUpdatedAt > requestedAt) {
-    return { reason: 'dws_completion_legacy_identity_changed_since_request' };
+  if (identityUpdatedAt > parentRequestedAt) {
+    return { reason: 'dws_completion_legacy_identity_changed_since_parent_request' };
   }
   return {
     route: {

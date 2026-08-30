@@ -228,11 +228,19 @@ describe('DwsCliContextClient', () => {
     expect(json.mock.calls[0]![0]).toContain('--page-all');
   });
 
-  it('fails closed when a v1.0.60 minutes inventory is not complete and has no safe cursor', async () => {
-    const { client } = setup([{
-      data: { minutes: [], complete: false },
-      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } },
-    }]);
+  it.each([
+    ['complete=false', { data: { minutes: [], complete: false },
+      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } } }],
+    ['100 pages without completion proof', { data: { minutes: [] },
+      meta: { pagination: { pages: 100, items: 2_000 } } }],
+    ['complete=true but endpoint not exhausted', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: false, pages: 100, items: 2_000 } } }],
+    ['contradictory next token', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, pages: 100, next_token: 'unsafe-next' } } }],
+    ['contradictory pagination hasMore', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, hasMore: true, pages: 100 } } }],
+  ])('fails closed for minutes inventory: %s', async (_name, payload) => {
+    const { client } = setup([payload]);
 
     await expect(client.listMinutes({ scope, window, pageSize: 20 }))
       .resolves.toEqual({ items: [], truncated: true });

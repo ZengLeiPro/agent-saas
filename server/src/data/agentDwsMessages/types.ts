@@ -11,7 +11,6 @@ export type AgentDwsPayload = Record<string, unknown>;
 export const DWS_INBOX_V1_IDENTITY_UNPROVABLE = 'DWS_INBOX_V1_IDENTITY_UNPROVABLE';
 
 export interface AgentDwsLegacyAccountIdentityCandidate {
-  revision: number;
   profileId: string;
   corpId: string;
   dingtalkUserId: string;

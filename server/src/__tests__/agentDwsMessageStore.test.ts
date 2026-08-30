@@ -112,15 +112,14 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain("active.state='processing'");
     expect(sql).toContain("earlier.state IN ('pending','processing','retry_wait','reply_pending')");
     expect(sql).toContain('lease_fence=inbox.lease_fence+1');
-    expect(sql).toContain("WHEN inbox.state='reply_pending'");
-    expect(sql).toContain("inbox.payload_json->>'schemaVersion'='1'");
-    expect(sql).toContain("NOT (inbox.payload_json ? 'accountIdentity')");
+    expect(sql).toContain("WHEN inbox.state='reply_pending' THEN 'reply_pending'");
+    expect(sql).not.toContain("inbox.payload_json->>'schemaVersion'='1'");
     expect(sql).toContain('attempt=inbox.attempt+1');
     expect(clientQuery.mock.calls.at(-1)?.[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('v1 身份可证明时按账号 revision 与入队时间原子补 pin，并保持 lease fence', async () => {
+  it('v1 身份可证明时忽略普通 revision 变化并按身份时间原子补 pin', async () => {
     const pinned = inboxRow({
       payload_json: {
         schemaVersion: 1,
@@ -133,7 +132,6 @@ describe('PgAgentDwsMessageStore', () => {
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
     await expect(store.pinLegacyIdentityOrTerminate('adwsi-1', 'worker-1', 3, {
-      revision: 7,
       profileId: 'corp-1:user-1',
       corpId: 'corp-1',
       dingtalkUserId: 'user-1',
@@ -145,13 +143,14 @@ describe('PgAgentDwsMessageStore', () => {
 
     const sql = String(query.mock.calls[0]?.[0]);
     expect(sql).toContain('FROM gov_agent_dws_accounts account');
-    expect(sql).toContain("account.status='active' AND account.revision=$4");
-    expect(sql).toContain('account.updated_at <= inbox.created_at');
+    expect(sql).toContain("account.status='active'");
+    expect(sql).not.toContain('account.revision=');
+    expect(sql).toContain('account.identity_updated_at <= inbox.created_at');
     expect(sql).toContain("inbox.payload_json->>'schemaVersion'='1'");
     expect(sql).toContain("NOT (inbox.payload_json ? 'accountIdentity')");
     expect(sql).toContain('inbox.lease_owner=$2 AND inbox.lease_fence=$3');
     expect(query.mock.calls[0]?.[1]).toEqual([
-      'adwsi-1', 'worker-1', 3, 7, 'corp-1:user-1', 'corp-1', 'user-1',
+      'adwsi-1', 'worker-1', 3, 'corp-1:user-1', 'corp-1', 'user-1',
       'DWS_INBOX_V1_IDENTITY_UNPROVABLE',
     ]);
   });
@@ -176,7 +175,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain("state=CASE WHEN decision.provable THEN inbox.state ELSE 'dead_letter' END");
     expect(sql).toContain('lease_owner=CASE WHEN decision.provable THEN inbox.lease_owner ELSE NULL END');
     expect(sql).toContain('next_attempt_at=CASE WHEN decision.provable THEN inbox.next_attempt_at ELSE NULL END');
-    expect(query.mock.calls[0]?.[1]?.slice(3, 7)).toEqual([null, null, null, null]);
+    expect(query.mock.calls[0]?.[1]?.slice(3, 6)).toEqual([null, null, null]);
   });
 
   it('停机释放 processing 或旧 v1 reply claim 时保持可恢复状态并回退 attempt', async () => {

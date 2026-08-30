@@ -308,7 +308,6 @@ export class AgentDwsMessageRouter {
         this.workerId,
         item.leaseFence,
         account && account.status === 'active' && hasExactAgentDwsProfile(account) ? {
-          revision: account.revision,
           profileId: account.profileId!,
           corpId: account.corpId!,
           dingtalkUserId: account.dingtalkUserId!,

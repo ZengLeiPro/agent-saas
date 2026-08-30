@@ -349,7 +349,7 @@ export function parseEventLine(line: string): DwsPersonalEvent | null {
   }
   const eventId = text(raw.event_id);
   const type = text(raw.type) ?? text(raw.event_type);
-  const senderName = text(raw.sender_name) ?? text(raw.sender_nick);
+  const senderName = text(raw.sender) ?? text(raw.sender_name) ?? text(raw.sender_nick);
   if (!eventId || !type) return null;
   return {
     type,

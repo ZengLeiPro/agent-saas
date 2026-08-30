@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
+import { parseEventLine } from './personalEventGateway.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
 import {
   DwsRequesterIdentityResolver,
@@ -79,6 +80,30 @@ describe('DwsRequesterIdentityResolver', () => {
       { ...alice, id: 'agent-user', username: 'agent-user', dingtalkStaffId: 'agent-staff' },
     ], '{"result":[{"staffId":"agent-staff","openDingtalkId":"agent-open"}]}').resolver;
     await expect(selfEcho.resolve(account, 'agent-open')).resolves.toBeNull();
+  });
+
+  it('使用 canonical sender 触发姓名交叉查询并对冲突目录映射 fail closed', async () => {
+    const event = parseEventLine(JSON.stringify({
+      event_id: 'event-a', type: 'user_im_message_receive_o2o_all', sender: '爱丽丝',
+      sender_open_dingtalk_id: 'open-a', content: 'hi',
+    }));
+    const invoke = vi.fn(async (request: { input: { command: string } }) => ({
+      status: 'success' as const,
+      content: request.input.command.includes("'search'")
+        ? '{"result":[{"staffId":"external-staff","openDingtalkId":"open-a"}]}'
+        : '{"result":[{"staffId":"staff-a","openDingtalkId":"open-a"}]}',
+    }));
+    const subject = new DwsRequesterIdentityResolver({
+      agentCwd: '/workspace',
+      userStore: { listAll: vi.fn().mockReturnValue([alice]) } as never,
+      auditStore: new InMemoryGovernanceAuditStore(),
+      resolveServerRemote: vi.fn().mockResolvedValue({ baseUrl: 'https://hand.test', authToken: 'token-a' }),
+      createTransport: () => ({ invoke }) as never,
+    });
+
+    await expect(subject.resolve(account, event!.senderOpenDingtalkId!, event!.senderName)).resolves.toBeNull();
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke.mock.calls[1]![0].input.command).toContain("'search' '--query' '爱丽丝'");
   });
 
   it('解析嵌套结果并拒绝无效 JSON', () => {

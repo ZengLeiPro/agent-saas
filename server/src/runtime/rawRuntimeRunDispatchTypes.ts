@@ -106,6 +106,7 @@ export interface LegacyDwsCompletionAccountSnapshot {
   profileId?: string;
   corpId?: string;
   dingtalkUserId?: string;
+  identityUpdatedAt?: string;
   updatedAt: string;
 }
 

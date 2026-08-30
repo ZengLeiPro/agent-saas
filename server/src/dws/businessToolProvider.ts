@@ -243,7 +243,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
     if (input.credentialMode === 'agent' && (!account || account.status !== 'active'
       || !hasExactAgentDwsProfile(account))) {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
-      throw new Error('当前企业专家没有可用的精确钉钉账号授权');
+      throw new Error('当前企业专家没有可用的钉钉账号授权');
     }
     const runAccountPin = input.credentialMode === 'agent'
       ? await this.resolveRunAccountPin(context.runId)

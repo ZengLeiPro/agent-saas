@@ -10,8 +10,7 @@ export const DWS_READ_COMMAND_OVERRIDES: ReadonlySet<string> = new Set([
   'attendance.approve.templates',
   'attendance.get-approve-template',
   'attendance.list-approve',
-  // chat.md 的 1.0.55 可执行查询；当版 schema catalog 漏收，1.0.60 已补录。
-  'chat.list-all-conversations',
+  // chat.md 的旧版只读别名仍未进入 1.0.60 schema catalog。
   'chat.message.list-unread-conversations',
   // contact.md 获取当前用户信息；旧版 CLI 别名未进入 1.0.55/1.0.60 schema catalog。
   'contact.user.me',

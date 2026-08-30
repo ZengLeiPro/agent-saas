@@ -29,6 +29,14 @@ describe('DWS Personal Stream event parser', () => {
     });
   });
 
+  it('优先解析 v1.0.60 flatten 顶层 sender 并兼容旧姓名字段', () => {
+    const canonical = { ...event, sender: '张三', sender_name: '旧名称', sender_nick: '旧昵称' };
+    expect(parseEventLine(JSON.stringify(canonical))).toMatchObject({
+      senderOpenDingtalkId: event.sender_open_dingtalk_id,
+      senderName: '张三',
+    });
+  });
+
   it('忽略日志、坏 JSON 和没有 event_id 的对象', () => {
     expect(parseEventLine('[event] ready')).toBeNull();
     expect(parseEventLine('{bad')).toBeNull();

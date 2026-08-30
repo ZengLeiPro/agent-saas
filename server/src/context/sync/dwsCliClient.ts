@@ -265,7 +265,7 @@ export class DwsCliContextClient implements DwsContextClient {
       });
     return pageResult(items, {
       ...page,
-      truncated: page.truncated || parsed.some(item => item === null),
+      truncated: page.truncated || !hasCompleteMinutesInventory(payload) || parsed.some(item => item === null),
     });
   }
 
@@ -395,6 +395,23 @@ function parsePage(payload: unknown, itemKeys: string[]): ParsedPage {
       || (hasMore === true && !nextCursor)
       || (complete === false && !nextCursor),
   };
+}
+
+function hasCompleteMinutesInventory(payload: unknown): boolean {
+  const root = asRecord(payload);
+  const records = objectCandidates(payload);
+  const container = records.find(record => (
+    ['minutes', 'itemList', 'items', 'tasks', 'list', 'records'].some(key => Array.isArray(record[key]))
+  )) ?? records[0] ?? {};
+  const pagination = asRecord(asRecord(root.meta).pagination);
+  const complete = optionalBoolean(container, ['complete']);
+  const endpointExhausted = optionalBoolean(pagination, ['endpoint_exhausted', 'endpointExhausted']);
+  const hasMore = optionalBoolean(container, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more'])
+    ?? optionalBoolean(pagination, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more']);
+  const nextCursor = optionalString(container, [
+    'nextCursor', 'next_cursor', 'nextToken', 'next_token', 'nextPageToken', 'next_page_token', 'pageToken',
+  ]) ?? optionalString(pagination, ['next_token', 'nextToken', 'next_cursor', 'nextCursor']);
+  return complete === true && endpointExhausted === true && hasMore !== true && !nextCursor;
 }
 
 function pageResult<T>(items: T[], page: ParsedPage): DwsPage<T> {

@@ -128,17 +128,30 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
     await pool.query(`DELETE FROM ${prefix}_managed_agents WHERE agent_id IN ('agent-auth-exact','agent-auth-empty')`);
   });
 
-  it('旧 v1 inbox 在真实 PostgreSQL 中按入队身份补 pin 或一次性终结', async () => {
+  it('V34 原子补 pin 存量路由，运行态更新不冒充身份变化，重授权仍 fail closed', async () => {
+    const accountsTable = `${prefix}_agent_dws_accounts`;
+    const inboxTable = `${prefix}_agent_dws_event_inbox`;
+    const runsTable = `${prefix}_runs`;
+    await pool.query(`CREATE TABLE ${runsTable} (
+      run_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,channel TEXT,requested_at TIMESTAMPTZ NOT NULL,
+      metadata JSONB NOT NULL
+    )`);
     await pool.query(`INSERT INTO ${prefix}_managed_agents
       (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
-      VALUES ('agent-inbox-v1','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
-    await pool.query(`INSERT INTO ${prefix}_agent_dws_accounts
+      VALUES
+        ('agent-inbox-v1','tenant-a','org_agent','admin','enabled',1,'admin','admin'),
+        ('agent-inbox-reauthed','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
+    await pool.query(`ALTER TABLE ${accountsTable} DROP CONSTRAINT ${prefix}_adws_active_identity_ck`);
+    await pool.query(`ALTER TABLE ${accountsTable} ALTER COLUMN identity_updated_at DROP NOT NULL`);
+    await pool.query(`INSERT INTO ${accountsTable}
       (account_id,tenant_id,agent_id,display_name,login_id,corp_id,dingtalk_user_id,profile_id,
-       status,event_policy_json,revision,created_by,updated_at,updated_by)
+       status,event_policy_json,revision,created_by,identity_updated_at,updated_at,updated_by)
       VALUES ('inbox-v1','tenant-a','agent-inbox-v1','旧 inbox 账号','inbox-v1-login',
-        'corp-v1','user-v1','corp-v1:user-v1','active','{"kinds":["at_me"]}'::jsonb,
-        1,'admin','2000-01-01T00:00:00Z','admin')`);
-    const inboxTable = `${prefix}_agent_dws_event_inbox`;
+        'corp-v1','user-v1','corp-v1','active','{"kinds":["at_me"]}'::jsonb,
+        1,'admin',NULL,'2000-01-01T00:00:00Z','admin'),
+        ('inbox-reauthed','tenant-a','agent-inbox-reauthed','已重授权账号','inbox-reauthed-login',
+        'corp-current','user-current','corp-current:user-current','active','{"kinds":["at_me"]}'::jsonb,
+        5,'admin',NULL,'2026-03-01T00:00:00Z','admin')`);
     await pool.query(`INSERT INTO ${inboxTable}
       (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
        session_id,run_id,response_text,attempt,lease_expires_at,next_attempt_at,created_at,updated_at)
@@ -152,43 +165,196 @@ describePg('DWS V34 PostgreSQL 跨版本兼容', () => {
         ('legacy-reply','tenant-a','inbox-v1','event-reply','chatbot_message','conv-reply','reply',
           '{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'reply_pending','session-v1','run-v1',
           '旧版本回复',2,'2025-01-01T00:00:00Z',NULL,'2026-01-01T00:00:02Z','2026-01-01T00:00:02Z')`);
+    await pool.query(`INSERT INTO ${inboxTable}
+      (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
+       attempt,lease_owner,lease_expires_at,created_at,updated_at)
+      VALUES ('legacy-processing','tenant-a','inbox-v1','event-processing','chatbot_message','conv-processing',
+        'processing','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'processing',1,
+        'old-worker','2099-01-01T00:00:00Z','2026-01-01T00:00:03Z','2026-01-01T00:00:03Z')`);
+    await pool.query(`INSERT INTO ${inboxTable}
+      (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
+       attempt,created_at,updated_at)
+      VALUES ('legacy-pre-reauth','tenant-a','inbox-reauthed','event-pre-reauth',
+        'chatbot_message','conv-pre-reauth','pre-reauth',
+        '{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,
+        '2026-02-01T00:00:00Z','2026-02-01T00:00:00Z')`);
+    await pool.query(`INSERT INTO ${runsTable} (run_id,tenant_id,channel,requested_at,metadata) VALUES
+      ('parent-legacy','tenant-a','dingtalk','2026-01-01T00:00:00Z','{}'::jsonb),
+      ('legacy-completion','tenant-a','background_task','2026-01-02T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-legacy","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-v1","conversationId":"conv-run","eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb),
+      ('partial-corp','tenant-a','background_task','2026-01-02T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-legacy","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-v1","corpId":"corp-conflict","conversationId":"conv-partial-corp",
+         "eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb),
+      ('partial-user','tenant-a','background_task','2026-01-02T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-legacy","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-v1","dingtalkUserId":"user-conflict","conversationId":"conv-partial-user",
+         "eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb),
+      ('partial-missing','tenant-a','background_task','2026-01-02T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-legacy","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-v1","corpId":"corp-v1","conversationId":"conv-partial-missing",
+         "eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb),
+      ('parent-pre-reauth','tenant-a','dingtalk','2026-02-01T00:00:00Z','{}'::jsonb),
+      ('legacy-completion-pre-reauth','tenant-a','background_task','2026-04-01T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-pre-reauth","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-reauthed","conversationId":"conv-old","eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb)`);
+
+    await rerunV34();
+    const accountStore = new PgAgentDwsAccountStore(pool, prefix);
+    const account = await accountStore.getForTenant('tenant-a', 'inbox-v1');
+    expect(account).toMatchObject({
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1', revision: 2,
+      identityUpdatedAt: expect.any(String),
+    });
+    const pinnedRun = await pool.query(`SELECT metadata FROM ${runsTable} WHERE run_id='legacy-completion'`);
+    expect(pinnedRun.rows[0]?.metadata.dwsCompletionRoute).toMatchObject({
+      accountId: 'inbox-v1', profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    });
+    const partialRuns = await pool.query(`SELECT run_id,metadata->'dwsCompletionRoute' AS route
+      FROM ${runsTable} WHERE run_id IN ('partial-corp','partial-user','partial-missing')`);
+    const partialRoutes = Object.fromEntries(partialRuns.rows.map(row => [row.run_id, row.route]));
+    expect(partialRoutes['partial-corp']).toMatchObject({ corpId: 'corp-conflict' });
+    expect(partialRoutes['partial-corp']).not.toHaveProperty('profileId');
+    expect(partialRoutes['partial-corp']).not.toHaveProperty('dingtalkUserId');
+    expect(partialRoutes['partial-user']).toMatchObject({ dingtalkUserId: 'user-conflict' });
+    expect(partialRoutes['partial-user']).not.toHaveProperty('profileId');
+    expect(partialRoutes['partial-user']).not.toHaveProperty('corpId');
+    expect(partialRoutes['partial-missing']).toMatchObject({ corpId: 'corp-v1' });
+    expect(partialRoutes['partial-missing']).not.toHaveProperty('profileId');
+    expect(partialRoutes['partial-missing']).not.toHaveProperty('dingtalkUserId');
+    const pinnedProcessing = await pool.query(`SELECT payload_json FROM ${inboxTable}
+      WHERE inbox_id='legacy-processing'`);
+    expect(pinnedProcessing.rows[0]?.payload_json.accountIdentity).toEqual({
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    });
+    const unprovenInbox = await pool.query(`SELECT payload_json FROM ${inboxTable}
+      WHERE inbox_id='legacy-pre-reauth'`);
+    expect(unprovenInbox.rows[0]?.payload_json).not.toHaveProperty('accountIdentity');
+    const unprovenRun = await pool.query(`SELECT metadata FROM ${runsTable}
+      WHERE run_id='legacy-completion-pre-reauth'`);
+    expect(unprovenRun.rows[0]?.metadata.dwsCompletionRoute).not.toHaveProperty('profileId');
 
     const store = new PgAgentDwsMessageStore(pool, prefix);
-    const identity = {
-      revision: 1, profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
-    };
     for (const expected of [
       ['legacy-pending', 'processing'], ['legacy-retry', 'processing'], ['legacy-reply', 'reply_pending'],
     ] as const) {
       const claimed = await store.claimNext('worker-v1', 60_000);
-      expect(claimed).toMatchObject({ inboxId: expected[0], state: expected[1] });
-      await expect(store.pinLegacyIdentityOrTerminate(
-        claimed!.inboxId, 'worker-v1', claimed!.leaseFence, identity,
-      )).resolves.toMatchObject({
-        state: expected[1],
-        payload: { accountIdentity: { profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1' } },
+      expect(claimed).toMatchObject({
+        inboxId: expected[0], state: expected[1],
+        payload: { accountIdentity: {
+          profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+        } },
       });
     }
 
-    await pool.query(`UPDATE ${prefix}_agent_dws_accounts SET updated_at=NOW() WHERE account_id='inbox-v1'`);
+    const preReauth = await store.claimNext('worker-pre-reauth', 60_000);
+    expect(preReauth?.inboxId).toBe('legacy-pre-reauth');
+    await expect(store.pinLegacyIdentityOrTerminate(
+      preReauth!.inboxId, 'worker-pre-reauth', preReauth!.leaseFence, {
+        profileId: 'corp-current:user-current',
+        corpId: 'corp-current', dingtalkUserId: 'user-current',
+      },
+    )).resolves.toMatchObject({
+      state: 'dead_letter', lastError: 'DWS_INBOX_V1_IDENTITY_UNPROVABLE',
+    });
+
+    const identityBeforeSameAuth = (await accountStore.getForTenant('tenant-a', 'inbox-v1'))!.identityUpdatedAt;
     await pool.query(`INSERT INTO ${inboxTable}
       (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
        attempt,created_at,updated_at)
-      VALUES ('legacy-unprovable','tenant-a','inbox-v1','event-unprovable','chatbot_message','conv-unprovable',
-        'unprovable','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,
-        '2026-01-01T00:00:03Z','2026-01-01T00:00:03Z')`);
-    const unprovable = await store.claimNext('worker-v1', 60_000);
+      VALUES ('legacy-same-auth','tenant-a','inbox-v1','event-same-auth','chatbot_message','conv-same-auth',
+        'same-auth','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,NOW(),NOW())`);
+    await pool.query(`INSERT INTO ${runsTable} (run_id,tenant_id,channel,requested_at,metadata) VALUES
+      ('parent-same-auth','tenant-a','dingtalk','2090-01-01T00:00:00Z','{}'::jsonb),
+      ('legacy-completion-same-auth','tenant-a','background_task','2090-01-02T00:00:00Z',
+       '{"backgroundTask":true,"parentRunId":"parent-same-auth","parentChannel":"dingtalk","dwsCompletionRoute":{
+         "accountId":"inbox-v1","conversationId":"conv-same-run","eventType":"user_im_message_receive_o2o_all"
+       }}'::jsonb)`);
+    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 2, 'admin:same-reauthorize');
+    const sameIdentity = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 3, {
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    }, 'admin:same-reauthorize');
+    expect(sameIdentity).toMatchObject({ revision: 4, identityUpdatedAt: identityBeforeSameAuth });
+    await rerunV34();
+    const sameAuthInbox = await pool.query(`SELECT payload_json FROM ${inboxTable}
+      WHERE inbox_id='legacy-same-auth'`);
+    expect(sameAuthInbox.rows[0]?.payload_json.accountIdentity).toEqual({
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    });
+    const sameAuthRun = await pool.query(`SELECT metadata FROM ${runsTable}
+      WHERE run_id='legacy-completion-same-auth'`);
+    expect(sameAuthRun.rows[0]?.metadata.dwsCompletionRoute).toMatchObject({
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    });
+    const sameAuthClaim = await store.claimNext('worker-same-auth', 60_000);
+    expect(sameAuthClaim).toMatchObject({ inboxId: 'legacy-same-auth', state: 'processing' });
+    await store.complete(sameAuthClaim!.inboxId, 'worker-same-auth', sameAuthClaim!.leaseFence);
+
+    await pool.query(`INSERT INTO ${inboxTable}
+      (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
+       session_id,run_id,response_text,attempt,lease_expires_at,created_at,updated_at)
+      VALUES ('v2-reply-recovery','tenant-a','inbox-v1','event-v2-reply','chatbot_message','conv-v2-reply',
+        'reply','{"schemaVersion":2,"source":"dws_personal_stream","accountIdentity":{
+          "profileId":"corp-v1:user-v1","corpId":"corp-v1","dingtalkUserId":"user-v1"
+        }}'::jsonb,'reply_pending','session-v2','run-v2','已持久化回复',1,
+        '2025-01-01T00:00:00Z','2026-04-01T00:00:00Z','2026-04-01T00:00:00Z')`);
+    const recoveredV2 = await store.claimNext('worker-v2-reply', 60_000);
+    expect(recoveredV2).toMatchObject({
+      inboxId: 'v2-reply-recovery', state: 'reply_pending', responseText: '已持久化回复',
+    });
+    await store.complete(recoveredV2!.inboxId, 'worker-v2-reply', recoveredV2!.leaseFence);
+
+    await accountStore.updateRuntimeStatus('inbox-v1', 'ready', undefined, undefined, 4);
+    await expect(accountStore.claimRuntimeLease('inbox-v1', 'runtime-v1', 60_000, 4)).resolves.toBe(true);
+    await expect(accountStore.markEvent('inbox-v1', 'runtime-v1', new Date(), 4)).resolves.toBe(true);
+    await accountStore.releaseRuntimeLease('inbox-v1', 'runtime-v1');
+    await pool.query(`INSERT INTO ${inboxTable}
+      (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
+       attempt,created_at,updated_at)
+      VALUES ('legacy-runtime','tenant-a','inbox-v1','event-runtime','chatbot_message','conv-runtime',
+        'runtime','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,NOW(),NOW())`);
+    const runtimeOnly = await store.claimNext('worker-runtime', 60_000);
+    const policyRace = await accountStore.setEnabled('tenant-a', 'inbox-v1', true, 4, 'admin:policy-race');
+    expect(policyRace).toMatchObject({ revision: 5, identityUpdatedAt: identityBeforeSameAuth });
+    await expect(store.pinLegacyIdentityOrTerminate(
+      runtimeOnly!.inboxId, 'worker-runtime', runtimeOnly!.leaseFence, {
+        profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+      },
+    )).resolves.toMatchObject({ state: 'processing', payload: { accountIdentity: {
+      profileId: 'corp-v1:user-v1', corpId: 'corp-v1', dingtalkUserId: 'user-v1',
+    } } });
+
+    await pool.query(`INSERT INTO ${inboxTable}
+      (inbox_id,tenant_id,account_id,event_id,event_type,conversation_id,content,payload_json,state,
+       attempt,created_at,updated_at)
+      VALUES ('legacy-changed','tenant-a','inbox-v1','event-changed','chatbot_message','conv-changed',
+        'changed','{"schemaVersion":1,"source":"dws_personal_stream"}'::jsonb,'pending',0,
+        NOW()-INTERVAL '1 minute',NOW())`);
+    await accountStore.markAuthorizing('tenant-a', 'inbox-v1', 5, 'admin:reauthorize');
+    const reauthorized = await accountStore.markAuthorized('tenant-a', 'inbox-v1', 6, {
+      profileId: 'corp-v2:user-v2', corpId: 'corp-v2', dingtalkUserId: 'user-v2',
+    }, 'admin:reauthorize');
+    const changed = await store.claimNext('worker-changed', 60_000);
     const terminal = await store.pinLegacyIdentityOrTerminate(
-      unprovable!.inboxId, 'worker-v1', unprovable!.leaseFence, identity,
+      changed!.inboxId, 'worker-changed', changed!.leaseFence, {
+        profileId: 'corp-v2:user-v2', corpId: 'corp-v2', dingtalkUserId: 'user-v2',
+      },
     );
     expect(terminal).toMatchObject({
       state: 'dead_letter', lastError: 'DWS_INBOX_V1_IDENTITY_UNPROVABLE',
     });
     expect(terminal.leaseOwner).toBeUndefined();
-    expect(terminal.nextAttemptAt).toBeUndefined();
-    await expect(store.claimNext('worker-v1', 60_000)).resolves.toBeNull();
 
-    await pool.query(`DELETE FROM ${prefix}_agent_dws_accounts WHERE account_id='inbox-v1'`);
-    await pool.query(`DELETE FROM ${prefix}_managed_agents WHERE agent_id='agent-inbox-v1'`);
+    await pool.query(`DROP TABLE ${runsTable}`);
+    await pool.query(`DELETE FROM ${accountsTable}
+      WHERE account_id IN ('inbox-v1','inbox-reauthed')`);
+    await pool.query(`DELETE FROM ${prefix}_managed_agents
+      WHERE agent_id IN ('agent-inbox-v1','agent-inbox-reauthed')`);
   });
 });

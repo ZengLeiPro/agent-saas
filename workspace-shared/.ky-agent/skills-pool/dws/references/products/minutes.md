@@ -1887,7 +1887,7 @@ dws minutes list mine --query "技术方案" --format json
 | 返回 JSON 中不包含 `nextToken` 字段 | 已到达最后一页，无更多数据 | 正常终止翻页，拼合已拉取内容 |
 | `nextToken` 字段值为空字符串 `""` | 等同于无 nextToken，已到达最后一页 | 正常终止翻页 |
 | 使用 `cursor` 翻页时 stdout 为空 | 已到达末尾或服务端未返回该页内容 | 首次空响应即终止翻页，不重试；基于已拉取的内容进行分析 |
-| 返回 JSON 但 `paragraphList` 为空数组 `[]` | 当前页无内容（可能是中间空页） | 如果有 nextToken 则继续翻页；如果无 nextToken 则终止 |
+| 返回 JSON 但 `paragraphList` 为空数组 `[]` | 服务端已返回空转写页 | 首次空页即终止翻页，即使同时携带 nextToken 也不继续 |
 
 ### 翻页流程伪代码
 
@@ -1900,6 +1900,10 @@ loop:
   
   if stdout 为空 or 返回无效:
     终止翻页，输出已累积内容
+    break
+
+  if paragraphList 为空数组:
+    终止翻页，输出已累积内容（即使有 nextToken 也不继续）
     break
   
   拼合本页转写文本到已累积文本

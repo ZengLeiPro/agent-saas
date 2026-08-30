@@ -8,6 +8,7 @@ function row(eventPolicy: unknown) {
     display_name: '销售 Agent', login_id: 'login-a', status: 'active', runtime_status: 'ready',
     event_policy_json: eventPolicy, revision: 4,
     created_at: '2026-08-22T00:00:00.000Z', created_by: 'admin-a',
+    identity_updated_at: '2026-08-22T00:30:00.000Z',
     updated_at: '2026-08-22T01:00:00.000Z', updated_by: 'admin-b',
   };
 }
@@ -99,7 +100,15 @@ describe('PgAgentDwsAccountStore identity and lease fencing', () => {
     }, 'admin-b');
 
     expect(query.mock.calls[0]![0]).toContain('SET profile_id=$4,corp_id=$5,corp_name=$6');
+    expect(query.mock.calls[0]![0]).toContain('identity_updated_at=CASE');
+    expect(query.mock.calls[0]![0]).toContain('profile_id IS DISTINCT FROM $4');
+    expect(query.mock.calls[0]![0]).toContain('corp_id IS DISTINCT FROM $5');
+    expect(query.mock.calls[0]![0]).toContain('dingtalk_user_id IS DISTINCT FROM $7');
+    expect(query.mock.calls[0]![0]).toContain('ELSE identity_updated_at');
     expect(query.mock.calls[0]![0]).not.toContain('COALESCE(corp_id');
+    expect(await store.getForTenant('tenant-a', 'account-a')).toMatchObject({
+      identityUpdatedAt: '2026-08-22T00:30:00.000Z',
+    });
     expect(query.mock.calls[0]![1]).toEqual([
       'tenant-a', 'account-a', 3, 'corp-a:user-a', 'corp-a', '示例企业', 'user-a', '张三', 'admin-b',
     ]);

@@ -8,6 +8,8 @@
  *   logger.error('处理失败', error);
  */
 
+import { correlationLogFields } from '@agent/shared';
+import { getInvocationCorrelation } from '../runtime/invocationCorrelation.js';
 import { getRequestContext } from './requestContext.js';
 
 // ============================================
@@ -127,6 +129,7 @@ function formatMessage(
   config: LoggerConfig,
   runId?: string,
   sessionId?: string,
+  invocationCorrelation = getInvocationCorrelation(),
 ): string {
   const { colorEnabled, showTimestamp, timestampFormat } = config;
   const levelCfg = levelConfig[level];
@@ -175,6 +178,13 @@ function formatMessage(
       parts.push(`(${trace})`);
     }
   }
+
+  const correlation = correlationLogFields(invocationCorrelation);
+  const correlationText = Object.entries(correlation)
+    .filter(([key]) => !['runId', 'sessionId'].includes(key))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(' ');
+  if (correlationText) parts.push(`{${correlationText}}`);
 
   // 消息内容
   parts.push(message);

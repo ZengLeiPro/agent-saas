@@ -1,3 +1,5 @@
+import { parseCorrelationContext, type CorrelationContext } from '@agent/shared';
+
 import type { ToolDescriptor } from 'server/agent/toolRuntime.js';
 import { WORKSPACE_HAND_TOOLS } from 'server/agent/toolRuntime.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
@@ -21,6 +23,8 @@ export interface WireToolInvocationRequest {
   input: unknown;
   context: {
     invocationId?: string;
+    handId?: string;
+    correlation?: CorrelationContext;
     workspace: WireWorkspaceRef;
     /**
      * 显式透传给远端 pod 的运行态 env。仅允许标准大写 env 名，并拒绝会改变
@@ -108,6 +112,7 @@ export interface SandboxRunnerInput {
   toolName: string;
   input: unknown;
   invocationId?: string;
+  correlation?: CorrelationContext;
   workspace: {
     id?: string;
     userId?: string;
@@ -179,6 +184,18 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
     ? pickHandEnv(rawEnv as Record<string, string | undefined>)
     : {};
   const envKeys = Object.keys(env);
+  const invocationId = context?.invocationId;
+  const handId = context?.handId;
+  if (invocationId !== undefined && typeof invocationId !== 'string') {
+    return { ok: false, error: 'context.invocationId 格式非法' };
+  }
+  if (handId !== undefined && typeof handId !== 'string') {
+    return { ok: false, error: 'context.handId 格式非法' };
+  }
+  const correlation = parseCorrelationContext(context?.correlation, { invocationId, handId });
+  if (!correlation.ok) return correlation;
+  const effectiveInvocationId = correlation.value?.invocationId ?? invocationId;
+  const effectiveHandId = correlation.value?.handId ?? handId;
 
   return {
     ok: true,
@@ -186,7 +203,9 @@ export function parseWireRequest(body: unknown): { ok: true; value: WireToolInvo
       toolName: b.toolName,
       input: b.input,
       context: {
-        ...(typeof context?.invocationId === 'string' ? { invocationId: context.invocationId } : {}),
+        ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
+        ...(effectiveHandId ? { handId: effectiveHandId } : {}),
+        ...(correlation.value ? { correlation: correlation.value } : {}),
         workspace: {
           id,
           sessionId,

@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ServerLocalExecutionProvider, type WorkspaceRef } from 'server/agent/toolRuntime.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
+import { runWithInvocationCorrelation } from 'server/runtime/invocationCorrelation.js';
 
 import type { SandboxRunnerFinalOutput, SandboxRunnerInput, SandboxRunnerOutput } from './protocol.js';
 import { runSandboxRunnerDaemon } from './sandboxRunnerDaemon.js';
@@ -89,6 +90,16 @@ export async function executeSandboxRunnerInput(
   emit: (output: SandboxRunnerOutput | SandboxRunnerFinalOutput) => void,
   options: { skipPythonEnv?: boolean } = {},
 ): Promise<void> {
+  return await runWithInvocationCorrelation(input.correlation, () =>
+    executeSandboxRunnerInputInternal(input, signal, emit, options));
+}
+
+async function executeSandboxRunnerInputInternal(
+  input: SandboxRunnerInput,
+  signal: AbortSignal,
+  emit: (output: SandboxRunnerOutput | SandboxRunnerFinalOutput) => void,
+  options: { skipPythonEnv?: boolean } = {},
+): Promise<void> {
   const workspaceRoot = input.workspace.root || process.env.ACS_WORKSPACE_PATH || '/workspace';
   if (input.toolName === '__FeishuCli') {
     emit({ kind: 'final', response: executeFeishuCli(input.input, workspaceRoot) });
@@ -150,6 +161,7 @@ export async function executeSandboxRunnerInput(
       env: baseEnv,
       signal,
       invocationId: input.invocationId,
+      correlation: input.correlation,
       workspace: {
         id: input.workspace.id,
         userId: input.workspace.userId,
@@ -195,6 +207,7 @@ export async function executeSandboxRunnerInput(
     input: runtimeToolInput,
     context: {
       ...(input.invocationId ? { invocationId: input.invocationId } : {}),
+      ...(input.correlation ? { correlation: input.correlation } : {}),
       workspace,
       signal,
     },

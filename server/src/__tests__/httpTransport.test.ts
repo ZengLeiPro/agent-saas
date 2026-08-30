@@ -84,6 +84,43 @@ describe('HttpTransport.serializeRequest', () => {
     expect(wire.context.workspace.sessionId).toBe('session-abc');
   });
 
+  it('serializes the versioned correlation contract and rejects conflicting legacy ids', () => {
+    const wire = serializeRequest(buildRequest({
+      context: {
+        workspace: SAMPLE_WORKSPACE,
+        invocationId: 'run-1:call-1',
+        correlation: {
+          version: 1,
+          sessionId: 'session-abc',
+          runId: 'run-1',
+          toolCallId: 'call-1',
+          invocationId: 'run-1:call-1',
+          attemptId: 'attempt-1',
+        },
+      },
+    }));
+    expect(wire.context.correlation).toMatchObject({
+      version: 1,
+      invocationId: 'run-1:call-1',
+      attemptId: 'attempt-1',
+    });
+    const correlationOnly = serializeRequest(buildRequest({
+      context: {
+        workspace: SAMPLE_WORKSPACE,
+        correlation: { version: 1, invocationId: 'correlation-only', attemptId: 'attempt-only' },
+      },
+    }));
+    expect(correlationOnly.context.invocationId).toBe('correlation-only');
+    expect(correlationOnly.context.correlation?.attemptId).toBe('attempt-only');
+    expect(() => serializeRequest(buildRequest({
+      context: {
+        workspace: SAMPLE_WORKSPACE,
+        invocationId: 'legacy-a',
+        correlation: { version: 1, invocationId: 'contract-b' },
+      },
+    }))).toThrow(/冲突/);
+  });
+
   it('preserves durable handId when present', () => {
     const wire = serializeRequest(buildRequest({
       context: {

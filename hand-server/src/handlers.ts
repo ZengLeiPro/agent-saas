@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { parseCorrelationContext, shortenCorrelationId, type CorrelationContext } from '@agent/shared';
 
 import {
   ContainerExecutionProvider,
@@ -10,6 +11,7 @@ import {
 import { unknownNetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
 import { pickHandEnv } from 'server/runtime/handEnvAllowlist.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from 'server/runtime/handProtocol.js';
+import { iterateWithInvocationCorrelation, runWithInvocationCorrelation } from 'server/runtime/invocationCorrelation.js';
 
 import type { HandServerConfig } from './config.js';
 import type { HandInvocationStore, RegisterRunningOutcome } from './invocationStore.js';
@@ -180,9 +182,9 @@ async function storeAndPersistInvocationResult(
       await deps.invocationStore.complete(invocationId, response);
       storeInvocationResult(deps, invocationId, response);
       return response;
-    } catch (err) {
+    } catch {
       deps.logger.error(
-        `invocation store complete failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+        `invocation store complete failed invocation=${shortenCorrelationId(invocationId)}`,
       );
       const marked = markPersistFailed(response);
       storeInvocationResult(deps, invocationId, marked);
@@ -322,11 +324,11 @@ async function prepareToolInvocation(
   if (invocationId && deps.invocationStore) {
     let registered: RegisterRunningOutcome;
     try {
-      registered = await deps.invocationStore.registerRunning(invocationId);
+      registered = await deps.invocationStore.registerRunning(invocationId, wire.context.correlation?.attemptId);
     } catch (err) {
       deps.invocations?.delete(invocationId);
       deps.logger.error(
-        `invocation store registerRunning failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+        `invocation store registerRunning failed invocation=${shortenCorrelationId(invocationId)}`,
       );
       return fail(503, {
         status: 'error',
@@ -335,7 +337,7 @@ async function prepareToolInvocation(
     }
     if (registered.outcome === 'replay') {
       deps.invocations?.delete(invocationId);
-      deps.logger.info(`replaying durable invocation result invocation=${invocationId}`);
+      deps.logger.info(`replaying durable invocation result invocation=${shortenCorrelationId(invocationId)}`);
       release();
       return { ok: true, replay: markDurableReplay(registered.record.response!), release };
     }
@@ -355,7 +357,7 @@ async function prepareToolInvocation(
       if (memoryRecord) {
         deps.invocations?.delete(invocationId);
         deps.logger.warn(
-          `replaying in-memory result for stuck running journal invocation=${invocationId}`,
+          `replaying in-memory result for stuck running journal invocation=${shortenCorrelationId(invocationId)}`,
         );
         release();
         return {
@@ -392,6 +394,7 @@ async function prepareToolInvocation(
     input: wire.input,
     context: {
       ...(invocationId ? { invocationId } : {}),
+      ...(wire.context.correlation ? { correlation: wire.context.correlation } : {}),
       workspace,
       ...(wire.context.env ? { env: wire.context.env } : {}),
       ...(controller ? { signal: controller.signal } : {}),
@@ -418,7 +421,10 @@ async function executePreparedTool(
 ): Promise<ToolInvocationResponse> {
   let response: ToolInvocationResponse;
   try {
-    response = await deps.provider.execute(prepared.toolRequest);
+    response = await runWithInvocationCorrelation(
+      prepared.toolRequest.context.correlation,
+      () => deps.provider.execute(prepared.toolRequest),
+    );
   } catch (err) {
     response = {
       status: 'error',
@@ -541,16 +547,19 @@ export async function handleExecuteStream(
   };
   await writeChunk({ type: 'progress', message: 'hand invocation accepted' });
   const heartbeat = setInterval(() => {
-    void writeChunk({ type: 'progress', message: 'hand invocation running' }).catch((err) => {
+    void writeChunk({ type: 'progress', message: 'hand invocation running' }).catch(() => {
       deps.logger.warn(
-        `stream heartbeat failed invocation=${prepared.invocationId ?? '-'}: ${err instanceof Error ? err.message : String(err)}`,
+        `stream heartbeat failed invocation=${shortenCorrelationId(prepared.invocationId ?? '-')}`,
       );
     });
   }, 10_000);
   heartbeat.unref?.();
   try {
     if (deps.provider.executeStream) {
-      for await (const chunk of deps.provider.executeStream(prepared.toolRequest)) {
+      for await (const chunk of iterateWithInvocationCorrelation(
+        prepared.toolRequest.context.correlation,
+        deps.provider.executeStream(prepared.toolRequest),
+      )) {
         if (chunk.type === 'completed') {
           sawCompleted = true;
           // 持久化结果（含失败标记）直接写回 chunk，SSE 与内存/GET 完全同源。
@@ -623,7 +632,7 @@ export async function handleCancelInvocation(
       await deps.invocationStore.markCancelled(invocationId);
     } catch (err) {
       deps.logger.error(
-        `invocation store markCancelled failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+        `invocation store markCancelled failed invocation=${shortenCorrelationId(invocationId)}`,
       );
       return sendJson(res, 503, {
         status: 'error',
@@ -669,9 +678,9 @@ export async function handleGetInvocationResult(
   // Durable journal（TASK-316）：内存未命中（含刚重启）时查磁盘，
   // 让 Brain 在 Hand 重启后仍能对账结果/cancel/interrupted 状态。
   if (deps.invocationStore) {
-    const stored = await deps.invocationStore.get(invocationId).catch((err) => {
+    const stored = await deps.invocationStore.get(invocationId).catch(() => {
       deps.logger.error(
-        `invocation store get failed invocation=${invocationId}: ${err instanceof Error ? err.message : String(err)}`,
+        `invocation store get failed invocation=${shortenCorrelationId(invocationId)}`,
       );
       return undefined;
     });
@@ -809,6 +818,8 @@ interface WireRequest {
   input: unknown;
   context: {
     invocationId?: string;
+    handId?: string;
+    correlation?: CorrelationContext;
     workspace: {
       id?: string;
       userId?: string;
@@ -844,6 +855,18 @@ export function parseWireRequest(
       ? pickHandEnv(rawEnv as Record<string, string | undefined>)
       : {};
   const envKeys = Object.keys(env);
+  const invocationId = context?.invocationId;
+  const handId = context?.handId;
+  if (invocationId !== undefined && typeof invocationId !== 'string') {
+    return { ok: false, error: 'context.invocationId 格式非法' };
+  }
+  if (handId !== undefined && typeof handId !== 'string') {
+    return { ok: false, error: 'context.handId 格式非法' };
+  }
+  const correlation = parseCorrelationContext(context?.correlation, { invocationId, handId });
+  if (!correlation.ok) return correlation;
+  const effectiveInvocationId = correlation.value?.invocationId ?? invocationId;
+  const effectiveHandId = correlation.value?.handId ?? handId;
 
   return {
     ok: true,
@@ -851,7 +874,9 @@ export function parseWireRequest(
       toolName: b.toolName,
       input: b.input ?? {},
       context: {
-        invocationId: typeof context?.invocationId === 'string' ? context.invocationId : undefined,
+        ...(effectiveInvocationId ? { invocationId: effectiveInvocationId } : {}),
+        ...(effectiveHandId ? { handId: effectiveHandId } : {}),
+        ...(correlation.value ? { correlation: correlation.value } : {}),
         workspace: {
           id: typeof workspace.id === 'string' ? workspace.id : undefined,
           userId: typeof workspace.userId === 'string' ? workspace.userId : undefined,

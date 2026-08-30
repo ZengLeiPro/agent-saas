@@ -34,6 +34,8 @@ export interface StoredInvocationRecord {
   cancelledAt?: string;
   /** 启动对账时标记：上一进程重启打断的 invocation。 */
   interruptedAt?: string;
+  /** Real provider attempt that created this journal record; never an idempotency key. */
+  executionAttemptId?: string;
 }
 
 export type RegisterRunningOutcome =
@@ -47,7 +49,7 @@ export type RegisterRunningOutcome =
 
 export interface HandInvocationStore {
   /** 登记开始执行；已存在时返回既有记录，不覆盖。 */
-  registerRunning(invocationId: string): Promise<RegisterRunningOutcome>;
+  registerRunning(invocationId: string, attemptId?: string): Promise<RegisterRunningOutcome>;
   get(invocationId: string): Promise<StoredInvocationRecord | undefined>;
   /** 幂等写终态结果；首个终态胜出（后续 complete 不覆盖）。 */
   complete(
@@ -143,7 +145,7 @@ export class FileHandInvocationStore implements HandInvocationStore {
     await rename(tmp, target);
   }
 
-  async registerRunning(invocationId: string): Promise<RegisterRunningOutcome> {
+  async registerRunning(invocationId: string, attemptId?: string): Promise<RegisterRunningOutcome> {
     return await this.withMutationLock(invocationId, async () => {
       const existing = await this.readRecord(invocationId);
       if (existing) {
@@ -158,6 +160,7 @@ export class FileHandInvocationStore implements HandInvocationStore {
         state: 'running',
         createdAt: now,
         updatedAt: now,
+        ...(attemptId ? { executionAttemptId: attemptId } : {}),
       };
       await this.atomicWrite(record);
       return { outcome: 'created', record };

@@ -9,6 +9,7 @@ import {
   type RunnerDaemonRequest,
 } from './runnerDaemonProtocol.js';
 import type { SandboxRef } from './sandboxManager.js';
+import { summarizeRunnerStderr } from './runnerLog.js';
 
 const READY_TIMEOUT_MS = 3_000;
 const HEARTBEAT_STALE_MS = 40_000;
@@ -125,7 +126,7 @@ export class PersistentSandboxRunner {
     child.stdout.on('data', (chunk: Buffer) => this.onStdout(chunk));
     child.stderr.on('data', (chunk: Buffer) => {
       const text = chunk.toString('utf-8').trim();
-      if (text) this.logger.warn(`kubectl_runner_daemon_stderr sandbox=${this.ref.name}: ${text}`);
+      if (text) this.logger.warn(`kubectl_runner_daemon_stderr sandbox=${this.ref.name} ${summarizeRunnerStderr(text)}`);
     });
     child.on('error', (err) => this.onClose(`runner process error: ${err.message}`));
     child.on('close', (exitCode, signal) => {

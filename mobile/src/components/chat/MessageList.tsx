@@ -3,7 +3,7 @@ import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-nativ
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RenderModel } from '@agent/shared';
-import { groupMessages, selectRenderModel } from '@agent/shared';
+import { groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
 import { CompactionDivider } from './CompactionDivider';
 import { isCompactionItem } from '../../lib/compaction';
@@ -261,7 +261,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
     const anim = Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const bubbleStyle = useMemo(() => ({
     backgroundColor: colors.card,
@@ -361,13 +361,23 @@ export function MessageList({
   const internalRef = useRef<FlashListRef<RenderItem>>(null);
   const listRef = externalRef ?? internalRef;
 
+  const { user } = useAuth();
+  const presentationGate = useMemo(() => ({
+    debugBuild: typeof __DEV__ !== 'undefined' && __DEV__,
+    authenticatedAdmin: user?.role === 'admin',
+    explicitSessionToggle: user?.debugMode === true
+      && isDebugModeAvailable(user.tenantId, user.tenantFeatures),
+  }), [user?.debugMode, user?.role, user?.tenantFeatures, user?.tenantId]);
   const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
   const renderModel = useMemo(() => {
     const next = selectRenderModel({ messages }, previousRenderModelRef.current);
     previousRenderModelRef.current = next;
     return next;
   }, [messages]);
-  const timelineRows = useMemo(() => adaptRenderModelForMobile(renderModel), [renderModel]);
+  const timelineRows = useMemo(
+    () => adaptRenderModelForMobile(renderModel, presentationGate),
+    [presentationGate, renderModel],
+  );
   const timelineMessages = useMemo(
     () => timelineRows.flatMap((row) => row.message ? [row.message] : []),
     [timelineRows],
@@ -460,8 +470,7 @@ export function MessageList({
     void onLoadEarlier();
   }, [hasMoreHistory, isLoadingEarlier, onLoadEarlier]);
 
-  // Stable refs for data that changes rarely — keeps renderItem deps minimal
-  const { user } = useAuth();
+  // Stable refs for data that changes rarely — keeps renderItem deps minimal.
   const { agentProfile, sessionParticipants } = useChatAppState();
 
   const displayUser = useMemo(() => {

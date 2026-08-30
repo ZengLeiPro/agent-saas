@@ -293,14 +293,22 @@ export const MessageList = memo(function MessageList({
   const { user } = useAuth();
   const debugMode = debugModeOverride
     ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
+  const presentationGate = useMemo(() => ({
+    debugBuild: import.meta.env.DEV,
+    authenticatedAdmin: user?.role === 'admin',
+    explicitSessionToggle: debugMode,
+  }), [debugMode, user?.role]);
   const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
   const renderModel = useMemo(() => {
     const next = selectRenderModel({ messages }, previousRenderModelRef.current);
     previousRenderModelRef.current = next;
     return next;
   }, [messages]);
-  const timelineRows = useMemo(() => adaptRenderModelForWeb(renderModel), [renderModel]);
-  // Legacy visual blocks remain source-compatible; RenderModel owns semantic identity/a11y/actions.
+  const timelineRows = useMemo(
+    () => adaptRenderModelForWeb(renderModel, presentationGate),
+    [presentationGate, renderModel],
+  );
+  // Legacy visual blocks remain source-compatible; RenderModel owns semantic identity, accessibility and actions.
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const mainThreadItems = useMemo(() => businessStepMainItems(groupedMessages), [groupedMessages]);
   // 选择、跟随、历史重映射与焦点恢复由专用 hook 统一维护；详情面板仅在选中后按需加载。

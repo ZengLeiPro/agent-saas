@@ -1003,6 +1003,20 @@ export {
   selectRenderModel,
 } from './lib/renderModel';
 
+// M20-05 authoritative renderer-neutral Tool/BusinessStep presentation presenters
+export {
+  PRESENTATION_STRUCTURE_BUDGET,
+  SHARED_PRESENTATION_PRESENTERS,
+  canShowRawPresentation,
+  listSharedPresentationKinds,
+  presentationSemanticSignature,
+  selectBusinessStepPresentation,
+  selectPresentationCardViewModel,
+  selectPresentationViewModel,
+  selectSharedPresentation,
+  selectToolPresentation,
+} from './lib/presentationPresenter';
+
 // M50-02 renderer-neutral tool/interaction card presenters
 export {
   CARD_VIEW_MODEL_VERSION,
@@ -1013,6 +1027,12 @@ export {
   selectToolCardViewModel,
   selectUnknownCardViewModel,
 } from './lib/cardViewModel';
+export type {
+  RawPresentationGate,
+  SharedPresentation,
+  SharedPresentationKind,
+  SharedPresentationPresenterInput,
+} from './lib/presentationPresenter';
 export type {
   ApprovalSurface,
   CardAccessibilityViewModel,

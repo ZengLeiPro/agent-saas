@@ -457,6 +457,79 @@ function projectRuntimePlatformEventLegacy(
 
 type RuntimeProjectionResult = { events: object[]; terminal?: boolean; sessionStatus?: 'completed' | 'failed' | 'cancelled'; terminalError?: string };
 
+type RuntimePresentationInput = {
+  kind: 'tool' | 'business_step';
+  source: Record<string, unknown>;
+};
+
+const BUSINESS_STEP_STATUSES = new Set([
+  'pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed',
+]);
+
+function structuredBusinessStepSources(argumentsText: string): RuntimePresentationInput[] {
+  try {
+    const parsed = JSON.parse(argumentsText) as { todos?: unknown };
+    if (!Array.isArray(parsed.todos)) return [];
+    return parsed.todos.flatMap((entry): RuntimePresentationInput[] => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const todo = entry as Record<string, unknown>;
+      if (todo.kind !== 'business' || typeof todo.content !== 'string'
+        || typeof todo.status !== 'string' || !BUSINESS_STEP_STATUSES.has(todo.status)) return [];
+      return [{
+        kind: 'business_step',
+        source: {
+          kind: 'business', content: todo.content, status: todo.status,
+          ...(typeof todo.activeForm === 'string' ? { activeForm: todo.activeForm } : {}),
+          ...(todo.outcome && typeof todo.outcome === 'object' ? { outcome: todo.outcome } : {}),
+          ...(Array.isArray(todo.detail) ? { detail: todo.detail } : {}),
+          ...(Array.isArray(todo.display) ? { display: todo.display } : {}),
+          ...(Array.isArray(todo.evidenceRefs) ? { evidenceRefs: todo.evidenceRefs } : {}),
+        },
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Server supplies structured presenter inputs but never evaluates client authentication/build/session
+ * gates and never emits showRaw. The shared client presenter remains disclosure authority.
+ */
+function structuredPresentationInputs(
+  event: PlatformEvent,
+  frame: Record<string, unknown>,
+): RuntimePresentationInput[] {
+  if (event.type === 'assistant_tool_calls' && frame.type === 'tool_input') {
+    const toolCallId = typeof frame.toolId === 'string' ? frame.toolId : undefined;
+    const call = event.toolCalls.find((candidate) => candidate.id === toolCallId);
+    if (!call) return [];
+    if (call.name === 'TodoWrite') return structuredBusinessStepSources(call.arguments);
+    return [{
+      kind: 'tool',
+      source: {
+        id: `tool:${event.runId}:${call.id}`,
+        kind: 'tool_activity', status: 'running',
+        content: [{ type: 'tool', toolName: call.name }],
+      },
+    }];
+  }
+  if (event.type === 'tool_result' && frame.type === 'tool_result') {
+    return [{
+      kind: 'tool',
+      source: {
+        id: `tool:${event.runId}:${event.toolCallId}`,
+        kind: 'tool_activity', status: event.isError ? 'failed' : 'completed',
+        content: [{
+          type: 'tool', toolName: event.toolName,
+          ...(event.presentation ? { presentation: event.presentation } : {}),
+        }],
+      },
+    }];
+  }
+  return [];
+}
+
 /** Attach canonical domain + stable identities without changing the legacy frame payload contract. */
 function attachCanonicalProjectionMetadata(
   event: PlatformEvent,
@@ -501,6 +574,7 @@ function attachCanonicalProjectionMetadata(
         : activeBlockId ?? (event.type === 'assistant_stream_event' && event.blockType
           ? `stream:${runId}:${streamStates?.get(runId)?.[event.blockType].blockId ?? event.draftId ?? event.id}`
           : undefined);
+    const presentationInputs = structuredPresentationInputs(event, frame);
     const projection = {
       eventId: `${event.id}:${index}`,
       domain,
@@ -508,6 +582,7 @@ function attachCanonicalProjectionMetadata(
       messageId,
       ...(blockId ? { blockId } : {}),
       ...(toolCallId ? { toolCallId } : {}),
+      ...(presentationInputs.length ? { presentationInputs } : {}),
       ...(domain === 'subagent' ? { subagentId: typeof frame.childRunId === 'string' ? frame.childRunId : `${runId}:${toolCallId ?? event.id}` } : {}),
     };
     const decorated = { ...frame, projection };

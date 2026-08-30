@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { projectRuntimePlatformEvent } from "../channels/web/runtimeEventProjection.js";
 import type { PlatformEvent } from "../runtime/types.js";
+import {
+  businessStepProjectionFixture,
+  toolPresentationProjectionFixture,
+} from './fixtures/presentationProjection.fixture.js';
 
 function legacyFrames(event: PlatformEvent): object[] {
   return projectRuntimePlatformEvent(event).events.map((frame) => {
@@ -162,6 +166,40 @@ describe("runtimeEventProjection", () => {
     });
   });
 
+
+  it('projects a structured tool presenter input without raw result or showRaw authority', () => {
+    const frame = projectRuntimePlatformEvent(toolPresentationProjectionFixture).events[0] as any;
+    expect(frame.projection.presentationInputs).toEqual([{
+      kind: 'tool',
+      source: {
+        id: 'tool:fixture-run:fixture-tool-call',
+        kind: 'tool_activity', status: 'completed',
+        content: [{
+          type: 'tool', toolName: 'Shell',
+          presentation: toolPresentationProjectionFixture.presentation,
+        }],
+      },
+    }]);
+    const serialized = JSON.stringify(frame.projection.presentationInputs);
+    expect(serialized).not.toContain('SERVER_RAW_SENTINEL');
+    expect(serialized).not.toContain('showRaw');
+  });
+
+  it('projects structured BusinessStep inputs and leaves raw disclosure to the client presenter', () => {
+    const frame = projectRuntimePlatformEvent(businessStepProjectionFixture).events.find(
+      (candidate) => (candidate as any).type === 'tool_input',
+    ) as any;
+    expect(frame.projection.presentationInputs).toEqual([{
+      kind: 'business_step',
+      source: {
+        kind: 'business', content: '核对发布结果', status: 'completed',
+        outcome: { text: '全部通过', tone: 'ok' },
+        display: [{ type: 'checklist', title: '发布检查', items: [{ label: '健康检查', status: 'pass' }] }],
+        evidenceRefs: ['release-42'],
+      },
+    }]);
+    expect(JSON.stringify(frame.projection.presentationInputs)).not.toContain('showRaw');
+  });
 
   it('stream restart rotates blockId while replayed deltas keep the active block identity', () => {
     const streamStates = new Map();

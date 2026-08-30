@@ -1,5 +1,5 @@
 import { apiUrl, resolveApiAssetUrl } from "../lib/apiBase";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Loader2, LogOut, User, ChevronRight, ChevronLeft, Camera, Lock, UserCog } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 import { SwipeableRow, type SwipeAction } from "@/components/mobile/SwipeableRow";
@@ -26,7 +26,7 @@ import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaiti
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
-import { getSessionAutomationBadge } from "@/lib/sessionAutomation";
+const SessionAutomationBadge = lazy(() => import("@/components/SessionAutomationBadge"));
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
@@ -327,7 +327,6 @@ export function MobileSessionList({
     (s: ChatSessionIndexItem, inGroup?: boolean) => {
       const active = s.id === activeSessionIdRef.current;
       const waitingLabel = getSessionWaitingLabel(s.runtimeStatus);
-      const automationBadge = getSessionAutomationBadge(s);
       const rowContent = (
         <div
           className={cn(
@@ -356,8 +355,7 @@ export function MobileSessionList({
             </span>
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground/60">
-            {automationBadge && <span className="max-w-40 truncate font-medium text-primary" title={automationBadge}>{automationBadge}</span>}
-            {automationBadge && <span>·</span>}
+            <Suspense fallback={null}><SessionAutomationBadge session={s} separator /></Suspense>
             <span>{sourceDisplayText(s.source)}</span>
             {s.orgAgentName && <span> · {s.orgAgentName}</span>}
             {isAdmin && s.owner && (

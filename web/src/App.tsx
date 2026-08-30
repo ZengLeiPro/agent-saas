@@ -86,7 +86,7 @@ function App() {
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
     tokenUsage, contextUsage, connectionState, resumeCurrentStream,
-    automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
+    automationControllerNode, automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
     runningSessionIds, sessionRuntimeStatuses,
@@ -283,6 +283,8 @@ function App() {
           </div>
         </div>
       ) : null}
+
+      {automationControllerNode}
 
       <SubagentTranscriptProvider value={subagentTranscriptContextValue}>
         <FilePreviewProvider value={{

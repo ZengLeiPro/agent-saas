@@ -26,8 +26,8 @@ import type { Components } from 'react-markdown';
 import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
-import { getAutomationTranscriptLabel } from '@/lib/sessionAutomation';
 import { ImageLightbox } from './ImageLightbox';
+const AutomationTranscriptBadge = lazy(() => import('@/components/AutomationTranscriptBadge'));
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
 const markdownPromise = import("react-markdown");
@@ -809,7 +809,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "text") {
-    const automationLabel = getAutomationTranscriptLabel(message);
+    const automationMessage = message as unknown as { automation?: unknown; automationKind?: unknown };
     const voiceStripped = stripVoiceMarkers(message.content);
     // 流式渲染时抑制尾部未闭合的 [CITE] 半截标记（只裁尾部；FILE 保持现状）
     const displaySource = message.streaming ? stripPartialCiteMarker(voiceStripped) : voiceStripped;
@@ -821,10 +821,8 @@ export const MessageItem = memo(function MessageItem({
     return (
       <div className="flex justify-start">
         <div className="group relative w-full min-w-0">
-          {automationLabel && (
-            <span className="mb-1.5 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-              {automationLabel}
-            </span>
+          {Boolean(automationMessage.automation || automationMessage.automationKind) && (
+            <Suspense fallback={null}><AutomationTranscriptBadge message={message} /></Suspense>
           )}
           {message.finalOutput ? (
             <div

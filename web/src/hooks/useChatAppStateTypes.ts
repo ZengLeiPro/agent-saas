@@ -1,4 +1,4 @@
-import type { ChangeEvent, ClipboardEvent, DragEvent, RefObject } from "react";
+import type { ChangeEvent, ClipboardEvent, DragEvent, ReactNode, RefObject } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
 import type { AskUserAnswers, ContextUsageData, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
@@ -126,6 +126,7 @@ export interface ChatAppState {
   /** 活跃会话的精确运行态，供列表区分执行中与人工等待。 */
   sessionRuntimeStatuses: ReadonlyMap<string, SessionRuntimeStatus>;
   connectionState: ConnectionState;
+  automationControllerNode: ReactNode;
   automation: SessionAutomationSnapshot | null;
   automationTimeline: AutomationTimelineEvent[];
   automationPending: boolean;

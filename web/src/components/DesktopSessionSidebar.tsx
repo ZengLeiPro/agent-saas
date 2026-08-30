@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useEffect, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState, useEffect, type Dispatch, type SetStateAction } from "react";
 import { resolveApiAssetUrl } from "@/lib/apiBase";
 import {
   Plus,
@@ -67,7 +67,8 @@ import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
-import { getSessionAutomationBadge } from "@/lib/sessionAutomation";
+const SessionAutomationBadge = lazy(() => import("@/components/SessionAutomationBadge"));
+
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -211,7 +212,6 @@ function SessionRow({
 }) {
   const menuOpen = actionMenuId === session.id;
   const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
-  const automationBadge = getSessionAutomationBadge(session);
   const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAutoTitle || onShare || onAddToGroup || onRemoveFromGroup || onCompact);
 
   const menuDropdown = menuOpen ? (
@@ -336,9 +336,7 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
-        {automationBadge && (
-          <span className="max-w-32 shrink-0 truncate rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" title={automationBadge}>{automationBadge}</span>
-        )}
+        <Suspense fallback={null}><SessionAutomationBadge session={session} compact /></Suspense>
         {session.orgAgentId && (
           <span
             className="flex max-w-24 shrink-0 items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
@@ -427,8 +425,7 @@ function SessionRow({
             )}
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground/60">
-            {automationBadge && <span className="max-w-40 shrink-0 truncate font-medium text-primary" title={automationBadge}>{automationBadge}</span>}
-            {automationBadge && metaText && <span>·</span>}
+            <Suspense fallback={null}><SessionAutomationBadge session={session} separator={Boolean(metaText)} /></Suspense>
             <span className="block min-w-0 truncate pr-28">{metaText}</span>
           </div>
         </div>

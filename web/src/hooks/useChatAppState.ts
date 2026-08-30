@@ -10,8 +10,7 @@ import type { WsEnvelope } from "@/lib/wsClient";
 import { approvalPolicyPayloadForTier, resolveApprovalTier } from "@/lib/approvalTier";
 import { useApprovalTierRunPolicy } from "./useApprovalTierRunPolicy";
 import { useSessionAutomation } from "./useSessionAutomation";
-import { isSessionAutomationCommand } from "@/lib/sessionAutomation";
-import { submitChatAutomationCommand } from "./chatAutomationSubmission";
+import { isSessionAutomationCommand } from "@/lib/sessionAutomationCommand";
 import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
@@ -2542,8 +2541,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const submitCurrentMessage = useCallback(async (deliveryMode: 'queue' | 'steer') => {
     const trimmedInput = inputRef.current.trim();
     if (!trimmedInput && uploadedFilesRef.current.length === 0) return;
-
     if (isSessionAutomationCommand(trimmedInput)) {
+      const { submitChatAutomationCommand } = await import("./chatAutomationSubmission");
       await submitChatAutomationCommand({
         command: trimmedInput,
         files: [...uploadedFilesRef.current],
@@ -3053,6 +3052,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     runningSessionIds: effectiveRunningSessionIds,
     sessionRuntimeStatuses: effectiveSessionRuntimeStatuses,
     connectionState,
+    automationControllerNode: automation.controllerNode,
     automation: automation.snapshot,
     automationTimeline: automation.timeline,
     automationPending: automation.commandPending || automation.controlPending || automation.loading,

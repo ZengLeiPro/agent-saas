@@ -6,9 +6,9 @@ vi.mock('@/lib/authFetch', () => ({ authFetch }));
 import {
   getAutomationTranscriptLabel,
   getSessionAutomationBadge,
-  isSessionAutomationCommand,
-  submitAutomationCommand,
 } from './sessionAutomation';
+import { isSessionAutomationCommand } from './sessionAutomationCommand';
+import { submitAutomationCommand } from './sessionAutomationApi';
 import { matchingSlashCommands } from './slashCommandRegistry';
 
 describe('session automation slash command registry', () => {

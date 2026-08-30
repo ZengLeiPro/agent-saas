@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatInput } from './ChatInput';
@@ -17,17 +17,18 @@ function Harness({ onSend }: { onSend: () => void }) {
 }
 
 describe('ChatInput slash automation help', () => {
-  it('shows registry help and completes a command before sending it', () => {
+  it('shows registry help and completes a command before sending it', async () => {
     const onSend = vi.fn();
     render(<Harness onSend={onSend} />);
     const input = screen.getByRole('textbox', { name: '消息输入' });
 
     fireEvent.change(input, { target: { value: '/' } });
-    expect(screen.getByRole('listbox', { name: 'Slash 命令' })).toBeTruthy();
+    expect(await screen.findByRole('listbox', { name: 'Slash 命令' })).toBeTruthy();
     expect(screen.getByText('/loop')).toBeTruthy();
     expect(screen.getByText('/goal')).toBeTruthy();
 
     fireEvent.change(input, { target: { value: '/go' } });
+    await waitFor(() => expect(screen.queryByText('/loop')).toBeNull());
     fireEvent.keyDown(input, { key: 'Enter' });
     expect((input as HTMLTextAreaElement).value).toBe('/goal ');
     expect(onSend).not.toHaveBeenCalled();

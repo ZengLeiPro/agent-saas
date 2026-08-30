@@ -1,4 +1,4 @@
-import { type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, type Ref, type MutableRefObject, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { OrgAgentAvatarContent } from "@/components/OrgAgentAvatar";
@@ -11,13 +11,16 @@ import type { AskUserAnswers } from "@agent/shared";
 import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import { MessageList } from "@/components/MessageList";
 import { FileUpload } from "@/components/FileUpload";
-import { ChatInput } from "@/components/ChatInput";
+import { LazyChatInput } from "@/components/LazyChatInput";
 import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 import { QueuedMessageBar } from "@/components/QueuedMessageBar";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { SandboxProfile } from "@/types/sandboxProfile";
-import { SessionAutomationCard } from "@/components/SessionAutomationCard";
 import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
+
+const SessionAutomationCard = lazy(() => import("@/components/SessionAutomationCard").then((module) => ({
+  default: module.SessionAutomationCard,
+})));
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -296,13 +299,15 @@ export function ChatTabContent({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {automation && onAutomationControl && !readOnly && (
-        <SessionAutomationCard
-          snapshot={automation}
-          timeline={automationTimeline}
-          pending={automationPending}
-          error={automationError}
-          onControl={onAutomationControl}
-        />
+        <Suspense fallback={null}>
+          <SessionAutomationCard
+            snapshot={automation}
+            timeline={automationTimeline}
+            pending={automationPending}
+            error={automationError}
+            onControl={onAutomationControl}
+          />
+        </Suspense>
       )}
       <div
         className={cn(
@@ -369,7 +374,7 @@ export function ChatTabContent({
 
       {readOnly && readOnlyInputPlaceholder ? (
         <div className="shrink-0">
-          <ChatInput
+          <LazyChatInput
             input=""
             loading={false}
             uploading={false}
@@ -431,7 +436,7 @@ export function ChatTabContent({
               onRemoveFile={onRemoveFile}
               onDismissError={onDismissUploadError}
             />
-            <ChatInput
+            <LazyChatInput
               input={input}
               loading={loading}
               uploading={uploading}

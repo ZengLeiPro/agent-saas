@@ -15,7 +15,7 @@ vi.mock('@/lib/wsClient', () => ({
   },
 }));
 
-import { useSessionAutomation } from './useSessionAutomation';
+import { useSessionAutomationRuntime as useSessionAutomation } from './useSessionAutomationRuntime';
 
 function response(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });

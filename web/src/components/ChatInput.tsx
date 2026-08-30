@@ -1,11 +1,11 @@
-import { useMemo, useRef, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useCallback, useEffect, useState } from 'react';
 import { Plus, ArrowUp, Square, Mic, Loader2, StopCircle, ChevronDown } from "lucide-react";
 
 import AttachmentControls from "@/components/AttachmentControls";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
-import { matchingSlashCommands } from "@/lib/slashCommandRegistry";
+import type { SlashCommandDefinition } from "@/lib/slashCommandRegistry";
 import type { ModelList } from "@/types/models";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
@@ -20,7 +20,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import type { SandboxProfile } from "@/types/sandboxProfile";
 
-interface ChatInputProps {
+export interface ChatInputProps {
   input: string;
   loading?: boolean;
   uploading: boolean;
@@ -54,6 +54,8 @@ interface ChatInputProps {
   topSlot?: React.ReactNode;
   attachedTopSlot?: React.ReactNode;
 }
+
+const SlashCommandMenu = lazy(() => import("@/components/SlashCommandMenu"));
 
 const MIN_HEIGHT = 56;
 const MAX_HEIGHT = 200;
@@ -111,7 +113,18 @@ export function ChatInput({
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [slashSelection, setSlashSelection] = useState(0);
-  const slashCommands = useMemo(() => matchingSlashCommands(input), [input]);
+  const [slashCommands, setSlashCommands] = useState<readonly SlashCommandDefinition[]>([]);
+  useEffect(() => {
+    let current = true;
+    if (!/^\s*\/\S*$/.test(input)) {
+      setSlashCommands([]);
+      return () => { current = false; };
+    }
+    void import("@/lib/slashCommandRegistry").then(({ matchingSlashCommands }) => {
+      if (current) setSlashCommands(matchingSlashCommands(input));
+    });
+    return () => { current = false; };
+  }, [input]);
   const slashMenuOpen = !isDisabled && slashCommands.length > 0;
   const slashCompletionActive = /^\s*\/\S*$/.test(input);
 
@@ -412,26 +425,9 @@ export function ChatInput({
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
             {slashMenuOpen && (
-              <div role="listbox" aria-label="Slash 命令" className="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-xl border bg-popover shadow-xl">
-                {slashCommands.map((command, index) => (
-                  <button
-                    key={command.name}
-                    type="button"
-                    role="option"
-                    aria-selected={index === slashSelection}
-                    className={cn(
-                      "block w-full px-3 py-2 text-left transition-colors",
-                      index === slashSelection ? "bg-accent" : "hover:bg-accent/60",
-                    )}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => applySlashCommand(index)}
-                  >
-                    <span className="flex items-center gap-2"><code className="font-semibold text-primary">{command.name}</code><span className="text-xs text-foreground">{command.summary}</span></span>
-                    <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{command.syntax}</span>
-                    <span className="mt-0.5 block text-[11px] text-muted-foreground">示例：{command.examples[0]} · {command.budgetHint}</span>
-                  </button>
-                ))}
-              </div>
+              <Suspense fallback={null}>
+                <SlashCommandMenu commands={slashCommands} selection={slashSelection} onSelect={applySlashCommand} />
+              </Suspense>
             )}
 
             {/* 文本输入区 / 录音指示器 */}

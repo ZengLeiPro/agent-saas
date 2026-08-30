@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_id:
-        description: '已通过 Staging 验收的 RC ID'
+        description: '已通过 Staging 确定性门禁的 RC ID'
         required: true
         type: string
       reason:
@@ -57,6 +57,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
           [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
+          test -n "$(printf '%s' "$PROMOTION_REASON" | tr -d '[:space:]')"
           printf 'RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v5
@@ -103,7 +104,7 @@ jobs:
             echo "MIGRATION_PHASE=$migration_phase"
           } >> "$GITHUB_ENV"
 
-      - name: Validate Staging evidence and record human approval
+      - name: Validate deterministic Staging evidence and record human approval
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -114,13 +115,16 @@ jobs:
           test -n "$staging"
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
           deployment_id="$(printf '%s' "$staging_reason" | jq -r .stagingDeploymentId)"
-          e2e_run_id="$(printf '%s' "$staging_reason" | jq -r .e2eRunId)"
-          e2e_summary="$(printf '%s' "$staging_reason" | jq -c .e2eSummary)"
+          staging_run_id="$(printf '%s' "$staging_reason" | jq -r .stagingRunId)"
+          verification_summary="$(printf '%s' "$staging_reason" | jq -c .verificationSummary)"
           runtime_summary="$(printf '%s' "$staging_reason" | jq -c .runtimeSummary)"
-          printf '%s\n' "$e2e_summary" > "$RUNNER_TEMP/staging-e2e-summary.json"
-          node scripts/staging/summarize-e2e.mjs verify "$RUNNER_TEMP/staging-e2e-summary.json"
+          test "$(printf '%s' "$verification_summary" | jq -r .schemaVersion)" = 1
+          test "$(printf '%s' "$verification_summary" | jq -r .mode)" = deterministic-deployment-gates-v1
+          test "$(printf '%s' "$verification_summary" | jq -r .status)" = passed
+          expected_checks='["acs-health","api-readiness","immutable-artifacts","migration-readback","reverse-isolation","runtime-identity","web-readback"]'
+          test "$(printf '%s' "$verification_summary" | jq -c '.checks | sort')" = "$expected_checks"
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
-          printf '%s' "$e2e_run_id" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
           expected_runtime_summary="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
@@ -137,17 +141,17 @@ jobs:
           test "$(printf '%s' "$deployment" | jq -r .sha)" = "$RELEASE_SHA"
           test "$(printf '%s' "$deployment" | jq -r .payload.releaseId)" = "$RELEASE_ID"
           test "$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses" --jq '.[0].state')" = success
-          e2e_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$e2e_run_id")"
-          test "$(printf '%s' "$e2e_run" | jq -r .head_sha)" = "$RELEASE_SHA"
-          test "$(printf '%s' "$e2e_run" | jq -r .conclusion)" = success
-          test "$(printf '%s' "$e2e_run" | jq -r .path)" = .github/workflows/deploy-staging.yml
+          staging_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$staging_run_id")"
+          test "$(printf '%s' "$staging_run" | jq -r .head_sha)" = "$RELEASE_SHA"
+          test "$(printf '%s' "$staging_run" | jq -r .conclusion)" = success
+          test "$(printf '%s' "$staging_run" | jq -r .path)" = .github/workflows/deploy-staging.yml
           approval_reason="$(jq -nc \
             --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
-            --arg stagingDeploymentId "$deployment_id" --arg e2eRunId "$e2e_run_id" \
-            --argjson e2eSummary "$e2e_summary" \
+            --arg stagingDeploymentId "$deployment_id" --arg stagingRunId "$staging_run_id" \
+            --argjson verificationSummary "$verification_summary" \
             --arg triggeredAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --arg reason "$PROMOTION_REASON" \
-            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,e2eRunId:$e2eRunId,e2eSummary:$e2eSummary,triggeredAt:$triggeredAt,reason:$reason}')"
+            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \

@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { canonicalJson } from '@agent/shared';
 import { ReleaseAttestationStore } from './releaseAttestationStore.js';
@@ -58,36 +57,35 @@ export function validateApprovalReason(
     'releaseId',
     'manifestDigest',
     'stagingDeploymentId',
-    'e2eRunId',
+    'stagingRunId',
     'triggeredAt',
+    'reason',
   ]) {
     if (!approval[key]) throw new Error(`Approval attestation is missing ${key}`);
   }
   if (approval.releaseId !== expected.releaseId || approval.manifestDigest !== expected.digest)
     throw new Error('Approval attestation is not bound to this Manifest');
-  const e2e = approval.e2eSummary as Record<string, unknown> | undefined;
+  if (typeof approval.reason !== 'string' || !approval.reason.trim())
+    throw new Error('Approval attestation lacks a human or Agent acceptance conclusion');
+  const verification = approval.verificationSummary as Record<string, unknown> | undefined;
+  const expectedChecks = [
+    'acs-health',
+    'api-readiness',
+    'immutable-artifacts',
+    'migration-readback',
+    'reverse-isolation',
+    'runtime-identity',
+    'web-readback',
+  ];
   if (
-    e2e?.schemaVersion !== 2 ||
-    e2e.status !== 'passed' ||
-    e2e.traceMode !== 'off' ||
-    e2e.artifactMode !== 'json-html-screenshot-video' ||
-    !Number.isSafeInteger(e2e.scenarioCount) ||
-    Number(e2e.scenarioCount) < 1 ||
-    !Number.isSafeInteger(e2e.executionCount) ||
-    Number(e2e.executionCount) < Number(e2e.scenarioCount) ||
-    !Array.isArray(e2e.projects) ||
-    !e2e.projects.includes('desktop-chromium') ||
-    !e2e.projects.includes('mobile-chromium') ||
-    !Array.isArray(e2e.responsiveScenarioFiles) ||
-    !e2e.responsiveScenarioFiles.includes('auth.spec.ts') ||
-    !e2e.responsiveScenarioFiles.includes('chat-stream.spec.ts')
+    verification?.schemaVersion !== 1 ||
+    verification.mode !== 'deterministic-deployment-gates-v1' ||
+    verification.status !== 'passed' ||
+    !Array.isArray(verification.checks) ||
+    canonicalJson([...verification.checks].sort()) !== canonicalJson(expectedChecks)
   ) {
-    throw new Error('Approval attestation lacks a passed scenario-level Staging E2E summary');
+    throw new Error('Approval attestation lacks complete deterministic Staging verification');
   }
-  const { evidenceDigest, ...e2eBody } = e2e;
-  const expectedE2eDigest = `sha256:${createHash('sha256').update(canonicalJson(e2eBody)).digest('hex')}`;
-  if (evidenceDigest !== expectedE2eDigest)
-    throw new Error('Approval attestation Staging E2E summary digest is invalid');
   return approval;
 }
 

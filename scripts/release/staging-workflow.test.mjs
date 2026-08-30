@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/deploy-staging.yml', import.meta.url);
+const acceptanceWorkflowPath = new URL(
+  '../../.github/workflows/staging-acceptance.yml',
+  import.meta.url,
+);
 const deployPath = new URL('./deploy-staging-release.sh', import.meta.url);
 const resourcePath = new URL('../../infra/staging/resource-plan.json', import.meta.url);
 const acsRuntimePath = new URL('../../infra/staging/acs-runtime.yaml', import.meta.url);
@@ -58,16 +62,16 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /VITE_WEB_ORIGIN: https:\/\/agent\.kaiyan\.net/u);
   assert.doesNotMatch(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
   assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
+  assert.doesNotMatch(workflow, /STAGING_E2E_PASSWORD|playwright test|playwright-report/u);
   assert.match(workflow, /ensure-integration-fixture\.mjs/u);
-  assert.match(workflow, /STAGING_E2E_INTEGRATION_TASK_ID=\$integration_task_id/u);
-  assert.match(workflow, /touch "\$RUNNER_TEMP\/staging-fixtures-touched"/u);
-  assert.match(workflow, /if \[ ! -f "\$RUNNER_TEMP\/staging-fixtures-touched" \]; then/u);
   assert.match(workflow, /infra\/staging\/resource-plan\.json/u);
   assert.match(workflow, /plan\.firstDeploymentReadiness !== 'ready'/u);
   assert.match(workflow, /blockers\.length > 0/u);
   assert.match(workflow, /REUSE_RC=true/u);
   assert.match(workflow, /state staging_deployed/u);
   assert.match(workflow, /state verified/u);
+  assert.match(workflow, /deterministic-deployment-gates-v1/u);
+  assert.match(workflow, /--arg stagingRunId "\$GITHUB_RUN_ID"/u);
   assert.match(workflow, /web-oss-readback/u);
   assert.match(
     workflow,
@@ -116,11 +120,34 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|N\/N\+1/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   const deployIndex = workflow.indexOf('Deploy exact Staging API, Worker and ACS artifacts');
-  const migrationIndex = workflow.indexOf(
-    'Verify migrations and create isolated Integration fixture',
+  const migrationIndex = workflow.indexOf('Verify migrations and isolated Integration fixture');
+  const isolationIndex = workflow.indexOf('Verify live reverse-isolation evidence');
+  const recordIndex = workflow.indexOf('Record deterministic Staging deployment and verification');
+  assert.ok(
+    deployIndex > 0 &&
+      deployIndex < migrationIndex &&
+      migrationIndex < isolationIndex &&
+      isolationIndex < recordIndex,
   );
-  const e2eIndex = workflow.indexOf('Run real browser and ACS E2E');
-  assert.ok(deployIndex > 0 && deployIndex < migrationIndex && migrationIndex < e2eIndex);
+  assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
+  const workflow = await readFile(acceptanceWorkflowPath, 'utf8');
+  assert.match(workflow, /name: Staging Acceptance/u);
+  assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
+  assert.match(workflow, /group: staging-acceptance\s+cancel-in-progress: false/u);
+  assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
+  assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
+  assert.match(workflow, /Verify exact RC is still active on Staging/u);
+  assert.match(workflow, /staging-web-identity\.json/u);
+  assert.match(workflow, /staging-api-ready\.json/u);
+  assert.match(workflow, /Run browser and Agent acceptance suite/u);
+  assert.match(workflow, /playwright test -c e2e\/playwright\.config\.ts/u);
+  assert.match(workflow, /summarize-e2e\.mjs/u);
+  assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
+  assert.match(workflow, /retention-days: 14/u);
+  assert.doesNotMatch(workflow, /releaseAttestationCli|state approved|deploy-staging-release\.sh/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 

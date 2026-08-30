@@ -10,6 +10,7 @@ import {
   DwsCommandPolicyError,
 } from './commandPolicy.js';
 import {
+  DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION,
   DWS_COMMAND_POLICY_BY_CLI_VERSION,
   DWS_COMMAND_POLICY_CATALOGS,
 } from './generated/commandPolicy.js';
@@ -30,6 +31,12 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     ]);
     expect(Object.keys(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.55'])).toHaveLength(830);
     expect(Object.keys(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.60'])).toHaveLength(1234);
+    expect(countGeneratedFileFlags('1.0.55')).toBe(10);
+    expect(countGeneratedFileFlags('1.0.60')).toBe(18);
+    expect(DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION['1.0.55']).toMatchObject({
+      'sheet.csv-put': { csv: 'indirect' },
+      'sheet.range.batch-set-style': { batch: 'path' },
+    });
     expect(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.55']['mcp.url.get']).toBe('d');
     expect(DWS_COMMAND_POLICY_BY_CLI_VERSION['1.0.60']['devapp.credentials-get']).toBe('d');
   });
@@ -86,14 +93,21 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     expectPolicyRejection(['aisearch', 'search-behavior']);
     expectPolicyRejection(['drive', 'file', 'download'], 'platform_boundary');
     expectPolicyRejection(['calendar', 'event', 'future-query-shape'], 'unregistered');
+    expectPolicyRejection(['calendar', 'event', 'future', 'list'], 'unregistered');
+    expectPolicyRejection(['calendar', 'event', 'future-create'], 'unregistered');
+    expectPolicyRejection(['calendar', 'event', 'future', '--help'], 'unregistered');
+    expectPolicyRejection(['chat', 'message', 'send', 'all'], 'unregistered');
   });
 
-  it('manifest 命中前拒绝破坏性 flag 与本地文件引用', () => {
+  it('manifest 命中前拒绝破坏性 flag、文件路径与 stdin 引用', () => {
     const rejectedCommands = [
       ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '@data.csv'],
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv=@data.csv'],
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', 'file:///tmp/data.csv'],
+      ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '-'],
+      ['sheet', 'range', 'batch-set-style', '--node', 'n1', '--batch', './styles.json'],
+      ['sheet', 'range', 'batch-set-style', '--node', 'n1', '--batch=./styles.json'],
     ];
     for (const args of rejectedCommands) {
       expectPolicyRejection(args, 'platform_boundary');
@@ -103,6 +117,12 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
         neverAutoApprove: true,
       });
     }
+    expect(
+      resolveDwsBusinessRisk({
+        args: ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', 'a,b\\n1,2'],
+        confirmed: true,
+      }),
+    ).toBe('workspace_write');
   });
 
   it('Dockerfile 实际版本、分版本 manifest 与缩进 skill metadata 必须同步', () => {
@@ -126,6 +146,13 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     expect(skillVersionSupportsActive('1.0.60', '1.0.55')).toBe(false);
   });
 });
+
+function countGeneratedFileFlags(version: '1.0.55' | '1.0.60'): number {
+  return Object.values(DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION[version]).reduce(
+    (sum, flags) => sum + Object.keys(flags).length,
+    0,
+  );
+}
 
 function isActiveCliVersion(version: string): boolean {
   return DWS_ACTIVE_CLI_VERSION === version;

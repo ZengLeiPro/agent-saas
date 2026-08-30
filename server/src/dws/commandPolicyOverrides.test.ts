@@ -34,13 +34,13 @@ describe('DWS schema 只读覆盖契约', () => {
     ).toBe('safe');
   });
 
-  it('真实写/破坏性命令与未知命令不得降档', () => {
+  it('真实写、破坏性与含已知动词的未知命令不得降档', () => {
     for (const path of DWS_WRITE_COMMAND_OVERRIDES) {
       expect(resolveDwsBusinessRisk({ args: path.split('.') }), path).toBe('workspace_write');
     }
     expect(
       resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'] }),
-    ).toBe('workspace_write');
+    ).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['oa', 'approval', 'approve', '--task-id', 't1'] })).toBe(
       'dangerous',
     );

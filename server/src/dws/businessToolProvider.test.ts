@@ -85,7 +85,7 @@ function setup(input: {
 }
 
 describe('DwsBusinessToolProvider', () => {
-  it('按命令动作动态分档，并对未知或破坏性动作 fail closed', () => {
+  it('按已登记命令精确分档，并对未知或破坏性动作 fail closed', () => {
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['minutes', '+list-all'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'list', '--help'] })).toBe('safe');
@@ -108,9 +108,9 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['auth', 'status'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
     expect(resolveDwsBusinessRisk({ args: ['auth', 'status', '--verbose'] })).toBe('dangerous');
-    // TASK-256：skill 文档强制所有命令带 --format json，格式旗标不得再触发受限旗标误判。
+    // 已登记命令带 --format json 时，格式旗标不得触发受限旗标误判。
     expect(resolveDwsBusinessRisk({ args: ['doc', 'read', '--format', 'json'] })).toBe('safe');
-    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox', '--format', 'json'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox', 'list', '--format', 'json'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['auth', 'status', '--format', 'json'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['sheet', 'list', '-f', 'json'] })).toBe('safe');
     // TASK-256：补录 skill 文档证实但此前未登记的只读动作。
@@ -127,47 +127,56 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['attendance', 'vacation', 'types'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['attendance', 'report', 'columns'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['attendance', 'rules'] })).toBe('safe');
-    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['report', 'inbox', 'list'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['mail', 'mailbox', 'profile'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['mail', 'message', 'verify'] })).toBe('safe');
-    expect(resolveDwsBusinessRisk({ args: ['contact', 'user', 'profile'] })).toBe('safe');
+    expect(resolveDwsBusinessRisk({ args: ['contact', 'user', 'profile', 'get'] })).toBe('safe');
     expect(resolveDwsBusinessRisk({ args: ['agoal', 'user', 'rules'] })).toBe('safe');
     // TASK-256：补录文档证实、受 confirmed 闸门约束的确认制写动作（分档仍为 write）。
     expect(resolveDwsBusinessRisk({ args: ['mail', 'rule', 'adjust', '--order', 'up'] })).toBe('workspace_write');
     expect(resolveDwsBusinessRisk({ args: ['drive', 'mkdir', '--name', '新目录'] })).toBe('workspace_write');
-    expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['todo', 'list'] })).toEqual({ risk: 'safe' });
+    expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['todo', 'task', 'list'] })).toEqual({ risk: 'safe' });
     expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['aisearch', 'person', '--keyword', '张三', '--format', 'json'] })).toEqual({ risk: 'safe' });
   });
 
-  it('TASK-256 review 返工：位置参数不得把真实写命令降档为 read', () => {
-    // review 复现：末尾位置参数命中读动词，曾把 send/create 降档为 safe，绕过 confirmed 闸门。
-    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'], confirmed: true })).toBe('workspace_write');
-    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'status', '--group', 'cid'], confirmed: true })).toBe('workspace_write');
-    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create', 'info', '--title', 'x'], confirmed: true })).toBe('workspace_write');
-    // 无 confirmed 时风险档不变（write），confirmed 闸门在 provider invoke 层拦截（见下个用例）。
-    expect(resolveDwsBusinessRisk({ args: ['chat', 'message', 'send', 'all', '--group', 'cid'] })).toBe('workspace_write');
-    expect(resolveDwsBusinessRisk({ args: ['calendar', 'event', 'create', 'info', '--title', 'x'] })).toBe('workspace_write');
+  it('TASK-335 二次 Review：含已知 read/write 动词的未知路径仍保持 fail-closed', () => {
+    const unknownCommands = [
+      ['calendar', 'event', 'future', 'list'],
+      ['calendar', 'event', 'future-create'],
+      ['chat', 'message', 'send', 'all', '--group', 'cid'],
+      ['calendar', 'event', 'create', 'info', '--title', 'x'],
+    ];
+    for (const args of unknownCommands) {
+      expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe('dangerous');
+      expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
+        risk: 'dangerous', neverAutoApprove: true,
+      });
+    }
   });
 
-  it('TASK-256 review 返工：缺 confirmed 时 provider 不得触达底层 invoke', async () => {
-    const { provider, invoke, auditStore, context } = setup();
-    await expect(provider.invoke({
-      toolId: 'DwsBusiness',
-      input: { args: ['chat', 'message', 'send', 'all', '--group', 'cid'], credentialMode: 'agent' },
-      authorization: { approved: true, source: 'policy_auto' },
-    }, context)).rejects.toThrow();
-    expect(invoke).not.toHaveBeenCalled();
-    expect(auditStore.events.at(-1)?.metadata).toMatchObject({
-      commandPath: 'chat.message.send.all',
-      policySource: 'legacy_verb_fallback',
-      policyCliVersion: '1.0.55',
-    });
+  it('TASK-335 二次 Review：confirmed 与人工授权不能执行含已知动词的未知路径', async () => {
+    for (const args of [
+      ['calendar', 'event', 'future', 'list'],
+      ['calendar', 'event', 'future-create'],
+    ]) {
+      const { provider, invoke, auditStore, context } = setup();
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness', input: { args, credentialMode: 'agent', confirmed: true },
+        authorization: { approved: true, source: 'human_approval' },
+      }, context)).rejects.toThrow();
+      expect(invoke).not.toHaveBeenCalled();
+      expect(auditStore.events.at(-1)).toMatchObject({
+        reason: 'DWS_BUSINESS_ACTION_REJECTED',
+        metadata: { commandPath: args.join('.'), policySource: 'unregistered', policyCliVersion: '1.0.55' },
+      });
+    }
   });
 
-  it('TASK-335 review 返工：明确 confirmed 也不能绕过破坏性 flag 或本地文件边界', async () => {
+  it('TASK-335 Review 返工：confirmed 也不能绕过破坏性 flag 或 catalog 文件边界', async () => {
     const rejectedCommands = [
       ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],
       ['sheet', 'csv-put', '--spreadsheet-id', 's1', '--csv', '@data.csv'],
+      ['sheet', 'range', 'batch-set-style', '--node', 'n', '--batch', './styles.json'],
     ];
     for (const args of rejectedCommands) {
       const { provider, invoke, auditStore, context } = setup();
@@ -251,12 +260,17 @@ describe('DwsBusinessToolProvider', () => {
     expect(result?.content).not.toMatch(/access-secret|refresh-secret|client-secret/);
   });
 
-  it('Agent credential 对未显式委托的敏感模块和策略不可用状态 fail closed', async () => {
-    for (const module of ['mail', 'contact', 'oa', 'calendar']) {
+  it('Agent credential 对未显式委托的已登记敏感命令 fail closed', async () => {
+    for (const args of [
+      ['mail', 'message', 'list'],
+      ['contact', 'user', 'get'],
+      ['oa', 'approval', 'list-pending'],
+      ['calendar', 'event', 'list'],
+    ]) {
       const { provider, invoke, auditStore, context, listEffectiveResourceIds } = setup({ delegatedScopes: [] });
       await expect(provider.invoke({
         toolId: 'DwsBusiness',
-        input: { args: [module, 'message', 'list'], credentialMode: 'agent' },
+        input: { args, credentialMode: 'agent' },
         authorization: { approved: true, source: 'policy_auto' },
       }, context)).rejects.toThrow('委托权限');
       expect(listEffectiveResourceIds).toHaveBeenCalledWith('tenant-a', 'user-a', 'dws_delegation');

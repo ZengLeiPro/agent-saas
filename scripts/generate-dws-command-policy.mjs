@@ -7,10 +7,42 @@ const EFFECT_CODES = {
   destructive: 'd',
 };
 
+function isGenericBlockedFileFlag(name) {
+  const flag = `--${name.toLowerCase()}`;
+  if (/^(?:--output|--out|--output-dir|--download-dir|--file|--path|--dir|--directory)$/.test(flag))
+    return true;
+  if (
+    /(?:^|-)(?:file|path|attachment|media|image)(?:-|$)/.test(flag) &&
+    !/(?:^|-)(?:file|attachment|media|image)-ids?$/.test(flag)
+  )
+    return true;
+  return /(?:^|-)(?:local|source-file|contents-file|template-file)(?:-|$)/.test(flag);
+}
+
+function classifyFileFlag(name, parameter) {
+  if (isGenericBlockedFileFlag(name)) return undefined;
+  const description = typeof parameter?.description === 'string' ? parameter.description : '';
+  if (!description) return undefined;
+  if (/@(?:file|文件|相对文件|工作目录)|-\s*(?:从|表示)?\s*stdin\b/i.test(description))
+    return 'indirect';
+
+  const evidence = description;
+  if (
+    /文件路径|本地保存路径|输出到本地文件路径|本地图片(?:文件)?路径|本地表格文件路径|本地音视频文件|文件夹绝对路径|附件文件路径|从文件读取|JSON 文件(?:[（；，。]|$)/.test(
+      evidence,
+    ) ||
+    /filesystem path|local (?:json )?file|local (?:file|upload) input|local output path|local destination/i.test(
+      evidence,
+    )
+  )
+    return 'path';
+  return undefined;
+}
+
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    '用法：node scripts/generate-dws-command-policy.mjs --catalog <version>=<schema.json> [--catalog ...] --output <file>',
+    '用法：node scripts/generate-dws-command-policy.mjs --catalog <version>=<schema.json> [--catalog ...] --output <策略文件>',
   );
   process.exit(1);
 }
@@ -38,6 +70,18 @@ function parseArgs(argv) {
   return { catalogs, output };
 }
 
+function normalizeParameterFlagName(value) {
+  if (typeof value !== 'string' || !value) throw new Error('DWS schema 参数名为空');
+  const normalized = value
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replaceAll('_', '-')
+    .toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(normalized)) {
+    throw new Error(`DWS schema 参数名无法安全归一化：${JSON.stringify(value)}`);
+  }
+  return normalized;
+}
+
 function normalizeCommandPath(value) {
   if (typeof value !== 'string') throw new Error('DWS schema tool 缺少 cli_path');
   const tokens = value
@@ -62,6 +106,7 @@ function readCatalog(spec) {
   }
 
   const commands = new Map();
+  const fileFlags = new Map();
   let sourceToolCount = 0;
   for (const product of schema.products) {
     if (!Array.isArray(product.tools)) continue;
@@ -92,6 +137,16 @@ function readCatalog(spec) {
         throw new Error(`${spec.file} 的归一化路径 ${path} 存在冲突：${existing} / ${code}`);
       }
       commands.set(path, code);
+
+      const commandFileFlags = fileFlags.get(path) ?? new Map();
+      for (const [name, parameter] of Object.entries(tool.parameters ?? {})) {
+        const flagName = normalizeParameterFlagName(name);
+        const mode = classifyFileFlag(flagName, parameter);
+        if (!mode) continue;
+        const existingMode = commandFileFlags.get(flagName);
+        commandFileFlags.set(flagName, existingMode === 'path' || mode === 'path' ? 'path' : mode);
+      }
+      if (commandFileFlags.size > 0) fileFlags.set(path, commandFileFlags);
     }
   }
   if (sourceToolCount === 0) throw new Error(`${spec.file} 没有工具条目`);
@@ -100,6 +155,7 @@ function readCatalog(spec) {
     catalogHash: schema.catalog_hash,
     sourceToolCount,
     commands,
+    fileFlags,
   };
 }
 
@@ -115,6 +171,10 @@ function tsString(value) {
   return `'${value.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
 }
 
+function tsProperty(value) {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value) ? value : tsString(value);
+}
+
 function render(catalogs) {
   const catalogRows = catalogs
     .map((catalog) =>
@@ -126,6 +186,21 @@ function render(catalogs) {
         '  },',
       ].join('\n'),
     )
+    .join('\n');
+  const fileFlagRows = catalogs
+    .map((catalog) => {
+      const commands = [...catalog.fileFlags.entries()].sort(([left], [right]) =>
+        left.localeCompare(right),
+      );
+      const rows = commands.map(([path, flags]) => {
+        const flagRows = [...flags.entries()]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([name, mode]) => `${tsProperty(name)}: ${tsString(mode)}`)
+          .join(', ');
+        return `    ${tsString(path)}: { ${flagRows} },`;
+      });
+      return `  ${tsString(catalog.version)}: {\n${rows.join('\n')}\n  },`;
+    })
     .join('\n');
   const policyRows = catalogs
     .map((catalog) => {
@@ -142,9 +217,14 @@ function render(catalogs) {
   return (
     `// 此文件由 scripts/generate-dws-command-policy.mjs 生成，禁止手改。\n` +
     `// 来源：每个对应 CLI 版本执行 dws schema --all --format json；升级 Dockerfile 中的 CLI 时必须同步生成。\n` +
-    `// 映射：低风险免确认 read=r，write=w，destructive/敏感 read=d，unavailable=u。\n\n` +
-    `export type DwsCommandPolicyCode = 'r' | 'w' | 'd' | 'u';\n\n` +
+    `// 映射：命令风险来自 effect，文件参数来自当前参数描述；冲突时采用更严格策略。\n\n` +
+    `export type DwsCommandPolicyCode = 'r' | 'w' | 'd' | 'u';\n` +
+    `export type DwsCommandFileFlagMode = 'path' | 'indirect';\n` +
+    `export type DwsCommandFileFlagPolicy = Readonly<\n` +
+    `  Record<string, Readonly<Record<string, DwsCommandFileFlagMode>>>\n` +
+    `>;\n\n` +
     `export const DWS_COMMAND_POLICY_CATALOGS = [\n${catalogRows}\n] as const;\n\n` +
+    `export const DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION = {\n${fileFlagRows}\n} as const satisfies Readonly<Record<string, DwsCommandFileFlagPolicy>>;\n\n` +
     `export const DWS_COMMAND_POLICY_BY_CLI_VERSION = {\n${policyRows}\n} as const satisfies Readonly<Record<string, Readonly<Record<string, DwsCommandPolicyCode>>>>;\n`
   );
 }
@@ -163,6 +243,12 @@ console.log(
       sourceTools: catalogs.reduce((sum, catalog) => sum + catalog.sourceToolCount, 0),
       generatedPathsByVersion: Object.fromEntries(
         catalogs.map((catalog) => [catalog.version, catalog.commands.size]),
+      ),
+      generatedFileFlagsByVersion: Object.fromEntries(
+        catalogs.map((catalog) => [
+          catalog.version,
+          [...catalog.fileFlags.values()].reduce((sum, flags) => sum + flags.size, 0),
+        ]),
       ),
     },
     null,

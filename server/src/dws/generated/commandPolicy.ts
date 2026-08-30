@@ -1,8 +1,12 @@
 // 此文件由 scripts/generate-dws-command-policy.mjs 生成，禁止手改。
 // 来源：每个对应 CLI 版本执行 dws schema --all --format json；升级 Dockerfile 中的 CLI 时必须同步生成。
-// 映射：低风险免确认 read=r，write=w，destructive/敏感 read=d，unavailable=u。
+// 映射：命令风险来自 effect，文件参数来自当前参数描述；冲突时采用更严格策略。
 
 export type DwsCommandPolicyCode = 'r' | 'w' | 'd' | 'u';
+export type DwsCommandFileFlagMode = 'path' | 'indirect';
+export type DwsCommandFileFlagPolicy = Readonly<
+  Record<string, Readonly<Record<string, DwsCommandFileFlagMode>>>
+>;
 
 export const DWS_COMMAND_POLICY_CATALOGS = [
   {
@@ -16,6 +20,40 @@ export const DWS_COMMAND_POLICY_CATALOGS = [
     sourceToolCount: 1256,
   },
 ] as const;
+
+export const DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION = {
+  '1.0.55': {
+    'aitable.workflow.create': { dsl: 'indirect' },
+    'aitable.workflow.update': { dsl: 'indirect' },
+    'markdown.create': { content: 'indirect' },
+    'markdown.overwrite': { content: 'indirect' },
+    'sheet.csv-put': { csv: 'indirect' },
+    'sheet.formula-verify': { targets: 'indirect' },
+    'sheet.pivot-table.create': { properties: 'indirect' },
+    'sheet.pivot-table.update': { properties: 'indirect' },
+    'sheet.range.batch-set-style': { batch: 'path' },
+    'sheet.table-put': { sheets: 'indirect' },
+  },
+  '1.0.60': {
+    'aitable.workflow.create': { dsl: 'indirect' },
+    'aitable.workflow.update': { dsl: 'indirect' },
+    'doc.checkpoint-update': { content: 'indirect' },
+    'doc.create': { content: 'indirect' },
+    'doc.update': { content: 'indirect', text: 'indirect' },
+    'markdown.create': { content: 'indirect' },
+    'markdown.overwrite': { content: 'indirect' },
+    'minutes.replace-batch': { json: 'indirect' },
+    'minutes.summary': { content: 'indirect' },
+    'recruit.job.create': { from: 'path' },
+    'sheet.csv-put': { csv: 'indirect' },
+    'sheet.formula-verify': { targets: 'indirect' },
+    'sheet.pivot-table.create': { properties: 'indirect' },
+    'sheet.pivot-table.update': { properties: 'indirect' },
+    'sheet.range.batch-set-style': { batch: 'path' },
+    'sheet.table-put': { sheets: 'indirect' },
+    'whiteboard.update': { source: 'path' },
+  },
+} as const satisfies Readonly<Record<string, DwsCommandFileFlagPolicy>>;
 
 export const DWS_COMMAND_POLICY_BY_CLI_VERSION = {
   '1.0.55': {

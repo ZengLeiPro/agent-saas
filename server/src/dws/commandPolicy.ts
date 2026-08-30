@@ -1,6 +1,8 @@
 import {
+  DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION,
   DWS_COMMAND_POLICY_BY_CLI_VERSION,
   DWS_COMMAND_POLICY_CATALOGS,
+  type DwsCommandFileFlagPolicy,
   type DwsCommandPolicyCode,
 } from './generated/commandPolicy.js';
 import {
@@ -36,96 +38,6 @@ const ALLOWED_MODULES = new Set([
   'wiki',
 ]);
 
-// 仅保留给当前 CLI schema 未覆盖的兼容命令；正式叶子命令均使用当前版本 manifest。
-const READ_VERBS = new Set([
-  'all',
-  'balance',
-  'behavior',
-  'check',
-  'columns',
-  'count',
-  'current',
-  'detail',
-  'enterprise',
-  'fields',
-  'find',
-  'get',
-  'history',
-  'inbox',
-  'info',
-  'list',
-  'list-all',
-  'members',
-  'mine',
-  'person',
-  'profile',
-  'query',
-  'read',
-  'record',
-  'records',
-  'result',
-  'rules',
-  'search',
-  'shared',
-  'show',
-  'stats',
-  'status',
-  'summary',
-  'transcription',
-  'tree',
-  'types',
-  'verify',
-  'view',
-  'whoami',
-]);
-const WRITE_VERBS = new Set([
-  'accept',
-  'add',
-  'adjust',
-  'append',
-  'archive',
-  'assign',
-  'bind',
-  'cancel',
-  'close',
-  'comment',
-  'complete',
-  'copy',
-  'create',
-  'disable',
-  'edit',
-  'enable',
-  'finish',
-  'forward',
-  'invite',
-  'join',
-  'leave',
-  'like',
-  'mark',
-  'mkdir',
-  'move',
-  'new',
-  'open',
-  'patch',
-  'pause',
-  'post',
-  'publish',
-  'rename',
-  'replace',
-  'reply',
-  'respond',
-  'resume',
-  'save',
-  'send',
-  'set',
-  'share',
-  'start',
-  'submit',
-  'unarchive',
-  'unshare',
-  'update',
-  'write',
-]);
 const DESTRUCTIVE_VERBS = new Set([
   'agree',
   'approve',
@@ -168,8 +80,6 @@ export type DwsCommandPolicySource =
   | 'legacy_read_table'
   | 'legacy_write_table'
   | 'auth_status'
-  | 'help'
-  | 'legacy_verb_fallback'
   | 'platform_boundary'
   | 'unregistered';
 
@@ -197,6 +107,8 @@ export const DWS_COMMAND_POLICY_CLI_VERSIONS = Object.freeze(
 );
 const DWS_ACTIVE_COMMAND_POLICY: Readonly<Record<string, DwsCommandPolicyCode>> =
   DWS_COMMAND_POLICY_BY_CLI_VERSION[DWS_ACTIVE_CLI_VERSION];
+const DWS_ACTIVE_COMMAND_FILE_FLAGS: DwsCommandFileFlagPolicy =
+  DWS_COMMAND_FILE_FLAGS_BY_CLI_VERSION[DWS_ACTIVE_CLI_VERSION];
 
 function isForbiddenDwsFlag(arg: string): boolean {
   if (FORBIDDEN_FLAGS.test(arg)) return true;
@@ -214,6 +126,23 @@ function isForbiddenDwsValue(arg: string): boolean {
   const separator = arg.startsWith('-') ? arg.indexOf('=') : -1;
   const value = separator >= 0 ? arg.slice(separator + 1) : arg;
   return (value.startsWith('@') && value.length > 1) || /^file:\/\//i.test(value);
+}
+
+function hasForbiddenDwsCatalogFileFlag(commandPath: string, trailingArgs: string[]): boolean {
+  const policy = DWS_ACTIVE_COMMAND_FILE_FLAGS[commandPath];
+  if (!policy) return false;
+  for (let index = 0; index < trailingArgs.length; index += 1) {
+    const arg = trailingArgs[index]!;
+    if (!arg.startsWith('--')) continue;
+    const separator = arg.indexOf('=');
+    const name = arg.slice(2, separator >= 0 ? separator : undefined).toLowerCase();
+    const mode = policy[name];
+    if (!mode) continue;
+    if (mode === 'path') return true;
+    const value = separator >= 0 ? arg.slice(separator + 1) : trailingArgs[index + 1];
+    if (value === '-' || (value !== undefined && isForbiddenDwsValue(value))) return true;
+  }
+  return false;
 }
 
 function manifestPolicy(
@@ -266,8 +195,10 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
     .map((token) => token.toLowerCase().replace(/^\+/, ''));
   const commandPath = commandTokens.join('.');
   const pathTokens = commandTokens.flatMap((token) => token.split('-').filter(Boolean));
-  const normalizedAction = commandTokens.at(-1)!;
   const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
+  if (hasForbiddenDwsCatalogFileFlag(commandPath, trailingArgs)) {
+    throw new DwsCommandPolicyError('DWS 命令包含本地文件参数', commandPath, 'platform_boundary');
+  }
   const flagNameTokens = trailingArgs
     .filter((token) => token.startsWith('-'))
     .flatMap((token) => token.split('=', 1)[0]!.toLowerCase().split('-').filter(Boolean));
@@ -317,18 +248,6 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
   const manifestPolicyCode = DWS_ACTIVE_COMMAND_POLICY[commandPath];
   if (manifestPolicyCode) {
     return manifestPolicy(manifestPolicyCode, module, commandPath, pathTokens);
-  }
-  if (
-    trailingArgs.length > 0 &&
-    trailingArgs.every((token) => token === '--help' || token === '-h')
-  ) {
-    return { module, commandPath, risk: 'read', policySource: 'help' };
-  }
-  if (pathTokens.some((token) => WRITE_VERBS.has(token))) {
-    return { module, commandPath, risk: 'write', policySource: 'legacy_verb_fallback' };
-  }
-  if (READ_VERBS.has(normalizedAction)) {
-    return { module, commandPath, risk: 'read', policySource: 'legacy_verb_fallback' };
   }
   throw new DwsCommandPolicyError(
     'DWS 动作未登记风险等级，已拒绝执行',

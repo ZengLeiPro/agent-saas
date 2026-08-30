@@ -81,7 +81,7 @@ export type ChatRejectReasonCode =
     | 'personal_agent_disabled'
     | 'org_agent_unavailable';
 
-export type WsEvent =
+type WsEventPayload =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
     // 统一排队区：普通 queue 与显式 steer 都由服务端 durable 快照恢复。
@@ -110,6 +110,7 @@ export type WsEvent =
     | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
     | { type: 'subagent_end'; toolId: string; agentType?: string; status?: Exclude<SubagentStatus, 'running'>; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
+    | { type: 'moderation_outcome'; moderationId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }
@@ -141,6 +142,20 @@ export type WsEvent =
     | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: WsEvent }> }
     | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery }
     | { type: 'pong'; seq?: number; epoch?: string; probe?: boolean };
+
+
+export interface WsProjectionMetadata {
+    eventId: string;
+    domain: 'message' | 'tool' | 'subagent' | 'moderation';
+    runId: string;
+    messageId: string;
+    blockId?: string;
+    toolCallId?: string;
+    subagentId?: string;
+}
+
+/** Stable canonical identity is present on modern server projections; absent only on legacy frames. */
+export type WsEvent = WsEventPayload & { projection?: WsProjectionMetadata };
 
 export interface WsOutboundEnvelope {
     eventId?: number;

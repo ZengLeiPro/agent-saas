@@ -12,6 +12,12 @@ import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
 import { applyInteractionResolution } from './wsInteractionResolution';
+import { adaptWsEventToActivityMessageProjection } from './wsActivityMessageProjection';
+import {
+  createActivityMessageProjectionState,
+  reduceActivityMessageProjection,
+  selectProjectedMessages,
+} from './activityMessageProjection';
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
   findUserMsgIndexByClientId,
@@ -154,6 +160,23 @@ function claimTerminalEvent(data: Extract<WsEvent, { type: 'done' }>, ctx: WsPro
   if (handled.size > MAX_HANDLED_TERMINAL_KEYS) {
     const oldest = handled.values().next().value;
     if (oldest) handled.delete(oldest);
+  }
+  return true;
+}
+
+/** Canonical modern projection path. Sparse legacy frames deliberately fall through below. */
+function applyCanonicalProjection(data: WsEvent, msg: MessagesController, block: WsBlockState): boolean {
+  const event = adaptWsEventToActivityMessageProjection(data);
+  if (!event) return false;
+  const previous = block.projectionState ?? createActivityMessageProjectionState();
+  const next = reduceActivityMessageProjection(previous, event);
+  block.projectionState = next;
+  if (next === previous) return true;
+  const projected = selectProjectedMessages(next);
+  for (const item of projected) {
+    const index = msg.messagesRef.current.findIndex((candidate) => candidate.id === item.id);
+    if (index >= 0) msg.updateMessageAt(index, () => item);
+    else msg.addMessage(item);
   }
   return true;
 }
@@ -312,6 +335,8 @@ export function processWsEvent(
     }
     // 插话被消费进时间线：清理队列区同 clientMsgId 条目（多端一致的移除信号）。
     ctx.onUserMessageProjected?.(data.client_msg_id, data.sourceRunId);
+    if (applyCanonicalProjection(data, msg, block)) return;
+    // Legacy adapter: stable projection metadata was unavailable.
     // 去重：优先按 client_msg_id（精准），回退 content（兼容老 transcript）
     const msgs = msg.messagesRef.current;
     const isDup = msgs.some(m => {
@@ -394,6 +419,18 @@ export function processWsEvent(
     return;
   }
 
+  if (
+    data.type === 'block_start' || data.type === 'block_end' || data.type === 'text'
+    || data.type === 'thinking' || data.type === 'tool_execution' || data.type === 'tool_result'
+    || data.type === 'subagent_start' || data.type === 'subagent_end' || data.type === 'moderation_outcome'
+  ) {
+    if (applyCanonicalProjection(data, msg, block)) {
+      removeRuntimeStatusMessages(msg);
+      return;
+    }
+  }
+
+  // Isolated compatibility adapter for old positional/string WS frames.
   if (data.type === "block_start") {
     removeRuntimeStatusMessages(msg);
     if (block.currentBlockIndex >= 0) {

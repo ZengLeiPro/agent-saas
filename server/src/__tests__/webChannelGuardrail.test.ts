@@ -246,7 +246,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(rig.enqueued).toHaveLength(0);
     // WS 合成气泡序列：stream_id → session → block_start → text(预设话术) → block_end → done
     const types = rig.ws.sent.map((m) => m.data?.type);
-    const seq = ['stream_id', 'session', 'block_start', 'text', 'block_end', 'done'];
+    const seq = ['stream_id', 'session', 'moderation_outcome', 'block_start', 'text', 'block_end', 'done'];
     const indexes = seq.map((t) => types.indexOf(t));
     expect(indexes.every((i) => i >= 0)).toBe(true);
     expect([...indexes].sort((a, b) => a - b)).toEqual(indexes);
@@ -254,6 +254,10 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(textEvent?.data?.content).toBe('这个问题超出了我的职责范围，请咨询选型相关问题。');
     // 拒答气泡携带真实 guardrail event id（员工申诉入口数据源；2026-07-19 F2 收尾）
     expect(textEvent?.data?.guardrailEventId).toBe('ev-fake-1');
+    expect(rig.ws.sent.find((m) => m.data?.type === 'moderation_outcome')?.data).toMatchObject({
+      moderationId: 'ev-fake-1', outcome: 'blocked', reasonCode: 'off_topic',
+      projection: { eventId: 'ev-fake-1:outcome', domain: 'moderation' },
+    });
     // 会话完成态广播（前端 loading 结束 + 列表刷新）
     expect(rig.userEvents.find((e) => e.type === 'session_status')?.status).toBe('completed');
     expect(rig.userEvents.some((e) => e.type === 'session_updated')).toBe(true);
@@ -272,6 +276,7 @@ describe('WebChannel 专职 Agent 门禁', () => {
       message: { content: [{ type: 'text', text: '这个问题超出了我的职责范围，请咨询选型相关问题。' }] },
       // assistant 行顶层持久化 event id → 刷新后历史重建仍能渲染申诉入口
       guardrailEventId: 'ev-fake-1',
+      moderation: { eventId: 'ev-fake-1', outcome: 'blocked', reasonCode: 'off_topic' },
     });
 
     // guardrail_events 落库

@@ -318,6 +318,8 @@ export interface ApiTranscriptBlock {
   finalOutput?: boolean;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /** Explicit moderation outcome hydrated from trusted transcript metadata. */
+  moderation?: { eventId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string };
   /** 演示剧本入口事件直接完整展示，不模拟 Agent 流式输出。 */
   replayInstant?: boolean;
   /**

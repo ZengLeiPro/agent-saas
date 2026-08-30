@@ -4255,13 +4255,23 @@ export class WebChannel implements BaseChannel {
       if (this.eventBus) this.eventBus.emitSession(sessionCtx, data);
       else this.wsSend(ws, data);
     };
-    emitSession({ type: 'block_start', blockType: 'text' });
+    const moderationId = guardrailEventId ?? `guardrail:${args.clientMsgId}`;
+    const moderationMessageId = `assistant:${streamId}`;
+    const moderationBlockId = `moderation:${moderationId}`;
+    const projectionBase = { runId: streamId, messageId: moderationMessageId, blockId: moderationBlockId };
+    // Moderation is a dedicated domain fact. Never infer it from rejection text/tool output/errors.
+    emitSession({
+      type: 'moderation_outcome', moderationId, outcome: 'blocked', reasonCode: 'off_topic',
+      projection: { eventId: `${moderationId}:outcome`, domain: 'moderation', ...projectionBase },
+    });
+    emitSession({ type: 'block_start', blockType: 'text', projection: { eventId: `${moderationId}:start`, domain: 'message', ...projectionBase } });
     emitSession({
       type: 'text',
       content: rejectionMessage,
       ...(guardrailEventId ? { guardrailEventId } : {}),
+      projection: { eventId: `${moderationId}:text`, domain: 'message', ...projectionBase },
     });
-    emitSession({ type: 'block_end', blockType: 'text' });
+    emitSession({ type: 'block_end', blockType: 'text', projection: { eventId: `${moderationId}:end`, domain: 'message', ...projectionBase } });
     emitSession({ type: 'done', sessionId, streamId, client_msg_id: args.clientMsgId });
     this.eventBufferStore.complete(sessionId);
     if (user?.sub && this.eventBus) {
@@ -4303,6 +4313,11 @@ export class WebChannel implements BaseChannel {
       message: { role: 'assistant', content: [{ type: 'text', text: assistantContent }] },
       sessionId,
       ...(guardrailEventId ? { guardrailEventId } : {}),
+      moderation: {
+        eventId: guardrailEventId ?? `guardrail:${sessionId}`,
+        outcome: 'blocked',
+        reasonCode: 'off_topic',
+      },
       timestamp: new Date().toISOString(),
     }) + '\n';
     await appendTrustedTranscript(transcriptPath, lines, 'utf-8');

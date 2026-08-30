@@ -49,9 +49,19 @@ export interface MessageAttachmentDisplay {
   relativePath?: string;
 }
 
+export interface MessageModerationMetadata {
+  eventId: string;
+  moderationId: string;
+  runId: string;
+  messageId: string;
+  blockId?: string;
+  outcome: 'allowed' | 'blocked' | 'flagged';
+  reasonCode?: string;
+}
+
 export type MessageItem =
-  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: MessageAttachmentDisplay[]; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
-  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[] }
+  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: MessageAttachmentDisplay[]; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string; moderation?: MessageModerationMetadata }
+  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[]; moderation?: MessageModerationMetadata }
   | { id: string; type: "system_event"; title: string; content: string; timestamp?: number }
   | { id: string; type: "thinking"; content: string; streaming?: boolean; draftId?: string; startedAt?: number; durationMs?: number }
   | {

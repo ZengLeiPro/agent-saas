@@ -849,6 +849,24 @@ export {
 export { groupMessages } from './lib/groupMessages';
 export type { GroupMessagesOptions } from './lib/groupMessages';
 
+// Lib - canonical activity/message projection (pure reducer + selectors)
+export {
+  createActivityMessageProjectionState,
+  reduceActivityMessageProjection,
+  selectModerationForTarget,
+  selectProjectedMessages,
+} from './lib/activityMessageProjection';
+export type {
+  ActivityMessageProjectionEvent,
+  ActivityMessageProjectionState,
+  ModerationOutcome,
+  ModerationProjection,
+  ProjectionActivityStatus,
+  ProjectionDomain,
+} from './lib/activityMessageProjection';
+
+export { adaptWsEventToActivityMessageProjection } from './lib/wsActivityMessageProjection';
+
 // Lib - WS event processor (pure functions)
 export {
   processWsEvent,

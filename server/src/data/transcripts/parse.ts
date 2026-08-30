@@ -88,6 +88,8 @@ export interface TranscriptBlock {
   finalOutput?: boolean;
   /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /** Explicit moderation domain fact; never inferred from text/error/tool payloads. */
+  moderation?: { eventId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string };
   /**
    * tool_use block：工具执行的「给人看」摘要。
    *
@@ -861,6 +863,15 @@ async function parseTranscriptFileUncached(
       const sourceEventId =
         typeof obj?.sourceEventId === "string" ? obj.sourceEventId : undefined;
       const runId = typeof obj?.runId === "string" ? obj.runId : undefined;
+      const moderation = obj?.moderation && typeof obj.moderation === 'object'
+        && typeof obj.moderation.eventId === 'string'
+        && (obj.moderation.outcome === 'allowed' || obj.moderation.outcome === 'blocked' || obj.moderation.outcome === 'flagged')
+        ? {
+          eventId: obj.moderation.eventId,
+          outcome: obj.moderation.outcome as 'allowed' | 'blocked' | 'flagged',
+          ...(typeof obj.moderation.reasonCode === 'string' ? { reasonCode: obj.moderation.reasonCode } : {}),
+        }
+        : undefined;
       if (Array.isArray(content)) {
         let idx = 0;
         for (const block of content) {
@@ -879,6 +890,7 @@ async function parseTranscriptFileUncached(
               ...(sourceEventId ? { sourceEventId } : {}),
               ...(runId ? { runId } : {}),
               ...(guardrailEventId ? { guardrailEventId } : {}),
+              ...(moderation ? { moderation } : {}),
             });
             continue;
           }

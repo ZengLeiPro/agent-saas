@@ -29,11 +29,28 @@ function signManifest(content) {
   };
 }
 
-async function createArchiveWithRuntime(root, target, component, identity, extra = '') {
+async function createArchiveWithRuntimeAndUnits(root, target, component, identity, extra = '') {
   const stage = join(root, `${component}-${Math.random().toString(16).slice(2)}`);
   const componentRoot = join(stage, component);
   await mkdir(componentRoot, { recursive: true });
   await writeFile(join(componentRoot, 'runtime-dependencies.json'), `${canonicalJson(identity)}\n`);
+  const systemdRoot = join(componentRoot, 'daemon-packaging/systemd');
+  await mkdir(systemdRoot, { recursive: true });
+  if (component === 'server') {
+    await writeFile(
+      join(systemdRoot, 'agent-saas-server@.service.template'),
+      '[Service]\nExecStart=/usr/bin/node server/dist/index.js\n',
+    );
+    await writeFile(
+      join(systemdRoot, 'agent-saas-runtime-worker@.service.template'),
+      '[Service]\nExecStart=/usr/bin/node server/dist/runtime-worker.js\n',
+    );
+  } else {
+    await writeFile(
+      join(systemdRoot, 'agent-saas-acs-orchestrator.service.template'),
+      '[Service]\nExecStart=/usr/bin/node acs-orchestrator/dist/index.js\n',
+    );
+  }
   if (extra) await writeFile(join(componentRoot, 'extra.txt'), extra);
   execFileSync('tar', ['-czf', target, '-C', stage, component]);
 }
@@ -50,8 +67,8 @@ async function fixture() {
   const contract = await loadRuntimeDependencyContract();
   const runtimeIdentity = createRuntimeDependencyIdentity(contract, SHA);
   const acsRuntimeIdentity = createRuntimeDependencyIdentity(contract, BASE);
-  await createArchiveWithRuntime(root, server, 'server', runtimeIdentity);
-  await createArchiveWithRuntime(root, acs, 'acs-orchestrator', acsRuntimeIdentity);
+  await createArchiveWithRuntimeAndUnits(root, server, 'server', runtimeIdentity);
+  await createArchiveWithRuntimeAndUnits(root, acs, 'acs-orchestrator', acsRuntimeIdentity);
   await writeFile(web, 'web');
   await writeFile(runtimeDependencies, `${canonicalJson(runtimeIdentity)}\n`);
   await Promise.all([
@@ -366,7 +383,13 @@ test('rejects a schema-valid Manifest whose deploy artifact diverges from the co
     await readFile(join(value.selectedDirectory, 'runtime-dependencies-server.json'), 'utf8'),
   );
   const selectedServer = join(value.selectedDirectory, 'server-bundle.tgz');
-  await createArchiveWithRuntime(value.root, selectedServer, 'server', runtimeIdentity, 'changed');
+  await createArchiveWithRuntimeAndUnits(
+    value.root,
+    selectedServer,
+    'server',
+    runtimeIdentity,
+    'changed',
+  );
   const changed = await digestFile(selectedServer);
   content.artifacts.serverBundle = {
     ...content.artifacts.serverBundle,

@@ -57,7 +57,55 @@ test('mutable or missing image identities fail closed', async () => {
   assert.throws(() => validateRuntimeDependencyContract(contract), /fields must be exactly/u);
 });
 
-test('identity tampering and Admin Runner contract conflicts are rejected', async () => {
+test('contract ownership matrix cannot drop a Runtime component, base image, or required tool', async () => {
+  const contract = await fixture();
+  for (const [label, mutate] of [
+    [
+      'Node component',
+      (value) => {
+        value.node.components.pop();
+      },
+    ],
+    [
+      'base image',
+      (value) => {
+        value.baseImages.pop();
+      },
+    ],
+    [
+      'required tool',
+      (value) => {
+        value.tools.splice(
+          value.tools.findIndex(
+            (tool) => tool.name === 'kubectl' && tool.components.includes('acsOrchestrator'),
+          ),
+          1,
+        );
+      },
+    ],
+    [
+      'conditional required tool',
+      (value) => {
+        value.tools.splice(
+          value.tools.findIndex(
+            (tool) => tool.name === 'aliyun' && tool.components.includes('acsOrchestrator'),
+          ),
+          1,
+        );
+      },
+    ],
+  ]) {
+    const weakened = structuredClone(contract);
+    mutate(weakened);
+    assert.throws(
+      () => createRuntimeDependencyIdentity(weakened, SHA),
+      /complete supported ownership matrix/u,
+      label,
+    );
+  }
+});
+
+test('identity tampering and Admin Runner contract digest conflicts are rejected', async () => {
   const contract = await fixture();
   const identity = createRuntimeDependencyIdentity(contract, SHA);
   identity.node.version = '22.23.2';
@@ -70,7 +118,7 @@ test('identity tampering and Admin Runner contract conflicts are rejected', asyn
   );
 });
 
-test('exact Node version, architecture, and required tools are enforced', async () => {
+test('exact Node version, architecture, and required tool versions are enforced', async () => {
   const contract = await fixture();
   const identity = createRuntimeDependencyIdentity(contract, SHA);
   const runtime = { version: contract.node.version, arch: 'x64', platform: 'linux' };

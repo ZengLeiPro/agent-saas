@@ -11,6 +11,15 @@ const SELECTED_FILES = {
   webAssets: 'web-assets.tgz',
   acsOrchestrator: 'acs-orchestrator.tgz',
 };
+const SERVER_CONTROL_FILES = [
+  'server/runtime-dependencies.json',
+  'server/daemon-packaging/systemd/agent-saas-server@.service.template',
+  'server/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template',
+];
+const ACS_CONTROL_FILES = [
+  'acs-orchestrator/runtime-dependencies.json',
+  'acs-orchestrator/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+];
 
 async function verifyFile(path, artifact, label) {
   const actual = await digestFile(path);
@@ -34,7 +43,7 @@ function normalizeArchiveMember(member) {
   return segments.length ? segments.join('/') : null;
 }
 
-function extractRuntimeIdentity(archivePath, componentPath) {
+function extractRegularArchiveFile(archivePath, componentPath) {
   const listing = execFileSync('tar', ['-tzf', archivePath], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -54,6 +63,27 @@ function extractRuntimeIdentity(archivePath, componentPath) {
   const matches = members.filter((member) => member.normalized === componentPath);
   if (matches.length !== 1) {
     throw new Error(`Selected archive must contain exactly one ${componentPath}`);
+  }
+  const metadata = execFileSync(
+    'tar',
+    [
+      '--list',
+      '--verbose',
+      '--gzip',
+      '--file',
+      archivePath,
+      '--quoting-style=literal',
+      '--',
+      matches[0].raw,
+    ],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+  )
+    .trimEnd()
+    .split('\n');
+  if (metadata.length !== 1 || metadata[0][0] !== '-') {
+    throw new Error(
+      `Selected archive control file must be a unique regular file: ${componentPath}`,
+    );
   }
   return execFileSync('tar', ['-xOf', archivePath, '--', matches[0].raw], {
     encoding: null,
@@ -75,7 +105,7 @@ async function verifyRuntime({ directory, descriptor, component, archiveName, em
   ) {
     throw new Error(`${component} Runtime Dependency Identity disagrees with the Manifest`);
   }
-  const embedded = extractRuntimeIdentity(join(directory, archiveName), embeddedPath);
+  const embedded = extractRegularArchiveFile(join(directory, archiveName), embeddedPath);
   if (!embedded.equals(standalone) || digestBuffer(embedded) !== descriptor.digest) {
     throw new Error(`${component} archive embeds a different Runtime Dependency Identity`);
   }
@@ -85,7 +115,7 @@ export async function verifySelectedReleaseArtifacts({ manifestPath, directory }
   const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
   const selectedDirectory = resolve(directory);
   if (![1, 2].includes(manifest.schemaVersion) || !manifest.artifacts) {
-    throw new Error('Unsupported selected Release Manifest');
+    throw new Error('Selected Release Manifest schema is unsupported');
   }
   for (const [name, filename] of Object.entries(SELECTED_FILES)) {
     await verifyFile(
@@ -109,6 +139,20 @@ export async function verifySelectedReleaseArtifacts({ manifestPath, directory }
     archiveName: SELECTED_FILES.acsOrchestrator,
     embeddedPath: 'acs-orchestrator/runtime-dependencies.json',
   });
+  // keep 组件沿用不可变兼容基线且不会安装 unit；仅 deploy 组件要求 RC-bound unit。
+  if (manifest.components?.api?.action === 'deploy') {
+    for (const controlPath of SERVER_CONTROL_FILES.slice(1)) {
+      extractRegularArchiveFile(join(selectedDirectory, SELECTED_FILES.serverBundle), controlPath);
+    }
+  }
+  if (manifest.components?.acs?.action === 'deploy') {
+    for (const controlPath of ACS_CONTROL_FILES.slice(1)) {
+      extractRegularArchiveFile(
+        join(selectedDirectory, SELECTED_FILES.acsOrchestrator),
+        controlPath,
+      );
+    }
+  }
   return manifest;
 }
 

@@ -1,6 +1,99 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+rollback_app_release() {
+  # 每个恢复动作独立累计状态，避免首个故障阻断旧实例复活。
+  local rollback_status=0
+  set +e
+
+  systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || rollback_status=1
+  systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || rollback_status=1
+
+  if [ "$had_api_env" = true ]; then
+    cp -a "$rollback_root/api.release.env" "$api_env" || rollback_status=1
+  else
+    rm -f "$api_env" || rollback_status=1
+  fi
+  if [ "$had_worker_env" = true ]; then
+    cp -a "$rollback_root/worker.release.env" "$worker_env" || rollback_status=1
+  else
+    rm -f "$worker_env" || rollback_status=1
+  fi
+
+  if [ -n "$api_idle_previous" ]; then
+    ln -sfn "$api_idle_previous" "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
+  else
+    rm -f "$APP_COLOR_ROOT/$api_idle" || rollback_status=1
+  fi
+  if [ -n "$worker_idle_previous" ]; then
+    ln -sfn "$worker_idle_previous" "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
+  else
+    rm -f "$APP_WORKER_ROOT/$worker_idle" || rollback_status=1
+  fi
+
+  printf '%s\n' "$api_active" >"$ACTIVE_COLOR_PATH" || rollback_status=1
+  printf '%s\n' "$worker_active" >"$WORKER_ACTIVE_COLOR_PATH" || rollback_status=1
+
+  if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
+    cp -a "$rollback_root/nginx-upstream.conf" "$NGINX_UPSTREAM_PATH" || rollback_status=1
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx || rollback_status=1
+    else
+      rollback_status=1
+    fi
+  fi
+
+  cp -a "$rollback_root/server@.service" "$server_unit" || rollback_status=1
+  cp -a "$rollback_root/runtime-worker@.service" "$worker_unit" || rollback_status=1
+  systemctl daemon-reload || rollback_status=1
+  rm -f "/run/agent-saas-server-$api_active.draining" || rollback_status=1
+  rm -f "/run/agent-saas-runtime-worker-$worker_active.draining" || rollback_status=1
+  systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
+  systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
+  systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1 || rollback_status=1
+  systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || rollback_status=1
+
+  if [ "$rollback_status" -ne 0 ]; then
+    echo 'App rollback completed with one or more recovery failures' >&2
+    return 70
+  fi
+  return 0
+}
+
+cleanup_app_failure() {
+  local deploy_status=$?
+  local rollback_status=0
+  set +e
+  if [ "$app_committed" = false ]; then
+    rollback_app_release
+    rollback_status=$?
+    if [ "$rollback_status" -ne 0 ]; then
+      echo "App deployment failed with status $deploy_status; rollback status $rollback_status" >&2
+      trap - EXIT HUP INT TERM
+      exit "$rollback_status"
+    fi
+  fi
+  return "$deploy_status"
+}
+
+APP_COLOR_ROOT="${APP_COLOR_ROOT:-/opt/agent-saas-app/color}"
+APP_WORKER_ROOT="${APP_WORKER_ROOT:-/opt/agent-saas-app/worker}"
+ACTIVE_COLOR_PATH="${ACTIVE_COLOR_PATH:-/etc/agent-saas/active-color}"
+WORKER_ACTIVE_COLOR_PATH="${WORKER_ACTIVE_COLOR_PATH:-/etc/agent-saas/runtime-worker-active-color}"
+NGINX_UPSTREAM_PATH="${NGINX_UPSTREAM_PATH:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
+
+case "${1:-}" in
+  --test-app-rollback)
+    rollback_app_release
+    exit $?
+    ;;
+  --test-app-cleanup-trap)
+    app_committed=false
+    trap cleanup_app_failure EXIT
+    false
+    ;;
+esac
+
 : "${PHASE:?PHASE must be acs, app or web}"
 : "${RELEASE_DIR:?RELEASE_DIR is required}"
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
@@ -244,7 +337,7 @@ port_for_color() { [ "$1" = blue ] && echo 3200 || echo 3201; }
 
 deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
-  local api_idle_previous worker_idle_previous api_env worker_env rollback_root
+  local api_idle_previous worker_idle_previous api_env worker_env rollback_root server_unit worker_unit
   local had_api_env=false had_worker_env=false nginx_changed=false app_committed=false
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
@@ -264,14 +357,14 @@ deploy_app() {
     mv "$candidate" "$target"
   fi
   mkdir -p "$target/server/data" "$target/workspace-shared"
-  api_active="$(tr -d '[:space:]' </etc/agent-saas/active-color)"
-  worker_active="$(tr -d '[:space:]' </etc/agent-saas/runtime-worker-active-color)"
+  api_active="$(tr -d '[:space:]' <"$ACTIVE_COLOR_PATH")"
+  worker_active="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_PATH")"
   case "$api_active:$worker_active" in blue:blue|blue:green|green:blue|green:green) ;; *) exit 1 ;; esac
   api_idle="$(other_color "$api_active")"
   worker_idle="$(other_color "$worker_active")"
   api_idle_port="$(port_for_color "$api_idle")"
-  api_idle_previous="$(readlink -f "/opt/agent-saas-app/color/$api_idle" 2>/dev/null || true)"
-  worker_idle_previous="$(readlink -f "/opt/agent-saas-app/worker/$worker_idle" 2>/dev/null || true)"
+  api_idle_previous="$(readlink -f "$APP_COLOR_ROOT/$api_idle" 2>/dev/null || true)"
+  worker_idle_previous="$(readlink -f "$APP_WORKER_ROOT/$worker_idle" 2>/dev/null || true)"
   api_env="/etc/agent-saas/server-$api_idle.release.env"
   worker_env="/etc/agent-saas/runtime-worker-$worker_idle.release.env"
   rollback_root="/tmp/agent-saas-app-rollback-$release_id-$GITHUB_RUN_ID"
@@ -289,50 +382,13 @@ deploy_app() {
   worker_unit=/etc/systemd/system/agent-saas-runtime-worker@.service
   cp -a "$server_unit" "$rollback_root/server@.service"
   cp -a "$worker_unit" "$rollback_root/runtime-worker@.service"
-  cleanup_app_failure() {
-    if [ "$app_committed" = false ]; then
-      systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
-      systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || true
-      if [ -n "$worker_idle_previous" ]; then
-        ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle"
-      else
-        rm -f "/opt/agent-saas-app/worker/$worker_idle"
-      fi
-      if [ -n "$api_idle_previous" ]; then
-        ln -sfn "$api_idle_previous" "/opt/agent-saas-app/color/$api_idle"
-      else
-        rm -f "/opt/agent-saas-app/color/$api_idle"
-      fi
-      if [ "$had_api_env" = true ]; then
-        cp -a "$rollback_root/api.release.env" "$api_env"
-      else
-        rm -f "$api_env"
-      fi
-      if [ "$had_worker_env" = true ]; then
-        cp -a "$rollback_root/worker.release.env" "$worker_env"
-      else
-        rm -f "$worker_env"
-      fi
-      printf '%s\n' "$api_active" >/etc/agent-saas/active-color
-      printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
-      if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
-        cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
-      fi
-      cp -a "$rollback_root/server@.service" "$server_unit"
-      cp -a "$rollback_root/runtime-worker@.service" "$worker_unit"
-      systemctl daemon-reload
-      systemctl enable --now "agent-saas-server@$api_active" >/dev/null 2>&1 || true
-      systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
-    fi
-  }
   trap cleanup_app_failure EXIT
   trap 'exit 130' HUP INT TERM
   install -m 0644 "$SERVER_UNIT_TEMPLATE" "$server_unit"
   install -m 0644 "$WORKER_UNIT_TEMPLATE" "$worker_unit"
   systemctl daemon-reload
-  ln -sfn "$target" "/opt/agent-saas-app/color/$api_idle"
-  ln -sfn "$target" "/opt/agent-saas-app/worker/$worker_idle"
+  ln -sfn "$target" "$APP_COLOR_ROOT/$api_idle"
+  ln -sfn "$target" "$APP_WORKER_ROOT/$worker_idle"
   upsert_env "$MANIFEST_PATH" "$api_env" api
   upsert_env "$MANIFEST_PATH" "$worker_env" worker
 
@@ -350,19 +406,19 @@ const r = JSON.parse(fs.readFileSync(readyPath)).release;
 if (r.environment !== 'production' || r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest) process.exit(1);
 NODE
 
-  cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"
+  cp -a "$NGINX_UPSTREAM_PATH" "$rollback_root/nginx-upstream.conf"
   nginx_changed=true
-  cat > /etc/nginx/conf.d/agent-saas-upstream.conf <<EOF
+  cat > "$NGINX_UPSTREAM_PATH" <<EOF
 # active=$api_idle release=$release_id
 upstream agent_saas_backend {
     server 127.0.0.1:$api_idle_port;
     server 127.0.0.1:$(port_for_color "$api_active") backup;
 }
 EOF
-  nginx -t || { cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf; exit 1; }
+  nginx -t || { cp -a "$rollback_root/nginx-upstream.conf" "$NGINX_UPSTREAM_PATH"; exit 1; }
   systemctl reload nginx
   curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
-  echo "$api_idle" >/etc/agent-saas/active-color
+  echo "$api_idle" >"$ACTIVE_COLOR_PATH"
 
   rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" "/run/agent-saas-runtime-worker-$worker_idle.ready" "/run/agent-saas-runtime-worker-$worker_idle.draining"
   systemctl enable --now "agent-saas-runtime-worker@$worker_idle"
@@ -375,7 +431,7 @@ EOF
   test -n "${pid:-}" && test "$pid" = "${ready:-}" && kill -0 "$pid"
   systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value \
     | tr ' ' '\n' | grep -Fx 'AGENT_SAAS_ENVIRONMENT=production' >/dev/null
-  echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color
+  echo "$worker_idle" >"$WORKER_ACTIVE_COLOR_PATH"
 
   old_worker_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
   if [ -n "$old_worker_pid" ]; then

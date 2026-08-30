@@ -14,6 +14,26 @@ export const RUNTIME_COMPONENTS = Object.freeze([
   'acsSandbox',
 ]);
 const BASE_IMAGE_COMPONENTS = new Set([...RUNTIME_COMPONENTS, 'webBuild']);
+const REQUIRED_BASE_IMAGE_BINDINGS = new Set([
+  'node-alpine:x64:server,webBuild',
+  'node-bookworm:x64:acsSandbox',
+  'python-bookworm:x64:acsSandbox',
+]);
+const REQUIRED_TOOL_BINDINGS = new Set([
+  'git:x64:server',
+  'bird:x64:server',
+  'kubectl:x64:acsOrchestrator',
+  'aliyun:x64:acsOrchestrator',
+  'git:x64:acsSandbox',
+  'python:x64:acsSandbox',
+  'gh:x64:acsSandbox',
+  'aliyun:x64:acsSandbox',
+  'gws:x64:acsSandbox',
+  'ntn:x64:acsSandbox',
+  'bird:x64:acsSandbox',
+  'dws:x64:acsSandbox',
+  'lark-cli:x64:acsSandbox',
+]);
 const TOOL_PROBES = new Map([
   ['git', ['git', '--version']],
   ['bird', ['bird', '--version']],
@@ -55,6 +75,18 @@ function assertStringArray(value, allowed, label) {
   }
 }
 
+function assertExactSet(actual, expected, label) {
+  const actualValues = [...actual].sort();
+  const expectedValues = [...expected].sort();
+  if (JSON.stringify(actualValues) !== JSON.stringify(expectedValues)) {
+    throw new Error(`${label} must contain the complete supported ownership matrix`);
+  }
+}
+
+function bindingKey(entry) {
+  return `${entry.name}:${entry.architecture}:${[...entry.components].sort().join(',')}`;
+}
+
 function assertNoSensitiveData(value, path = '$') {
   if (Array.isArray(value)) {
     value.forEach((entry, index) => assertNoSensitiveData(entry, `${path}[${index}]`));
@@ -82,6 +114,7 @@ export function validateRuntimeDependencyContract(contract) {
     throw new Error('Node contract must declare an exact Linux version');
   assertStringArray(contract.node.architectures, ARCHITECTURES, 'node.architectures');
   assertStringArray(contract.node.components, new Set(RUNTIME_COMPONENTS), 'node.components');
+  assertExactSet(contract.node.components, RUNTIME_COMPONENTS, 'node.components');
 
   if (!Array.isArray(contract.baseImages) || contract.baseImages.length === 0)
     throw new Error('baseImages must not be empty');
@@ -101,6 +134,7 @@ export function validateRuntimeDependencyContract(contract) {
       `baseImage.${image.name}.components`,
     );
   }
+  assertExactSet(contract.baseImages.map(bindingKey), REQUIRED_BASE_IMAGE_BINDINGS, 'baseImages');
 
   if (!Array.isArray(contract.tools)) throw new Error('tools must be an array');
   const toolIdentities = new Set();
@@ -156,6 +190,7 @@ export function validateRuntimeDependencyContract(contract) {
     if (toolIdentities.has(identity)) throw new Error(`Duplicate tool identity ${identity}`);
     toolIdentities.add(identity);
   }
+  assertExactSet(contract.tools.map(bindingKey), REQUIRED_TOOL_BINDINGS, 'tools');
   return contract;
 }
 

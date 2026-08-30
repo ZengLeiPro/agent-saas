@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -25,8 +25,8 @@ async function fixture({ mismatchedAcsArchive = false, serverSha = SHA, acsSha =
   const acsStage = join(root, 'acs-stage', 'acs-orchestrator');
   const webStage = join(root, 'web-stage');
   await Promise.all([
-    mkdir(serverStage, { recursive: true }),
-    mkdir(acsStage, { recursive: true }),
+    mkdir(join(serverStage, 'daemon-packaging/systemd'), { recursive: true }),
+    mkdir(join(acsStage, 'daemon-packaging/systemd'), { recursive: true }),
     mkdir(webStage, { recursive: true }),
     mkdir(selected, { recursive: true }),
   ]);
@@ -37,8 +37,20 @@ async function fixture({ mismatchedAcsArchive = false, serverSha = SHA, acsSha =
   const acsRuntime = `${canonicalJson(acsIdentity)}\n`;
   await writeFile(join(serverStage, 'runtime-dependencies.json'), serverRuntime);
   await writeFile(
+    join(serverStage, 'daemon-packaging/systemd/agent-saas-server@.service.template'),
+    '[Service]\nExecStart=/usr/bin/node server/dist/index.js\n',
+  );
+  await writeFile(
+    join(serverStage, 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
+    '[Service]\nExecStart=/usr/bin/node server/dist/runtime-worker.js\n',
+  );
+  await writeFile(
     join(acsStage, 'runtime-dependencies.json'),
     mismatchedAcsArchive ? serverRuntime : acsRuntime,
+  );
+  await writeFile(
+    join(acsStage, 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template'),
+    '[Service]\nExecStart=/usr/bin/node acs-orchestrator/dist/index.js\n',
   );
   await writeFile(join(webStage, 'index.html'), '<!doctype html>');
   const serverArchive = join(selected, 'server-bundle.tgz');
@@ -62,6 +74,12 @@ async function fixture({ mismatchedAcsArchive = false, serverSha = SHA, acsSha =
   const manifest = {
     schemaVersion: 2,
     releaseId: 'rc-20260829-01',
+    components: {
+      web: { action: 'deploy' },
+      api: { action: serverSha === SHA ? 'deploy' : 'keep' },
+      runtimeWorker: { action: serverSha === SHA ? 'deploy' : 'keep' },
+      acs: { action: acsSha === SHA ? 'deploy' : 'keep' },
+    },
     artifacts: {
       serverBundle: await digestFile(serverArchive),
       webAssets: await digestFile(webArchive),
@@ -74,7 +92,7 @@ async function fixture({ mismatchedAcsArchive = false, serverSha = SHA, acsSha =
   };
   const manifestPath = join(root, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(manifest));
-  return { root, selected, manifestPath, manifest };
+  return { root, selected, manifestPath, manifest, serverStage, acsStage };
 }
 
 for (const [name, serverSha, acsSha] of [
@@ -124,6 +142,76 @@ for (const [label, transform] of [
     );
   });
 }
+
+for (const attack of [
+  {
+    label: 'Server unit absolute symlink',
+    archive: 'serverBundle',
+    stage: 'serverStage',
+    path: 'daemon-packaging/systemd/agent-saas-server@.service.template',
+    apply: (value, target) => symlink('/tmp/production-secret', target),
+  },
+  {
+    label: 'Worker unit hardlink',
+    archive: 'serverBundle',
+    stage: 'serverStage',
+    path: 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template',
+    apply: (value, target) => link(join(value.serverStage, 'runtime-dependencies.json'), target),
+  },
+  {
+    label: 'ACS unit escaping symlink',
+    archive: 'acsOrchestrator',
+    fixtureOptions: { acsSha: SHA },
+    stage: 'acsStage',
+    path: 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+    apply: (value, target) => symlink('../../../../tmp/production-secret', target),
+  },
+]) {
+  test(`rejects ${attack.label} before Promotion extraction`, async () => {
+    const value = await fixture(attack.fixtureOptions);
+    const target = join(value[attack.stage], attack.path);
+    await rm(target);
+    await attack.apply(value, target);
+    const archivePath = join(
+      value.selected,
+      attack.archive === 'serverBundle' ? 'server-bundle.tgz' : 'acs-orchestrator.tgz',
+    );
+    pack(
+      join(value.root, attack.stage === 'serverStage' ? 'server-stage' : 'acs-stage'),
+      archivePath,
+    );
+    value.manifest.artifacts[attack.archive] = await digestFile(archivePath);
+    await writeFile(value.manifestPath, JSON.stringify(value.manifest));
+    await assert.rejects(
+      verifySelectedReleaseArtifacts({
+        manifestPath: value.manifestPath,
+        directory: value.selected,
+      }),
+      /control file must be a unique regular file/u,
+    );
+  });
+}
+
+test('keep components accept immutable compatibility archives without nested managed units', async () => {
+  const value = await fixture({ serverSha: BASE, acsSha: BASE });
+  await Promise.all([
+    rm(join(value.serverStage, 'daemon-packaging'), { recursive: true }),
+    rm(join(value.acsStage, 'daemon-packaging'), { recursive: true }),
+  ]);
+  const serverArchive = join(value.selected, 'server-bundle.tgz');
+  const acsArchive = join(value.selected, 'acs-orchestrator.tgz');
+  pack(join(value.root, 'server-stage'), serverArchive);
+  pack(join(value.root, 'acs-stage'), acsArchive);
+  value.manifest.artifacts.serverBundle = await digestFile(serverArchive);
+  value.manifest.artifacts.acsOrchestrator = await digestFile(acsArchive);
+  await writeFile(value.manifestPath, JSON.stringify(value.manifest));
+  await assert.doesNotReject(
+    verifySelectedReleaseArtifacts({
+      manifestPath: value.manifestPath,
+      directory: value.selected,
+    }),
+  );
+});
 
 test('rejects selected archive bytes embedding another component Runtime identity', async () => {
   const value = await fixture({ mismatchedAcsArchive: true });

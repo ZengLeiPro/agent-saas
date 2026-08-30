@@ -104,13 +104,13 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
-test('validation, built evidence, selected artifacts, and RC-bound units precede ordered convergence', async () => {
+test('verified evidence and safely extracted RC-bound units precede ACS, App, and Web convergence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
     'node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"',
     '- name: Revalidate Staging evidence and record human approval',
     '- name: Read authoritative live production prefix before any write',
-    '- name: Prefetch and verify built evidence plus selected Manifest artifacts',
+    '- name: Prefetch, verify, and safely extract selected Manifest artifacts',
     '- name: Mark and persist promotion started before any production write',
     '- name: Upload immutable deploy payload and RC-bound managed units',
     '- name: Deploy exact ACS Orchestrator and Sandbox digest first',
@@ -164,8 +164,20 @@ test('validation, built evidence, selected artifacts, and RC-bound units precede
     /node '\$remote\/read-production-state\.mjs' --output '\$remote\/production-before\.json/u,
   );
   assert.doesNotMatch(workflow, /install -m 0444 daemon-packaging\/systemd/u);
-  assert.match(workflow, /selected-server\/server\/daemon-packaging\/systemd/u);
-  assert.match(workflow, /selected-acs\/acs-orchestrator\/daemon-packaging\/systemd/u);
+  assert.match(workflow, /extract_control_file\(\)/u);
+  assert.match(workflow, /tar -xOf "\$archive" -- "\$raw" > "\$candidate"/u);
+  assert.doesNotMatch(
+    workflow,
+    /tar -xzf "\$RUNNER_TEMP\/selected\/(?:server-bundle|acs-orchestrator)/u,
+  );
+  assert.match(
+    workflow,
+    /server\/daemon-packaging\/systemd\/agent-saas-server@\.service\.template/u,
+  );
+  assert.match(
+    workflow,
+    /acs-orchestrator\/daemon-packaging\/systemd\/agent-saas-acs-orchestrator\.service\.template/u,
+  );
   assert.match(workflow, /selected-units\/agent-saas-acs-orchestrator\.service\.template/u);
   assert.match(workflow, /app_action="\$\(jq -r \.components\.api\.action/u);
   assert.match(workflow, /acs_action="\$\(jq -r \.components\.acs\.action/u);
@@ -200,12 +212,12 @@ test('validation, built evidence, selected artifacts, and RC-bound units precede
   assert.match(workflow, /\boptional_staging_acceptance\b/u);
   assert.doesNotMatch(workflow, /observe-production\.mjs|duration-ms 900000/u);
   assert.doesNotMatch(workflow, /PRODUCTION_OBSERVATION_(?:TOKEN|URL)/u);
-  assert.doesNotMatch(workflow, /production-observation\.json/u);
+  assert.doesNotMatch(workflow, /production-observation(?:\.json|\/)/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('workflow preserves exact retries, locked rollback evidence, migrations, and acceptance boundaries', async () => {
+test('workflow preserves exact retry matrices, locked rollback evidence, migrations, and acceptance boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
   const buildRelease = await readFile(buildReleasePath, 'utf8');
@@ -267,6 +279,8 @@ test('workflow preserves exact retries, locked rollback evidence, migrations, an
   assert.match(workflow, /Record fail-closed outcome before production mutation/u);
   assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
+  assert.match(deploy, /rollback_app_release/u);
+  assert.match(deploy, /return 70/u);
   assert.match(deploy, /cleanup_acs_failure/u);
   assert.match(deploy, /local deploy_status=\$\? reload_status=0 restart_status=0/u);
   assert.match(deploy, /local had_previous_unit=false/u);
@@ -326,7 +340,10 @@ test('workflow preserves exact retries, locked rollback evidence, migrations, an
   );
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
   assert.match(deploy, /app_committed=true/u);
-  assert.match(deploy, /printf '%s\\n' "\$api_active" >\/etc\/agent-saas\/active-color/u);
+  assert.match(
+    deploy,
+    /printf '%s\\n' "\$api_active" >"\$ACTIVE_COLOR_PATH" \|\| rollback_status=1/u,
+  );
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
   assert.match(deploy, /exit 20/u);
   assert.doesNotMatch(deploy, /pnpm (?:install|build)/u);

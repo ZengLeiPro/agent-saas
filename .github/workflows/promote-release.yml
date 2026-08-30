@@ -211,6 +211,16 @@ jobs:
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json" \
             --recovery-mode "$PROMOTION_RETRY_MODE"
+          production_already_target=false
+          if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
+            jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
+              "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
+            if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
+                <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
+              production_already_target=true
+            fi
+          fi
+          echo "PRODUCTION_ALREADY_TARGET=$production_already_target" >> "$GITHUB_ENV"
 
       - name: Verify immutable Manifest and artifact index from OSS record
         run: |
@@ -304,6 +314,12 @@ jobs:
           remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID"
           echo "PROMOTION_REMOTE=$remote" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote/artifacts'"
+          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+            scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
+              scripts/release/write-production-identity.mjs \
+              "$ECS_USER@$ECS_HOST:$remote/"
+            exit 0
+          fi
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/selected/"*.tgz "$ECS_USER@$ECS_HOST:$remote/artifacts/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
@@ -328,6 +344,7 @@ jobs:
           set -euo pipefail
           outcome=started
           [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
             --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs-start" \
@@ -347,6 +364,10 @@ jobs:
             echo 'ACS already equals the frozen production baseline; keep without restart'
             exit 0
           fi
+          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+            echo 'ACS already equals the immutable target; keep without restart'
+            exit 0
+          fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
@@ -361,6 +382,7 @@ jobs:
           outcome=failed
           [ "$STEP_OUTCOME" = success ] && outcome=succeeded
           [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
           [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component acs \
@@ -381,6 +403,7 @@ jobs:
           for component in api runtimeWorker; do
             outcome=started
             [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+            [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
             receipt_json="$(node scripts/release/write-operation-receipt.mjs \
               --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
               --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component-start" \
@@ -402,6 +425,10 @@ jobs:
             echo 'API and Runtime Worker already equal the frozen production baseline; keep without cutover'
             exit 0
           fi
+          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+            echo 'API and Runtime Worker already equal the immutable target; keep without cutover'
+            exit 0
+          fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
@@ -417,6 +444,7 @@ jobs:
             outcome=failed
             [ "$STEP_OUTCOME" = success ] && outcome=succeeded
             [ "$(jq -r ".components.$component.action" "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+            [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
             [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
             receipt_json="$(node scripts/release/write-operation-receipt.mjs \
               --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component "$component" \
@@ -437,6 +465,7 @@ jobs:
           set -euo pipefail
           outcome=started
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
             --outcome "$outcome" --operation "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web-start" \
@@ -454,6 +483,10 @@ jobs:
           set -euo pipefail
           if [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ]; then
             echo 'Web already equals the frozen production baseline; keep the current entry'
+            exit 0
+          fi
+          if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
+            echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
@@ -516,6 +549,7 @@ jobs:
           outcome=failed
           [ "$STEP_OUTCOME" = success ] && outcome=succeeded
           [ "$(jq -r .components.web.action "$RUNNER_TEMP/manifest.json")" = keep ] && outcome=skipped
+          [ "$PRODUCTION_ALREADY_TARGET" = true ] && outcome=skipped
           [ "$STEP_OUTCOME" = skipped ] && outcome=skipped
           receipt_json="$(node scripts/release/write-operation-receipt.mjs \
             --manifest "$RUNNER_TEMP/manifest.json" --digest "$MANIFEST_DIGEST" --component web \
@@ -554,8 +588,9 @@ jobs:
             "node '$remote/read-production-state.mjs' --output '$remote/production-confirmed.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-confirmed.json" \
             "$RUNNER_TEMP/production-confirmed.json"
-          diff -u <(jq -S .components "$RUNNER_TEMP/production-confirmed.json") \
-            <(jq -S .components "$RUNNER_TEMP/production-after.json")
+          identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
+          diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
+            <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
           echo 'target_match=true' >> "$GITHUB_OUTPUT"
 
       - name: Reconcile component outcome

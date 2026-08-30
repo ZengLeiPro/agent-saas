@@ -268,8 +268,10 @@ export interface WorkspaceUsageRecord {
 
 export type EventStoreRetentionMode = "dry-run" | "execute";
 
+
 export type EventStoreRetentionStatus =
   | "never_run"
+  | "scheduled"
   | "running"
   | "dry_run_succeeded"
   | "execute_succeeded"

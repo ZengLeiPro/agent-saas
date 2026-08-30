@@ -44,7 +44,41 @@ function metric(overrides: Partial<SystemMetricRecord>): SystemMetricRecord {
   };
 }
 
+function retentionCategories(
+  overrides: Record<string, { eligible: number; deleted: number }> = {},
+): Record<string, { eligible: number; deleted: number }> {
+  return {
+    'tool-delta': { eligible: 2, deleted: 2 },
+    'assistant-stream': { eligible: 0, deleted: 0 },
+    'tool-stream-summary': { eligible: 0, deleted: 0 },
+    'model-diagnostics': { eligible: 0, deleted: 0 },
+    'model-request-finished': { eligible: 0, deleted: 0 },
+    'hand-events': { eligible: 0, deleted: 0 },
+    ...overrides,
+  };
+}
+
+function retentionDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    state: 'execute_succeeded',
+    mode: 'execute',
+    sweepIntervalMinutes: 10,
+    lastStartedAt: '2026-08-29T14:00:00.000Z',
+    lastCompletedAt: '2026-08-29T14:00:00.025Z',
+    lastSuccessAt: '2026-08-29T14:00:00.025Z',
+    durationMs: 25,
+    errorCategory: null,
+    nextScheduledAt: '2026-08-29T14:10:00.000Z',
+    watermarks: { legal: '20', billing: '18', effectiveDeleteThrough: '18' },
+    maxGlobalSequence: '22',
+    categories: retentionCategories(),
+    ...overrides,
+  };
+}
+
 describe('GET /api/admin/system/event-store', () => {
+
   const servers: Array<{ close(): Promise<void> }> = [];
   afterEach(async () => Promise.all(servers.splice(0).map((server) => server.close())));
 
@@ -76,20 +110,7 @@ describe('GET /api/admin/system/event-store', () => {
       metric: 'runtime_event_retention',
       label: 'status',
       valueNum: 25,
-      detailJson: {
-        schemaVersion: 1,
-        state: 'execute_succeeded',
-        mode: 'execute',
-        lastStartedAt: '2026-08-29T14:00:00.000Z',
-        lastCompletedAt: '2026-08-29T14:00:00.025Z',
-        lastSuccessAt: '2026-08-29T14:00:00.025Z',
-        durationMs: 25,
-        errorCategory: null,
-        nextScheduledAt: '2026-08-29T14:10:00.000Z',
-        watermarks: { legal: '20', billing: '18', effectiveDeleteThrough: '18' },
-        maxGlobalSequence: '22',
-        categories: { 'tool-delta': { eligible: 2, deleted: 2 } },
-      },
+      detailJson: retentionDetail(),
     });
     const capacity = metric({});
     const store = {
@@ -163,12 +184,154 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
+  it('returns the current scheduled mode and schedule while preserving historical success time', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail({
+        state: 'scheduled',
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        durationMs: null,
+        errorCategory: null,
+        watermarks: { legal: '20', billing: null, effectiveDeleteThrough: null },
+        maxGlobalSequence: null,
+        categories: {},
+      }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: {
+        mode: 'execute',
+        status: 'scheduled',
+        stale: false,
+        lastSuccessAt: '2026-08-29T14:00:00.025Z',
+        nextScheduledAt: '2026-08-29T14:10:00.000Z',
+      },
+    });
+  });
+
+  it.each([
+    ['scheduled 携带进度水位', retentionDetail({
+      state: 'scheduled',
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      durationMs: null,
+      errorCategory: null,
+      watermarks: { legal: '20', billing: '1', effectiveDeleteThrough: '1' },
+      maxGlobalSequence: '1',
+      categories: {},
+    })],
+    ['running 携带分类进度', retentionDetail({
+      state: 'running',
+      lastCompletedAt: null,
+      durationMs: null,
+      errorCategory: null,
+      watermarks: { legal: '20', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: { 'tool-delta': { eligible: 1, deleted: 0 } },
+    })],
+  ])('fails closed for a fresh %s snapshot', async (_name, detailJson) => {
+    const retention = metric({ metric: 'runtime_event_retention', label: 'status', detailJson });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { mode: 'execute', status: 'unavailable', stale: false },
+    });
+  });
+
+  it.each([
+    ['缺失完成字段', { lastCompletedAt: undefined }],
+    ['缺失成功字段', { lastSuccessAt: null }],
+    ['非法时间', { lastCompletedAt: 'not-a-time' }],
+    ['未来成功时间', { lastSuccessAt: '2099-01-01T00:00:00.000Z' }],
+    ['负耗时', { durationMs: -1 }],
+    ['非法水位', { watermarks: { legal: '20', billing: 'bad', effectiveDeleteThrough: '18' } }],
+    ['effective 不是双水位最小值', { watermarks: { legal: '20', billing: '18', effectiveDeleteThrough: '17' } }],
+    ['billing 超过最大序号', { maxGlobalSequence: '17' }],
+    ['非法最大序号', { maxGlobalSequence: '-1' }],
+    ['空分类', { categories: {} }],
+    ['分类不完整', { categories: { 'tool-delta': { eligible: 2, deleted: 2 } } }],
+    ['未知分类', { categories: retentionCategories({ future: { eligible: 0, deleted: 0 } }) }],
+    ['负数分类', { categories: retentionCategories({ 'tool-delta': { eligible: -1, deleted: 0 } }) }],
+    ['删除量超过候选量', { categories: retentionCategories({ 'tool-delta': { eligible: 1, deleted: 2 } }) }],
+    ['dry-run 出现删除量', {
+      state: 'dry_run_succeeded',
+      mode: 'dry-run',
+      categories: retentionCategories({ 'tool-delta': { eligible: 2, deleted: 1 } }),
+    }],
+    ['旧运行模式', { mode: 'dry-run' }],
+    ['旧调度间隔', { sweepIntervalMinutes: 60 }],
+  ])('fails closed for a fresh successful snapshot with %s', async (_name, detailOverrides) => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail(detailOverrides),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: {
+        mode: 'execute',
+        status: 'unavailable',
+        stale: false,
+        lastSuccessAt: null,
+        nextScheduledAt: null,
+        categories: {},
+      },
+    });
+  });
+
+  it('normalizes an unknown old retention state to unavailable before staleness', async () => {
+
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      sampledAt: '2020-01-01T00:00:00.000Z',
+      detailJson: retentionDetail({ state: 'future_state' }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { mode: 'execute', status: 'unavailable', stale: false },
+    });
+  });
+
   it('marks old snapshots stale and rejects invalid hours', async () => {
     const old = metric({
       metric: 'runtime_event_retention',
       label: 'status',
       sampledAt: '2020-01-01T00:00:00.000Z',
-      detailJson: { schemaVersion: 1, state: 'failed', mode: 'execute' },
+      detailJson: retentionDetail({
+        state: 'failed',
+        lastStartedAt: '2019-12-31T23:59:58.000Z',
+        lastCompletedAt: '2019-12-31T23:59:59.000Z',
+        lastSuccessAt: null,
+        durationMs: 10,
+        errorCategory: 'execution_failed',
+        nextScheduledAt: '2020-01-01T00:10:00.000Z',
+      }),
     });
     const store = {
       getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? old : null),

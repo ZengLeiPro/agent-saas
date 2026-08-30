@@ -28,11 +28,13 @@ type QueryValue = string | number | boolean | null | undefined;
 
 const nullableNumberSchema = z.number().nullable();
 const nullableStringSchema = z.string().nullable();
+const isoTimestampSchema = z.string().datetime({ offset: true });
+
 const eventStoreCapacityPointSchema = z.object({
   totalBytes: nullableNumberSchema,
   tableBytes: nullableNumberSchema,
   indexBytes: nullableNumberSchema,
-  sampledAt: z.string(),
+  sampledAt: isoTimestampSchema,
 });
 const eventStoreCapacitySchema = z.object({
   available: z.boolean(),
@@ -40,7 +42,7 @@ const eventStoreCapacitySchema = z.object({
   totalBytes: nullableNumberSchema,
   tableBytes: nullableNumberSchema,
   indexBytes: nullableNumberSchema,
-  sampledAt: nullableStringSchema,
+  sampledAt: isoTimestampSchema.nullable(),
   stale: z.boolean(),
   series: z.array(eventStoreCapacityPointSchema),
 }).refine(
@@ -50,31 +52,140 @@ const eventStoreCapacitySchema = z.object({
   ),
   { message: "可用的 EventStore 容量必须包含完整的非负 table/index/total 字段" },
 );
+const digitStringSchema = z.string().regex(/^\d+$/);
+const retentionCategoryNames = [
+  "tool-delta",
+  "assistant-stream",
+  "tool-stream-summary",
+  "model-diagnostics",
+  "model-request-finished",
+  "hand-events",
+] as const;
+const eventStoreRetentionSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(["dry-run", "execute"]),
+  status: z.enum(["never_run", "scheduled", "running", "dry_run_succeeded", "execute_succeeded", "blocked", "failed", "stale", "unavailable"]),
+  stale: z.boolean(),
+  lastStartedAt: isoTimestampSchema.nullable(),
+  lastCompletedAt: isoTimestampSchema.nullable(),
+  lastSuccessAt: isoTimestampSchema.nullable(),
+  durationMs: z.number().nonnegative().nullable(),
+  errorCategory: nullableStringSchema,
+  nextScheduledAt: isoTimestampSchema.nullable(),
+  watermarks: z.object({
+    legal: digitStringSchema.nullable(),
+    billing: digitStringSchema.nullable(),
+    effective: digitStringSchema.nullable(),
+    maxGlobalSequence: digitStringSchema.nullable(),
+    lag: digitStringSchema.nullable(),
+  }),
+  categories: z.record(z.string(), z.object({
+    eligible: z.number().int().nonnegative().nullable(),
+    deleted: z.number().int().nonnegative().nullable(),
+  })),
+}).superRefine((retention, ctx) => {
+  const issue = (message: string) => ctx.addIssue({ code: "custom", message });
+  const categories = Object.values(retention.categories);
+  const hasNoProgress = categories.length === 0
+    && retention.watermarks.billing === null && retention.watermarks.effective === null
+    && retention.watermarks.maxGlobalSequence === null && retention.watermarks.lag === null;
+  if (categories.some((category) => (
+    category.eligible !== null && category.deleted !== null && category.deleted > category.eligible
+  ))) issue("retention 分类删除量不能超过符合条件量");
+  if (retention.status === "scheduled") {
+    if (!retention.enabled || retention.nextScheduledAt === null
+      || retention.lastStartedAt !== null || retention.lastCompletedAt !== null
+      || retention.durationMs !== null || retention.errorCategory !== null
+      || retention.watermarks.legal === null || !hasNoProgress) {
+      issue("scheduled retention 状态字段不完整");
+    }
+    return;
+  }
+  if (retention.status === "never_run") {
+    if (retention.lastStartedAt !== null || retention.lastCompletedAt !== null
+      || retention.lastSuccessAt !== null || retention.durationMs !== null
+      || retention.errorCategory !== null || retention.nextScheduledAt !== null
+      || retention.watermarks.legal !== null || !hasNoProgress) {
+      issue("never_run retention 状态字段不完整");
+    }
+    return;
+  }
+  if (retention.status === "running") {
+    if (retention.lastStartedAt === null || retention.lastCompletedAt !== null
+      || retention.durationMs !== null || retention.errorCategory !== null
+      || retention.watermarks.legal === null || !hasNoProgress) {
+      issue("running retention 状态字段不完整");
+    }
+    return;
+  }
+  if (retention.status === "dry_run_succeeded" || retention.status === "execute_succeeded") {
+    const completeCategories = categories.length === retentionCategoryNames.length
+      && retentionCategoryNames.every((name) => retention.categories[name] !== undefined)
+      && categories.every((category) => category.eligible !== null && category.deleted !== null);
+    const dryRunDeletedNothing = retention.status !== "dry_run_succeeded"
+      || categories.every((category) => category.deleted === 0);
+    const ordered = retention.lastStartedAt !== null && retention.lastCompletedAt !== null
+      && Date.parse(retention.lastCompletedAt) >= Date.parse(retention.lastStartedAt)
+      && retention.lastSuccessAt !== null
+      && Date.parse(retention.lastSuccessAt) >= Date.parse(retention.lastStartedAt);
+    if (!ordered || retention.durationMs === null || retention.errorCategory !== null
+      || retention.watermarks.legal === null || retention.watermarks.billing === null
+      || retention.watermarks.effective === null || retention.watermarks.maxGlobalSequence === null
+      || retention.watermarks.lag === null || !hasConsistentRetentionWatermarks(retention.watermarks)
+      || !completeCategories || !dryRunDeletedNothing
+      || (retention.enabled && retention.nextScheduledAt === null)
+      || (retention.status === "dry_run_succeeded") !== (retention.mode === "dry-run")) {
+      issue("成功 retention 状态字段不完整或语义非法");
+    }
+    return;
+  }
+  if (retention.status === "blocked" || retention.status === "failed") {
+    const ordered = retention.lastStartedAt !== null && retention.lastCompletedAt !== null
+      && Date.parse(retention.lastCompletedAt) >= Date.parse(retention.lastStartedAt);
+    if (!ordered || retention.durationMs === null || !retention.errorCategory?.trim()
+      || (retention.enabled && retention.nextScheduledAt === null)) {
+      issue("失败 retention 状态字段不完整");
+    }
+  }
+});
+
+function hasConsistentRetentionWatermarks(watermarks: {
+  legal: string | null;
+  billing: string | null;
+  effective: string | null;
+  maxGlobalSequence: string | null;
+  lag: string | null;
+}): boolean {
+  if (watermarks.legal === null || watermarks.billing === null || watermarks.effective === null
+    || watermarks.maxGlobalSequence === null || watermarks.lag === null) return false;
+  if (![watermarks.legal, watermarks.billing, watermarks.effective, watermarks.maxGlobalSequence, watermarks.lag]
+    .every((value) => /^\d+$/.test(value))) return false;
+  const legal = BigInt(watermarks.legal);
+  const billing = BigInt(watermarks.billing);
+  const effective = BigInt(watermarks.effective);
+  const maxGlobalSequence = BigInt(watermarks.maxGlobalSequence);
+  const lag = BigInt(watermarks.lag);
+  return effective === (legal < billing ? legal : billing)
+    && maxGlobalSequence >= billing
+    && lag === maxGlobalSequence - effective;
+}
+
 const eventStoreStatusSchema = z.object({
   schemaVersion: z.literal(1),
   available: z.boolean(),
-  generatedAt: z.string(),
-  retention: z.object({
-    enabled: z.boolean(),
-    mode: z.enum(["dry-run", "execute"]),
-    status: z.enum(["never_run", "running", "dry_run_succeeded", "execute_succeeded", "blocked", "failed", "stale", "unavailable"]),
-    stale: z.boolean(),
-    lastStartedAt: nullableStringSchema,
-    lastCompletedAt: nullableStringSchema,
-    lastSuccessAt: nullableStringSchema,
-    durationMs: nullableNumberSchema,
-    errorCategory: nullableStringSchema,
-    nextScheduledAt: nullableStringSchema,
-    watermarks: z.object({
-      legal: nullableStringSchema,
-      billing: nullableStringSchema,
-      effective: nullableStringSchema,
-      maxGlobalSequence: nullableStringSchema,
-      lag: nullableStringSchema,
-    }),
-    categories: z.record(z.string(), z.object({ eligible: nullableNumberSchema, deleted: nullableNumberSchema })),
-  }),
+  generatedAt: isoTimestampSchema,
+  retention: eventStoreRetentionSchema,
   capacity: eventStoreCapacitySchema,
+}).superRefine((status, ctx) => {
+  const latestRunTimestamp = Date.parse(status.generatedAt) + 5 * 60_000;
+  const runTimestamps = [
+    status.retention.lastStartedAt,
+    status.retention.lastCompletedAt,
+    status.retention.lastSuccessAt,
+  ];
+  if (runTimestamps.some((value) => value !== null && Date.parse(value) > latestRunTimestamp)) {
+    ctx.addIssue({ code: "custom", message: "retention 运行时间不能晚于响应生成时间" });
+  }
 });
 
 function hasCompleteCapacityValues(capacity: {

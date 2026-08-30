@@ -14,6 +14,7 @@ const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
 describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
+
   const prefix = `retention_status_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const eventsTable = `${prefix}_events`;
   const toolInvocationsTable = `${prefix}_tool_invocations`;
@@ -70,7 +71,25 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
 
     const dryRun = createRetention(pool);
     await dryRun.runOnce();
+    const dryRunSuccessAt = (await latestDetail()).lastSuccessAt;
     expect((await latestDetail()).state).toBe('dry_run_succeeded');
+
+    const restartedExecute = createRetention(pool, {
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      sweepIntervalMinutes: 30,
+    });
+    await restartedExecute.start();
+    expect(await latestDetail()).toMatchObject({
+      state: 'scheduled',
+      mode: 'execute',
+      sweepIntervalMinutes: 30,
+      lastSuccessAt: dryRunSuccessAt,
+      nextScheduledAt: expect.any(String),
+    });
+    restartedExecute.stop();
 
     const execute = createRetention(pool, {
       executionMode: 'execute',
@@ -79,7 +98,22 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     });
     await execute.runOnce();
     await execute.runOnce();
+    const executeSuccessAt = (await latestDetail()).lastSuccessAt;
     expect((await latestDetail()).state).toBe('execute_succeeded');
+
+    const restartedDryRun = createRetention(pool, {
+      enabled: true,
+      sweepIntervalMinutes: 5,
+    });
+    await restartedDryRun.start();
+    expect(await latestDetail()).toMatchObject({
+      state: 'scheduled',
+      mode: 'dry-run',
+      sweepIntervalMinutes: 5,
+      lastSuccessAt: executeSuccessAt,
+      nextScheduledAt: expect.any(String),
+    });
+    restartedDryRun.stop();
 
     const blocked = createRetention(pool, {
       executionMode: 'execute',
@@ -243,6 +277,7 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
       schemaVersion: 1,
       state: 'execute_succeeded',
       mode: 'execute',
+      sweepIntervalMinutes: 10,
       lastStartedAt: '2026-08-29T12:00:00.000Z',
       lastCompletedAt: '2026-08-29T12:00:01.000Z',
       lastSuccessAt: '2026-08-29T12:00:01.000Z',

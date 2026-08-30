@@ -2,6 +2,7 @@ import type pg from 'pg';
 
 export type RuntimeEventRetentionState =
   | 'never_run'
+  | 'scheduled'
   | 'running'
   | 'dry_run_succeeded'
   | 'execute_succeeded'
@@ -12,6 +13,7 @@ export interface RuntimeEventRetentionStatusSnapshot {
   schemaVersion: 1;
   state: RuntimeEventRetentionState;
   mode: 'dry-run' | 'execute';
+  sweepIntervalMinutes: number;
   lastStartedAt: string | null;
   lastCompletedAt: string | null;
   lastSuccessAt: string | null;
@@ -114,6 +116,7 @@ export class RuntimeEventRetention {
   private lastCompletedAt: string | null = null;
   private lastSuccessAt: string | null = null;
   private nextScheduledAt: string | null = null;
+  private startGeneration = 0;
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
@@ -141,16 +144,30 @@ export class RuntimeEventRetention {
 
   async start(): Promise<void> {
     if (this.options.enabled !== true || !this.stopped) return;
+    const generation = ++this.startGeneration;
     this.stopped = false;
-    this.scheduleNext();
+    this.lastStartedAt = null;
+    this.lastCompletedAt = null;
+    this.prepareNextScheduledAt();
     const gateError = this.configurationGateError();
+    let statusRecorded: boolean;
     if (gateError) {
       const now = new Date().toISOString();
       this.lastStartedAt = now;
       this.lastCompletedAt = now;
-      await this.recordStatus(this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }));
+      statusRecorded = await this.recordStatus(this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }));
       this.options.logger?.warn?.(`RuntimeEventRetention configuration blocked: category=${gateError.category}`);
+    } else {
+      statusRecorded = await this.recordStatus(this.snapshot('scheduled'));
     }
+    if (generation !== this.startGeneration || this.stopped) return;
+    if (!statusRecorded) {
+      this.stopped = true;
+      this.nextScheduledAt = null;
+      this.options.logger?.warn?.('RuntimeEventRetention startup not scheduled: status persistence unavailable');
+      return;
+    }
+    this.scheduleNext();
     this.options.logger?.info?.(
       `RuntimeEventRetention started: mode=${this.executionMode} interval=${this.sweepIntervalMinutes}m `
       + `batchLimit=${this.batchLimit} maxBatchesPerCategory=${this.maxBatchesPerCategory} `
@@ -160,11 +177,12 @@ export class RuntimeEventRetention {
 
   stop(): void {
     this.stopped = true;
+    this.startGeneration += 1;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
-      this.nextScheduledAt = null;
     }
+    this.nextScheduledAt = null;
   }
 
   async runOnce(): Promise<RuntimeEventRetentionResult> {
@@ -177,8 +195,11 @@ export class RuntimeEventRetention {
     let billingWatermark: string | null = null;
     let effectiveDeleteThrough: string | null = null;
     let maxGlobalSequence: string | null = null;
-    await this.recordStatus(this.snapshot('running', { categories }));
     try {
+      const runningStatusRecorded = await this.recordStatus(this.snapshot('running', { categories }));
+      if (this.executionMode === 'execute' && this.options.enabled === true && !runningStatusRecorded) {
+        throw new RetentionGateError('status_persistence_unavailable');
+      }
       const gateError = this.configurationGateError();
       if (gateError) throw gateError;
       // dry-run 必须严格只读，不能为了预览推进 billing projection。
@@ -258,18 +279,23 @@ export class RuntimeEventRetention {
     return null;
   }
 
-  private scheduleNext(): void {
-    if (this.stopped) return;
-    this.nextScheduledAt = new Date(Date.now() + this.sweepIntervalMinutes * 60_000).toISOString();
+  private scheduleNext(generation = this.startGeneration): void {
+    if (this.stopped || generation !== this.startGeneration) return;
+    this.prepareNextScheduledAt();
+    const scheduledMs = Date.parse(this.nextScheduledAt!);
+    const delayMs = Number.isFinite(scheduledMs)
+      ? Math.max(0, scheduledMs - Date.now())
+      : this.sweepIntervalMinutes * 60_000;
     this.timer = setTimeout(() => {
+      if (this.stopped || generation !== this.startGeneration) return;
       this.timer = undefined;
       this.nextScheduledAt = null;
       void this.runOnce()
         .catch((err) => {
           this.options.logger?.warn?.(`RuntimeEventRetention failed: ${err instanceof Error ? err.message : String(err)}`);
         })
-        .finally(() => this.scheduleNext());
-    }, this.sweepIntervalMinutes * 60_000);
+        .finally(() => this.scheduleNext(generation));
+    }, delayMs);
     this.timer.unref?.();
   }
 
@@ -294,6 +320,7 @@ export class RuntimeEventRetention {
       schemaVersion: 1,
       state,
       mode: this.executionMode,
+      sweepIntervalMinutes: this.sweepIntervalMinutes,
       lastStartedAt: this.lastStartedAt,
       lastCompletedAt: this.lastCompletedAt,
       lastSuccessAt: this.lastSuccessAt,
@@ -310,12 +337,14 @@ export class RuntimeEventRetention {
     };
   }
 
-  private async recordStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
-    if (!this.options.statusRecorder) return;
+  private async recordStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<boolean> {
+    if (!this.options.statusRecorder) return this.executionMode !== 'execute';
     try {
       await this.options.statusRecorder(snapshot);
+      return true;
     } catch {
       this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
+      return false;
     }
   }
 
@@ -547,10 +576,12 @@ export class RuntimeEventRetention {
 }
 
 class RetentionGateError extends Error {
-  constructor(readonly category: 'authorization_missing' | 'legal_watermark_invalid') {
+  constructor(readonly category: 'authorization_missing' | 'legal_watermark_invalid' | 'status_persistence_unavailable') {
     super(category === 'authorization_missing'
       ? 'RuntimeEventRetention execute 模式缺少授权'
-      : 'RuntimeEventRetention execute 模式 legal watermark 无效');
+      : category === 'legal_watermark_invalid'
+        ? 'RuntimeEventRetention execute 模式 legal watermark 无效'
+        : 'RuntimeEventRetention execute 模式状态持久化不可用');
     this.name = 'RetentionGateError';
   }
 }

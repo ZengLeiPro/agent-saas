@@ -8,6 +8,7 @@ import type { EventStoreRetentionStatus, EventStoreStatusResponse } from "../typ
 
 const STATUS_TEXT: Record<EventStoreRetentionStatus, string> = {
   never_run: "从未运行",
+  scheduled: "已调度",
   running: "运行中",
   dry_run_succeeded: "预演成功",
   execute_succeeded: "执行成功",
@@ -32,21 +33,113 @@ function normalizedStatus(data: EventStoreStatusResponse): EventStoreRetentionSt
     : "unavailable";
 }
 
-function hasCompleteCapacity(data: EventStoreStatusResponse): boolean {
-  const { capacity } = data;
+function hasCompleteCapacityValues(capacity: {
+  totalBytes: number | null;
+  tableBytes: number | null;
+  indexBytes: number | null;
+}): boolean {
   const values = [capacity.totalBytes, capacity.tableBytes, capacity.indexBytes];
-  if (!capacity.available || !capacity.sampledAt) return false;
-  if (values.some((value) => value === null || !Number.isFinite(value) || value < 0)) return false;
-  return capacity.totalBytes! >= capacity.tableBytes! + capacity.indexBytes!;
+  return values.every((value) => value !== null && Number.isFinite(value) && value >= 0)
+    && capacity.totalBytes! >= capacity.tableBytes! + capacity.indexBytes!;
+}
+
+function hasCompleteCapacity(data: EventStoreStatusResponse): boolean {
+  return data.capacity.available && isValidTimestamp(data.capacity.sampledAt)
+    && hasCompleteCapacityValues(data.capacity);
+}
+
+function isValidTimestamp(value: string | null): value is string {
+  return value !== null && Number.isFinite(Date.parse(value));
+}
+
+function hasPlausibleRunTimestamps(data: EventStoreStatusResponse): boolean {
+  const generatedMs = Date.parse(data.generatedAt);
+  if (!Number.isFinite(generatedMs)) return false;
+  return [
+    data.retention.lastStartedAt,
+    data.retention.lastCompletedAt,
+    data.retention.lastSuccessAt,
+  ].every((value) => value === null || (
+    isValidTimestamp(value) && Date.parse(value) <= generatedMs + 5 * 60_000
+  ));
+}
+
+function isValidCapacitySample(sample: EventStoreStatusResponse["capacity"]["series"][number]): boolean {
+  return isValidTimestamp(sample.sampledAt) && hasCompleteCapacityValues(sample);
+}
+
+function hasConsistentRetentionWatermarks(
+  watermarks: EventStoreStatusResponse["retention"]["watermarks"],
+): boolean {
+  const values = [
+    watermarks.legal,
+    watermarks.billing,
+    watermarks.effective,
+    watermarks.maxGlobalSequence,
+    watermarks.lag,
+  ];
+  if (values.some((value) => value === null || !/^\d+$/.test(value))) return false;
+  const legal = BigInt(watermarks.legal!);
+  const billing = BigInt(watermarks.billing!);
+  const effective = BigInt(watermarks.effective!);
+  const maxGlobalSequence = BigInt(watermarks.maxGlobalSequence!);
+  const lag = BigInt(watermarks.lag!);
+  return effective === (legal < billing ? legal : billing)
+    && maxGlobalSequence >= billing
+    && lag === maxGlobalSequence - effective;
+}
+
+function hasSufficientCapacityTrend(data: EventStoreStatusResponse): boolean {
+  return data.capacity.series.filter(isValidCapacitySample).length >= 2;
+}
+
+function hasTrustworthyRetention(data: EventStoreStatusResponse): boolean {
+  const { retention } = data;
+  const status = normalizedStatus(data);
+  if (status === "scheduled") {
+    return hasPlausibleRunTimestamps(data)
+      && retention.enabled && isValidTimestamp(retention.nextScheduledAt)
+      && retention.lastStartedAt === null && retention.lastCompletedAt === null
+      && retention.durationMs === null && retention.errorCategory === null
+      && typeof retention.watermarks.legal === "string" && /^\d+$/.test(retention.watermarks.legal)
+      && retention.watermarks.billing === null && retention.watermarks.effective === null
+      && retention.watermarks.maxGlobalSequence === null && retention.watermarks.lag === null
+      && Object.keys(retention.categories).length === 0;
+  }
+  if (status !== "dry_run_succeeded" && status !== "execute_succeeded") return true;
+  const categories = Object.values(retention.categories);
+  const validCategories = categories.length === Object.keys(CATEGORY_TEXT).length
+    && Object.keys(CATEGORY_TEXT).every((name) => retention.categories[name] !== undefined)
+    && categories.every((category) => (
+      category.eligible !== null && Number.isSafeInteger(category.eligible) && category.eligible >= 0
+      && category.deleted !== null && Number.isSafeInteger(category.deleted) && category.deleted >= 0
+      && category.deleted <= category.eligible
+    ));
+  const dryRunDeletedNothing = status !== "dry_run_succeeded"
+    || categories.every((category) => category.deleted === 0);
+  return hasPlausibleRunTimestamps(data)
+    && isValidTimestamp(retention.lastStartedAt)
+    && isValidTimestamp(retention.lastCompletedAt)
+    && isValidTimestamp(retention.lastSuccessAt)
+    && Date.parse(retention.lastCompletedAt) >= Date.parse(retention.lastStartedAt)
+    && Date.parse(retention.lastSuccessAt) >= Date.parse(retention.lastStartedAt)
+    && retention.durationMs !== null && Number.isFinite(retention.durationMs) && retention.durationMs >= 0
+    && retention.errorCategory === null && hasConsistentRetentionWatermarks(retention.watermarks)
+    && validCategories && dryRunDeletedNothing
+    && (!retention.enabled || isValidTimestamp(retention.nextScheduledAt))
+    && (status === "dry_run_succeeded") === (retention.mode === "dry-run");
 }
 
 function statusTone(data: EventStoreStatusResponse, refreshFailed: boolean): MetricTone {
+
   const status = normalizedStatus(data);
   if (status === "blocked" || status === "failed") return "bad";
-  if (!data.available || status === "unavailable" || !hasCompleteCapacity(data)) return "default";
+  if (!data.available || status === "unavailable"
+    || !hasCompleteCapacity(data) || !hasTrustworthyRetention(data)) return "default";
   if (
     refreshFailed || !data.retention.enabled || data.retention.stale || data.capacity.stale
-    || status === "stale" || status === "running" || status === "never_run"
+    || !hasSufficientCapacityTrend(data)
+    || status === "stale" || status === "scheduled" || status === "running" || status === "never_run"
   ) return "warn";
   return "good";
 }
@@ -62,10 +155,12 @@ function healthText(data: EventStoreStatusResponse, refreshFailed: boolean): str
   const status = normalizedStatus(data);
   if (status === "blocked") return "已阻断";
   if (status === "failed") return "失败";
-  if (!data.available || status === "unavailable" || !hasCompleteCapacity(data)) return "不可用";
+  if (!data.available || status === "unavailable"
+    || !hasCompleteCapacity(data) || !hasTrustworthyRetention(data)) return "不可用";
   if (!data.retention.enabled) return "未启用";
   if (refreshFailed || data.retention.stale || data.capacity.stale || status === "stale") return "已过期";
-  if (status === "running" || status === "never_run") return "需关注";
+  if (!hasSufficientCapacityTrend(data)
+    || status === "scheduled" || status === "running" || status === "never_run") return "需关注";
   return "健康";
 }
 
@@ -92,8 +187,10 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
   const retentionStale = data.retention.stale || data.retention.status === "stale";
   const capacityAvailable = hasCompleteCapacity(data);
   const capacityStale = data.capacity.stale;
+  const trendInsufficient = capacityAvailable && !hasSufficientCapacityTrend(data);
   const categories = Object.entries(data.retention.categories);
-  const samples = [...data.capacity.series]
+  const samples = data.capacity.series
+    .filter(isValidCapacitySample)
     .sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt));
   const firstSample = samples[0];
   const lastSample = samples.at(-1);
@@ -111,12 +208,14 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
         <Badge variant={badgeVariant(tone)}>{healthText(data, refreshFailed)}</Badge>
       </div>
 
-      {(refreshFailed || retentionStale || capacityStale) && (
+      {(refreshFailed || retentionStale || capacityStale || trendInsufficient) && (
         <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-xs text-warning-ink">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
           {refreshFailed
             ? "EventStore 刷新失败；当前显示最近一次可信数据，可能已过期。"
-            : <>EventStore {retentionStale && capacityStale ? "保留状态和容量采样" : retentionStale ? "保留状态" : "容量采样"}已过期；当前显示最近一次可信数据。</>}
+            : retentionStale || capacityStale
+              ? <>EventStore {retentionStale && capacityStale ? "保留状态和容量采样" : retentionStale ? "保留状态" : "容量采样"}已过期；当前显示最近一次可信数据。</>
+              : "EventStore 容量趋势有效样本不足 2 条，暂不判定为健康。"}
         </div>
       )}
 

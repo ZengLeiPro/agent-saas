@@ -49,6 +49,7 @@ function record(path: string, bytes: number): UpsertWorkspaceUsageInput {
 }
 
 describe('PgSystemMetricsStore', () => {
+
   // Retention 状态与容量都复用本 Store；测试确保不会靠进程内内存维持关键时间点。
   it('deletes rows missing from a full (non-partial) round', async () => {
     const pool = createFakePool();
@@ -137,6 +138,7 @@ describe('PgSystemMetricsStore', () => {
       schemaVersion: 1,
       state: 'failed',
       mode: 'execute',
+      sweepIntervalMinutes: 10,
       lastStartedAt: '2026-08-29T13:00:00.000Z',
       lastCompletedAt: '2026-08-29T13:00:01.000Z',
       lastSuccessAt: '2026-08-29T11:00:00.000Z',

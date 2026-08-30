@@ -99,6 +99,7 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
     const retentionBase = {
       enabled: retentionConfig?.enabled === true,
       mode: retentionConfig?.executionMode ?? 'dry-run' as const,
+      sweepIntervalMinutes: retentionConfig?.sweepIntervalMinutes ?? 10,
     };
     if (!store) {
       res.json({
@@ -335,7 +336,11 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
   return router;
 }
 
-type RetentionBase = { enabled: boolean; mode: 'dry-run' | 'execute' };
+type RetentionBase = {
+  enabled: boolean;
+  mode: 'dry-run' | 'execute';
+  sweepIntervalMinutes: number;
+};
 
 function emptyWatermarks() {
   return {
@@ -349,7 +354,8 @@ function emptyWatermarks() {
 
 function unavailableRetention(base: RetentionBase) {
   return {
-    ...base,
+    enabled: base.enabled,
+    mode: base.mode,
     status: 'unavailable' as const,
     stale: false,
     lastStartedAt: null,
@@ -370,6 +376,25 @@ function neverRunRetention(base: RetentionBase) {
   };
 }
 
+const persistedRetentionStates = new Set([
+  'never_run',
+  'scheduled',
+  'running',
+  'dry_run_succeeded',
+  'execute_succeeded',
+  'blocked',
+  'failed',
+]);
+const retentionCategoryNames = [
+  'tool-delta',
+  'assistant-stream',
+  'tool-stream-summary',
+  'model-diagnostics',
+  'model-request-finished',
+  'hand-events',
+] as const;
+const retentionCategoryNameSet = new Set<string>(retentionCategoryNames);
+
 function serializeRetentionStatus(
   base: RetentionBase,
   metric: SystemMetricRecord | null,
@@ -379,37 +404,143 @@ function serializeRetentionStatus(
   if (!metric) return neverRunRetention(base);
   const detail = metric.detailJson;
   if (!detail || detail.schemaVersion !== 1) return unavailableRetention(base);
+  const persistedState = typeof detail.state === 'string' ? detail.state : '';
+  if (!persistedRetentionStates.has(persistedState)) return unavailableRetention(base);
+  if (!isIsoTimestamp(metric.sampledAt)) return unavailableRetention(base);
   const sampledMs = Date.parse(metric.sampledAt);
-  const stale = !Number.isFinite(sampledMs) || now.getTime() - sampledMs > staleAfterMs;
-  const persistedState = typeof detail.state === 'string' ? detail.state : 'unavailable';
-  const allowed = new Set([
-    'never_run', 'running', 'dry_run_succeeded', 'execute_succeeded', 'blocked', 'failed',
-  ]);
-  const status = stale ? 'stale' : (allowed.has(persistedState) ? persistedState : 'unavailable');
-  const persistedWatermarks = isObject(detail.watermarks) ? detail.watermarks : {};
-  const billing = nullableString(persistedWatermarks.billing);
-  const effective = nullableString(persistedWatermarks.effectiveDeleteThrough);
-  const maxGlobalSequence = nullableString(detail.maxGlobalSequence);
+  const persistedWatermarks = isObject(detail.watermarks) ? detail.watermarks : null;
+  const categories = parseRetentionCategories(detail.categories);
+  if (
+    detail.mode !== base.mode
+    || detail.sweepIntervalMinutes !== base.sweepIntervalMinutes
+    || !persistedWatermarks
+    || !isNullableIsoTimestamp(detail.lastStartedAt)
+    || !isNullableIsoTimestamp(detail.lastCompletedAt)
+    || !isNullableIsoTimestamp(detail.lastSuccessAt)
+    || !retentionRunTimestampsNotFuture(detail, sampledMs)
+    || !isNullableNonnegativeNumber(detail.durationMs)
+    || !isNullableString(detail.errorCategory)
+    || !isNullableIsoTimestamp(detail.nextScheduledAt)
+    || !isDigitString(persistedWatermarks.legal)
+    || !isNullableDigitString(persistedWatermarks.billing)
+    || !isNullableDigitString(persistedWatermarks.effectiveDeleteThrough)
+    || !isNullableDigitString(detail.maxGlobalSequence)
+    || !categories
+  ) return unavailableRetention(base);
+  const snapshot = {
+    state: persistedState,
+    mode: base.mode,
+    enabled: base.enabled,
+    lastStartedAt: detail.lastStartedAt,
+    lastCompletedAt: detail.lastCompletedAt,
+    lastSuccessAt: detail.lastSuccessAt,
+    durationMs: detail.durationMs,
+    errorCategory: detail.errorCategory,
+    nextScheduledAt: detail.nextScheduledAt,
+    legal: persistedWatermarks.legal,
+    billing: persistedWatermarks.billing,
+    effective: persistedWatermarks.effectiveDeleteThrough,
+    maxGlobalSequence: detail.maxGlobalSequence,
+    categories,
+  };
+  if (!isRetentionStateSemanticallyValid(snapshot)) return unavailableRetention(base);
+  const stale = now.getTime() - sampledMs > staleAfterMs;
   return {
     enabled: base.enabled,
-    mode: detail.mode === 'execute' || detail.mode === 'dry-run' ? detail.mode : base.mode,
-    status,
+    mode: base.mode,
+    status: stale ? 'stale' : persistedState,
     stale,
-    lastStartedAt: nullableString(detail.lastStartedAt),
-    lastCompletedAt: nullableString(detail.lastCompletedAt),
-    lastSuccessAt: nullableString(detail.lastSuccessAt),
-    durationMs: nullableNumber(detail.durationMs),
-    errorCategory: nullableString(detail.errorCategory),
-    nextScheduledAt: nullableString(detail.nextScheduledAt),
+    lastStartedAt: snapshot.lastStartedAt,
+    lastCompletedAt: snapshot.lastCompletedAt,
+    lastSuccessAt: snapshot.lastSuccessAt,
+    durationMs: snapshot.durationMs,
+    errorCategory: snapshot.errorCategory,
+    nextScheduledAt: snapshot.nextScheduledAt,
     watermarks: {
-      legal: nullableString(persistedWatermarks.legal),
-      billing,
-      effective,
-      maxGlobalSequence,
-      lag: bigintLag(maxGlobalSequence, effective),
+      legal: persistedWatermarks.legal,
+      billing: snapshot.billing,
+      effective: snapshot.effective,
+      maxGlobalSequence: snapshot.maxGlobalSequence,
+      lag: bigintLag(snapshot.maxGlobalSequence, snapshot.effective),
     },
-    categories: serializeCategories(detail.categories),
+    categories,
   };
+}
+
+function retentionRunTimestampsNotFuture(
+  detail: Record<string, unknown>,
+  sampledMs: number,
+): boolean {
+  return [detail.lastStartedAt, detail.lastCompletedAt, detail.lastSuccessAt]
+    .every((value) => value === null || (isIsoTimestamp(value) && Date.parse(value) <= sampledMs + 5 * 60_000));
+}
+
+function isRetentionStateSemanticallyValid(snapshot: {
+  state: string;
+  mode: 'dry-run' | 'execute';
+  enabled: boolean;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastSuccessAt: string | null;
+  durationMs: number | null;
+  errorCategory: string | null;
+  nextScheduledAt: string | null;
+  legal: string;
+  billing: string | null;
+  effective: string | null;
+  maxGlobalSequence: string | null;
+  categories: Record<string, { eligible: number; deleted: number }>;
+}): boolean {
+  const runCompleted = snapshot.lastStartedAt !== null
+    && snapshot.lastCompletedAt !== null
+    && snapshot.durationMs !== null
+    && Date.parse(snapshot.lastCompletedAt) >= Date.parse(snapshot.lastStartedAt);
+  const scheduledWhenEnabled = !snapshot.enabled || snapshot.nextScheduledAt !== null;
+  const hasNoProgress = snapshot.billing === null && snapshot.effective === null
+    && snapshot.maxGlobalSequence === null && Object.keys(snapshot.categories).length === 0;
+  if (snapshot.state === 'scheduled') {
+    return snapshot.enabled && snapshot.nextScheduledAt !== null
+      && snapshot.lastStartedAt === null && snapshot.lastCompletedAt === null
+      && snapshot.durationMs === null && snapshot.errorCategory === null && hasNoProgress;
+  }
+  if (snapshot.state === 'never_run') {
+    return snapshot.lastStartedAt === null && snapshot.lastCompletedAt === null
+      && snapshot.durationMs === null && snapshot.errorCategory === null && hasNoProgress;
+  }
+  if (snapshot.state === 'running') {
+    return snapshot.lastStartedAt !== null && snapshot.lastCompletedAt === null
+      && snapshot.durationMs === null && snapshot.errorCategory === null && hasNoProgress;
+  }
+  if (snapshot.state === 'dry_run_succeeded' || snapshot.state === 'execute_succeeded') {
+    const completeCategories = retentionCategoryNames.every((name) => snapshot.categories[name] !== undefined)
+      && Object.keys(snapshot.categories).length === retentionCategoryNames.length;
+    const dryRunDeletedNothing = snapshot.state !== 'dry_run_succeeded'
+      || Object.values(snapshot.categories).every((category) => category.deleted === 0);
+    return runCompleted && snapshot.lastSuccessAt !== null
+      && Date.parse(snapshot.lastSuccessAt) >= Date.parse(snapshot.lastStartedAt!)
+      && snapshot.errorCategory === null && scheduledWhenEnabled
+      && hasConsistentRetentionWatermarks(snapshot)
+      && completeCategories && dryRunDeletedNothing
+      && (snapshot.state === 'dry_run_succeeded') === (snapshot.mode === 'dry-run');
+  }
+  return runCompleted && scheduledWhenEnabled
+    && typeof snapshot.errorCategory === 'string' && snapshot.errorCategory.trim().length > 0;
+}
+
+function hasConsistentRetentionWatermarks(snapshot: {
+  legal: string;
+  billing: string | null;
+  effective: string | null;
+  maxGlobalSequence: string | null;
+}): boolean {
+  if (snapshot.billing === null || snapshot.effective === null || snapshot.maxGlobalSequence === null) {
+    return false;
+  }
+  const legal = BigInt(snapshot.legal);
+  const billing = BigInt(snapshot.billing);
+  const effective = BigInt(snapshot.effective);
+  const maxGlobalSequence = BigInt(snapshot.maxGlobalSequence);
+  return effective === (legal < billing ? legal : billing) && maxGlobalSequence >= billing;
 }
 
 function unavailableCapacity(tableName?: string) {
@@ -433,7 +564,7 @@ function serializeCapacity(
 ) {
   if (!tableName || !latest) return unavailableCapacity(tableName);
   const capacity = capacityValues(latest);
-  if (!capacity) return unavailableCapacity(tableName);
+  if (!capacity || !isIsoTimestamp(latest.sampledAt)) return unavailableCapacity(tableName);
   const sampledMs = Date.parse(latest.sampledAt);
   return {
     available: true,
@@ -443,7 +574,7 @@ function serializeCapacity(
     stale: !Number.isFinite(sampledMs) || now.getTime() - sampledMs > 30 * 60_000,
     series: series.flatMap((metric) => {
       const values = capacityValues(metric);
-      return values ? [{ sampledAt: metric.sampledAt, ...values }] : [];
+      return values && isIsoTimestamp(metric.sampledAt) ? [{ sampledAt: metric.sampledAt, ...values }] : [];
     }).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
   };
 }
@@ -461,15 +592,19 @@ function capacityValues(metric: SystemMetricRecord): {
   return { totalBytes, tableBytes, indexBytes };
 }
 
-function serializeCategories(value: unknown): Record<string, { eligible: number | null; deleted: number | null }> {
-  if (!isObject(value)) return {};
-  return Object.fromEntries(Object.entries(value).map(([key, category]) => {
-    const item = isObject(category) ? category : {};
-    return [key, {
-      eligible: nullableNumber(item.eligible),
-      deleted: nullableNumber(item.deleted),
-    }];
-  }));
+function parseRetentionCategories(
+  value: unknown,
+): Record<string, { eligible: number; deleted: number }> | null {
+  if (!isObject(value)) return null;
+  const categories: Record<string, { eligible: number; deleted: number }> = {};
+  for (const [key, category] of Object.entries(value)) {
+    if (!retentionCategoryNameSet.has(key) || !isObject(category)) return null;
+    const eligible = nonnegativeInteger(category.eligible);
+    const deleted = nonnegativeInteger(category.deleted);
+    if (eligible === null || deleted === null || deleted > eligible) return null;
+    categories[key] = { eligible, deleted };
+  }
+  return categories;
 }
 
 function bigintLag(maxGlobalSequence: string | null, effective: string | null): string | null {
@@ -488,6 +623,36 @@ function nullableString(value: unknown): string | null {
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+function isDigitString(value: unknown): value is string {
+  return typeof value === 'string' && /^\d+$/.test(value);
+}
+
+function isNullableDigitString(value: unknown): value is string | null {
+  return value === null || isDigitString(value);
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+function isNullableIsoTimestamp(value: unknown): value is string | null {
+  return value === null || isIsoTimestamp(value);
+}
+
+function isNullableNonnegativeNumber(value: unknown): value is number | null {
+  return value === null || nonnegativeNumber(value) !== null;
+}
+
+function nonnegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function nonnegativeNumber(value: unknown): number | null {

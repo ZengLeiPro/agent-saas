@@ -19,9 +19,16 @@ function fixture(status: EventStoreRetentionStatus = "execute_succeeded"): Event
       lastSuccessAt: "2026-08-29T13:00:02.000Z",
       durationMs: 2000,
       errorCategory: null,
-      nextScheduledAt: null,
-      watermarks: { legal: "100", billing: "200", effective: "180", maxGlobalSequence: "220", lag: "40" },
-      categories: Object.fromEntries(["legal", "billing", "expired", "compacted", "orphaned", "other"].map((key, index) => [key, { eligible: index + 1, deleted: index }])),
+      nextScheduledAt: "2026-08-29T14:10:00.000Z",
+      watermarks: { legal: "180", billing: "200", effective: "180", maxGlobalSequence: "220", lag: "40" },
+      categories: Object.fromEntries([
+        "tool-delta",
+        "assistant-stream",
+        "tool-stream-summary",
+        "model-diagnostics",
+        "model-request-finished",
+        "hand-events",
+      ].map((key, index) => [key, { eligible: index + 1, deleted: index }])),
     },
     capacity: {
       available: true,
@@ -40,6 +47,7 @@ function fixture(status: EventStoreRetentionStatus = "execute_succeeded"): Event
 }
 
 describe("EventStoreSection", () => {
+
   it("展示健康状态、六类摘要、水位和 runtime_events 容量趋势", () => {
     render(<EventStoreSection data={fixture()} />);
     expect(screen.getAllByText("健康").length).toBeGreaterThan(0);
@@ -59,6 +67,38 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText(text).some(node => node.className.includes(toneClass))).toBe(true);
   });
 
+  it("已调度的当前模式在首轮完成前显示需关注", () => {
+    const data = fixture("scheduled");
+    data.retention.lastStartedAt = null;
+    data.retention.lastCompletedAt = null;
+    data.retention.durationMs = null;
+    data.retention.watermarks.billing = null;
+    data.retention.watermarks.effective = null;
+    data.retention.watermarks.maxGlobalSequence = null;
+    data.retention.watermarks.lag = null;
+    data.retention.categories = {};
+    render(<EventStoreSection data={data} />);
+    expect(screen.getByText("已调度")).toBeTruthy();
+    expect(screen.getAllByText("需关注").length).toBeGreaterThan(0);
+    expect(screen.queryByText("健康")).toBeNull();
+  });
+
+  it("已调度状态携带运行进度时降级为不可用", () => {
+
+    const data = fixture("scheduled");
+    data.retention.lastStartedAt = null;
+    data.retention.lastCompletedAt = null;
+    data.retention.durationMs = null;
+    data.retention.categories = {};
+    data.retention.watermarks.billing = "1";
+    data.retention.watermarks.effective = "1";
+    data.retention.watermarks.maxGlobalSequence = "1";
+    data.retention.watermarks.lag = "0";
+    render(<EventStoreSection data={data} />);
+    expect(screen.queryByText("健康")).toBeNull();
+    expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
+  });
+
   it("stale 即使最近成功也显示已过期和最近可信数据提示", () => {
     const data = fixture();
     data.retention.stale = true;
@@ -68,11 +108,36 @@ describe("EventStoreSection", () => {
     expect(screen.getByText(/当前显示最近一次可信数据/)).toBeTruthy();
   });
 
-  it("容量样本不足显示暂无，不伪造趋势", () => {
+  it.each([0, 1])("容量只有 %i 个有效样本时降级为需关注，不伪造绿色趋势", (sampleCount) => {
     const data = fixture();
-    data.capacity.series = data.capacity.series.slice(0, 1);
+    data.capacity.series = data.capacity.series.slice(0, sampleCount);
     render(<EventStoreSection data={data} />);
+    expect(screen.queryByText("健康")).toBeNull();
+    expect(screen.getAllByText("需关注").length).toBeGreaterThan(0);
     expect(screen.getByText(/趋势：暂无（样本不足）/)).toBeTruthy();
+    expect(screen.getByText(/有效样本不足 2 条/)).toBeTruthy();
+  });
+
+  it.each([
+    ["缺失成功时间", (data: EventStoreStatusResponse) => { data.retention.lastSuccessAt = null; }],
+    ["非法完成时间", (data: EventStoreStatusResponse) => { data.retention.lastCompletedAt = "not-a-time"; }],
+    ["未来成功时间", (data: EventStoreStatusResponse) => { data.retention.lastSuccessAt = "2099-01-01T00:00:00.000Z"; }],
+    ["负耗时", (data: EventStoreStatusResponse) => { data.retention.durationMs = -1; }],
+    ["水位缺失", (data: EventStoreStatusResponse) => { data.retention.watermarks.billing = null; }],
+    ["水位顺序矛盾", (data: EventStoreStatusResponse) => { data.retention.watermarks.maxGlobalSequence = "100"; }],
+    ["lag 不一致", (data: EventStoreStatusResponse) => { data.retention.watermarks.lag = "41"; }],
+    ["空分类", (data: EventStoreStatusResponse) => { data.retention.categories = {}; }],
+    ["模式与状态不一致", (data: EventStoreStatusResponse) => { data.retention.mode = "dry-run"; }],
+    ["dry-run 出现删除量", (data: EventStoreStatusResponse) => {
+      data.retention.status = "dry_run_succeeded";
+      data.retention.mode = "dry-run";
+    }],
+  ])("成功 retention 状态%s时不得显示绿色健康", (_name, mutate) => {
+    const data = fixture();
+    mutate(data);
+    render(<EventStoreSection data={data} />);
+    expect(screen.queryByText("健康")).toBeNull();
+    expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
   it("容量不可用时总体健康降级为不可用", () => {

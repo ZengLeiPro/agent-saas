@@ -4,8 +4,9 @@ const authFetchMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/authFetch", () => ({ authFetch: authFetchMock }));
 
 import { buildAdminApiPath, platformAdminApi } from "./api";
+import type { EventStoreStatusResponse } from "./types";
 
-function eventStoreFixture() {
+function eventStoreFixture(): EventStoreStatusResponse {
   return {
     schemaVersion: 1,
     available: true,
@@ -15,14 +16,21 @@ function eventStoreFixture() {
       mode: "execute",
       status: "execute_succeeded",
       stale: false,
-      lastStartedAt: null,
-      lastCompletedAt: null,
-      lastSuccessAt: null,
-      durationMs: null,
+      lastStartedAt: "2026-08-29T13:59:59.000Z",
+      lastCompletedAt: "2026-08-29T14:00:00.000Z",
+      lastSuccessAt: "2026-08-29T14:00:00.000Z",
+      durationMs: 1_000,
       errorCategory: null,
-      nextScheduledAt: null,
-      watermarks: { legal: null, billing: null, effective: null, maxGlobalSequence: null, lag: null },
-      categories: {},
+      nextScheduledAt: "2026-08-29T14:10:00.000Z",
+      watermarks: { legal: "100", billing: "90", effective: "90", maxGlobalSequence: "110", lag: "20" },
+      categories: {
+        "tool-delta": { eligible: 2, deleted: 2 },
+        "assistant-stream": { eligible: 0, deleted: 0 },
+        "tool-stream-summary": { eligible: 0, deleted: 0 },
+        "model-diagnostics": { eligible: 0, deleted: 0 },
+        "model-request-finished": { eligible: 0, deleted: 0 },
+        "hand-events": { eligible: 0, deleted: 0 },
+      },
     },
     capacity: {
       available: false,
@@ -38,6 +46,7 @@ function eventStoreFixture() {
 }
 
 describe("platform admin api", () => {
+
   beforeEach(() => authFetchMock.mockReset());
 
   it("builds admin paths with encoded query params and skips empty values", () => {
@@ -75,11 +84,78 @@ describe("platform admin api", () => {
     });
   });
 
+  it("accepts a complete scheduled startup status", async () => {
+    const fixture = eventStoreFixture();
+    fixture.retention = {
+      ...fixture.retention,
+      status: "scheduled",
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      durationMs: null,
+      nextScheduledAt: "2026-08-29T14:10:00.000Z",
+      watermarks: { legal: "100", billing: null, effective: null, maxGlobalSequence: null, lag: null },
+      categories: {},
+    };
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify(fixture), { status: 200 }));
+
+    await expect(platformAdminApi.eventStoreStatus()).resolves.toMatchObject({
+      retention: { mode: "execute", status: "scheduled", nextScheduledAt: "2026-08-29T14:10:00.000Z" },
+    });
+  });
+
   it.each([
     ["", "空响应"],
     ["{bad-json", "坏 JSON"],
     [JSON.stringify({ schemaVersion: 1 }), "缺失字段"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "future_status" } }), "未知状态"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        status: "scheduled",
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        durationMs: null,
+        watermarks: { legal: "100", billing: "1", effective: "1", maxGlobalSequence: "1", lag: "0" },
+        categories: {},
+      },
+    }), "scheduled 携带进度水位"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        status: "running",
+        lastCompletedAt: null,
+        durationMs: null,
+        watermarks: { legal: "100", billing: null, effective: null, maxGlobalSequence: null, lag: null },
+      },
+    }), "running 携带分类进度"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, lastSuccessAt: null } }), "成功状态缺失成功时间"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, lastCompletedAt: "not-a-time" } }), "成功状态时间非法"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, lastSuccessAt: "2099-01-01T00:00:00.000Z" } }), "成功状态时间晚于响应"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, durationMs: -1 } }), "成功状态耗时为负数"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        watermarks: { ...eventStoreFixture().retention.watermarks, maxGlobalSequence: "-1" },
+      },
+    }), "成功状态最大序号非法"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        watermarks: { ...eventStoreFixture().retention.watermarks, maxGlobalSequence: "80" },
+      },
+    }), "成功状态水位顺序矛盾"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        watermarks: { ...eventStoreFixture().retention.watermarks, lag: "21" },
+      },
+    }), "成功状态 lag 不一致"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, categories: {} } }), "成功状态分类为空"],
     [JSON.stringify({
       ...eventStoreFixture(),
       capacity: {

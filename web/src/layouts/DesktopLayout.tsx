@@ -153,29 +153,21 @@ export function DesktopLayout(props: LayoutProps) {
 
   const [taskDetailPanelTarget, setTaskDetailPanelTarget] = useState<HTMLDivElement | null>(null); const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const {
-    businessStepPanelOpen, businessStepDetailHost, setBusinessStepDetailHost,
-    rightPanelKind, rightPanelKey,
-    handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview,
-    handleCloseArtifactPreview, handleDockFilePreview, handleExpandFilePreview,
-    handleToggleFileBrowser, handleCloseFileBrowser, handleCloseSubagentTranscript,
+    businessStepPanelOpen, businessStepDetailHost, setBusinessStepDetailHost, rightPanelKind, rightPanelKey,
+    handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview, handleCloseArtifactPreview,
+    handleDockFilePreview, handleExpandFilePreview, handleToggleFileBrowser, handleCloseFileBrowser, handleCloseSubagentTranscript,
   } = useChatRightPanelController({
     sessionId, previewFilePath, previewMode, previewArtifact, fileBrowserOpen,
-    subagentTranscript: subagentTranscript ?? null,
-    systemPanelOpen,
-    openFilePreview, closeFilePreview, closeArtifactPreview,
-    dockFilePreview, expandFilePreview,
+    subagentTranscript: subagentTranscript ?? null, systemPanelOpen,
+    openFilePreview, closeFilePreview, closeArtifactPreview, dockFilePreview, expandFilePreview,
     toggleFileBrowser, closeFileBrowser, closeSubagentTranscript,
   });
   const rightPanelOpen = rightPanelKind !== null;
   const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
   const showTaskDetailPanel = !settingsMode && !analysisMode && activeTab === "cron" && taskDetailOpen;
-  // 聊天右栏与任务详情复用同一外层分栏；各自保留独立 resize key。
-  const showDockedPanel = showRightPanel || showTaskDetailPanel;
-  const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
-  // 任务详情略窄于正文，业务步骤保留专用宽度，其余聊天侧栏保持对半分栏。
-  const dockedPanelInitialRatio = showTaskDetailPanel
-    ? 0.46
-    : rightPanelKind === "business-step" ? 0.42 : 0.5;
+  const showDockedPanel = showRightPanel || showTaskDetailPanel; const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
+  // 任务详情略窄于正文；业务步骤保留专用宽度，其余聊天侧栏保持对半分栏。
+  const dockedPanelInitialRatio = showTaskDetailPanel ? 0.46 : rightPanelKind === "business-step" ? 0.42 : 0.5;
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey);
 
   // 侧边栏折叠状态

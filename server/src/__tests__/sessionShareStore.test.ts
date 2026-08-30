@@ -6,6 +6,9 @@ import {
   type UpsertSessionShareInput,
 } from '../data/sessionShares/store.js';
 import { projectSessionShareSnapshot } from '../data/sessionShares/publicProjection.js';
+import { mapSessionDetailToMessages } from '../../../shared/src/lib/sessionsApi.js';
+import { groupMessages } from '../../../shared/src/lib/groupMessages.js';
+import type { ActivityGroup, BusinessStepSection } from '../../../shared/src/types/message.js';
 
 function snapshotRow(snapshot: SessionShareSnapshot) {
   return {
@@ -278,5 +281,50 @@ describe('session share public projection', () => {
     expect(repeatedTodos.map((block) => block.runId)).toEqual(['shared-run-1', 'shared-run-1']);
     expect(repeatedTodos.map((block) => block.content)).toEqual(todoBlocks.map((block) => block.content));
     expect(JSON.stringify(projectedAgain)).not.toContain('UNSELECTED_');
+  });
+
+  it('公开投影保留匿名 reset，确保映射后的最终正文留在旧步骤节外', () => {
+    const projected = projectSessionShareSnapshot({
+      sessionId: 'private-session',
+      stats: { lines: 5, parsedLines: 5, parseErrors: 0 },
+      blocks: [
+        {
+          id: 'todo-start', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: JSON.stringify({ todos: [{
+            id: 'verify', kind: 'business', content: '核验分享', status: 'in_progress',
+          }] }), toolName: 'TodoWrite', toolId: 'todo-start', runId: 'private-run-1',
+        },
+        {
+          id: 'read-before', kind: 'tool_use', title: '读取前', defaultOpen: false,
+          content: '{}', toolName: 'Read', toolId: 'read-before',
+        },
+        {
+          id: 'todo-reset', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: JSON.stringify({ todos: [] }), toolName: 'TodoWrite', toolId: 'todo-reset', runId: 'private-run-2',
+        },
+        {
+          id: 'read-after', kind: 'tool_use', title: '读取后', defaultOpen: false,
+          content: '{}', toolName: 'Read', toolId: 'read-after',
+        },
+        { id: 'final', kind: 'text', title: '正文', defaultOpen: true, content: 'FINAL' },
+      ],
+    });
+
+    const reset = projected.blocks.find((block) => block.id === 'todo-reset')!;
+    expect(reset.content).toBe('{"todos":[]}');
+    expect(reset.runId).toBe('shared-run-2');
+    expect(JSON.stringify(projected)).not.toContain('private-run');
+    expect(projectSessionShareSnapshot(projected).blocks.find((block) => block.id === 'todo-reset'))
+      .toMatchObject({ content: '{"todos":[]}', runId: 'shared-run-2' });
+
+    const publicDetail = projected as Parameters<typeof mapSessionDetailToMessages>[0];
+    const grouped = groupMessages(mapSessionDetailToMessages(publicDetail), false, { sectioning: true });
+    expect(grouped.map((item) => item.type)).toEqual([
+      'business_step', 'business_step_section', 'activity_group', 'text',
+    ]);
+    const section = grouped[1] as BusinessStepSection;
+    expect((section.items[0] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-before']);
+    expect((grouped[2] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-after']);
+    expect(grouped[3]).toMatchObject({ type: 'text', content: 'FINAL' });
   });
 });

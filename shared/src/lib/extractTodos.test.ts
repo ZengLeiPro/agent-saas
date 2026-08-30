@@ -419,6 +419,28 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     },
   );
 
+  it.each([
+    ["user", user("boundary-user"), "completed"],
+    ["system_event", sectionBoundary("system_event"), "waiting"],
+  ])("anchors a synthetic start before post-%s process when the next snapshot is terminal", (_label, boundary, status) => {
+    const after: MessageItem = {
+      id: "read-after", type: "tool_use", toolName: "Read", toolId: "read-after", toolInput: "{}",
+    };
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      boundary,
+      after,
+      todo("t2", todos([step("a", status)]), "run-1"),
+    ], false);
+
+    expect(result.eventsByAnchor.get("read-after")).toEqual([
+      expect.objectContaining({ kind: "start", runId: "run-1", todo: expect.objectContaining({ status: "in_progress" }) }),
+    ]);
+    expect(result.eventsByAnchor.get("t2")).toEqual([
+      expect.objectContaining({ kind: status === "completed" ? "complete" : "wait" }),
+    ]);
+  });
+
   it("keeps a structural update when reopening an unchanged active step", () => {
     const result = projectBusinessStepEvents([
       user("user-1"),
@@ -503,6 +525,7 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     ], false);
 
     expect((result.eventsByAnchor.get("clear") ?? []).map((event) => event.kind)).toEqual(["reset"]);
+    expect(result.events.find((event) => event.kind === "plan")?.isClosed).toBe(true);
     expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.hiddenMessageIds.has("clear")).toBe(true);
   });

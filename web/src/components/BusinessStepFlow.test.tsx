@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { BusinessStepEventItem } from "@agent/shared";
 
@@ -91,6 +91,14 @@ describe("BusinessStepFlow 主导航卡", () => {
     fireEvent.keyDown(row, { key: "Enter" });
     fireEvent.click(row);
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("reset 关闭的历史计划不再把旧 in_progress 步骤标成当前运行", () => {
+    render(<BusinessStepFlow event={event({ isClosed: true })} sessionId="session-1" selected={null} />);
+    const row = screen.getByRole("button", { name: /核验订单/ });
+    expect(row.getAttribute("aria-current")).toBeNull();
+    expect(row.getAttribute("data-business-step-current")).toBe("false");
+    expect(within(row).getByLabelText("已结束")).toBeTruthy();
   });
 
   it("start / terminal / update 事件不再生成第二套主区步骤正文", () => {

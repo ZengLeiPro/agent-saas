@@ -240,6 +240,7 @@ function PlanTodoRow({
   runId,
   selected,
   detailPanelId,
+  planClosed,
   onSelect,
 }: {
   todo: TodoItem;
@@ -250,12 +251,14 @@ function PlanTodoRow({
   runId?: string | null;
   selected: BusinessStepSelection | null;
   detailPanelId: string;
+  planClosed?: boolean;
   onSelect?: (selection: BusinessStepSelection) => void;
 }) {
   const selection = detailSelection(sessionId, runId, planId, todo.id ? `id:${todo.id}` : `legacy:${todo.content}`);
   const selectionKey = businessStepSelectionKey(selection);
   const isSelected = selected?.planId === planId && selected.todoKey === selection.todoKey;
-  const isCurrent = todo.status === "in_progress";
+  const endedWithoutTerminal = planClosed && todo.status === "in_progress";
+  const isCurrent = !planClosed && todo.status === "in_progress";
 
   return (
     <li>
@@ -277,7 +280,11 @@ function PlanTodoRow({
         data-business-step-current={isCurrent ? "true" : "false"}
         onClick={() => onSelect?.(selection)}
       >
-        <BusinessStepStatusIcon todo={todo} />
+        {endedWithoutTerminal ? (
+          <span className="inline-flex shrink-0" title="已结束" aria-label="已结束">
+            <Circle className={activityStatusIconClass("neutral", "size-4")} />
+          </span>
+        ) : <BusinessStepStatusIcon todo={todo} />}
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{todo.content}</span>
         <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/70">
           {index}/{count}
@@ -326,6 +333,7 @@ export function BusinessStepFlow({
             runId={event.runId}
             selected={selected}
             detailPanelId={detailPanelId}
+            planClosed={event.isClosed}
             onSelect={onSelect}
           />
         ))}

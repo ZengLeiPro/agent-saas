@@ -383,7 +383,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.activeElement).toBe(replacementTrigger);
   });
 
-  it("同一 Run 跨 user、system_event、user-voice 与 system-error 后收齐全部详情", async () => {
+  it("同一 Run 跨 user、system_event、user-voice 与 system-error 后收齐完整详情", async () => {
     const active = [{ id: "verify", kind: "business", content: "跨消息核验", status: "in_progress" }];
     const messages: MessageItem[] = [
       { id: "continuation-user-1", type: "user", content: "开始核验" },
@@ -463,6 +463,34 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.getByText(/写入核验回执/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "依据" }));
     expect(screen.getByText("receipt:continuation")).toBeTruthy();
+  });
+
+  it("用户边界后先执行工具、再直接 completed 时，后半过程仍进入步骤详情", async () => {
+    const active = [{ id: "verify", kind: "business", content: "延迟续接核验", status: "in_progress" }];
+    const completed = [{ id: "verify", kind: "business", content: "延迟续接核验", status: "completed" }];
+    const messages: MessageItem[] = [
+      { id: "delayed-user-1", type: "user", content: "开始" },
+      todoSnapshot("delayed-start", active, "run-delayed"),
+      { id: "delayed-user-2", type: "user", content: "继续" },
+      {
+        id: "delayed-read", type: "tool_use", toolName: "Read", toolId: "delayed-read",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "边界后读取" },
+      },
+      todoSnapshot("delayed-done", completed, "run-delayed"),
+    ];
+
+    render(<Harness messages={messages} debugMode />);
+    await waitForBusinessPlan();
+    expect(screen.queryByText(/边界后读取/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /延迟续接核验/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：延迟续接核验")).toBeTruthy());
+    const process = await waitFor(() => {
+      const value = document.querySelector<HTMLElement>("[data-business-step-process]");
+      expect(value).toBeTruthy();
+      return value!;
+    });
+    expect(within(process).getByText(/边界后读取/)).toBeTruthy();
   });
 
   it.each([

@@ -177,9 +177,10 @@ function redactStructuredValue(value: unknown): unknown {
 function publicTodoWriteContent(block: TranscriptBlock): string | undefined {
   if (block.toolName !== 'TodoWrite') return undefined;
   const todos = parseTodos(block.content);
-  if (!todos?.length) return undefined;
-  const businessTodos = todos.filter(isBusinessTodo);
-  if (!businessTodos.length) return undefined;
+  if (todos === undefined) return undefined;
+  const businessTodos = (todos ?? []).filter(isBusinessTodo);
+  // empty / task-only 是完整的全量替换快照：公开页必须保留匿名 reset，
+  // 否则旧业务 section 会继续吞掉后续工具与最终正文。
   return JSON.stringify({ todos: redactStructuredValue(businessTodos) });
 }
 
@@ -385,7 +386,7 @@ export function collectSessionShareCandidateFiles(blocks: TranscriptBlock[]): Se
 
 /**
  * 旧分享与新建分享统一走安全投影：保留用户/助手正文，以及不含原始 payload 的
- * 工具活动摘要；TodoWrite 额外保留归一化、脱敏后的 business 快照与不透明 runId。
+ * 工具活动摘要；TodoWrite 额外保留归一化、脱敏后的 business 快照（含 reset）与不透明 runId。
  * thinking、其他原始 tool input/result、raw、原始 runId 与原始账号标识全部移除；
  * 附件只留下快照显式 allowlist。
  */

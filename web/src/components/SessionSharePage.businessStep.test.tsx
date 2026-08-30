@@ -146,6 +146,31 @@ function sharedResponse(): PublicSessionShareResponse {
   };
 }
 
+function resetSharedResponse(): PublicSessionShareResponse {
+  const response = sharedResponse();
+  response.detail.blocks = [
+    todoBlock("todo-start", "in_progress"),
+    {
+      id: "read-before", kind: "tool_use", title: "Reset 前读取", defaultOpen: false,
+      content: "", toolName: "Read", toolId: "read-before", executionStatus: "completed",
+      presentation: { title: "Reset 前读取" }, publicActivityOnly: true,
+    },
+    {
+      id: "todo-reset", kind: "tool_use", title: "TodoWrite", defaultOpen: false,
+      content: JSON.stringify({ todos: [] }), toolName: "TodoWrite", toolId: "todo-reset",
+      runId: "shared-run-2", executionStatus: "completed", publicActivityOnly: true,
+    },
+    {
+      id: "read-after", kind: "tool_use", title: "Reset 后读取", defaultOpen: false,
+      content: "", toolName: "Read", toolId: "read-after", executionStatus: "completed",
+      presentation: { title: "Reset 后读取" }, publicActivityOnly: true,
+    },
+    { id: "final", kind: "text", title: "正文", defaultOpen: true, content: "公开最终正文" },
+  ];
+  response.detail.stats = { lines: 5, parsedLines: 5, parseErrors: 0 };
+  return response;
+}
+
 describe("SessionSharePage 业务步骤只读详情", () => {
   beforeEach(() => {
     vi.mocked(fetchPublicSessionShare).mockResolvedValue(sharedResponse());
@@ -182,5 +207,23 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(stepRow));
     expect(stepRow.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("公开 reset 后最终正文与后续工具留在主区，旧主卡不再显示运行态", async () => {
+    vi.mocked(fetchPublicSessionShare).mockResolvedValue(resetSharedResponse());
+    render(<SessionSharePage token="share-reset-token" />);
+
+    const stepRow = await screen.findByRole("button", { name: /核验分享步骤/ }, { timeout: 5_000 });
+    expect(stepRow.getAttribute("aria-current")).toBeNull();
+    expect(within(stepRow).getByLabelText("已结束")).toBeTruthy();
+    expect(screen.queryByText(/Reset 前读取/)).toBeNull();
+    expect(screen.getByText(/Reset 后读取/)).toBeTruthy();
+    expect(screen.getByText("公开最终正文")).toBeTruthy();
+
+    fireEvent.click(stepRow);
+    const sheet = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(sheet).getByText(/Reset 前读取/)).toBeTruthy());
+    expect(within(sheet).queryByText(/Reset 后读取/)).toBeNull();
+    expect(within(sheet).queryByText("公开最终正文")).toBeNull();
   });
 });

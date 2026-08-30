@@ -92,6 +92,7 @@ export function buildBusinessStepCatalog(items: RenderItem[]): BusinessStepCatal
     if (item.type === "business_step" && item.kind === "plan") {
       const todos = item.todos ?? [];
       const currentTodo = todos.find((todo) => todo.status === "in_progress");
+      // reset 后保留历史主卡与详情，但不再提供“当前步骤”跟随语义。
       currentPlan = {
         event: item,
         details: todos.map((todo, index) => ({
@@ -102,7 +103,7 @@ export function buildBusinessStepCatalog(items: RenderItem[]): BusinessStepCatal
           stepCount: todos.length,
           sections: [],
         })),
-        currentTodoKey: currentTodo ? todoItemKey(currentTodo) : null,
+        currentTodoKey: !item.isClosed && currentTodo ? todoItemKey(currentTodo) : null,
       };
       plans.push(currentPlan);
       planById.set(item.id, currentPlan);

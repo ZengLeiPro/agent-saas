@@ -408,7 +408,7 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(sections.at(-1)?.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
   });
 
-  it('queued user 插话留在开放步骤节内且不触发封节', () => {
+  it('queued user 插话留在开放步骤节内而不触发封节', () => {
     const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
     const result = groupMessages([
       user('user-1'),
@@ -424,6 +424,48 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(sections[0].items.some((item) => item.id === 'queued-user')).toBe(true);
     expect(sections[0].items.some((item) =>
       item.type === 'activity_group' && item.items.some((nested) => nested.id === 'read-after'))).toBe(true);
+  });
+
+  it('用户边界后先执行工具、再 completed 时，后半过程归回同一步骤详情', () => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const completed = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }];
+    const result = groupMessages([
+      user('user-1'), businessTodo('todo-start', active, 'run-1'),
+      tool('read-before', { toolName: 'Read', resultReady: true }),
+      user('user-2'),
+      tool('read-after', { toolName: 'Read', resultReady: true }),
+      businessTodo('todo-done', completed, 'run-1'),
+    ], false, opts);
+
+    expect(result.map((item) => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'user', 'business_step_section',
+    ]);
+    const after = result[4] as BusinessStepSection;
+    expect((after.items[0] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-after']);
+    expect(after.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
+  });
+
+  it('system_event 后 connector 与 Artifact 先于 waiting 快照时全部归回步骤详情', () => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const waiting = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'waiting' }];
+    const result = groupMessages([
+      businessTodo('todo-start', active, 'run-1'),
+      systemEvent('system-boundary'),
+      tool('connector-after', {
+        toolName: 'DwsBusiness', resultReady: true,
+        presentation: { title: '钉钉回执', connector: { system: '钉钉', write: true } },
+      }),
+      {
+        id: 'artifact-after', type: 'file_download', fileName: '结果.xlsx',
+        fileType: 'xlsx', filePath: 'assets/结果.xlsx', fileSize: 128,
+      },
+      businessTodo('todo-wait', waiting, 'run-1'),
+    ], false, opts);
+
+    const section = result.at(-1) as BusinessStepSection;
+    expect(section.items.map((item) => item.id)).toEqual(['connector-after', 'artifact-after']);
+    expect(section.systemActionIds).toEqual(['connector-after']);
+    expect(section.terminal).toMatchObject({ kind: 'wait', anchorMessageId: 'todo-wait' });
   });
 
   it.each([

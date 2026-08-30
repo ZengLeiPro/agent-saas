@@ -1,9 +1,16 @@
 import type { IPlatformConfig } from '@agent/shared';
 
-// 前端与 API 分域部署时（web 静态托管在 OSS、API 在 api.agent.kaiyan.net），
-// 构建时注入 VITE_API_BASE=https://api.agent.kaiyan.net。
-// 留空则保持同源相对路径：本地 dev 走 vite proxy，ECS 同域部署走 nginx 反代。
-const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '');
+// 同一份不可变 Web 制品先在 Staging 验证、再晋升到生产。制品始终绑定生产 API，
+// 仅 Staging 的精确公开域名在运行时改写到隔离 API；本地 dev 仍保持同源相对路径。
+const STAGING_API_BY_WEB_HOST: Readonly<Record<string, string>> = {
+  'staging-agent.kaiyan.net': 'https://staging-agent-api.kaiyan.net',
+};
+
+export function resolveApiBase(compiledBase: string | undefined, hostname: string): string {
+  return (STAGING_API_BY_WEB_HOST[hostname] ?? compiledBase ?? '').replace(/\/+$/, '');
+}
+
+const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE, window.location.hostname);
 let authEnabledPromise: Promise<boolean> | undefined;
 
 function isAuthEnabled(): Promise<boolean> {

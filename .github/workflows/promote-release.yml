@@ -116,11 +116,22 @@ jobs:
           deployment_id="$(printf '%s' "$staging_reason" | jq -r .stagingDeploymentId)"
           e2e_run_id="$(printf '%s' "$staging_reason" | jq -r .e2eRunId)"
           e2e_summary="$(printf '%s' "$staging_reason" | jq -c .e2eSummary)"
+          runtime_summary="$(printf '%s' "$staging_reason" | jq -c .runtimeSummary)"
           printf '%s\n' "$e2e_summary" > "$RUNNER_TEMP/staging-e2e-summary.json"
           node scripts/staging/summarize-e2e.mjs verify "$RUNNER_TEMP/staging-e2e-summary.json"
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$e2e_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
+          expected_runtime_summary="$(jq -nc \
+            --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
+            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg stagingRuntimeAssetsDigest "$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")" \
+            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}')"
+          test "$(printf '%s' "$runtime_summary" | jq -S .)" = \
+            "$(printf '%s' "$expected_runtime_summary" | jq -S .)"
           deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id")"
           test "$(printf '%s' "$deployment" | jq -r .environment)" = staging
           test "$(printf '%s' "$deployment" | jq -r .sha)" = "$RELEASE_SHA"
@@ -208,8 +219,19 @@ jobs:
       - name: Prefetch and verify all selected artifacts
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/selected"
+          mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
           fetch() { case "$1" in oss://*) aliyun --secure oss cp "$1" "$2" --region "$RELEASE_RECORD_OSS_REGION" ;; https://*) curl -fsSL --retry 3 "$1" -o "$2" ;; *) return 1 ;; esac; }
+          cp "$RUNNER_TEMP/release/artifact-index.json" "$RUNNER_TEMP/built/artifact-index.json"
+          built_base="$RELEASE_RECORD_OSS_URI/$RELEASE_ID"
+          while IFS= read -r artifact_path; do
+            [[ "$artifact_path" =~ ^[A-Za-z0-9._-]+$ ]]
+            fetch "$built_base/$artifact_path" "$RUNNER_TEMP/built/$artifact_path"
+          done < <(jq -r '.artifacts[] | .path' "$RUNNER_TEMP/built/artifact-index.json")
+          sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/built/artifact-index.json")"
+          [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
+          fetch "$built_base/$sbom_path" "$RUNNER_TEMP/built/$sbom_path"
+          node scripts/release/verify-artifact.mjs \
+            "$RUNNER_TEMP/built/artifact-index.json" "$RELEASE_SHA"
           for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
             set -- $pair
             uri="$(jq -r ".artifacts.$1.uri" "$RUNNER_TEMP/manifest.json")"
@@ -217,14 +239,6 @@ jobs:
             fetch "$uri" "$RUNNER_TEMP/selected/$2"
             test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
-          cp "$RUNNER_TEMP/release/artifact-index.json" "$RUNNER_TEMP/selected/artifact-index.json"
-          sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/selected/artifact-index.json")"
-          [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
-          artifact_base="$(jq -r .artifacts.serverBundle.uri "$RUNNER_TEMP/manifest.json")"
-          artifact_base="${artifact_base%/*}"
-          fetch "$artifact_base/$sbom_path" "$RUNNER_TEMP/selected/$sbom_path"
-          node scripts/release/verify-artifact.mjs \
-            "$RUNNER_TEMP/selected/artifact-index.json" "$RELEASE_SHA"
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"

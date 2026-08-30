@@ -189,8 +189,8 @@ jobs:
       - name: Build immutable artifacts once
         if: env.REUSE_RC != 'true'
         env:
-          VITE_API_BASE: ${{ env.STAGING_API_URL }}
-          VITE_WEB_ORIGIN: ${{ env.STAGING_WEB_URL }}
+          VITE_API_BASE: https://api.agent.kaiyan.net
+          VITE_WEB_ORIGIN: https://agent.kaiyan.net
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release"
@@ -318,6 +318,22 @@ jobs:
             fetch "$uri" "$RUNNER_TEMP/selected/$2"
             test "sha256:$(sha256sum "$RUNNER_TEMP/selected/$2" | cut -d' ' -f1)" = "$digest"
           done
+          runtime_path="$(jq -r .artifacts.stagingRuntimeAssets.path "$RUNNER_TEMP/release/artifact-index.json")"
+          runtime_digest="$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")"
+          test "$runtime_path" = staging-runtime-assets.tgz
+          cp "$RUNNER_TEMP/release/$runtime_path" "$RUNNER_TEMP/selected/staging-runtime-assets.tgz"
+          test "sha256:$(sha256sum "$RUNNER_TEMP/selected/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
+            "$runtime_digest"
+          jq -n \
+            --arg releaseId "$STAGING_RELEASE_ID" \
+            --arg manifestDigest "$MANIFEST_DIGEST" \
+            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg stagingRuntimeAssetsDigest "$runtime_digest" \
+            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}' \
+            > "$RUNNER_TEMP/staging-runtime-summary.json"
 
       - name: Create GitHub Staging Deployment
         env:
@@ -388,7 +404,7 @@ jobs:
             daemon-packaging/systemd/agent-saas-acs-orchestrator-staging.service.template \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
+            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
 
       - name: Publish exact Staging Web artifact last
         run: |
@@ -512,8 +528,9 @@ jobs:
           if [ "$current" = built ]; then
             staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg e2eRunId "$GITHUB_RUN_ID" \
               --arg manifestDigest "$MANIFEST_DIGEST" \
+              --argjson runtimeSummary "$(cat "$RUNNER_TEMP/staging-runtime-summary.json")" \
               --argjson e2eSummary "$(cat "$RUNNER_TEMP/staging-e2e-summary.json")" \
-              '{stagingDeploymentId:$deploymentId,e2eRunId:$e2eRunId,manifestDigest:$manifestDigest,e2eSummary:$e2eSummary}')"
+              '{stagingDeploymentId:$deploymentId,e2eRunId:$e2eRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,e2eSummary:$e2eSummary}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
               --state staging_deployed --operation "staging:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -566,7 +583,8 @@ jobs:
         run: |
           set -euo pipefail
           for evidence in manifest.json isolation-summary.json staging-e2e-summary.json \
-            staging-fixture-reset-before.json staging-fixture-reset-after.json; do
+            staging-runtime-summary.json staging-fixture-reset-before.json \
+            staging-fixture-reset-after.json; do
             test -f "$RUNNER_TEMP/$evidence"
           done
 
@@ -583,5 +601,6 @@ jobs:
             ${{ runner.temp }}/manifest.json
             ${{ runner.temp }}/isolation-summary.json
             ${{ runner.temp }}/staging-e2e-summary.json
+            ${{ runner.temp }}/staging-runtime-summary.json
             ${{ runner.temp }}/staging-fixture-reset-before.json
             ${{ runner.temp }}/staging-fixture-reset-after.json

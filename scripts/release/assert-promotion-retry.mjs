@@ -8,7 +8,11 @@ export function assertPromotionRetryable(entries) {
     throw new Error('Release attestation history is empty');
   const latest = entries.at(-1);
   if (latest?.state === 'verified') return { mode: 'fresh', latestState: 'verified' };
-  if (latest?.state !== 'needs_human' && latest?.state !== 'failed_before_change')
+  if (
+    latest?.state !== 'approved' &&
+    latest?.state !== 'needs_human' &&
+    latest?.state !== 'failed_before_change'
+  )
     throw new Error(`Release cannot be approved from ${String(latest?.state ?? 'unknown')}`);
 
   const verifiedIndex = entries.findLastIndex((entry) => entry?.state === 'verified');

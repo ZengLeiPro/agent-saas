@@ -26,6 +26,12 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
       previousApprovalCount: 1,
     },
   );
+  assert.deepEqual(assertPromotionRetryable([entry('verified', 'verified:1'), entry('approved')]), {
+    mode: 'retry_before_change',
+    latestState: 'approved',
+    verifiedOperationKey: 'verified:1',
+    previousApprovalCount: 1,
+  });
 });
 
 test('rejects retry after production mutation may have started', () => {

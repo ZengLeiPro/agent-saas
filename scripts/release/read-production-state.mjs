@@ -175,13 +175,16 @@ export function validateConfigIdentitySummary(value) {
     ? configIdentitySide(summary.observed, 'configIdentity.observed', { observed: true })
     : undefined;
   assertConfigIdentityRelationship(summary, expected, observed);
+  if (typeof summary.releaseId !== 'string' || !summary.releaseId.trim()) {
+    throw new Error('Production API config identity requires a non-empty releaseId');
+  }
   return {
     schemaVersion: 1,
     status: summary.status,
     ...(summary.reason ? { reason: summary.reason } : {}),
     ...(expected ? { expected } : {}),
     ...(observed ? { observed } : {}),
-    ...(summary.releaseId ? { releaseId: summary.releaseId } : {}),
+    releaseId: summary.releaseId,
     ...(summary.firstObservedAt ? { firstObservedAt: summary.firstObservedAt } : {}),
     ...(summary.lastObservedAt ? { lastObservedAt: summary.lastObservedAt } : {}),
     ...(summary.lastChangedAt ? { lastChangedAt: summary.lastChangedAt } : {}),
@@ -213,7 +216,7 @@ export function validateProductionObservations({ runtime, api, web, acs }) {
     throw new Error('Production Web or ACS identity is not attested');
   if (acsRelease.namespace !== 'agent-saas-coding')
     throw new Error('Production ACS namespace is not authoritative');
-  if (apiConfigIdentity?.releaseId && apiConfigIdentity.releaseId !== apiRelease.releaseId) {
+  if (apiConfigIdentity && apiConfigIdentity.releaseId !== apiRelease.releaseId) {
     throw new Error('Production API config identity releaseId disagrees with API release identity');
   }
   if (identity.configIdentity && apiConfigIdentity?.expected) {

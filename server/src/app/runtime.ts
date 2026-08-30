@@ -188,6 +188,7 @@ import {
   createWebToolsRuntimeUpdatePreparer,
   createWebToolsRuntimeUpdater,
 } from './webToolsRuntimeUpdate.js';
+import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js';
 import {
   createRuntimeRunCapacityResolver,
   createRuntimeSchedulerCapacityController,
@@ -197,7 +198,10 @@ import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.j
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner } from '../dws/authFlow.js';
 import { createDwsBusinessToolProviders } from '../dws/businessToolProvider.js';
-import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRuntime.js';
+import {
+  createAgentDwsRuntime,
+  type AgentDwsRuntimeBundle,
+} from './agentDwsRuntime.js';
 import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
@@ -1554,6 +1558,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 模型解析器：如果配置了 models，则绑定到 RawRuntime / WebChannel / Cron。
   // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
+  let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
@@ -1564,7 +1569,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
     onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
     prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
-    onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
+    prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
     resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
       if (!value) throw new Error('models 未配置');
@@ -1816,7 +1821,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
-  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
+  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger }); prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault });
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };
@@ -1824,11 +1829,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     config.imageGenTools = imageGenTools; const resolved = await resolveImageGenToolsConfig(imageGenTools, secretVault);
     if (resolved) rawRuntimeConfig.imageGenTools = resolved; else delete rawRuntimeConfig.imageGenTools;
   };
-  const validateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => { await resolveSttRuntimeConfig(stt, secretVault); };
-  const updateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => {
-    config.stt = stt; const resolved = await resolveSttRuntimeConfig(stt, secretVault);
-    if (resolved.audioTranscribeConfig) rawRuntimeConfig.audioTranscribeTools = resolved.audioTranscribeConfig;
-    else delete rawRuntimeConfig.audioTranscribeTools;
+  const validateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => { await resolveSttRuntimeConfig(stt, secretVault); }; const updateAudioTranscribeConfig = async (stt: AppConfig['stt']): Promise<void> => {
+    const commit = await prepareSttRuntimeUpdate(stt); commit();
+    if (stt) config.stt = stt; else delete config.stt;
   };
   const updateMemoryIndexConfig = async (
     memoryIndex: NonNullable<NonNullable<AppConfig['memory']>['index']> | undefined,

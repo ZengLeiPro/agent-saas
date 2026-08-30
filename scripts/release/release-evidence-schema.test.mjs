@@ -54,6 +54,22 @@ const invalidMutations = [
     (value) => (value.configIdentity = { schemaVersion: 1, status: 'consistent' }),
   ],
   [
+    'config identity without release binding',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'consistent',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+      }),
+  ],
+  [
     'impossible consistent config identity',
     (value) =>
       (value.configIdentity = {

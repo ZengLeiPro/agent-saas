@@ -41,7 +41,7 @@ const configIdentitySummarySchema = z
       })
       .strict()
       .optional(),
-    releaseId: z.string().min(1).optional(),
+    releaseId: z.string().min(1),
     firstObservedAt: z.string().min(1).optional(),
     lastObservedAt: z.string().min(1).optional(),
     lastChangedAt: z.string().min(1).optional(),

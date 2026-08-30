@@ -19,6 +19,7 @@ import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import { createSharedConfigRefresher, type SharedConfigRefresher } from './sharedConfigRefresher.js';
 import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
+import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 
 export type ModelResolver = (
   ref: string,
@@ -52,8 +53,10 @@ export function createModelResolvers(params: {
   prepareWebToolsUpdate?: (
     next: AppConfig['webTools'],
   ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
-  /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
-  onSttUpdated?: (next: AppConfig['stt']) => void;
+  /** STT 变化后准备无副作用的执行侧提交；配置候选确认后再原子应用。 */
+  prepareSttUpdate?: (
+    next: AppConfig['stt'],
+  ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
   initialRuntimeModels?: NonNullable<AppConfig['models']>;
   resolveRuntimeModels?: (
     next: NonNullable<AppConfig['models']>,
@@ -86,7 +89,7 @@ export function createModelResolvers(params: {
     ...(params.prepareWebToolsUpdate
       ? { prepareWebToolsUpdate: params.prepareWebToolsUpdate }
       : {}),
-    ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
+    ...(params.prepareSttUpdate ? { prepareSttUpdate: params.prepareSttUpdate } : {}),
     onModelsUpdated: (next) => {
       void updateModelsConfig(next).catch((error) => logger?.warn(
         `[SharedConfig] 模型 SecretRef 解析失败，继续使用上一份运行时模型快照：${error instanceof Error ? error.message : String(error)}`,

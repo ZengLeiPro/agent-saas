@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../types/index.js';
 import { parseAppConfig } from '../app/config.js';
-import { InMemorySecretVault } from '../security/secretVault.js';
+import { InMemorySecretVault, type SecretVault, type SecretRef } from '../security/secretVault.js';
 import { createConfigIdentityRuntime } from './configIdentityRuntime.js';
 import {
   calculateConfigIdentityDigest,
@@ -251,6 +251,55 @@ describe('createConfigIdentityRuntime', () => {
     });
     await runtime.refresh('rotation');
     expect(runtime.getSummary().status).toBe('drifted');
+  });
+
+  it('较慢的周期重算不会覆盖较新的热更新 observed identity', async () => {
+    let resolveSlow!: (value: SecretRef) => void;
+    const slowMetadata = new Promise<SecretRef>((resolve) => { resolveSlow = resolve; });
+    const metadata = (id: string, version: number): SecretRef => ({
+      id,
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version,
+      metadata: {},
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    });
+    const vault = {
+      inspectRef: vi.fn((id: string) => id === 'slow-ref'
+        ? slowMetadata
+        : Promise.resolve(metadata(id, 2))),
+    } as unknown as SecretVault;
+    const config = baseConfig(PG);
+    let clock = 0;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: vault,
+      environment: 'test',
+      now: () => new Date(clock),
+    });
+    await runtime.initialize();
+
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'slow', baseUrl: 'https://slow.internal', authTokenRef: 'slow-ref' }],
+      },
+    }).tenantRemoteHands;
+    clock = 6_000;
+    runtime.getSummary();
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'fast', baseUrl: 'https://fast.internal', authTokenRef: 'fast-ref' }],
+      },
+    }).tenantRemoteHands;
+    await runtime.refresh('fast-candidate');
+    const currentDigest = digestOf(config);
+    resolveSlow(metadata('slow-ref', 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runtime.getSummary().observed?.digest).toBe(currentDigest);
   });
 
   it('getSummary 摘要不含任何 secret 明文或 ref id', async () => {

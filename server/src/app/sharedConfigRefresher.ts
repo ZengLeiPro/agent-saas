@@ -20,6 +20,7 @@ import { getAppConfigPath, loadAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import { applyModelsHotUpdate, type ModelsHotUpdateTarget } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
+import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 
 /** 同一文件两次 stat 的最小间隔，避免 resolver 热路径打满 IO。 */
 const DEFAULT_MIN_STAT_INTERVAL_MS = 1000;
@@ -65,10 +66,10 @@ export function createSharedConfigRefresher(params: {
   prepareWebToolsUpdate?: (
     next: AppConfig['webTools'],
   ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
-  /**
-   * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
-   */
-  onSttUpdated?: (next: AppConfig['stt']) => void;
+  /** STT 两阶段更新：SecretVault 解析成功后返回无副作用的执行侧 commit。 */
+  prepareSttUpdate?: (
+    next: AppConfig['stt'],
+  ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
   /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
   onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
   /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
@@ -88,7 +89,7 @@ export function createSharedConfigRefresher(params: {
     target,
     onSystemPromptOverridesUpdated,
     prepareWebToolsUpdate,
-    onSttUpdated,
+    prepareSttUpdate,
     onModelsUpdated,
     onConfigReloaded,
     validateConfigReload,
@@ -120,6 +121,7 @@ export function createSharedConfigRefresher(params: {
     nextConfig: AppConfig,
     stamp: FileStamp | undefined,
     commitWebToolsUpdate?: WebToolsRuntimeUpdateCommit,
+    commitSttUpdate?: SttRuntimeUpdateCommit,
   ): void {
     const webToolsChanged = JSON.stringify(config.webTools ?? null)
       !== JSON.stringify(nextConfig.webTools ?? null);
@@ -166,17 +168,6 @@ export function createSharedConfigRefresher(params: {
       logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
     }
 
-    const sttChanged = JSON.stringify(config.stt ?? null)
-      !== JSON.stringify(nextConfig.stt ?? null);
-    if (sttChanged) {
-      if (nextConfig.stt) config.stt = nextConfig.stt;
-      else delete config.stt;
-      onSttUpdated?.(nextConfig.stt);
-      logger?.info(
-        `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
-      );
-    }
-
     const codexSubscriptionChanged = JSON.stringify(config.codexSubscription ?? null)
       !== JSON.stringify(nextConfig.codexSubscription ?? null);
     if (codexSubscriptionChanged) {
@@ -191,6 +182,17 @@ export function createSharedConfigRefresher(params: {
         `[SharedConfig] 已从磁盘热更新 Codex 订阅配置：enabled=${nextConfig.codexSubscription?.enabled === true} / `
           + `websocketEnabled=${nextConfig.codexSubscription?.websocketEnabled === true} / `
           + `credentialCount=${new Set(refs).size}`,
+      );
+    }
+
+    const sttChanged = JSON.stringify(config.stt ?? null)
+      !== JSON.stringify(nextConfig.stt ?? null);
+    if (sttChanged) {
+      commitSttUpdate?.();
+      if (nextConfig.stt) config.stt = nextConfig.stt;
+      else delete config.stt;
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
       );
     }
 
@@ -227,6 +229,7 @@ export function createSharedConfigRefresher(params: {
     let nextConfig: AppConfig;
     let validation: void | Promise<void>;
     let webToolsPreparation: WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit> | undefined;
+    let sttPreparation: SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit> | undefined;
     try {
       nextConfig = loadAppConfig(processCwd);
       validation = validateConfigReload?.(nextConfig);
@@ -235,6 +238,9 @@ export function createSharedConfigRefresher(params: {
       webToolsPreparation = webToolsChanged
         ? prepareWebToolsUpdate?.(nextConfig.webTools)
         : undefined;
+      const sttChanged = JSON.stringify(config.stt ?? null)
+        !== JSON.stringify(nextConfig.stt ?? null);
+      sttPreparation = sttChanged ? prepareSttUpdate?.(nextConfig.stt) : undefined;
     } catch (error) {
       warnConfigReload(error);
       return;
@@ -243,13 +249,19 @@ export function createSharedConfigRefresher(params: {
     const validationAsync = validation && typeof validation.then === 'function';
     const webToolsPreparationAsync = webToolsPreparation
       && typeof (webToolsPreparation as Promise<WebToolsRuntimeUpdateCommit>).then === 'function';
-    if (validationAsync || webToolsPreparationAsync) {
+    const sttPreparationAsync = sttPreparation
+      && typeof (sttPreparation as Promise<SttRuntimeUpdateCommit>).then === 'function';
+    if (validationAsync || webToolsPreparationAsync || sttPreparationAsync) {
       pendingConfigStamp = stamp;
-      void Promise.all([Promise.resolve(validation), Promise.resolve(webToolsPreparation)])
-        .then(([, commitWebToolsUpdate]) => {
+      void Promise.all([
+        Promise.resolve(validation),
+        Promise.resolve(webToolsPreparation),
+        Promise.resolve(sttPreparation),
+      ])
+        .then(([, commitWebToolsUpdate, commitSttUpdate]) => {
           // 校验/凭据解析期间文件若再次变化，丢弃无副作用候选并读取最新版。
           if (!sameStamp(readStamp(configPath), stamp)) return;
-          applyConfigFile(nextConfig, stamp, commitWebToolsUpdate);
+          applyConfigFile(nextConfig, stamp, commitWebToolsUpdate, commitSttUpdate);
         })
         .catch(warnConfigReload)
         .finally(() => {
@@ -261,6 +273,7 @@ export function createSharedConfigRefresher(params: {
       nextConfig,
       stamp,
       webToolsPreparation as WebToolsRuntimeUpdateCommit | undefined,
+      sttPreparation as SttRuntimeUpdateCommit | undefined,
     );
   }
 

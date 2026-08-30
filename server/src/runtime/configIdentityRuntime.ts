@@ -62,6 +62,7 @@ export function createConfigIdentityRuntime(
   let lastObservedAt: string | undefined;
   let lastChangedAt: string | undefined;
   let lastComputedAtMs = 0;
+  let computeGeneration = 0;
 
   function applyObservation(next: ConfigIdentityObservation): void {
     const previous = observation;
@@ -116,15 +117,22 @@ export function createConfigIdentityRuntime(
 
   async function initialize(): Promise<void> {
     if (environment === 'production') assertProductionManagedCredentialSafety(config);
+    const generation = ++computeGeneration;
     const next = await compute();
     assertProductionObservation(next);
+    if (generation !== computeGeneration) return;
     applyObservation(next);
     lastComputedAtMs = now().getTime();
     logger?.info(`[ConfigIdentity] observed identity computed: ${next.digest.slice(0, 19)}…`);
   }
 
   async function refresh(reason: string): Promise<void> {
+    const generation = ++computeGeneration;
     const next = await compute();
+    if (generation !== computeGeneration) {
+      logger?.info(`[ConfigIdentity] discarded stale recompute after ${reason}`);
+      return;
+    }
     applyObservation(next);
     lastComputedAtMs = now().getTime();
     logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
@@ -188,8 +196,11 @@ export function createConfigIdentityRuntime(
       // 轻量节流：summary 读取最多每 5s 触发一次全量重算；显式热更新通知不受限。
       if (currentMs - lastComputedAtMs >= SUMMARY_RECOMPUTE_MIN_INTERVAL_MS) {
         lastComputedAtMs = currentMs;
+        const generation = ++computeGeneration;
         void compute()
-          .then((next) => applyObservation(next))
+          .then((next) => {
+            if (generation === computeGeneration) applyObservation(next);
+          })
           .catch((error) => {
             logger?.warn(
               `[ConfigIdentity] periodic recompute failed: ${

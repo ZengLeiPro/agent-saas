@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 function read(path) {
   return readFileSync(path, 'utf8').trim();
@@ -112,6 +113,44 @@ function validateTrustedExpectedConfigIdentity(value) {
   };
 }
 
+function readActiveReleaseManifest(activeReleaseTarget, options) {
+  if (options.activeReleaseManifest) return options.activeReleaseManifest;
+  const readManifest = options.readActiveReleaseManifest ?? readFileSync;
+  try {
+    const value = readManifest(join(activeReleaseTarget, 'manifest.json'), 'utf8');
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    throw new Error('Kept API active release manifest is unavailable or malformed');
+  }
+}
+
+function assertKeptApiReleaseBinding(values, previousIdentity, activeReleaseTarget, options) {
+  const activeManifest = readActiveReleaseManifest(activeReleaseTarget, options);
+  const activeReleaseId = values.AGENT_SAAS_RELEASE_ID;
+  if (!activeReleaseId || activeReleaseId !== activeManifest?.releaseId) {
+    throw new Error('Kept API release env releaseId disagrees with active release manifest');
+  }
+
+  const normalizedTarget = activeReleaseTarget.replace(/\/+$/u, '');
+  const targetName = basename(normalizedTarget);
+  const releaseRoot = options.activeReleasesRoot ?? '/opt/agent-saas-app/releases';
+  const targetDigest = dirname(normalizedTarget) === releaseRoot && /^[a-f0-9]{64}$/u.test(targetName)
+    ? `sha256:${targetName}`
+    : undefined;
+  const envDigest = values.AGENT_SAAS_SERVER_DIGEST;
+  const manifestDigest = activeManifest?.components?.api?.artifactDigest;
+  const trustedDigest = previousIdentity?.components?.api?.artifactDigest;
+  if (
+    !targetDigest ||
+    !/^sha256:[a-f0-9]{64}$/u.test(envDigest ?? '') ||
+    envDigest !== targetDigest ||
+    envDigest !== manifestDigest ||
+    envDigest !== trustedDigest
+  ) {
+    throw new Error('Kept API server digest is not bound to the active release target');
+  }
+}
+
 function sameExpectedConfigIdentity(left, right) {
   return left.schemaVersion === right.schemaVersion &&
     left.digest === right.digest &&
@@ -143,19 +182,17 @@ export function resolveExpectedConfigIdentityForProduction(
   }
 
   const values = readReleaseEnvironment(color, options);
-  const active = values ? parseExpectedConfigIdentity(values) : undefined;
+  if (!values) throw new Error('Kept API active release environment is unavailable');
+  const activeReleaseTarget = options.activeReleaseTarget
+    ?? previousIdentity?.topology?.api?.releaseTarget;
+  if (typeof activeReleaseTarget !== 'string' || !activeReleaseTarget) {
+    throw new Error('Kept API active release target is unavailable');
+  }
+  assertKeptApiReleaseBinding(values, previousIdentity, activeReleaseTarget, options);
+  const active = parseExpectedConfigIdentity(values);
   if (!previous && !active) return undefined;
   if (!previous || !active) {
     throw new Error('Kept API expected configIdentity is missing from one trusted source');
-  }
-  const activeReleaseId = values?.AGENT_SAAS_RELEASE_ID;
-  const activeReleaseTarget = options.activeReleaseTarget
-    ?? previousIdentity?.topology?.api?.releaseTarget;
-  const targetReleaseId = typeof activeReleaseTarget === 'string'
-    ? activeReleaseTarget.replace(/\/+$/u, '').split('/').at(-1)
-    : undefined;
-  if (!activeReleaseId || activeReleaseId !== targetReleaseId) {
-    throw new Error('Kept API release env is not bound to the active release target');
   }
   if (!sameExpectedConfigIdentity(previous, active)) {
     throw new Error('Kept API expected configIdentity disagrees across trusted sources');

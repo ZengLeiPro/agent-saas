@@ -25,6 +25,7 @@ import { validateRuntimeIdentity } from './read-runtime-identity.mjs';
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
 const CONFIG_DIGEST = `sha256:${'d'.repeat(64)}`;
+const API_RELEASE_TARGET = `/opt/agent-saas-app/releases/${DIGEST.slice('sha256:'.length)}`;
 
 function baseIdentity() {
   return {
@@ -100,6 +101,7 @@ function baseObservations() {
 const validConfigIdentity = {
   schemaVersion: 1,
   status: 'consistent',
+  releaseId: 'rc-1',
   expected: { schemaVersion: 1, digest: CONFIG_DIGEST },
   observed: {
     schemaVersion: 1,
@@ -117,6 +119,16 @@ test('read-production-state passes structured configIdentity through into state'
   assert.equal(state.configIdentity.status, 'consistent');
   assert.equal(state.configIdentity.expected.digest, CONFIG_DIGEST);
   assert.ok(state.digest.startsWith('sha256:'));
+});
+
+test('read-production-state rejects configIdentity without releaseId', () => {
+  const observations = baseObservations();
+  const { releaseId: _releaseId, ...withoutReleaseId } = validConfigIdentity;
+  observations.api.configIdentity = withoutReleaseId;
+  assert.throws(
+    () => validateProductionObservations(observations),
+    /requires a non-empty releaseId/,
+  );
 });
 
 test('read-production-state keeps working without configIdentity (legacy API)', () => {
@@ -275,9 +287,14 @@ test('partial promotion with API keep inherits and cross-checks trusted expected
       },
     },
   };
-  previous.topology.api.releaseTarget = '/opt/agent-saas-app/releases/rc-api-active';
+  previous.topology.api.releaseTarget = API_RELEASE_TARGET;
+  const activeReleaseManifest = {
+    releaseId: 'rc-api-active',
+    components: { api: { artifactDigest: DIGEST } },
+  };
   const activeEnv = [
     'AGENT_SAAS_RELEASE_ID=rc-api-active',
+    `AGENT_SAAS_SERVER_DIGEST=${DIGEST}`,
     `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${CONFIG_DIGEST}`,
     'AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=1',
     `AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST=sha256:${'e'.repeat(64)}`,
@@ -285,13 +302,47 @@ test('partial promotion with API keep inherits and cross-checks trusted expected
   ].join('\n');
   const expected = resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
     readFile: () => activeEnv,
+    activeReleaseManifest,
   });
   assert.throws(
     () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
       readFile: () => activeEnv,
-      activeReleaseTarget: '/opt/agent-saas-app/releases/different-release',
+      activeReleaseManifest,
+      activeReleaseTarget: `/opt/agent-saas-app/releases/${'f'.repeat(64)}`,
     }),
     /not bound to the active release target/,
+  );
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv,
+      activeReleaseManifest,
+      activeReleaseTarget: `/opt/agent-saas-app/not-releases/${DIGEST.slice('sha256:'.length)}`,
+    }),
+    /not bound to the active release target/,
+  );
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv.replace('rc-api-active', 'rc-stale-env'),
+      activeReleaseManifest,
+    }),
+    /releaseId disagrees with active release manifest/,
+  );
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
+      activeReleaseManifest,
+    }),
+    /server digest is not bound to the active release target/,
+  );
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv,
+      activeReleaseManifest: {
+        ...activeReleaseManifest,
+        components: { api: { artifactDigest: `sha256:${'f'.repeat(64)}` } },
+      },
+    }),
+    /server digest is not bound to the active release target/,
   );
   const identity = buildProductionIdentity(
     manifest,
@@ -305,14 +356,61 @@ test('partial promotion with API keep inherits and cross-checks trusted expected
   assert.throws(
     () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
       readFile: () => activeEnv.replace(CONFIG_DIGEST, `sha256:${'f'.repeat(64)}`),
+      activeReleaseManifest,
     }),
     /disagrees across trusted sources/,
   );
   assert.throws(
     () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => 'AGENT_SAAS_RELEASE_ID=rc-api-active\n',
+      readFile: () => [
+        'AGENT_SAAS_RELEASE_ID=rc-api-active',
+        `AGENT_SAAS_SERVER_DIGEST=${DIGEST}`,
+        '',
+      ].join('\n'),
+      activeReleaseManifest,
     }),
     /missing from one trusted source/,
+  );
+});
+
+test('legacy API keep still verifies the content-addressed active release binding', () => {
+  const previous = baseIdentity();
+  previous.topology.api.releaseTarget = API_RELEASE_TARGET;
+  const manifest = {
+    releaseId: 'rc-web-only',
+    digest: DIGEST,
+    components: {
+      web: { sourceSha: SHA, artifactDigest: DIGEST, action: 'deploy' },
+      api: { sourceSha: SHA, artifactDigest: DIGEST, action: 'keep' },
+      runtimeWorker: { sourceSha: SHA, artifactDigest: DIGEST, action: 'keep' },
+      acs: {
+        sourceSha: SHA,
+        orchestratorArtifactDigest: DIGEST,
+        sandboxImageDigest: DIGEST,
+        action: 'keep',
+      },
+    },
+  };
+  const activeReleaseManifest = {
+    releaseId: 'rc-api-active',
+    components: { api: { artifactDigest: DIGEST } },
+  };
+  const activeEnv = [
+    'AGENT_SAAS_RELEASE_ID=rc-api-active',
+    `AGENT_SAAS_SERVER_DIGEST=${DIGEST}`,
+    '',
+  ].join('\n');
+
+  assert.equal(resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+    readFile: () => activeEnv,
+    activeReleaseManifest,
+  }), undefined);
+  assert.throws(
+    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
+      activeReleaseManifest,
+    }),
+    /server digest is not bound to the active release target/,
   );
 });
 

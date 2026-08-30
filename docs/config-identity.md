@@ -117,10 +117,11 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 `configIdentityRuntime.notifyConfigChanged('config_file_hot_reload')` 异步重算：
 
 - 重算成功：发布新 observed identity；digest 或 credentialVersionDigest 变化
-  时更新 `lastChangedAt` 并记录日志。
+  时更新 `lastChangedAt` 并记录日志。显式热更新与周期重算共享单调 generation，
+  较慢的旧计算即使晚完成也只会被丢弃，不能覆盖更新快照。
 - Production 在应用新配置前先跑 inline-secret 安全门禁，并异步解析候选配置中
   所有受管 ref 的 version；任一校验失败则整次重载保留旧内存配置。校验期间热路径
-  继续使用旧配置。webTools 额外使用 prepare/commit 两阶段：SecretVault 明文解析只
+  继续使用旧配置。webTools 与 STT 都使用 prepare/commit 两阶段：SecretVault 明文解析只
   产生无副作用 commit，候选文件仍为最新版且前置回调全部成功后，执行侧配置、AppConfig
   与 observed identity 才在同一发布点更新。身份重算若失败则保留上一份 observed identity
   并告警，不发布半成品摘要。
@@ -139,11 +140,14 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
    单元注入进程环境。
 3. `readRuntimeIdentity` 读取 expected；`write-production-identity.mjs` 把
    expected 固化进 trusted runtime identity。Web-only / ACS-only partial promotion
-   在 API keep 时从 active release env 与上一份 trusted identity 双源交叉校验后继承，
-   任一来源缺失、冲突或未绑定 active release target 都 fail closed（`configIdentity` 字段；legacy
-   `configFingerprint` 语义不变）；`read-production-state.mjs` 把 API
-   `/api/healthz/ready` 返回的 observed 摘要透传进 Production State 与
-   Release Evidence（`configIdentity` 字段，显式版本化新增）。
+   在 API keep 时从 active release env 与上一份 trusted identity 双源交叉校验后继承。
+   release env 的 `AGENT_SAAS_SERVER_DIGEST` 必须同时绑定 content-addressed target basename、
+   active target 内不可变 Manifest 的 API artifact digest 与上一份 trusted API digest；
+   `AGENT_SAAS_RELEASE_ID` 必须绑定同一 Manifest 的 releaseId。任一来源缺失或冲突都 fail
+   closed（`configIdentity` 字段；legacy `configFingerprint` 语义不变）。
+   `read-production-state.mjs` 把 API `/api/healthz/ready` 返回的 observed 摘要透传进 Production
+   State 与 Release Evidence；legacy API 可以完全不提供 `configIdentity`，但一旦提供该对象，
+   非空 `releaseId` 必须存在并等于 `api.release.releaseId`，Evidence schema 同样强制此绑定。
 4. `read-runtime-identity.mjs` 的校验器对 `configIdentity` 做结构校验
    （存在时必须合法），旧 identity 文件（无该字段）保持兼容。
 
@@ -171,7 +175,8 @@ raw config 的任何入口。drifted / unverifiable 同时进入待关注队列�
 - `server/src/release/configIdentityCli.ts` — 部署期 CLI
 - `server/src/runtime/configIdentityRuntime.ts` — observed 运行时
 - `server/src/release/runtimeIdentity.ts` — expected env 绑定 + staging 断言
-- `server/src/app/sharedConfigRefresher.ts` — `onConfigReloaded` 回调
+- `server/src/app/sharedConfigRefresher.ts` — 配置候选两阶段提交 + `onConfigReloaded` 回调
+- `server/src/app/sttRuntimeUpdate.ts` — STT SecretVault 无副作用 prepare / 同步 commit
 - `server/src/routes/platformObservability.ts` — snapshot `configIdentity` + attention
 - `server/src/routes/health.ts` — ready 载荷 `configIdentity`
 - `scripts/release/deploy-production-release.sh` / `deploy-staging-release.sh` — 部署期绑定

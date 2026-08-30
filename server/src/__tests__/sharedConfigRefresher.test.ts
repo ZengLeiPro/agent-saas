@@ -483,7 +483,7 @@ describe('createSharedConfigRefresher', () => {
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onSttUpdated: (next) => {
+      prepareSttUpdate: (next) => () => {
         seen.push(`${next?.enabled}:${next?.pricing?.creditsPerCall}`);
       },
       now: () => clock,
@@ -639,7 +639,7 @@ describe('createSharedConfigRefresher', () => {
     expect(warns.some((message) => message.includes('SecretVault resolve failed'))).toBe(true);
   });
 
-  it('TASK-318：其他配置回调失败时不提交已准备的 webTools 执行配置', () => {
+  it('TASK-318：其他同步回调失败时不提交已准备的 webTools/STT 配置', () => {
     const stt = {
       enabled: false,
       apiKeyRef: 'vault-dashscope',
@@ -648,41 +648,55 @@ describe('createSharedConfigRefresher', () => {
       model: 'fun-asr',
       pricing: { creditsPerCall: 0, costYuanPerCall: 0.08 },
     };
-    const writeCandidate = (provider: string, enabled: boolean) => writeFileSync(
+    const writeCandidate = (provider: string, enabled: boolean, prompt: string) => writeFileSync(
       join(dir, 'config.json'),
       JSON.stringify({
         agent: { cwd: '.' },
         server: { port: 3200 },
         models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+        systemPrompts: { 'utility.title': prompt },
         webTools: { enabled: true, search: { provider, apiKeyRef: `ref-${provider}` } },
         stt: { ...stt, enabled },
       }),
     );
-    writeCandidate('tencent_wsa', false);
+    writeCandidate('tencent_wsa', false, '旧提示语');
     const config = {
       models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      systemPrompts: { 'utility.title': '旧提示语' },
       webTools: { enabled: true, search: { provider: 'tencent_wsa', apiKeyRef: 'ref-tencent_wsa' } },
       stt,
     } as unknown as AppConfig;
     let runtimeProvider = 'tencent_wsa';
+    let runtimeSttEnabled = false;
+    let reloadCalls = 0;
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      onSystemPromptOverridesUpdated: () => { throw new Error('prompt registry update failed'); },
       prepareWebToolsUpdate: (next) => () => {
         runtimeProvider = next?.search?.provider ?? 'none';
       },
-      onSttUpdated: () => { throw new Error('STT runtime update failed'); },
+      prepareSttUpdate: (next) => () => {
+        runtimeSttEnabled = next?.enabled === true;
+      },
+      onConfigReloaded: () => { reloadCalls += 1; },
       now: () => clock,
     });
+    const initialStamp = refresher.getAppliedStamps().config;
 
-    writeCandidate('zhipu', true);
+    writeCandidate('zhipu', true, '新提示语');
     clock += 5_000;
-    expect(() => refresher.refreshIfChanged()).toThrow('STT runtime update failed');
+    expect(() => refresher.refreshIfChanged()).toThrow('prompt registry update failed');
     expect(config.webTools?.search?.provider).toBe('tencent_wsa');
+    expect(config.stt?.enabled).toBe(false);
     expect(runtimeProvider).toBe('tencent_wsa');
+    expect(runtimeSttEnabled).toBe(false);
+    expect(refresher.getAppliedStamps().config).toEqual(initialStamp);
+    expect(reloadCalls).toBe(0);
   });
+
 
   it('TASK-318：异步 ref version 门禁失败时也在应用前 fail closed', async () => {
     writeConfig(dir, [BASE_GROUP]);

@@ -12,12 +12,15 @@ const DIGEST = `sha256:${'b'.repeat(64)}`;
 const stagingRoot = mkdtempSync(join(tmpdir(), 'agent-saas-staging-'));
 const workspace = join(stagingRoot, 'workspace');
 const processCwd = join(stagingRoot, 'app', 'server');
+const stagingReleaseRoot = join(stagingRoot, 'releases');
+const releaseSharedDir = join(stagingReleaseRoot, 'rc-20260825-01', 'server', 'workspace-shared');
 const vaultFile = join(stagingRoot, 'vault', 'secrets.enc');
 const JWT_SECRET = 'staging-jwt-secret-that-is-at-least-32-characters';
 mkdirSync(workspace);
 mkdirSync(join(workspace, '.shared'));
 mkdirSync(join(workspace, 'uploads'));
 mkdirSync(join(processCwd, 'data'), { recursive: true });
+mkdirSync(releaseSharedDir, { recursive: true });
 mkdirSync(join(stagingRoot, 'vault'));
 writeFileSync(vaultFile, 'encrypted');
 afterAll(() => rmSync(stagingRoot, { recursive: true, force: true }));
@@ -31,6 +34,7 @@ const stagingEnv = {
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: DIGEST,
   AGENT_SAAS_ACS_SANDBOX_IMAGE_DIGEST: DIGEST,
   AGENT_SAAS_STAGING_ROOT: stagingRoot,
+  AGENT_SAAS_STAGING_RELEASE_ROOT: stagingReleaseRoot,
   AGENT_SAAS_STAGING_DATABASE_HOSTS: 'staging-db.internal',
   AGENT_SAAS_STAGING_DATABASE_NAME: 'runtime',
   AGENT_SAAS_STAGING_DATABASE_USER: 'staging',
@@ -124,6 +128,16 @@ describe('assertRuntimeEnvironmentSafety', () => {
     });
   });
 
+  it('allows immutable shared assets inside the explicit Staging release root', () => {
+    expect(
+      assertRuntimeEnvironmentSafety(
+        config({ agent: { cwd: workspace, sharedDir: releaseSharedDir } }),
+        stagingEnv,
+        { processCwd },
+      ),
+    ).toMatchObject({ environment: 'staging', safetyAttested: true });
+  });
+
   it('fails closed when cron is absent or enabled', () => {
     expect(() =>
       assertRuntimeEnvironmentSafety(config({ cron: undefined }), stagingEnv, { processCwd }),
@@ -169,10 +183,12 @@ describe('assertRuntimeEnvironmentSafety', () => {
     const escapedWorkspace = join(stagingRoot, 'escaped-workspace');
     const productionSecret = join(productionRoot, 'secrets.json');
     const escapedSecret = join(stagingRoot, 'escaped-secrets.json');
+    const escapedSharedDir = join(stagingReleaseRoot, 'escaped-shared');
     mkdirSync(join(productionRoot, 'workspace'));
     writeFileSync(productionSecret, '{}');
     symlinkSync(join(productionRoot, 'workspace'), escapedWorkspace);
     symlinkSync(productionSecret, escapedSecret);
+    symlinkSync(join(productionRoot, 'workspace'), escapedSharedDir);
 
     expect(() =>
       assertRuntimeEnvironmentSafety(config({ agent: { cwd: escapedWorkspace } }), stagingEnv),
@@ -183,6 +199,12 @@ describe('assertRuntimeEnvironmentSafety', () => {
         stagingEnv,
       ),
     ).toThrow(/SecretVault file/);
+    expect(() =>
+      assertRuntimeEnvironmentSafety(
+        config({ agent: { cwd: workspace, sharedDir: escapedSharedDir } }),
+        stagingEnv,
+      ),
+    ).toThrow(/sharedDir/);
     rmSync(productionRoot, { recursive: true, force: true });
   });
 
@@ -278,11 +300,17 @@ describe('assertRuntimeEnvironmentSafety', () => {
 
   it('requires explicit staging identities for NAS, Vault, Hand, OAuth, and notifications', () => {
     expect(() =>
+      assertRuntimeEnvironmentSafety(config(), {
+        ...stagingEnv,
+        AGENT_SAAS_STAGING_RELEASE_ROOT: undefined,
+      }),
+    ).toThrow(/AGENT_SAAS_STAGING_RELEASE_ROOT/);
+    expect(() =>
       assertRuntimeEnvironmentSafety(
         config({ agent: { cwd: workspace, sharedDir: '/mnt/shared-without-prod-marker' } }),
         stagingEnv,
       ),
-    ).toThrow(/sharedDir\/NAS/);
+    ).toThrow(/sharedDir/);
     expect(() =>
       assertRuntimeEnvironmentSafety(
         config({

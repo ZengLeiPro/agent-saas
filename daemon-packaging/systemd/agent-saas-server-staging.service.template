@@ -14,6 +14,7 @@ RuntimeDirectoryPreserve=yes
 WorkingDirectory=/mnt/agent-saas-staging/runtime/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
+Environment=AGENT_SAAS_STAGING_RELEASE_ROOT=/opt/agent-saas-staging
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/server.pid

@@ -205,7 +205,10 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
   assert.match(deploy, /STAGING_RUNTIME_ASSETS_PATH:\?STAGING_RUNTIME_ASSETS_PATH is required/u);
-  assert.match(deploy, /STAGING_RUNTIME_ASSETS_DIGEST:\?STAGING_RUNTIME_ASSETS_DIGEST is required/u);
+  assert.match(
+    deploy,
+    /STAGING_RUNTIME_ASSETS_DIGEST:\?STAGING_RUNTIME_ASSETS_DIGEST is required/u,
+  );
   assert.match(deploy, /sha256sum "\$STAGING_RUNTIME_ASSETS_PATH"/u);
   assert.match(deploy, /staging-runtime-assets\.tgz/u);
   assert.match(deploy, /\.ky-agent\/skills-pool\/_manifest\.json/u);
@@ -214,7 +217,15 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy,
     /tar -xzf "\$candidate\/\.release\/staging-runtime-assets\.tgz"[\s\S]*-C "\$candidate\/server\/workspace-shared"/u,
   );
-  assert.match(deploy, /Staging immutable shared asset conflicts with persistent path/u);
+  assert.match(deploy, /Staging runtime directory must be a real immutable directory/u);
+  assert.doesNotMatch(deploy, /shared_root=\/mnt\/agent-saas-staging\/workspace-shared/u);
+  assert.match(
+    deploy,
+    /sharedDir: '\/opt\/agent-saas-staging\/current\/server\/workspace-shared'/u,
+  );
+  assert.match(deploy, /cp -a "\$server_config" "\$rollback_root\/config\.json"/u);
+  assert.match(deploy, /cp -a "\$rollback_root\/config\.json" "\$server_config"/u);
+  assert.match(deploy, /chmod 0640 "\$server_config"/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
   assert.match(
     deploy,
@@ -320,6 +331,7 @@ test('Staging API and Worker keep mutable process data isolated while executing 
     assert.match(unit, /WorkingDirectory=\/mnt\/agent-saas-staging\/runtime\/server/u);
     assert.match(unit, /ExecStart=.*\/opt\/agent-saas-staging\/current\/server\/dist\/index\.js/u);
     assert.match(unit, /Environment=KB_PREVIEW_AUTO_GENERATE=false/u);
+    assert.match(unit, /Environment=AGENT_SAAS_STAGING_RELEASE_ROOT=\/opt\/agent-saas-staging/u);
   }
 
   const workerUnit = await readFile(workerUnitPath, 'utf8');

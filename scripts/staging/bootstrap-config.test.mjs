@@ -53,6 +53,7 @@ test('renders a fail-closed Staging config while retaining model configuration',
   assert.equal(config.dingtalk.enabled, false);
   assert.equal(config.webPush.enabled, false);
   assert.equal(config.agent.cwd, '/mnt/agent-saas-staging/workspaces');
+  assert.equal(config.agent.sharedDir, '/opt/agent-saas-staging/current/server/workspace-shared');
   assert.deepEqual(config.agent.userOverrides, {});
   assert.equal(config.runtimeScheduler.maxConcurrentRuns, 10);
   assert.equal(config.tenantRemoteHands.hands[0].authTokenRef, STAGING_ACS_TOKEN_REF);

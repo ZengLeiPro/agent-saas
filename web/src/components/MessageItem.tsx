@@ -295,7 +295,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   owner?: string;
   /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
-  /** Artifact 内容寻址存储侧记录的真实 MIME，用于专用预览器选择。 */
+  /** Artifact 内容寻址存储记录的真实 MIME，用于专用预览器选择。 */
   mimeType?: string;
   /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
   shareToken?: string;
@@ -418,7 +418,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         </div>
       </div>
       {downloadError ? <p className="mt-1 text-xs text-destructive" role="alert">{downloadError}</p> : null}
-      {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
+      {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} onDock={filePreview?.openArtifactPreview ? () => { setArtifactPreviewOpen(false); filePreview.openArtifactPreview?.({ artifactId, fileName, fileSize: resolvedSize, mimeType }); } : undefined} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}

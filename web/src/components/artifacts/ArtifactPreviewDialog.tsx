@@ -1,29 +1,37 @@
 import { useEffect, useState } from "react";
-import { Download, Loader2, Share2 } from "lucide-react";
+import { Download, Loader2, PanelRight, Share2 } from "lucide-react";
 
 import { ArtifactContentViewer } from "@/components/artifacts/ArtifactContentViewer";
 import { ArtifactShareDialog } from "@/components/artifacts/ArtifactShareDialog";
+import { RightPanelFrame } from "@/components/RightPanelFrame";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { formatFileSize } from "@/components/types";
 import { getArtifactContentUrl } from "@/lib/artifactShareApi";
 
-interface ArtifactPreviewDialogProps {
-  open: boolean;
+interface ArtifactPreviewProps {
   artifactId: string;
   fileName: string;
   fileSize?: number;
   mimeType?: string;
-  onOpenChange: (open: boolean) => void;
 }
 
-export function ArtifactPreviewDialog({ open, artifactId, fileName, fileSize, mimeType, onOpenChange }: ArtifactPreviewDialogProps) {
+interface ArtifactPreviewDialogProps extends ArtifactPreviewProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDock?: () => void;
+}
+
+interface ArtifactPreviewPanelProps extends ArtifactPreviewProps {
+  onClose: () => void;
+}
+
+function useArtifactContentUrl(artifactId: string, active: boolean) {
   const [contentUrl, setContentUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     let cancelled = false;
     setContentUrl(null);
     setError(null);
@@ -31,7 +39,56 @@ export function ArtifactPreviewDialog({ open, artifactId, fileName, fileSize, mi
       .then((url) => { if (!cancelled) setContentUrl(url); })
       .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : "Artifact 加载失败"); });
     return () => { cancelled = true; };
-  }, [artifactId, open]);
+  }, [active, artifactId]);
+
+  return { contentUrl, error };
+}
+
+function ArtifactPreviewContent({ contentUrl, error, fileName, mimeType }: {
+  contentUrl: string | null;
+  error: string | null;
+  fileName: string;
+  mimeType?: string;
+}) {
+  if (!contentUrl && !error) {
+    return <div className="flex h-full items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>;
+  }
+  if (error) {
+    return <div role="alert" className="flex h-full items-center justify-center px-6 text-center text-sm text-destructive">{error}</div>;
+  }
+  return <ArtifactContentViewer contentUrl={contentUrl!} fileName={fileName} mimeType={mimeType} className="h-full" />;
+}
+
+function ArtifactPreviewActions({ contentUrl, fileName, onShare }: {
+  contentUrl: string | null;
+  fileName: string;
+  onShare: () => void;
+}) {
+  return (
+    <>
+      {contentUrl ? (
+        <Button variant="outline" size="sm" className="shrink-0 px-2 sm:px-3" asChild title="下载 Artifact">
+          <a href={contentUrl} download={fileName}><Download className="size-4" /><span className="hidden sm:inline">下载</span></a>
+        </Button>
+      ) : null}
+      <Button variant="outline" size="sm" className="shrink-0 px-2 sm:px-3" onClick={onShare}>
+        <Share2 className="size-4" /><span className="hidden sm:inline">分享</span>
+      </Button>
+    </>
+  );
+}
+
+export function ArtifactPreviewDialog({
+  open,
+  artifactId,
+  fileName,
+  fileSize,
+  mimeType,
+  onOpenChange,
+  onDock,
+}: ArtifactPreviewDialogProps) {
+  const { contentUrl, error } = useArtifactContentUrl(artifactId, open);
+  const [shareOpen, setShareOpen] = useState(false);
 
   return (
     <>
@@ -47,22 +104,47 @@ export function ArtifactPreviewDialog({ open, artifactId, fileName, fileSize, mi
                 {[mimeType || "未知类型", fileSize ? formatFileSize(fileSize) : null].filter(Boolean).join(" · ")}
               </div>
             </div>
-            {contentUrl ? (
-              <Button variant="outline" size="sm" className="shrink-0 px-2 sm:px-3" asChild title="下载 Artifact">
-                <a href={contentUrl} download={fileName}><Download className="size-4" /><span className="hidden sm:inline">下载</span></a>
+            <ArtifactPreviewActions contentUrl={contentUrl} fileName={fileName} onShare={() => setShareOpen(true)} />
+            {onDock ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={onDock}
+                title="在右侧预览栏打开"
+                aria-label="在右侧预览栏打开"
+              >
+                <PanelRight className="size-4" />
+                <span className="hidden sm:inline">右侧打开</span>
               </Button>
             ) : null}
-            <Button variant="outline" size="sm" className="shrink-0 px-2 sm:px-3" onClick={() => setShareOpen(true)}>
-              <Share2 className="size-4" /><span className="hidden sm:inline">分享</span>
-            </Button>
           </header>
           <div className="min-h-0 flex-1 overflow-hidden">
-            {!contentUrl && !error ? <div className="flex h-full items-center justify-center"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div> : null}
-            {error ? <div role="alert" className="flex h-full items-center justify-center px-6 text-center text-sm text-destructive">{error}</div> : null}
-            {contentUrl ? <ArtifactContentViewer contentUrl={contentUrl} fileName={fileName} mimeType={mimeType} className="h-full" /> : null}
+            <ArtifactPreviewContent contentUrl={contentUrl} error={error} fileName={fileName} mimeType={mimeType} />
           </div>
         </DialogContent>
       </Dialog>
+      <ArtifactShareDialog open={shareOpen} artifactId={artifactId} fileName={fileName} onOpenChange={setShareOpen} />
+    </>
+  );
+}
+
+export function ArtifactPreviewPanel({ artifactId, fileName, fileSize, mimeType, onClose }: ArtifactPreviewPanelProps) {
+  const { contentUrl, error } = useArtifactContentUrl(artifactId, true);
+  const [shareOpen, setShareOpen] = useState(false);
+  const subtitle = [mimeType || "未知类型", fileSize ? formatFileSize(fileSize) : null].filter(Boolean).join(" · ");
+
+  return (
+    <>
+      <RightPanelFrame
+        title={fileName}
+        subtitle={subtitle}
+        onClose={onClose}
+        closeLabel="关闭 Artifact 预览"
+        actions={<ArtifactPreviewActions contentUrl={contentUrl} fileName={fileName} onShare={() => setShareOpen(true)} />}
+      >
+        <ArtifactPreviewContent contentUrl={contentUrl} error={error} fileName={fileName} mimeType={mimeType} />
+      </RightPanelFrame>
       <ArtifactShareDialog open={shareOpen} artifactId={artifactId} fileName={fileName} onOpenChange={setShareOpen} />
     </>
   );

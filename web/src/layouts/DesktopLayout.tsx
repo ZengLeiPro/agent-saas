@@ -29,6 +29,7 @@ const TenantManager = lazy(() => import("@/components/TenantManager").then(m => 
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
 const FilePreviewPanel = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewPanel })));
+const ArtifactPreviewPanel = lazy(() => import("@/components/artifacts/ArtifactPreviewDialog").then(m => ({ default: m.ArtifactPreviewPanel })));
 const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
@@ -92,6 +93,7 @@ export function DesktopLayout(props: LayoutProps) {
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
+    previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
@@ -162,19 +164,16 @@ export function DesktopLayout(props: LayoutProps) {
    * 点开的；子任务详情是当前最新意图，system 则是自动跟随 Agent 的。
    * 被压住的一方不卸载（走 hidden），保住滚动位置与内部状态。
    */
-  const rightPanelKind: 'subagent' | 'preview' | 'system' | 'browser' | null =
-    subagentTranscript ? 'subagent'
-      : sidePreviewOpen ? 'preview'
-        : systemPanelOpen ? 'system'
-          : fileBrowserOpen ? 'browser'
-            : null;
+  const rightPanelKind: 'subagent' | 'artifact' | 'preview' | 'system' | 'browser' | null = subagentTranscript ? 'subagent'
+    : previewArtifact ? 'artifact' : sidePreviewOpen ? 'preview'
+      : systemPanelOpen ? 'system' : fileBrowserOpen ? 'browser' : null;
   const rightPanelOpen = rightPanelKind !== null;
   const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
   const showTaskDetailPanel = !settingsMode && !analysisMode && activeTab === "cron" && taskDetailOpen;
   const showDockedPanel = showRightPanel || showTaskDetailPanel;
-  const rightPanelKey = rightPanelKind === 'subagent'
-    ? subagentTranscript?.childSessionId ?? null
-    : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
+  const rightPanelKey = rightPanelKind === 'subagent' ? subagentTranscript?.childSessionId ?? null
+    : rightPanelKind === 'artifact' ? previewArtifact?.artifactId ?? null
+      : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
   const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, dockedPanelKey);
 
@@ -946,6 +945,11 @@ export function DesktopLayout(props: LayoutProps) {
                     title={subagentTranscript.title}
                     onClose={() => closeSubagentTranscript?.()}
                   />
+                </Suspense>
+              ) : null}
+              {rightPanelKind === 'artifact' && previewArtifact ? (
+                <Suspense fallback={SuspenseFallback}>
+                  <ArtifactPreviewPanel {...previewArtifact} onClose={closeArtifactPreview} />
                 </Suspense>
               ) : null}
               {rightPanelKind === 'preview' && previewFilePath ? (

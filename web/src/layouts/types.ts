@@ -15,6 +15,7 @@ import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { PlatformAdminSection, TenantAdminSection } from "@/lib/urlSync";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { SandboxProfile } from "@/types/sandboxProfile";
+import type { ArtifactPreviewTarget } from "@/contexts/FilePreviewContext";
 
 export interface LayoutProps {
   // 会话导航
@@ -144,6 +145,8 @@ export interface LayoutProps {
   dockFilePreview: () => void;
   expandFilePreview: () => void;
   closeFilePreview: () => void;
+  previewArtifact: ArtifactPreviewTarget | null;
+  closeArtifactPreview: () => void;
 
   // File browser
   fileBrowserOpen: boolean;

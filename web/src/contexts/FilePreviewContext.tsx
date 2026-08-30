@@ -1,6 +1,13 @@
 import { createContext, useContext } from 'react';
 
 /** 打开文件预览时的可选行为参数。 */
+export interface ArtifactPreviewTarget {
+  artifactId: string;
+  fileName: string;
+  fileSize?: number;
+  mimeType?: string;
+}
+
 export interface OpenPreviewOptions {
   /**
    * 预览呈现模式：
@@ -14,6 +21,8 @@ export interface OpenPreviewOptions {
 
 interface FilePreviewContextValue {
   openPreview: (filePath: string, owner?: string, options?: OpenPreviewOptions) => void;
+  /** 桌面端将不可变 Artifact 停靠到右侧预览栏；移动端与分享页不提供。 */
+  openArtifactPreview?: (artifact: ArtifactPreviewTarget) => void;
   /** 演示或离线产物可提供自己的下载实现，避免回落到真实会话文件 API。 */
   downloadFile?: (filePath: string, fileName: string) => void;
   /** 当前会话所属用户（admin 查看其他用户会话时需要） */

@@ -10,6 +10,7 @@ import {
   AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
   AgentDwsAccountInvariantError,
   failClosedAgentDwsContextPolicy,
+  hasExactAgentDwsProfile,
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
   type AgentDwsContextPolicy,
@@ -279,7 +280,7 @@ export function createAgentDwsAccountsRouter(options: AgentDwsAccountsRouterOpti
     if (!tenantId) return res.status(403).json({ error: '跨组织访问被拒绝' });
     const account = await options.accountStore?.getForTenant(tenantId, req.params.accountId);
     if (!account) return res.status(404).json({ error: 'Agent 钉钉账号不存在' });
-    if (account.status !== 'active' || !account.profileId) {
+    if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       return res.status(409).json({ error: '账号尚未完成授权或已暂停' });
     }
     await runMutation(req, res, options, {

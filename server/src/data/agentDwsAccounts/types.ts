@@ -1,5 +1,6 @@
 export type AgentDwsAccountStatus = 'draft' | 'authorizing' | 'active' | 'paused' | 'error';
 export type AgentDwsRuntimeStatus = 'stopped' | 'starting' | 'ready' | 'error';
+
 export type AgentDwsEventKind = 'at_me' | 'all_direct';
 export type AgentDwsContextPolicyMode = 'none' | 'selected' | 'all';
 
@@ -72,10 +73,21 @@ export interface CreateAgentDwsAccountInput {
 }
 
 export interface AgentDwsAuthorizedProfile {
+  /** Exact dws selector (`corpId:userId`), never an organization-only selector. */
   profileId: string;
+  corpId: string;
   corpName?: string;
-  dingtalkUserId?: string;
+  dingtalkUserId: string;
   dingtalkUserName?: string;
+}
+
+export function hasExactAgentDwsProfile(
+  value: Pick<AgentDwsAccountRecord, 'profileId' | 'corpId' | 'dingtalkUserId'>,
+): boolean {
+  const profileId = value.profileId?.trim();
+  const corpId = value.corpId?.trim();
+  const dingtalkUserId = value.dingtalkUserId?.trim();
+  return Boolean(profileId && corpId && dingtalkUserId && profileId === `${corpId}:${dingtalkUserId}`);
 }
 
 export type AgentDwsAccountInvariantCode =

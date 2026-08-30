@@ -18,7 +18,8 @@ const account: AgentDwsAccountRecord = {
   agentId: 'agent-a',
   displayName: '开开',
   loginId: '17300000000',
-  profileId: 'corp-a',
+  profileId: 'corp-a:agent-self',
+  corpId: 'corp-a',
   dingtalkUserId: 'agent-self',
   status: 'active',
   runtimeStatus: 'ready',
@@ -49,7 +50,13 @@ const item: AgentDwsInboxRecord = {
   messageId: 'mid-a',
   senderOpenDingtalkId: 'sender-a',
   content: '请汇总今天的进展',
-  payload: {},
+  payload: {
+    accountIdentity: {
+      profileId: account.profileId,
+      corpId: account.corpId,
+      dingtalkUserId: account.dingtalkUserId,
+    },
+  },
   state: 'processing',
   attempt: 1,
   maxAttempts: 8,
@@ -167,7 +174,7 @@ function setup(input: {
   };
 }
 
-describe('AgentDwsMessageRouter', () => {
+describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () => {
   it('processes different conversations concurrently up to the configured bound', async () => {
     const second = {
       ...item,
@@ -286,14 +293,19 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.ingest).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'cid-a', content: item.content,
     }), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: 'dws_personal_stream',
       eventType: item.eventType,
+      accountIdentity: {
+        profileId: 'corp-a:agent-self',
+        corpId: 'corp-a',
+        dingtalkUserId: 'agent-self',
+      },
     });
     await router.stop();
   });
 
-  it('binds a stable Session, dispatches the org Agent, and sends one durable reply', async () => {
+  it('binds a stable Session, dispatches the org Agent, and sends one identity-fenced durable reply', async () => {
     const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);
@@ -331,12 +343,53 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
 
-  it('background completion is dispatched into the same parent Session as a durable notification, not a new Worker request', async () => {
+  it('缺少入站账号身份快照时 fail closed，不执行也不回复', async () => {
+    const { router, dispatch, sender, messageStore } = setup({
+      claimed: { ...item, payload: {} },
+    });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      expect.objectContaining({ message: expect.stringContaining('identity is missing') }),
+    );
+  });
+
+  it('账号在 dispatch 期间重授权时拒绝用旧快照或新账号发送回复', async () => {
+    const changedAccount = {
+      ...account,
+      profileId: 'corp-a:agent-other',
+      dingtalkUserId: 'agent-other',
+      revision: account.revision + 1,
+    };
+    const { router, accountStore, sender, messageStore } = setup();
+    vi.mocked(accountStore.getForTenant)
+      .mockResolvedValueOnce(account)
+      .mockResolvedValueOnce(changedAccount);
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.complete).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      expect.objectContaining({ message: 'Agent DWS account identity changed before reply' }),
+    );
+  });
+
+  it('background completion keeps the pinned account identity and reuses the parent Session', async () => {
     const completion = {
       ...item,
       eventId: 'background-task-completion:bg-1',
       content: '<task-notification><task-id>T-1234ABCD</task-id><status>completed</status></task-notification>',
-      payload: { source: 'background_task_completion', backgroundTaskId: 'bg-1' },
+      payload: {
+        ...item.payload,
+        source: 'background_task_completion',
+        backgroundTaskId: 'bg-1',
+      },
     };
     const dispatch: AgentRunDispatch = vi.fn((_message, _context, _options, hooks) => (async function* () {
       await hooks?.onResult?.({ resultText: '任务 T-1234ABCD 已完成。' });

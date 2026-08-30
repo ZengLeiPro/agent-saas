@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createDwsBackgroundCompletionEnqueuer } from '../app/orgAgentDispatcherRuntime.js';
 import {
   deliverDwsBackgroundCompletion,
   resolveDwsCompletionRoute,
@@ -21,19 +22,63 @@ describe('background task DWS completion route', () => {
         channel: 'dingtalk', chatId: 'cid-1', senderId: 'open-user-1',
         metadata: {
           source: 'agent_dws_personal_stream', accountId: 'adws-1',
+          profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
           eventType: 'user_im_message_receive_o2o_all', messageId: 'msg-1',
         },
       },
     }), 'dingtalk');
     expect(route).toEqual({
-      accountId: 'adws-1', conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
+      accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
       messageId: 'msg-1', senderOpenDingtalkId: 'open-user-1',
     });
   });
 
-  it('fails closed for non-DWS or incomplete metadata', () => {
+  it('fails closed for non-DWS, incomplete or inconsistent account identity metadata', () => {
     expect(resolveDwsCompletionRoute(parentRun({}), 'dingtalk')).toBeUndefined();
     expect(resolveDwsCompletionRoute(parentRun({ wakeMessage: {} }), 'web')).toBeUndefined();
+    expect(resolveDwsCompletionRoute(parentRun({
+      wakeMessage: {
+        channel: 'dingtalk', chatId: 'cid-1',
+        metadata: {
+          source: 'agent_dws_personal_stream', accountId: 'adws-1',
+          profileId: 'corp-1:user-2', corpId: 'corp-1', dingtalkUserId: 'user-1',
+          eventType: 'user_im_message_receive_o2o_all',
+        },
+      },
+    }), 'dingtalk')).toBeUndefined();
+  });
+
+  it('enqueues background completion with the pinned exact account identity', async () => {
+    const ingest = vi.fn(async () => ({ record: {} as never, created: true }));
+    const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never);
+
+    await enqueue({
+      tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all', content: 'done',
+    });
+
+    expect(ingest).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'adws-1' }), {
+      schemaVersion: 2,
+      source: 'background_task_completion',
+      backgroundTaskId: 'bg-1',
+      accountIdentity: {
+        profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      },
+    });
+  });
+
+  it('rejects an inconsistent background completion identity before inbox ingest', async () => {
+    const ingest = vi.fn();
+    const enqueue = createDwsBackgroundCompletionEnqueuer({ ingest } as never);
+
+    await expect(enqueue({
+      tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
+      profileId: 'corp-1:user-2', corpId: 'corp-1', dingtalkUserId: 'user-1',
+      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all', content: 'done',
+    })).rejects.toThrow('account identity is invalid');
+    expect(ingest).not.toHaveBeenCalled();
   });
 
   it('delivers through durable inbox and freezes the wake as queued', async () => {
@@ -48,7 +93,8 @@ describe('background task DWS completion route', () => {
       parentOutputTransactionMode: 'terminal_buffered' as const,
       prompt: '执行', agentType: 'general' as const, includeCompanyInfo: false,
       dwsCompletionRoute: {
-        accountId: 'adws-1', conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' as const,
+        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all' as const,
       },
     };
     await expect(deliverDwsBackgroundCompletion({
@@ -58,6 +104,7 @@ describe('background task DWS completion route', () => {
     })).resolves.toBe(true);
     expect(enqueueDwsBackgroundCompletion).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-1', taskId: 'bg-1', accountId: 'adws-1',
+      profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
       content: expect.stringContaining('<task-id>T-1234ABCD</task-id>'),
     }));
     expect(finishBackgroundTaskWake).toHaveBeenCalledWith(

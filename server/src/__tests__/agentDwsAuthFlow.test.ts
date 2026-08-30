@@ -10,7 +10,7 @@ import { resolveAgentConnectorCwd } from '../workspace/resolver.js';
 
 const account: AgentDwsAccountRecord = {
   accountId: 'adws-1', tenantId: 'tenant-a', agentId: 'oa-sales',
-  displayName: '销售数字员工', loginId: 'sales-agent-001',
+  displayName: '销售数字员工', loginId: 'sales-agent-001', corpId: 'corp-a',
   status: 'authorizing', runtimeStatus: 'stopped', eventKinds: ['at_me'], revision: 7,
   createdAt: '2026-08-13T00:00:00.000Z', createdBy: 'admin-a',
   updatedAt: '2026-08-13T00:00:00.000Z', updatedBy: 'admin-a',
@@ -62,7 +62,79 @@ describe('AgentDwsAuthFlowService', () => {
     root = undefined;
   });
 
-  it('用发起授权时的 tenant/account/revision CAS 写入授权终态', async () => {
+  it('重授权先失效旧身份资源，再接受有新鲜证据的 currentProfile', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
+    const agentCwd = join(root, 'workspaces');
+    const profileDir = join(
+      resolveAgentConnectorCwd(agentCwd, account.tenantId, account.agentId, 'dws'),
+      '.dws/config',
+    );
+    const profileFile = join(profileDir, 'profiles.json');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(profileFile, JSON.stringify({
+      version: 3,
+      currentProfile: 'corp-a:ding-user-a',
+      orgCurrentProfiles: { 'corp-a': 'corp-a:ding-user-a' },
+      profiles: [
+        { name: 'old', corpId: 'corp-a', corpName: '示例企业', userId: 'ding-user-old', userName: '旧账号' },
+        {
+          name: 'new', corpId: 'corp-a', corpName: '示例企业', userId: 'ding-user-a',
+          userName: '销售数字员工', updatedAt: '2026-08-29T00:00:00.000Z',
+        },
+      ],
+    }));
+    const accounts = accountStore();
+    const auth = authStore();
+    const onBeforeAccountIdentityChange = vi.fn(async () => undefined);
+    const service = new AgentDwsAuthFlowService({
+      agentCwd,
+      authSessionStore: auth,
+      accountStore: accounts,
+      onBeforeAccountIdentityChange,
+      runner: {
+        login: vi.fn(async () => {
+          await writeFile(profileFile, JSON.stringify({
+            version: 3,
+            currentProfile: 'corp-a:ding-user-a',
+            orgCurrentProfiles: { 'corp-a': 'corp-a:ding-user-a' },
+            profiles: [
+              { name: 'old', corpId: 'corp-a', userId: 'ding-user-old' },
+              {
+                name: 'new', corpId: 'corp-a', userId: 'ding-user-a',
+                updatedAt: '2026-08-30T00:00:00.000Z',
+              },
+            ],
+          }));
+        }),
+      },
+    });
+
+    await service.start({
+      ...account,
+      profileId: 'corp-a:ding-user-old',
+      corpId: 'corp-a',
+      dingtalkUserId: 'ding-user-old',
+    });
+    await waitForCall(accounts.markAuthorized as ReturnType<typeof vi.fn>);
+    expect(onBeforeAccountIdentityChange).toHaveBeenCalledWith(expect.objectContaining({
+      profileId: 'corp-a:ding-user-old',
+      dingtalkUserId: 'ding-user-old',
+    }));
+    expect(onBeforeAccountIdentityChange.mock.invocationCallOrder[0])
+      .toBeLessThan((accounts.markAuthorized as ReturnType<typeof vi.fn>)
+        .mock.invocationCallOrder[0]!);
+    expect(accounts.markAuthorized).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 7,
+      expect.objectContaining({
+        profileId: 'corp-a:ding-user-a', corpId: 'corp-a', dingtalkUserId: 'ding-user-a',
+      }),
+      'system:agent-dws-auth',
+    );
+    expect(auth.markConnected).toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it('login 未改变既有 currentProfile 的任何授权证据时拒绝沿用旧账号', async () => {
     root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
     const agentCwd = join(root, 'workspaces');
     const profileDir = join(
@@ -71,7 +143,46 @@ describe('AgentDwsAuthFlowService', () => {
     );
     await mkdir(profileDir, { recursive: true });
     await writeFile(join(profileDir, 'profiles.json'), JSON.stringify({
-      profiles: [{ corpId: 'corp-a', corpName: '示例企业', userId: 'ding-user-a', userName: '销售数字员工' }],
+      version: 3,
+      currentProfile: 'corp-a:ding-user-old',
+      profiles: [{
+        name: 'old', corpId: 'corp-a', userId: 'ding-user-old',
+        updatedAt: '2026-08-29T00:00:00.000Z',
+      }],
+    }));
+    const accounts = accountStore();
+    const service = new AgentDwsAuthFlowService({
+      agentCwd,
+      authSessionStore: authStore(),
+      accountStore: accounts,
+      runner: { login: vi.fn(async () => undefined) },
+    });
+
+    await service.start(account);
+    await waitForCall(accounts.markAuthorizationFailed as ReturnType<typeof vi.fn>);
+    expect(accounts.markAuthorized).not.toHaveBeenCalled();
+    expect(accounts.markAuthorizationFailed).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 7,
+      expect.stringContaining('缺少新鲜授权证据'),
+      'system:agent-dws-auth',
+    );
+    await service.stop();
+  });
+
+  it('同组织多账号没有 currentProfile 或新增证据时失败，不静默选择旧账号', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
+    const agentCwd = join(root, 'workspaces');
+    const profileDir = join(
+      resolveAgentConnectorCwd(agentCwd, account.tenantId, account.agentId, 'dws'),
+      '.dws/config',
+    );
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(join(profileDir, 'profiles.json'), JSON.stringify({
+      version: 3,
+      profiles: [
+        { name: 'old', corpId: 'corp-a', userId: 'ding-user-old' },
+        { name: 'new', corpId: 'corp-a', userId: 'ding-user-new' },
+      ],
     }));
     const accounts = accountStore();
     const auth = authStore();
@@ -83,13 +194,98 @@ describe('AgentDwsAuthFlowService', () => {
     });
 
     await service.start(account);
+    await waitForCall(accounts.markAuthorizationFailed as ReturnType<typeof vi.fn>);
+    expect(accounts.markAuthorized).not.toHaveBeenCalled();
+    expect(accounts.markAuthorizationFailed).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 7,
+      expect.stringContaining('没有唯一 current profile'),
+      'system:agent-dws-auth',
+    );
+    await service.stop();
+  });
+
+  it('没有 currentProfile 时只接受授权后唯一新增的精确账号', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
+    const agentCwd = join(root, 'workspaces');
+    const profileDir = join(
+      resolveAgentConnectorCwd(agentCwd, account.tenantId, account.agentId, 'dws'),
+      '.dws/config',
+    );
+    const profileFile = join(profileDir, 'profiles.json');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(profileFile, JSON.stringify({
+      version: 3,
+      profiles: [{ name: 'old', corpId: 'corp-a', userId: 'ding-user-old' }],
+    }));
+    const accounts = accountStore();
+    const service = new AgentDwsAuthFlowService({
+      agentCwd,
+      authSessionStore: authStore(),
+      accountStore: accounts,
+      runner: {
+        login: vi.fn(async () => {
+          await writeFile(profileFile, JSON.stringify({
+            version: 3,
+            profiles: [
+              { name: 'old', corpId: 'corp-a', userId: 'ding-user-old' },
+              { name: 'new', corpId: 'corp-a', userId: 'ding-user-new' },
+            ],
+          }));
+        }),
+      },
+    });
+
+    await service.start(account);
     await waitForCall(accounts.markAuthorized as ReturnType<typeof vi.fn>);
     expect(accounts.markAuthorized).toHaveBeenCalledWith(
       'tenant-a', 'adws-1', 7,
-      expect.objectContaining({ profileId: 'corp-a', dingtalkUserId: 'ding-user-a' }),
+      expect.objectContaining({ profileId: 'corp-a:ding-user-new', dingtalkUserId: 'ding-user-new' }),
       'system:agent-dws-auth',
     );
-    expect(auth.markConnected).toHaveBeenCalled();
+    await service.stop();
+  });
+
+  it('currentProfile 与新增账号证据冲突时失败，不沿用旧账号', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agent-dws-auth-'));
+    const agentCwd = join(root, 'workspaces');
+    const profileDir = join(
+      resolveAgentConnectorCwd(agentCwd, account.tenantId, account.agentId, 'dws'),
+      '.dws/config',
+    );
+    const profileFile = join(profileDir, 'profiles.json');
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(profileFile, JSON.stringify({
+      version: 3,
+      currentProfile: 'corp-a:ding-user-old',
+      profiles: [{ name: 'old', corpId: 'corp-a', userId: 'ding-user-old' }],
+    }));
+    const accounts = accountStore();
+    const service = new AgentDwsAuthFlowService({
+      agentCwd,
+      authSessionStore: authStore(),
+      accountStore: accounts,
+      runner: {
+        login: vi.fn(async () => {
+          await writeFile(profileFile, JSON.stringify({
+            version: 3,
+            currentProfile: 'corp-a:ding-user-old',
+            profiles: [
+              { name: 'old', corpId: 'corp-a', userId: 'ding-user-old' },
+              { name: 'new', corpId: 'corp-a', userId: 'ding-user-new' },
+            ],
+          }));
+        }),
+      },
+    });
+
+    await service.start(account);
+    await waitForCall(accounts.markAuthorizationFailed as ReturnType<typeof vi.fn>);
+    expect(accounts.markAuthorized).not.toHaveBeenCalled();
+    expect(accounts.markAuthorizationFailed).toHaveBeenCalledWith(
+      'tenant-a', 'adws-1', 7,
+      expect.stringContaining('current profile 与新增账号证据冲突'),
+      'system:agent-dws-auth',
+    );
     await service.stop();
   });
 

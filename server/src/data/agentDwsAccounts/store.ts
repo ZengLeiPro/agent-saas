@@ -7,6 +7,7 @@ import {
   AGENT_DWS_CONTEXT_POLICY_MAX_LOOKBACK_DAYS,
   AgentDwsAccountInvariantError,
   failClosedAgentDwsContextPolicy,
+  hasExactAgentDwsProfile,
   type AgentDwsAccountRecord,
   type AgentDwsAuthorizedProfile,
   type AgentDwsContextPolicy,
@@ -32,12 +33,18 @@ export interface AgentDwsAccountStore {
     expectedRevision: number,
     updatedBy: string,
   ): Promise<AgentDwsAccountRecord>;
-  claimRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean>;
-  renewRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean>;
+  claimRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number, expectedRevision: number): Promise<boolean>;
+  renewRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number, expectedRevision: number): Promise<boolean>;
   releaseRuntimeLease(accountId: string, leaseOwner: string): Promise<void>;
   revokeRuntimeLease(accountId: string): Promise<void>;
-  updateRuntimeStatus(accountId: string, status: AgentDwsAccountRecord['runtimeStatus'], error?: string, leaseOwner?: string): Promise<void>;
-  markEvent(accountId: string, leaseOwner: string, occurredAt?: Date): Promise<boolean>;
+  updateRuntimeStatus(
+    accountId: string,
+    status: AgentDwsAccountRecord['runtimeStatus'],
+    error: string | undefined,
+    leaseOwner: string | undefined,
+    expectedRevision: number,
+  ): Promise<void>;
+  markEvent(accountId: string, leaseOwner: string, occurredAt: Date, expectedRevision: number): Promise<boolean>;
 }
 
 type PgPool = pg.Pool;
@@ -69,6 +76,8 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     const result = await this.pool.query(
       `SELECT * FROM ${this.table}
        WHERE status='active' AND profile_id IS NOT NULL
+         AND corp_id IS NOT NULL AND dingtalk_user_id IS NOT NULL
+         AND profile_id=corp_id || ':' || dingtalk_user_id
        ORDER BY updated_at, account_id`,
     );
     return result.rows.map(mapRow);
@@ -147,12 +156,15 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     profile: AgentDwsAuthorizedProfile,
     updatedBy: string,
   ): Promise<AgentDwsAccountRecord> {
+    if (!hasExactAgentDwsProfile(profile)) {
+      throw new AgentDwsAccountInvariantError('AGENT_DWS_ACCOUNT_NOT_AUTHORIZED');
+    }
     const result = await this.pool.query(`
       UPDATE ${this.table}
-      SET profile_id=$4,corp_id=COALESCE(corp_id,$4),corp_name=$5,
-          dingtalk_user_id=$6,dingtalk_user_name=$7,status='active',
+      SET profile_id=$4,corp_id=$5,corp_name=$6,
+          dingtalk_user_id=$7,dingtalk_user_name=$8,status='active',
           runtime_status='stopped',last_error=NULL,revision=revision+1,
-          updated_at=NOW(),updated_by=$8
+          updated_at=NOW(),updated_by=$9
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3 AND status='authorizing'
       RETURNING *
     `, [
@@ -160,8 +172,9 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
       accountId,
       expectedRevision,
       profile.profileId,
+      profile.corpId,
       profile.corpName ?? null,
-      profile.dingtalkUserId ?? null,
+      profile.dingtalkUserId,
       profile.dingtalkUserName ?? null,
       updatedBy,
     ]);
@@ -193,11 +206,21 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET status=CASE
-            WHEN $4::boolean AND profile_id IS NOT NULL THEN 'active'
-            WHEN $4::boolean THEN 'draft'
+            WHEN $4::boolean AND profile_id IS NULL THEN 'draft'
+            WHEN $4::boolean
+              AND corp_id IS NOT NULL AND dingtalk_user_id IS NOT NULL
+              AND profile_id=corp_id || ':' || dingtalk_user_id THEN 'active'
+            WHEN $4::boolean THEN 'error'
             ELSE 'paused'
           END,
-          runtime_status='stopped',last_error=NULL,
+          runtime_status='stopped',
+          last_error=CASE
+            WHEN $4::boolean AND profile_id IS NOT NULL
+              AND (corp_id IS NULL OR dingtalk_user_id IS NULL
+                OR profile_id<>corp_id || ':' || dingtalk_user_id)
+              THEN 'dws_profile_identity_reauthorization_required'
+            ELSE NULL
+          END,
           runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
           revision=revision+1,updated_at=NOW(),updated_by=$5
       WHERE tenant_id=$1 AND account_id=$2 AND revision=$3
@@ -231,25 +254,37 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
     return await this.requireUpdated(result.rows[0], tenantId, accountId);
   }
 
-  async claimRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean> {
+  async claimRuntimeLease(
+    accountId: string,
+    leaseOwner: string,
+    leaseTtlMs: number,
+    expectedRevision: number,
+  ): Promise<boolean> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_lease_owner=$2,
           runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')
-      WHERE account_id=$1 AND status='active' AND profile_id IS NOT NULL
+      WHERE account_id=$1 AND revision=$4 AND status='active' AND profile_id IS NOT NULL
+        AND corp_id IS NOT NULL AND dingtalk_user_id IS NOT NULL
+        AND profile_id=corp_id || ':' || dingtalk_user_id
         AND (runtime_lease_owner IS NULL OR runtime_lease_expires_at <= NOW())
       RETURNING account_id
-    `, [accountId, leaseOwner, leaseTtlMs]);
+    `, [accountId, leaseOwner, leaseTtlMs, expectedRevision]);
     return Boolean(result.rows[0]);
   }
 
-  async renewRuntimeLease(accountId: string, leaseOwner: string, leaseTtlMs: number): Promise<boolean> {
+  async renewRuntimeLease(
+    accountId: string,
+    leaseOwner: string,
+    leaseTtlMs: number,
+    expectedRevision: number,
+  ): Promise<boolean> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_lease_expires_at=NOW()+($3::bigint * INTERVAL '1 millisecond')
-      WHERE account_id=$1 AND runtime_lease_owner=$2 AND status='active'
+      WHERE account_id=$1 AND revision=$4 AND runtime_lease_owner=$2 AND status='active'
       RETURNING account_id
-    `, [accountId, leaseOwner, leaseTtlMs]);
+    `, [accountId, leaseOwner, leaseTtlMs, expectedRevision]);
     return Boolean(result.rows[0]);
   }
 
@@ -272,23 +307,30 @@ export class PgAgentDwsAccountStore implements AgentDwsAccountStore {
   async updateRuntimeStatus(
     accountId: string,
     status: AgentDwsAccountRecord['runtimeStatus'],
-    error?: string,
-    leaseOwner?: string,
+    error: string | undefined,
+    leaseOwner: string | undefined,
+    expectedRevision: number,
   ): Promise<void> {
     await this.pool.query(`
       UPDATE ${this.table}
       SET runtime_status=$2,last_error=$3,updated_at=NOW()
-      WHERE account_id=$1 AND ($4::text IS NULL OR runtime_lease_owner=$4)
-    `, [accountId, status, error ? compactError(error) : null, leaseOwner ?? null]);
+      WHERE account_id=$1 AND revision=$5 AND ($4::text IS NULL OR runtime_lease_owner=$4)
+    `, [accountId, status, error ? compactError(error) : null, leaseOwner ?? null, expectedRevision]);
   }
 
-  async markEvent(accountId: string, leaseOwner: string, occurredAt = new Date()): Promise<boolean> {
+  async markEvent(
+    accountId: string,
+    leaseOwner: string,
+    occurredAt: Date,
+    expectedRevision: number,
+  ): Promise<boolean> {
     const result = await this.pool.query(`
       UPDATE ${this.table}
       SET last_event_at=$3,runtime_status='ready',last_error=NULL,updated_at=NOW()
-      WHERE account_id=$1 AND runtime_lease_owner=$2 AND runtime_lease_expires_at > NOW()
+      WHERE account_id=$1 AND revision=$4
+        AND runtime_lease_owner=$2 AND runtime_lease_expires_at > NOW()
       RETURNING account_id
-    `, [accountId, leaseOwner, occurredAt.toISOString()]);
+    `, [accountId, leaseOwner, occurredAt.toISOString(), expectedRevision]);
     return Boolean(result.rows[0]);
   }
 

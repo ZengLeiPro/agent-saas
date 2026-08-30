@@ -6,6 +6,9 @@ import { parseSandboxResources, type SandboxResources } from '../sandboxProfile.
 
 export interface BackgroundTaskDwsCompletionRoute {
   accountId: string;
+  profileId: string;
+  corpId: string;
+  dingtalkUserId: string;
   conversationId: string;
   eventType: 'user_im_message_receive_at' | 'user_im_message_receive_o2o_all';
   messageId?: string;
@@ -164,17 +167,24 @@ function parseRuntimeIsolationRequirement(value: unknown): RuntimeIsolationRequi
 }
 
 function parseDwsCompletionRoute(value: unknown): BackgroundTaskDwsCompletionRoute | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const route = value as Record<string, unknown>;
   const accountId = metadataString(route, 'accountId');
+  const profileId = metadataString(route, 'profileId');
+  const corpId = metadataString(route, 'corpId');
+  const dingtalkUserId = metadataString(route, 'dingtalkUserId');
   const conversationId = metadataString(route, 'conversationId');
   const eventType = route.eventType === 'user_im_message_receive_at'
     || route.eventType === 'user_im_message_receive_o2o_all'
     ? route.eventType
     : undefined;
-  if (!accountId || !conversationId || !eventType) return undefined;
+  if (!accountId || !profileId || !corpId || !dingtalkUserId || !conversationId || !eventType
+    || profileId !== `${corpId}:${dingtalkUserId}`) return undefined;
   return {
     accountId,
+    profileId,
+    corpId,
+    dingtalkUserId,
     conversationId,
     eventType,
     ...(metadataString(route, 'messageId') ? { messageId: metadataString(route, 'messageId') } : {}),

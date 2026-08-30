@@ -97,7 +97,7 @@ const githubInput = {
 };
 
 describe('Connector Catalog', () => {
-  it('migration V7 创建 Definition/immutable Version 表，不复用展示词典', async () => {
+  it('migration V7 创建 Definition/immutable Version 表，并跑完当前 ledger', async () => {
     const { pool, queries } = buildPool();
     const store = new PgConnectorCatalogStore({ pool, tablePrefix: 'test' });
     await store.init();
@@ -106,7 +106,7 @@ describe('Connector Catalog', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_connector_definition_versions');
     expect(sql).toContain("status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'disabled', 'retired'))");
     expect(sql).toContain('UNIQUE (connector_id, version_number)');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('publish 创建 immutable version、digest 与 currentVersionId', async () => {

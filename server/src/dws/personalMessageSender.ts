@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountRecord,
+} from '../data/agentDwsAccounts/index.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { HttpTransport, type HttpTransportOptions } from '../runtime/httpTransport.js';
 import type { DwsWorkspacePrincipal } from './authFlow.js';
@@ -106,6 +109,7 @@ export function buildDwsPersonalMessageCommand(
   text: string,
   idempotencyKey: string,
 ): string {
+  if (!hasExactAgentDwsProfile(account)) throw new Error('Agent DWS profile 身份不完整，请重新授权');
   const profileId = requiredText(account.profileId, 'Agent DWS profile 缺失');
   const uuid = requiredText(idempotencyKey, 'Agent DWS 消息幂等键缺失');
   if (typeof text !== 'string' || !text.trim()) throw new Error('Agent DWS 消息正文缺失');

@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AgentRunDispatch, AgentRunOptions } from '../agent/index.js';
 import { createEventConsumer } from '../channels/eventConsumer.js';
-import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountRecord,
+  type AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
 import type {
   AgentDwsInboxRecord,
   AgentDwsMessageStore,
@@ -136,6 +140,10 @@ export class AgentDwsMessageRouter {
   }
 
   async ingest(account: AgentDwsAccountRecord, event: DwsPersonalEvent): Promise<boolean> {
+    if (!hasExactAgentDwsProfile(account)) {
+      this.options.logger?.warn(`Agent DWS event ignored with inexact account identity account=${account.accountId}`);
+      return false;
+    }
     if (!SUPPORTED_EVENT_TYPES.has(event.type)) {
       this.options.logger?.warn(
         `Agent DWS event ignored with unsupported type account=${account.accountId} event=${safeLogId(event.eventId)}`,
@@ -167,9 +175,14 @@ export class AgentDwsMessageRouter {
       content: event.content,
       ...(event.timestamp !== undefined ? { eventTimestamp: normalizeEventTimestamp(event.timestamp) } : {}),
     }, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: 'dws_personal_stream',
       eventType: event.type,
+      accountIdentity: {
+        profileId: account.profileId,
+        corpId: account.corpId,
+        dingtalkUserId: account.dingtalkUserId,
+      },
       ...(event.senderName ? { senderName: event.senderName } : {}),
     });
     if (result.created) this.scheduleKick();
@@ -288,8 +301,11 @@ export class AgentDwsMessageRouter {
 
   private async process(item: AgentDwsInboxRecord, abortController: AbortController): Promise<void> {
     const account = await this.options.accountStore.getForTenant(item.tenantId, item.accountId);
-    if (!account || account.status !== 'active' || !account.profileId) {
+    if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       throw new Error('Agent DWS account is unavailable or unauthorized');
+    }
+    if (!matchesInboxAccountIdentity(item, account)) {
+      throw new Error('Agent DWS inbox account identity is missing, invalid or stale');
     }
     if (account.agentId.length === 0) throw new Error('Agent DWS account has no Agent binding');
 
@@ -359,8 +375,13 @@ export class AgentDwsMessageRouter {
     if (Date.now() - Date.parse(replyAttempt.replyStartedAt) > DWS_REPLY_IDEMPOTENCY_SAFE_MS) {
       throw new Error('Agent DWS reply idempotency window expired; manual reconciliation required');
     }
+    const replyAccount = await this.options.accountStore.getForTenant(item.tenantId, item.accountId);
+    if (!replyAccount || replyAccount.status !== 'active' || !hasExactAgentDwsProfile(replyAccount)
+      || !matchesInboxAccountIdentity(item, replyAccount)) {
+      throw new Error('Agent DWS account identity changed before reply');
+    }
     await this.options.sender.send(
-      account,
+      replyAccount,
       inboxEvent(item),
       responseText,
       deterministicId('agent-dws-reply', `${item.accountId}:${item.eventId}`),
@@ -440,9 +461,11 @@ export class AgentDwsMessageRouter {
       ...(item.senderOpenDingtalkId ? { senderId: item.senderOpenDingtalkId } : {}),
       metadata: {
         source: item.payload.source === 'background_task_completion'
-          ? 'agent_dws_background_completion'
-          : 'agent_dws_personal_stream',
+          ? 'agent_dws_background_completion' : 'agent_dws_personal_stream',
         accountId: item.accountId,
+        profileId: account.profileId,
+        corpId: account.corpId,
+        dingtalkUserId: account.dingtalkUserId,
         eventId: item.eventId,
         eventType: item.eventType,
         ...(item.messageId ? { messageId: item.messageId } : {}),
@@ -514,6 +537,18 @@ function inboxEvent(item: AgentDwsInboxRecord): DwsPersonalEvent {
     ...(item.eventTimestamp ? { timestamp: new Date(item.eventTimestamp).getTime() } : {}),
     raw: item.payload,
   };
+}
+
+function matchesInboxAccountIdentity(
+  item: AgentDwsInboxRecord,
+  account: AgentDwsAccountRecord,
+): boolean {
+  const rawIdentity = item.payload.accountIdentity;
+  if (!rawIdentity || typeof rawIdentity !== 'object' || Array.isArray(rawIdentity)) return false;
+  const identity = rawIdentity as Record<string, unknown>;
+  return identity.profileId === account.profileId
+    && identity.corpId === account.corpId
+    && identity.dingtalkUserId === account.dingtalkUserId;
 }
 
 function buildSystemContext(account: AgentDwsAccountRecord, item: AgentDwsInboxRecord): string {

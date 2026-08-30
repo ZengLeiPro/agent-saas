@@ -20,12 +20,16 @@ export function resolveDwsCompletionRoute(
   const metadata = messageMetadata as Record<string, unknown>;
   if (metadata.source !== 'agent_dws_personal_stream') return undefined;
   const accountId = typeof metadata.accountId === 'string' ? metadata.accountId : undefined;
+  const profileId = typeof metadata.profileId === 'string' ? metadata.profileId : undefined;
+  const corpId = typeof metadata.corpId === 'string' ? metadata.corpId : undefined;
+  const dingtalkUserId = typeof metadata.dingtalkUserId === 'string' ? metadata.dingtalkUserId : undefined;
   const conversationId = typeof wake.chatId === 'string' ? wake.chatId : undefined;
   const eventType = metadata.eventType === 'user_im_message_receive_at'
     || metadata.eventType === 'user_im_message_receive_o2o_all' ? metadata.eventType : undefined;
-  if (!accountId || !conversationId || !eventType) return undefined;
+  if (!accountId || !profileId || !corpId || !dingtalkUserId || !conversationId || !eventType
+    || profileId !== `${corpId}:${dingtalkUserId}`) return undefined;
   return {
-    accountId, conversationId, eventType,
+    accountId, profileId, corpId, dingtalkUserId, conversationId, eventType,
     ...(typeof metadata.messageId === 'string' ? { messageId: metadata.messageId } : {}),
     ...(typeof wake.senderId === 'string' ? { senderOpenDingtalkId: wake.senderId } : {}),
   };

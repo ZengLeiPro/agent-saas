@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
-import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountRecord,
+} from '../data/agentDwsAccounts/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserIdentity } from '../types/index.js';
@@ -44,7 +47,7 @@ export class DwsRequesterIdentityResolver {
     senderOpenDingtalkId: string,
     senderName?: string,
   ): Promise<UserIdentity | null> {
-    if (!account.profileId || account.status !== 'active') {
+    if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       return await this.recordDecision(account, null, 'AGENT_DWS_ACCOUNT_UNAVAILABLE');
     }
     const candidates = this.options.userStore.listAll()

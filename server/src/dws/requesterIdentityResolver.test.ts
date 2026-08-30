@@ -9,7 +9,8 @@ import {
 
 const account: AgentDwsAccountRecord = {
   accountId: 'account-a', tenantId: 'tenant-a', agentId: 'agent-a', displayName: '专家甲',
-  loginId: 'login-a', profileId: 'profile-a', dingtalkUserId: 'agent-staff', status: 'active', runtimeStatus: 'ready',
+  loginId: 'login-a', profileId: 'corp-a:agent-staff', corpId: 'corp-a',
+  dingtalkUserId: 'agent-staff', status: 'active', runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'], revision: 1, createdAt: '2026-08-25T00:00:00.000Z',
   createdBy: 'admin-a', updatedAt: '2026-08-25T00:00:00.000Z', updatedBy: 'admin-a',
 };
@@ -48,14 +49,14 @@ describe('DwsRequesterIdentityResolver', () => {
     });
     const request = invoke.mock.calls[0]![0];
     expect(request.input.command).toContain("'contact' 'user' 'get' '--ids' 'staff-a'");
-    expect(request.input.command).toContain("'--profile' 'profile-a' '--format' 'json'");
+    expect(request.input.command).toContain("'--profile' 'corp-a:agent-staff' '--format' 'json'");
     expect(request.context.workspace).toMatchObject({
       userId: 'account-a', tenantId: 'tenant-a', executionTarget: 'server-remote',
     });
     expect(auditStore.events.map(event => event.result)).toEqual([
       'intent', 'succeeded', 'intent', 'succeeded', 'succeeded',
     ]);
-    expect(JSON.stringify(auditStore.events)).not.toContain('profile-a');
+    expect(JSON.stringify(auditStore.events)).not.toContain('corp-a:agent-staff');
   });
 
   it('无匹配、跨 staffId 或平台成员映射重复时 fail closed', async () => {

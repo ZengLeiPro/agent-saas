@@ -17,7 +17,9 @@ const account: AgentDwsAccountRecord = {
   agentId: 'oa-sales',
   displayName: '销售数字员工',
   loginId: 'sales-agent-001',
-  profileId: 'corp-a',
+  profileId: 'corp-a:user-a',
+  corpId: 'corp-a',
+  dingtalkUserId: 'user-a',
   status: 'active',
   runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'],
@@ -50,14 +52,14 @@ function successfulInvoke() {
 describe('DwsPersonalMessageSender command builder', () => {
   it('引用字段齐全时按 v1.0.60 flags 构建 reply，并透传 24h 幂等 uuid', () => {
     expect(buildDwsPersonalMessageCommand(account, personalEvent(), '已收到', 'event:event-1')).toBe(
-      "dws chat message reply --group 'cid-1' --ref-msg-id 'msg-1' --ref-sender 'sender-1' --content '已收到' --uuid 'event:event-1' --profile 'corp-a' --format json",
+      "dws chat message reply --group 'cid-1' --ref-msg-id 'msg-1' --ref-sender 'sender-1' --content '已收到' --uuid 'event:event-1' --profile 'corp-a:user-a' --format json",
     );
   });
 
   it('引用字段不全的群事件使用 canonical conversation-id send', () => {
     const event = personalEvent({ messageId: undefined, senderOpenDingtalkId: undefined });
     expect(buildDwsPersonalMessageCommand(account, event, '群回复', 'idem-group')).toBe(
-      "dws chat message send --conversation-id 'cid-1' --content '群回复' --idempotency-key 'idem-group' --profile 'corp-a' --format json",
+      "dws chat message send --conversation-id 'cid-1' --content '群回复' --idempotency-key 'idem-group' --profile 'corp-a:user-a' --format json",
     );
   });
 
@@ -68,12 +70,17 @@ describe('DwsPersonalMessageSender command builder', () => {
       messageId: undefined,
     });
     expect(buildDwsPersonalMessageCommand(account, event, '单聊回复', 'idem-o2o')).toBe(
-      "dws chat message send --open-dingtalk-id 'sender-1' --content '单聊回复' --idempotency-key 'idem-o2o' --profile 'corp-a' --format json",
+      "dws chat message send --open-dingtalk-id 'sender-1' --content '单聊回复' --idempotency-key 'idem-o2o' --profile 'corp-a:user-a' --format json",
     );
   });
 
   it('对目标、正文、uuid 和 profile 的 shell 元字符逐项单引号转义', () => {
-    const dangerousAccount = { ...account, profileId: "corp'; echo profile" };
+    const dangerousAccount = {
+      ...account,
+      profileId: "corp'; echo:profile",
+      corpId: "corp'; echo",
+      dingtalkUserId: 'profile',
+    };
     const dangerousEvent = personalEvent({
       conversationId: "cid'; touch /tmp/pwn",
       messageId: undefined,
@@ -87,7 +94,7 @@ describe('DwsPersonalMessageSender command builder', () => {
     );
 
     expect(command).toBe(
-      "dws chat message send --conversation-id 'cid'\"'\"'; touch /tmp/pwn' --content 'hello'\"'\"'; $(touch /tmp/text)\nnext' --idempotency-key 'uuid'\"'\"'; echo nope' --profile 'corp'\"'\"'; echo profile' --format json",
+      "dws chat message send --conversation-id 'cid'\"'\"'; touch /tmp/pwn' --content 'hello'\"'\"'; $(touch /tmp/text)\nnext' --idempotency-key 'uuid'\"'\"'; echo nope' --profile 'corp'\"'\"'; echo:profile' --format json",
     );
   });
 

@@ -116,7 +116,7 @@ const createInput = {
 };
 
 describe('Governance Change Job', () => {
-  it('migration V11 创建可重试 Job 与分域计数表', async () => {
+  it('migration V11 创建可重试 Job、分域计数表并跑完当前 ledger', async () => {
     const { pool, queries } = buildPool();
     const store = new PgGovernanceChangeJobStore({ pool, tablePrefix: 'test' });
     await store.init();
@@ -129,7 +129,7 @@ describe('Governance Change Job', () => {
     expect(sql).toContain('unresolved_items_json');
     expect(sql).toContain('ADD COLUMN IF NOT EXISTS ordinal INTEGER');
     expect(sql).toContain("'deletion_verification',9,'pending'");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('按请求顺序持久化并返回分域 ordinal，通用 Job 也不依赖字母排序', async () => {

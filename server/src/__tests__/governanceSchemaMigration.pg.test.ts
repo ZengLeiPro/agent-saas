@@ -276,7 +276,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     expect(Number(retried.rows[0]?.version)).toBe(34);
   }, 30_000);
 
-  it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V34 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -348,7 +348,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 33, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 34, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();

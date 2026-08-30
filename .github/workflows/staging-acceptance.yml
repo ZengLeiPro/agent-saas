@@ -1,4 +1,4 @@
-name: Staging Acceptance
+name: 预发验收
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: Prepare Release Evidence
+name: 准备发布证据
 
 on:
   workflow_run:

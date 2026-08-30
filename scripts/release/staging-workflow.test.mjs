@@ -134,7 +134,7 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
 
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
   const workflow = await readFile(acceptanceWorkflowPath, 'utf8');
-  assert.match(workflow, /name: Staging Acceptance/u);
+  assert.match(workflow, /name: 预发验收/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
   assert.match(workflow, /group: staging-acceptance\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);

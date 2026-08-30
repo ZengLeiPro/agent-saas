@@ -1,4 +1,4 @@
-name: Deploy Staging RC
+name: 部署预发 RC
 
 on:
   workflow_dispatch:

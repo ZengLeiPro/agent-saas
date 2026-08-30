@@ -27,12 +27,14 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
 
-  it("任务详情复用外层分栏，让任务中心 Header 与看板整体收缩", () => {
+  it("任务详情复用外层分栏，并使用略窄于正文的默认宽度", () => {
     expect(source).toContain("const showDockedPanel = showRightPanel || showTaskDetailPanel");
     expect(source).toContain("style={showDockedPanel");
     expect(source).toContain("detailPanelTarget={taskDetailPanelTarget}");
     expect(source).toContain("onTaskDetailOpenChange={setTaskDetailOpen}");
     expect(source).toContain('label="调整任务详情宽度"');
+    expect(source).toContain("const dockedPanelInitialRatio = showTaskDetailPanel ? 0.46 : 0.5");
+    expect(source).toContain("useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey)");
     expect(source).toContain('minWidth: "min(26rem, 75%)"');
     expect(taskBoardSource).toContain("portalTarget={detailPanelTarget}");
     expect(taskBoardSource).toContain("onDetailOpenChange?.(detailVisible)");

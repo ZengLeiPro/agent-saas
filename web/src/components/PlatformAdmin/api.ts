@@ -61,6 +61,13 @@ const retentionCategoryNames = [
   "model-request-finished",
   "hand-events",
 ] as const;
+const retentionErrorCategorySchema = z.enum([
+  "authorization_missing",
+  "legal_watermark_invalid",
+  "status_persistence_unavailable",
+  "partial_failure",
+  "execution_failed",
+]).nullable();
 // 运行结果与 freshness 正交；过期只能由 stale 布尔值表达。
 const eventStoreRetentionSchema = z.object({
   enabled: z.boolean(),
@@ -71,7 +78,7 @@ const eventStoreRetentionSchema = z.object({
   lastCompletedAt: isoTimestampSchema.nullable(),
   lastSuccessAt: isoTimestampSchema.nullable(),
   durationMs: z.number().nonnegative().nullable(),
-  errorCategory: nullableStringSchema,
+  errorCategory: retentionErrorCategorySchema,
   nextScheduledAt: isoTimestampSchema.nullable(),
   watermarks: z.object({
     legal: digitStringSchema.nullable(),
@@ -171,6 +178,7 @@ function hasConsistentRetentionWatermarks(watermarks: {
     && lag === maxGlobalSequence - effective;
 }
 
+// 响应生成时间、运行时间与容量时间共享 5 分钟时钟偏差门禁。
 const eventStoreStatusSchema = z.object({
   schemaVersion: z.literal(1),
   available: z.boolean(),
@@ -178,7 +186,11 @@ const eventStoreStatusSchema = z.object({
   retention: eventStoreRetentionSchema,
   capacity: eventStoreCapacitySchema,
 }).superRefine((status, ctx) => {
-  const latestRunTimestamp = Date.parse(status.generatedAt) + 5 * 60_000;
+  const generatedAtMs = Date.parse(status.generatedAt);
+  const latestRunTimestamp = generatedAtMs + 5 * 60_000;
+  if (generatedAtMs > Date.now() + 5 * 60_000) {
+    ctx.addIssue({ code: "custom", message: "EventStore 响应生成时间不能明显晚于客户端时间" });
+  }
   const runTimestamps = [
     status.retention.lastStartedAt,
     status.retention.lastCompletedAt,
@@ -186,6 +198,13 @@ const eventStoreStatusSchema = z.object({
   ];
   if (runTimestamps.some((value) => value !== null && Date.parse(value) > latestRunTimestamp)) {
     ctx.addIssue({ code: "custom", message: "retention 运行时间不能晚于响应生成时间" });
+  }
+  const capacityTimestamps = [
+    status.capacity.sampledAt,
+    ...status.capacity.series.map((point) => point.sampledAt),
+  ];
+  if (capacityTimestamps.some((value) => value !== null && Date.parse(value) > latestRunTimestamp)) {
+    ctx.addIssue({ code: "custom", message: "EventStore 容量采样时间不能晚于响应生成时间" });
   }
 });
 

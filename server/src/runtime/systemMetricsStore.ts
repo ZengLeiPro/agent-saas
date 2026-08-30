@@ -1,4 +1,4 @@
-import pg from 'pg';
+import pg, { type PoolClient } from 'pg';
 
 import type { RuntimeEventRetentionStatusSnapshot } from './runtimeEventRetention.js';
 
@@ -225,8 +225,9 @@ export class PgSystemMetricsStore {
   }
 
   async recordRuntimeEventRetentionStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
-    const client = await this.pool.connect();
+    let client: PoolClient | undefined;
     try {
+      client = await this.pool.connect();
       await client.query('BEGIN');
       const lock = await client.query<{ locked: boolean }>(
         'SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked',
@@ -270,10 +271,10 @@ export class PgSystemMetricsStore {
       this.runtimeEventRetentionStatusAvailable = true;
     } catch (err) {
       this.runtimeEventRetentionStatusAvailable = false;
-      await client.query('ROLLBACK').catch(() => undefined);
+      await client?.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {
-      client.release();
+      client?.release();
     }
   }
 

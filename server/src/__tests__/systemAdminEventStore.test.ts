@@ -105,12 +105,18 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
-  it('marks retention unavailable when startup status persistence is unavailable while preserving capacity', async () => {
+  it('keeps a fresh old success unavailable after startup persistence failure until a successful retry', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail(),
+    });
     const capacity = metric({});
+    let statusAvailable = false;
     const store = {
-      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? capacity : null),
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : capacity),
       listMetricSeries: vi.fn(async () => [capacity]),
-      isRuntimeEventRetentionStatusAvailable: () => false,
+      isRuntimeEventRetentionStatusAvailable: () => statusAvailable,
     };
     const server = await startServer({ store });
     servers.push(server);
@@ -119,6 +125,11 @@ describe('GET /api/admin/system/event-store', () => {
       available: true,
       retention: { status: 'unavailable', stale: false },
       capacity: { available: true, totalBytes: 140 },
+    });
+
+    statusAvailable = true;
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'execute_succeeded', stale: false },
     });
   });
 
@@ -186,6 +197,35 @@ describe('GET /api/admin/system/event-store', () => {
         series: [],
       },
     });
+  });
+
+  it('rejects a capacity snapshot sampled beyond the clock-skew allowance', async () => {
+    const future = metric({ sampledAt: '2099-01-01T00:00:00.000Z' });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? future : null),
+      listMetricSeries: vi.fn(async () => [future]),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      capacity: { available: false, sampledAt: null, stale: false, series: [] },
+    });
+  });
+
+  it('drops future capacity series points while preserving a valid latest snapshot', async () => {
+    const latest = metric({});
+    const future = metric({ id: 2, sampledAt: '2099-01-01T00:00:00.000Z' });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? latest : null),
+      listMetricSeries: vi.fn(async () => [latest, future]),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    const body = await (await server.get()).json() as any;
+    expect(body.capacity).toMatchObject({ available: true, sampledAt: latest.sampledAt });
+    expect(body.capacity.series).toEqual([expect.objectContaining({ sampledAt: latest.sampledAt })]);
   });
 
   it('returns never-run rather than healthy when the store has no retention snapshot', async () => {
@@ -312,6 +352,28 @@ describe('GET /api/admin/system/event-store', () => {
         nextScheduledAt: null,
         categories: {},
       },
+    });
+  });
+
+  it.each(['db down', 'future_error_category'])('rejects an unstable error category %s', async (errorCategory) => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail({
+        state: 'failed',
+        errorCategory,
+        lastSuccessAt: null,
+      }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'unavailable', errorCategory: null },
     });
   });
 

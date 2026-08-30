@@ -396,6 +396,13 @@ const retentionCategoryNames = [
   'hand-events',
 ] as const;
 const retentionCategoryNameSet = new Set<string>(retentionCategoryNames);
+const retentionErrorCategorySet = new Set([
+  'authorization_missing',
+  'legal_watermark_invalid',
+  'status_persistence_unavailable',
+  'partial_failure',
+  'execution_failed',
+]);
 
 function serializeRetentionStatus(
   base: RetentionBase,
@@ -421,7 +428,7 @@ function serializeRetentionStatus(
     || !isNullableIsoTimestamp(detail.lastSuccessAt)
     || !retentionRunTimestampsNotFuture(detail, sampledMs)
     || !isNullableNonnegativeNumber(detail.durationMs)
-    || !isNullableString(detail.errorCategory)
+    || !isNullableRetentionErrorCategory(detail.errorCategory)
     || !isNullableIsoTimestamp(detail.nextScheduledAt)
     || !isDigitString(persistedWatermarks.legal)
     || !isNullableDigitString(persistedWatermarks.billing)
@@ -568,6 +575,8 @@ function serializeCapacity(
   const capacity = capacityValues(latest);
   if (!capacity || !isIsoTimestamp(latest.sampledAt)) return unavailableCapacity(tableName);
   const sampledMs = Date.parse(latest.sampledAt);
+  const latestAllowedMs = now.getTime() + 5 * 60_000;
+  if (sampledMs > latestAllowedMs) return unavailableCapacity(tableName);
   return {
     available: true,
     tableName,
@@ -576,7 +585,9 @@ function serializeCapacity(
     stale: !Number.isFinite(sampledMs) || now.getTime() - sampledMs > 30 * 60_000,
     series: series.flatMap((metric) => {
       const values = capacityValues(metric);
-      return values && isIsoTimestamp(metric.sampledAt) ? [{ sampledAt: metric.sampledAt, ...values }] : [];
+      return values && isIsoTimestamp(metric.sampledAt) && Date.parse(metric.sampledAt) <= latestAllowedMs
+        ? [{ sampledAt: metric.sampledAt, ...values }]
+        : [];
     }).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
   };
 }
@@ -627,8 +638,8 @@ function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === 'string';
+function isNullableRetentionErrorCategory(value: unknown): value is string | null {
+  return value === null || (typeof value === 'string' && retentionErrorCategorySet.has(value));
 }
 
 function isDigitString(value: unknown): value is string {

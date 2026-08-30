@@ -278,6 +278,13 @@ export type EventStoreRetentionStatus =
   | "failed"
   | "unavailable";
 
+export type EventStoreRetentionErrorCategory =
+  | "authorization_missing"
+  | "legal_watermark_invalid"
+  | "status_persistence_unavailable"
+  | "partial_failure"
+  | "execution_failed";
+
 export interface EventStoreCategorySummary {
   eligible: number | null;
   deleted: number | null;
@@ -296,7 +303,7 @@ export interface EventStoreStatusResponse {
     lastCompletedAt: string | null;
     lastSuccessAt: string | null;
     durationMs: number | null;
-    errorCategory: string | null;
+    errorCategory: EventStoreRetentionErrorCategory | null;
     nextScheduledAt: string | null;
     watermarks: {
       legal: string | null;

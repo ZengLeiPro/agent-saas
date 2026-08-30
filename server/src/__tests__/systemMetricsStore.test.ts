@@ -171,7 +171,7 @@ describe('PgSystemMetricsStore', () => {
     expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
   });
 
-  it('fails closed without status writes when the retention authority lock is unavailable', async () => {
+  it('marks status unavailable without writes when the retention authority lock is unavailable', async () => {
     const pool = createFakePool();
     (pool as any).connect = async () => ({
       async query(text: string, values: unknown[] = []) {
@@ -203,6 +203,41 @@ describe('PgSystemMetricsStore', () => {
     expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
     expect(pool.queries.some((query) => query.text === 'ROLLBACK')).toBe(true);
     expect(pool.queries.some((query) => /INSERT INTO|UPDATE/.test(query.text))).toBe(false);
+  });
+
+  it('marks status persistence unavailable when connection acquisition fails and recovers after a successful retry', async () => {
+    const pool = createFakePool();
+    const connect = pool.connect.bind(pool);
+    let databaseAvailable = false;
+    (pool as any).connect = async () => {
+      if (!databaseAvailable) throw new Error('db down');
+      return connect();
+    };
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+    const snapshot = {
+      schemaVersion: 1 as const,
+      state: 'scheduled' as const,
+      mode: 'execute' as const,
+      sweepIntervalMinutes: 10,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: '2026-08-29T13:10:00.000Z',
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    };
+
+    await expect(store.recordRuntimeEventRetentionStatus(snapshot)).rejects.toThrow('db down');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries).toEqual([]);
+
+    databaseAvailable = true;
+    await expect(store.recordRuntimeEventRetentionStatus(snapshot)).resolves.toBeUndefined();
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
+    expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
   });
 
   it('preserves the latest retention status while pruning ordinary expired series', async () => {

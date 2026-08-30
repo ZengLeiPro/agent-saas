@@ -123,6 +123,14 @@ describe("platform admin api", () => {
     ["{bad-json", "坏 JSON"],
     [JSON.stringify({ schemaVersion: 1 }), "缺失字段"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "future_status" } }), "未知状态"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: { ...eventStoreFixture().retention, status: "failed", errorCategory: "db down" },
+    }), "错误类别包含原始错误文本"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: { ...eventStoreFixture().retention, status: "failed", errorCategory: "future_error_category" },
+    }), "错误类别不是稳定白名单值"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "stale", stale: true } }), "用 status 覆盖 freshness"],
     [JSON.stringify({
       ...eventStoreFixture(),
@@ -181,7 +189,54 @@ describe("platform admin api", () => {
         totalBytes: 140,
       },
     }), "旧格式可用容量仍缺 table/index 字段"],
-  ])("rejects invalid 2xx %s rather than replacing trusted EventStore data (%s)", async (body) => {
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      capacity: {
+        available: true,
+        tableName: "runtime_events",
+        totalBytes: 140,
+        tableBytes: 100,
+        indexBytes: 40,
+        sampledAt: "2099-01-01T00:00:00.000Z",
+        stale: false,
+        series: [
+          { totalBytes: 120, tableBytes: 90, indexBytes: 30, sampledAt: "2098-12-31T23:00:00.000Z" },
+          { totalBytes: 140, tableBytes: 100, indexBytes: 40, sampledAt: "2099-01-01T00:00:00.000Z" },
+        ],
+      },
+    }), "容量快照与趋势晚于响应生成时间"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      generatedAt: "2099-01-01T00:00:00.000Z",
+      capacity: {
+        available: true,
+        tableName: "runtime_events",
+        totalBytes: 140,
+        tableBytes: 100,
+        indexBytes: 40,
+        sampledAt: "2099-01-01T00:00:00.000Z",
+        stale: false,
+        series: [
+          { totalBytes: 140, tableBytes: 100, indexBytes: 40, sampledAt: "2099-01-01T00:00:00.000Z" },
+        ],
+      },
+    }), "响应与容量时间同时伪造到未来"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      capacity: {
+        available: true,
+        tableName: "runtime_events",
+        totalBytes: 140,
+        tableBytes: 100,
+        indexBytes: 40,
+        sampledAt: "2026-08-29T14:00:00.000Z",
+        stale: false,
+        series: [
+          { totalBytes: 140, tableBytes: 100, indexBytes: 40, sampledAt: "2099-01-01T00:00:00.000Z" },
+        ],
+      },
+    }), "单个容量趋势样本晚于响应生成时间"],
+  ])("rejects an invalid 2xx body rather than replacing trusted EventStore data (%s)", async (body) => {
     authFetchMock.mockResolvedValue(new Response(body, { status: 200 }));
 
     await expect(platformAdminApi.eventStoreStatus()).rejects.toThrow("EventStore 状态响应无效");

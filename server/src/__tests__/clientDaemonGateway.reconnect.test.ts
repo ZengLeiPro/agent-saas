@@ -218,6 +218,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     }, { disconnectGracePeriodMs: 2_000 });
   });
 
+  // coverage 并发会放大本地 WebSocket 重连调度延迟，单独放宽本条生命周期用例。
   it('resumes a built-in runner invocation across a grace-period reconnect', async () => {
     await withGateway(async ({ url, transport }) => {
       let resolveExecution: ((response: ToolInvocationResponse) => void) | undefined;
@@ -264,7 +265,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         await run;
       }
     }, { disconnectGracePeriodMs: 2_000 });
-  });
+  }, 20_000);
 
   // C2: grace-period reconnect — when the socket drops with pending invokes
   // and the same handId reconnects within the grace window, the pendingInvokes

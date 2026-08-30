@@ -50,7 +50,7 @@ describe('ACS deploy workflow contract', () => {
     expect(gate).not.toContain('workflow_dispatch');
   });
 
-  it('对普通 UI、ACS 源码和 ACS Workflow fixture 给出稳定分类', () => {
+  it('对普通 UI、ACS 源码、managed unit 和 Workflow 给出稳定分类', () => {
     expect(classify(['web/src/App.tsx'])).toMatchObject({
       publish: 'false',
       contract_check: 'false',
@@ -68,13 +68,25 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
+    expect(classify(['scripts/release/manage-acs-systemd-unit.sh'])).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
+    expect(
+      classify(['daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template']),
+    ).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
   });
 
-  it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {
+  it('在等待镜像前拒绝落后 main 的 dispatch，并在确认后打包 managed unit', () => {
     const checkoutIndex = workflow.indexOf('- name: Checkout exact dispatch commit');
     const verifyIndex = workflow.indexOf('- name: Verify dispatch still targets latest main');
     const waitIndex = workflow.indexOf('- name: Wait for ACR auto-build of HEAD');
-    const packIndex = workflow.indexOf('- name: Pack and identify orchestrator release');
+    const packIndex = workflow.indexOf(
+      '- name: Pack and identify orchestrator and managed unit release',
+    );
 
     expect(checkoutIndex).toBeGreaterThan(-1);
     expect(verifyIndex).toBeGreaterThan(checkoutIndex);

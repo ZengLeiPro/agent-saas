@@ -6,7 +6,7 @@ set -euo pipefail
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
-: "${READ_PRODUCTION_STATE_SCRIPT:?READ_PRODUCTION_STATE_SCRIPT is required}"
+: "${READ_LIVE_COMPONENTS_SCRIPT:?READ_LIVE_COMPONENTS_SCRIPT is required}"
 : "${VERIFY_PROMOTION_PHASE_SCRIPT:?VERIFY_PROMOTION_PHASE_SCRIPT is required}"
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 VERIFY_ONLY="${VERIFY_ONLY:-false}"
@@ -36,14 +36,17 @@ exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
 
 # Promotion 的 GitHub gate 与分阶段写入之间仍可能有手工/兼容入口；每个阶段必须在
-# 同一主机锁内重新读取 live state，并只接受该阶段应看到的精确前置矩阵。
+# 同一主机锁内从 observer、systemd 与已安装密封字节重建 live matrix，再只接受该阶段
+# 应看到的“冻结基线 + 已提交 phase”精确前置矩阵；重试时也只接受当前 phase 已精确提交的目标矩阵。
+# 不能先要求 live 全量等于旧 trusted identity，
+# 否则首个 phase 成功后会把后续 phase 拒绝在事务中间。
 production_now="/tmp/agent-saas-production-before-${PHASE}-${GITHUB_RUN_ID}.json"
 rm -f "$production_now"
-node "$READ_PRODUCTION_STATE_SCRIPT" --output "$production_now" >/dev/null
+node "$READ_LIVE_COMPONENTS_SCRIPT" --output "$production_now" >/dev/null
 node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" "$production_now" "$PHASE" >/dev/null
 rm -f "$production_now"
 if [ "$VERIFY_ONLY" = true ] || [ "$PHASE" = web ]; then
-  echo "$PHASE phase precondition verified for $release_id"
+  echo "$PHASE live precondition verified for $release_id"
   exit 0
 fi
 
@@ -69,6 +72,7 @@ NODE
 
 deploy_acs() {
   local digest target previous main_pid rollback_root unit_path had_previous_identity candidate
+  local had_previous_unit=false
   local acs_committed=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
@@ -102,13 +106,22 @@ deploy_acs() {
   mkdir -p "$rollback_root"
   unit_path=/etc/systemd/system/agent-saas-acs-orchestrator.service
   cp -a /etc/agent-saas/acs-orchestrator.env "$rollback_root/acs-orchestrator.env"
-  cp -a "$unit_path" "$rollback_root/acs-orchestrator.service"
+  if [ -L "$unit_path" ] || { [ -e "$unit_path" ] && [ ! -f "$unit_path" ]; }; then
+    echo "Existing ACS managed unit must be absent or a regular file: $unit_path" >&2
+    exit 1
+  fi
+  if [ -f "$unit_path" ]; then
+    had_previous_unit=true
+    cp -a "$unit_path" "$rollback_root/acs-orchestrator.service"
+  fi
   had_previous_identity=false
   if [ -e /etc/agent-saas/acs-release-identity.json ]; then
     had_previous_identity=true
     cp -a /etc/agent-saas/acs-release-identity.json "$rollback_root/acs-release-identity.json"
   fi
   cleanup_acs_failure() {
+    local deploy_status=$? reload_status=0 restart_status=0
+    set +e
     if [ "$acs_committed" = false ]; then
       if [ -n "$previous" ]; then
         ln -sfn "$previous" /opt/agent-saas/acs-current
@@ -121,11 +134,19 @@ deploy_acs() {
       else
         rm -f /etc/agent-saas/acs-release-identity.json
       fi
-      cp -a "$rollback_root/acs-orchestrator.service" "$unit_path"
-      systemctl daemon-reload
-      systemctl restart agent-saas-acs-orchestrator.service || true
+      if [ "$had_previous_unit" = true ]; then
+        cp -a "$rollback_root/acs-orchestrator.service" "$unit_path"
+      else
+        rm -f "$unit_path"
+      fi
+      systemctl daemon-reload || reload_status=$?
+      systemctl restart agent-saas-acs-orchestrator.service || restart_status=$?
+      if [ "$reload_status" -ne 0 ] || [ "$restart_status" -ne 0 ]; then
+        echo "ACS rollback incomplete: daemon-reload=$reload_status restart=$restart_status" >&2
+      fi
     fi
     rm -rf "$rollback_root"
+    return "$deploy_status"
   }
   trap cleanup_acs_failure EXIT
   trap 'exit 130' HUP INT TERM

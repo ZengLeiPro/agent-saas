@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { validateLiveProductionComponents } from './read-live-production-components.mjs';
 import { assertPromotionPhaseState } from './verify-promotion-phase-state.mjs';
 
 const BASE_SHA = 'a'.repeat(40);
@@ -58,20 +59,111 @@ function deployApp(value) {
   value.state.components.runtimeWorker = { gitSha: RELEASE_SHA, artifactDigest: digest('6') };
 }
 
-test('each promotion phase accepts only its exact predecessor matrix', () => {
+function readLiveState(state) {
+  const { components } = state;
+  return {
+    components: validateLiveProductionComponents({
+      api: {
+        status: 'ok',
+        release: {
+          environment: 'production',
+          releaseSha: components.api.gitSha,
+          serverDigest: components.api.artifactDigest,
+          safetyAttested: true,
+        },
+      },
+      web: {
+        schemaVersion: 1,
+        environment: 'production',
+        releaseSha: components.web.gitSha,
+        webDigest: components.web.artifactDigest,
+      },
+      workerReleaseEnvironment: {
+        AGENT_SAAS_RELEASE_SHA: components.runtimeWorker.gitSha,
+        AGENT_SAAS_SERVER_DIGEST: components.runtimeWorker.artifactDigest,
+      },
+      workerSystemdEnvironment: 'AGENT_SAAS_ENVIRONMENT=production',
+      acs: {
+        environment: 'production',
+        releaseIdentityAttested: true,
+        namespace: 'agent-saas-coding',
+        sourceSha: components.acs.gitSha,
+        orchestratorArtifactDigest: components.acs.orchestratorArtifactDigest,
+        sandboxImageDigest: components.acs.sandboxImageDigest,
+      },
+    }),
+  };
+}
+
+test('live reader accepts ACS → App → Web only at each exact predecessor matrix', () => {
   const value = fixture();
-  assert.doesNotThrow(() => assertPromotionPhaseState(value.manifest, value.state, 'acs'));
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'acs'),
+  );
   deployAcs(value);
-  assert.doesNotThrow(() => assertPromotionPhaseState(value.manifest, value.state, 'app'));
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'app'),
+  );
   deployApp(value);
-  assert.doesNotThrow(() => assertPromotionPhaseState(value.manifest, value.state, 'web'));
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'web'),
+  );
+});
+
+test('current phase retry accepts the exact target after a committed phase failure', () => {
+  const value = fixture();
+  deployAcs(value);
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'acs'),
+  );
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'app'),
+  );
+  deployApp(value);
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'app'),
+  );
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'web'),
+  );
+  value.state.components.web = { gitSha: RELEASE_SHA, artifactDigest: digest('5') };
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'web'),
+  );
+});
+
+test('whole job retry accepts only an exact committed prefix from every earlier phase', () => {
+  const value = fixture();
+  deployAcs(value);
+  deployApp(value);
+  value.state.components.web = { gitSha: RELEASE_SHA, artifactDigest: digest('5') };
+  for (const phase of ['acs', 'app', 'web']) {
+    assert.doesNotThrow(() =>
+      assertPromotionPhaseState(value.manifest, readLiveState(value.state), phase),
+    );
+  }
+
+  const skippedPredecessors = fixture();
+  skippedPredecessors.state.components.web = {
+    gitSha: RELEASE_SHA,
+    artifactDigest: digest('5'),
+  };
+  assert.throws(
+    () =>
+      assertPromotionPhaseState(
+        skippedPredecessors.manifest,
+        readLiveState(skippedPredecessors.state),
+        'acs',
+      ),
+    /Production changed after promotion gate: web\.gitSha/u,
+  );
 });
 
 test('fails closed when another deploy changes production between phases', () => {
   const beforeAcs = fixture();
   beforeAcs.state.components.api.artifactDigest = digest('9');
   assert.throws(
-    () => assertPromotionPhaseState(beforeAcs.manifest, beforeAcs.state, 'acs'),
+    () => assertPromotionPhaseState(beforeAcs.manifest, readLiveState(beforeAcs.state), 'acs'),
     /Production changed after promotion gate: api\.artifactDigest/u,
   );
 
@@ -79,8 +171,16 @@ test('fails closed when another deploy changes production between phases', () =>
   deployAcs(beforeApp);
   beforeApp.state.components.runtimeWorker.artifactDigest = digest('9');
   assert.throws(
-    () => assertPromotionPhaseState(beforeApp.manifest, beforeApp.state, 'app'),
+    () => assertPromotionPhaseState(beforeApp.manifest, readLiveState(beforeApp.state), 'app'),
     /Production changed after promotion gate: runtimeWorker\.artifactDigest/u,
+  );
+
+  const halfApp = fixture();
+  deployAcs(halfApp);
+  halfApp.state.components.api = { gitSha: RELEASE_SHA, artifactDigest: digest('6') };
+  assert.throws(
+    () => assertPromotionPhaseState(halfApp.manifest, readLiveState(halfApp.state), 'app'),
+    /Production changed after promotion gate: api\.gitSha/u,
   );
 
   const beforeWeb = fixture();
@@ -88,7 +188,7 @@ test('fails closed when another deploy changes production between phases', () =>
   deployApp(beforeWeb);
   beforeWeb.state.components.acs.sandboxImageDigest = digest('9');
   assert.throws(
-    () => assertPromotionPhaseState(beforeWeb.manifest, beforeWeb.state, 'web'),
+    () => assertPromotionPhaseState(beforeWeb.manifest, readLiveState(beforeWeb.state), 'web'),
     /Production changed after promotion gate: acs\.sandboxImageDigest/u,
   );
 });
@@ -98,6 +198,10 @@ test('partial keep matrices preserve the frozen baseline expectation', () => {
   value.manifest.components.api.action = 'keep';
   value.manifest.components.runtimeWorker.action = 'keep';
   value.manifest.components.acs.action = 'keep';
-  assert.doesNotThrow(() => assertPromotionPhaseState(value.manifest, value.state, 'app'));
-  assert.doesNotThrow(() => assertPromotionPhaseState(value.manifest, value.state, 'web'));
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'app'),
+  );
+  assert.doesNotThrow(() =>
+    assertPromotionPhaseState(value.manifest, readLiveState(value.state), 'web'),
+  );
 });

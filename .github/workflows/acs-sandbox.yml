@@ -31,6 +31,8 @@ on:
       - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'
       - 'scripts/deploy-acs-orchestrator.sh'
+      - 'scripts/release/manage-acs-systemd-unit.sh'
+      - 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template'
       - 'scripts/release/upload-oss-object-immutable.sh'
       - 'scripts/release/runtime-dependency.mjs'
       - 'scripts/release/artifact-lib.mjs'
@@ -634,13 +636,14 @@ jobs:
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Pack and identify orchestrator release
+      - name: Pack and identify orchestrator and managed unit release
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
           set -euo pipefail
           pnpm -F acs-orchestrator build
           stage="$RUNNER_TEMP/acs-release-stage"
           mkdir -p "$stage/scripts/release" \
+            "$stage/daemon-packaging/systemd" \
             "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts"
           pnpm --config.allowUnusedPatches=true --filter acs-orchestrator --prod deploy \
             "$stage/acs-orchestrator"
@@ -652,6 +655,10 @@ jobs:
             --source-sha="$GITHUB_SHA" --output="$stage/acs-orchestrator/runtime-dependencies.json"
           install -m 0444 scripts/release/runtime-dependency.mjs \
             scripts/release/artifact-lib.mjs "$stage/acs-orchestrator/dist/"
+          install -m 0555 scripts/release/manage-acs-systemd-unit.sh \
+            "$stage/scripts/release/manage-acs-systemd-unit.sh"
+          install -m 0444 daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template \
+            "$stage/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template"
           mkdir -p "$stage/acs-orchestrator/config"
           install -m 0444 acs-orchestrator/config/production.env \
             "$stage/acs-orchestrator/config/production.env"

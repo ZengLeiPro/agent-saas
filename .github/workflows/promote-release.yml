@@ -284,6 +284,40 @@ jobs:
           fi
           node scripts/release/verify-selected-release-artifacts.mjs \
             "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/selected"
+          mkdir -p "$RUNNER_TEMP/selected-units" "$RUNNER_TEMP/selected-server" \
+            "$RUNNER_TEMP/selected-acs"
+          schema_version="$(jq -r .schemaVersion "$RUNNER_TEMP/manifest.json")"
+          app_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
+          acs_action="$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")"
+          if [ "$schema_version" = 2 ]; then
+            if [ "$app_action" = deploy ]; then
+              tar -xzf "$RUNNER_TEMP/selected/server-bundle.tgz" -C "$RUNNER_TEMP/selected-server"
+              install -m 0444 \
+                "$RUNNER_TEMP/selected-server/server/daemon-packaging/systemd/agent-saas-server@.service.template" \
+                "$RUNNER_TEMP/selected-units/agent-saas-server@.service.template"
+              install -m 0444 \
+                "$RUNNER_TEMP/selected-server/server/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
+                "$RUNNER_TEMP/selected-units/agent-saas-runtime-worker@.service.template"
+            fi
+            if [ "$acs_action" = deploy ]; then
+              tar -xzf "$RUNNER_TEMP/selected/acs-orchestrator.tgz" -C "$RUNNER_TEMP/selected-acs"
+              install -m 0444 \
+                "$RUNNER_TEMP/selected-acs/acs-orchestrator/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template" \
+                "$RUNNER_TEMP/selected-units/agent-saas-acs-orchestrator.service.template"
+            fi
+          else
+            # 显式历史 v1 没有 unit provenance；仅 deploy 组件保留旧入口，keep 不读取 baseline archive 的 unit。
+            if [ "$app_action" = deploy ]; then
+              install -m 0444 daemon-packaging/systemd/agent-saas-server@.service.template \
+                "$RUNNER_TEMP/selected-units/agent-saas-server@.service.template"
+              install -m 0444 daemon-packaging/systemd/agent-saas-runtime-worker@.service.template \
+                "$RUNNER_TEMP/selected-units/agent-saas-runtime-worker@.service.template"
+            fi
+            if [ "$acs_action" = deploy ]; then
+              install -m 0444 daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template \
+                "$RUNNER_TEMP/selected-units/agent-saas-acs-orchestrator.service.template"
+            fi
+          fi
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
             "$expected_repository"
@@ -324,7 +358,7 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" \
             -f state=in_progress -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
 
-      - name: Upload immutable deploy payload and managed units
+      - name: Upload immutable deploy payload and RC-bound managed units
         run: |
           set -euo pipefail
           remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID"
@@ -339,15 +373,15 @@ jobs:
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/selected/"*.tgz "$ECS_USER@$ECS_HOST:$remote/artifacts/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
-            scripts/release/verify-installed-release.mjs scripts/release/read-production-state.mjs \
+            scripts/release/verify-installed-release.mjs \
+            scripts/release/read-live-production-components.mjs scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs scripts/release/verify-promotion-phase-state.mjs \
             scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
-          scp -i ~/.ssh/production_key \
-            daemon-packaging/systemd/agent-saas-server@.service.template \
-            daemon-packaging/systemd/agent-saas-runtime-worker@.service.template \
-            daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template \
-            "$ECS_USER@$ECS_HOST:$remote/"
+          unit_files=("$RUNNER_TEMP/selected-units/"*)
+          if [ -e "${unit_files[0]}" ]; then
+            scp -i ~/.ssh/production_key "${unit_files[@]}" "$ECS_USER@$ECS_HOST:$remote/"
+          fi
 
       - name: Persist ACS operation start receipt
         id: start_acs
@@ -382,7 +416,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' ACS_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-acs-orchestrator.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -444,7 +478,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app VERIFY_ONLY='$verify_only' RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' SERVER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-server@.service.template' WORKER_UNIT_TEMPLATE='$PROMOTION_REMOTE/agent-saas-runtime-worker@.service.template' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -504,8 +538,9 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_PRODUCTION_STATE_SCRIPT='$PROMOTION_REMOTE/read-production-state.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
           # 仅在主机侧 phase 前置校验通过后发布 OSS Web entry。
+          # OSS 写入仍由 workflow 负责，主机脚本只锁定 phase 前置状态。
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"

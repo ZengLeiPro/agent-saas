@@ -249,7 +249,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         cls.workflow = ACS_WORKFLOW.read_text(encoding='utf-8')
         cls.deploy_script = ACS_DEPLOY_SCRIPT.read_text(encoding='utf-8')
 
-    def test_externalizes_remote_deploy_script_below_github_expression_limit(self):
+    def test_externalizes_remote_deploy_script_and_keeps_syntax_valid(self):
         self.assertIn('< scripts/deploy-acs-orchestrator.sh', self.workflow)
         self.assertNotIn("<<'REMOTE'", self.workflow)
         syntax = subprocess.run(
@@ -272,6 +272,43 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             )
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
+
+    def test_direct_deploy_recovers_restart_and_reload_failures(self):
+        self.assertIn('scripts/release/manage-acs-systemd-unit.sh', self.workflow)
+        self.assertIn(
+            'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+            self.workflow,
+        )
+        push_paths = self.workflow.split('  workflow_dispatch:', 1)[0]
+        self.assertIn("- 'scripts/release/manage-acs-systemd-unit.sh'", push_paths)
+        self.assertIn(
+            "- 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template'",
+            push_paths,
+        )
+        guard = self.deploy_script.index(
+            '"$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs"'
+        )
+        install = self.deploy_script.index('install_acs_managed_unit')
+        replacement = self.deploy_script.index('PROCESS_REPLACED=true')
+        restart = self.deploy_script.index(
+            '"$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"', replacement
+        )
+        # restart 自身失败时也必须进入显式 rollback，而不是走“尚未替换”的轻量 cleanup。
+        self.assertIn('ACS_NODE=/usr/bin/node', self.deploy_script)
+        self.assertLess(guard, install)
+        self.assertLess(install, replacement)
+        self.assertLess(replacement, restart)
+        self.assertIn('Restart=on-failure 不会在 drain 的 clean exit(0) 后自动拉起', self.deploy_script)
+        self.assertLess(self.deploy_script.index('rollback() {'), restart)
+        self.assertIn(
+            'if ! "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"; then',
+            self.deploy_script,
+        )
+        self.assertIn('candidate restart failed; rolling back the managed unit', self.deploy_script)
+        self.assertIn('|| unit_restore_status=$?', self.deploy_script)
+        self.assertIn('|| restart_status=$?', self.deploy_script)
+        self.assertGreaterEqual(self.deploy_script.count('restore_acs_managed_unit'), 2)
+        self.assertIn('ACS_UNIT_HAD_PREVIOUS=false', self.deploy_script)
 
     def test_test_fixtures_are_contract_only_and_never_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:

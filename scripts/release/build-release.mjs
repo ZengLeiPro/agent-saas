@@ -221,6 +221,15 @@ export async function buildRelease(argv = process.argv) {
     join(root, 'scripts/release/artifact-lib.mjs'),
     join(stage, 'server/dist/artifact-lib.mjs'),
   ]);
+  await mkdir(join(stage, 'server/daemon-packaging/systemd'), { recursive: true });
+  run('cp', [
+    join(root, 'daemon-packaging/systemd/agent-saas-server@.service.template'),
+    join(stage, 'server/daemon-packaging/systemd/agent-saas-server@.service.template'),
+  ]);
+  run('cp', [
+    join(root, 'daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
+    join(stage, 'server/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template'),
+  ]);
 
   const artifacts = {
     serverBundle: await packRooted(stage, 'server', join(output, 'server-bundle.tgz')),
@@ -247,6 +256,16 @@ export async function buildRelease(argv = process.argv) {
     run('cp', [
       join(root, 'scripts/release/artifact-lib.mjs'),
       join(stage, 'acs-orchestrator/dist/artifact-lib.mjs'),
+    ]);
+    await mkdir(join(stage, 'acs-orchestrator/daemon-packaging/systemd'), {
+      recursive: true,
+    });
+    run('cp', [
+      join(root, 'daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template'),
+      join(
+        stage,
+        'acs-orchestrator/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
+      ),
     ]);
     artifacts.acsOrchestrator = await packRooted(
       stage,

@@ -165,6 +165,8 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(promotionWorkflow, /group: production-runtime/u);
   assert.match(acsWorkflow, /baselines\/acs-/u);
   assert.match(acsWorkflow, /acs-release-stage\/acs-orchestrator\/runtime-dependencies\.json/u);
+  assert.match(acsWorkflow, /manage-acs-systemd-unit\.sh/u);
+  assert.match(acsWorkflow, /agent-saas-acs-orchestrator\.service\.template/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /environment: production/u);
   assert.match(acsWorkflow, /group: agent-saas-production-deploy/u);
@@ -191,17 +193,31 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     acsDeploy,
     /if \[ "\$\{PRODUCTION_CLEANUP_ARMED:-false\}" != "true" \]; then[\s\S]*return "\$deploy_status"/u,
   );
+  assert.match(acsDeploy, /ACS_NODE=\/usr\/bin\/node/u);
+  assert.match(acsDeploy, /SYSTEMCTL_BIN=\/usr\/bin\/systemctl/u);
   assert.match(
     acsDeploy,
-    /runtime-dependency\.mjs[\s\S]*--component=acsOrchestrator --production=true/u,
+    /"\$ACS_NODE" "\$RUNTIME_PREFLIGHT_DIR\/acs-orchestrator\/dist\/runtime-dependency\.mjs"[\s\S]*--component=acsOrchestrator --production=true/u,
   );
+  assert.match(
+    acsDeploy,
+    /validate_acs_managed_unit "\$unit_source" "\$ACS_NODE" "\$ACS_SERVICE_NAME"/u,
+  );
+  assert.match(
+    acsDeploy,
+    /install_acs_managed_unit "\$unit_source" "\$ACS_UNIT_PATH" "\$SYSTEMCTL_BIN"/u,
+  );
+  assert.match(acsDeploy, /restore_acs_managed_unit/u);
   assert.ok(
     acsDeploy.indexOf('--component=acsOrchestrator --production=true') <
-      acsDeploy.indexOf('cp "$ENV_FILE" "$ENV_BAK"'),
+      acsDeploy.indexOf('install_acs_managed_unit'),
   );
   assert.ok(
-    acsDeploy.indexOf('--component=acsOrchestrator --production=true') <
+    acsDeploy.indexOf('install_acs_managed_unit') <
       acsDeploy.indexOf('PRODUCTION_CLEANUP_ARMED=true'),
+  );
+  assert.ok(
+    acsDeploy.indexOf('install_acs_managed_unit') < acsDeploy.indexOf('cp "$ENV_FILE" "$ENV_BAK"'),
   );
   assert.ok(
     acsDeploy.indexOf('PRODUCTION_CLEANUP_ARMED=true') <

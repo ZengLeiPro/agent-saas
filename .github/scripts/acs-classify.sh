@@ -11,7 +11,8 @@
 #   contract_check=true|false 仅需契约门禁（typecheck + test, 不判定需部署）
 #   reason=...                publish/contract 命中原因（分号分隔; 无则 none）
 #   skipped=...               未命中 ACS 面的输入（分号分隔; 无则 none）
-# 注意: 纯测试文件 acs-orchestrator/**/*.test.ts 归 contract_check——测试代码
+# 注意: managed unit 与安装 helper 属于 ACS 生产运行契约，任一变化都必须发布。
+# 纯测试文件 acs-orchestrator/**/*.test.ts 归 contract_check——测试代码
 #   会 COPY 进 sandbox 镜像但不影响运行行为，只跑测试门禁、不触发全量部署。
 # ============================================================================
 set -euo pipefail
@@ -73,7 +74,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/manage-acs-systemd-unit.sh|scripts/release/upload-oss-object-immutable.sh|scripts/release/runtime-dependency.mjs|scripts/release/artifact-lib.mjs|daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template|config/runtime-dependency-contract.json|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)

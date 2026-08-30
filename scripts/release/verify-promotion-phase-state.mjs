@@ -25,17 +25,15 @@ function baselineComponents(manifest) {
   };
 }
 
-export function assertPromotionPhaseState(manifest, productionState, phase) {
-  if (!['acs', 'app', 'web'].includes(phase)) throw new Error(`Unknown promotion phase: ${phase}`);
-  const expected = baselineComponents(manifest);
-  if (['app', 'web'].includes(phase) && manifest.components.acs.action === 'deploy') {
+function deployComponent(expected, manifest, component) {
+  if (component === 'acs' && manifest.components.acs.action === 'deploy') {
     expected.acs = {
       gitSha: manifest.components.acs.sourceSha,
       orchestratorArtifactDigest: manifest.components.acs.orchestratorArtifactDigest,
       sandboxImageDigest: manifest.components.acs.sandboxImageDigest,
     };
   }
-  if (phase === 'web' && manifest.components.api.action === 'deploy') {
+  if (component === 'app' && manifest.components.api.action === 'deploy') {
     expected.api = {
       gitSha: manifest.components.api.sourceSha,
       artifactDigest: manifest.components.api.artifactDigest,
@@ -45,17 +43,53 @@ export function assertPromotionPhaseState(manifest, productionState, phase) {
       artifactDigest: manifest.components.runtimeWorker.artifactDigest,
     };
   }
-  for (const [component, identity] of Object.entries(expected)) {
-    for (const [field, value] of Object.entries(identity)) {
-      const actual = productionState.components?.[component]?.[field];
-      if (actual !== value) {
-        throw new Error(
-          `Production changed after promotion gate: ${component}.${field} expected ${value}, got ${actual}`,
-        );
-      }
+  if (component === 'web' && manifest.components.web.action === 'deploy') {
+    expected.web = {
+      gitSha: manifest.components.web.sourceSha,
+      artifactDigest: manifest.components.web.artifactDigest,
+    };
+  }
+}
+
+const PHASES = ['acs', 'app', 'web'];
+
+function allowedPhaseMatrices(manifest, phase) {
+  const phaseIndex = PHASES.indexOf(phase);
+  const expected = baselineComponents(manifest);
+  for (const predecessor of PHASES.slice(0, phaseIndex)) {
+    deployComponent(expected, manifest, predecessor);
+  }
+  const candidates = [structuredClone(expected)];
+  for (const committed of PHASES.slice(phaseIndex)) {
+    deployComponent(expected, manifest, committed);
+    if (JSON.stringify(expected) !== JSON.stringify(candidates.at(-1))) {
+      candidates.push(structuredClone(expected));
     }
   }
-  return expected;
+  return candidates;
+}
+
+function mismatch(expected, actual) {
+  for (const [component, identity] of Object.entries(expected)) {
+    for (const [field, value] of Object.entries(identity)) {
+      const observed = actual?.[component]?.[field];
+      if (observed !== value) return { component, field, expected: value, actual: observed };
+    }
+  }
+  return null;
+}
+
+export function assertPromotionPhaseState(manifest, productionState, phase) {
+  if (!['acs', 'app', 'web'].includes(phase)) throw new Error(`Unknown promotion phase: ${phase}`);
+  const candidates = allowedPhaseMatrices(manifest, phase);
+  const predecessor = candidates[0];
+  for (const candidate of candidates) {
+    if (!mismatch(candidate, productionState.components)) return candidate;
+  }
+  const drift = mismatch(predecessor, productionState.components);
+  throw new Error(
+    `Production changed after promotion gate: ${drift.component}.${drift.field} expected ${drift.expected}, got ${drift.actual}`,
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

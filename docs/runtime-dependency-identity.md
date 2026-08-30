@@ -36,6 +36,8 @@ Production 与 Staging systemd unit 在 `ExecStart` 前运行；ACS 兼容直发
   --component=<server|runtimeWorker|acsOrchestrator> --production=true
 ```
 
+Release Manifest v2 的 Server/ACS archive 同时携带对应 managed systemd unit；Promotion 仅为 `deploy` 组件从已校验的 selected archive 提取并安装 unit，`keep` 不要求历史 baseline archive 补带 unit，避免 partial RC 被旧基线阻断。这样也不会让批准 RC 后的主线 unit 变化污染旧 RC；显式历史 v1 仍走原兼容分支。
+
 门禁精确比较 Node version、`process.arch`、`process.platform`，并对组件声明的宿主工具执行版本 probe。
 缺文件、篡改、版本/架构不符、工具缺失或版本不符均阻断启动。工具 probe 仅允许“可执行文件名 + `--version|version`”两段结构，带超时执行，并要求输出中的首个规范化 semver token 精确等于契约版本，不能借后续兼容版本文本蒙混过关。`--production=true`（包括 bare flag）时禁止使用 `--mode=off`；local/dev 只有显式传入 `--mode=off` 才能跳过。
 
@@ -54,4 +56,4 @@ patch 版本，也不得让 Admin Runner 与主 Server 使用不同 contract。
 5. 合并后环境验证必须读回：宿主 `node --version`/架构、systemd `ExecStartPre` 成功日志、Sandbox 镜像内
    Node/Python/关键工具版本，以及 artifact index、SBOM、Admin Runner 报告的 contract digest 一致性。
 
-正式镜像构建、宿主升级和部署不属于代码任务；代码只提供不可变输入、门禁与证据链。
+正式镜像构建、宿主升级和部署不属于代码任务；代码只提供不可变输入、RC-bound managed unit、门禁与证据链。

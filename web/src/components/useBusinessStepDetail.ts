@@ -122,15 +122,14 @@ export function useBusinessStepDetail({
 
   useEffect(() => {
     if (!selection || selectedDetail) return;
-    const replacementPlan = selection.runId
-      ? [...catalog.plans]
-          .reverse()
-          .find(
-            (plan) =>
-              plan.event.runId === selection.runId &&
-              plan.details.some((detail) => detail.todoKey === selection.todoKey),
-          )
+    const replacementPlans = catalog.plans.filter((plan) =>
+      plan.details.some((detail) => detail.todoKey === selection.todoKey)
+      && (selection.runId ? plan.event.runId === selection.runId : !plan.event.runId));
+    const replacementPlan = selection.runId || replacementPlans.length === 1
+      ? replacementPlans.at(-1)
       : null;
+    // legacy transcript 无 runId：仅在 todoKey 命中的无 runId 计划唯一时迁移；
+    // 歧义时仍关闭详情，不能用跨 Run 错选换取“看起来没关”。
     if (replacementPlan) {
       setSelection({ ...selection, planId: replacementPlan.event.id });
       return;

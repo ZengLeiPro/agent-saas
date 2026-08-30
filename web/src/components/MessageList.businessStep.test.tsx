@@ -36,13 +36,13 @@ beforeAll(() => {
   }) as unknown as DOMRectList;
 });
 
-function todoSnapshot(id: string, todos: unknown[], runId = "run-1"): MessageItem {
+function todoSnapshot(id: string, todos: unknown[], runId: string | null = "run-1"): MessageItem {
   return {
     id,
     type: "tool_use",
     toolName: "TodoWrite",
     toolId: id,
-    runId,
+    ...(runId ? { runId } : {}),
     toolInput: JSON.stringify({ todos }),
     executionStatus: "completed",
     resultReady: true,
@@ -279,6 +279,47 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByLabelText("步骤详情：稳定步骤（第二轮）")).toBeNull();
   });
 
+  it("无 runId 的旧历史前插仅有唯一候选时保持步骤详情", async () => {
+    const current = todoSnapshot("legacy-current", [
+      { id: "legacy-step", kind: "business", content: "旧历史稳定步骤", status: "in_progress" },
+    ], null);
+    const earlier = todoSnapshot("legacy-earlier", [
+      { id: "legacy-step", kind: "business", content: "旧历史稳定步骤", status: "pending" },
+    ], null);
+    const { rerender } = render(<Harness messages={[current]} />);
+    fireEvent.click(screen.getByRole("button", { name: /旧历史稳定步骤/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：旧历史稳定步骤")).toBeTruthy());
+
+    rerender(<Harness messages={[earlier, current]} />);
+
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：旧历史稳定步骤")).toBeTruthy());
+    expect(screen.getByRole("button", { name: /旧历史稳定步骤/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("无 runId 的旧计划候选不唯一时安全关闭详情", async () => {
+    const current = todoSnapshot("legacy-current", [
+      { id: "legacy-step", kind: "business", content: "重复旧步骤", status: "in_progress" },
+    ], null);
+    const earlierFirst = todoSnapshot("legacy-first", [
+      { id: "legacy-step", kind: "business", content: "重复旧步骤", status: "pending" },
+    ], null);
+    const earlierSecond = todoSnapshot("legacy-second", [
+      { id: "legacy-step", kind: "business", content: "重复旧步骤", status: "pending" },
+    ], null);
+    const { rerender } = render(<Harness messages={[current]} />);
+    fireEvent.click(screen.getByRole("button", { name: /重复旧步骤/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：重复旧步骤")).toBeTruthy());
+
+    rerender(<Harness messages={[
+      earlierFirst,
+      { id: "legacy-boundary", type: "user", content: "下一轮" },
+      earlierSecond,
+      current,
+    ]} />);
+
+    await waitFor(() => expect(screen.queryByLabelText("步骤详情：重复旧步骤")).toBeNull());
+  });
+
   it("主卡移出虚拟化窗口后详情继续更新，关闭时焦点回退消息容器", async () => {
     const { rerender } = render(<Harness messages={workflowMessages(2)} />);
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
@@ -326,7 +367,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.activeElement).toBe(replacementTrigger);
   });
 
-  it("同一 Run 跨用户消息继续时，详情收齐前后过程、系统动作与 Artifact", async () => {
+  it("同一 Run 跨 user、system_event 与 user-voice 后收齐过程、系统动作与 Artifact", async () => {
     const active = [{ id: "verify", kind: "business", content: "跨消息核验", status: "in_progress" }];
     const messages: MessageItem[] = [
       { id: "continuation-user-1", type: "user", content: "开始核验" },
@@ -341,7 +382,23 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       {
         id: "continuation-after", type: "tool_use", toolName: "Read", toolId: "continuation-after",
         toolInput: "{}", resultReady: true, executionStatus: "completed",
-        presentation: { title: "后半段读取" },
+        presentation: { title: "用户边界后读取" },
+      },
+      { id: "continuation-system", type: "system_event", title: "系统事件", content: "继续核验" },
+      todoSnapshot("continuation-system-resume", active, "run-continuation"),
+      {
+        id: "continuation-after-system", type: "tool_use", toolName: "Read", toolId: "continuation-after-system",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "系统事件后读取" },
+      },
+      {
+        id: "continuation-voice", type: "user-voice", audioUrl: "voice.wav", duration: 1, status: "sent",
+      },
+      todoSnapshot("continuation-voice-resume", active, "run-continuation"),
+      {
+        id: "continuation-after-voice", type: "tool_use", toolName: "Read", toolId: "continuation-after-voice",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "语音边界后读取" },
       },
       {
         id: "continuation-connector", type: "tool_use", toolName: "DwsBusiness", toolId: "continuation-connector",
@@ -361,7 +418,9 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
     render(<Harness messages={messages} debugMode />);
     expect(screen.queryByText(/前半段读取/)).toBeNull();
-    expect(screen.queryByText(/后半段读取/)).toBeNull();
+    expect(screen.queryByText(/用户边界后读取/)).toBeNull();
+    expect(screen.queryByText(/系统事件后读取/)).toBeNull();
+    expect(screen.queryByText(/语音边界后读取/)).toBeNull();
     expect(screen.queryByText("跨消息核验结果.xlsx")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /跨消息核验/ }));
@@ -371,8 +430,10 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
 
     fireEvent.click(screen.getByRole("tab", { name: "过程" }));
     expect(screen.getByText(/前半段读取/)).toBeTruthy();
-    expect(screen.getByText(/后半段读取/)).toBeTruthy();
-    expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(/用户边界后读取/)).toBeTruthy();
+    expect(screen.getByText(/系统事件后读取/)).toBeTruthy();
+    expect(screen.getByText(/语音边界后读取/)).toBeTruthy();
+    expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(5);
     expect(screen.getByText(/写入核验回执/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "依据" }));
     expect(screen.getByText("receipt:continuation")).toBeTruthy();

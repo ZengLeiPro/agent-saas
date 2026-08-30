@@ -9,6 +9,16 @@ function user(id: string): MessageItem {
   return { id, type: "user", content: "next task" };
 }
 
+function sectionBoundary(type: "system_event" | "user-voice" | "system-error"): MessageItem {
+  if (type === "system_event") {
+    return { id: `boundary-${type}`, type, title: "系统事件", content: "继续处理" };
+  }
+  if (type === "user-voice") {
+    return { id: `boundary-${type}`, type, audioUrl: "voice.wav", duration: 1, status: "sent" };
+  }
+  return { id: `boundary-${type}`, type, content: "系统错误" };
+}
+
 function todo(id: string, toolInput: string, runId?: string): MessageItem {
   return {
     id,
@@ -391,6 +401,23 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
       }),
     ]);
   });
+
+  it.each(["system_event", "user-voice", "system-error"] as const)(
+    "reopens the unchanged active step after a %s section boundary",
+    (boundaryType) => {
+      const result = projectBusinessStepEvents([
+        user("user-1"),
+        todo("t1", todos([step("a", "in_progress")]), "run-1"),
+        sectionBoundary(boundaryType),
+        todo("t2", todos([step("a", "in_progress")]), "run-1"),
+      ], false);
+
+      expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+      expect(result.eventsByAnchor.get("t2")).toEqual([
+        expect.objectContaining({ kind: "start", runId: "run-1", todo: expect.objectContaining({ id: "a" }) }),
+      ]);
+    },
+  );
 
   it("keeps a structural update when reopening an unchanged active step", () => {
     const result = projectBusinessStepEvents([

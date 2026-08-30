@@ -19,6 +19,12 @@ import type { MessageItem, ActivityGroup, BusinessStepSection } from '../types/m
 
 const user = (id: string): MessageItem => ({ id, type: 'user', content: 'hi' });
 const text = (id: string): MessageItem => ({ id, type: 'text', content: 'answer' });
+const systemEvent = (id: string): MessageItem => ({
+  id, type: 'system_event', title: '系统事件', content: '继续处理',
+});
+const voice = (id: string): MessageItem => ({
+  id, type: 'user-voice', audioUrl: 'voice.wav', duration: 1, status: 'sent',
+});
 const tool = (id: string, extra: Partial<Extract<MessageItem, { type: 'tool_use' }>> = {}): MessageItem => ({
   id, type: 'tool_use', toolName: 'Bash', toolInput: '{}', toolId: id, ...extra,
 });
@@ -351,6 +357,33 @@ describe('groupMessages sectioning（章节化）', () => {
     expect((after.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-after']);
     expect(after.systemActionIds).toEqual(['connector-after']);
     expect(after.items.at(-1)).toMatchObject({ id: 'artifact-after', artifactId: 'artifact-1' });
+  });
+
+  it('同一 Run 跨 system_event 与 user-voice 后逐次重开同一步骤节', () => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const done = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }];
+    const result = groupMessages([
+      user('user-1'),
+      businessTodo('todo-start', active, 'run-1'),
+      tool('read-before', { toolName: 'Read', resultReady: true }),
+      systemEvent('system-boundary'),
+      businessTodo('todo-after-system', active, 'run-1'),
+      tool('read-after-system', { toolName: 'Read', resultReady: true }),
+      voice('voice-boundary'),
+      businessTodo('todo-after-voice', active, 'run-1'),
+      tool('read-after-voice', { toolName: 'Read', resultReady: true }),
+      businessTodo('todo-done', done, 'run-1'),
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'system_event',
+      'business_step_section', 'user-voice', 'business_step_section',
+    ]);
+    const sections = result.filter((item): item is BusinessStepSection =>
+      item.type === 'business_step_section');
+    expect(sections.map((section) => (section.items[0] as ActivityGroup).items[0].id))
+      .toEqual(['read-before', 'read-after-system', 'read-after-voice']);
+    expect(sections.at(-1)?.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
   });
 
   it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {

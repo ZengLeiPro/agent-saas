@@ -69,6 +69,7 @@ const retentionErrorCategorySchema = z.enum([
   "execution_failed",
 ]).nullable();
 // 运行结果与 freshness 正交；过期只能由 stale 布尔值表达。
+// persisted never_run 可携带当前配置的 legal watermark；无持久快照时该字段为 null。
 const eventStoreRetentionSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(["dry-run", "execute"]),
@@ -113,7 +114,7 @@ const eventStoreRetentionSchema = z.object({
     if (retention.lastStartedAt !== null || retention.lastCompletedAt !== null
       || retention.lastSuccessAt !== null || retention.durationMs !== null
       || retention.errorCategory !== null || retention.nextScheduledAt !== null
-      || retention.watermarks.legal !== null || !hasNoProgress) {
+      || !hasNoProgress) {
       issue("never_run retention 状态字段不完整");
     }
     return;

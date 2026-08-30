@@ -355,6 +355,29 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     });
   });
 
+  it('首次 bootstrap 回滚时旧 all 可重新 claim，候选停止后不能再覆盖', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    const oldAll = createRetention(pool, { enabled: true });
+    const candidate = createRetention(pool, { enabled: true });
+
+    await oldAll.start();
+    const oldWriterId = ((await latestDetail()).authority as { writerId: string }).writerId;
+    await candidate.start();
+    const candidateWriterId = ((await latestDetail()).authority as { writerId: string }).writerId;
+    expect(candidateWriterId).not.toBe(oldWriterId);
+
+    await oldAll.reassertStatusAuthority(true);
+    expect(await latestDetail()).toMatchObject({
+      authority: { writerId: oldWriterId, claim: true },
+    });
+    await expect(candidate.reassertStatusAuthority()).rejects.toThrow('failed to reassert status authority');
+    expect(candidate.isStatusPersistenceAvailable()).toBe(false);
+    expect(await latestDetail()).toMatchObject({ authority: { writerId: oldWriterId } });
+
+    candidate.stop();
+    oldAll.stop();
+  });
+
   it('从长历史按索引权威行合并并收敛为单例，不执行 JSON 历史排序', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
     await pool.query(`
@@ -387,6 +410,26 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     expect(await latestDetail()).toMatchObject({
       state: 'failed',
       lastSuccessAt: '2026-08-29T12:00:01.000Z',
+    });
+  });
+
+  it('非法未来 lastSuccessAt 可被同一权威 writer 的当前成功时间纠正', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    const authority = { writerId: 'worker-current', claim: true };
+    await metricsStore.recordRuntimeEventRetentionStatus(statusSnapshot({
+      lastStartedAt: '2099-01-01T00:00:00.000Z',
+      lastCompletedAt: '2099-01-01T00:00:01.000Z',
+      lastSuccessAt: '2099-01-01T00:00:01.000Z',
+      authority,
+    }));
+
+    await metricsStore.recordRuntimeEventRetentionStatus(statusSnapshot({
+      authority: { ...authority, claim: false },
+    }));
+    expect(await latestDetail()).toMatchObject({
+      state: 'execute_succeeded',
+      lastSuccessAt: '2026-08-29T12:00:01.000Z',
+      authority: { writerId: authority.writerId, claim: false },
     });
   });
 

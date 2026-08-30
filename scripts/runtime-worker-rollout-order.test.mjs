@@ -28,6 +28,8 @@ test('runtime worker rollback restores drained authority before candidate stop',
   assert.ok(restoreReady < candidateStop);
   assert.ok(workflow.includes('WORKER_DRAIN_TIMEOUT=960'));
   assert.ok(workflow.includes('preserving candidate and refusing restart'));
+  assert.ok(workflow.includes('bootstrap all cannot reclaim runtime retention authority; preserving candidate'));
+  assert.ok(workflow.includes('bootstrap all authority reclaim timed out; preserving candidate'));
   assert.ok(workflow.includes('recover interrupted runtime worker drain before rollout'));
   assert.ok(workflow.includes('runtime worker marker target is ready and enabled'));
   assert.ok(workflow.includes('failed to disable non-marker runtime worker candidate'));
@@ -36,6 +38,24 @@ test('runtime worker rollback restores drained authority before candidate stop',
     < position('interrupted runtime worker candidate drained after active recovery'));
   assert.equal(workflow.split('recover_interrupted_runtime_worker_drain "$WORKER_ACTIVE"').length - 1, 2);
   assert.equal(workflow.includes('WORKER_ACTIVE_DRAINED'), false);
+});
+
+test('bootstrap rollback restores the serving all process authority before candidate stop', () => {
+  const restoreFunction = position('restore_bootstrap_all_authority()');
+  const restoreSignal = workflow.indexOf('kill -HUP "$bootstrap_all_pid"', restoreFunction);
+  const restoreAck = workflow.indexOf('bootstrap all runtime retention authority reclaimed before candidate stop', restoreFunction);
+  const rollbackStart = position('rollback_idle_and_exit()');
+  const bootstrapGuard = workflow.indexOf('[ -z "${WORKER_ACTIVE:-}" ]', rollbackStart);
+  const restoreCall = workflow.indexOf('\n              restore_bootstrap_all_authority\n', rollbackStart);
+  const bootstrapMarkerRemoval = workflow.indexOf('remove bootstrap runtime worker authority before candidate stop', rollbackStart);
+  const candidateStop = workflow.indexOf('stop runtime worker candidate:', rollbackStart);
+
+  assert.ok(restoreSignal > restoreFunction);
+  assert.ok(restoreSignal < restoreAck);
+  assert.ok(bootstrapGuard > rollbackStart);
+  assert.ok(restoreCall > bootstrapGuard);
+  assert.ok(restoreCall < bootstrapMarkerRemoval);
+  assert.ok(bootstrapMarkerRemoval < candidateStop);
 });
 
 test('runtime worker candidate authority and post-drain refresh precede Web readiness', () => {

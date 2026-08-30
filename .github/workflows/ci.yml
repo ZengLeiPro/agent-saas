@@ -822,6 +822,7 @@ jobs:
           PREVIOUS_UPDATED=0
           WORKER_CANDIDATE_STARTED=0
           WORKER_CANDIDATE_PROCESS_STARTED=0
+          WORKER_PROCESS_READY=0
           WORKER_ACTIVE_DRAIN_STARTED=0
           WORKER_ACTIVE_DRAIN_COMPLETED=0
           WORKER_PREACTIVATED=0
@@ -861,8 +862,49 @@ jobs:
             exit 1
           }
 
+          restore_bootstrap_all_authority() {
+            local bootstrap_target bootstrap_all_pid bootstrap_all_ready_pid bootstrap_all_main_pid
+            local bootstrap_all_ack bootstrap_all_ack_pid
+            bootstrap_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+            if [ ! -f "$bootstrap_target/.release/runtime-worker-authority-refresh-v1" ]; then
+              log "bootstrap all cannot reclaim runtime retention authority; preserving candidate"
+              preserve_candidate_authority_and_exit
+            fi
+            bootstrap_all_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.pid" 2>/dev/null || true)
+            bootstrap_all_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+            bootstrap_all_main_pid=$(systemctl show "${SERVICE_NAME}@${ACTIVE}" -p MainPID --value 2>/dev/null || true)
+            if ! systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}" \
+              || [ -z "$bootstrap_all_pid" ] || [ "$bootstrap_all_pid" != "$bootstrap_all_ready_pid" ] \
+              || [ "$bootstrap_all_pid" != "$bootstrap_all_main_pid" ] || ! kill -0 "$bootstrap_all_pid" 2>/dev/null; then
+              log "ERROR: bootstrap all identity invalid during authority rollback: color=$ACTIVE"
+              preserve_candidate_authority_and_exit
+            fi
+            bootstrap_all_ack="/run/${SERVICE_NAME}-${ACTIVE}.ready.authority"
+            rm -f "$bootstrap_all_ack"
+            if ! kill -HUP "$bootstrap_all_pid" 2>/dev/null; then
+              log "ERROR: bootstrap all authority reclaim signal failed: color=$ACTIVE"
+              preserve_candidate_authority_and_exit
+            fi
+            WORKER_ACTIVE_RESTORED=0
+            for _ in $(seq 1 30); do
+              bootstrap_all_ack_pid=$(cat "$bootstrap_all_ack" 2>/dev/null || true)
+              bootstrap_all_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+              if [ "$bootstrap_all_ack_pid" = "$bootstrap_all_pid" ] \
+                && [ "$bootstrap_all_ready_pid" = "$bootstrap_all_pid" ]; then
+                WORKER_ACTIVE_RESTORED=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+              log "ERROR: bootstrap all authority reclaim timed out; preserving candidate"
+              preserve_candidate_authority_and_exit
+            fi
+            log "bootstrap all runtime retention authority reclaimed before candidate stop: color=$ACTIVE"
+          }
+
           # 切流前失败：已 drain 的旧 worker 才 restart；仍存活的新版旧 worker 原地 reclaim。
-          # 首次上线的 legacy 旧 worker 不识别 fencing，保持运行避免中断 durable run。
+          # 首次 bootstrap 在候选停止前由仍在服务的 all 进程 reclaim；不支持 reclaim 时保留候选。
           rollback_idle_and_exit() {
             log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
             if [ "$WORKER_ACTIVE_DRAIN_STARTED" -eq 1 ] && [ "$WORKER_ACTIVE_DRAIN_COMPLETED" -ne 1 ]; then
@@ -927,6 +969,10 @@ jobs:
               else
                 log "legacy runtime worker kept running without restart; awaiting its native status write: color=$WORKER_ACTIVE"
               fi
+            fi
+            if [ "$WORKER_CANDIDATE_PROCESS_STARTED" -eq 1 ] && [ "$WORKER_PROCESS_READY" -eq 1 ] \
+              && [ -z "${WORKER_ACTIVE:-}" ]; then
+              restore_bootstrap_all_authority
             fi
             if [ "$WORKER_PREACTIVATED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
               if ! write_worker_active_color "$WORKER_ACTIVE"; then

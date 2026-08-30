@@ -117,7 +117,10 @@ describe('PgSystemMetricsStore', () => {
       async query(text: string, values: unknown[] = []) {
         pool.queries.push({ text, values });
         if (text.includes('pg_try_advisory_xact_lock')) {
-          return { rows: [{ locked: true }], rowCount: 1 };
+          return {
+            rows: [{ locked: true, observed_at: '2026-08-29T13:00:00.000Z' }],
+            rowCount: 1,
+          };
         }
         if (text.includes('SELECT id, metric, label')
           && text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
@@ -169,6 +172,60 @@ describe('PgSystemMetricsStore', () => {
     expect(compact?.text).toContain("label = 'status' AND id <> $1");
     expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
     expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('discards an invalid future persisted lastSuccessAt when the current writer succeeds', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return {
+            rows: [{ locked: true, observed_at: '2026-08-29T13:00:00.000Z' }],
+            rowCount: 1,
+          };
+        }
+        if (text.includes('FOR UPDATE')) {
+          return {
+            rows: [{
+              id: 1,
+              detail_json: {
+                lastSuccessAt: '2099-01-01T00:00:00.000Z',
+                authority: { writerId: 'worker-current', claim: true },
+              },
+              sampled_at: '2026-08-29T12:00:00.000Z',
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'execute_succeeded',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: '2026-08-29T12:30:00.000Z',
+      lastCompletedAt: '2026-08-29T12:30:01.000Z',
+      lastSuccessAt: '2026-08-29T12:30:01.000Z',
+      durationMs: 1000,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: '10', effectiveDeleteThrough: '10' },
+      maxGlobalSequence: '10',
+      categories: {},
+      authority: { writerId: 'worker-current', claim: false },
+    });
+
+    const update = pool.queries.find((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`));
+    expect(JSON.parse(String(update?.values[1]))).toMatchObject({
+      state: 'execute_succeeded',
+      lastSuccessAt: '2026-08-29T12:30:01.000Z',
+    });
   });
 
   it('rejects a retiring worker write after another worker claims status authority', async () => {

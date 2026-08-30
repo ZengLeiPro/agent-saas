@@ -111,6 +111,27 @@ describe("platform admin api", () => {
     });
   });
 
+  it.each(["100", null] as const)("accepts never_run with configured or absent legal watermark (%s)", async (legal) => {
+    const fixture = eventStoreFixture();
+    fixture.retention = {
+      ...fixture.retention,
+      status: "never_run",
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal, billing: null, effective: null, maxGlobalSequence: null, lag: null },
+      categories: {},
+    };
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify(fixture), { status: 200 }));
+
+    await expect(platformAdminApi.eventStoreStatus()).resolves.toMatchObject({
+      retention: { status: "never_run", watermarks: { legal } },
+    });
+  });
+
   it("accepts a complete scheduled startup status", async () => {
     const fixture = eventStoreFixture();
     fixture.retention = {
@@ -132,6 +153,21 @@ describe("platform admin api", () => {
 
   it.each([
     ["", "空响应"],
+    [JSON.stringify({
+      ...eventStoreFixture(),
+      retention: {
+        ...eventStoreFixture().retention,
+        status: "never_run",
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        lastSuccessAt: null,
+        durationMs: null,
+        errorCategory: null,
+        nextScheduledAt: null,
+        watermarks: { legal: "100", billing: "1", effective: null, maxGlobalSequence: null, lag: null },
+        categories: {},
+      },
+    }), "never_run 携带运行进度"],
     ["{bad-json", "坏 JSON"],
     [JSON.stringify({ schemaVersion: 1 }), "缺失字段"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "future_status" } }), "未知状态"],

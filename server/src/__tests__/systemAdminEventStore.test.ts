@@ -290,7 +290,7 @@ describe('GET /api/admin/system/event-store', () => {
     expect(body.capacity.series).toEqual([expect.objectContaining({ sampledAt: latest.sampledAt })]);
   });
 
-  it('returns never-run rather than healthy when the store has no retention snapshot', async () => {
+  it('returns never-run with an unknown legal watermark when the store has no retention snapshot', async () => {
     const store = {
       getLatestMetric: vi.fn(async () => null),
       listMetricSeries: vi.fn(async () => []),
@@ -299,7 +299,78 @@ describe('GET /api/admin/system/event-store', () => {
     servers.push(server);
     expect(await (await server.get()).json()).toMatchObject({
       available: true,
-      retention: { enabled: true, status: 'never_run', stale: false, categories: {} },
+      retention: {
+        enabled: true,
+        status: 'never_run',
+        stale: false,
+        watermarks: { legal: null, billing: null, effective: null, maxGlobalSequence: null, lag: null },
+        categories: {},
+      },
+    });
+  });
+
+  it('recovers from a future persisted success after the current writer publishes a valid success', async () => {
+    let retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail({
+        lastStartedAt: '2099-01-01T00:00:00.000Z',
+        lastCompletedAt: '2099-01-01T00:00:01.000Z',
+        lastSuccessAt: '2099-01-01T00:00:01.000Z',
+        nextScheduledAt: '2099-01-01T00:10:00.000Z',
+      }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'unavailable', stale: false },
+    });
+
+    retention = metric({ metric: 'runtime_event_retention', label: 'status', detailJson: retentionDetail() });
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'execute_succeeded', stale: false },
+    });
+  });
+
+  it('serializes persisted never_run with its configured legal watermark', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail({
+        state: 'never_run',
+        lastStartedAt: null,
+        lastCompletedAt: null,
+        lastSuccessAt: null,
+        durationMs: null,
+        errorCategory: null,
+        nextScheduledAt: null,
+        watermarks: { legal: '20', billing: null, effectiveDeleteThrough: null },
+        maxGlobalSequence: null,
+        categories: {},
+      }),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: {
+        enabled: true,
+        status: 'never_run',
+        stale: false,
+        lastSuccessAt: null,
+        nextScheduledAt: null,
+        watermarks: { legal: '20', billing: null, effective: null, maxGlobalSequence: null, lag: null },
+        categories: {},
+      },
     });
   });
 
@@ -337,6 +408,17 @@ describe('GET /api/admin/system/event-store', () => {
   });
 
   it.each([
+    ['never_run 携带旧成功时间', retentionDetail({
+      state: 'never_run',
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal: '20', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    })],
     ['scheduled 携带进度水位', retentionDetail({
       state: 'scheduled',
       lastStartedAt: null,

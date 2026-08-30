@@ -374,6 +374,7 @@ function unavailableRetention(base: RetentionBase) {
   };
 }
 
+// 无持久快照时 legal 未知；persisted never_run 则保留配置快照中的数字字符串。
 function neverRunRetention(base: RetentionBase) {
   return {
     ...unavailableRetention(base),
@@ -518,7 +519,8 @@ function isRetentionStateSemanticallyValid(snapshot: {
   }
   if (snapshot.state === 'never_run') {
     return snapshot.lastStartedAt === null && snapshot.lastCompletedAt === null
-      && snapshot.durationMs === null && snapshot.errorCategory === null && hasNoProgress;
+      && snapshot.lastSuccessAt === null && snapshot.durationMs === null
+      && snapshot.errorCategory === null && snapshot.nextScheduledAt === null && hasNoProgress;
   }
   if (snapshot.state === 'running') {
     return snapshot.lastStartedAt !== null && snapshot.lastCompletedAt === null

@@ -229,8 +229,9 @@ export class PgSystemMetricsStore {
     try {
       client = await this.pool.connect();
       await client.query('BEGIN');
-      const lock = await client.query<{ locked: boolean }>(
-        'SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked',
+      const lock = await client.query<{ locked: boolean; observed_at?: Date | string }>(
+        `SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked,
+                clock_timestamp() AS observed_at`,
         [`${this.systemMetricsTable}:${RETENTION_STATUS_LOCK_SUFFIX}`],
       );
       if (lock.rows[0]?.locked !== true) {
@@ -247,7 +248,12 @@ export class PgSystemMetricsStore {
       const current = previous.rows[0];
       assertRuntimeEventRetentionAuthority(current?.detail_json, snapshot);
       const persisted = current?.detail_json?.lastSuccessAt;
-      const lastSuccessAt = laterTimestamp(snapshot.lastSuccessAt, typeof persisted === 'string' ? persisted : null);
+      const observedAt = lock.rows[0]?.observed_at;
+      const observedMs = observedAt ? Date.parse(toIso(observedAt)) : Date.now();
+      const trustedPersisted = isTimestampWithinFutureSkew(persisted, observedMs, 5 * 60_000)
+        ? persisted
+        : null;
+      const lastSuccessAt = laterTimestamp(snapshot.lastSuccessAt, trustedPersisted);
       const values = [snapshot.durationMs ?? 0, JSON.stringify({ ...snapshot, lastSuccessAt })];
       if (current) {
         await client.query(
@@ -522,6 +528,16 @@ function isRetentionAuthority(value: unknown): value is { writerId: string } {
   return !!value && typeof value === 'object'
     && typeof (value as { writerId?: unknown }).writerId === 'string'
     && (value as { writerId: string }).writerId.length > 0;
+}
+
+function isTimestampWithinFutureSkew(
+  value: unknown,
+  observedMs: number,
+  futureSkewMs: number,
+): value is string {
+  if (typeof value !== 'string') return false;
+  const valueMs = Date.parse(value);
+  return Number.isFinite(valueMs) && Number.isFinite(observedMs) && valueMs <= observedMs + futureSkewMs;
 }
 
 function laterTimestamp(current: string | null, persisted: string | null): string | null {

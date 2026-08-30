@@ -67,16 +67,20 @@ export function validateApprovalReason(
     throw new Error('Approval attestation is not bound to this Manifest');
   const e2e = approval.e2eSummary as Record<string, unknown> | undefined;
   if (
-    e2e?.schemaVersion !== 1 ||
+    e2e?.schemaVersion !== 2 ||
     e2e.status !== 'passed' ||
-    e2e.traceMode !== 'on' ||
+    e2e.traceMode !== 'off' ||
+    e2e.artifactMode !== 'json-html-screenshot-video' ||
     !Number.isSafeInteger(e2e.scenarioCount) ||
     Number(e2e.scenarioCount) < 1 ||
     !Number.isSafeInteger(e2e.executionCount) ||
     Number(e2e.executionCount) < Number(e2e.scenarioCount) ||
     !Array.isArray(e2e.projects) ||
     !e2e.projects.includes('desktop-chromium') ||
-    !e2e.projects.includes('mobile-chromium')
+    !e2e.projects.includes('mobile-chromium') ||
+    !Array.isArray(e2e.responsiveScenarioFiles) ||
+    !e2e.responsiveScenarioFiles.includes('auth.spec.ts') ||
+    !e2e.responsiveScenarioFiles.includes('chat-stream.spec.ts')
   ) {
     throw new Error('Approval attestation lacks a passed scenario-level Staging E2E summary');
   }

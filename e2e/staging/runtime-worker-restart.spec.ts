@@ -22,7 +22,7 @@ test('Runtime Worker 重启后活跃 run 由持久化 lease 恢复并完成', as
   await waitForSessionRun(request, token, sessionId, ['running']);
   await restartStagingService('agent-saas-runtime-worker-staging.service');
   await expect(page.locator('.prose-chat').filter({ hasText: expected }).last()).toBeVisible({
-    timeout: 8 * 60_000,
+    timeout: 4 * 60_000,
   });
   await waitForSessionRun(request, token, sessionId, ['completed']);
 });

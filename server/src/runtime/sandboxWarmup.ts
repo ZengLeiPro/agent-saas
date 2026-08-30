@@ -3,6 +3,7 @@ import { selectTenantRemoteHandsForRegistration, type TenantRemoteHandAuthTokenR
 import type { SessionCatalog } from './sessionCatalog.js';
 import type { HandStore } from './handStore.js';
 import { applySandboxProfileResources, isSandboxProfile, sandboxResourcesFromHand } from './sandboxProfile.js';
+import { controlPlaneFetch } from './controlPlaneFetch.js';
 
 /**
  * Sandbox 预热服务（2026-07-31 冷启动治理批次）。
@@ -60,12 +61,9 @@ export class SandboxWarmupService {
   private readonly lastFiredAtByScope = new Map<string, number>();
   private readonly throttleMs: number;
   private readonly requestTimeoutMs: number;
-  private readonly fetchImpl: typeof fetch;
-
   constructor(private readonly options: SandboxWarmupServiceOptions) {
     this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   /**
@@ -118,21 +116,24 @@ export class SandboxWarmupService {
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${resolved.baseUrl.replace(/\/$/, '')}/warmup`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${resolved.authToken}`,
+      const response = await controlPlaneFetch(resolved.baseUrl, this.options.fetchImpl)(
+        `${resolved.baseUrl.replace(/\/$/, '')}/warmup`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${resolved.authToken}`,
+          },
+          body: JSON.stringify({
+            workspaceId,
+            sessionId,
+            ...(sandboxScopeId ? { sandboxScopeId } : {}),
+            ...(mountSubPath ? { mountSubPath } : {}),
+            ...(resources ? { resources } : {}),
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          workspaceId,
-          sessionId,
-          ...(sandboxScopeId ? { sandboxScopeId } : {}),
-          ...(mountSubPath ? { mountSubPath } : {}),
-          ...(resources ? { resources } : {}),
-        }),
-        signal: controller.signal,
-      });
+      );
       if (response.status !== 202) {
         const text = await response.text().catch(() => '');
         this.options.logger?.warn(

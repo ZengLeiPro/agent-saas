@@ -200,6 +200,14 @@ else
   tar -tzf "$candidate/.release/server-bundle.tgz" \
     | awk '$0 == "./server/dist/index.js" || $0 == "server/dist/index.js" { found = 1 } END { exit !found }' \
     || { echo 'Staging server bundle must contain server/dist/index.js' >&2; exit 1; }
+  for required_asset in \
+    server/workspace-shared/.ky-agent/skills-pool/_manifest.json \
+    server/workspace-shared/prompts/static.md \
+    server/workspace-shared/PERSONA.template.md; do
+    tar -tzf "$candidate/.release/server-bundle.tgz" \
+      | awk -v expected="$required_asset" '$0 == expected || $0 == "./" expected { found = 1 } END { exit !found }' \
+      || { echo "Staging server bundle is missing $required_asset" >&2; exit 1; }
+  done
   tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
     | awk '$0 == "./acs-orchestrator/dist/index.js" || $0 == "acs-orchestrator/dist/index.js" { found = 1 } END { exit !found }' \
     || { echo 'Staging ACS bundle must contain acs-orchestrator/dist/index.js' >&2; exit 1; }
@@ -265,6 +273,26 @@ if (failures.length > 0) {
 NODE
 
 ln -sfn "$target" "$current"
+shared_root=/mnt/agent-saas-staging/workspace-shared
+runuser -u agent-saas-staging -- mkdir -p "$shared_root/.ky-agent"
+for shared_asset in \
+  .browser-profile-seed \
+  .ky-agent/scripts \
+  .ky-agent/skills-pool \
+  prompts \
+  MEMORY.template.md \
+  PERSONA.template.md \
+  questions.template.md; do
+  live_asset="$shared_root/$shared_asset"
+  if [ -e "$live_asset" ] && [ ! -L "$live_asset" ]; then
+    echo "Staging immutable shared asset conflicts with persistent path: $live_asset" >&2
+    exit 1
+  fi
+  runuser -u agent-saas-staging -- ln -sfn \
+    "$current/server/workspace-shared/$shared_asset" "$live_asset.candidate-$GITHUB_RUN_ID"
+  runuser -u agent-saas-staging -- mv -Tf \
+    "$live_asset.candidate-$GITHUB_RUN_ID" "$live_asset"
+done
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);

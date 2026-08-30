@@ -31,11 +31,13 @@ test('reports business scenarios separately from viewport executions', () => {
               status: 'expected',
               results: [{ status: 'passed' }],
             },
-            {
-              projectName: 'mobile-chromium',
-              status: 'expected',
-              results: [{ status: 'passed' }],
-            },
+            ...(['auth.spec.ts', 'chat-stream.spec.ts'].includes(file)
+              ? [{
+                  projectName: 'mobile-chromium',
+                  status: 'expected',
+                  results: [{ status: 'passed' }],
+                }]
+              : []),
           ],
         },
       ],
@@ -43,6 +45,8 @@ test('reports business scenarios separately from viewport executions', () => {
   };
   const summary = summarizeStagingE2e(report);
   assert.equal(summary.scenarioCount, 14);
-  assert.equal(summary.executionCount, 28);
+  assert.equal(summary.executionCount, 16);
+  assert.deepEqual(summary.responsiveScenarioFiles, ['auth.spec.ts', 'chat-stream.spec.ts']);
+  assert.equal(summary.traceMode, 'off');
   assert.equal(validateStagingE2eSummary(summary), summary);
 });

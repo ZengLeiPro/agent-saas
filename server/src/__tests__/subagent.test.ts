@@ -197,18 +197,17 @@ describe('SubagentLimiter per-parent capacity', () => {
     await third.release();
   });
 
-  it('同一父 run 同时只允许一个子 Agent 继承父容量槽', async () => {
-    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 2 });
+  it('只限制单父并发，不再持有跨 run 或父槽继承状态', async () => {
+    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
-    const second = await limiter.acquire('run-1');
-    expect(first.inheritsParentCapacity).toBe(true);
-    expect(second.inheritsParentCapacity).toBe(false);
+    let sameRunAcquired = false;
+    const sameRun = limiter.acquire('run-1').then((slot) => { sameRunAcquired = true; return slot; });
+    const otherRun = await limiter.acquire('run-2');
+    expect(sameRunAcquired).toBe(false);
 
     await first.release();
-    const third = await limiter.acquire('run-1');
-    expect(third.inheritsParentCapacity).toBe(true);
-    await second.release();
-    await third.release();
+    await (await sameRun).release();
+    await otherRun.release();
   });
 });
 

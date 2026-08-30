@@ -257,8 +257,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
 
   // ── 闸门 3：单父并发 + 统一 Run 容量 ──
-  // 同一父 run 同时最多一个子 Agent 继承父槽；其余子 run 正常占用全局槽。
-  // 满载时父 loop 正在等待该子工具，因此用一个槽表达这组执行，不会父等子自锁。
+  // 每个子 run 都可动态竞选父槽；PG 容量锁保证同父同时最多一个继承者。
+  // 当前继承者结束后，已等待的并行兄弟会在下一次重试中接棒，不会父等子自锁。
   const slot = await limiter.acquire(parentRunId, parentContext.signal);
 
   const startedAt = Date.now();
@@ -320,7 +320,6 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       sandboxScopeId: parentWorkspace.sandboxScopeId,
       metadata: {
         subagent: true,
-        ...(slot.inheritsParentCapacity ? { subagentCapacityInherited: true } : {}),
         outputTransactionMode: 'terminal_buffered',
         parentRunId,
         parentSessionId,
@@ -360,7 +359,6 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         parentRun,
         parentRunId,
         childRunId,
-        inheritsParentCapacity: slot.inheritsParentCapacity,
         leaseMs: hardTimeoutMs + 60_000,
         signal: combinedSignal,
       });
@@ -648,12 +646,11 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   }
 }
 
-async function acquireSubagentRunLease(input: {
+export async function acquireSubagentRunLease(input: {
   config: RawRuntimeRunDispatchConfig;
   parentRun: RunRecord | null | undefined;
   parentRunId: string;
   childRunId: string;
-  inheritsParentCapacity: boolean;
   leaseMs: number;
   signal: AbortSignal;
 }): Promise<void> {
@@ -672,7 +669,7 @@ async function acquireSubagentRunLease(input: {
       {
         foreground: isForegroundParentRun(input.parentRun),
         foregroundReservedRuns: capacity.foregroundReservedRuns,
-        ...(input.inheritsParentCapacity ? { inheritFromRunId: input.parentRunId } : {}),
+        inheritFromRunId: input.parentRunId,
       },
     );
     if (acquired) return;

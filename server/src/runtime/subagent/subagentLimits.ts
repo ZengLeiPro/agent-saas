@@ -79,12 +79,9 @@ class AsyncSemaphore {
 
 interface RunEntry {
   semaphore: AsyncSemaphore;
-  inheritedParentSlotActive: boolean;
 }
 
 export interface SubagentSlot {
-  /** 同一父 run 同时最多一个子 Agent 继承父槽，避免满载时父等子自锁。 */
-  inheritsParentCapacity: boolean;
   release(): void;
 }
 
@@ -92,7 +89,7 @@ export interface SubagentLimiterOptions {
   perRunMaxConcurrency?: number;
 }
 
-/** 单父 run 限额器；跨 run 总量由 PgRunStore.acquireLease 的统一容量锁治理。 */
+/** 单父 run 限额器；跨 run 总量与父槽继承资格均由 PgRunStore 的统一容量锁治理。 */
 export class SubagentLimiter {
   private readonly perRunMaxConcurrency: number;
   private readonly runs = new Map<string, RunEntry>();
@@ -105,16 +102,12 @@ export class SubagentLimiter {
   async acquire(parentRunId: string, signal?: AbortSignal): Promise<SubagentSlot> {
     const entry = this.ensureRunEntry(parentRunId);
     await entry.semaphore.acquire(signal);
-    const inheritsParentCapacity = !entry.inheritedParentSlotActive;
-    if (inheritsParentCapacity) entry.inheritedParentSlotActive = true;
 
     let released = false;
     return {
-      inheritsParentCapacity,
       release: () => {
         if (released) return;
         released = true;
-        if (inheritsParentCapacity) entry.inheritedParentSlotActive = false;
         entry.semaphore.release();
       },
     };
@@ -124,10 +117,7 @@ export class SubagentLimiter {
     let entry = this.runs.get(parentRunId);
     if (!entry) {
       this.pruneIfNeeded();
-      entry = {
-        semaphore: new AsyncSemaphore(this.perRunMaxConcurrency),
-        inheritedParentSlotActive: false,
-      };
+      entry = { semaphore: new AsyncSemaphore(this.perRunMaxConcurrency) };
       this.runs.set(parentRunId, entry);
     }
     return entry;

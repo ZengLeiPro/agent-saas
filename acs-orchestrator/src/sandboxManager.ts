@@ -1,9 +1,7 @@
 import { chmod, chown, mkdir, rename, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CapacityReservations } from './capacityReservations.js';
-import {
-  summarizeSandboxCapacity,
-} from './sandboxCapacity.js';
+import { summarizeSandboxCapacity } from './sandboxCapacity.js';
 import type { AcsOrchestratorConfig } from './config.js';
 import { reserveSandboxCapacity } from './sandboxCapacityAdmission.js';
 import type { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
@@ -23,6 +21,7 @@ import {
   WORKSPACE_ANNOTATION, WORKSPACE_LABEL, readManagedSandboxes,
 } from './sandboxInventoryReader.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
+import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
 import {
   WORKLOAD_CLASS_LABEL,
   WORKLOAD_DESCRIPTOR_ANNOTATION,
@@ -56,9 +55,7 @@ import {
 import { SnatManager, type SnatCleanupReport, type SnatStatus } from './snatManager.js';
 import type { NetworkPolicyStatus } from 'server/runtime/networkPolicy.js';
 import {
-  buildPackageMirrorEnv,
-  buildSandboxProxyEnv,
-  egressSandboxFingerprint,
+  buildPackageMirrorEnv, buildSandboxProxyEnv, egressSandboxFingerprint,
 } from 'server/runtime/egressPolicy.js';
 import type {
   SandboxCleanupReport,
@@ -113,7 +110,7 @@ export class SandboxManager {
   readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
   private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
-  /** Serializes lifecycle deletion against ensureRunning so a new invocation waits and recreates safely. */
+  /** Serializes deletion against ensureRunning; new invocations wait and recreate safely. */
   private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
@@ -602,7 +599,7 @@ export class SandboxManager {
       sandboxIdlePauseMs: this.config.sandboxIdlePauseMs,
       listManagedSandboxes: () => this.listManagedSandboxes(),
       isBusy: (name, busy) => this.isBusy(name, busy),
-      deleteWhenIdle: (name, busy) => this.deleteWhenIdle(name, busy),
+      deleteWhenIdle: (name, busy, canDelete) => this.deleteWhenIdle(name, busy, canDelete),
       patchPaused: (name) => this.patchPaused(name, true),
       cleanupOrphanSnat: () => this.cleanupOrphanSnat(),
       warn: (message) => this.logger.warn(message),
@@ -679,17 +676,19 @@ export class SandboxManager {
     return { name: ref.name, deleted: true, missing: false };
   }
 
-  private async deleteWhenIdle(name: string, busySandboxNames: Set<string> = new Set()): Promise<string[] | null> {
+  private async deleteWhenIdle(name: string, busySandboxNames: Set<string> = new Set(),
+    canDelete?: (latest: ManagedSandbox) => boolean): Promise<string[] | null> {
     const existing = this.deleteInFlight.get(name);
     if (existing) return await existing;
-    const promise = Promise.resolve().then(async () => {
-      if (this.isBusy(name, busySandboxNames)) return null;
-      const status = await this.getStatus(name);
-      if (!status) return [];
-      if (this.statusHasActiveInvocationLease(status) || backgroundShellProtectionFromStatus(status)) return null;
-      if (this.isBusy(name, busySandboxNames)) return null;
-      this.invalidateEnsureFastPath(name);
-      return await this.deleteSandboxAndReclaimNetwork(name);
+    const promise = deleteSandboxWhenIdle({
+      name, config: this.config, canDelete,
+      isBusy: () => this.isBusy(name, busySandboxNames),
+      isEnsuring: () => this.ensureInFlight.has(name),
+      getStatus: () => this.getStatus(name),
+      delete: async () => {
+        this.invalidateEnsureFastPath(name);
+        return await this.deleteSandboxAndReclaimNetwork(name);
+      },
     });
     this.deleteInFlight.set(name, promise);
     try {
@@ -897,7 +896,7 @@ export class SandboxManager {
       skipCapacityManagement: options.skipCapacityManagement,
       listSandboxes: () => this.listManagedSandboxes(),
       isBusy: (name, busy) => this.isBusy(name, busy),
-      evict: async (name) => { await this.deleteSandboxAndReclaimNetwork(name); },
+      evict: async (name) => (await this.deleteWhenIdle(name, options.busySandboxNames, (latest) => latest.phase === 'Paused')) !== null,
       warn: (message) => this.logger.warn(message),
     });
   }

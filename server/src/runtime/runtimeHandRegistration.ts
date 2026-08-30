@@ -26,7 +26,7 @@ import {
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
-// Workload classification is fixed at the Server creation boundary; descendants inherit it.
+// Workload classification is fixed at the Server creation boundary; memory consolidation is always isolated.
 
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
@@ -67,6 +67,7 @@ export function resolveSandboxWorkloadDescriptor(
   toolProfile: unknown,
   channel: string,
 ): SandboxWorkloadDescriptor {
+  if (toolProfile === 'memory_consolidate') return { kind: 'memory' };
   return existing ?? replay ?? requested ?? (toolProfile ? { kind: 'memory' } : channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
 }
 

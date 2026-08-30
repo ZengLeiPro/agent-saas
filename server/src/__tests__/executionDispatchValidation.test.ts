@@ -51,6 +51,7 @@ function makeDispatch(): TaskboardExecutionDispatch {
     executionTarget: EXECUTION_TARGET,
     workspaceId: expectedWorkspaceId,
     status: 'running' as const,
+    sandboxWorkloadDescriptor: { kind: 'taskboard' as const, taskKind: 'delivery' as const, purpose: 'review' as const },
     createdAt: now,
     updatedAt: now,
   };
@@ -65,7 +66,10 @@ function makeDispatch(): TaskboardExecutionDispatch {
     executionTarget: EXECUTION_TARGET,
     workspaceId: expectedWorkspaceId,
     status: 'pending',
-    metadata: {},
+    metadata: {
+      sandboxWorkloadTopLevel: true,
+      sandboxWorkloadDescriptor: session.sandboxWorkloadDescriptor,
+    },
   };
   return {
     runId: RUN_ID,
@@ -94,6 +98,8 @@ describe('canonicalizeDispatchPayload（review 独立 Session 首跑重建契约
       username: USERNAME,
       userRole: USER_ROLE,
       modelRef: MODEL,
+      sandboxWorkloadTopLevel: true,
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' },
       cwd: expect.any(String),
       transcriptPath: expect.any(String),
     });
@@ -113,7 +119,21 @@ describe('canonicalizeDispatchPayload（review 独立 Session 首跑重建契约
       sessionSource: 'taskboard_execution',
       memoryAutomationEligible: false,
       memoryPolicyVersion: 'v2',
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' },
     });
+  });
+
+  it('拒绝伪造或不一致的 Taskboard workload', () => {
+    const dispatch = makeDispatch();
+    dispatch.payload.session.sandboxWorkloadDescriptor = { kind: 'interactive' };
+    expect(() => canonicalizeDispatchPayload(dispatch, AGENT_CWD)).toThrow(InvalidTaskboardDispatchPayloadError);
+
+    const mismatched = makeDispatch();
+    mismatched.payload.run.metadata = {
+      ...mismatched.payload.run.metadata,
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'work' },
+    };
+    expect(() => canonicalizeDispatchPayload(mismatched, AGENT_CWD)).toThrow(InvalidTaskboardDispatchPayloadError);
   });
 
   it('assertDispatchedRun 放行一致的首跑 dispatch', () => {

@@ -94,7 +94,13 @@ describe('SandboxLifecycleService', () => {
       listActiveScopeRuns: vi.fn(async () => [{
         runId: 'run-child', sessionId: 'sub-child', tenantId: 'tenant-1', userId: 'u-1',
       }]),
-      enqueueCleanup: vi.fn(async () => true),
+      enqueueCleanup: vi.fn(async () => 'run-cleanup'),
+      claimCleanup: vi.fn(async (_runId: string, claimId: string) => ({
+        ...identity, runId: 'run-cleanup', claimId, tenantId: 'tenant-1', userId: 'u-1', username: 'alice',
+      })),
+      isCleanupClaimCurrent: vi.fn(async () => true),
+      releaseCleanupClaim: vi.fn(async () => undefined),
+      markCleanupDelivered: vi.fn(async () => undefined),
     };
     const service = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never,
@@ -110,6 +116,81 @@ describe('SandboxLifecycleService', () => {
       'sub-child', 'session_deleted:session-1', 'run-child',
       expect.objectContaining({ type: 'run_cancel_requested', runId: 'run-child' }), 'tenant-1',
     );
-    expect(store.enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining(identity));
+    expect(store.enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({
+      ...identity, tenantId: 'tenant-1', userId: 'u-1', username: 'alice',
+    }));
+    expect(store.releaseCleanupClaim).toHaveBeenCalledWith('run-cleanup', expect.any(String));
+  });
+
+  it('retries queued cleanup after worker restart without session meta using persisted routing identity', async () => {
+    const pending = {
+      ...identity, runId: 'run-cleanup', tenantId: 'tenant-1', userId: 'u-1', username: 'alice',
+    };
+    const markCleanupDelivered = vi.fn(async () => undefined);
+    const store = {
+      listCleanupCandidates: vi.fn(async () => [pending]),
+      claimCleanup: vi.fn(async (_runId: string, claimId: string) => ({ ...pending, claimId })),
+      isCleanupClaimCurrent: vi.fn(async () => true),
+      releaseCleanupClaim: vi.fn(async () => undefined),
+      markCleanupDelivered,
+      listTerminalCandidates: vi.fn(async () => []),
+    };
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const restarted = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => [remote()],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [remote()] }),
+      fetchImpl,
+    });
+
+    await (restarted as unknown as { scan(): Promise<void> }).scan();
+
+    expect(fetchImpl).toHaveBeenCalledWith('http://acs.test/sandboxes/scope', expect.objectContaining({ method: 'DELETE' }));
+    expect(markCleanupDelivered).toHaveBeenCalledWith('run-cleanup', expect.any(String), expect.any(String));
+  });
+
+  it('restore cancels and drains an already claimed cleanup before warmup may continue', async () => {
+    let state: 'pending' | 'claimed' | 'cancelled' = 'pending';
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    const markCleanupDelivered = vi.fn(async () => undefined);
+    const pending = { ...identity, runId: 'run-cleanup', tenantId: 'tenant-1', userId: 'u-1', username: 'alice' };
+    const store = {
+      listCleanupCandidates: vi.fn(async () => [pending]),
+      claimCleanup: vi.fn(async (_runId: string, claimId: string) => {
+        if (state !== 'pending') return undefined;
+        state = 'claimed';
+        return { ...pending, claimId };
+      }),
+      isCleanupClaimCurrent: vi.fn(async () => state === 'claimed'),
+      cancelCleanup: vi.fn(async () => { state = 'cancelled'; }),
+      releaseCleanupClaim: vi.fn(async () => undefined),
+      markCleanupDelivered,
+      listTerminalCandidates: vi.fn(async () => []),
+    };
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      requestStarted();
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
+      });
+    }) as unknown as typeof fetch;
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => session() },
+      tenantRemoteHands: () => [remote()],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [remote()] }),
+      fetchImpl,
+    });
+    const scan = (service as unknown as { scan(): Promise<void> }).scan();
+    await started;
+
+    await service.cancelSessionDeletion('session-1');
+    const warmupStartedAfterDrain = true;
+    await scan;
+
+    expect(warmupStartedAfterDrain).toBe(true);
+    expect(state).toBe('cancelled');
+    expect(markCleanupDelivered).not.toHaveBeenCalled();
   });
 });

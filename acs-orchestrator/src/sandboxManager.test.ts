@@ -646,26 +646,23 @@ describe('SandboxManager', () => {
       .rejects.toThrow(/capacity exhausted/);
   });
 
-  it('evicts the oldest safe Paused Sandbox before enforcing allocated quota', async () => {
+  it('evicts the oldest still-Paused Sandbox before enforcing allocated quota', async () => {
     const calls: string[][] = [];
     let created = false;
     let applied: Record<string, unknown> | undefined;
+    const idleSandbox = {
+      metadata: { name: 'as-idle', annotations: {
+        'agent-saas.kaiyan.net/created-at': '2026-06-27T00:00:00.000Z',
+        'agent-saas.kaiyan.net/last-active-at': '2026-06-27T00:00:00.000Z',
+      } }, status: { phase: 'Paused' },
+    };
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
         calls.push(args);
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return {
             stdout: JSON.stringify({
-              items: [{
-                metadata: {
-                  name: 'as-idle',
-                  annotations: {
-                    'agent-saas.kaiyan.net/created-at': '2026-06-27T00:00:00.000Z',
-                    'agent-saas.kaiyan.net/last-active-at': '2026-06-27T00:00:00.000Z',
-                  },
-                },
-                status: { phase: 'Paused' },
-              }],
+              items: [idleSandbox],
             }),
             stderr: '',
             exitCode: 0,
@@ -673,6 +670,7 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
+          if (args[1] === 'sandbox/as-idle') return { stdout: JSON.stringify(idleSandbox), stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }

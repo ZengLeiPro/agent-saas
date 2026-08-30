@@ -16,7 +16,7 @@ export async function reserveSandboxCapacity(input: {
   skipCapacityManagement?: boolean;
   listSandboxes: () => Promise<ManagedSandbox[]>;
   isBusy: (name: string, busySandboxNames?: Set<string>) => boolean;
-  evict: (name: string) => Promise<void>;
+  evict: (name: string) => Promise<boolean>;
   warn: (message: string) => void;
 }): Promise<void> {
   if (
@@ -42,8 +42,7 @@ export async function reserveSandboxCapacity(input: {
         if (input.isBusy(sandbox.name, input.busySandboxNames)
           || isActiveInvocationLeaseProtected(sandbox, Date.now())
           || isBackgroundShellProtected(sandbox, Date.now())) return false;
-        await input.evict(sandbox.name);
-        return true;
+        return await input.evict(sandbox.name);
       },
     });
     if (result.evicted.length) input.warn(

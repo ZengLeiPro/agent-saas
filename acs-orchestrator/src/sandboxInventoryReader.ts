@@ -41,7 +41,13 @@ export async function readManagedSandboxes(
     const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
     items = body.items ?? [];
   }
-  return items.map((item) => {
+  return items.map((item) => managedSandboxFromResource(config, item)).filter((sandbox) => sandbox.name);
+}
+
+export function managedSandboxFromResource(
+  config: AcsOrchestratorConfig,
+  item: Record<string, unknown>,
+): ManagedSandbox {
     const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {};
     const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
     const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
@@ -77,5 +83,4 @@ export async function readManagedSandboxes(
       cpuRequest: stringValue(requests.cpu), cpuLimit: stringValue(limits.cpu),
       memoryRequest: stringValue(requests.memory), memoryLimit: stringValue(limits.memory),
     };
-  }).filter((sandbox) => sandbox.name);
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SandboxWorkloadDescriptor } from '@agent/shared';
 import type { PlatformEvent } from './types.js';
 import type { HandStore } from './handStore.js';
@@ -28,6 +29,9 @@ interface LifecycleCandidate extends SandboxLifecycleIdentity {
 interface CleanupCandidate extends SandboxLifecycleIdentity {
   runId: string;
   tenantId?: string;
+  userId?: string;
+  username?: string;
+  claimId?: string;
 }
 
 interface ActiveScopeRun {
@@ -100,7 +104,8 @@ export class PgSandboxLifecycleStore {
   async enqueueCleanup(candidate: Omit<CleanupCandidate, 'runId'>): Promise<string | undefined> {
     const payload = JSON.stringify({
       state: 'pending', workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
-      sandboxScopeId: candidate.sandboxScopeId, queuedAt: new Date().toISOString(),
+      sandboxScopeId: candidate.sandboxScopeId, tenantId: candidate.tenantId,
+      userId: candidate.userId, username: candidate.username, queuedAt: new Date().toISOString(),
     });
     const result = await this.pool.query<{ run_id: string }>(`
       UPDATE ${this.runsTable}
@@ -124,36 +129,72 @@ export class PgSandboxLifecycleStore {
         COALESCE(metadata->'sandboxCleanupOutbox','{}'::jsonb) || jsonb_build_object('state','cancelled','cancelledAt',$3::text)),
         updated_at=NOW()
       WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-        AND metadata->'sandboxCleanupOutbox'->>'state' = 'pending'
+        AND metadata->'sandboxCleanupOutbox'->>'state' IN ('pending','claimed')
     `, [sessionId, tenantId ?? null, new Date().toISOString()]);
   }
 
   async listCleanupCandidates(limit = 100): Promise<CleanupCandidate[]> {
+    const staleBefore = new Date(Date.now() - 60_000).toISOString();
     const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, tenant_id, metadata->'sandboxCleanupOutbox' AS cleanup
+      SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
+             metadata->'sandboxCleanupOutbox' AS cleanup
       FROM ${this.runsTable}
       WHERE metadata->'sandboxCleanupOutbox'->>'state' = 'pending'
+         OR (metadata->'sandboxCleanupOutbox'->>'state' = 'claimed'
+             AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $2::text)
       ORDER BY updated_at ASC LIMIT $1
-    `, [limit]);
+    `, [limit, staleBefore]);
     return result.rows.flatMap((row) => {
       const cleanup = asRecord(row.cleanup);
       if (!stringValue(cleanup.workspaceId) || !stringValue(cleanup.sessionId) || !stringValue(cleanup.sandboxScopeId)) return [];
-      return [{
-        runId: String(row.run_id), workspaceId: stringValue(cleanup.workspaceId)!,
-        sessionId: stringValue(cleanup.sessionId)!, sandboxScopeId: stringValue(cleanup.sandboxScopeId)!,
-        ...(typeof row.tenant_id === 'string' ? { tenantId: row.tenant_id } : {}),
-      }];
+      return [cleanupCandidateFromRow(row, cleanup)];
     });
   }
 
-  async markCleanupDelivered(runId: string, deliveredAt: string): Promise<void> {
+  async claimCleanup(runId: string, claimId: string): Promise<CleanupCandidate | undefined> {
+    const claimedAt = new Date().toISOString();
+    const staleBefore = new Date(Date.now() - 60_000).toISOString();
+    const result = await this.pool.query<Record<string, unknown>>(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
+        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','claimed','claimId',$2::text,'claimedAt',$3::text)), updated_at=NOW()
+      WHERE run_id=$1 AND (metadata->'sandboxCleanupOutbox'->>'state'='pending'
+        OR (metadata->'sandboxCleanupOutbox'->>'state'='claimed'
+          AND metadata->'sandboxCleanupOutbox'->>'claimedAt' < $4::text))
+      RETURNING run_id, tenant_id, user_id, metadata->>'username' AS username,
+                metadata->'sandboxCleanupOutbox' AS cleanup
+    `, [runId, claimId, claimedAt, staleBefore]);
+    const row = result.rows[0];
+    return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
+  }
+
+  async isCleanupClaimCurrent(runId: string, claimId: string): Promise<boolean> {
+    const result = await this.pool.query<{ current: boolean }>(`
+      SELECT EXISTS(SELECT 1 FROM ${this.runsTable} WHERE run_id=$1
+        AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
+        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2) AS current
+    `, [runId, claimId]);
+    return result.rows[0]?.current === true;
+  }
+
+  async releaseCleanupClaim(runId: string, claimId: string): Promise<void> {
     await this.pool.query(`
       UPDATE ${this.runsTable}
       SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        COALESCE(metadata->'sandboxCleanupOutbox','{}'::jsonb) || jsonb_build_object('state','delivered','deliveredAt',$2::text)),
-        updated_at=NOW()
-      WHERE run_id=$1
-    `, [runId, deliveredAt]);
+        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','pending','claimId',NULL,'retryAt',$3::text)), updated_at=NOW()
+      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
+        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
+    `, [runId, claimId, new Date().toISOString()]);
+  }
+
+  async markCleanupDelivered(runId: string, claimId: string, deliveredAt: string): Promise<void> {
+    await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
+        metadata->'sandboxCleanupOutbox' || jsonb_build_object('state','delivered','deliveredAt',$3::text)), updated_at=NOW()
+      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='claimed'
+        AND metadata->'sandboxCleanupOutbox'->>'claimId'=$2
+    `, [runId, claimId, deliveredAt]);
   }
 
   async listActiveScopeRuns(identity: SandboxLifecycleIdentity, tenantId?: string): Promise<ActiveScopeRun[]> {
@@ -189,11 +230,11 @@ export class AcsSandboxLifecycleClient {
     await this.request('/sandboxes/lifecycle', 'POST', input);
   }
 
-  async deleteScope(input: SandboxLifecycleIdentity): Promise<void> {
-    await this.request('/sandboxes/scope', 'DELETE', input);
+  async deleteScope(input: SandboxLifecycleIdentity, signal?: AbortSignal): Promise<void> {
+    await this.request('/sandboxes/scope', 'DELETE', input, signal);
   }
 
-  private async request(path: string, method: 'POST' | 'DELETE', body: unknown): Promise<void> {
+  private async request(path: string, method: 'POST' | 'DELETE', body: unknown, externalSignal?: AbortSignal): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
     timer.unref?.();
@@ -201,7 +242,7 @@ export class AcsSandboxLifecycleClient {
       const baseUrl = this.options.baseUrl.replace(/\/$/, '');
       const response = await controlPlaneFetch(baseUrl, this.options.fetchImpl)(`${baseUrl}${path}`, {
         method, headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.authToken}` },
-        body: JSON.stringify(body), signal: controller.signal,
+        body: JSON.stringify(body), signal: externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal,
       });
       if (response.ok) return;
       const text = await response.text().catch(() => '');
@@ -215,7 +256,8 @@ export class AcsSandboxLifecycleClient {
 
 export class SandboxLifecycleService {
   private timer?: NodeJS.Timeout;
-  private scanPromise?: Promise<void>;
+  private scanPromise: Promise<void> | undefined;
+  private readonly cleanupInFlight = new Map<string, { controller: AbortController; promise: Promise<void> }>();
 
   constructor(private readonly options: {
     agentCwd: string;
@@ -256,20 +298,31 @@ export class SandboxLifecycleService {
   async cancelSessionDeletion(sessionId: string): Promise<void> {
     const record = await this.options.sessionCatalog.get(sessionId);
     await this.options.store.cancelCleanup(sessionId, record?.tenantId);
+    const inFlight = this.cleanupInFlight.get(sessionId);
+    if (!inFlight) return;
+    inFlight.controller.abort(new Error('sandbox cleanup cancelled by session restore'));
+    await inFlight.promise.catch(() => undefined);
   }
 
   async prepareSessionDeletion(sessionId: string): Promise<'skipped' | 'deleted' | 'queued'> {
     const resolved = await this.resolveSessionTarget(sessionId);
     if (!resolved) return 'skipped';
-    const { identity, tenantId, client } = resolved;
+    const { identity, tenantId, userId, username, client } = resolved;
     await this.cancelScope(identity, tenantId);
-    const cleanupRunId = await this.options.store.enqueueCleanup({ ...identity, ...(tenantId ? { tenantId } : {}) });
-    try {
+    const cleanupRunId = await this.options.store.enqueueCleanup({
+      ...identity, ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
+    });
+    if (!cleanupRunId) {
       await client.deleteScope(identity);
-      if (cleanupRunId) await this.options.store.markCleanupDelivered(cleanupRunId, new Date().toISOString());
       return 'deleted';
+    }
+    const claimId = randomUUID();
+    const cleanup = await this.options.store.claimCleanup(cleanupRunId, claimId);
+    if (!cleanup) return 'queued';
+    try {
+      return await this.deliverClaimedCleanup(cleanup, client) ? 'deleted' : 'queued';
     } catch (error) {
-      if (!cleanupRunId) throw error;
+      await this.options.store.releaseCleanupClaim(cleanupRunId, claimId);
       this.options.logger?.warn(`sandbox_cleanup_queued session=${sessionId} scope=${identity.sandboxScopeId} error=${error instanceof Error ? error.message : String(error)}`);
       this.wake();
       return 'queued';
@@ -277,13 +330,19 @@ export class SandboxLifecycleService {
   }
 
   private async scan(): Promise<void> {
-    for (const cleanup of await this.options.store.listCleanupCandidates()) {
-      const client = await this.resolveClient(cleanup.sessionId, cleanup.tenantId);
-      if (!client) continue;
+    for (const pending of await this.options.store.listCleanupCandidates()) {
+      const claimId = randomUUID();
+      const cleanup = await this.options.store.claimCleanup(pending.runId, claimId);
+      if (!cleanup) continue;
+      const client = await this.resolveClient(cleanup.sessionId, cleanup.tenantId, undefined, cleanup);
+      if (!client) {
+        await this.options.store.releaseCleanupClaim(cleanup.runId, claimId);
+        continue;
+      }
       try {
-        await client.deleteScope(cleanup);
-        await this.options.store.markCleanupDelivered(cleanup.runId, new Date().toISOString());
+        await this.deliverClaimedCleanup(cleanup, client);
       } catch (error) {
+        await this.options.store.releaseCleanupClaim(cleanup.runId, claimId);
         this.options.logger?.warn(`sandbox_cleanup_retry_failed session=${cleanup.sessionId} error=${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -307,6 +366,24 @@ export class SandboxLifecycleService {
     }
   }
 
+  private async deliverClaimedCleanup(cleanup: CleanupCandidate, client: AcsSandboxLifecycleClient): Promise<boolean> {
+    const claimId = cleanup.claimId;
+    if (!claimId || !await this.options.store.isCleanupClaimCurrent(cleanup.runId, claimId)) return false;
+    const controller = new AbortController();
+    const promise = (async () => {
+      if (!await this.options.store.isCleanupClaimCurrent(cleanup.runId, claimId)) return;
+      await client.deleteScope(cleanup, controller.signal);
+      await this.options.store.markCleanupDelivered(cleanup.runId, claimId, new Date().toISOString());
+    })();
+    this.cleanupInFlight.set(cleanup.sessionId, { controller, promise });
+    try {
+      await promise;
+      return !controller.signal.aborted;
+    } finally {
+      if (this.cleanupInFlight.get(cleanup.sessionId)?.promise === promise) this.cleanupInFlight.delete(cleanup.sessionId);
+    }
+  }
+
   private async cancelScope(identity: SandboxLifecycleIdentity, tenantId?: string): Promise<void> {
     const active = await this.options.store.listActiveScopeRuns(identity, tenantId);
     const cancel = this.options.runStore.cancelSteeringBeforeDispatchBySessionWithEvent;
@@ -325,6 +402,8 @@ export class SandboxLifecycleService {
   private async resolveSessionTarget(sessionId: string): Promise<{
     identity: SandboxLifecycleIdentity;
     tenantId?: string;
+    userId?: string;
+    username?: string;
     client: AcsSandboxLifecycleClient;
   } | undefined> {
     const record = await this.options.sessionCatalog.get(sessionId);
@@ -340,7 +419,9 @@ export class SandboxLifecycleService {
       ?? deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId: sessionId });
     return {
       identity: { workspaceId, sessionId, sandboxScopeId },
-      ...(record.tenantId ? { tenantId: record.tenantId } : {}), client,
+      ...(record.tenantId ? { tenantId: record.tenantId } : {}),
+      ...(record.userId ? { userId: record.userId } : {}),
+      ...(record.username ? { username: record.username } : {}), client,
     };
   }
 
@@ -348,14 +429,17 @@ export class SandboxLifecycleService {
     sessionId: string,
     tenantId?: string,
     knownRecord?: Awaited<ReturnType<SessionCatalog['get']>>,
+    routing?: Pick<CleanupCandidate, 'userId' | 'username'>,
   ): Promise<AcsSandboxLifecycleClient | undefined> {
     const record = knownRecord ?? await this.options.sessionCatalog.get(sessionId);
-    const entry = selectTenantRemoteHandsForRegistration(this.options.tenantRemoteHands(), {
-      userId: record?.userId, username: record?.username, userTenantId: tenantId ?? record?.tenantId,
-    }).find((hand) => hand.id === 'agent-saas-acs')
-      ?? selectTenantRemoteHandsForRegistration(this.options.tenantRemoteHands(), {
-        userId: record?.userId, username: record?.username, userTenantId: tenantId ?? record?.tenantId,
-      }).find((hand) => /acs/i.test(hand.id));
+    const selector = {
+      userId: record?.userId ?? routing?.userId,
+      username: record?.username ?? routing?.username,
+      userTenantId: tenantId ?? record?.tenantId,
+    };
+    const candidates = selectTenantRemoteHandsForRegistration(this.options.tenantRemoteHands(), selector);
+    const entry = candidates.find((hand) => hand.id === 'agent-saas-acs')
+      ?? candidates.find((hand) => /acs/i.test(hand.id));
     if (!entry) return undefined;
     const resolved = await this.options.tenantRemoteHandResolver.resolveForRegister(entry);
     return new AcsSandboxLifecycleClient({
@@ -366,6 +450,19 @@ export class SandboxLifecycleService {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function cleanupCandidateFromRow(row: Record<string, unknown>, cleanup: Record<string, unknown>): CleanupCandidate {
+  const tenantId = stringValue(cleanup.tenantId) ?? stringValue(row.tenant_id);
+  const userId = stringValue(cleanup.userId) ?? stringValue(row.user_id);
+  const username = stringValue(cleanup.username) ?? stringValue(row.username);
+  const claimId = stringValue(cleanup.claimId);
+  return {
+    runId: String(row.run_id), workspaceId: stringValue(cleanup.workspaceId)!,
+    sessionId: stringValue(cleanup.sessionId)!, sandboxScopeId: stringValue(cleanup.sandboxScopeId)!,
+    ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}),
+    ...(username ? { username } : {}), ...(claimId ? { claimId } : {}),
+  };
 }
 
 function stringValue(value: unknown): string | undefined {

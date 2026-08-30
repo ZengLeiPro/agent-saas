@@ -11,7 +11,11 @@ export interface SandboxCleanupHost {
   sandboxIdlePauseMs: number;
   listManagedSandboxes(): Promise<ManagedSandbox[]>;
   isBusy(name: string, busySandboxNames: Set<string>): boolean;
-  deleteWhenIdle(name: string, busySandboxNames: Set<string>): Promise<string[] | null>;
+  deleteWhenIdle(
+    name: string,
+    busySandboxNames: Set<string>,
+    canDelete?: (latest: ManagedSandbox) => boolean,
+  ): Promise<string[] | null>;
   patchPaused(name: string): Promise<void>;
   cleanupOrphanSnat(): Promise<SnatCleanupReport>;
   warn(message: string): void;
@@ -49,46 +53,27 @@ export async function cleanupManagedSandboxes(
     }
     const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs });
     decisionCounts[lifecycle.decision] = (decisionCounts[lifecycle.decision] ?? 0) + 1;
-    const phase = sandbox.phase ?? 'Unknown';
-    const createdAtMs = parseDateMs(sandbox.createdAt);
-    const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
-    const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
-    const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
-
-    if (sandbox.brokenReason && host.sandboxBrokenRecycleGraceMs > 0) {
-      const brokenSinceMs = Math.max(
-        parseDateMs(sandbox.pausedConditionChangedAt) ?? 0,
-        lastActiveAtMs ?? 0,
-        createdAtMs ?? 0,
+    const deletionReason = cleanupDeletionReason(host, sandbox, nowMs);
+    if (deletionReason) {
+      if (deletionReason === 'broken') host.warn(`sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason}`);
+      const reclaimed = await host.deleteWhenIdle(
+        sandbox.name,
+        busySandboxNames,
+        (latest) => cleanupDeletionReason(host, mergeLatestSandbox(sandbox, latest), nowMs) === deletionReason,
       );
-      if (brokenSinceMs > 0 && nowMs - brokenSinceMs >= host.sandboxBrokenRecycleGraceMs) {
-        host.warn(`sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason} brokenForMs=${nowMs - brokenSinceMs}`);
-        const reclaimed = await host.deleteWhenIdle(sandbox.name, busySandboxNames);
-        if (!reclaimed) {
-          skippedBusy.push(sandbox.name);
-          continue;
-        }
-        snatDeleted.push(...reclaimed);
-        brokenRecycled.push(sandbox.name);
-        continue;
-      }
-    }
-
-    const orphanPhase = !['Running', 'Paused'].includes(phase);
-    const orphanGraceMs = lifecycle.workloadClass === 'probe' ? 5 * 60_000 : host.sandboxOrphanGraceMs;
-    const shouldDeleteOrphan = orphanGraceMs > 0 && orphanPhase && ageMs >= orphanGraceMs;
-    const shouldDeleteByLegacyTtl = host.sandboxTtlMs > 0 && idleMs >= host.sandboxTtlMs;
-    const shouldDeleteByPolicy = host.lifecyclePolicyMode === 'enforce' && lifecycle.delete;
-    if (shouldDeleteOrphan || (host.lifecyclePolicyMode === 'shadow' ? shouldDeleteByLegacyTtl : shouldDeleteByPolicy)) {
-      const reclaimed = await host.deleteWhenIdle(sandbox.name, busySandboxNames);
       if (!reclaimed) {
         skippedBusy.push(sandbox.name);
         continue;
       }
       snatDeleted.push(...reclaimed);
-      deleted.push(sandbox.name);
+      if (deletionReason === 'broken') brokenRecycled.push(sandbox.name);
+      else deleted.push(sandbox.name);
       continue;
     }
+    const phase = sandbox.phase ?? 'Unknown';
+    const createdAtMs = parseDateMs(sandbox.createdAt);
+    const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
+    const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
     if (phase === 'Running' && host.sandboxIdlePauseMs > 0 && idleMs >= host.sandboxIdlePauseMs) {
       if (host.isBusy(sandbox.name, busySandboxNames)) {
         skippedBusy.push(sandbox.name);
@@ -112,4 +97,31 @@ export async function cleanupManagedSandboxes(
     policyMode: host.lifecyclePolicyMode,
     decisionCounts,
   };
+}
+
+type CleanupDeletionReason = 'broken' | 'expired';
+
+function mergeLatestSandbox(fallback: ManagedSandbox, latest: ManagedSandbox): ManagedSandbox {
+  const defined = Object.fromEntries(Object.entries(latest).filter(([, value]) => value !== undefined));
+  return { ...fallback, ...defined };
+}
+
+function cleanupDeletionReason(
+  host: Pick<SandboxCleanupHost, 'lifecyclePolicyMode' | 'sandboxBrokenRecycleGraceMs' | 'sandboxOrphanGraceMs' | 'sandboxTtlMs'>,
+  sandbox: ManagedSandbox,
+  nowMs: number,
+): CleanupDeletionReason | undefined {
+  const createdAtMs = parseDateMs(sandbox.createdAt);
+  const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
+  if (sandbox.brokenReason && host.sandboxBrokenRecycleGraceMs > 0) {
+    const brokenSinceMs = Math.max(parseDateMs(sandbox.pausedConditionChangedAt) ?? 0, lastActiveAtMs ?? 0, createdAtMs ?? 0);
+    if (brokenSinceMs > 0 && nowMs - brokenSinceMs >= host.sandboxBrokenRecycleGraceMs) return 'broken';
+  }
+  const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs });
+  const orphanGraceMs = lifecycle.workloadClass === 'probe' ? 5 * 60_000 : host.sandboxOrphanGraceMs;
+  const orphanExpired = orphanGraceMs > 0 && !['Running', 'Paused'].includes(sandbox.phase ?? 'Unknown')
+    && createdAtMs !== undefined && nowMs - createdAtMs >= orphanGraceMs;
+  const legacyExpired = host.sandboxTtlMs > 0 && lastActiveAtMs !== undefined && nowMs - lastActiveAtMs >= host.sandboxTtlMs;
+  const policyExpired = host.lifecyclePolicyMode === 'enforce' && lifecycle.delete;
+  return orphanExpired || (host.lifecyclePolicyMode === 'shadow' ? legacyExpired : policyExpired) ? 'expired' : undefined;
 }

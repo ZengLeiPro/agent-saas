@@ -7,7 +7,6 @@ function callbacks() {
   return {
     openFilePreview: vi.fn(),
     closeFilePreview: vi.fn(),
-    closeArtifactPreview: vi.fn(),
     dockFilePreview: vi.fn(),
     expandFilePreview: vi.fn(),
     toggleFileBrowser: vi.fn(),
@@ -77,8 +76,7 @@ describe('useChatRightPanelController', () => {
     expect(result.current.rightPanelKind).toBe('artifact');
     expect(result.current.rightPanelKey).toBe('artifact-1');
 
-    act(() => result.current.handleCloseArtifactPreview());
-    expect(fns.closeArtifactPreview).toHaveBeenCalledTimes(1);
+    rerender({ ...baseProps, fileBrowserOpen: true, previewArtifact: null });
     expect(result.current.rightPanelKind).toBe('browser');
   });
 

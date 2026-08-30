@@ -154,12 +154,12 @@ export function DesktopLayout(props: LayoutProps) {
   const [taskDetailPanelTarget, setTaskDetailPanelTarget] = useState<HTMLDivElement | null>(null); const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const {
     businessStepPanelOpen, businessStepDetailHost, setBusinessStepDetailHost, rightPanelKind, rightPanelKey,
-    handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview, handleCloseArtifactPreview,
-    handleDockFilePreview, handleExpandFilePreview, handleToggleFileBrowser, handleCloseFileBrowser, handleCloseSubagentTranscript,
+    handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview, handleDockFilePreview,
+    handleExpandFilePreview, handleToggleFileBrowser, handleCloseFileBrowser, handleCloseSubagentTranscript,
   } = useChatRightPanelController({
     sessionId, previewFilePath, previewMode, previewArtifact, fileBrowserOpen,
     subagentTranscript: subagentTranscript ?? null, systemPanelOpen,
-    openFilePreview, closeFilePreview, closeArtifactPreview, dockFilePreview, expandFilePreview,
+    openFilePreview, closeFilePreview, dockFilePreview, expandFilePreview,
     toggleFileBrowser, closeFileBrowser, closeSubagentTranscript,
   });
   const rightPanelOpen = rightPanelKind !== null;
@@ -949,7 +949,7 @@ export function DesktopLayout(props: LayoutProps) {
               ) : null}
               {rightPanelKind === 'artifact' && previewArtifact ? (
                 <Suspense fallback={SuspenseFallback}>
-                  <ArtifactPreviewPanel {...previewArtifact} onClose={handleCloseArtifactPreview} />
+                  <ArtifactPreviewPanel {...previewArtifact} onClose={closeArtifactPreview} />
                 </Suspense>
               ) : null}
               {rightPanelKind === 'preview' && previewFilePath ? (

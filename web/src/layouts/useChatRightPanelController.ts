@@ -14,7 +14,6 @@ export function useChatRightPanelController({
   systemPanelOpen,
   openFilePreview,
   closeFilePreview,
-  closeArtifactPreview,
   dockFilePreview,
   expandFilePreview,
   toggleFileBrowser,
@@ -30,7 +29,6 @@ export function useChatRightPanelController({
   systemPanelOpen: boolean;
   openFilePreview: (path: string, owner?: string, options?: PreviewOptions) => void;
   closeFilePreview: () => void;
-  closeArtifactPreview: () => void;
   dockFilePreview: () => void;
   expandFilePreview: () => void;
   toggleFileBrowser: () => void;
@@ -73,13 +71,6 @@ export function useChatRightPanelController({
       current === 'preview' ? (fileBrowserOpen ? 'browser' : null) : current,
     );
   }, [closeFilePreview, fileBrowserOpen]);
-
-  const handleCloseArtifactPreview = useCallback(() => {
-    closeArtifactPreview();
-    setIntent((current) =>
-      current === 'artifact' ? (fileBrowserOpen ? 'browser' : null) : current,
-    );
-  }, [closeArtifactPreview, fileBrowserOpen]);
 
   const handleDockFilePreview = useCallback(() => {
     setBusinessStepPanelOpen(false);
@@ -170,7 +161,6 @@ export function useChatRightPanelController({
     handleBusinessStepPanelOpenChange,
     handleOpenFilePreview,
     handleCloseFilePreview,
-    handleCloseArtifactPreview,
     handleDockFilePreview,
     handleExpandFilePreview,
     handleToggleFileBrowser,

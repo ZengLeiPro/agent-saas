@@ -132,7 +132,7 @@ describe('groupMessages', () => {
 
     const result = groupMessages([user('user-1'), start, read, update, text('answer')], false);
 
-    // 扁平事件流（非 sectioning）：plan+start（首快照位置）→ 工具活动组（不被吸收）→ complete → 正文
+    // 扁平事件流（非 sectioning）：plan+start（首快照位置）→ 工具活动组 → complete → 正文
     expect(result.map(item => item.type)).toEqual([
       'user', 'business_step', 'business_step', 'activity_group', 'business_step', 'text',
     ]);
@@ -147,6 +147,23 @@ describe('groupMessages', () => {
       anchorMessageId: 'todo-update',
       todo: { id: 'verify', status: 'completed', detail: ['核验通过'] },
     });
+  });
+
+  it('非 sectioning 事件流静默忽略 reset，不产生空白业务事件', () => {
+    const result = groupMessages([
+      businessTodo('todo-start', [
+        { id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' },
+      ], 'run-1'),
+      businessTodo('todo-reset', [], 'run-2'),
+      tool('read-after', { toolName: 'Read', resultReady: true }),
+      text('final-summary'),
+    ], false);
+
+    expect(result.map((item) => item.type)).toEqual([
+      'business_step', 'business_step', 'activity_group', 'text',
+    ]);
+    expect(result.filter((item) => item.type === 'business_step')
+      .map((item) => (item as BusinessStepEventItem).kind)).toEqual(['plan', 'start']);
   });
 
   it('非 debug 视图隐藏 TodoWrite 原始块；debug 视图保留（与事件并存）', () => {
@@ -360,7 +377,7 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(after.items.at(-1)).toMatchObject({ id: 'artifact-after', artifactId: 'artifact-1' });
   });
 
-  it('同一 Run 跨 system_event、user-voice 与 system-error 后逐次重开同一步骤节', () => {
+  it('同一 Run 跨 system_event、user-voice 与 system-error 后依次重开同一步骤节', () => {
     const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
     const done = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'completed' }];
     const result = groupMessages([
@@ -407,6 +424,30 @@ describe('groupMessages sectioning（章节化）', () => {
     expect(sections[0].items.some((item) => item.id === 'queued-user')).toBe(true);
     expect(sections[0].items.some((item) =>
       item.type === 'activity_group' && item.items.some((nested) => nested.id === 'read-after'))).toBe(true);
+  });
+
+  it.each([
+    ['同 Run task-only', 'run-1', [{ id: 'task', kind: 'task', content: '普通任务', status: 'in_progress' }]],
+    ['跨 Run empty', 'run-2', []],
+  ])('%s reset 关闭旧步骤节，后续工具与正文留在主时间线', (_label, resetRunId, resetTodos) => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const result = groupMessages([
+      user('user-1'),
+      businessTodo('todo-start', active, 'run-1'),
+      tool('read-before', { toolName: 'Read', resultReady: true }),
+      businessTodo('todo-reset', resetTodos, resetRunId),
+      tool('read-after', { toolName: 'Read', resultReady: true }),
+      text('final-summary'),
+    ], false, opts);
+
+    expect(result.map((item) => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'activity_group', 'text',
+    ]);
+    const section = result[2] as BusinessStepSection;
+    expect(section.terminal).toBeUndefined();
+    expect((section.items[0] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-before']);
+    expect((result[3] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-after']);
+    expect(result[4]).toMatchObject({ id: 'final-summary', type: 'text' });
   });
 
   it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {

@@ -313,7 +313,8 @@ export type BusinessStepEventKind =
   | "fail"
   | "block"
   | "wait"
-  | "update";
+  | "update"
+  | "reset";
 
 export interface BusinessStepEventItem {
   type: "business_step";
@@ -424,6 +425,8 @@ export function projectBusinessStepEvents(
     // streaming 中的不完整入参：不隐藏、不发事件，等完整快照一次性处理。
     if (todos === undefined) continue;
 
+    const hadBusinessPlan = baseline !== null;
+    const resetRunId = currentPlanRunId;
     const continuesCurrentRun = currentPlanRunId !== null && message.runId === currentPlanRunId;
     const resumesCurrentRunAfterSectionBoundary = pendingSectionBoundary && continuesCurrentRun;
     if (!continuesCurrentRun
@@ -441,8 +444,18 @@ export function projectBusinessStepEvents(
     const businessTodos = todos === null ? [] : todos.filter(isBusinessTodo);
 
     if (!businessTodos.length) {
-      // 整体替换语义下没有 business 项 = 业务步骤列表被清空（任务收尾或退回纯 task）。
-      // 终态事件此前都已发出，这里静默清 baseline，不再追加噪音。
+      // 从业务计划退回空列表或纯 task 时，发一条仅供章节化消费的 reset：
+      // groupMessages 据此关闭开放节，主区投影会忽略它，不制造第二套步骤正文。
+      if (hadBusinessPlan) {
+        pushEvents(message.id, [{
+          type: "business_step",
+          id: `bs-${message.id}-reset`,
+          anchorMessageId: message.id,
+          ...(resetRunId ? { runId: resetRunId } : {}),
+          kind: "reset",
+          stepCount: 0,
+        }]);
+      }
       baseline = null;
       latestActiveKey = null;
       currentPlanEvent = null;

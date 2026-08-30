@@ -383,7 +383,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.activeElement).toBe(replacementTrigger);
   });
 
-  it("同一 Run 跨 user、system_event、user-voice 与 system-error 后收齐完整详情", async () => {
+  it("同一 Run 跨 user、system_event、user-voice 与 system-error 后收齐全部详情", async () => {
     const active = [{ id: "verify", kind: "business", content: "跨消息核验", status: "in_progress" }];
     const messages: MessageItem[] = [
       { id: "continuation-user-1", type: "user", content: "开始核验" },
@@ -463,6 +463,48 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.getByText(/写入核验回执/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "依据" }));
     expect(screen.getByText("receipt:continuation")).toBeTruthy();
+  });
+
+  it.each([
+    ["同 Run task-only", "run-reset", [{ id: "task", kind: "task", content: "普通任务", status: "in_progress" }]],
+    ["跨 Run empty", "run-next", []],
+  ])("%s reset 后工具与最终正文留在主区且不进入旧步骤详情", async (_label, resetRunId, resetTodos) => {
+    const active = [{ id: "verify", kind: "business", content: "Reset 边界核验", status: "in_progress" }];
+    const messages: MessageItem[] = [
+      { id: "reset-user", type: "user", content: "开始核验" },
+      todoSnapshot("reset-start", active, "run-reset"),
+      {
+        id: "reset-before", type: "tool_use", toolName: "Read", toolId: "reset-before",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "Reset 前读取" },
+      },
+      todoSnapshot("reset-boundary", resetTodos, resetRunId),
+      {
+        id: "reset-after", type: "tool_use", toolName: "Read", toolId: "reset-after",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "Reset 后读取" },
+      },
+      { id: "reset-final", type: "text", content: "Reset 后最终总结", finalOutput: true },
+    ];
+
+    render(<Harness messages={messages} debugMode />);
+    await waitForBusinessPlan();
+    expect(screen.queryByText(/Reset 前读取/)).toBeNull();
+    expect(screen.getByText(/Reset 后读取/)).toBeTruthy();
+    expect(screen.getByText("Reset 后最终总结")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Reset 边界核验/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：Reset 边界核验")).toBeTruthy());
+    const processTab = screen.queryByRole("tab", { name: "过程" });
+    if (processTab) fireEvent.click(processTab);
+    const process = await waitFor(() => {
+      const value = document.querySelector<HTMLElement>("[data-business-step-process]");
+      expect(value).toBeTruthy();
+      return value!;
+    });
+    expect(within(process).getByText(/Reset 前读取/)).toBeTruthy();
+    expect(within(process).queryByText(/Reset 后读取/)).toBeNull();
+    expect(within(process).queryByText("Reset 后最终总结")).toBeNull();
   });
 
   it("步骤中的真实 permission_request 仍留在主对话区域", async () => {

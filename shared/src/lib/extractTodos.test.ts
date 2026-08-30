@@ -480,13 +480,29 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     expect(result.hiddenMessageIds.has("t1")).toBe(true);
   });
 
-  it("clears the baseline on explicit reset and plans fresh afterwards", () => {
+  it.each([
+    ["同 Run task-only", "run-1", [{ id: "task", kind: "task", content: "普通任务", status: "in_progress" }]],
+    ["跨 Run empty", "run-2", []],
+  ])("emits a silent reset boundary for %s", (_label, resetRunId, resetTodos) => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      todo("reset", todos(resetTodos), resetRunId),
+    ], false);
+
+    expect(result.eventsByAnchor.get("reset")).toEqual([
+      expect.objectContaining({ kind: "reset", runId: "run-1", stepCount: 0 }),
+    ]);
+    expect(result.hiddenMessageIds.has("reset")).toBe(true);
+  });
+
+  it("closes the previous plan on explicit reset and plans fresh afterwards", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")])),
       todo("clear", JSON.stringify({ todos: [] })),
       todo("t2", todos([step("a", "in_progress")])),
     ], false);
 
+    expect((result.eventsByAnchor.get("clear") ?? []).map((event) => event.kind)).toEqual(["reset"]);
     expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.hiddenMessageIds.has("clear")).toBe(true);
   });

@@ -148,6 +148,13 @@ export function groupMessages(
   };
 
   const handleBusinessEvent = (event: BusinessStepEventItem) => {
+    if (event.kind === 'reset') {
+      if (sectioning) {
+        flushGroup(false);
+        closeSection();
+      }
+      return;
+    }
     if (!sectioning) {
       flushGroup(false);
       result.push(event);
@@ -183,7 +190,7 @@ export function groupMessages(
       }
       return;
     }
-    // update：计划调整发生在某步进行中时归入该节，否则顶层。
+    // update：计划调整发生在某步进行中时归入该节，否则顶层；reset 已在上方静默消费。
     flushGroup(false);
     sink().push(event);
   };

@@ -99,7 +99,6 @@ export function DesktopLayout(props: LayoutProps) {
     agentProfile, sessionParticipants,
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
-
   const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth(); const [organizationSettingsTargetId, setOrganizationSettingsTargetId] = useState<string | null>();
   const {
     mode: settingsMode,
@@ -135,14 +134,11 @@ export function DesktopLayout(props: LayoutProps) {
     updatePreferences({ sidebarLayout: layout });
     void saveUserPreferences({ sidebarLayout: layout }).then((saved) => { if (saved) updatePreferences(saved); });
   }, [updatePreferences]);
-
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
   const { activeCapabilityTab, handleCapabilityTabChange } = useCapabilityNavigation(personalAgentEnabled);
-
   // 企业系统面板：从当前会话消息流 fold，与演示回放共用同一个 hook
   const { snapshot: systemPanel, pulse: systemPanelPulse, open: systemPanelOpen, selectView: selectSystemPanelView, dismiss: dismissSystemPanel } =
     useSystemPanelDock(messages, sessionId);
-
   const capabilityReplayActive = activeTab === "capabilities" && capabilityReplayOpen;
   // 工作流回放自行渲染会话卡与系统数据卡；目录态仍由外层提供统一浮动白框。
   const contentPanelFloating = settingsMode || analysisMode

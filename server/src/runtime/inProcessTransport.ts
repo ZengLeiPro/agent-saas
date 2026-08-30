@@ -30,10 +30,24 @@ export class InProcessTransport implements ExecutionTransport {
   constructor(private readonly provider: ExecutionProvider) {}
 
   invoke(request: ToolInvocationRequest): Promise<ToolInvocationResponse> {
+    if (request.context.signal?.aborted) {
+      return Promise.resolve({
+        status: 'error',
+        error: 'in-process invocation aborted before dispatch',
+        metadata: { aborted: true },
+      });
+    }
     return this.provider.execute(request);
   }
 
   invokeStream(request: ToolInvocationRequest): ToolInvocationStream {
+    if (request.context.signal?.aborted) {
+      return fallbackInvokeStream(Promise.resolve({
+        status: 'error',
+        error: 'in-process invocation aborted before dispatch',
+        metadata: { aborted: true },
+      }));
+    }
     return this.provider.executeStream ? this.provider.executeStream(request) : fallbackInvokeStream(this.provider.execute(request));
   }
 

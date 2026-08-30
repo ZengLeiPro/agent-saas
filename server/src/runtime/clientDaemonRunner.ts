@@ -7,8 +7,10 @@ import {
   type ExecutionProvider,
 } from '../agent/toolRuntime.js';
 import type { HandCapability } from './handStore.js';
+import { iterateWithInvocationCorrelation, runWithInvocationCorrelation } from './invocationCorrelation.js';
 import type { ToolInvocationRequest } from './handProtocol.js';
 import {
+  deriveClientDaemonHandId,
   parseClientDaemonMessage,
   serializeClientDaemonMessage,
   type ClientDaemonMessage,
@@ -34,6 +36,8 @@ export interface ClientDaemonRunnerOptions {
 
 interface ActiveInvocation {
   controller: AbortController;
+  settled: Promise<void>;
+  markSettled: () => void;
 }
 
 export class ClientDaemonRunner {
@@ -55,9 +59,9 @@ export class ClientDaemonRunner {
     while (!this.stopped) {
       try {
         await this.connectOnce();
-      } catch (err) {
+      } catch {
         if (this.stopped) break;
-        this.options.logger?.warn?.(`client daemon connection ended: ${err instanceof Error ? err.message : String(err)}`, err);
+        this.options.logger?.warn?.('client daemon connection ended');
       }
       if (!this.stopped) await delay(this.reconnectDelayMs);
     }
@@ -66,10 +70,10 @@ export class ClientDaemonRunner {
   async stop(): Promise<void> {
     this.stopped = true;
     this.stopHeartbeat();
+    const settlements = [...this.activeInvocations.values()].map((active) => active.settled);
     for (const [invocationId, active] of this.activeInvocations) {
       active.controller.abort(`daemon stopping: ${invocationId}`);
     }
-    this.activeInvocations.clear();
     await new Promise<void>((resolve) => {
       const ws = this.ws;
       if (!ws || ws.readyState === WebSocket.CLOSED) return resolve();
@@ -77,6 +81,9 @@ export class ClientDaemonRunner {
       ws.close();
       setTimeout(resolve, 1_000).unref?.();
     });
+    if (settlements.length > 0) {
+      await Promise.race([Promise.allSettled(settlements), delay(1_000)]);
+    }
   }
 
   private async connectOnce(): Promise<void> {
@@ -88,6 +95,7 @@ export class ClientDaemonRunner {
     });
 
     const caps = this.capabilities();
+    const resumeInvocations = [...this.activeInvocations.keys()].map((invocationId) => ({ invocationId }));
     this.send(ws, {
       type: 'daemon_hello',
       protocolVersion: 1,
@@ -101,25 +109,29 @@ export class ClientDaemonRunner {
       // skip rewriting HandStore on reconnect when this matches the cached
       // version (i.e. the daemon's tool surface hasn't actually changed).
       capabilitiesVersion: hashCapabilities(caps),
+      ...(resumeInvocations.length > 0 ? { resumeInvocations } : {}),
     });
 
     this.startHeartbeat(ws);
-    this.options.logger?.info?.(`client daemon connected to ${this.options.url}`);
+    this.options.logger?.info?.('client daemon connected');
 
     await new Promise<void>((resolve, reject) => {
       ws.on('message', (raw) => {
-        void this.handleMessage(ws, raw.toString()).catch((err) => {
-          this.options.logger?.warn?.(`client daemon message failed: ${err instanceof Error ? err.message : String(err)}`, err);
+        if (this.ws !== ws) return;
+        void this.handleMessage(ws, raw.toString()).catch(() => {
+          this.options.logger?.warn?.('client daemon message rejected');
         });
       });
       ws.once('close', () => {
+        if (this.ws !== ws) return resolve();
         this.stopHeartbeat();
         this.failActiveInvocations('client daemon websocket closed');
         resolve();
       });
       ws.once('error', (err) => {
+        if (this.ws !== ws) return reject(err);
         this.stopHeartbeat();
-        this.failActiveInvocations(`client daemon websocket error: ${err.message}`);
+        this.failActiveInvocations('client daemon websocket error');
         reject(err);
       });
     });
@@ -151,7 +163,7 @@ export class ClientDaemonRunner {
         this.handleCancel(ws, message);
         return;
       case 'daemon_error':
-        this.options.logger?.warn?.(`platform daemon_error: ${message.message}`);
+        this.options.logger?.warn?.('platform daemon_error received');
         return;
       default:
         return;
@@ -159,15 +171,39 @@ export class ClientDaemonRunner {
   }
 
   private async handleInvoke(ws: WebSocket, message: Extract<ClientDaemonMessage, { type: 'invoke_request' }>): Promise<void> {
-    const controller = new AbortController();
-    this.activeInvocations.set(message.invocationId, { controller });
-    const request = this.withDaemonWorkspace(message.request, message.invocationId, controller.signal);
+    if (this.stopped) {
+      this.send(ws, {
+        type: 'invoke_completed',
+        protocolVersion: 1,
+        requestId: message.requestId,
+        invocationId: message.invocationId,
+        response: { status: 'error', error: 'client daemon stopping' },
+      });
+      return;
+    }
+    if (this.activeInvocations.has(message.invocationId)) {
+      this.send(ws, {
+        type: 'invoke_completed',
+        protocolVersion: 1,
+        requestId: message.requestId,
+        invocationId: message.invocationId,
+        response: { status: 'error', error: 'client daemon invocation already running' },
+      });
+      return;
+    }
+    let markSettled = () => {};
+    const settled = new Promise<void>((resolve) => { markSettled = resolve; });
+    const active: ActiveInvocation = { controller: new AbortController(), settled, markSettled };
+    this.activeInvocations.set(message.invocationId, active);
+    const request = this.withDaemonWorkspace(message.request, message.invocationId, active.controller.signal);
     let sawCompleted = false;
     try {
       if (this.provider.executeStream) {
-        for await (const chunk of this.provider.executeStream(request)) {
+        for await (const chunk of iterateWithInvocationCorrelation(
+          request.context.correlation,
+          this.provider.executeStream(request),
+        )) {
           if (chunk.type === 'completed') {
-            sawCompleted = true;
             this.send(ws, {
               type: 'invoke_completed',
               protocolVersion: 1,
@@ -175,18 +211,22 @@ export class ClientDaemonRunner {
               invocationId: message.invocationId,
               response: chunk.response,
             });
-          } else {
-            this.send(ws, {
-              type: 'invoke_chunk',
-              protocolVersion: 1,
-              requestId: message.requestId,
-              invocationId: message.invocationId,
-              chunk,
-            });
+            sawCompleted = true;
+            break;
           }
+          this.send(ws, {
+            type: 'invoke_chunk',
+            protocolVersion: 1,
+            requestId: message.requestId,
+            invocationId: message.invocationId,
+            chunk,
+          });
         }
       } else {
-        const response = await this.provider.execute(request);
+        const response = await runWithInvocationCorrelation(
+          request.context.correlation,
+          () => this.provider.execute(request),
+        );
         sawCompleted = true;
         this.send(ws, {
           type: 'invoke_completed',
@@ -206,15 +246,20 @@ export class ClientDaemonRunner {
         });
       }
     } catch (err) {
-      this.send(ws, {
-        type: 'invoke_completed',
-        protocolVersion: 1,
-        requestId: message.requestId,
-        invocationId: message.invocationId,
-        response: { status: 'error', error: err instanceof Error ? err.message : String(err) },
-      });
+      if (!sawCompleted) {
+        this.send(ws, {
+          type: 'invoke_completed',
+          protocolVersion: 1,
+          requestId: message.requestId,
+          invocationId: message.invocationId,
+          response: { status: 'error', error: err instanceof Error ? err.message : String(err) },
+        });
+      }
     } finally {
-      this.activeInvocations.delete(message.invocationId);
+      active.markSettled();
+      if (this.activeInvocations.get(message.invocationId) === active) {
+        this.activeInvocations.delete(message.invocationId);
+      }
     }
   }
 
@@ -256,7 +301,7 @@ export class ClientDaemonRunner {
         type: 'daemon_heartbeat',
         protocolVersion: 1,
         daemonId: this.options.daemonId,
-        handId: this.options.handId ?? `client-${this.options.daemonId}`,
+        handId: this.options.handId ?? deriveClientDaemonHandId(this.options.daemonId),
         activeInvocationIds: [...this.activeInvocations.keys()],
       });
     }, this.heartbeatIntervalMs);
@@ -270,7 +315,6 @@ export class ClientDaemonRunner {
 
   private failActiveInvocations(reason: string): void {
     for (const active of this.activeInvocations.values()) active.controller.abort(reason);
-    this.activeInvocations.clear();
   }
 
   private withAuthToken(rawUrl: string): string {
@@ -281,8 +325,9 @@ export class ClientDaemonRunner {
   }
 
   private send(ws: WebSocket, message: ClientDaemonMessage): void {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    ws.send(serializeClientDaemonMessage(message));
+    const target = ws.readyState === WebSocket.OPEN ? ws : this.ws;
+    if (!target || target.readyState !== WebSocket.OPEN) return;
+    target.send(serializeClientDaemonMessage(message));
   }
 }
 

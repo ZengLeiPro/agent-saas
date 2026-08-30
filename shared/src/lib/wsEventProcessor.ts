@@ -52,7 +52,6 @@ export function upsertRuntimeStatusMessage(
   }
   msg.addMessage({ type: "runtime_status", ...patch, timestamp: Date.now() });
 }
-
 export function removeRuntimeStatusMessages(msg: MessagesController): void {
   const msgs = msg.messagesRef.current;
   if (!msgs.some((message) => message.type === "runtime_status")) return;
@@ -68,7 +67,6 @@ export function removeRuntimeStatusMessages(msg: MessagesController): void {
     }
   }
 }
-
 export function findToolUseIndex(msgs: MessageItem[], toolId?: string, toolName?: string): number {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const message = msgs[i];
@@ -78,7 +76,6 @@ export function findToolUseIndex(msgs: MessageItem[], toolId?: string, toolName?
   }
   return -1;
 }
-
 /** Mark all running subagents as completed */
 export function finalizeRunningSubagents(msg: MessagesController): void {
   const msgs = msg.messagesRef.current;
@@ -408,6 +405,7 @@ export function processWsEvent(
       });
     }
     block.currentBlockType = data.blockType;
+    const blockRunId = data.runId ?? ctx.runIdRef?.current ?? undefined;
     if (data.blockType === "thinking") {
       block.currentBlockIndex = msg.addMessage({
         type: "thinking",
@@ -423,7 +421,7 @@ export function processWsEvent(
         content: "",
         streaming: true,
         ...(data.draftId ? { draftId: data.draftId } : {}),
-        ...(data.runId ? { runId: data.runId } : {}),
+        ...(blockRunId ? { runId: blockRunId } : {}),
         ...(owner ? { owner } : {}),
         timestamp: Date.now(),
       });
@@ -441,7 +439,7 @@ export function processWsEvent(
             ? {
                 ...message,
                 toolName: data.toolName || message.toolName || "unknown",
-                toolId: data.toolId || message.toolId || "", ...(data.runId ? { runId: data.runId } : {}),
+                toolId: data.toolId || message.toolId || "", ...(blockRunId ? { runId: blockRunId } : {}),
                 toolInput: "",
                 streaming: true,
                 executionStatus: message.executionStatus ?? "pending",
@@ -451,7 +449,7 @@ export function processWsEvent(
       } else {
         block.currentBlockIndex = msg.addMessage({
           type: "tool_use", toolName: data.toolName || "unknown",
-          toolInput: "", toolId: data.toolId || "", streaming: true, ...(data.runId ? { runId: data.runId } : {}),
+          toolInput: "", toolId: data.toolId || "", streaming: true, ...(blockRunId ? { runId: blockRunId } : {}),
           executionStatus: "pending",
         });
       }
@@ -540,6 +538,7 @@ export function processWsEvent(
           ? "cancelled"
           : "completed"
       : "running";
+    const activeRunId = executionStatus === "running" ? ctx.runIdRef?.current ?? undefined : undefined;
     const patch = {
       toolName,
       toolId,
@@ -552,7 +551,7 @@ export function processWsEvent(
     } satisfies Partial<Extract<MessageItem, { type: "tool_use" }>>;
     if (existingIdx >= 0) {
       msg.updateMessageAt(existingIdx, (message) =>
-        message.type === "tool_use" ? { ...message, ...patch } : message
+        message.type === "tool_use" ? { ...message, ...patch, ...(!message.runId && activeRunId ? { runId: activeRunId } : {}) } : message
       );
       return;
     }
@@ -560,6 +559,7 @@ export function processWsEvent(
       type: "tool_use",
       toolInput: "",
       ...patch,
+      ...(activeRunId ? { runId: activeRunId } : {}),
     });
     return;
   }

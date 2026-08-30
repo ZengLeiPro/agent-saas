@@ -149,7 +149,7 @@ export interface ToolCallContext {
   /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
-  invocationId?: string;
+  invocationId?: string; correlation?: import('@agent/shared').CorrelationContext;
   onStreamChunk?: (chunk: import('../runtime/handProtocol.js').ToolInvocationStreamChunk) => Promise<void> | void;
   hooks?: AgentRunHooks;
   signal?: AbortSignal;
@@ -981,7 +981,7 @@ class WorkspaceToolProvider implements ToolProvider {
       input: transportInput,
       context: {
         ...(context.invocationId ? { invocationId: context.invocationId } : {}),
-        ...(handId ? { handId } : {}),
+        ...(handId ? { handId } : {}), ...(context.correlation ? { correlation: context.correlation } : {}),
         workspace: workspaceForHand,
         env: context.env,
         signal: context.signal,
@@ -1001,7 +1001,7 @@ class WorkspaceToolProvider implements ToolProvider {
     };
     let response: ToolInvocationResponse;
     try {
-      response = routed.transport.invokeStream && call.toolId === 'Shell' && !isBackgroundShellStart && context.invocationId
+      response = routed.transport.invokeStream && call.toolId === 'Shell' && !isBackgroundShellStart && (context.invocationId ?? context.correlation?.invocationId)
         ? await consumeToolStream(routed.transport.invokeStream(request), context.onStreamChunk)
         : await routed.transport.invoke(request);
     } catch (err) {

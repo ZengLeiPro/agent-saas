@@ -21,7 +21,7 @@ import {
   type ToolPolicy,
   type PlatformEvent,
 } from './types.js';
-import { canonicalToolInputDigest } from './canonicalToolInput.js';
+import { canonicalToolInputDigest } from './canonicalToolInput.js'; import { createExecutionAttempt, createInvocationCorrelation, runWithInvocationCorrelation } from './invocationCorrelation.js';
 import { requireEventTenantId, TenantProjectingEventSink } from './rawAgentLoopEventSink.js';
 import { buildFailurePresentation, ToolExecutionError, type ToolPresentation } from '../agent/toolPresentationBuilder.js';
 export { canonicalToolInputDigest } from './canonicalToolInput.js';
@@ -2886,7 +2886,6 @@ export class RawAgentLoop implements AgentLoop {
       };
     }
   }
-
   private async invokeAuthorizedTool(args: {
     call: ModelToolCall;
     descriptor: ToolDescriptor;
@@ -2957,6 +2956,7 @@ export class RawAgentLoop implements AgentLoop {
     };
     const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
     const effectiveHandId = autoHandId;
+    toolContext.correlation = createInvocationCorrelation({ sessionId: args.context.sessionId, runId: args.context.runId, toolCallId: args.call.id, invocationId, ...(effectiveHandId ? { handId: effectiveHandId } : {}) });
     const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
     const invocation = await this.toolInvocationStore?.start({
       invocationId,
@@ -3041,6 +3041,7 @@ export class RawAgentLoop implements AgentLoop {
           parallelGate.onClaimed();
           await parallelGate.waitForRelease;
         }
+        const attemptCorrelation = createExecutionAttempt(toolContext.correlation!);
         await this.eventSink.append({
           type: 'tool_invocation_started',
           runId: args.context.runId,
@@ -3048,12 +3049,12 @@ export class RawAgentLoop implements AgentLoop {
           invocationId,
           toolCallId: args.call.id,
           toolName: args.descriptor.name,
-          executionTarget: args.baseToolContext.workspace.executionTarget,
+          executionTarget: args.baseToolContext.workspace.executionTarget, attemptId: attemptCorrelation.attemptId,
         });
-        return this.toolRuntime.invoke(
+        return runWithInvocationCorrelation(attemptCorrelation, () => this.toolRuntime.invoke(
           { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
-          toolContext,
-        );
+          { ...toolContext, correlation: attemptCorrelation },
+        ));
       };
       const guarded = this.toolInvocationStore
         ? await this.toolInvocationStore.invokeWithActiveRunGate(
@@ -3190,7 +3191,6 @@ export class RawAgentLoop implements AgentLoop {
       throw err;
     }
   }
-
   private async appendToolStreamSummary(
     builder: ToolStreamSummaryBuilder,
     args: {

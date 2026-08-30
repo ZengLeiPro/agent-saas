@@ -29,7 +29,7 @@ export class ClientDaemonTransport implements ExecutionTransport {
   }
 
   async invoke(request: ToolInvocationRequest): Promise<ToolInvocationResponse> {
-    const handId = request.context.handId;
+    const handId = request.context.handId ?? request.context.correlation?.handId;
     if (!handId) {
       return { status: 'error', error: 'client daemon invocation requires context.handId' };
     }
@@ -37,7 +37,25 @@ export class ClientDaemonTransport implements ExecutionTransport {
     if (!connection) {
       return { status: 'error', error: `client daemon hand not connected: ${handId}` };
     }
-    return connection.invoke(request);
+    if (request.context.signal?.aborted) {
+      return { status: 'error', error: 'client daemon invocation aborted before dispatch' };
+    }
+    const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
+    let dispatched = false;
+    const onAbort = () => {
+      if (dispatched && invocationId) void connection.cancel?.(invocationId);
+    };
+    request.context.signal?.addEventListener('abort', onAbort, { once: true });
+    if (request.context.signal?.aborted) {
+      request.context.signal.removeEventListener('abort', onAbort);
+      return { status: 'error', error: 'client daemon invocation aborted before dispatch' };
+    }
+    try {
+      dispatched = true;
+      return await connection.invoke(request);
+    } finally {
+      request.context.signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   invokeStream(request: ToolInvocationRequest): ToolInvocationStream {
@@ -45,7 +63,7 @@ export class ClientDaemonTransport implements ExecutionTransport {
   }
 
   private async *invokeStreamInternal(request: ToolInvocationRequest): ToolInvocationStream {
-    const handId = request.context.handId;
+    const handId = request.context.handId ?? request.context.correlation?.handId;
     if (!handId) {
       yield { type: 'completed', response: { status: 'error', error: 'client daemon stream requires context.handId' } };
       return;
@@ -55,17 +73,39 @@ export class ClientDaemonTransport implements ExecutionTransport {
       yield { type: 'completed', response: { status: 'error', error: `client daemon hand not connected: ${handId}` } };
       return;
     }
+    if (request.context.signal?.aborted) {
+      yield { type: 'completed', response: { status: 'error', error: 'client daemon invocation aborted before dispatch' } };
+      return;
+    }
+    const invocationId = request.context.invocationId ?? request.context.correlation?.invocationId;
+    let dispatched = false;
+    const onAbort = () => {
+      if (dispatched && invocationId) void connection.cancel?.(invocationId);
+    };
     if (!connection.invokeStream) {
-      yield { type: 'completed', response: await connection.invoke(request) };
+      request.context.signal?.addEventListener('abort', onAbort, { once: true });
+      if (request.context.signal?.aborted) {
+        request.context.signal.removeEventListener('abort', onAbort);
+        yield { type: 'completed', response: { status: 'error', error: 'client daemon invocation aborted before dispatch' } };
+        return;
+      }
+      try {
+        dispatched = true;
+        yield { type: 'completed', response: await connection.invoke(request) };
+      } finally {
+        request.context.signal?.removeEventListener('abort', onAbort);
+      }
       return;
     }
     let sawCompleted = false;
-    const onAbort = () => {
-      const invocationId = request.context.invocationId;
-      if (invocationId) void connection.cancel?.(invocationId);
-    };
     request.context.signal?.addEventListener('abort', onAbort, { once: true });
+    if (request.context.signal?.aborted) {
+      request.context.signal.removeEventListener('abort', onAbort);
+      yield { type: 'completed', response: { status: 'error', error: 'client daemon invocation aborted before dispatch' } };
+      return;
+    }
     try {
+      dispatched = true;
       for await (const chunk of connection.invokeStream(request)) {
         if (chunk.type === 'completed') sawCompleted = true;
         yield chunk;

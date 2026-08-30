@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("ScenariosPanel V3", () => {
-  it("有引导演示时仍直接展示完整工作流目录", async () => {
+  it("有引导演示时仍展示完整目录，按需加载回放步骤结果", async () => {
     const guided = makeWorkflowScenario("guided", {
       featured: true,
       featuredOrder: 1,
@@ -93,9 +93,9 @@ describe("ScenariosPanel V3", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     expect(screen.getByText("1 / 6")).toBeTruthy();
-    expect(screen.getByText("业务计划")).toBeTruthy();
-    expect(screen.getByText("业务步骤 1已完成并形成可回读结果")).toBeTruthy();
+    expect(await screen.findByText("任务步骤", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getAllByText("业务步骤 1").length).toBeGreaterThan(0);
+    expect(screen.queryByText("业务步骤 1已完成并形成可回读结果")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onReplayOpenChange).toHaveBeenLastCalledWith(false);
     expect(screen.getByTestId("workflow-catalog").children).toHaveLength(2);
@@ -131,7 +131,7 @@ describe("ScenariosPanel V3", () => {
     expect(await screen.findByText('0 / 8', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('旧回放占位')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
-    expect(screen.getByText('业务计划')).toBeTruthy();
+    expect(screen.getByText('任务步骤')).toBeTruthy();
   });
 
   it('目标 Trace 尚在加载时切换场景，不会被迟到结果覆盖', async () => {

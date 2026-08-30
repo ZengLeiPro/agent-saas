@@ -1,11 +1,11 @@
 /**
  * 场景回放视图测试。
  *
- * 最重要的一条是「摘要在 debugModeOverride=false 下可见」——它对应本批次的
+ * 最重要的一条是「回放与真实会话走同一主卡和详情投影」——它对应本批次的
  * 验收标准：演示与普通客户视图必须同构，不允许存在只有演示看得到的内容。
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
 import { knowledgeQaScript } from './knowledgeQaScript';
 import { deadlineWatchScript } from './deadlineWatchScript';
@@ -16,12 +16,27 @@ import {
   TECHNICAL_INQUIRY_TRACE_SCENARIO_ID,
 } from './technicalInquiryTraceScript';
 
+let mobileViewport = false;
+
 beforeAll(() => {
   Range.prototype.getClientRects = () => ({
     length: 0,
     item: () => null,
     [Symbol.iterator]: [][Symbol.iterator],
   }) as unknown as DOMRectList;
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn((query: string) => ({
+      matches: mobileViewport,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }) as MediaQueryList),
+  });
 });
 
 vi.mock('@/lib/authFetch', () => ({
@@ -42,11 +57,24 @@ function renderReplay() {
 }
 
 function clickNext(times: number) {
-  for (let i = 0; i < times; i++) fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
+  const toolbar = screen.getByRole('toolbar', { name: '演示回放控制' });
+  for (let i = 0; i < times; i++) {
+    fireEvent.click(within(toolbar).getByRole('button', { name: /下一步/ }));
+  }
+}
+
+async function openBusinessStep(content: string) {
+  const plan = await waitFor(() => {
+    const current = document.querySelector<HTMLElement>('[data-business-step-plan]');
+    expect(current).toBeTruthy();
+    return current!;
+  }, { timeout: 5_000 });
+  const label = within(plan).getByText(content);
+  fireEvent.click(label.closest('button')!);
 }
 
 describe('ScenarioReplayView', () => {
-  it('打开时只显示用户消息，点击下一步后才显示第一条 Agent 输出', () => {
+  it('打开时只显示用户消息，点击下一步后才显示第一条 Agent 输出', async () => {
     renderReplay();
     expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
@@ -55,17 +83,33 @@ describe('ScenarioReplayView', () => {
 
     clickNext(1);
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
-    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
-    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
   });
 
-  it('旧版回放同样走真实业务步骤投影，并展示终态摘要', () => {
+  it('旧版回放同样走真实业务步骤投影，并从步骤行打开终态摘要', async () => {
     renderReplay();
-    expect(screen.queryByText('业务计划')).toBeNull();
+    expect(screen.queryByText('任务步骤')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('业务计划')).toBeTruthy();
-    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
+    expect(await screen.findByText('任务步骤', {}, { timeout: 5_000 })).toBeTruthy();
+    await openBusinessStep('员工提问');
+    expect(await screen.findByText('员工提问已完成并形成可回读结果')).toBeTruthy();
+    expect(document.querySelector('[data-scenario-business-step-panel]')).toBeTruthy();
+  });
+
+  it('移动端回放点击步骤使用底部 Sheet，不创建桌面详情右栏', async () => {
+    mobileViewport = true;
+    try {
+      renderReplay();
+      clickNext(1);
+      await openBusinessStep('员工提问');
+      await screen.findByRole('dialog');
+      expect(document.querySelector('[data-business-step-detail-sheet]')).toBeTruthy();
+      expect(document.querySelector('[data-scenario-business-step-panel]')).toBeNull();
+    } finally {
+      mobileViewport = false;
+    }
   });
 
   it('右侧只高亮当前步骤 delta，推进到下一步后清除旧变化', () => {
@@ -116,13 +160,14 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText('订单 1').closest('tr')?.hasAttribute('data-panel-delta')).toBe(false);
   });
 
-  it('义务巡检首屏先显示员工的简单问题，推进后才扫描企业台账', () => {
+  it('义务巡检首屏先显示员工的简单问题，推进后才扫描企业台账', async () => {
     render(<ScenarioReplayView script={deadlineWatchScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     expect(screen.getByText('本月哪些义务还没到权威终态？先处理会错过窗口的。')).toBeTruthy();
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('一句话问清本月未结义务已完成并形成可回读结果')).toBeTruthy();
+    expect(await screen.findByText('一句话问清本月未结义务', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(screen.queryByText('一句话问清本月未结义务已完成并形成可回读结果')).toBeNull();
     expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
 
@@ -159,9 +204,10 @@ describe('ScenarioReplayView', () => {
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={10} />);
     expect(screen.getByText('开始')).toBeTruthy();
     expect(screen.queryByText('逐字输出测试')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /下一步/ }));
+    const toolbar = screen.getByRole('toolbar', { name: '演示回放控制' });
+    fireEvent.click(within(toolbar).getByRole('button', { name: /下一步/ }));
 
-    const nextButton = screen.getByRole('button', { name: /生成中/ });
+    const nextButton = within(toolbar).getByRole('button', { name: /生成中/ });
     expect(nextButton).toHaveProperty('disabled', true);
 
     act(() => vi.advanceTimersByTime(10));
@@ -172,7 +218,7 @@ describe('ScenarioReplayView', () => {
       act(() => vi.advanceTimersByTime(10));
     }
     expect(screen.getByText('逐字输出测试')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', false);
+    expect(within(toolbar).getByRole('button', { name: /下一步/ })).toHaveProperty('disabled', false);
     vi.useRealTimers();
   });
 
@@ -192,8 +238,9 @@ describe('ScenarioReplayView', () => {
     };
 
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={10} />);
-    fireEvent.click(screen.getByRole('button', { name: '下一步' }));
-    expect(screen.getByRole('button', { name: '生成中' })).toHaveProperty('disabled', true);
+    const toolbar = screen.getByRole('toolbar', { name: '演示回放控制' });
+    fireEvent.click(within(toolbar).getByRole('button', { name: '下一步' }));
+    expect(within(toolbar).getByRole('button', { name: '生成中' })).toHaveProperty('disabled', true);
     expect(screen.queryByRole('button', { name: '演示完成' })).toBeNull();
 
     for (let index = 0; index < 6; index += 1) {
@@ -203,17 +250,18 @@ describe('ScenarioReplayView', () => {
     vi.useRealTimers();
   });
 
-  it('逐步推进，内容累加而非替换', () => {
+  it('逐步推进时保留用户消息，并在同一主卡中累加步骤行', async () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
-    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
     clickNext(1);
-    // 第一步的用户消息和业务结果仍在；工具过程默认收进可展开的业务步骤。
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
-    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
-    expect(screen.getByText('检索制度库已完成并形成可回读结果')).toBeTruthy();
-    expect(screen.queryByText('检索企业制度库')).toBeNull();
+    expect(screen.getByText('员工提问')).toBeTruthy();
+    expect(await screen.findByText('检索制度库', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(document.querySelectorAll('[data-business-step-plan]')).toHaveLength(1);
+    expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
+    expect(screen.queryByText('检索制度库已完成并形成可回读结果')).toBeNull();
   });
 
   it('客户同构视图隐藏工具摘要，但保留同源的企业系统面板', () => {
@@ -231,7 +279,7 @@ describe('ScenarioReplayView', () => {
     expect(screen.queryByText(/score=0\.91/)).toBeNull();
   });
 
-  it('空格与方向键推进/回退（与客户演示稿一致，禁止自动播放）', () => {
+  it('页面背景上的空格与方向键推进/回退（禁止自动播放）', () => {
     renderReplay();
     fireEvent.keyDown(window, { key: ' ' });
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
@@ -239,6 +287,23 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText(`2 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     fireEvent.keyDown(window, { key: 'ArrowLeft' });
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+  });
+
+  it('焦点位于步骤行或详情控件时不误触发回放热键', async () => {
+    renderReplay();
+    clickNext(1);
+
+    const stepButton = (await screen.findByText('员工提问', {}, { timeout: 5_000 })).closest('button')!;
+    stepButton.focus();
+    fireEvent.keyDown(stepButton, { key: 'ArrowRight' });
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+
+    fireEvent.click(stepButton);
+    const closeButton = await screen.findByRole('button', { name: '关闭步骤详情' });
+    closeButton.focus();
+    fireEvent.keyDown(closeButton, { key: ' ' });
+    expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
+    expect(await screen.findByText('员工提问已完成并形成可回读结果')).toBeTruthy();
   });
 
   it('走到末步时明确显示演示完成，重放回到仅有用户消息的初始态', () => {
@@ -265,13 +330,13 @@ describe('ScenarioReplayView', () => {
 });
 
 describe('右侧企业系统面板', () => {
-  it('初始态不显示面板，第一次工具执行后再出现', () => {
+  it('初始态不显示面板，第一次工具执行后再出现', async () => {
     renderReplay();
     expect(screen.queryByText('企业系统实况')).toBeNull();
     clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
-    expect(screen.getByText('员工提问已完成并形成可回读结果')).toBeTruthy();
-    expect(screen.queryByText('确认问题范围与可用资料')).toBeNull();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
+    expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
   });
 
   it('会话区与业务系统数据区是有间距的独立圆角卡片', () => {
@@ -384,24 +449,31 @@ describe('Workflow Trace V1 Hero', () => {
     }));
   }
 
-  it('首屏只显示业务事件，第一步后同时出现正式业务计划、步骤结果与系统面板', () => {
+  it('第一步先显示任务导航与系统面板，显式选择后切换到步骤结果', async () => {
     const script = traceScript();
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={0} />);
 
     expect(screen.getByText('客户询价中的消息和附件规格不一致。')).toBeTruthy();
-    expect(screen.queryByText('业务计划')).toBeNull();
+    expect(screen.queryByText('任务步骤')).toBeNull();
     expect(screen.queryByText('企业系统实况')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('业务计划')).toBeTruthy();
-    expect(screen.getAllByText('先发现不能靠猜的规格冲突').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('发现 1 项关键规格冲突，已停止继续报价')).toBeTruthy();
+    expect(await screen.findByText('任务步骤', {}, { timeout: 5_000 })).toBeTruthy();
+    const plan = document.querySelector<HTMLElement>('[data-business-step-plan]');
+    expect(within(plan!).getAllByText('先发现不能靠猜的规格冲突')).toHaveLength(1);
+    expect(screen.queryByText('发现 1 项关键规格冲突，已停止继续报价')).toBeNull();
     expect(screen.getByText('企业系统实况')).toBeTruthy();
     expect(screen.getByText('防护等级 IP65')).toBeTruthy();
     expect(screen.getByText(/演示来源：询价资料库（不进入真实审计）/)).toBeTruthy();
+
+    await openBusinessStep('先发现不能靠猜的规格冲突');
+    expect(await screen.findByText('发现 1 项关键规格冲突，已停止继续报价')).toBeTruthy();
+    expect(screen.queryByText('企业系统实况')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '关闭步骤详情' }));
+    expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
 
-  it('Trace gate 退回不产生发送 effect，重新提交并批准后才继续', () => {
+  it('Trace gate 退回不产生发送 effect，重新提交并批准后才继续', async () => {
     const script = traceScript();
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={0} />);
     clickNext(2);
@@ -409,13 +481,13 @@ describe('Workflow Trace V1 Hero', () => {
     expect(screen.getByRole('button', { name: '需先批准' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('button', { name: '确认发送澄清' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '退回修改' }));
-    expect(screen.getByText('澄清消息已退回，业务系统未写入')).toBeTruthy();
+    expect(screen.getByText('已退回修改，未写入业务系统')).toBeTruthy();
     expect(screen.queryByText('澄清消息已模拟送达测试联系人。')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: '重新提交审核' }));
     fireEvent.click(screen.getByRole('button', { name: '确认发送澄清' }));
     expect(screen.getByText('3 / 8')).toBeTruthy();
-    expect(screen.getAllByText('客户答复后从原任务继续').length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findAllByText('客户答复后从原任务继续', {}, { timeout: 5_000 })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: '沟通' }));
     expect(screen.getByText('澄清消息已模拟送达测试联系人。')).toBeTruthy();
   });

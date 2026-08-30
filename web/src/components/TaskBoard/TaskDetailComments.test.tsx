@@ -1,5 +1,5 @@
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { TaskBoardComment, TaskBoardTask } from "@agent/shared";
 import { TaskDetailComments } from "./TaskDetailComments";
@@ -121,7 +121,64 @@ describe("TaskDetailComments", () => {
     await waitFor(() => expect(scrollContainer.scrollTop).toBe(480));
   });
 
-  it("讨论栏整行控制详情，并在展开时移动到输入区上方", () => {
+  it("按正文与评论顺序渲染可访问的阶段圆点导航", () => {
+    const comments: TaskBoardComment[] = [
+      agentComment,
+      { ...agentComment, id: "comment-work-2", body: "第二条实施评论。" },
+      { ...agentComment, id: "comment-review", body: "复核评论。", executionPurpose: "review" },
+      { ...agentComment, id: "comment-merge", body: "集成评论。", executionPurpose: "merge" },
+      { ...agentComment, id: "comment-general", body: "普通用户评论。", authorType: "user", authorName: "曾磊", executionPurpose: undefined },
+    ];
+    renderComments({ taskDescription: "很长的任务正文".repeat(20), comments });
+
+    const navigation = screen.getByRole("navigation", { name: "评论阶段导航" });
+    const buttons = within(navigation).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "跳转到第 1 条：任务正文",
+      "跳转到第 2 条：实施阶段评论",
+      "跳转到第 3 条：实施阶段评论",
+      "跳转到第 4 条：复核阶段评论",
+      "跳转到第 5 条：集成阶段评论",
+      "跳转到第 6 条：用户评论",
+    ]);
+    expect(buttons.map((button) => button.getAttribute("data-purpose"))).toEqual([
+      "general", "work", "work", "review", "merge", "general",
+    ]);
+    expect(buttons[1]?.firstElementChild?.className).toContain("bg-blue-500");
+    expect(buttons[3]?.firstElementChild?.className).toContain("bg-violet-500");
+    expect(buttons[4]?.firstElementChild?.className).toContain("bg-emerald-500");
+    expect(buttons[5]?.firstElementChild?.className).toContain("bg-slate-400");
+  });
+
+  it("点击圆点后将目标评论顶部对齐滚动区，并为末尾评论补足滚动边界", () => {
+    const lastComment: TaskBoardComment = {
+      ...agentComment,
+      id: "comment-last",
+      body: "末尾长评论".repeat(100),
+      executionPurpose: "review",
+    };
+    renderComments({ comments: [agentComment, lastComment] });
+
+    const container = screen.getByTestId("task-comments-scroll");
+    const target = document.querySelector<HTMLElement>('[data-comment-id="comment-last"]');
+    expect(target).toBeTruthy();
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, writable: true, value: 20 },
+      scrollHeight: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    vi.spyOn(target!, "getBoundingClientRect").mockReturnValue({ top: 380 } as DOMRect);
+    const scrollTo = vi.fn();
+    container.scrollTo = scrollTo;
+
+    fireEvent.click(screen.getByRole("button", { name: "跳转到第 2 条：复核阶段评论" }));
+
+    expect(Number.parseFloat(container.style.paddingBottom)).toBeGreaterThan(0);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 300, behavior: "smooth" });
+  });
+
+  it("展开详情时隐藏评论列表，并让讨论栏紧贴输入区", () => {
     const onToggleDetails = vi.fn();
     renderComments({ detailsExpanded: true, onToggleDetails });
 
@@ -135,6 +192,8 @@ describe("TaskDetailComments", () => {
     expect(chevron?.classList.contains("ml-1")).toBe(true);
     expect(chevron?.classList.contains("right-1")).toBe(false);
     expect(chevron?.classList.contains("rotate-180")).toBe(true);
+    expect(screen.getByTestId("task-comments-scroll").className).toContain("hidden");
+    expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("shrink-0");
     expect(discussion.nextElementSibling).toBe(form);
     expect(discussion.className).toContain("slide-in-from-bottom-1");
     expect(screen.queryByText(/^评论（/)).toBeNull();

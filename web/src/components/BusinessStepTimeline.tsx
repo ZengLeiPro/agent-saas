@@ -1,45 +1,37 @@
-import type { ReactNode } from 'react';
-import type { RenderItem } from './types';
+import type { ReactNode } from "react";
+import type { RenderItem } from "./types";
 
-interface BusinessStepRun {
-  type: 'business_step_run';
-  id: string;
-  items: RenderItem[];
-}
-
-function isCompactBusinessStep(item: RenderItem): boolean {
-  return (
-    item.type === 'business_step_section' || (item.type === 'business_step' && item.kind !== 'plan')
-  );
+function mainConversationItems(items: RenderItem[]): RenderItem[] {
+  const interactions: RenderItem[] = [];
+  for (const item of items) {
+    if (
+      item.type === "permission_request"
+      || item.type === "ask_user"
+      || (item.type === "user" && item.status === "queued")
+    ) {
+      interactions.push(item);
+    }
+  }
+  return interactions;
 }
 
 /**
- * 折叠步骤是同一条业务时间线，不是彼此独立的消息块。把连续步骤收成一组后，
- * 组内使用更紧凑的 6px 节奏；计划亮相块与普通消息仍由外层 10px gap 分隔。
+ * 主对话区域只保留每个 Run 的最新计划卡、真实人工门禁与排队中的用户插话。
+ * start/terminal/section 数据仍留在完整投影中供详情目录使用，但不再打印第二套步骤正文。
  */
-function groupBusinessStepRuns(items: RenderItem[]): Array<RenderItem | BusinessStepRun> {
-  const result: Array<RenderItem | BusinessStepRun> = [];
-  let currentRun: RenderItem[] = [];
-
-  const flushRun = () => {
-    if (!currentRun.length) return;
-    result.push({
-      type: 'business_step_run',
-      id: `business-run-${currentRun[0].id}`,
-      items: currentRun,
-    });
-    currentRun = [];
-  };
-
+export function businessStepMainItems(items: RenderItem[]): RenderItem[] {
+  const result: RenderItem[] = [];
   for (const item of items) {
-    if (isCompactBusinessStep(item)) {
-      currentRun.push(item);
+    if (item.type === "business_step") {
+      if (item.kind === "plan") result.push(item);
       continue;
     }
-    flushRun();
+    if (item.type === "business_step_section") {
+      result.push(...mainConversationItems(item.items));
+      continue;
+    }
     result.push(item);
   }
-  flushRun();
   return result;
 }
 
@@ -50,15 +42,5 @@ export function BusinessStepTimeline({
   items: RenderItem[];
   renderItem: (item: RenderItem) => ReactNode;
 }) {
-  return groupBusinessStepRuns(items).map((item) => {
-    if (item.type === 'business_step_run') {
-      return (
-        <div key={item.id} className="flex flex-col gap-1.5" data-business-step-run>
-          {item.items.map((step) => renderItem(step))}
-        </div>
-      );
-    }
-    if (item.type === 'file_download') return null;
-    return renderItem(item);
-  });
+  return businessStepMainItems(items).map((item) => renderItem(item));
 }

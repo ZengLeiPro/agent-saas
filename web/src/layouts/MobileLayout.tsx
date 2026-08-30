@@ -110,6 +110,7 @@ export function MobileLayout(props: LayoutProps) {
   const approvalTier = resolveApprovalTier(authUser?.preferences);
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [businessStepPanelOpen, setBusinessStepPanelOpen] = useState(false);
   const [activeUsageCard, setActiveUsageCard] = useState<"context" | "billing" | null>(null);
   const handleContextCardOpenChange = useCallback((open: boolean) => {
     setActiveUsageCard((current) => open ? "context" : current === "context" ? null : current);
@@ -124,10 +125,29 @@ export function MobileLayout(props: LayoutProps) {
     setSheetOpen(false);
     setActiveTab("chat");
   }, [setActiveTab]);
+  const handleBusinessStepPanelOpenChange = useCallback((open: boolean) => {
+    setBusinessStepPanelOpen(open);
+  }, []);
+  const handleOpenFilePreview = useCallback((
+    path: string,
+    owner?: string,
+    options?: { mode?: "dialog" | "side" },
+  ) => {
+    setBusinessStepPanelOpen(false);
+    openFilePreview(path, owner, options);
+  }, [openFilePreview]);
+  const handleCloseFilePreview = useCallback(() => {
+    closeFilePreview();
+  }, [closeFilePreview]);
 
   useEffect(() => {
     closeSubagentTranscript?.();
+    setBusinessStepPanelOpen(false);
   }, [closeSubagentTranscript, sessionId]);
+
+  useEffect(() => {
+    if (subagentTranscript || previewFilePath || sheetOpen) setBusinessStepPanelOpen(false);
+  }, [previewFilePath, sheetOpen, subagentTranscript?.childSessionId]);
 
   // 一级页面实际渲染在移动端抽屉中：直达 URL 与浏览器前进/后退时必须同步打开。
   useEffect(() => {
@@ -273,7 +293,7 @@ export function MobileLayout(props: LayoutProps) {
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
             renderMcp={() => <McpAdminCatalogPanel />}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
             renderAutomation={() => <CronManager />}
             settingsOpen={false}
@@ -348,7 +368,7 @@ export function MobileLayout(props: LayoutProps) {
               className="size-9"
               onClick={() => subagentTranscript
                 ? closeSubagentTranscript?.()
-                : previewFilePath ? closeFilePreview() : setSheetOpen(true)}
+                : previewFilePath ? handleCloseFilePreview() : setSheetOpen(true)}
             >
               <ChevronLeft className="size-6" />
             </Button>
@@ -466,7 +486,7 @@ export function MobileLayout(props: LayoutProps) {
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
                     renderMcp={() => <McpAdminCatalogPanel />}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-                    renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+                    renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
                     settingsOpen={adminSettings?.target === "tenant"}
                     settingsSection={(adminSettings?.target === "tenant" ? adminSettings.section : "users") as TenantSection}
@@ -511,7 +531,7 @@ export function MobileLayout(props: LayoutProps) {
               renderFileBrowser={() => (
                 <Suspense fallback={SuspenseFallback}>
                   <FileBrowserLazy
-                    onPreviewFile={(path, owner) => { closeDrawer(); openFilePreview(path, owner); }}
+                    onPreviewFile={(path, owner) => { closeDrawer(); handleOpenFilePreview(path, owner); }}
                     owner={authUser?.username}
                     fullPage
                   />
@@ -596,6 +616,9 @@ export function MobileLayout(props: LayoutProps) {
               modelList={modelList}
               selectedModel={selectedModel}
               sessionId={sessionId}
+              businessStepDetailMode="mobile"
+              businessStepPanelOpen={businessStepPanelOpen}
+              onBusinessStepPanelOpenChange={handleBusinessStepPanelOpenChange}
               onModelChange={onModelChange}
               canAutoApproveRunShell={approvalTier === "ask"}
               autoApproveRunShell={autoApproveRunShell}
@@ -633,7 +656,7 @@ export function MobileLayout(props: LayoutProps) {
         {/* 详情面板：移动端沿用文件预览的 SlidePanel，桌面端则进入统一右侧 slot。 */}
         <SlidePanel
           open={!!subagentTranscript || !!previewFilePath}
-          onClose={subagentTranscript ? () => closeSubagentTranscript?.() : closeFilePreview}
+          onClose={subagentTranscript ? () => closeSubagentTranscript?.() : handleCloseFilePreview}
         >
           {subagentTranscript ? (
             <Suspense fallback={SuspenseFallback}>
@@ -648,11 +671,11 @@ export function MobileLayout(props: LayoutProps) {
             <Suspense fallback={SuspenseFallback}>
               {(() => {
                 const previewType = getPreviewFileType(previewFilePath);
-                if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-                if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-                if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-                if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
-                return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={closeFilePreview} hideHeader />;
+                if (previewType === 'html') return <HtmlPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={handleCloseFilePreview} hideHeader />;
+                if (previewType === 'pdf') return <PdfPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={handleCloseFilePreview} hideHeader />;
+                if (previewType === 'video') return <VideoPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={handleCloseFilePreview} hideHeader />;
+                if (previewType === 'code') return <CodePreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={handleCloseFilePreview} hideHeader />;
+                return <MarkdownPreviewPanel filePath={previewFilePath} owner={previewFileOwner} onBack={handleCloseFilePreview} hideHeader />;
               })()}
             </Suspense>
           ) : null}
@@ -702,7 +725,7 @@ export function MobileLayout(props: LayoutProps) {
           renderMemory={() => <MemorySectionPanel />}
           renderFiles={() => (
             <FileBrowserLazy
-              onPreviewFile={openFilePreview}
+              onPreviewFile={handleOpenFilePreview}
               owner={authUser?.username}
               fullPage
               reserveCloseButtonSpace
@@ -728,7 +751,7 @@ export function MobileLayout(props: LayoutProps) {
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
             renderMcp={() => <McpAdminCatalogPanel />}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={openFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
             settingsOpen
             settingsOnly

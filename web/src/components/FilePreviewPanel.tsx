@@ -13,6 +13,7 @@ import { PdfPreviewPanel } from "@/components/PdfPreviewPanel";
 import { VideoPreviewPanel } from "@/components/VideoPreviewPanel";
 import { FilePreviewActions } from "@/components/FilePreviewActions";
 import { RightPanelFrame } from "@/components/RightPanelFrame";
+import { cn } from "@/lib/utils";
 
 interface FilePreviewPanelProps {
   filePath: string;
@@ -99,9 +100,11 @@ interface FilePreviewDialogProps {
   shareToken?: string;
   onClose: () => void;
   onDock?: () => void;
+  /** 嵌套在其他 Dialog/Sheet 中时提高层级，避免预览落到触发层后方。 */
+  nestedLayer?: boolean;
 }
 
-export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, onDock }: FilePreviewDialogProps) {
+export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, onDock, nestedLayer = false }: FilePreviewDialogProps) {
   const filename = filePath?.split("/").pop() || filePath || "";
   const dirPath = filePath?.includes("/") ? filePath.slice(0, filePath.lastIndexOf("/")) : "";
 
@@ -110,7 +113,11 @@ export function FilePreviewDialog({ open, filePath, owner, shareToken, onClose, 
       <DialogContent
         // 阻止 Radix 默认 auto-focus 到首个可交互元素（下载按钮），避免打开就有蓝色 focus ring
         onOpenAutoFocus={(event) => event.preventDefault()}
-        className="flex h-[calc(100dvh-32px)] w-[min(1180px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden !border-0 p-0 !shadow-xl outline-none focus:outline-none focus-visible:ring-0 [&>button[aria-label='Close']]:top-1.5 sm:rounded-xl">
+        overlayClassName={nestedLayer ? "z-[120]" : undefined}
+        className={cn(
+          "flex h-[calc(100dvh-32px)] w-[min(1180px,calc(100vw-48px))] max-w-none flex-col gap-0 overflow-hidden !border-0 p-0 !shadow-xl outline-none focus:outline-none focus-visible:ring-0 [&>button[aria-label='Close']]:top-1.5 sm:rounded-xl",
+          nestedLayer && "z-[121]",
+        )}>
         <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 pr-16">
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-sm font-medium leading-5">

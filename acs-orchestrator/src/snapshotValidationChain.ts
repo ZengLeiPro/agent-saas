@@ -1,3 +1,4 @@
+import type { CorrelationContext } from '@agent/shared';
 import type { WorkspaceRef } from 'server/agent/toolRuntime.js';
 import { ServerLocalExecutionProvider } from 'server/agent/toolRuntime.js';
 import {
@@ -69,6 +70,7 @@ export async function executeSnapshotValidationChain(input: {
   env: Record<string, string>;
   signal: AbortSignal;
   invocationId?: string;
+  correlation?: CorrelationContext;
   workspace: Omit<WorkspaceRef, 'root' | 'executionTarget'>;
   stream: boolean;
   emit: (chunk: ToolInvocationStreamChunk) => void;
@@ -125,6 +127,7 @@ async function executeValidationLane(input: {
   env: Record<string, string>;
   signal: AbortSignal;
   invocationId?: string;
+  correlation?: CorrelationContext;
   workspace: Omit<WorkspaceRef, 'root' | 'executionTarget'>;
   stream: boolean;
   emit: (chunk: ToolInvocationStreamChunk) => void;
@@ -157,7 +160,8 @@ async function executeValidationLane(input: {
         ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
       },
       context: {
-        ...(input.invocationId ? { invocationId: `${input.invocationId}-validation-${input.index + 1}` } : {}),
+        ...(input.invocationId ? { invocationId: input.invocationId } : {}),
+        ...(input.correlation ? { correlation: input.correlation } : {}),
         workspace,
         signal: input.signal,
       },

@@ -1,6 +1,7 @@
 import type { MessageItem, ActivityGroup, RenderItem, BusinessStepSection } from '../types/message';
 import { ACTIVITY_TYPES } from '../types/message';
 import {
+  isBusinessStepSectionBoundary,
   isTerminalStepEvent,
   projectBusinessStepEvents,
   todoItemKey,
@@ -30,9 +31,6 @@ export interface GroupMessagesOptions {
    */
   sectioning?: boolean;
 }
-
-/** 全局叙事边界：这些消息不属于任何业务步骤节，出现时先封当前节。 */
-const SECTION_BREAKING_TYPES = new Set(['user', 'user-voice', 'system_event', 'system-error']);
 
 function sameStepKey(a: BusinessStepEventItem, b: BusinessStepEventItem): boolean {
   return !!a.todo && !!b.todo && todoItemKey(a.todo) === todoItemKey(b.todo);
@@ -150,6 +148,13 @@ export function groupMessages(
   };
 
   const handleBusinessEvent = (event: BusinessStepEventItem) => {
+    if (event.kind === 'reset') {
+      if (sectioning) {
+        flushGroup(false);
+        closeSection();
+      }
+      return;
+    }
     if (!sectioning) {
       flushGroup(false);
       result.push(event);
@@ -185,7 +190,7 @@ export function groupMessages(
       }
       return;
     }
-    // update：计划调整发生在某步进行中时归入该节，否则顶层。
+    // update：计划调整发生在某步进行中时归入该节，否则顶层；reset 已在上方静默消费。
     flushGroup(false);
     sink().push(event);
   };
@@ -205,8 +210,8 @@ export function groupMessages(
 
     // 排队中的插话气泡不是叙事边界（2026-08-04 P2-7）：它还没被 Agent 看到，
     // 不得把进行中的业务步骤节提前收口。终态设计下排队消息不进流，这里防御存量。
-    const isQueuedUserBubble = msg.type === 'user'
-      && (msg as Extract<MessageItem, { type: 'user' }>).status === 'queued';
+    const isSectionBoundary = isBusinessStepSectionBoundary(msg);
+    const isQueuedUserBubble = msg.type === 'user' && !isSectionBoundary;
 
     if (isConnectorActionItem(msg)) {
       // 外部系统动作两种视图都独立成行（2026-08-04 曾磊拍板）：
@@ -234,7 +239,7 @@ export function groupMessages(
       // 若本轮到此结束，渲染层需明确它等待恢复，不能误作尚未开始的 Play 状态。
       markSectionResumePending(currentSection);
       result.push(msg);
-    } else if (SECTION_BREAKING_TYPES.has(msg.type)) {
+    } else if (isSectionBoundary) {
       flushGroup(false);
       closeSection();
       result.push(msg);

@@ -55,10 +55,11 @@ const sheetVariants = cva(
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof SheetPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SheetPrimitive.Content> &
-    VariantProps<typeof sheetVariants>
->(({ side = "right", className, children, onEscapeKeyDown, onFocusOutside,
+    VariantProps<typeof sheetVariants> & { overlayClassName?: string }
+>(({ side = "right", className, overlayClassName, children, onEscapeKeyDown, onFocusOutside,
   onInteractOutside, onPointerDownOutside, ...props }, ref) => {
   const { blocked } = usePortalContainer();
+  // blocked 的人工流程不允许遮罩关闭；普通 Sheet 则提供明确、可测试的遮罩关闭语义。
   const [content, setContent] = React.useState<React.ElementRef<typeof SheetPrimitive.Content> | null>(null);
   const preventBlockedDismiss = React.useCallback((event: Event) => event.preventDefault(), []);
   const handleRef = React.useCallback((node: React.ElementRef<typeof SheetPrimitive.Content> | null) => {
@@ -77,7 +78,13 @@ const SheetContent = React.forwardRef<
   );
   return (
     <SheetPortal>
-      <SheetOverlay />
+      {blocked ? (
+        <SheetOverlay className={overlayClassName} />
+      ) : (
+        <SheetPrimitive.Close asChild>
+          <SheetOverlay className={overlayClassName} />
+        </SheetPrimitive.Close>
+      )}
       <SheetPrimitive.Content
         ref={handleRef}
         className={cn(sheetVariants({ side }), className)}

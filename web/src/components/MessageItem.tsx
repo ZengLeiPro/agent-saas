@@ -295,7 +295,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   owner?: string;
   /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
-  /** Artifact 内容寻址存储侧记录的真实 MIME，用于专用预览器选择。 */
+  /** Artifact 内容寻址存储记录的真实 MIME，用于专用预览器选择。 */
   mimeType?: string;
   /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
   shareToken?: string;
@@ -342,15 +342,17 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   const visual = getFileTypeVisual(fileName);
   const TypeIcon = CATEGORY_ICON[visual.category];
   const isImage = visual.category === 'image';
-  // Artifact 使用独立预览器，未知二进制也会提供明确的仅下载状态。
+  // Session Share 只公开会话投影，不授予底层 Artifact 内容读取权限。
+  const isPublicArtifact = !!artifactId && !!shareToken;
+  // 登录态 Artifact 使用独立预览器；公开会话只展示文件元信息。
   const canOpenPreview = artifactId
-    ? true
+    ? !isPublicArtifact
     : shareToken
       ? (isImage || (isShareable && !!filePreview))
       : (isImage || (isPreviewable && !!filePreview));
 
   const handleClick = () => {
-    if (artifactId) {
+    if (artifactId && !isPublicArtifact) {
       setArtifactPreviewOpen(true);
       return;
     }
@@ -392,33 +394,31 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
             <div className="truncate text-sm font-medium text-foreground">{fileName}</div>
             {resolvedSize > 0 && <div className="text-xs text-muted-foreground">{formatFileSize(resolvedSize)}</div>}
           </div>
-          <button
-            type="button"
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (artifactId) {
-                setDownloadError(null);
-                void artifactDownload(artifactId, fileName).catch((err: unknown) => {
-                  setDownloadError(err instanceof Error ? err.message : '下载失败，请稍后重试');
-                });
-              } else if (shareToken) {
-                void shareFileDownload(shareToken, filePath, fileName);
-              } else if (filePreview?.downloadFile) {
-                filePreview.downloadFile(filePath, fileName);
-              } else {
-                void authFetchDownload(filePath, fileName, owner);
-              }
-            }}
-            title="下载"
-            aria-label={`下载 ${fileName}`}
-          >
-            <Download className="size-4" />
-          </button>
+          {isPublicArtifact ? (
+            <span className="shrink-0 text-xs text-muted-foreground">公开分享中仅展示</span>
+          ) : (
+            <button type="button"
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (artifactId) {
+                  setDownloadError(null);
+                  void artifactDownload(artifactId, fileName).catch((err: unknown) =>
+                    setDownloadError(err instanceof Error ? err.message : '下载失败，请稍后重试'));
+                } else if (shareToken) void shareFileDownload(shareToken, filePath, fileName);
+                else if (filePreview?.downloadFile) filePreview.downloadFile(filePath, fileName);
+                else void authFetchDownload(filePath, fileName, owner);
+              }}
+              title="下载"
+              aria-label={`下载 ${fileName}`}
+            >
+              <Download className="size-4" />
+            </button>
+          )}
         </div>
       </div>
       {downloadError ? <p className="mt-1 text-xs text-destructive" role="alert">{downloadError}</p> : null}
-      {artifactId && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
+      {artifactId && !isPublicArtifact && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} onDock={filePreview?.openArtifactPreview ? () => { setArtifactPreviewOpen(false); filePreview.openArtifactPreview?.({ artifactId, fileName, fileSize: resolvedSize, mimeType }); } : undefined} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}
@@ -431,7 +431,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
 }
 
 /**
- * 用户消息气泡内的附件 chip。
+ * 用户消息气泡中的附件 chip。
  * 有 relativePath（2026-07-14 起 transcript/WS meta 携带）时可点击：
  * 图片走 lightbox，可预览文件走 FilePreviewDialog（默认弹窗），其余类型直接下载。
  * 存量消息无 relativePath，保持静态展示。

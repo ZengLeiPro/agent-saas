@@ -33,6 +33,19 @@ describe('FileHandInvocationStore', () => {
     expect(second.record.createdAt).toBe(first.record.createdAt);
   });
 
+  it('records the real attempt without changing the logical invocation key', async () => {
+    const s = store();
+    const first = await s.registerRunning('logical-invocation', 'attempt-1');
+    expect(first.record).toMatchObject({
+      invocationId: 'logical-invocation',
+      executionAttemptId: 'attempt-1',
+    });
+    await s.complete('logical-invocation', { status: 'success', content: 'done' });
+    const replay = await store().registerRunning('logical-invocation', 'attempt-2');
+    expect(replay.outcome).toBe('replay');
+    expect(replay.record.executionAttemptId).toBe('attempt-1');
+  });
+
   it('complete 落终态结果；重复 complete 首个终态胜出', async () => {
     const s = store();
     await s.registerRunning('inv-2');

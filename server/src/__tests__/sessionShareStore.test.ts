@@ -6,6 +6,9 @@ import {
   type UpsertSessionShareInput,
 } from '../data/sessionShares/store.js';
 import { projectSessionShareSnapshot } from '../data/sessionShares/publicProjection.js';
+import { mapSessionDetailToMessages } from '../../../shared/src/lib/sessionsApi.js';
+import { groupMessages } from '../../../shared/src/lib/groupMessages.js';
+import type { ActivityGroup, BusinessStepSection } from '../../../shared/src/types/message.js';
 
 function snapshotRow(snapshot: SessionShareSnapshot) {
   return {
@@ -165,5 +168,163 @@ describe('session share public projection', () => {
         content: '正文',
       }],
     }).blocks[0]!.title).toBe('结果 token=[已脱敏]');
+  });
+
+  it('Markdown 仅保留已公开的本地媒体与远程 https 媒体', () => {
+    const projected = projectSessionShareSnapshot({
+      sessionId: 'media-session',
+      stats: { lines: 1, parsedLines: 1, parseErrors: 0 },
+      blocks: [{
+        id: 'text-1', kind: 'text', title: '正文', defaultOpen: true,
+        content: [
+          '![公开](assets/public.png)',
+          '![未选](assets/private.png)',
+          '![远程](https://cdn.example.com/public.png)',
+          '![内联](data:image/png;base64,AAAA)',
+          '![绝对](/assets/private.png)',
+          '![越界](../assets/private.png)',
+        ].join('\n'),
+      }],
+      allowedFiles: [{ relativePath: 'assets/public.png', fileName: 'public.png' }],
+    });
+
+    expect(projected.blocks[0]!.content).toContain('![公开](assets/public.png)');
+    expect(projected.blocks[0]!.content).toContain('![远程](https://cdn.example.com/public.png)');
+    expect(projected.blocks[0]!.content.match(/\[正文媒体未公开\]/g)).toHaveLength(4);
+  });
+
+  it('TodoWrite 只公开归一化脱敏后的业务步骤，并用匿名 runId 保持快照归属', () => {
+    const secret = 'Abcdef1234567890abc';
+    const todoContent = (status: 'in_progress' | 'completed') => JSON.stringify({
+      todos: [
+        { id: 'internal', kind: 'task', content: '内部任务', status: 'pending' },
+        {
+          id: 'verify',
+          kind: 'business',
+          content: `核验 token=${secret}`,
+          status,
+          ...(status === 'completed' ? {
+            outcome: { text: `完成 token=${secret}` },
+            evidenceRefs: [`receipt token=${secret}`],
+          } : {}),
+        },
+      ],
+    });
+    const projected = projectSessionShareSnapshot({
+      sessionId: 'private-session',
+      stats: { lines: 4, parsedLines: 4, parseErrors: 0 },
+      blocks: [
+        {
+          id: 'todo-1', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: todoContent('in_progress'), raw: 'raw-secret', toolName: 'TodoWrite',
+          toolId: 'tool-todo-1', runId: 'private-run-id',
+        },
+        {
+          id: 'shell-1', kind: 'tool_use', title: 'Shell', defaultOpen: false,
+          content: 'cat .env', raw: 'raw-shell', toolName: 'Shell',
+          toolId: 'tool-shell-1', runId: 'private-run-id',
+          presentation: {
+            title: '读取公开数据', status: 'ok',
+            detail: ['UNSELECTED_PRESENTATION_CONTENT_42'],
+            connector: { system: '钉钉', write: true },
+            receipt: { id: 'DING-42', system: '钉钉', readBack: true },
+          },
+          toolMetadata: { exitCode: 0, diff: 'UNSELECTED_FILE_CONTENT_42' },
+        },
+        {
+          id: 'artifact-1', kind: 'tool_use', title: 'Artifact', defaultOpen: false,
+          content: '', toolName: 'Artifact', toolId: 'tool-artifact-1',
+          toolMetadata: {
+            artifactAction: 'deliver', artifactId: 'artifact-public', artifactKind: 'file',
+            fileName: '交付报告.pdf', sizeBytes: 42, mimeType: 'application/pdf',
+            diff: 'UNSELECTED_ARTIFACT_CONTENT_42', sha256: 'private-hash',
+          },
+        },
+        {
+          id: 'todo-2', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: todoContent('completed'), raw: 'raw-secret', toolName: 'TodoWrite',
+          toolId: 'tool-todo-2', runId: 'private-run-id',
+        },
+      ],
+    });
+
+    const todoBlocks = projected.blocks.filter((block) => block.toolName === 'TodoWrite');
+    expect(todoBlocks.map((block) => block.runId)).toEqual(['shared-run-1', 'shared-run-1']);
+    expect(JSON.stringify(todoBlocks)).not.toContain('private-run-id');
+    expect(JSON.stringify(todoBlocks)).not.toContain(secret);
+    const firstTodos = JSON.parse(todoBlocks[0]!.content) as {
+      todos: Array<{ id?: string; content: string }>;
+    };
+    expect(firstTodos.todos).toEqual([
+      expect.objectContaining({ id: 'verify', content: '核验 token=[已脱敏]' }),
+    ]);
+    const shell = projected.blocks.find((block) => block.toolName === 'Shell')!;
+    expect(shell.content).toBe('');
+    expect(shell).not.toHaveProperty('runId');
+    expect(shell).not.toHaveProperty('toolMetadata');
+    expect(shell.presentation).toEqual({
+      title: '读取公开数据', status: 'ok',
+      connector: { system: '钉钉', write: true },
+      receipt: { id: 'DING-42', system: '钉钉', readBack: true },
+    });
+    const artifact = projected.blocks.find((block) => block.toolName === 'Artifact')!;
+    expect(artifact.toolMetadata).toEqual({
+      artifactAction: 'deliver', artifactId: 'artifact-public', artifactKind: 'file',
+      fileName: '交付报告.pdf', sizeBytes: 42, mimeType: 'application/pdf',
+    });
+    expect(JSON.stringify(projected)).not.toContain('UNSELECTED_');
+    expect(JSON.stringify(projected)).not.toContain('private-hash');
+    expect(projected.blocks.every((block) => !('raw' in block))).toBe(true);
+
+    const projectedAgain = projectSessionShareSnapshot(projected);
+    const repeatedTodos = projectedAgain.blocks.filter((block) => block.toolName === 'TodoWrite');
+    expect(repeatedTodos.map((block) => block.runId)).toEqual(['shared-run-1', 'shared-run-1']);
+    expect(repeatedTodos.map((block) => block.content)).toEqual(todoBlocks.map((block) => block.content));
+    expect(JSON.stringify(projectedAgain)).not.toContain('UNSELECTED_');
+  });
+
+  it('公开投影保留匿名 reset，确保映射后的最终正文留在旧步骤节外', () => {
+    const projected = projectSessionShareSnapshot({
+      sessionId: 'private-session',
+      stats: { lines: 5, parsedLines: 5, parseErrors: 0 },
+      blocks: [
+        {
+          id: 'todo-start', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: JSON.stringify({ todos: [{
+            id: 'verify', kind: 'business', content: '核验分享', status: 'in_progress',
+          }] }), toolName: 'TodoWrite', toolId: 'todo-start', runId: 'private-run-1',
+        },
+        {
+          id: 'read-before', kind: 'tool_use', title: '读取前', defaultOpen: false,
+          content: '{}', toolName: 'Read', toolId: 'read-before',
+        },
+        {
+          id: 'todo-reset', kind: 'tool_use', title: 'TodoWrite', defaultOpen: false,
+          content: JSON.stringify({ todos: [] }), toolName: 'TodoWrite', toolId: 'todo-reset', runId: 'private-run-2',
+        },
+        {
+          id: 'read-after', kind: 'tool_use', title: '读取后', defaultOpen: false,
+          content: '{}', toolName: 'Read', toolId: 'read-after',
+        },
+        { id: 'final', kind: 'text', title: '正文', defaultOpen: true, content: 'FINAL' },
+      ],
+    });
+
+    const reset = projected.blocks.find((block) => block.id === 'todo-reset')!;
+    expect(reset.content).toBe('{"todos":[]}');
+    expect(reset.runId).toBe('shared-run-2');
+    expect(JSON.stringify(projected)).not.toContain('private-run');
+    expect(projectSessionShareSnapshot(projected).blocks.find((block) => block.id === 'todo-reset'))
+      .toMatchObject({ content: '{"todos":[]}', runId: 'shared-run-2' });
+
+    const publicDetail = projected as Parameters<typeof mapSessionDetailToMessages>[0];
+    const grouped = groupMessages(mapSessionDetailToMessages(publicDetail), false, { sectioning: true });
+    expect(grouped.map((item) => item.type)).toEqual([
+      'business_step', 'business_step_section', 'activity_group', 'text',
+    ]);
+    const section = grouped[1] as BusinessStepSection;
+    expect((section.items[0] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-before']);
+    expect((grouped[2] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-after']);
+    expect(grouped[3]).toMatchObject({ type: 'text', content: 'FINAL' });
   });
 });

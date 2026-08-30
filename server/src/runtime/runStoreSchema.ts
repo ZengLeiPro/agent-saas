@@ -94,19 +94,33 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       // A composite FK may only target a matching unique key. Install the parent key before any
       // session-automation schema can add its (tenant, session, run) FK (rolling deploy order).
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_run_uidx ON ${store.runsTable} (tenant_id, session_id, run_id)`);
-      // Existing auxiliary rows inherit tenant from their globally unique source run.
+      // Expand first, then backfill. Rows whose owner cannot be proved are preserved in a JSONB
+      // quarantine and removed from the live table before validation; they must never be guessed as
+      // LEGACY_TENANT_ID or block process startup. The fingerprint makes every phase restart-safe.
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
+      for (const table of [store.messageSubmissionsTable, store.steeringInputsTable, store.steeringSessionsTable]) {
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS ${table}_tenant_quarantine (
+            fingerprint TEXT PRIMARY KEY,
+            reason TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            quarantined_at TIMESTAMPTZ NOT NULL DEFAULT now()
+          )
+        `);
+      }
       await client.query(`
         UPDATE ${store.messageSubmissionsTable} submission SET tenant_id = run.tenant_id
         FROM ${store.runsTable} run
-        WHERE submission.run_id = run.run_id AND submission.tenant_id IS NULL
+        WHERE submission.run_id = run.run_id AND submission.session_id = run.session_id AND submission.tenant_id IS NULL
       `);
       await client.query(`
         UPDATE ${store.steeringInputsTable} input SET tenant_id = source.tenant_id
-        FROM ${store.runsTable} source
-        WHERE input.source_run_id = source.run_id AND input.tenant_id IS NULL
+        FROM ${store.runsTable} source, ${store.runsTable} target
+        WHERE input.source_run_id = source.run_id AND input.target_run_id = target.run_id
+          AND source.tenant_id = target.tenant_id AND source.session_id = target.session_id
+          AND input.session_id = source.session_id AND input.tenant_id IS NULL
       `);
       await client.query(`
         UPDATE ${store.steeringSessionsTable} steering_session SET tenant_id = identity.tenant_id
@@ -116,6 +130,44 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
         ) identity
         WHERE steering_session.session_id = identity.session_id AND steering_session.tenant_id IS NULL
       `);
+      await client.query(`
+        INSERT INTO ${store.messageSubmissionsTable}_tenant_quarantine (fingerprint, reason, payload)
+        SELECT md5(row_to_json(submission)::text),
+               CASE WHEN EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=submission.run_id)
+                    THEN 'session_mismatch' ELSE 'orphan_run' END,
+               row_to_json(submission)::jsonb
+        FROM ${store.messageSubmissionsTable} submission WHERE tenant_id IS NULL
+        ON CONFLICT (fingerprint) DO NOTHING
+      `);
+      await client.query(`
+        INSERT INTO ${store.steeringInputsTable}_tenant_quarantine (fingerprint, reason, payload)
+        SELECT md5(row_to_json(input)::text),
+               CASE WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=input.source_run_id) THEN 'orphan_source_run'
+                    WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=input.target_run_id) THEN 'orphan_target_run'
+                    ELSE 'tenant_session_mismatch' END,
+               row_to_json(input)::jsonb
+        FROM ${store.steeringInputsTable} input WHERE tenant_id IS NULL
+        ON CONFLICT (fingerprint) DO NOTHING
+      `);
+      await client.query(`
+        INSERT INTO ${store.steeringSessionsTable}_tenant_quarantine (fingerprint, reason, payload)
+        SELECT md5(row_to_json(steering_session)::text),
+               CASE WHEN EXISTS (
+                 SELECT 1 FROM ${store.runsTable} run WHERE run.session_id = steering_session.session_id
+               ) THEN 'ambiguous_session' ELSE 'orphan_session' END,
+               row_to_json(steering_session)::jsonb
+        FROM ${store.steeringSessionsTable} steering_session WHERE tenant_id IS NULL
+        ON CONFLICT (fingerprint) DO NOTHING
+      `);
+      await client.query(`DELETE FROM ${store.messageSubmissionsTable} WHERE tenant_id IS NULL`);
+      await client.query(`DELETE FROM ${store.steeringInputsTable} WHERE tenant_id IS NULL`);
+      await client.query(`DELETE FROM ${store.steeringSessionsTable} WHERE tenant_id IS NULL`);
+      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
+      await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD CONSTRAINT ${store.steeringInputsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
+      await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
+      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} VALIDATE CONSTRAINT ${store.messageSubmissionsTable}_tenant_present`);
+      await client.query(`ALTER TABLE ${store.steeringInputsTable} VALIDATE CONSTRAINT ${store.steeringInputsTable}_tenant_present`);
+      await client.query(`ALTER TABLE ${store.steeringSessionsTable} VALIDATE CONSTRAINT ${store.steeringSessionsTable}_tenant_present`);
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ALTER COLUMN tenant_id SET NOT NULL`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
@@ -188,14 +240,17 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_user_idx ON ${store.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_sandbox_scope_idx ON ${store.runsTable} (sandbox_scope_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_status_idx ON ${store.runsTable} (status, updated_at)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_session_idx ON ${store.runsTable} (session_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_session_enqueue_idx ON ${store.runsTable} (session_id, enqueue_seq)`);
+      await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_idx`);
+      await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_enqueue_idx`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_idx ON ${store.runsTable} (tenant_id, session_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_enqueue_idx ON ${store.runsTable} (tenant_id, session_id, enqueue_seq)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_parent_session_idx ON ${store.runsTable} ((metadata->>'parentSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_top_session_idx ON ${store.runsTable} ((metadata->>'topLevelSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_parent_run_idx ON ${store.runsTable} ((metadata->>'parentRunId'), status) WHERE metadata->>'backgroundTask' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_background_tenant_status_idx ON ${store.runsTable} (tenant_id, status, updated_at) WHERE metadata->>'backgroundTask' = 'true'`);
       // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
-      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_session_last_response_idx ON ${store.runsTable} (session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);
+      await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_session_last_response_idx`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_last_response_idx ON ${store.runsTable} (tenant_id, session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_active_idempotency_idx`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_active_idempotency_v2_idx`);
       // v3 accidentally made idempotency global across tenants. Drop it before installing the

@@ -35,6 +35,9 @@ class CapacityPool {
             inherited_active: this.inheritedActive,
           }] as T[] };
         }
+        if (sql.includes('SELECT tenant_id, session_id FROM runtime_runs')) {
+          return { rows: [{ tenant_id: 'tenant-1', session_id: 'session-1' }] as T[] };
+        }
         if (sql.includes('SELECT session_id FROM runtime_runs')) {
           return { rows: [{ session_id: 'session-1' }] as T[] };
         }

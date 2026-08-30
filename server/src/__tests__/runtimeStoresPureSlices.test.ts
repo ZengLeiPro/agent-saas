@@ -330,9 +330,9 @@ describe('sanitizeIdentifier（经 PgRunStore 构造函数驱动）', () => {
 });
 
 describe('updateResponseSessionState 动态 SET/参数位装配（现场增补的 A 切片）', () => {
-  it('全量 patch：SET 片段按固定顺序编号 $3..$8，delta 走累加而非覆盖', async () => {
+  it('全量 patch：SET 片段带 tenant/session identity，delta 走累加而非覆盖', async () => {
     const { store, query } = makeRunStoreRig([]);
-    await store.updateResponseSessionState('run-9', {
+    await store.updateResponseSessionState('run-9', 'tenant-a', 'session-shared', {
       lastResponseId: 'resp-9',
       lastResponseExpireAt: '2026-07-22T00:00:00.000Z',
       actualModelSeen: 'glm-actual',
@@ -343,13 +343,13 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0]! as [string, unknown[]];
     expect(sql).toContain(
-      'SET updated_at = $2, last_response_id = $3, last_response_expire_at = $4, '
-      + 'actual_model_seen = $5, last_response_model = $6, '
-      + 'last_response_profile_digest = $7, cumulative_input_tokens = cumulative_input_tokens + $8',
+      'SET updated_at = $4, last_response_id = $5, last_response_expire_at = $6, '
+      + 'actual_model_seen = $7, last_response_model = $8, '
+      + 'last_response_profile_digest = $9, cumulative_input_tokens = cumulative_input_tokens + $10',
     );
-    expect(params[0]).toBe('run-9');
-    expect(typeof params[1]).toBe('string'); // updated_at = now ISO
-    expect(params.slice(2)).toEqual([
+    expect(params.slice(0, 3)).toEqual(['run-9', 'tenant-a', 'session-shared']);
+    expect(typeof params[3]).toBe('string'); // updated_at = now ISO
+    expect(params.slice(4)).toEqual([
       'resp-9',
       '2026-07-22T00:00:00.000Z',
       'glm-actual',
@@ -361,7 +361,7 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
 
   it('显式 null 清空：参与 SET 且参数为 null；undefined 字段不进 SET', async () => {
     const { store, query } = makeRunStoreRig([]);
-    await store.updateResponseSessionState('run-10', {
+    await store.updateResponseSessionState('run-10', 'tenant-a', 'session-shared', {
       lastResponseId: null,
       lastResponseModel: null,
       lastResponseProfileDigest: null,
@@ -369,24 +369,24 @@ describe('updateResponseSessionState 动态 SET/参数位装配（现场增补�
     });
     const [sql, params] = query.mock.calls[0]! as [string, unknown[]];
     expect(sql).toContain(
-      'SET updated_at = $2, last_response_id = $3, last_response_model = $4, '
-      + 'last_response_profile_digest = $5',
+      'SET updated_at = $4, last_response_id = $5, last_response_model = $6, '
+      + 'last_response_profile_digest = $7',
     );
     expect(sql).not.toContain('last_response_expire_at');
     expect(sql).not.toContain('actual_model_seen');
     expect(sql).not.toContain('cumulative_input_tokens');
-    expect(params.slice(2)).toEqual([null, null, null]);
+    expect(params.slice(4)).toEqual([null, null, null]);
   });
 
   it('空 patch 与 delta=0 短路：不发 UPDATE，回退为 get() 的 SELECT', async () => {
     const { store, query } = makeRunStoreRig([]);
-    const result = await store.updateResponseSessionState('run-11', { cumulativeInputTokensDelta: 0 });
+    const result = await store.updateResponseSessionState('run-11', 'tenant-a', 'session-shared', { cumulativeInputTokensDelta: 0 });
     expect(result).toBeNull(); // 假 pool 无行 → get 返回 null
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0]! as [string, unknown[]];
     expect(sql).toContain('SELECT row_to_json');
     expect(sql).not.toContain('UPDATE');
-    expect(params).toEqual(['run-11']);
+    expect(params).toEqual(['run-11', 'tenant-a', 'session-shared']);
   });
 });
 

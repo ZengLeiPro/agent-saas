@@ -1,6 +1,6 @@
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
 import { markRunStatusIfCurrent } from './runStatusCas.js';
-import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
+import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 
 export class PgRunStoreQueries { // all steering joins preserve tenant/session identity
@@ -539,6 +539,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     now = new Date(),
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
+    identity?: RunLeaseIdentity,
   ): Promise<RunRecord | null> {
     if (maxConcurrentRuns !== undefined && (!Number.isInteger(maxConcurrentRuns) || maxConcurrentRuns < 1)) {
       throw new Error('maxConcurrentRuns must be a positive integer');
@@ -618,17 +619,21 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         }
       }
 
-      const candidate = await client.query<{ session_id: string }>(`
-        SELECT session_id FROM ${this.runsTable} WHERE run_id = $1
-      `, [runId]);
+      const candidate = await client.query<{ tenant_id: string; session_id: string }>(`
+        SELECT tenant_id, session_id FROM ${this.runsTable}
+        WHERE run_id = $1
+          AND ($2::text IS NULL OR tenant_id = $2)
+          AND ($3::text IS NULL OR session_id = $3)
+      `, [runId, identity?.tenantId ?? null, identity?.sessionId ?? null]);
+      const tenantId = candidate.rows[0]?.tenant_id;
       const sessionId = candidate.rows[0]?.session_id;
-      if (!sessionId) {
+      if (!tenantId || !sessionId) {
         await client.query('ROLLBACK');
         return null;
       }
       // 数据库级会话闸门：跨进程原子检查“没有其他 executing run”并取得本 run lease。
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `${this.runsTable}:session-dispatch:${sessionId}`,
+        `${this.runsTable}:session-dispatch:${tenantId}:${sessionId}`,
       ]);
       const result = await client.query<{ row_json: RunRecord }>(`
         UPDATE ${this.runsTable} candidate
@@ -724,10 +729,15 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
    * - lastResponseId/lastResponseExpireAt/actualModelSeen：传 undefined 保留原值，传 null 清空，传字符串覆盖
    * - cumulativeInputTokensDelta：累加到 cumulative_input_tokens（绝不允许直接覆盖避免并发丢失）
    */
-  async updateResponseSessionState(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
-    const sets: string[] = ['updated_at = $2'];
-    const params: unknown[] = [runId, new Date().toISOString()];
-    let nextIdx = 3;
+  async updateResponseSessionState(
+    runId: string,
+    tenantId: string,
+    sessionId: string,
+    patch: ResponseSessionStatePatch,
+  ): Promise<RunRecord | null> {
+    const sets: string[] = ['updated_at = $4'];
+    const params: unknown[] = [runId, tenantId, sessionId, new Date().toISOString()];
+    let nextIdx = 5;
     if (patch.lastResponseId !== undefined) {
       sets.push(`last_response_id = $${nextIdx}`);
       params.push(patch.lastResponseId);
@@ -759,11 +769,17 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
       nextIdx++;
     }
     // 只有 updated_at 没东西改，跳过
-    if (sets.length === 1) return this.get(runId);
+    if (sets.length === 1) {
+      const current = await this.pool.query<{ row_json: RunRecord }>(`
+        SELECT row_to_json(run.*) AS row_json FROM ${this.runsTable} run
+        WHERE run_id = $1 AND tenant_id = $2 AND session_id = $3
+      `, [runId, tenantId, sessionId]);
+      return current.rows[0] ? normalizeRunRecord(current.rows[0].row_json) : null;
+    }
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       UPDATE ${this.runsTable}
       SET ${sets.join(', ')}
-      WHERE run_id = $1
+      WHERE run_id = $1 AND tenant_id = $2 AND session_id = $3
       RETURNING row_to_json(${this.runsTable}.*) AS row_json
     `, params);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
@@ -773,6 +789,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
    * RFC v1 P0.4：按 sessionId 查最近一条有 last_response_id 且未过期的 run。
    */
   async findLatestResponseSessionStateBySession(
+    tenantId: string,
     sessionId: string,
     now: Date = new Date(),
   ): Promise<LatestResponseSessionState | null> {
@@ -787,12 +804,13 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     }>(`
       SELECT run_id, last_response_id, last_response_expire_at, actual_model_seen, last_response_model, last_response_profile_digest, cumulative_input_tokens
       FROM ${this.runsTable}
-      WHERE session_id = $1
+      WHERE tenant_id = $1
+        AND session_id = $2
         AND last_response_id IS NOT NULL
-        AND (last_response_expire_at IS NULL OR last_response_expire_at > $2::timestamptz)
+        AND (last_response_expire_at IS NULL OR last_response_expire_at > $3::timestamptz)
       ORDER BY updated_at DESC
       LIMIT 1
-    `, [sessionId, now.toISOString()]);
+    `, [tenantId, sessionId, now.toISOString()]);
     const row = result.rows[0];
     if (!row) return null;
     const cumulative = typeof row.cumulative_input_tokens === 'string'
@@ -830,12 +848,12 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     return result.rows.map((entry) => normalizeRunRecord(entry.row_json));
   }
 
-  async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
+  async clearResponseSessionStateBySession(tenantId: string, sessionId: string): Promise<number> {
     const result = await this.pool.query(`
       UPDATE ${this.runsTable}
       SET last_response_id = NULL, last_response_profile_digest = NULL
-      WHERE session_id = $1 AND last_response_id IS NOT NULL
-    `, [sessionId]);
+      WHERE tenant_id = $1 AND session_id = $2 AND last_response_id IS NOT NULL
+    `, [tenantId, sessionId]);
     return result.rowCount ?? 0;
   }
 

@@ -118,6 +118,12 @@ export function useSessionAutomationRuntime({ sessionId, onSessionCommitted, onN
       }
       if (type === 'automation_state_changed') {
         const next = data.snapshot as SessionAutomationSnapshot | undefined;
+        const currentVersion = projectionVersion(snapshotRef.current);
+        if (next && projectionVersion(next) > currentVersion + 1) {
+          applySnapshot(next);
+          void refresh(eventSessionId ?? undefined);
+          return;
+        }
         if (next && applySnapshot(next)) {
           setTimeline((current) => [...current, {
             eventId: eventId || `${next.automationId}:${next.projectionVersion}`,
@@ -129,6 +135,10 @@ export function useSessionAutomationRuntime({ sessionId, onSessionCommitted, onN
         return;
       }
       if (type === 'automation_execution_changed') {
+        const next = data.snapshot as SessionAutomationSnapshot | undefined;
+        const currentVersion = projectionVersion(snapshotRef.current);
+        if (next && projectionVersion(next) > currentVersion + 1) { applySnapshot(next); void refresh(eventSessionId ?? undefined); }
+        else if (next) applySnapshot(next);
         setTimeline((current) => [...current, {
           eventId: eventId || `${String(data.runId)}:${String(data.phase)}`,
           type,
@@ -156,6 +166,12 @@ export function useSessionAutomationRuntime({ sessionId, onSessionCommitted, onN
       unsubscribeState();
     };
   }, [applySnapshot, refresh]);
+
+  useEffect(() => {
+    if (!sessionId || !snapshot || ['completed', 'cancelled', 'failed', 'expired'].includes(snapshot.status)) return;
+    const timer = window.setInterval(() => void refresh(sessionId), 5_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, sessionId, snapshot]);
 
   const submitCommand = useCallback(async (rawCommand: string, attachments: UploadedFile[]) => {
     const attachmentIds = attachments.map((file) => file.attachmentId).filter((id): id is string => Boolean(id));

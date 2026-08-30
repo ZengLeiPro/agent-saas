@@ -426,14 +426,14 @@ describe('PgRunStore steering inbox', () => {
     expect(pool.query).toHaveBeenCalled();
   });
 
-  it('acquires a lease for a reserved source after its steering target becomes terminal', async () => {
+  it('acquires a tenant-scoped lease for a reserved source after its steering target becomes terminal', async () => {
     const now = new Date().toISOString();
     let leaseUpdateSql = '';
     const client = {
       query: async (sql: string) => {
         const normalizedSql = sql.trim();
-        if (normalizedSql.includes('SELECT session_id FROM runtime_runs')) {
-          return { rows: [{ session_id: 'session-reserved-terminal' }] };
+        if (normalizedSql.includes('SELECT tenant_id, session_id FROM runtime_runs')) {
+          return { rows: [{ tenant_id: 'tenant-1', session_id: 'session-reserved-terminal' }] };
         }
         if (normalizedSql.includes('UPDATE runtime_runs candidate')) {
           leaseUpdateSql = normalizedSql;

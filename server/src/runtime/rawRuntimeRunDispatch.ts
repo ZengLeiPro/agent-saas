@@ -271,7 +271,7 @@ export class DirectRuntimeLeaseLostError extends Error {
 
 export async function acquireDirectRuntimeRunLease(input: {
   runStore: RunStore | undefined;
-  runId: string;
+  runId: string; tenantId?: string; sessionId?: string;
   runtimeWorkerId?: string;
   logger?: RawRuntimeRunDispatchConfig['logger'];
   onLeaseLost?: (error: DirectRuntimeLeaseLostError) => void;
@@ -286,7 +286,7 @@ export async function acquireDirectRuntimeRunLease(input: {
   const workerId = `direct-${process.pid}-${randomUUID()}`;
   let acquired: RunRecord | null;
   try {
-    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS);
+    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS, new Date(), undefined, undefined, input.tenantId && input.sessionId ? { tenantId: input.tenantId, sessionId: input.sessionId } : undefined);
   } catch (err) {
     input.logger?.warn(`Direct runtime lease acquire failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
@@ -1342,7 +1342,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId,
+        runId, tenantId: tenantIdForRun, sessionId,
         runtimeWorkerId: options.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: error => abortController.abort(error),
@@ -1954,7 +1954,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId: resumeRunId,
+        runId: resumeRunId, tenantId: sessionRecord.tenantId, sessionId: request.sessionId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: (error) => abortController.abort(error),
@@ -2437,7 +2437,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     try {
       directRuntimeLease = await acquireDirectRuntimeRunLease({
         runStore: config.runStore,
-        runId: resumeRunId,
+        runId: resumeRunId, tenantId: sessionRecord.tenantId, sessionId: request.sessionId,
         runtimeWorkerId: request.runtimeWorkerId,
         logger: config.logger,
         onLeaseLost: (error) => abortController.abort(error),

@@ -361,7 +361,7 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /**
-   * RFC v1 P0.4：跨 run 接力 — 启动时从 runStore 查上一 run 的 last_response_id（未过期）。
+   * RFC v1 P0.4：跨 run 接力 — 启动时按 tenant/session 查上一 run 的 last_response_id（未过期）。
    * RunStore 缺失 / 接口未实现 / 查询出错全部退化为不接力（绝不阻断主流程）。
    *
    * 2026-07-02 模型匹配防线：response id 是上游后端的私有状态，只在「同一 model」下有效。
@@ -371,13 +371,13 @@ export class RawAgentLoop implements AgentLoop {
    * 本就不在旧 response 链上，全量才是语义正确的选择，不只是安全退化。
    */
   private async loadInitialResponseId(
-    sessionId: string,
+    tenantId: string, sessionId: string,
     model: string,
     profileConfigDigest?: string,
   ): Promise<string | undefined> {
     if (!this.runStore?.findLatestResponseSessionStateBySession) return undefined;
     try {
-      const state = await this.runStore.findLatestResponseSessionStateBySession(sessionId);
+      const state = await this.runStore.findLatestResponseSessionStateBySession(tenantId, sessionId);
       if (!state?.lastResponseId) return undefined;
       if (state.lastResponseModel !== model) {
         logger.info(
@@ -405,14 +405,14 @@ export class RawAgentLoop implements AgentLoop {
    * model 作为接力身份键一并落库（loadInitialResponseId 据此拒绝跨模型接力）。
    */
   private async persistResponseSessionState(
-    runId: string,
+    runId: string, tenantId: string, sessionId: string,
     completed: Extract<ModelEvent, { type: 'completed' }>,
     model: string,
     profileConfigDigest?: string,
   ): Promise<void> {
     if (!this.runStore?.updateResponseSessionState || !completed.responseId) return;
     try {
-      await this.runStore.updateResponseSessionState(runId, {
+      await this.runStore.updateResponseSessionState(runId, tenantId, sessionId, {
         lastResponseId: completed.responseId,
         lastResponseModel: model,
         ...(profileConfigDigest ? { lastResponseProfileDigest: profileConfigDigest } : {}),
@@ -430,13 +430,13 @@ export class RawAgentLoop implements AgentLoop {
   }
 
   /** Local tool-call repair creates a call id absent from provider-owned response state. */
-  private async clearResponseSessionStateForRepair(runId: string, sessionId: string): Promise<void> {
+  private async clearResponseSessionStateForRepair(runId: string, tenantId: string, sessionId: string): Promise<void> {
     if (!this.runStore) return;
     try {
       if (this.runStore.clearResponseSessionStateBySession) {
-        await this.runStore.clearResponseSessionStateBySession(sessionId);
+        await this.runStore.clearResponseSessionStateBySession(tenantId, sessionId);
       } else if (this.runStore.updateResponseSessionState) {
-        await this.runStore.updateResponseSessionState(runId, {
+        await this.runStore.updateResponseSessionState(runId, tenantId, sessionId, {
           lastResponseId: null,
           lastResponseExpireAt: null,
           actualModelSeen: null,
@@ -1005,9 +1005,9 @@ export class RawAgentLoop implements AgentLoop {
     // ChatCompletionsAdapter 不消费 previousResponseId；dispatcher 已按 protocol 路由 adapter。
     const usesStoredResponseState = !context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
-    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(requireEventTenantId(context), context.sessionId, 'run wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
-      ? await this.loadInitialResponseId(context.sessionId, context.model, context.profileConfigDigest)
+      ? await this.loadInitialResponseId(requireEventTenantId(context), context.sessionId, context.model, context.profileConfigDigest)
       : undefined;
 
     try {
@@ -1426,10 +1426,10 @@ export class RawAgentLoop implements AgentLoop {
         // currentResponseId 供同 run 下一轮及跨 run 接力。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
-          await this.clearResponseSessionStateForRepair(context.runId, context.sessionId);
+          await this.clearResponseSessionStateForRepair(context.runId, requireEventTenantId(context), context.sessionId);
         } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
-          await this.persistResponseSessionState(context.runId, completed, context.model, context.profileConfigDigest);
+          await this.persistResponseSessionState(context.runId, requireEventTenantId(context), context.sessionId, completed, context.model, context.profileConfigDigest);
         }
         await this.persistLoadedMcpTools(completed, tools, messages, context);
 
@@ -2060,7 +2060,7 @@ export class RawAgentLoop implements AgentLoop {
       if (!summaryAudit.validation.valid) logger.warn(`[compact] summary validation warning session=${context.sessionId} run=${context.runId} ${formatCompactionSummaryWarning(summaryAudit.validation)}`);
 
       if (this.runStore?.clearResponseSessionStateBySession) {
-        const cleared = await this.runStore.clearResponseSessionStateBySession(context.sessionId);
+        const cleared = await this.runStore.clearResponseSessionStateBySession(requireEventTenantId(context), context.sessionId);
         if (cleared > 0) logger.info(`[compact] cleared ${cleared} response relay state(s) session=${context.sessionId}`);
       }
       await this.eventSink.append({
@@ -3266,10 +3266,10 @@ export class RawAgentLoop implements AgentLoop {
     if (contextRewindRecoveryUsed) clearProviderContinuations(args.messages);
     const usesStoredResponseState = !args.context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
-    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(args.context.sessionId, 'resume wake');
+    if (contextRewindRecoveryUsed) await this.clearResponseRelayState(requireEventTenantId(args.context), args.context.sessionId, 'resume wake');
     let currentResponseId = usesStoredResponseState && !contextRewindRecoveryUsed
       ? await this.loadInitialResponseId(
-        args.context.sessionId,
+        requireEventTenantId(args.context), args.context.sessionId,
         args.context.model,
         args.context.profileConfigDigest,
       )
@@ -3582,11 +3582,11 @@ export class RawAgentLoop implements AgentLoop {
         // RFC v1 P0.4：resume 路径同样持久化 last_response_id 等。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
-          await this.clearResponseSessionStateForRepair(args.context.runId, args.context.sessionId);
+          await this.clearResponseSessionStateForRepair(args.context.runId, requireEventTenantId(args.context), args.context.sessionId);
         } else if (usesStoredResponseState && completed.responseId) {
           currentResponseId = completed.responseId;
           await this.persistResponseSessionState(
-            args.context.runId,
+            args.context.runId, requireEventTenantId(args.context), args.context.sessionId,
             completed,
             args.context.model,
             args.context.profileConfigDigest,
@@ -3857,10 +3857,10 @@ export class RawAgentLoop implements AgentLoop {
     }
   }
 
-  private async clearResponseRelayState(sessionId: string, source: string): Promise<void> {
+  private async clearResponseRelayState(tenantId: string, sessionId: string, source: string): Promise<void> {
     if (!this.runStore?.clearResponseSessionStateBySession) return;
     try {
-      const cleared = await this.runStore.clearResponseSessionStateBySession(sessionId);
+      const cleared = await this.runStore.clearResponseSessionStateBySession(tenantId, sessionId);
       logger.info(`[responses-chain] ${source} cleared ${cleared} relay state(s) session=${sessionId}`);
     } catch (error) {
       logger.warn(
@@ -3916,7 +3916,7 @@ export class RawAgentLoop implements AgentLoop {
         hiddenFromUserTranscript: true,
       },
     ]);
-    await this.clearResponseRelayState(args.context.sessionId, 'context rewind');
+    await this.clearResponseRelayState(requireEventTenantId(args.context), args.context.sessionId, 'context rewind');
 
     const replayEvents = await this.eventStore.list(requireEventTenantId(args.context), args.context.sessionId, {
       excludeTypes: RUN_START_REPLAY_EXCLUDED_EVENT_TYPES,

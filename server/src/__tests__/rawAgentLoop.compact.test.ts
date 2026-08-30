@@ -70,7 +70,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-compact-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
-    const clearedSessions: string[] = [];
+    const clearedSessions: string[] = []; // capture session component, not tenant
     const runStore = {
       upsertPending: vi.fn(),
       markStatus: vi.fn(),
@@ -78,7 +78,7 @@ describe('RawAgentLoop.compact（/compact 真实现）', () => {
       findByIdempotencyKey: vi.fn().mockResolvedValue(null),
       listRecoverable: vi.fn().mockResolvedValue([]),
       findLatestResponseSessionStateBySession: vi.fn().mockResolvedValue(options.relayState ?? null),
-      clearResponseSessionStateBySession: vi.fn(async (sessionId: string) => {
+      clearResponseSessionStateBySession: vi.fn(async (_tenantId: string, sessionId: string) => {
         clearedSessions.push(sessionId);
         return 2;
       }),

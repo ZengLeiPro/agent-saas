@@ -264,6 +264,7 @@ export class BillingService {
     username: string;
     sessionId?: string;
     channel: 'guardrail' | 'title' | 'memory_embedding' | 'automation_evaluator';
+    attribution?: { rootAutomationId: string; automationExecutionId: string; automationGeneration: number };
   }): Promise<BillingUtilityModelRun> {
     const runId = `utility-${input.channel}-${randomUUID()}`;
     const initial = await this.authorizeRun({
@@ -290,7 +291,7 @@ export class BillingService {
           modelValue: pending.model,
           requestIndex: pending.requestIndex,
           usage: pending.usage,
-          rawUsageJson: pending.usage,
+          rawUsageJson: input.attribution ? { usage: pending.usage, automationAttribution: input.attribution } : pending.usage,
           occurredAt: pending.occurredAt,
         });
         pendingUsage.shift();

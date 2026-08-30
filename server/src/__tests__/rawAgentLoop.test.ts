@@ -2426,7 +2426,7 @@ describe('RawAgentLoop', () => {
     const patches: ResponseSessionStatePatch[] = [];
     const runStore = {
       findLatestResponseSessionStateBySession: async () => null,
-      updateResponseSessionState: async (_runId: string, patch: ResponseSessionStatePatch) => {
+      updateResponseSessionState: async (_runId: string, _tenantId: string, _sessionId: string, patch: ResponseSessionStatePatch) => {
         patches.push(patch);
         return null;
       },
@@ -4301,7 +4301,7 @@ describe('RawAgentLoop', () => {
     const patches: Array<{ runId: string; patch: ResponseSessionStatePatch }> = [];
     const runStore = {
       findLatestResponseSessionStateBySession: async () => state,
-      updateResponseSessionState: async (runId: string, patch: ResponseSessionStatePatch) => {
+      updateResponseSessionState: async (runId: string, _tenantId: string, _sessionId: string, patch: ResponseSessionStatePatch) => {
         patches.push({ runId, patch });
         return null;
       },
@@ -4851,7 +4851,7 @@ describe('RawAgentLoop', () => {
         lastResponseId: 'resp_stale',
         lastResponseModel: 'glm-5.2',
       }),
-      clearResponseSessionStateBySession: async (sessionId: string) => {
+      clearResponseSessionStateBySession: async (_tenantId: string, sessionId: string) => {
         clearedSessions.push(sessionId);
         return 1;
       },

@@ -17,7 +17,7 @@ const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunLeaseIdentity, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
   readonly runsTable: string;
@@ -1217,20 +1217,20 @@ export class PgRunStore implements RunStore {
   async cancelStaleWaitingApproval(runId: string, cutoff: Date, reason: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
     return this.queries.cancelStaleWaitingApproval(runId, cutoff, reason, metadataPatch);
   }
-  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission): Promise<RunRecord | null> {
-    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission);
+  async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission, identity?: RunLeaseIdentity): Promise<RunRecord | null> {
+    return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission, identity);
   }
   async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
     return this.queries.renewLease(runId, workerId, leaseMs, now);
   }
-  async updateResponseSessionState(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
-    return this.queries.updateResponseSessionState(runId, patch);
+  async updateResponseSessionState(runId: string, tenantId: string, sessionId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
+    return this.queries.updateResponseSessionState(runId, tenantId, sessionId, patch);
   }
-  async findLatestResponseSessionStateBySession(sessionId: string, now = new Date()): Promise<LatestResponseSessionState | null> {
-    return this.queries.findLatestResponseSessionStateBySession(sessionId, now);
+  async findLatestResponseSessionStateBySession(tenantId: string, sessionId: string, now = new Date()): Promise<LatestResponseSessionState | null> {
+    return this.queries.findLatestResponseSessionStateBySession(tenantId, sessionId, now);
   }
-  async clearResponseSessionStateBySession(sessionId: string): Promise<number> {
-    return this.queries.clearResponseSessionStateBySession(sessionId);
+  async clearResponseSessionStateBySession(tenantId: string, sessionId: string): Promise<number> {
+    return this.queries.clearResponseSessionStateBySession(tenantId, sessionId);
   }
 
   private async appendRuntimeEventsInTransaction(

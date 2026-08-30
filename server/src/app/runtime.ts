@@ -2039,7 +2039,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
         },
         dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
-        executionEnabled: () => config.sessionAutomation?.executionEnabled === true,
+        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: async (runId, reason) => { await pgRunStore!.markStatus(runId, 'cancelled', reason); },
         onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
       });
       ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers);

@@ -191,6 +191,11 @@ export interface RunLeaseAdmission {
   inheritFromRunId?: string;
 }
 
+export interface RunLeaseIdentity {
+  tenantId: string;
+  sessionId: string;
+}
+
 export interface RunStore {
   init?(): Promise<void>;
   upsertPending(input: UpsertRunInput): Promise<RunRecord>;
@@ -332,6 +337,7 @@ export interface RunStore {
     now?: Date,
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
+    identity?: RunLeaseIdentity,
   ): Promise<RunRecord | null>;
   renewLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
   releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null>;
@@ -339,12 +345,21 @@ export interface RunStore {
    * RFC v1 P0.4：增量更新 Responses API session state。
    * 用 COALESCE 让 null 显式清空，undefined 保留原值；delta 累加到 cumulative_input_tokens。
    */
-  updateResponseSessionState?(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null>;
+  updateResponseSessionState?(
+    runId: string,
+    tenantId: string,
+    sessionId: string,
+    patch: ResponseSessionStatePatch,
+  ): Promise<RunRecord | null>;
   /**
    * RFC v1 P0.4：按 sessionId 查最近有 last_response_id 的 run（用于新 run 启动时接力上一 run）。
    * 过滤掉已过期的（last_response_expire_at < now）。
    */
-  findLatestResponseSessionStateBySession?(sessionId: string, now?: Date): Promise<LatestResponseSessionState | null>;
+  findLatestResponseSessionStateBySession?(
+    tenantId: string,
+    sessionId: string,
+    now?: Date,
+  ): Promise<LatestResponseSessionState | null>;
   /**
    * /compact 真实现（2026-07-03）：清空整个 session 的 Responses API 接力状态。
    * 压缩后若仍接力旧 response chain，远端保存的全量历史会绕过本地投影，压缩等于没做——
@@ -352,7 +367,7 @@ export interface RunStore {
    * compact run 自身无 responseId 并不能自然阻断，必须显式按 session 清空。
    * 不更新 updated_at（避免把老 run 顶到观测排序顶部）。返回受影响行数。
    */
-  clearResponseSessionStateBySession?(sessionId: string): Promise<number>;
+  clearResponseSessionStateBySession?(tenantId: string, sessionId: string): Promise<number>;
 }
 
 export interface PgRunStoreOptions {

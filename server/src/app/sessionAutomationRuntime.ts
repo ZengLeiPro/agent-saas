@@ -35,7 +35,7 @@ export async function createSessionAutomationPersistence(options: {
     adaptiveLoopEnabled: flags.adaptiveLoopEnabled ?? false,
     goalEnabled: flags.goalEnabled ?? false,
     evaluatorEnforced: flags.evaluatorEnforced ?? false,
-  }, options.cancelRun);
+  });
   return { store, commandService };
 }
 
@@ -44,6 +44,7 @@ export function createSessionAutomationWorkers(options: {
   evaluator: ConstructorParameters<typeof ModelGoalEvaluator>[0];
   dispatcher: ConstructorParameters<typeof SessionAutomationCoordinator>[1];
   executionEnabled: () => boolean;
+  cancelRun: (runId:string,reason:string)=>Promise<void>;
   onError: (error: unknown) => void;
 }) {
   const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator(options.evaluator));
@@ -52,6 +53,7 @@ export function createSessionAutomationWorkers(options: {
     provider: new SessionAutomationToolProvider(new SessionAutomationTools(options.store, evaluator)),
     coordinator: new SessionAutomationCoordinator(options.store, options.dispatcher, {
       executionEnabled: options.executionEnabled,
+      cancelRun: options.cancelRun,
       onError: options.onError,
     }),
     terminalProjector: new SessionAutomationTerminalProjector(options.store),

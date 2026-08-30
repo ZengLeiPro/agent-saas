@@ -237,6 +237,7 @@ END $$`,
    REFERENCES ${t.providerAttempts}(provider_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id) DEFERRABLE INITIALLY DEFERRED
 )`,
 `ALTER TABLE ${t.reconciliationReceipts} ADD COLUMN IF NOT EXISTS receipt_authority TEXT NOT NULL DEFAULT 'legacy_untrusted'`,
+`ALTER TABLE ${t.reconciliationReceipts} ALTER COLUMN receipt_authority SET DEFAULT 'legacy_untrusted'`,
 `ALTER TABLE ${t.reconciliationReceipts} DROP CONSTRAINT IF EXISTS ${t.reconciliationReceipts}_receipt_authority_check`,
 `ALTER TABLE ${t.reconciliationReceipts} ADD CONSTRAINT ${t.reconciliationReceipts}_receipt_authority_check CHECK(receipt_authority IN ('provider_adapter','operator','legacy_untrusted')) NOT VALID`,
 `ALTER TABLE ${t.reconciliationReceipts} VALIDATE CONSTRAINT ${t.reconciliationReceipts}_receipt_authority_check`,

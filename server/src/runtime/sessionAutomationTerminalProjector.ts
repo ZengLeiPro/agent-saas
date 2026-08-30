@@ -67,8 +67,15 @@ export class SessionAutomationTerminalProjector {
            FROM ${this.store.tables.executions} e
            JOIN ${this.store.tables.outbox} o ON o.outbox_id=e.outbox_id
            JOIN ${this.store.tables.wakeups} w ON w.wakeup_id=o.wakeup_id
-           JOIN ${this.store.tables.automations} a USING(automation_id)
-           JOIN ${this.store.tables.specs} s ON s.automation_id=a.automation_id AND s.spec_version=a.spec_version
+           JOIN ${this.store.tables.automations} a
+             ON a.tenant_id=e.tenant_id
+            AND a.session_id=e.session_id
+            AND a.automation_id=e.automation_id
+           JOIN ${this.store.tables.specs} s
+             ON s.tenant_id=a.tenant_id
+            AND s.session_id=a.session_id
+            AND s.automation_id=a.automation_id
+            AND s.spec_version=a.spec_version
           WHERE e.tenant_id=$1 AND e.session_id=$2 AND e.run_id=$3
           FOR UPDATE OF e,a`,
         [event.tenantId, event.sessionId, event.runId],

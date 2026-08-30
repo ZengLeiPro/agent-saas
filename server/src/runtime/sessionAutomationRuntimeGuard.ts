@@ -143,8 +143,12 @@ export class SessionAutomationRuntimeGuard {
     tenantId: string,
     model: string,
     tokens: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number },
+    requireVerifiablePrice: boolean,
   ): Promise<number> {
-    if (!resolveModelPrice(model)) throw new AutomationFenceRejectedError('unknown_model_price');
+    if (!resolveModelPrice(model)) {
+      if (requireVerifiablePrice) throw new AutomationFenceRejectedError('unknown_model_price');
+      return 0;
+    }
     const result = await client.query<{
       credit_value_yuan_micro: string | number;
       fx_rate_to_cny: string | number;
@@ -250,7 +254,7 @@ export class SessionAutomationRuntimeGuard {
       const prospectiveTokens = inputTokens + maxOutputTokens;
       const prospectiveCreditsMicro = await this.estimateCreditsMicro(client,lineage.tenantId,admission.model,{
         inputTokens,outputTokens:maxOutputTokens,cacheReadTokens:0,cacheCreationTokens:0,
-      });
+      }, budget.maxCredits !== undefined);
       const totals = await client.query<{turns:string;tokens:string;credits:string}>(
         `SELECT COALESCE(SUM(turns),0)::text turns,COALESCE(SUM(tokens),0)::text tokens,COALESCE(SUM(credits),0)::text credits FROM ${this.tables.usage} WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
         [lineage.tenantId,lineage.automationId],
@@ -346,7 +350,7 @@ export class SessionAutomationRuntimeGuard {
         amounts={
           runs:0,turns:1,
           tokens:computeUsageTotalTokens(handle.model,tokens),
-          credits:await this.estimateCreditsMicro(client,lineage.tenantId,handle.model,tokens),
+          credits:await this.estimateCreditsMicro(client,lineage.tenantId,handle.model,tokens,false),
         };
         const heldResult=await client.query<{budget_kind:string;amount:string}>(
           `SELECT budget_kind,amount::text FROM ${this.tables.budgetReservations} WHERE reservation_id=ANY($1::uuid[]) FOR UPDATE`,

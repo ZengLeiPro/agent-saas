@@ -22,6 +22,9 @@ describe('session automation PG schema',()=>{
     expect(sql).toContain('automation_execution_lineage');
     expect(sql).toContain('UNIQUE(tenant_id,provider,idempotency_key)');
     expect(sql).toContain('UNIQUE(tenant_id,receipt_key)');
+    expect(sql).toContain(`ALTER TABLE ${t.reconciliationReceipts} ADD COLUMN IF NOT EXISTS receipt_authority TEXT NOT NULL DEFAULT 'legacy_untrusted'`);
+    expect(sql).toContain(`ALTER TABLE ${t.reconciliationReceipts} ALTER COLUMN receipt_authority SET DEFAULT 'legacy_untrusted'`);
+    expect(sql).toContain("CHECK(receipt_authority IN ('provider_adapter','operator','legacy_untrusted')) NOT VALID");
     expect(sql).toContain(`ALTER TABLE ${t.outbox} ADD COLUMN IF NOT EXISTS updated_at`);
     expect(sql).toContain(`ALTER TABLE ${t.lifecycleWork} ADD COLUMN IF NOT EXISTS next_attempt_at`);
     expect(sql).toContain("CHECK(state IN ('pending','claimed','waiting','completed','result_unknown','dead'))");

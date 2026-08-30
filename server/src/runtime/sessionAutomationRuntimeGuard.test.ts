@@ -29,14 +29,18 @@ class FakePool {
   reserved = { turns: '0', tokens: '0', credits: '0' };
   allowanceRemaining = 2;
   settlementReservations: Array<{ budget_kind: string; amount: string }> = [];
+  creditReservationAmounts: unknown[] = [];
 
   async connect(): Promise<pg.PoolClient> {
     return { query: this.query.bind(this), release() {} } as unknown as pg.PoolClient;
   }
 
-  async query<T>(sql: string): Promise<{ rows: T[]; rowCount: number }> {
+  async query<T>(sql: string, values?: readonly unknown[]): Promise<{ rows: T[]; rowCount: number }> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
     this.statements.push(normalized);
+    if (normalized.startsWith('INSERT INTO runtime_session_automation_budget_reservations') && values?.[8] === 'credits') {
+      this.creditReservationAmounts.push(values[10]);
+    }
     if (normalized.includes('SELECT status,incarnation_id,generation,spec_version,active_run_id')) {
       return { rows: [this.automation] as T[], rowCount: 1 };
     }
@@ -131,6 +135,14 @@ describe('SessionAutomationRuntimeGuard', () => {
     expect(joined).toContain("SET state='result_unknown'");
     expect(joined).toContain("status='reconcile_required'");
     expect(pool.statements.at(-1)).toBe('COMMIT');
+  });
+
+  it('未配置 credit 上限时未知模型价格允许执行且 credit reservation 为 0', async () => {
+    const pool = new FakePool();
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    await expect(guard.beforeModel(context, 'turn:unpriced', { model: 'unknown-model', inputTokens: 10, maxOutputTokens: 20 }))
+      .resolves.toBeDefined();
+    expect(pool.creditReservationAmounts).toEqual([0]);
   });
 
   it('配置 credit 上限时未知模型价格 fail-closed', async () => {

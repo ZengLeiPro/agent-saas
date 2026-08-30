@@ -160,7 +160,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   const [unknown]=await ledger.claimProviderAttempts(['result_unknown']);await ledger.transitionProviderAttempt(unknown!,'reconcile');
   const [reconcile]=await ledger.claimProviderAttempts(['reconcile']);await ledger.reconcileProviderAttempt(reconcile!,{receiptKey:'receipt-key',observedState:'completed',receiptPayload:{providerRequestId:'provider-request'},nextState:'completed'});
   const row=await pool.query(`SELECT state,version,lease_token FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`,[reconcile!.providerAttemptId]);expect(row.rows[0]).toMatchObject({state:'completed',version:'5',lease_token:null});
-  expect((await pool.query(`SELECT count(*)::int count FROM ${store.tables.reconciliationReceipts} WHERE provider_attempt_id=$1`,[reconcile!.providerAttemptId])).rows[0].count).toBe(1);
+  expect((await pool.query(`SELECT count(*)::int count FROM ${store.tables.reconciliationReceipts} WHERE provider_attempt_id=$1 AND receipt_authority='provider_adapter'`,[reconcile!.providerAttemptId])).rows[0].count).toBe(1);
   const constraints=await pool.query(`SELECT count(*)::int count FROM pg_constraint WHERE conrelid=$1::regclass AND condeferrable`,[store.tables.providerAttempts]);expect(constraints.rows[0].count).toBeGreaterThanOrEqual(2);
   await expect(pool.query(`INSERT INTO ${store.tables.interactions}(interaction_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,interaction_key,interaction_kind,request_payload) VALUES($1,$2,$3,$4,$5,99,$6,$7,'bad-lineage','tool','{}')`,[randomUUID(),tenant,session,automationId,incarnationId,executionId,runId])).rejects.toMatchObject({code:'23503'});
  });

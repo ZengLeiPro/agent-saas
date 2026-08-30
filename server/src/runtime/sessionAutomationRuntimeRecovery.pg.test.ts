@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
@@ -36,6 +36,14 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     await store.init();
     guard = new SessionAutomationRuntimeGuard(pool, prefix, runs.runsTable);
   }, 30_000);
+
+  afterEach(async () => {
+    if (!pool) return;
+    // evaluatePending scans the durable queue globally; do not leak retryable jobs into the next case.
+    await pool.query(`UPDATE ${store.tables.evaluations}
+      SET state='cancelled',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+      WHERE state IN ('pending','claimed')`);
+  });
 
   afterAll(async () => {
     if (!pool) return;

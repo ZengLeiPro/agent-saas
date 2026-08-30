@@ -9,7 +9,7 @@ import {
   sbomListArgs,
 } from './build-release.mjs';
 
-test('Staging immutable bundle includes runtime assets but excludes mutable settings and tenant data', () => {
+test('Staging has a standalone immutable runtime asset allowlist without mutable tenant data', () => {
   assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('.ky-agent/skills-pool'));
   assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('prompts'));
   assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('PERSONA.template.md'));

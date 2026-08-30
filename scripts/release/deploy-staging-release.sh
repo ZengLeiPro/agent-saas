@@ -5,6 +5,8 @@ set -euo pipefail
 : "${UNIT_DIR:?UNIT_DIR is required}"
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
+: "${STAGING_RUNTIME_ASSETS_PATH:?STAGING_RUNTIME_ASSETS_PATH is required}"
+: "${STAGING_RUNTIME_ASSETS_DIGEST:?STAGING_RUNTIME_ASSETS_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
@@ -13,6 +15,9 @@ manifest_digest="$(node -p "require(process.env.MANIFEST_PATH).digest")"
 printf '%s' "$release_id" | grep -Eq '^rc-[0-9]{8}-[0-9]{2,}$'
 printf '%s' "$release_sha" | grep -Eq '^[a-f0-9]{40}$'
 test "$manifest_digest" = "$EXPECTED_MANIFEST_DIGEST"
+printf '%s' "$STAGING_RUNTIME_ASSETS_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+test "sha256:$(sha256sum "$STAGING_RUNTIME_ASSETS_PATH" | cut -d' ' -f1)" = \
+  "$STAGING_RUNTIME_ASSETS_DIGEST"
 
 root=/opt/agent-saas-staging
 state_root=/var/lib/agent-saas-staging
@@ -190,6 +195,11 @@ fi
 if [ -d "$target" ]; then
   node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server
   node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs
+  test "sha256:$(sha256sum "$target/.release/staging-runtime-assets.tgz" | cut -d' ' -f1)" = \
+    "$STAGING_RUNTIME_ASSETS_DIGEST" || {
+    echo 'Immutable Staging runtime assets conflict' >&2
+    exit 1
+  }
   existing="$(node -p "require('$target/manifest.json').digest")"
   test "$existing" = "$manifest_digest" || { echo 'Immutable Staging release conflicts' >&2; exit 1; }
 else
@@ -197,16 +207,18 @@ else
   mkdir -p "$candidate/web" "$candidate/.release"
   install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
   install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
+  install -m 0444 "$STAGING_RUNTIME_ASSETS_PATH" \
+    "$candidate/.release/staging-runtime-assets.tgz"
   tar -tzf "$candidate/.release/server-bundle.tgz" \
     | awk '$0 == "./server/dist/index.js" || $0 == "server/dist/index.js" { found = 1 } END { exit !found }' \
     || { echo 'Staging server bundle must contain server/dist/index.js' >&2; exit 1; }
   for required_asset in \
-    server/workspace-shared/.ky-agent/skills-pool/_manifest.json \
-    server/workspace-shared/prompts/static.md \
-    server/workspace-shared/PERSONA.template.md; do
-    tar -tzf "$candidate/.release/server-bundle.tgz" \
+    .ky-agent/skills-pool/_manifest.json \
+    prompts/static.md \
+    PERSONA.template.md; do
+    tar -tzf "$candidate/.release/staging-runtime-assets.tgz" \
       | awk -v expected="$required_asset" '$0 == expected || $0 == "./" expected { found = 1 } END { exit !found }' \
-      || { echo "Staging server bundle is missing $required_asset" >&2; exit 1; }
+      || { echo "Staging runtime assets are missing $required_asset" >&2; exit 1; }
   done
   tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
     | awk '$0 == "./acs-orchestrator/dist/index.js" || $0 == "acs-orchestrator/dist/index.js" { found = 1 } END { exit !found }' \
@@ -214,6 +226,9 @@ else
   tar -xzf "$candidate/.release/server-bundle.tgz" -C "$candidate"
   tar -xzf "$RELEASE_DIR/web-assets.tgz" -C "$candidate/web"
   tar -xzf "$candidate/.release/acs-orchestrator.tgz" -C "$candidate"
+  mkdir -p "$candidate/server/workspace-shared"
+  tar -xzf "$candidate/.release/staging-runtime-assets.tgz" \
+    -C "$candidate/server/workspace-shared"
   test -s "$candidate/server/dist/index.js"
   test -s "$candidate/acs-orchestrator/dist/index.js"
   install -m 0444 "$MANIFEST_PATH" "$candidate/manifest.json"

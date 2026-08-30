@@ -54,8 +54,9 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /environment: staging/u);
   assert.match(workflow, /STAGING_WEB_URL: https:\/\/staging-agent\.kaiyan\.net/u);
   assert.match(workflow, /STAGING_API_URL: https:\/\/staging-agent-api\.kaiyan\.net/u);
-  assert.match(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
-  assert.match(workflow, /VITE_WEB_ORIGIN: \$\{\{ env\.STAGING_WEB_URL \}\}/u);
+  assert.match(workflow, /VITE_API_BASE: https:\/\/api\.agent\.kaiyan\.net/u);
+  assert.match(workflow, /VITE_WEB_ORIGIN: https:\/\/agent\.kaiyan\.net/u);
+  assert.doesNotMatch(workflow, /VITE_API_BASE: \$\{\{ env\.STAGING_API_URL \}\}/u);
   assert.doesNotMatch(workflow, /vars\.STAGING_E2E_INTEGRATION_TASK_ID/u);
   assert.match(workflow, /ensure-integration-fixture\.mjs/u);
   assert.match(workflow, /STAGING_E2E_INTEGRATION_TASK_ID=\$integration_task_id/u);
@@ -78,6 +79,12 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.ok(webIdentityIndex > 0 && webIdentityIndex < webEntryIndex);
   assert.match(workflow, /manifest-digest: \$MANIFEST_DIGEST/u);
   assert.match(workflow, /publish-release-record\.mjs/u);
+  assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\.path/u);
+  assert.match(workflow, /test "\$runtime_path" = staging-runtime-assets\.tgz/u);
+  assert.match(workflow, /STAGING_RUNTIME_ASSETS_PATH='\$remote\/staging-runtime-assets\.tgz'/u);
+  assert.match(workflow, /--argjson runtimeSummary/u);
+  assert.match(workflow, /stagingRuntimeAssetsDigest/u);
+  assert.match(workflow, /\$\{\{ runner\.temp \}\}\/staging-runtime-summary\.json/u);
   assert.match(workflow, /name: Verify completed Staging evidence bundle\s+if: success\(\)/u);
   assert.match(workflow, /test -f "\$RUNNER_TEMP\/\$evidence"/u);
   assert.match(workflow, /if-no-files-found: warn/u);
@@ -197,7 +204,16 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
-  assert.match(deploy, /server\/workspace-shared\/\.ky-agent\/skills-pool\/_manifest\.json/u);
+  assert.match(deploy, /STAGING_RUNTIME_ASSETS_PATH:\?STAGING_RUNTIME_ASSETS_PATH is required/u);
+  assert.match(deploy, /STAGING_RUNTIME_ASSETS_DIGEST:\?STAGING_RUNTIME_ASSETS_DIGEST is required/u);
+  assert.match(deploy, /sha256sum "\$STAGING_RUNTIME_ASSETS_PATH"/u);
+  assert.match(deploy, /staging-runtime-assets\.tgz/u);
+  assert.match(deploy, /\.ky-agent\/skills-pool\/_manifest\.json/u);
+  assert.match(deploy, /Staging runtime assets are missing \$required_asset/u);
+  assert.match(
+    deploy,
+    /tar -xzf "\$candidate\/\.release\/staging-runtime-assets\.tgz"[\s\S]*-C "\$candidate\/server\/workspace-shared"/u,
+  );
   assert.match(deploy, /Staging immutable shared asset conflicts with persistent path/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
   assert.match(

@@ -51,9 +51,8 @@ export const STAGING_SHARED_ASSET_ENTRIES = [
   'questions.template.md',
 ];
 
-export async function copyStagingSharedAssets(root, serverRoot) {
+export async function copyStagingSharedAssets(root, targetRoot) {
   const sourceRoot = join(root, 'workspace-shared');
-  const targetRoot = join(serverRoot, 'workspace-shared');
   for (const entry of STAGING_SHARED_ASSET_ENTRIES) {
     const target = join(targetRoot, entry);
     await mkdir(join(target, '..'), { recursive: true });
@@ -141,12 +140,16 @@ export async function buildRelease(argv = process.argv) {
     join(root, 'server/src/agent/descriptions'),
     join(stage, 'server/descriptions'),
   ]);
-  await copyStagingSharedAssets(root, join(stage, 'server'));
   run('cp', ['-R', join(root, 'web/dist'), join(stage, 'web')]);
+  await copyStagingSharedAssets(root, join(stage, 'staging-runtime-assets'));
 
   const artifacts = {
     serverBundle: await packRooted(stage, 'server', join(output, 'server-bundle.tgz')),
     webAssets: await pack(join(stage, 'web'), join(output, 'web-assets.tgz')),
+    stagingRuntimeAssets: await pack(
+      join(stage, 'staging-runtime-assets'),
+      join(output, 'staging-runtime-assets.tgz'),
+    ),
   };
   if (opts['include-acs']) {
     run('pnpm', ['-F', 'acs-orchestrator', 'build'], root);

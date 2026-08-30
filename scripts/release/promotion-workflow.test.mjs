@@ -58,6 +58,9 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /Latest release attestation is not approved|--state approved/u);
   assert.match(workflow, /deployments\/\$deployment_id\/statuses/u);
   assert.match(workflow, /actions\/runs\/\$e2e_run_id/u);
+  assert.match(workflow, /runtime_summary=/u);
+  assert.match(workflow, /stagingRuntimeAssetsDigest/u);
+  assert.match(workflow, /expected_runtime_summary/u);
 });
 
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
@@ -88,7 +91,10 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.match(workflow, /components\.acs\.sandboxImageDigest/u);
   assert.match(workflow, /aliyun cr ListRepoTag/u);
   assert.match(workflow, /sha256sum/u);
-  assert.match(workflow, /selected\/artifact-index\.json/u);
+  assert.match(workflow, /built\/artifact-index\.json/u);
+  assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
+  assert.match(workflow, /\.artifacts\[\] \| \.path/u);
+  assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
   assert.match(workflow, /keep without restart/u);

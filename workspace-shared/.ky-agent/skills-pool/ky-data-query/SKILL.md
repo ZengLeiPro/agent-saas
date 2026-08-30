@@ -1,6 +1,6 @@
 ---
 name: ky-data-query
-description: 查询和操作公司业务数据库，涵盖CRM数据、钉钉员工/部门/日志/日程、云效项目/工时、官网第一方埋点（PV/UV/UTM/来源/博客表现/咨询点击/首触点归因/百度统计对数）、SEO 监测（Bing 关键词/Clarity 页面洞察/百度统计快照/同步任务），以及销售数据闭环的待办表 sales_action_items（缺口侦探/作战信号读写）。查询分析默认只读；当用户明确要求新增、修改、删除、恢复业务数据时，也通过 ky-azeroth CLI 执行。
+description: 查询和操作公司业务数据库，涵盖 CRM、钉钉、云效、官网第一方埋点、SEO 监测、小红书聚光完整投放数据（动态目录、任意数据集、全量分页导出与分析），以及销售数据闭环待办 sales_action_items。查询分析默认只读；用户明确要求写入时通过 ky-azeroth CLI 执行。
 ---
 
 # 开沿业务数据查询
@@ -37,7 +37,7 @@ CLI 已支持标准 CRUD，但写操作会真实修改业务系统数据：
 
 ## 第 0 步：确保 CLI 是最新版（每次会话首次使用 ky-data-query 时必跑一次）
 
-agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）和 `AZEROTH_API_URL` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移）。平台 Shell 默认可能是 `/bin/sh`，且不同工具调用之间不会保留 `PATH`；因此每次执行 `azeroth ...` 的 Shell 命令，都在同一个 `bash -lc` 里先 `source` 一次 ensure 脚本。
+agent 平台已经按当前会话用户自动注入 `AZEROTH_TOKEN`（长期 PAT）、`AZEROTH_API_URL` 和 `AZEROTH_CLI_CACHE_DIR` 到子进程 env。但 `azeroth` 二进制本身要从 ky-azeroth 生产服务按需拉取（保证与服务端同版本，永不漂移）。平台 Shell 默认可能是 `/bin/sh`，且不同工具调用之间不会保留 `PATH`；因此每次执行 `azeroth ...` 的 Shell 命令，都在同一个 `bash -lc` 里先 `source` 一次 ensure 脚本。
 
 Shell 默认从 workspace 根目录运行；ky-data-query skill 在 workspace 内的稳定路径是 `.ky-agent/skills/ky-data-query`。**不要自行推断或使用服务端/NAS 物理路径**（例如 `/mnt/agent-saas/workspaces/...`），ACS Sandbox 容器内不可见这些宿主路径。
 
@@ -48,7 +48,7 @@ bash -lc 'source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cli.sh" && azeroth who
 
 ensure 脚本逻辑：
 
-- cache 在当前 workspace 的 `.cache/azeroth-cli/azeroth`（脚本内部用 `$(pwd)/.cache/azeroth-cli` 推断；从 workspace 根运行）
+- dispatch 将唯一 cache 目录注入 `AZEROTH_CLI_CACHE_DIR` 并把它前置到 `PATH`；仅在未注入时回退当前 workspace 的 `.cache/azeroth-cli`
 - 1h TTL；命中 cache 且未过期 → 0 网络请求立即返回
 - 过期 → 调一次轻量 hash 端点比对，hash 一致只刷新 stamp 不下载
 - hash 变了 / cache 空 → 拉 ~1MB bundle 原子覆盖
@@ -124,7 +124,7 @@ approval-flows  notifications  table-preferences
 
 如果 `azeroth` 报"command not found" / "Not logged in" / 401：
 
-1. 先确认 ensure 脚本跑过：`ls -la .cache/azeroth-cli/azeroth`
+1. 先确认 ensure 脚本跑过：`CLI_CACHE_DIR="${AZEROTH_CLI_CACHE_DIR:-$(pwd)/.cache/azeroth-cli}"; ls -la "$CLI_CACHE_DIR/azeroth"`
 2. `test -n "${AZEROTH_TOKEN:-}" && echo "AZEROTH_TOKEN=set" || echo "AZEROTH_TOKEN=missing"` 验证 PAT env 是否存在；不要打印 token 片段
 3. PAT 缺失 = 当前 agent 用户在 server 端的 PAT 配置里没有条目，告诉用户找 admin 补一个；不要尝试自己 login
 
@@ -146,6 +146,8 @@ duckdb --version      # 期望 ≥ 0.10
 若 `duckdb` 缺失，停止并报告 ACS 镜像依赖缺口；不要用 Homebrew、系统包管理器或全局安装命令在任务运行期修。
 
 ## 三步法
+
+> 小红书聚光不是标准 entity CRUD，不能套用 `<entity> list --all`。涉及聚光时跳到「小红书聚光完整投放数据」专节，使用动态数据集目录与 `query-dataset --all`。
 
 ### 第 1 步：dump NDJSON
 
@@ -586,19 +588,86 @@ azeroth approvals get-change-request <id>                  # 查询变更申请�
 
 > 上述非标 action 命令均**不在** ky-data-query"业务查询默认范围"内（ky-data-query 主要做 CRM/项目/工时只读分析），仅当用户**明确要求**做批量转交、发起退款、红冲、整年发布、薪资导入、用户状态切换、工时补录、组织树调整、工单流转、变更申请等业务操作时才用，执行前按"写操作原则"段展示命令与影响对象等待确认。只读类（如 `departments tree` / `project-tickets stats` / `effort-records my-timesheet` / `approvals get-change-request` / `crm-products trash` / `system-params get*` / `holidays work-dates`）作为常规分析入口可直接用，无需额外确认。
 
+## 小红书聚光完整投放数据（动态数据集，非 entity CRUD）
+
+用户提到“小红书投放、聚光、广告消耗、计划/单元/创意/笔记/关键词/搜索词、私信咨询或转化归因”时使用本流程。这里的完整性来自服务端 registry 动态目录：**不要硬编码数据集清单，也不要只查旧的 5 张本地日报。**
+
+完整操作手册、覆盖矩阵与分析口径见 [references/xiaohongshu-spotlight.md](references/xiaohongshu-spotlight.md)。实时第一信源依次是：
+
+1. `azeroth xiaohongshu datasets --advertiser-id <id>`：发现全部数据集、授权状态和参数摘要；
+2. `azeroth xiaohongshu describe-dataset <dataset> --advertiser-id <id>`：读取单项完整契约；
+3. `azeroth xiaohongshu query-dataset --help`：确认当前 CLI 的导出/续传参数。
+
+若上述命令不存在，先按第 0 步设置 `AZEROTH_CLI_FORCE=1` 强制刷新一次 CLI；仍不存在就报告“服务端/CLI 发布尚未同步”，**不得退回旧命令后声称完成了全量分析**。
+
+### 强制查询流程（命令模板）
+
+```bash
+export SESS="$(pwd)/.cache/azq/$(date +%Y%m%d-%H%M)"
+mkdir -p "$SESS/xiaohongshu"
+
+# 1) 先确定真实身份、连接和广告主 ID
+azeroth whoami
+azeroth xiaohongshu connection > "$SESS/xiaohongshu/connection.json"
+azeroth xiaohongshu advertisers > "$SESS/xiaohongshu/advertisers.json"
+# 先从 advertisers.json 选择目标广告主，并在运行本代码块前 export ADV=<真实 advertiserId>。
+: "${ADV:?请先设置真实 advertiserId；不能猜测}"
+
+# 2) 目录快照：不可查询/缺 scope 是覆盖边界，不是“数据为 0”
+azeroth xiaohongshu datasets --advertiser-id "$ADV" \
+  > "$SESS/xiaohongshu/catalog.json"
+
+# 3) 描述所需数据集，再构造严格 JSON；额外官方参数必须放 params 内
+azeroth xiaohongshu describe-dataset report.keyword.offline --advertiser-id "$ADV" \
+  > "$SESS/xiaohongshu/report.keyword.offline.contract.json"
+# 以下日期仅示例，必须替换为用户要求的明确范围。
+cat > "$SESS/xiaohongshu/report.keyword.offline.query.json" <<EOF
+{
+  "advertiserId": "$ADV",
+  "startDate": "2026-08-01",
+  "endDate": "2026-08-29",
+  "dataCaliber": 0,
+  "page": 1,
+  "pageSize": 100,
+  "params": {}
+}
+EOF
+
+# 4) 先探一页核对字段/汇总/口径，再完整导出
+azeroth xiaohongshu query-dataset report.keyword.offline \
+  --json "$SESS/xiaohongshu/report.keyword.offline.query.json" \
+  > "$SESS/xiaohongshu/report.keyword.offline.probe.json"
+azeroth xiaohongshu query-dataset report.keyword.offline \
+  --json "$SESS/xiaohongshu/report.keyword.offline.query.json" \
+  --all --page-size 100 \
+  --output "$SESS/xiaohongshu/report.keyword.offline.ndjson" \
+  --metadata-output "$SESS/xiaohongshu/report.keyword.offline.metadata.json"
+```
+
+`--all` 的输出文件只有行数据 NDJSON；sidecar 顶层 `dataset.coreFields` 是预期核心字段、顶层 `fields` 是实际字段并集，逐页汇总/附加信息/追踪标识分别在 `pages[].aggregation`、`pages[].metadata`、`pages[].requestId`，`ndjson` 保存 SHA-256/字节数/行数。分析前确认 sidecar 的 `status === "complete"`；失败时执行 stderr 给出的原样续传命令，不能把半成品当全量。
+
+### 完整分析的最低标准
+
+- 先做覆盖矩阵：`datasetId / queryable / 是否导出 / 行数 / 日期范围 / dataCaliber / 未导出原因`。`scope_missing`、白名单、账户角色或契约限制必须单列，不能按 0 行处理。
+- 报表必须显式给 `startDate/endDate`；同一分析统一 `dataCaliber`。0（计费/点击时间）与 1（转化时间）若都查，必须分栏，禁止直接相加。
+- 有 `parameters[].source === "params" && required === true` 的数据集，先从基础数据集取得 ID/上下文，再把值放进 `params`。禁止猜 ID、空数组占位或跳过后仍称“完整”。
+- 不跨层级、跨来源重复求和：账户、计划、单元等通常是同一消耗的不同切片；`local_report` 与 `official_api` 的同层数据也只能整段选择一个 `complete` 来源作为总量事实层，另一来源只做核对，禁止按日/按键 `COALESCE` 补缺拼接。
+- 官方字段是动态的。写 SQL 前先读 probe，以及 sidecar 的顶层 `fields` 与 `dataset.coreFields`，不要凭旧字段表猜名字或单位；保留原始 NDJSON 和 metadata 作为证据。
+- 用户只问单一问题时按需查询相关数据集；用户要求“完整分析”时才建立目录覆盖矩阵并分层拉取，避免无目的轰炸全部接口。
+
 ## 官网埋点 / SEO 监测（事件流与第三方数据快照）
 
 埋点 / SEO 数据**统一走 azeroth CLI**（2026-06-13 起改造，原 `web-analytics` skill + `~/.config/kaiyan-analytics/.env` 直连 PG 路径已废除）。
 
 ### 数据源与实体
 
-| 实体命令 | 数据源 | 写入方 | 适用问题 |
-|---|---|---|---|
-| `web-events` | 自建 collector 上报 | `kaiyan.net/tools/analytics-collector` FC | 「用户在我官网做什么」：PV/UV/UTM/路径/咨询点击 |
-| `seo-search-queries` | Bing Webmaster API | `apps/seo-sync` FC，每日 09:30 | 「Bing 给我带了哪些关键词」 |
-| `seo-page-insights` | Microsoft Clarity API | 同上 | 「页面停留 / 死点击 / 滚动深度」 |
-| `seo-traffic-snapshots` | 百度统计 API（待开通） | 同上 | 「整站 PV/UV/跳出率」 |
-| `seo-sync-runs` | 上述同步任务自身 | 同上 | 「最近同步成功了吗」 |
+| 实体命令                | 数据源                 | 写入方                                    | 适用问题                                        |
+| ----------------------- | ---------------------- | ----------------------------------------- | ----------------------------------------------- |
+| `web-events`            | 自建 collector 上报    | `kaiyan.net/tools/analytics-collector` FC | 「用户在我官网做什么」：PV/UV/UTM/路径/咨询点击 |
+| `seo-search-queries`    | Bing Webmaster API     | `apps/seo-sync` FC，每日 09:30            | 「Bing 给我带了哪些关键词」                     |
+| `seo-page-insights`     | Microsoft Clarity API  | 同上                                      | 「页面停留 / 死点击 / 滚动深度」                |
+| `seo-traffic-snapshots` | 百度统计 API（待开通） | 同上                                      | 「整站 PV/UV/跳出率」                           |
+| `seo-sync-runs`         | 上述同步任务自身       | 同上                                      | 「最近同步成功了吗」                            |
 
 ### web-events 关键差异（vs CRM 实体）
 

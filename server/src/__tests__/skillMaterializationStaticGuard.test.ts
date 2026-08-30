@@ -12,7 +12,7 @@ async function materializationFiles(): Promise<string[]> {
     .map((name) => join(root, name));
 }
 
-describe('技能物化阻塞 I/O 静态门禁', () => {
+describe('技能物化与运行时静态门禁', () => {
   it('请求、运行前置、Cron 与物化 worker 不得重新引入同步重型文件操作', async () => {
     const files = [
       join(serverSrc, 'routes', 'skills.ts'),
@@ -40,6 +40,27 @@ describe('技能物化阻塞 I/O 静态门禁', () => {
       const source = await readFile(path, 'utf-8');
       expect(source, path).not.toMatch(/\bsyncSkills\s*\(/);
     }
+  });
+
+  it('dispatch PATH 与 ensure-cli 使用同一个 Azeroth CLI cache 契约', async () => {
+    const dispatch = await readFile(join(serverSrc, 'engine', 'dispatch.ts'), 'utf-8');
+    const ensureCli = await readFile(
+      join(
+        process.cwd(),
+        '..',
+        'workspace-shared',
+        '.ky-agent',
+        'skills-pool',
+        'ky-data-query',
+        'scripts',
+        'ensure-cli.sh',
+      ),
+      'utf-8',
+    );
+
+    expect(dispatch).toContain('AZEROTH_CLI_CACHE_DIR: azerothCliDir');
+    expect(dispatch).toContain('PATH: `${azerothCliDir}:${prevPath}`');
+    expect(ensureCli).toContain('CACHE_DIR="${AZEROTH_CLI_CACHE_DIR:-');
   });
 
   it('workspace 热路径不得恢复递归复制、物理删除、同步子进程或深度权限遍历', async () => {

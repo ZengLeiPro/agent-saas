@@ -87,6 +87,7 @@ async function readJson(response: Response) {
   return response.json() as Promise<any>;
 }
 
+// PUT 必须先验证完整候选，再允许 config.json 与运行态一起前进。
 describe('models admin router', () => {
   afterEach(() => {
     while (servers.length > 0) servers.pop()?.close();
@@ -314,7 +315,70 @@ describe('models admin router', () => {
     });
   });
 
-  it('persists title model order and title prompt in the same update', async () => {
+  it('在写盘前拒绝会使门禁 fallback 引用失效的 models 更新', async () => {
+    const rawConfig = { ...baseRawConfig(), guardrail: { model: 'main/gpt', fallbackModels: ['main/mini'] } };
+    rawConfig.models.groups[0]!.models.push({ id: 'mini', name: 'Mini', value: 'gpt-5-mini' });
+    const replacementModels = structuredClone(rawConfig.models);
+    replacementModels.groups[0]!.models = replacementModels.groups[0]!.models.filter((model) => model.id !== 'mini');
+
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: replacementModels }),
+      });
+
+      expect(response.status).toBe(400);
+      expect((await readJson(response)).error).toContain('门禁模型引用不存在：main/mini');
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).models.groups[0].models).toHaveLength(2);
+      expect(runtimeConfig.models?.groups[0]?.models).toHaveLength(2);
+    });
+  });
+
+  it('拒绝旧页面携带的过期 revision，不让后提交覆盖先提交', async () => {
+    const rawConfig = baseRawConfig();
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const loaded = await readJson(await fetch(`${baseUrl}/api/admin/models`));
+      writeFileSync(configPath, JSON.stringify({ ...rawConfig, concurrentWinner: true }), 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models: rawConfig.models, expectedRevision: loaded.revision }),
+      });
+      expect(response.status).toBe(409);
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+    }, { requireRevision: true });
+  });
+
+  it('异步校验期间服务端基线被修改时返回 409，不覆盖胜出版本', async () => {
+    const rawConfig = baseRawConfig(); let configPath = '';
+    const validateConfigReload = vi.fn(async () => { writeFileSync(configPath, JSON.stringify({ ...rawConfig, concurrentWinner: true }), 'utf-8'); });
+    await withApp(rawConfig, async ({ baseUrl, configPath: path }) => {
+      configPath = path;
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models: rawConfig.models }),
+      });
+      expect(response.status).toBe(409);
+      expect(JSON.parse(readFileSync(path, 'utf-8')).concurrentWinner).toBe(true);
+    }, { validateConfigReload });
+  });
+
+  it('Production 安全门禁拒绝候选时不写盘、不提交运行态与 identity 回调', async () => {
+    const rawConfig = baseRawConfig();
+    const before = JSON.stringify(rawConfig, null, 2);
+    const validateConfigReload = vi.fn().mockRejectedValue(new Error('inline model secret is forbidden'));
+    const commit = vi.fn(); const prepareConfigUpdate = vi.fn(() => commit); const onConfigReloaded = vi.fn();
+    await withApp(rawConfig, async ({ baseUrl, configPath, runtimeConfig }) => {
+      const models = structuredClone(rawConfig.models); models.groups[0]!.apiKey = 'new-inline-secret';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models }),
+      });
+      expect(response.status).toBe(500);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.models?.groups[0]?.apiKey).toBe('sk-main');
+      expect(prepareConfigUpdate).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled(); expect(onConfigReloaded).not.toHaveBeenCalled();
+    }, { validateConfigReload, prepareConfigUpdate, onConfigReloaded });
+  });
+
+  it('persists title model order and title prompt in one commit', async () => {
     const rawConfig = baseRawConfig();
     rawConfig.models.groups[0]!.models.push({ id: 'mini', name: 'Mini', value: 'gpt-5-mini' });
     const onModelsUpdated = vi.fn();

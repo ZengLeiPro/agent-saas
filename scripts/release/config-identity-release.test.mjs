@@ -9,12 +9,16 @@
  * - read-runtime-identity：identity.configIdentity 存在时必须是合法形态。
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { validateProductionObservations } from './read-production-state.mjs';
+import {
+  readPrivateConfigIdentitySnapshot,
+  validateExpectedConfigIdentityObservers,
+  validateProductionObservations,
+} from './read-production-state.mjs';
 import {
   buildProductionIdentity,
   readExpectedConfigIdentityFromReleaseEnv,
@@ -111,9 +115,15 @@ const validConfigIdentity = {
     secretRefCount: 0,
   },
 };
+const relationshipContradictions = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/config-identity-relationship-contradictions.json', import.meta.url),
+  ),
+);
 
 test('read-production-state passes structured configIdentity through into state', () => {
   const observations = baseObservations();
+  observations.runtime.configIdentity = validConfigIdentity.expected;
   observations.api.configIdentity = validConfigIdentity;
   const state = validateProductionObservations(observations);
   assert.equal(state.configIdentity.status, 'consistent');
@@ -131,9 +141,15 @@ test('read-production-state rejects configIdentity without releaseId', () => {
   );
 });
 
-test('read-production-state keeps working without configIdentity (legacy API)', () => {
-  const state = validateProductionObservations(baseObservations());
+test('read-production-state keeps working without configIdentity only for legacy baseline', () => {
+  const state = validateProductionObservations(baseObservations(), {
+    configIdentityStage: 'legacy-pre-upgrade-baseline',
+  });
   assert.equal(state.configIdentity, undefined);
+  assert.throws(
+    () => validateProductionObservations(baseObservations()),
+    /completely absent outside the legacy pre-upgrade baseline/,
+  );
 });
 
 test('read-production-state rejects a malformed configIdentity payload', () => {
@@ -177,6 +193,19 @@ test('read-production-state rejects impossible status/version relationships', ()
   );
 });
 
+test('read-production-state rejects unresolved-version reasons that hide a stronger state', () => {
+  for (const [name, summary] of Object.entries(relationshipContradictions)) {
+    const observations = baseObservations();
+    if (summary.expected) observations.runtime.configIdentity = summary.expected;
+    observations.api.configIdentity = summary;
+    assert.throws(
+      () => validateProductionObservations(observations),
+      /unverifiable config identity reason conflicts with its sides/,
+      name,
+    );
+  }
+});
+
 test('read-production-state rejects unknown configIdentity fields before evidence serialization', () => {
   const observations = baseObservations();
   observations.api.configIdentity = {
@@ -186,6 +215,86 @@ test('read-production-state rejects unknown configIdentity fields before evidenc
   assert.throws(
     () => validateProductionObservations(observations),
     /unknown fields: plaintextSecret/,
+  );
+});
+
+test('private ConfigIdentity snapshot strictly rebuilds the API evidence boundary', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 't318-private-config-identity-'));
+  try {
+    const snapshot = join(tmp, 'config-identity.json');
+    writeFileSync(snapshot, JSON.stringify(validConfigIdentity));
+    assert.deepEqual(await readPrivateConfigIdentitySnapshot(snapshot), validConfigIdentity);
+
+    writeFileSync(
+      snapshot,
+      JSON.stringify({
+        ...validConfigIdentity,
+        plaintextSecret: 'must-not-cross-private-boundary',
+      }),
+    );
+    await assert.rejects(
+      readPrivateConfigIdentitySnapshot(snapshot),
+      /unknown fields: plaintextSecret/,
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('read-production-state rejects both directions of unilateral expected ConfigIdentity in every stage', () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL('./fixtures/config-identity-unilateral.json', import.meta.url)),
+  );
+  for (const [name, sides] of Object.entries(fixture)) {
+    const observations = baseObservations();
+    if (sides.runtimeExpected) observations.runtime.configIdentity = sides.runtimeExpected;
+    if (sides.apiSummary) observations.api.configIdentity = sides.apiSummary;
+    for (const configIdentityStage of ['legacy-pre-upgrade-baseline', 'steady-state']) {
+      assert.throws(
+        () => validateProductionObservations(observations, { configIdentityStage }),
+        /expected ConfigIdentity is missing from/,
+        `${name} must fail during ${configIdentityStage}`,
+      );
+    }
+  }
+});
+
+test('legacy baseline rejects a partially migrated API summary without expected binding', () => {
+  const observations = baseObservations();
+  observations.api.configIdentity = {
+    schemaVersion: 1,
+    status: 'unverifiable',
+    reason: 'expected_not_bound',
+    releaseId: 'rc-1',
+    observed: validConfigIdentity.observed,
+  };
+  assert.throws(
+    () => validateProductionObservations(observations, {
+      configIdentityStage: 'legacy-pre-upgrade-baseline',
+    }),
+    /expected ConfigIdentity is missing from both observers/,
+  );
+});
+
+test('candidate readback accepts a new bound expected before trusted identity commit', () => {
+  const observations = baseObservations();
+  observations.api.configIdentity = validConfigIdentity;
+  assert.doesNotThrow(() =>
+    validateExpectedConfigIdentityObservers(
+      { schemaVersion: 1, digest: `sha256:${'f'.repeat(64)}` },
+      observations.api.configIdentity,
+      { configIdentityStage: 'candidate-readback' },
+    ),
+  );
+  assert.throws(
+    () => validateExpectedConfigIdentityObservers(undefined, {
+      schemaVersion: 1,
+      status: 'unverifiable',
+      reason: 'expected_not_bound',
+      releaseId: 'rc-1',
+      observed: validConfigIdentity.observed,
+    }, { configIdentityStage: 'candidate-readback' }),
+    /requires a consistent API expected ConfigIdentity/,
   );
 });
 
@@ -305,43 +414,48 @@ test('partial promotion with API keep inherits and cross-checks trusted expected
     activeReleaseManifest,
   });
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv,
-      activeReleaseManifest,
-      activeReleaseTarget: `/opt/agent-saas-app/releases/${'f'.repeat(64)}`,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv,
+        activeReleaseManifest,
+        activeReleaseTarget: `/opt/agent-saas-app/releases/${'f'.repeat(64)}`,
+      }),
     /not bound to the active release target/,
   );
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv,
-      activeReleaseManifest,
-      activeReleaseTarget: `/opt/agent-saas-app/not-releases/${DIGEST.slice('sha256:'.length)}`,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv,
+        activeReleaseManifest,
+        activeReleaseTarget: `/opt/agent-saas-app/not-releases/${DIGEST.slice('sha256:'.length)}`,
+      }),
     /not bound to the active release target/,
   );
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv.replace('rc-api-active', 'rc-stale-env'),
-      activeReleaseManifest,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv.replace('rc-api-active', 'rc-stale-env'),
+        activeReleaseManifest,
+      }),
     /releaseId disagrees with active release manifest/,
   );
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
-      activeReleaseManifest,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
+        activeReleaseManifest,
+      }),
     /server digest is not bound to the active release target/,
   );
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv,
-      activeReleaseManifest: {
-        ...activeReleaseManifest,
-        components: { api: { artifactDigest: `sha256:${'f'.repeat(64)}` } },
-      },
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv,
+        activeReleaseManifest: {
+          ...activeReleaseManifest,
+          components: { api: { artifactDigest: `sha256:${'f'.repeat(64)}` } },
+        },
+      }),
     /server digest is not bound to the active release target/,
   );
   const identity = buildProductionIdentity(
@@ -354,21 +468,22 @@ test('partial promotion with API keep inherits and cross-checks trusted expected
 
   assert.deepEqual(identity.configIdentity, previous.configIdentity);
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv.replace(CONFIG_DIGEST, `sha256:${'f'.repeat(64)}`),
-      activeReleaseManifest,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv.replace(CONFIG_DIGEST, `sha256:${'f'.repeat(64)}`),
+        activeReleaseManifest,
+      }),
     /disagrees across trusted sources/,
   );
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => [
-        'AGENT_SAAS_RELEASE_ID=rc-api-active',
-        `AGENT_SAAS_SERVER_DIGEST=${DIGEST}`,
-        '',
-      ].join('\n'),
-      activeReleaseManifest,
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () =>
+          ['AGENT_SAAS_RELEASE_ID=rc-api-active', `AGENT_SAAS_SERVER_DIGEST=${DIGEST}`, ''].join(
+            '\n',
+          ),
+        activeReleaseManifest,
+      }),
     /missing from one trusted source/,
   );
 });
@@ -401,15 +516,19 @@ test('legacy API keep still verifies the content-addressed active release bindin
     '',
   ].join('\n');
 
-  assert.equal(resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-    readFile: () => activeEnv,
-    activeReleaseManifest,
-  }), undefined);
-  assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
+  assert.equal(
+    resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+      readFile: () => activeEnv,
       activeReleaseManifest,
     }),
+    undefined,
+  );
+  assert.throws(
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => activeEnv.replace(DIGEST, `sha256:${'f'.repeat(64)}`),
+        activeReleaseManifest,
+      }),
     /server digest is not bound to the active release target/,
   );
 });
@@ -433,9 +552,10 @@ test('API deploy cannot silently drop an existing trusted expected configIdentit
     },
   };
   assert.throws(
-    () => resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
-      readFile: () => 'AGENT_SAAS_RELEASE_ID=rc-api-new\n',
-    }),
+    () =>
+      resolveExpectedConfigIdentityForProduction(manifest, 'blue', previous, {
+        readFile: () => 'AGENT_SAAS_RELEASE_ID=rc-api-new\n',
+      }),
     /would drop trusted expected configIdentity/,
   );
 });

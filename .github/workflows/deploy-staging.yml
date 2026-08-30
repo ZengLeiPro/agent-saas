@@ -764,8 +764,10 @@ jobs:
           set -euo pipefail
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
+          # The deploy gate imports the shared strict private ConfigIdentity contract.
           scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-staging-release.sh scripts/release/verify-installed-release.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/artifact-lib.mjs \
             daemon-packaging/systemd/agent-saas-server-staging.service.template \
             daemon-packaging/systemd/agent-saas-runtime-worker-staging.service.template \

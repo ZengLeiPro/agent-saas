@@ -118,12 +118,12 @@ export interface RawRuntimeRunDispatchConfig {
    * 加载 system prompt 片段；同时 `${sharedDir}/tenants/<tenantId>/company.md` 作为 `{{COMPANY_INFO}}` 注入。
    */
   sharedDir: string;
-  /** Process-level model adapter factory; app runtime injects Codex OAuth transport here. */
+  /** 进程级 model adapter factory；app runtime 在此注入 Codex OAuth transport。 */
   modelAdapterFactory?: ModelAdapterFactory;
   /** 平台系统提示语注册表 getter；每次运行现取，以支持管理端热更新。 */
   getSystemPrompt?: (id: SystemPromptId) => string;
-  /** Run 执行边界刷新跨进程共享配置；普通 dispatch、resume 与 scheduler wake 均调用。 */
-  refreshSharedConfig?: () => void;
+  /** Run 执行边界等待共享配置原子提交；false 时调用方必须 fail closed。 */
+  refreshSharedConfig?: () => void | boolean | Promise<boolean>;
   /** Stable entity + immutable version resolver. New sessions read current binding once; resumes use the pinned version. */
   agentRuntimeProfileResolver?: AgentRuntimeProfileResolver;
   memory?: { enabled?: boolean; maxLines?: number };

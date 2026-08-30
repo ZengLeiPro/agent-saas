@@ -54,6 +54,19 @@ const ZERO_ACTIVE_RUN_COUNTS: ActiveRunCounts = {
   total: 0,
 };
 
+function buildPublicReleaseIdentity(release: RuntimeIdentity, safetyAttested: boolean) {
+  return {
+    environment: release.environment,
+    releaseId: release.releaseId,
+    releaseSha: release.releaseSha,
+    serverDigest: release.serverDigest,
+    webDigest: release.webDigest,
+    acsOrchestratorDigest: release.acsOrchestratorDigest,
+    acsSandboxImageDigest: release.acsSandboxImageDigest,
+    safetyAttested,
+  };
+}
+
 /**
  * 创建健康检查和配置路由
  * @param config 应用配置
@@ -105,7 +118,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
 
   // ready：可以接流量才 200（draining / runtime admission paused → 503）。
   // 蓝绿部署门禁在新色端口上等它变 200 再切流。warmup 进度随载荷暴露但不
-  // gate ready——skills 物化未完成时 dispatch 路径的版本化同步兜底正确性，
+  // gate ready——skills 物化未完成时，dispatch 路径的版本化同步兜底正确性，
   // 部署脚本自行决定是否等 warmup.state=done 再切流。
   router.get('/healthz/ready', async (_req, res) => {
     const draining = options.getIsDraining?.() ?? false;
@@ -114,6 +127,9 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
     const warmup = options.getSkillsWarmupStatus?.() ?? { state: 'done' as const };
     const release = options.getRuntimeIdentity?.() ?? runtimeIdentity;
     const configIdentity = options.getConfigIdentitySummary?.() ?? undefined;
+    // 新版 release 已绑定 expected 时，readiness 直接把一致性作为门禁；legacy 未绑定
+    // expected 仍兼容。摘要本身只走平台管理员 API / 私有运行态快照，不进匿名响应。
+    const configIdentityReady = !configIdentity?.expected || configIdentity.status === 'consistent';
     const safetyAttested =
       release?.safetyAttested !== false && (options.getEnvironmentSafetyAttested?.() ?? true);
     let integrationV3: IntegrationV3HealthStatus | undefined;
@@ -135,13 +151,14 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
       return;
     }
     const releaseReady = integrationV3?.releaseReady !== false;
+    const ready = !draining && runtimeReady && releaseReady && safetyAttested && configIdentityReady;
     const effectiveConfig = options.getEffectiveConfigStatus?.();
-    res.status(draining || !runtimeReady || !releaseReady || !safetyAttested ? 503 : 200).json({
-      status: draining ? 'draining' : runtimeReady && releaseReady && safetyAttested ? 'ok' : 'not_ready',
+    res.status(ready ? 200 : 503).json({
+      status: draining ? 'draining' : ready ? 'ok' : 'not_ready',
       draining,
       warmup,
       ...(runtimeAdmission ? { runtimeAdmission } : {}),
-      ...(release ? { release: { ...release, safetyAttested } } : {}),
+      ...(release ? { release: buildPublicReleaseIdentity(release, safetyAttested) } : {}),
       ...(effectiveConfig ? {
         configSchemaVersion: effectiveConfig.configSchemaVersion,
         effectiveConfigFingerprint: effectiveConfig.effectiveConfigFingerprint,
@@ -150,7 +167,6 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
         environment: effectiveConfig.environment,
         appliedAt: effectiveConfig.appliedAt,
       } : {}),
-      ...(configIdentity ? { configIdentity } : {}),
       ...(integrationV3 ? { integrationV3 } : {}),
     });
   });

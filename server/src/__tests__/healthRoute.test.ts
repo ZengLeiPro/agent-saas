@@ -18,10 +18,19 @@ const APP_CONFIG = {
   tts: undefined,
 } as any;
 
-async function startHealthServer(options: Parameters<typeof createHealthRouter>[1] = {}) {
+async function startHealthServer(
+  options: Parameters<typeof createHealthRouter>[1] = {},
+  requestUser?: unknown,
+) {
   const originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
   const app = express();
+  if (requestUser) {
+    app.use((req, _res, next) => {
+      req.user = requestUser as typeof req.user;
+      next();
+    });
+  }
   try {
     app.use('/api', createHealthRouter(APP_CONFIG, options));
   } finally {
@@ -469,6 +478,62 @@ describe('health router', () => {
     });
   });
 
+  it.each([
+    ['匿名调用者', undefined],
+    ['普通调用者', { id: 'member-1', role: 'member' }],
+  ])('TASK-318：%s 的公开 readiness 仅返回白名单 release identity', async (_label, user) => {
+    const server = await startHealthServer(
+      {
+        getRuntimeIdentity: () =>
+          ({
+            environment: 'staging',
+            releaseId: 'rc-20260825-01',
+            releaseSha: 'a'.repeat(40),
+            serverDigest: `sha256:${'b'.repeat(64)}`,
+            webDigest: `sha256:${'c'.repeat(64)}`,
+            acsOrchestratorDigest: `sha256:${'d'.repeat(64)}`,
+            acsSandboxImageDigest: `sha256:${'e'.repeat(64)}`,
+            safetyAttested: true,
+            expectedConfigIdentity: {
+              schemaVersion: 1,
+              digest: `sha256:${'f'.repeat(64)}`,
+              credentialVersionDigest: `sha256:${'1'.repeat(64)}`,
+            },
+            configIdentity: { plaintextSecretProbe: 'must-not-leak-config-identity' },
+            observedIdentity: { digest: 'must-not-leak-observed-identity' },
+            credentialVersionDigest: 'must-not-leak-credential-version',
+          }) as any,
+      },
+      user,
+    );
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    const serialized = JSON.stringify(body);
+
+    expect(response.status).toBe(200);
+    expect(body.release).toEqual({
+      environment: 'staging',
+      releaseId: 'rc-20260825-01',
+      releaseSha: 'a'.repeat(40),
+      serverDigest: `sha256:${'b'.repeat(64)}`,
+      webDigest: `sha256:${'c'.repeat(64)}`,
+      acsOrchestratorDigest: `sha256:${'d'.repeat(64)}`,
+      acsSandboxImageDigest: `sha256:${'e'.repeat(64)}`,
+      safetyAttested: true,
+    });
+    for (const forbidden of [
+      'expectedConfigIdentity',
+      'configIdentity',
+      'observed',
+      'credentialVersionDigest',
+      'must-not-leak',
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
   it('fails readiness closed for an unattested staging identity', async () => {
     const server = await startHealthServer({
       getRuntimeIdentity: () => ({ environment: 'staging', safetyAttested: false }),
@@ -496,33 +561,58 @@ describe('health router', () => {
     });
   });
 
-  it('TASK-318：readiness 透传只读脱敏 configIdentity 摘要', async () => {
+  it('TASK-318：公开 readiness 不暴露 configIdentity 或上游额外字段', async () => {
     const configIdentity = {
       schemaVersion: 1 as const,
-      status: 'drifted' as const,
+      status: 'consistent' as const,
       expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
       observed: {
         schemaVersion: 1,
-        digest: `sha256:${'b'.repeat(64)}`,
+        digest: `sha256:${'a'.repeat(64)}`,
         credentialVersionDigest: null,
         versionResolution: 'resolved' as const,
         secretRefCount: 0,
       },
-      lastChangedAt: '2026-08-29T12:00:00.000Z',
+      releaseId: 'release-1',
+      plaintextSecretProbe: 'must-not-leak',
     };
     const server = await startHealthServer({
-      getConfigIdentitySummary: () => configIdentity,
+      getConfigIdentitySummary: () => configIdentity as any,
     });
     servers.push(server);
 
     const response = await server.request('/api/healthz/ready');
     const body = (await response.json()) as any;
     expect(response.status).toBe(200);
-    expect(body.configIdentity).toEqual(configIdentity);
-    expect(JSON.stringify(body.configIdentity)).not.toContain('plaintext-secret-probe');
+    expect(body).not.toHaveProperty('configIdentity');
+    expect(JSON.stringify(body)).not.toContain('must-not-leak');
   });
 
-  it('defaults warmup to done when no status provider is wired', async () => {
+  it('TASK-318：已绑定 expected 的 drift 在匿名 readiness 只表现为 503', async () => {
+    const server = await startHealthServer({
+      getConfigIdentitySummary: () => ({
+        schemaVersion: 1,
+        status: 'drifted',
+        expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'b'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+        releaseId: 'release-1',
+      }),
+    });
+    servers.push(server);
+
+    const response = await server.request('/api/healthz/ready');
+    const body = (await response.json()) as any;
+    expect(response.status).toBe(503);
+    expect(body).not.toHaveProperty('configIdentity');
+  });
+
+  it('未接入 provider 时 warmup 默认为 done', async () => {
     const server = await startHealthServer({});
     servers.push(server);
 

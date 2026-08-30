@@ -1016,7 +1016,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     options: AgentRunOptions = {},
     hooks?: AgentRunHooks,
   ): AsyncGenerator<OutboundEvent> {
-    config.refreshSharedConfig?.();
+    if (await config.refreshSharedConfig?.() === false) { yield { type: 'error', error: '共享配置刷新失败，请重试' }; return; }
     // cron/dingtalk 触发即跑，无 resume 路径；context.user/cwd/modelConnection 由 channel 注入。
     if (context.channel !== 'web' && context.channel !== 'cron' && context.channel !== 'dingtalk') {
       yield { type: 'error', error: `Raw runtime 暂不支持通道 "${context.channel}"（仅支持 web/cron/dingtalk）` };
@@ -1753,7 +1753,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
   return async function* rawApprovalResumeDispatch(
     request: RawApprovalResumeRequest,
   ): AsyncGenerator<OutboundEvent> {
-    config.refreshSharedConfig?.();
+    if (await config.refreshSharedConfig?.() === false) { yield { type: 'error', error: '共享配置刷新失败，请重试' }; return; }
     if (request.context.channel !== 'web') {
       yield { type: 'error', error: 'Raw approval resume 当前仅支持 Web 通道' };
       return;
@@ -2229,7 +2229,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
   return async function* rawInteractionResumeDispatch(
     request: RawInteractionResumeRequest,
   ): AsyncGenerator<OutboundEvent> {
-    config.refreshSharedConfig?.();
+    if (await config.refreshSharedConfig?.() === false) { yield { type: 'error', error: '共享配置刷新失败，请重试' }; return; }
     if (request.context.channel !== 'web') {
       yield { type: 'error', error: 'Raw interaction resume 当前仅支持 Web 通道' };
       return;
@@ -2712,7 +2712,7 @@ export async function wakeRuntimeSession(
   run: RunRecord,
   options: WakeRuntimeSessionOptions = {},
 ): Promise<void> {
-  config.refreshSharedConfig?.();
+  if (await config.refreshSharedConfig?.() === false) throw new Error('共享配置刷新失败，请重试');
   const sessionCatalog = resolveSessionCatalog(config);
   const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
   if (!session) {

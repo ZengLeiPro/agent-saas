@@ -652,7 +652,7 @@ describe('四态判定', () => {
 });
 
 describe('跨组件 wire 契约（shared schema）', () => {
-  it('合法 summary 可解析；旧 schema / 缺字段数据被拒绝', () => {
+  it('合法 summary 可解析；旧 schema / 缺字段及矛盾状态数据被拒绝', () => {
     const valid = {
       schemaVersion: 1,
       status: 'drifted',
@@ -706,6 +706,63 @@ describe('跨组件 wire 契约（shared schema）', () => {
         observed: valid.observed,
       }),
     ).toBeNull();
+  });
+
+  it('secret_ref_version_unresolved 仅接受已绑定、schema 可比且 config digest 相同', () => {
+    const digestA = `sha256:${'a'.repeat(64)}`;
+    const digestB = `sha256:${'b'.repeat(64)}`;
+    const observed = {
+      schemaVersion: 1,
+      digest: digestA,
+      credentialVersionDigest: null,
+      versionResolution: 'unavailable' as const,
+      secretRefCount: 1,
+    };
+    const unresolved = {
+      schemaVersion: 1 as const,
+      status: 'unverifiable' as const,
+      reason: 'secret_ref_version_unresolved' as const,
+      expected: { schemaVersion: 1, digest: digestA },
+      observed,
+    };
+
+    expect(parseConfigIdentitySummary(unresolved)).toEqual(unresolved);
+    expect(
+      parseConfigIdentitySummary({
+        ...unresolved,
+        expected: { ...unresolved.expected, digest: digestB },
+      }),
+    ).toBeNull();
+    expect(
+      parseConfigIdentitySummary({
+        ...unresolved,
+        expected: { ...unresolved.expected, schemaVersion: 2 },
+      }),
+    ).toBeNull();
+    const { expected: _expected, ...withoutExpected } = unresolved;
+    expect(parseConfigIdentitySummary(withoutExpected)).toBeNull();
+
+    expect(
+      parseConfigIdentitySummary({
+        ...unresolved,
+        status: 'drifted',
+        reason: undefined,
+        expected: { ...unresolved.expected, digest: digestB },
+      }),
+    ).not.toBeNull();
+    expect(
+      parseConfigIdentitySummary({
+        ...unresolved,
+        reason: 'schema_version_unsupported',
+        expected: { ...unresolved.expected, schemaVersion: 2 },
+      }),
+    ).not.toBeNull();
+    expect(
+      parseConfigIdentitySummary({
+        ...withoutExpected,
+        reason: 'expected_not_bound',
+      }),
+    ).not.toBeNull();
   });
 });
 

@@ -134,13 +134,12 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     let model: string | undefined;
     if (modelRef && this.config.modelResolver) {
       const resolved = this.config.modelResolver(modelRef, tenantId);
-      if (!resolved && (request.model
-        || boundProfile?.version.config.model.strategy === 'fixed'
-        || configuredWorkerModel?.strategy === 'fixed')) {
-        throw new Error(`后台 Agent 模型 "${modelRef}" 不在当前组织可用模型白名单内。`);
+      if (!resolved) {
+        throw new Error(`后台 Agent 模型 "${modelRef}" 配置刷新失败或不在当前组织可用模型白名单内。`);
       }
-      model = resolved?.model;
+      model = resolved.model;
     }
+    // 仅未装配 resolver 的 file/test backend 可继承原始 ref；resolver 返回 null 必须拒绝。
     model ??= modelRef ?? parentRun?.model;
     if (!model || !modelRef) throw new Error('无法确定后台 Agent 模型。');
 

@@ -881,7 +881,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
   describe('语音消息 STT', () => {
     const voiceFile = { savedPath: '/tmp/cov-voice.wav', relativePath: 'voice/cov-voice.wav', duration: 1200 };
 
-    it('未配置 STT → stt_not_configured + voice_transcribed(error)', async () => {
+    it('未配置 STT → stt_not_configured + voice_transcribed(error)，不进入模型执行', async () => {
       const rig = makeRig();
       await rig.send(USER, { client_msg_id: 'cm-stt-0', message: '', voiceFile });
       const types = rig.ws.sent.map((m) => m.data.type);
@@ -891,23 +891,23 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       expect(rig.ws.sent.some((message) => message.data.type === 'chat_ack')).toBe(false);
     });
 
-    it('识别成功：注入 VOICE_STT_TAG 前缀送 dispatch，先推 voice_transcribed', async () => {
-      const tmp = await makeTmp('cov-stt-ok-');
+    it('异步刷新后使用最新 STT，禁用或刷新失败时语音与文本都 fail closed', async () => {
+      const tmp = await makeTmp('cov-stt-hot-');
+      let currentSttConfig: SttConfig | undefined = { apiKey: 'old-key' } as SttConfig; const refreshOrder: string[] = []; let refreshCount = 0;
       sttMock.mockResolvedValueOnce({ text: '今天天气不错', duration: 900 });
       const inbound: any[] = [];
-      const dispatch: AgentRunDispatch = async function* (msg) {
-        inbound.push(msg);
-        yield { type: 'done' };
-      };
-      const rig = makeRig({ agentCwd: tmp, sttConfig: { apiKey: 'k' } as SttConfig }, dispatch);
+      const dispatch: AgentRunDispatch = async function* (msg) { inbound.push(msg); yield { type: 'done' }; };
+      const rig = makeRig({ agentCwd: tmp, refreshSharedConfig: async () => { refreshOrder.push('refresh'); await Promise.resolve(); refreshCount += 1; if (refreshCount === 2) currentSttConfig = { apiKey: 'new-key' } as SttConfig; if (refreshCount === 3) currentSttConfig = undefined; return refreshCount < 4; }, getSttConfig: () => { refreshOrder.push('get'); return currentSttConfig; } }, dispatch);
       await rig.send(USER, { client_msg_id: 'cm-stt-1', message: '', voiceFile });
-      expect(sttMock).toHaveBeenCalledWith('/tmp/cov-voice.wav', { apiKey: 'k' });
-      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({
-        type: 'voice_transcribed', text: '今天天气不错',
-      });
-      expect(inbound).toHaveLength(1);
-      expect(inbound[0].content).toBe('[这是一条语音转文字的消息，可能存在识别准确度问题] 今天天气不错');
-      expect(rig.ws.sent.find((m) => m.data.type === 'done')?.data).toMatchObject({ client_msg_id: 'cm-stt-1' });
+      expect(refreshOrder.slice(0, 2)).toEqual(['refresh', 'get']); expect(sttMock).toHaveBeenCalledWith('/tmp/cov-voice.wav', { apiKey: 'old-key' });
+      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({ type: 'voice_transcribed', text: '今天天气不错' });
+      expect(inbound).toHaveLength(1); expect(inbound[0].content).toBe('[这是一条语音转文字的消息，可能存在识别准确度问题] 今天天气不错');
+      sttMock.mockResolvedValueOnce({ text: '第二次', duration: 300 });
+      await rig.send(USER, { client_msg_id: 'cm-stt-2', message: '', voiceFile });
+      expect(sttMock).toHaveBeenNthCalledWith(2, '/tmp/cov-voice.wav', { apiKey: 'new-key' });
+      await rig.send(USER, { client_msg_id: 'cm-stt-3', message: '', voiceFile });
+      expect(sttMock).toHaveBeenCalledTimes(2); expect(rig.ws.sent.at(-1)?.data).toMatchObject({ reason_code: 'stt_not_configured' });
+      await rig.send(USER, { client_msg_id: 'cm-stt-4', message: '', voiceFile }); expect(rig.ws.sent.at(-1)?.data).toMatchObject({ reason_code: 'stt_failed' }); await rig.send(USER, { client_msg_id: 'cm-config-5', message: '文本消息' }); expect(rig.ws.sent.at(-1)?.data).toMatchObject({ reason_code: 'model_not_allowed' });
     });
 
     it('识别为空（未检测到语音）与调用异常 → stt_failed，不进入 dispatch', async () => {

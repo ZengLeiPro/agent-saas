@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { OverviewPage } from './OverviewPage';
@@ -151,7 +151,7 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
     expect(screen.getByTestId('config-identity-observed').textContent?.trim()).toBe('—');
   });
 
-  it('接口失败（snapshot 请求 reject）时同样显示未采集，不崩溃', async () => {
+  it('首次接口失败（snapshot 请求 reject）时显示未采集，不崩溃', async () => {
     overviewSnapshot.mockRejectedValue(new Error('network down'));
     billingTrend.mockResolvedValue({ audit: { days: 14, daily: [] } });
     overviewTrends.mockResolvedValue({
@@ -217,6 +217,84 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
     await waitFor(() => {
       expect(screen.getByTestId('config-identity-status').textContent).toBe('一致');
     });
+  });
+
+  it('成功后手动刷新失败时立刻从一致降级为未采集', async () => {
+    setup({ ...baseSnapshot, configIdentity: identity({}) });
+    render(<OverviewPage />);
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('一致');
+    });
+
+    overviewSnapshot.mockRejectedValueOnce(new Error('refresh failed'));
+    fireEvent.click(await screen.findByRole('button', { name: /刷新/ }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    });
+    expect(document.body.textContent).toContain('refresh failed');
+  });
+
+  it('成功后定时刷新失败时也降级，不保留旧 consistent 绿态', async () => {
+    let refreshIntervalCallback: (() => void) | undefined;
+    vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
+      if (timeout === 15_000) refreshIntervalCallback = handler as () => void;
+      return {} as ReturnType<typeof setInterval>;
+    });
+    setup({ ...baseSnapshot, configIdentity: identity({}) });
+    render(<OverviewPage />);
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('一致');
+    });
+
+    expect(refreshIntervalCallback).toBeTypeOf('function');
+    overviewSnapshot.mockRejectedValueOnce(new Error('poll failed'));
+    await act(async () => {
+      refreshIntervalCallback?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    });
+    expect(document.body.textContent).toContain('poll failed');
+  });
+
+  it('较早请求晚到时不能覆盖较新失败后的保守降级', async () => {
+    let refreshIntervalCallback: (() => void) | undefined;
+    vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
+      if (timeout === 15_000) refreshIntervalCallback = handler as () => void;
+      return {} as ReturnType<typeof setInterval>;
+    });
+    let resolveInitial!: (value: unknown) => void;
+    overviewSnapshot
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
+      .mockRejectedValueOnce(new Error('newer poll failed'));
+    billingTrend.mockResolvedValue({ audit: { days: 14, daily: [] } });
+    overviewTrends.mockResolvedValue({
+      available: true,
+      missingSources: [],
+      days: 14,
+      timezone: 'Asia/Shanghai',
+      daily: [],
+    });
+    render(<OverviewPage />);
+
+    expect(refreshIntervalCallback).toBeTypeOf('function');
+    await act(async () => {
+      refreshIntervalCallback?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    });
+
+    await act(async () => {
+      resolveInitial({ ...baseSnapshot, configIdentity: identity({}) });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    expect(screen.getByTestId('config-identity-release-id').textContent?.trim()).toBe('—');
   });
 
   it('摘要只显示截断 digest，不把完整 digest 或任何敏感值渲染进 DOM', async () => {

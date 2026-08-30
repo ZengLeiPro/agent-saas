@@ -11,8 +11,9 @@ Environment=NODE_ENV=production
 Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas/config.json
 Environment=AZEROTH_TOKENS_FILE=/etc/agent-saas/azeroth-tokens.json
 EnvironmentFile=/etc/agent-saas/server.env
-# 生产环境身份是启动硬约束，必须覆盖共享 env 中可能残留的旧值
+# 生产环境身份与私有配置身份快照必须覆盖共享 env 中可能残留的旧值。
 Environment=AGENT_SAAS_ENVIRONMENT=production
+Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-server.config-identity.json
 ExecStart=/usr/local/bin/pnpm start
 Restart=always
 RestartSec=5

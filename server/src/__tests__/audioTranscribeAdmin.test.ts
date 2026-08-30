@@ -39,7 +39,9 @@ async function withApp<T>(
     secretVault: InMemorySecretVault;
     validate: ReturnType<typeof vi.fn>;
     onUpdated: ReturnType<typeof vi.fn>;
+    onConfigReloaded: ReturnType<typeof vi.fn>;
   }) => Promise<T>,
+  opts: Partial<Parameters<typeof createAudioTranscribeAdminRouter>[0]> = {},
 ): Promise<T> {
   const root = mkdtempSync(join(tmpdir(), 'audio-transcribe-admin-'));
   roots.push(root);
@@ -52,6 +54,7 @@ async function withApp<T>(
   const secretVault = new InMemorySecretVault();
   const validate = vi.fn(async () => undefined);
   const onUpdated = vi.fn(async () => undefined);
+  const onConfigReloaded = vi.fn(async () => undefined);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -69,6 +72,8 @@ async function withApp<T>(
     secretVault,
     validate,
     onUpdated,
+    onConfigReloaded,
+    ...opts,
   }));
 
   const server = app.listen(0);
@@ -82,11 +87,18 @@ async function withApp<T>(
     secretVault,
     validate,
     onUpdated,
+    onConfigReloaded,
   });
 }
 
 async function readJson(response: Response) {
   return response.json() as Promise<any>;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
 }
 
 afterEach(() => {
@@ -95,7 +107,7 @@ afterEach(() => {
 });
 
 describe('audio transcribe admin router', () => {
-  it('GET returns only configured booleans for secrets plus pricing and status', async () => {
+  it('GET returns only configured booleans for secrets, pricing, and status', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`);
       expect(response.status).toBe(200);
@@ -134,6 +146,7 @@ describe('audio transcribe admin router', () => {
       secretVault,
       validate,
       onUpdated,
+      onConfigReloaded,
     }) => {
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
         method: 'PUT',
@@ -178,7 +191,98 @@ describe('audio transcribe admin router', () => {
       expect(runtimeConfig.stt).toEqual(onDisk.stt);
       expect(validate).toHaveBeenCalledWith(runtimeConfig.stt);
       expect(onUpdated).toHaveBeenCalledWith(runtimeConfig.stt);
+      expect(onConfigReloaded).toHaveBeenCalledWith(text);
     });
+  });
+
+  it('force full baseline preserves an unloaded field and publishes identity from complete runtime config', async () => {
+    const diskConfig: Record<string, unknown> = {
+      ...baseRawConfig(),
+      toolControls: { tools: { Shell: { enabled: false } } },
+    };
+    const staleRuntimeConfig = parseAppConfig(baseRawConfig());
+    let identityToolControls: unknown;
+    const ensureConfigBaselineApplied = vi.fn(async (expectedText: string) => {
+      Object.assign(staleRuntimeConfig, parseAppConfig((await import('jsonc-parser')).parse(expectedText)));
+      return true;
+    });
+    const onConfigReloaded = vi.fn(async () => {
+      identityToolControls = structuredClone(staleRuntimeConfig.toolControls);
+    });
+
+    await withApp(diskConfig, async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'baseline-aware-stt' } }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(ensureConfigBaselineApplied).toHaveBeenCalledWith(before);
+      expect(parseAppConfig((await import('jsonc-parser')).parse(
+        readFileSync(configPath, 'utf-8'),
+      )).toolControls?.tools?.Shell?.enabled).toBe(false);
+      expect(staleRuntimeConfig.toolControls?.tools?.Shell?.enabled).toBe(false);
+      expect(identityToolControls).toEqual(staleRuntimeConfig.toolControls);
+    }, { config: staleRuntimeConfig, ensureConfigBaselineApplied, onConfigReloaded });
+  });
+
+  it('baseline false rejects before secret, validation, runtime, disk, or identity side effects', async () => {
+    const staleRuntimeConfig = parseAppConfig(baseRawConfig());
+    const secretVault = new InMemorySecretVault();
+    const putSecret = vi.spyOn(secretVault, 'putSecret');
+    const validate = vi.fn();
+    const onUpdated = vi.fn();
+    const onConfigReloaded = vi.fn();
+    const ensureConfigBaselineApplied = vi.fn(async () => false);
+
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'rejected-stt', apiKey: 'must-not-store' } }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(staleRuntimeConfig.stt?.model).toBe('fun-asr');
+      expect(putSecret).not.toHaveBeenCalled();
+      expect(validate).not.toHaveBeenCalled();
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(onConfigReloaded).not.toHaveBeenCalled();
+    }, {
+      config: staleRuntimeConfig, secretVault, validate, onUpdated,
+      onConfigReloaded, ensureConfigBaselineApplied,
+    });
+  });
+
+  it('file change during baseline returns 409 before secret or callbacks', async () => {
+    const secretVault = new InMemorySecretVault();
+    const putSecret = vi.spyOn(secretVault, 'putSecret');
+    const validate = vi.fn();
+    const onUpdated = vi.fn();
+    const onConfigReloaded = vi.fn();
+    let configPathForBaseline = '';
+    const ensureConfigBaselineApplied = vi.fn(async () => {
+      writeFileSync(configPathForBaseline, JSON.stringify({ ...baseRawConfig(), concurrentWinner: true }), 'utf-8');
+      return true;
+    });
+
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      configPathForBaseline = configPath;
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'loser-stt', apiKey: 'must-not-store' } }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+      expect(runtimeConfig.stt?.model).toBe('fun-asr');
+      expect(putSecret).not.toHaveBeenCalled();
+      expect(validate).not.toHaveBeenCalled();
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(onConfigReloaded).not.toHaveBeenCalled();
+    }, { secretVault, validate, onUpdated, onConfigReloaded, ensureConfigBaselineApplied });
   });
 
   it('empty strings preserve old refs and explicit null clears the selected secret', async () => {
@@ -259,6 +363,154 @@ describe('audio transcribe admin router', () => {
       expect(putSecret).not.toHaveBeenCalled();
       expect(validate).not.toHaveBeenCalled();
       expect(onUpdated).not.toHaveBeenCalled();
+    });
+  });
+
+  it('callback 失败时回滚执行侧且不提交磁盘或 AppConfig', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig, onUpdated }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      let executionStt = structuredClone(runtimeConfig.stt);
+      onUpdated.mockImplementation(async (next) => {
+        executionStt = structuredClone(next);
+        if (next?.model === 'candidate-that-fails') throw new Error('STT runtime callback failed');
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'candidate-that-fails' } }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.stt?.model).toBe('fun-asr');
+      expect(executionStt?.model).toBe('fun-asr');
+      expect(onUpdated).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('SecretVault 第二次解析失败时不发布候选 STT', async () => {
+    const rawConfig = baseRawConfig();
+    rawConfig.stt = {
+      ...rawConfig.stt,
+      apiKey: 'old-dashscope',
+      ossAccessKeyId: 'old-oss-id',
+      ossAccessKeySecret: 'old-oss-secret',
+    } as typeof rawConfig.stt & Record<string, unknown>;
+    delete (rawConfig.stt as Record<string, unknown>).apiKeyRef;
+    delete (rawConfig.stt as Record<string, unknown>).ossAccessKeyIdRef;
+    delete (rawConfig.stt as Record<string, unknown>).ossAccessKeySecretRef;
+
+    await withApp(rawConfig, async ({
+      baseUrl, configPath, runtimeConfig, secretVault, validate, onUpdated,
+    }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      const originalGetSecret = secretVault.getSecret.bind(secretVault);
+      let secretReads = 0;
+      vi.spyOn(secretVault, 'getSecret').mockImplementation(async (secretId, context) => {
+        secretReads += 1;
+        if (secretReads === 4) throw new Error('SecretVault second resolution failed');
+        return originalGetSecret(secretId, context);
+      });
+      const resolveRefs = async (next: typeof runtimeConfig.stt) => {
+        for (const ref of [next?.apiKeyRef, next?.ossAccessKeyIdRef, next?.ossAccessKeySecretRef]) {
+          if (ref) await secretVault.getSecret(ref, {
+            actor: 'system', userId: '__system__', scopes: ['secret:stt:read'],
+          });
+        }
+      };
+      validate.mockImplementation(resolveRefs);
+      onUpdated.mockImplementation(resolveRefs);
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config: {
+            model: 'new-stt-model',
+            apiKey: 'new-dashscope',
+            ossAccessKeyId: 'new-oss-id',
+            ossAccessKeySecret: 'new-oss-secret',
+          },
+        }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.stt?.model).toBe('fun-asr');
+      expect(validate).toHaveBeenCalledOnce();
+      expect(onUpdated).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('CAS 冲突不推进 ConfigIdentity，且不覆盖并发胜出版本', async () => {
+    await withApp(baseRawConfig(), async ({
+      baseUrl, configPath, runtimeConfig, validate, onUpdated, onConfigReloaded,
+    }) => {
+      validate.mockImplementation(async () => {
+        writeFileSync(configPath, JSON.stringify({ ...baseRawConfig(), concurrentWinner: true }), 'utf-8');
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'losing-stt-candidate' } }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+      expect(runtimeConfig.stt?.model).toBe('fun-asr');
+      expect(onUpdated).not.toHaveBeenCalled();
+      expect(onConfigReloaded).not.toHaveBeenCalled();
+    });
+  });
+
+  it('ConfigIdentity 发布失败时响应 fail closed，但 durable commit 保持可刷新', async () => {
+    const onConfigReloaded = vi.fn(async () => {
+      throw new Error('配置文件被并发改写且重载失败');
+    });
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'durably-committed-stt' } }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(parseAppConfig((await import('jsonc-parser')).parse(
+        readFileSync(configPath, 'utf-8'),
+      )).stt?.model).toBe('durably-committed-stt');
+      expect(onConfigReloaded).toHaveBeenCalledOnce();
+    }, { onConfigReloaded });
+  });
+
+  it('两个管理员交错保存时锁内 callback 未完成前拒绝另一写入', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig, onUpdated }) => {
+      const firstBlocked = deferred();
+      const firstEntered = deferred();
+      onUpdated.mockImplementation(async (next) => {
+        if (next?.model === 'admin-a-model') {
+          firstEntered.resolve();
+          await firstBlocked.promise;
+        }
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'admin-a-model' } }),
+      });
+      await firstEntered.promise;
+      const secondResponse = await fetch(`${baseUrl}/api/admin/audio-transcribe`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { model: 'admin-b-model' } }),
+      });
+      expect(secondResponse.status).toBe(409);
+
+      firstBlocked.resolve();
+      expect((await firstRequest).status).toBe(200);
+      expect(parseAppConfig((await import('jsonc-parser')).parse(readFileSync(configPath, 'utf-8'))).stt?.model)
+        .toBe('admin-a-model');
+      expect(runtimeConfig.stt?.model).toBe('admin-a-model');
     });
   });
 });

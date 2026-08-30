@@ -179,29 +179,16 @@ import { PgSystemMetricsStore } from '../runtime/systemMetricsStore.js';
 import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
-import {
-  notifyBillingAuditAlerts,
-  registerSearchProviderAlerts,
-} from './registerSearchProviderAlerts.js';
-import {
-  createToolSettingsUpdater,
-  createWebToolsRuntimeUpdatePreparer,
-  createWebToolsRuntimeUpdater,
-} from './webToolsRuntimeUpdate.js';
+import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
+import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
 import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js';
-import {
-  createRuntimeRunCapacityResolver,
-  createRuntimeSchedulerCapacityController,
-} from './runtimeSchedulerCapacityAssembly.js';
+import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
 import { DwsAuthFlowService, DwsDeviceLoginRunner } from '../dws/authFlow.js';
 import { createDwsBusinessToolProviders } from '../dws/businessToolProvider.js';
-import {
-  createAgentDwsRuntime,
-  type AgentDwsRuntimeBundle,
-} from './agentDwsRuntime.js';
+import { createAgentDwsRuntime, type AgentDwsRuntimeBundle } from './agentDwsRuntime.js';
 import { createConnectorServerRemoteResolver, hasAcsConnector } from './connectorServerRemote.js';
 import type { PgAgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
 import type { PgAgentDwsMessageStore } from '../data/agentDwsMessages/index.js';
@@ -390,10 +377,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantSharedEnv,
     sharedDir,
   };
-  const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
+  const titleGeneratorDefaultModel = process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini'; const titleGeneratorConfigs = resolveTitleGeneratorConfigs({
     models: config.models,
     titleGenerator: config.titleGenerator,
-    defaultModel: process.env.OPENAI_DEFAULT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.4-mini',
+    defaultModel: titleGeneratorDefaultModel,
     logger: serverLogger,
   });
   // 门禁模型配置链（主 + fallback；2026-07 唯恩批次）。与 title 不同：
@@ -705,7 +692,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({ config, secretVault, logger: serverLogger.child('ConfigIdentity') });
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const webChannelSttRuntime = resolvedSttRuntimeConfig.sttConfig ? { sttConfig: resolvedSttRuntimeConfig.sttConfig } : {}; const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({ config, secretVault, logger: serverLogger.child('ConfigIdentity') });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -1555,8 +1542,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
-  // 模型解析器：如果配置了 models，则绑定到 RawRuntime / WebChannel / Cron。
-  // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
+  // 模型解析器：如果配置了 models，则绑定到 RawRuntime、WebChannel 与 Cron。
+  // 安全入口解析前强制对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
   let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
@@ -1564,10 +1551,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     tenantStore,
     tenantsFilePath,
-    logger: serverLogger,
-    titleGeneratorConfigs,
+    logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
-    onSystemPromptOverridesUpdated: (next) => { systemPromptRegistry.replaceOverrides(next); },
+    prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next),
     prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
     prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
@@ -1659,7 +1645,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       providerOptions,
       { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
-    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => { sharedConfigRefresher.refreshIfChanged(); rawRuntimeConfig.toolControls = config.toolControls; },
+    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: async () => { const refreshed = await sharedConfigRefresher.refreshIfChanged(true); if (refreshed) rawRuntimeConfig.toolControls = config.toolControls; return refreshed; },
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
@@ -1675,7 +1661,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       : false,
     ...memoryContextTools, agentStore, orgAgentStore, tenantStore,
     environmentStore,
-    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
+    taskboard: { service: () => taskboardService, generateTaskTitle: (description, identity) => createTaskboardTitleGenerator({ agentCwd, titleGeneratorConfigs, titleModelAdapterFactory, refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true), getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'), tokenUsageStore, billingService })(description, identity), executionService: () => taskboardExecutionCoordinator, executionStore: () => taskboardStoreService, resolveTrustedWorkspace: createTaskboardTrustedWorkspaceResolver(agentCwd), ...createTaskboardAttachmentAccess({ agentCwd, uploadManager, userStore }) },
     authorizeEnvironmentTemplate: async ({ tenantId, userId, agentId, templateId }) => {
       const effectiveAgentId = agentId
         ?? (await agentResourceStore?.findPersonalByOwner(tenantId, userId))?.agentId;
@@ -1821,7 +1807,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
-  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger }); prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault });
+  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger }); prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({ target: rawRuntimeConfig, webChannelTarget: webChannelSttRuntime, secretVault }); if (!await sharedConfigRefresher.refreshIfChanged(true)) throw new Error('共享配置启动对齐失败');
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };
@@ -2585,7 +2571,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
-    sttConfig: resolvedSttRuntimeConfig.sttConfig,
+    getSttConfig: () => webChannelSttRuntime.sttConfig,
     ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
@@ -2994,9 +2980,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshEgressProxyCredential,
     groupStore,
     authMiddleware,
-    titleGeneratorConfigs, titleModelAdapterFactory,
+    titleGeneratorConfigs, titleModelAdapterFactory, defaultTitleModel: titleGeneratorDefaultModel,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     updateModelsConfig,
+    ...(configIdentityAssembly.modelResolverHooks.validateConfigReload
+      ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload }
+      : {}),
+    invalidateSharedConfigIdentity: configIdentityAssembly.invalidate,
+    notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded,
+    acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied,
     orgAgentStore,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore,

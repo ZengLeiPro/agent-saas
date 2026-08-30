@@ -1,15 +1,16 @@
 {
   "schemaVersion": 1,
-  "reason": "Staging API 通过 AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE 读取隔离 Worker 的单槽 readyfile，避免误读生产蓝绿 active-color 身份",
-  "updatedAt": "2026-08-29",
+  "reason": "TASK-318: 为每个 Runtime 实例配置私有 ConfigIdentity 快照路径，供发布 Evidence 严格读取且不暴露于匿名 readiness",
+  "updatedAt": "2026-08-30",
   "domains": {
     "server": {
-      "budget": 49,
+      "budget": 50,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
         "AGENT_AZEROTH_LEAD_URL",
         "AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE",
+        "AGENT_SAAS_CONFIG_IDENTITY_PATH",
         "AGENT_SAAS_CONFIG_PATH",
         "AGENT_SAAS_CREATE_WORKSPACE_VENV",
         "AGENT_SAAS_DRAIN_ABORT_GRACE_MS",
@@ -127,11 +128,18 @@
     },
     "shared/runtime": {
       "budget": 2,
-      "names": ["PATH", "SKILL_DEMO_ALLOW_AUTH_STATE"]
+      "names": [
+        "PATH",
+        "SKILL_DEMO_ALLOW_AUTH_STATE"
+      ]
     },
     "web build-time": {
       "budget": 3,
-      "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
+      "names": [
+        "BUNDLE_API_ORIGIN",
+        "VITE_API_BASE",
+        "VITE_WEB_ORIGIN"
+      ]
     },
     "deployment/scripts": {
       "budget": 38,

@@ -364,7 +364,7 @@ describe('runSubagent', () => {
     expect(fixture.usageRecords).toHaveLength(0);
   });
 
-  it('模型白名单拒绝：model 参数校验显式携带父 tenantId', async () => {
+  it('模型白名单拒绝：显式 model 参数校验携带父 tenantId，resolver 为 null 时禁止降级', async () => {
     const resolver = vi.fn((_ref: string, _tenantId?: string) => null);
     const fixture = await makeFixture({ cleanupDirs, modelResolver: resolver });
     await expect(runSubagent({

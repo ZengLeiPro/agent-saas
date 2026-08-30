@@ -235,11 +235,22 @@ export interface AppRuntime {
    * 主返回空 content 或 catch 后会按顺序尝试 fallback。
    */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
+  /** titleGenerator 缺省或删除时，恢复启动阶段默认标题模型。 */
+  defaultTitleModel?: string;
   /** 标题 utility 专用 adapter factory；Codex 固定 HTTP/SSE，不复用主会话 WebSocket pool。 */
   titleModelAdapterFactory?: TitleModelAdapterFactory;
-  refreshSharedConfig: () => void;
+  /** 从磁盘加载并应用共享配置；force 绕过节流并重新确认内容指纹。 */
+  refreshSharedConfig: (force?: boolean) => boolean | Promise<boolean>;
   /** 解析模型 SecretRef 并原子替换当前进程的运行时模型连接快照。 */
   updateModelsConfig?: (models: NonNullable<AppConfig['models']>) => Promise<void>;
+  /** 管理端写盘前复用 Production 配置安全门禁与 SecretVault 校验。 */
+  validateSharedConfigCandidate?: (next: AppConfig) => Promise<void>;
+  /** 纯同步撤销 ConfigIdentity observation、取消在途计算并发布 not_collected。 */
+  invalidateSharedConfigIdentity: () => void;
+  /** 管理端原子提交后撤销旧 ConfigIdentity observation 并重算。 */
+  notifySharedConfigChanged: () => void;
+  /** 管理端提交后按精确文本推进指纹；并发改写时返回 false 并强制重载。 */
+  acknowledgeSharedConfigApplied: (expectedConfigText: string) => boolean;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。

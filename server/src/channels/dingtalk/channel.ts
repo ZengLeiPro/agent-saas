@@ -212,11 +212,12 @@ export class DingtalkChannel implements BaseChannel {
       dingtalkLogger.separator();
       dingtalkLogger.info('开始处理消息...');
 
-      // 读取会话级模型选择
+      // 读取会话级模型选择；显式携带租户，且 resolver 为 null 时绝不降级环境默认模型
       const modelRef = this.sessionService.getModelRef(ctx.conversationId);
       const resolved = modelRef && this.config.modelResolver
-        ? this.config.modelResolver(modelRef)
+        ? this.config.modelResolver(modelRef, prepared.context.user?.tenantId)
         : undefined;
+      if (modelRef && this.config.modelResolver && !resolved) { await resetHelpers.sendStatus('模型配置刷新失败或当前模型已不可用，请稍后重试'); return; }
       const modelOptions = resolved ? toRunModelOptions(resolved) : {};
 
       const events = this.dispatch(prepared.inbound, prepared.context, modelOptions, {

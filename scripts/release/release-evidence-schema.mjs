@@ -8,9 +8,10 @@ const fullShaSchema = z
 const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u, 'Expected a sha256 digest');
 
 /**
- * TASK-318：只读脱敏配置身份摘要（与 server /api/healthz/ready 的
- * configIdentity 同构；strict 校验防止旧 schema/缺字段数据混入 evidence）。
+ * TASK-318：只读脱敏配置身份摘要（来自活动色私有运行态快照；strict 校验
+ * 防止旧 schema、缺字段或额外字段混入 evidence）。
  */
+// expected / observed 两侧沿用同一 digest 语义，但 observed 额外携带版本解析状态。
 const configIdentitySideSchema = z
   .object({
     schemaVersion: z.number().int().positive(),
@@ -48,6 +49,15 @@ const configIdentitySummarySchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    // Release Evidence 一旦携带 ConfigIdentity，就必须保留 release-bound expected；
+    // 完全旧版 baseline 应省略整个摘要，不能用 expected_not_bound 冒充权威证据。
+    if (!value.expected) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expected'],
+        message: 'release evidence config identity requires expected',
+      });
+    }
     if ((value.status === 'consistent' || value.status === 'drifted') && !value.expected) {
       ctx.addIssue({
         code: 'custom',
@@ -73,11 +83,16 @@ const configIdentitySummarySchema = z
       });
     }
     if (value.status === 'unverifiable' && value.reason) {
+      // 原因必须服从 evaluator 的优先级：缺 binding、schema、config drift、版本解析。
       const reasonMatches =
         (value.reason === 'expected_not_bound' && !value.expected && Boolean(value.observed)) ||
         (value.reason === 'observed_unavailable' && !value.observed) ||
         (value.reason === 'secret_ref_version_unresolved' &&
+          Boolean(value.expected) &&
           Boolean(value.observed) &&
+          value.expected?.schemaVersion === value.schemaVersion &&
+          value.observed?.schemaVersion === value.schemaVersion &&
+          value.expected?.digest === value.observed?.digest &&
           value.observed?.versionResolution !== 'resolved') ||
         (value.reason === 'schema_version_unsupported' &&
           Boolean(value.expected) &&
@@ -265,7 +280,7 @@ export const releaseEvidenceSchema = z
       })
       .strict(),
     productionBaseline: productionBaselineSchema,
-    // TASK-318：结构化配置身份（可选；由 Production State 的 configIdentity 透传）。
+    // TASK-318：旧版 baseline 可整体缺失；一旦存在，schema 强制 release-bound expected。
     configIdentity: configIdentitySummarySchema.optional(),
     baselineArtifacts: baselineArtifactsSchema,
     affectedComponents: z.array(releaseComponentSchema).max(4),

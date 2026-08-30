@@ -228,11 +228,12 @@ describe('createSharedConfigRefresher', () => {
       now: () => clock,
     });
 
-    const before = refresher.getAppliedStamps().config;
+    refresher.refreshIfChanged();
+    const afterInitialSync = refresher.getAppliedStamps().config;
     clock += 5_000;
     refresher.refreshIfChanged();
     refresher.refreshIfChanged();
-    expect(refresher.getAppliedStamps().config).toEqual(before);
+    expect(refresher.getAppliedStamps().config).toEqual(afterInitialSync);
     expect(config.models!.groups).toHaveLength(1);
   });
 
@@ -316,7 +317,7 @@ describe('createSharedConfigRefresher', () => {
         updateGuardrailModelConfigs: () => {},
         titleGeneratorConfigs: titleConfigs,
       },
-      onSystemPromptOverridesUpdated: (next) => { promptOverrides = next; },
+      prepareSystemPromptOverridesUpdate: (next) => () => { promptOverrides = next; },
       now: () => clock,
     });
 
@@ -337,25 +338,26 @@ describe('createSharedConfigRefresher', () => {
     expect(promptOverrides).toEqual({ 'utility.title': '新提示语' });
   });
 
-  it('组织白名单变更后重载 tenantStore', () => {
+  it('组织白名单两阶段提交，失败保留旧内存/stamp 并立即重试', () => {
     writeConfig(dir, [BASE_GROUP]);
     const tenantsPath = join(dir, 'tenants.json');
     writeFileSync(tenantsPath, JSON.stringify({ version: 1, tenants: [] }), 'utf-8');
     let reloaded = 0;
+    let failReload = false;
     const config = { models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' } } as unknown as AppConfig;
     let clock = 10_000;
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      tenantStore: { reload: () => { reloaded += 1; } } as never,
+      tenantStore: { reload: () => { if (failReload) throw new Error('invalid tenants'); reloaded += 1; }, prepareReloadSnapshot: () => { if (failReload) throw new Error('invalid tenants'); return { commit: () => { reloaded += 1; }, rollback: () => { reloaded -= 1; } }; } } as never,
       tenantsFilePath: tenantsPath,
       now: () => clock,
     });
 
     clock += 5_000;
     refresher.refreshIfChanged();
-    expect(reloaded).toBe(0); // 没变化不该重载
+    expect(reloaded).toBe(1); // 首轮必须对齐构造前可能变化的磁盘快照
 
     writeFileSync(
       tenantsPath,
@@ -364,9 +366,17 @@ describe('createSharedConfigRefresher', () => {
     );
     clock += 5_000;
     refresher.refreshIfChanged();
-    expect(reloaded).toBe(1);
+    expect(reloaded).toBe(2);
     // 确认读的就是这个文件，避免路径拼错却静默通过
     expect(readFileSync(tenantsPath, 'utf-8')).toContain('kaiyan');
+
+    const appliedBeforeFailure = refresher.getAppliedStamps().tenants; // 失败绝不能推进已应用指纹
+    writeFileSync(tenantsPath, '{broken', 'utf-8'); failReload = true; clock += 5_000;
+    expect(refresher.refreshIfChanged()).toBe(false);
+    expect(refresher.getAppliedStamps().tenants).toEqual(appliedBeforeFailure);
+    failReload = false; writeFileSync(tenantsPath, JSON.stringify({ version: 1, tenants: [] }), 'utf-8');
+    expect(refresher.refreshIfChanged()).toBe(true); // 失败后节流窗口内立即重试
+    expect(reloaded).toBe(3);
   });
 
   /**
@@ -519,7 +529,7 @@ describe('createSharedConfigRefresher', () => {
     expect(calls).toBe(0);
   });
 
-  it('TASK-318：config 文件重载成功后调用 onConfigReloaded，重算 observed config identity', () => {
+  it('TASK-318：identity 重算与管理端精确文本确认抵御并发覆盖', () => {
     writeConfig(dir, [BASE_GROUP]);
     const config = {
       models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
@@ -534,15 +544,20 @@ describe('createSharedConfigRefresher', () => {
       now: () => clock,
     });
 
-    // 无变化 -> 不触发回调
+    // 首轮重新确认构造前磁盘状态并触发 observed identity 重算
     refresher.refreshIfChanged();
-    expect(reasons).toEqual([]);
+    expect(reasons).toEqual(['reloaded']);
 
     writeConfig(dir, [BASE_GROUP, QWEN_GROUP]);
     clock += 5_000;
     refresher.refreshIfChanged();
-    expect(reasons).toEqual(['reloaded']);
+    expect(reasons).toEqual(['reloaded', 'reloaded']);
     expect(config.models!.groups.map((g) => g.id)).toContain('qwen');
+    const exactAppliedText = readFileSync(join(dir, 'config.json'), 'utf-8');
+    expect(refresher.acknowledgeConfigApplied(exactAppliedText)).toBe(true); refresher.refreshIfChanged(true);
+    expect(reasons).toEqual(['reloaded', 'reloaded']);
+    writeConfig(dir, [BASE_GROUP]);
+    expect(refresher.acknowledgeConfigApplied(exactAppliedText)).toBe(false);
   });
 
   it('TASK-318：Production 安全门禁在应用前拒绝受管 inline secret，整次重载保持旧配置', () => {
@@ -639,7 +654,7 @@ describe('createSharedConfigRefresher', () => {
     expect(warns.some((message) => message.includes('SecretVault resolve failed'))).toBe(true);
   });
 
-  it('TASK-318：其他同步回调失败时不提交已准备的 webTools/STT 配置', () => {
+  it('TASK-318：提示语 prepare 失败不提交任何切面，修复后重试一次原子发布', () => {
     const stt = {
       enabled: false,
       apiKeyRef: 'vault-dashscope',
@@ -668,13 +683,19 @@ describe('createSharedConfigRefresher', () => {
     } as unknown as AppConfig;
     let runtimeProvider = 'tencent_wsa';
     let runtimeSttEnabled = false;
+    let promptOverrides: NonNullable<AppConfig['systemPrompts']> = { 'utility.title': '旧提示语' };
+    let shouldRejectPromptPreparation = true;
     let reloadCalls = 0;
     let clock = 10_000;
+    const warns: string[] = [];
     const refresher = createSharedConfigRefresher({
       config,
       processCwd: dir,
       target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
-      onSystemPromptOverridesUpdated: () => { throw new Error('prompt registry update failed'); },
+      prepareSystemPromptOverridesUpdate: (next) => {
+        if (shouldRejectPromptPreparation) throw new Error('prompt registry prepare failed');
+        return () => { promptOverrides = next; };
+      },
       prepareWebToolsUpdate: (next) => () => {
         runtimeProvider = next?.search?.provider ?? 'none';
       },
@@ -682,19 +703,35 @@ describe('createSharedConfigRefresher', () => {
         runtimeSttEnabled = next?.enabled === true;
       },
       onConfigReloaded: () => { reloadCalls += 1; },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
       now: () => clock,
     });
     const initialStamp = refresher.getAppliedStamps().config;
 
     writeCandidate('zhipu', true, '新提示语');
     clock += 5_000;
-    expect(() => refresher.refreshIfChanged()).toThrow('prompt registry update failed');
+    refresher.refreshIfChanged();
+    expect(config.systemPrompts).toEqual({ 'utility.title': '旧提示语' });
     expect(config.webTools?.search?.provider).toBe('tencent_wsa');
     expect(config.stt?.enabled).toBe(false);
+    expect(promptOverrides).toEqual({ 'utility.title': '旧提示语' });
     expect(runtimeProvider).toBe('tencent_wsa');
     expect(runtimeSttEnabled).toBe(false);
     expect(refresher.getAppliedStamps().config).toEqual(initialStamp);
     expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('prompt registry prepare failed'))).toBe(true);
+
+    shouldRejectPromptPreparation = false;
+    clock += 5_000;
+    refresher.refreshIfChanged();
+    expect(config.systemPrompts).toEqual({ 'utility.title': '新提示语' });
+    expect(config.webTools?.search?.provider).toBe('zhipu');
+    expect(config.stt?.enabled).toBe(true);
+    expect(promptOverrides).toEqual({ 'utility.title': '新提示语' });
+    expect(runtimeProvider).toBe('zhipu');
+    expect(runtimeSttEnabled).toBe(true);
+    expect(refresher.getAppliedStamps().config).not.toEqual(initialStamp);
+    expect(reloadCalls).toBe(1);
   });
 
 

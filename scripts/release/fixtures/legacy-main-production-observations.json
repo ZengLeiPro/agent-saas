@@ -1,0 +1,56 @@
+{
+  "runtime": {
+    "environment": "production",
+    "components": {
+      "web": {
+        "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "deployedAt": "2026-08-26T00:00:00.000Z"
+      },
+      "api": {
+        "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "deployedAt": "2026-08-26T00:00:00.000Z"
+      },
+      "runtimeWorker": {
+        "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "deployedAt": "2026-08-26T00:00:00.000Z"
+      },
+      "acs": {
+        "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "orchestratorArtifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sandboxImageDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "deployedAt": "2026-08-26T00:00:00.000Z"
+      }
+    },
+    "configFingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "topology": { "observedAt": "2026-08-26T00:00:00.000Z" }
+  },
+  "api": {
+    "status": "ok",
+    "release": {
+      "environment": "production",
+      "releaseId": "rc-20260826-01",
+      "releaseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "serverDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "safetyAttested": true
+    }
+  },
+  "web": {
+    "schemaVersion": 1,
+    "environment": "production",
+    "releaseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "webDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "configFingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "acs": {
+    "environment": "production",
+    "releaseIdentityAttested": true,
+    "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "orchestratorArtifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "sandboxImageDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "namespace": "agent-saas-coding",
+    "configFingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  }
+}

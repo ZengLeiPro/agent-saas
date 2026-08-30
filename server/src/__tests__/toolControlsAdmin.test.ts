@@ -79,6 +79,12 @@ async function readJson(response: Response) {
   return response.json() as Promise<any>;
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 describe('tool controls admin router', () => {
   afterEach(() => {
     while (servers.length > 0) servers.pop()?.close();
@@ -147,6 +153,7 @@ describe('tool controls admin router', () => {
   it('updates tool switches and web tools in one config write', async () => {
     const validateToolSettingsConfig = vi.fn(async () => undefined);
     const onToolSettingsUpdated = vi.fn(async () => undefined);
+    const onConfigReloaded = vi.fn(async () => undefined);
     await withApp({
       agent: { cwd: '/tmp/agent' },
       server: { port: 3200 },
@@ -194,12 +201,14 @@ describe('tool controls admin router', () => {
         webTools: runtimeConfig.webTools,
       });
 
-      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const writtenText = readFileSync(configPath, 'utf-8');
+      const written = JSON.parse(writtenText);
       expect(written.toolControls.tools.Shell.enabled).toBe(false);
       expect(written.toolControls.tools.WebFetch.enabled).toBe(false);
       expect(written.webTools.search.apiKeyRef).toBe('brave-search-api-key');
       expect(written.webTools.search.apiKey).toBeUndefined();
-    }, { validateToolSettingsConfig, onToolSettingsUpdated });
+      expect(onConfigReloaded).toHaveBeenCalledWith(writtenText);
+    }, { validateToolSettingsConfig, onToolSettingsUpdated, onConfigReloaded });
   });
 
   it('stores a newly submitted WebSearch apiKey in the secret vault and persists only its ref', async () => {
@@ -655,5 +664,89 @@ describe('tool controls admin router', () => {
       expect(written.toolControls).toBeUndefined();
       expect(written.webTools).toBeUndefined();
     });
+  });
+
+  it('CAS 冲突不推进 ConfigIdentity，且不覆盖并发胜出版本', async () => {
+    const validateToolSettingsConfig = vi.fn();
+    const onToolSettingsUpdated = vi.fn();
+    const onConfigReloaded = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      validateToolSettingsConfig.mockImplementation(async () => {
+        writeFileSync(configPath, JSON.stringify({ ...baseRawConfig(), concurrentWinner: true }), 'utf-8');
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+      expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
+      expect(onToolSettingsUpdated).not.toHaveBeenCalled();
+      expect(onConfigReloaded).not.toHaveBeenCalled();
+    }, { validateToolSettingsConfig, onToolSettingsUpdated, onConfigReloaded });
+  });
+
+  it('callback 失败时回滚执行侧且不提交磁盘或 AppConfig', async () => {
+    const onToolSettingsUpdated = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const before = readFileSync(configPath, 'utf-8');
+      let executionSettings = {
+        toolControls: structuredClone(runtimeConfig.toolControls),
+        webTools: structuredClone(runtimeConfig.webTools),
+      };
+      onToolSettingsUpdated.mockImplementation(async (next) => {
+        executionSettings = structuredClone(next);
+        if (next.toolControls?.tools?.Read?.enabled === false) {
+          throw new Error('tool runtime callback failed');
+        }
+      });
+
+      const response = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(readFileSync(configPath, 'utf-8')).toBe(before);
+      expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
+      expect(executionSettings.toolControls?.tools?.Read).toBeUndefined();
+      expect(onToolSettingsUpdated).toHaveBeenCalledTimes(2);
+    }, { onToolSettingsUpdated });
+  });
+
+  it('两个管理员交错保存时锁内 callback 未完成前拒绝另一写入', async () => {
+    const onToolSettingsUpdated = vi.fn();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
+      const firstBlocked = deferred();
+      const firstEntered = deferred();
+      onToolSettingsUpdated.mockImplementation(async (next) => {
+        if (next.toolControls?.tools?.Read?.enabled === false) {
+          firstEntered.resolve();
+          await firstBlocked.promise;
+        }
+      });
+
+      const firstRequest = fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      await firstEntered.promise;
+      const secondResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(secondResponse.status).toBe(409);
+
+      firstBlocked.resolve();
+      expect((await firstRequest).status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(written.toolControls.tools.Read.enabled).toBe(false);
+      expect(written.toolControls.tools.Edit).toBeUndefined();
+      expect(runtimeConfig.toolControls?.tools?.Read?.enabled).toBe(false);
+      expect(runtimeConfig.toolControls?.tools?.Edit).toBeUndefined();
+    }, { onToolSettingsUpdated });
   });
 });

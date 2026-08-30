@@ -79,13 +79,14 @@ describe('TenantStore', () => {
       await expect(store.create({ id: 'wain', name: '   ', createdBy: 's' })).rejects.toThrow(/name cannot be empty/);
     });
 
-    it('持久化失败时回滚内存记录，不留下半成品组织', async () => {
+    it('持久化失败时回滚内存记录，存储恢复后无半成品组织', async () => {
       const blockedParent = join(tmpDir, 'blocked-parent');
       const store = new TenantStore(join(blockedParent, 'tenants.json'));
       rmSync(blockedParent, { recursive: true, force: true });
       require('node:fs').writeFileSync(blockedParent, 'not a directory', 'utf-8');
 
       await expect(store.create({ id: 'wain', name: '唯恩', createdBy: 's' })).rejects.toThrow();
+      rmSync(blockedParent, { force: true }); require('node:fs').mkdirSync(blockedParent);
       expect(store.findById('wain')).toBeUndefined();
       expect(store.count()).toBe(0);
     });
@@ -149,17 +150,17 @@ describe('TenantStore', () => {
       expect(JSON.parse(readFileSync(storePath, 'utf-8'))).toEqual({ version: 1 });
     });
 
-    it('文件不存在时初始化为空', () => {
+    it('从未创建过文件时仍可初始化为空', () => {
       const store = new TenantStore(storePath);
       expect(store.count()).toBe(0);
       expect(store.listAll()).toEqual([]);
     });
 
-    it('文件 JSON 损坏时回退到空（不 crash）', () => {
+    it('文件 JSON 损坏时读取 fail closed，不降级成空租户', () => {
       const path = join(tmpDir, 'corrupt.json');
       require('node:fs').writeFileSync(path, '{not json', 'utf-8');
       const store = new TenantStore(path);
-      expect(store.count()).toBe(0);
+      expect(() => store.count()).toThrow(/Failed to read tenant store/);
     });
   });
 

@@ -31,6 +31,8 @@ export interface ConfigIdentityRuntimeOptions {
     info: (message: string) => void;
     warn: (message: string) => void;
   };
+  /** 将严格摘要同步发布到进程外私有观察面；不得暴露到匿名 health API。 */
+  onSummaryUpdated?: (summary: ConfigIdentitySummary) => void;
   /** 注入时钟（测试）。 */
   now?: () => Date;
 }
@@ -43,7 +45,9 @@ export interface ConfigIdentityRuntime {
   initialize(): Promise<void>;
   /** Production 热更新应用前异步校验 inline secret 与 ref version。 */
   validateConfigReload(nextConfig: AppConfig): Promise<void>;
-  /** 配置热更新成功后重算（内部捕获异常，绝不打断热更新主流程）。 */
+  /** 纯同步撤销 observation、取消在途计算并发布 not_collected；不启动重算。 */
+  invalidateObservation(): void;
+  /** 配置热更新成功后先失效再重算（内部捕获异常，绝不打断热更新主流程）。 */
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
   refresh(reason?: string): Promise<void>;
@@ -54,7 +58,7 @@ export interface ConfigIdentityRuntime {
 export function createConfigIdentityRuntime(
   options: ConfigIdentityRuntimeOptions,
 ): ConfigIdentityRuntime {
-  const { config, secretVault, expected, environment, releaseId, logger } = options;
+  const { config, secretVault, expected, environment, releaseId, logger, onSummaryUpdated } = options;
   const now = options.now ?? (() => new Date());
 
   let observation: ConfigIdentityObservation | undefined;
@@ -63,9 +67,14 @@ export function createConfigIdentityRuntime(
   let lastChangedAt: string | undefined;
   let lastComputedAtMs = 0;
   let computeGeneration = 0;
+  let observationInvalidated = false;
+  let invalidatedComparisonObservation: ConfigIdentityObservation | undefined;
 
-  function applyObservation(next: ConfigIdentityObservation): void {
-    const previous = observation;
+  function applyObservation(
+    next: ConfigIdentityObservation,
+    comparisonObservation: ConfigIdentityObservation | undefined = observation,
+  ): void {
+    const previous = comparisonObservation;
     const identityChanged =
       previous !== undefined &&
       (previous.digest !== next.digest ||
@@ -82,6 +91,7 @@ export function createConfigIdentityRuntime(
           `(credentialVersions=${next.credentialVersionDigest?.slice(0, 19) ?? 'none'})`,
       );
     }
+    onSummaryUpdated?.(buildSummary());
   }
 
   async function compute(): Promise<ConfigIdentityObservation> {
@@ -127,20 +137,35 @@ export function createConfigIdentityRuntime(
   }
 
   async function refresh(reason: string): Promise<void> {
+    const comparisonObservation = observationInvalidated
+      ? invalidatedComparisonObservation
+      : observation;
     const generation = ++computeGeneration;
     const next = await compute();
     if (generation !== computeGeneration) {
       logger?.info(`[ConfigIdentity] discarded stale recompute after ${reason}`);
       return;
     }
-    applyObservation(next);
+    observationInvalidated = false;
+    invalidatedComparisonObservation = undefined;
+    applyObservation(next, comparisonObservation);
     lastComputedAtMs = now().getTime();
     logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
   }
 
+  function invalidateObservation(): void {
+    ++computeGeneration;
+    if (!observationInvalidated) invalidatedComparisonObservation = observation;
+    observationInvalidated = true;
+    observation = undefined;
+    lastComputedAtMs = now().getTime();
+    onSummaryUpdated?.(buildSummary());
+  }
+
   function notifyConfigChanged(reason: string): void {
-    // 热更新成功后的重算是「发布新 observed identity」；失败保留上一份并告警，
-    // 不能让身份重算的异常打断配置热更新本身。
+    // 先纯同步失效，避免异步重算窗口及失败场景保留旧 consistent；成功结果
+    // 仍与失效前 observation 比较，以正确推进 lastChangedAt。
+    invalidateObservation();
     void refresh(reason).catch((error) => {
       logger?.warn(
         `[ConfigIdentity] recompute after ${reason} failed: ${
@@ -148,7 +173,6 @@ export function createConfigIdentityRuntime(
         }`,
       );
     });
-    lastComputedAtMs = now().getTime();
   }
 
   function buildSummary(): ConfigIdentitySummary {
@@ -189,12 +213,13 @@ export function createConfigIdentityRuntime(
   return {
     initialize,
     validateConfigReload,
+    invalidateObservation,
     notifyConfigChanged,
     refresh: (reason = 'explicit') => refresh(reason),
     getSummary(): ConfigIdentitySummary {
       const currentMs = now().getTime();
-      // 轻量节流：summary 读取最多每 5s 触发一次全量重算；显式热更新通知不受限。
-      if (currentMs - lastComputedAtMs >= SUMMARY_RECOMPUTE_MIN_INTERVAL_MS) {
+      // 纯失效态必须等显式胜出版本通知；不得由周期读取重算仍在内存中的失选候选。
+      if (!observationInvalidated && currentMs - lastComputedAtMs >= SUMMARY_RECOMPUTE_MIN_INTERVAL_MS) {
         lastComputedAtMs = currentMs;
         const generation = ++computeGeneration;
         void compute()

@@ -30,6 +30,11 @@ lock=/run/lock/agent-saas-staging/deploy.lock
 mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
+config_identity_reader="${CONFIG_IDENTITY_READER:-$(dirname "$0")/read-production-state.mjs}"
+test -f "$config_identity_reader" || {
+  echo 'Missing shared ConfigIdentity readiness contract module' >&2
+  exit 1
+}
 
 install -d -o agent-saas-staging -g agent-saas-staging -m 0700 "$config_root"
 if [ ! -e "$server_config" ]; then
@@ -407,7 +412,6 @@ fs.renameSync(`${configPath}.candidate`, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
-node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 shared_root=/mnt/agent-saas-staging/workspace-shared
 runuser -u agent-saas-staging -- mkdir -p "$shared_root/.ky-agent"
 for shared_asset in \
@@ -455,7 +459,7 @@ if (identity.credentialVersionDigest) {
 }
 const keys = new Set([
   ...Object.keys(desired),
-  // identity 未解析到 credential version 时删除旧 release 遗留值，禁止串线。
+  // identity 未解析到版本时必须删除旧 release 遗留值，禁止凭据版本串线。
   'AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST',
 ]);
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
@@ -532,17 +536,27 @@ test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
 }
 rm -f "$artifact_persistence_probe"
 
-node - "$MANIFEST_PATH" "$state_root/api-ready.json" "$state_root/acs-health.json" <<'NODE'
+node --input-type=module - "$MANIFEST_PATH" "$state_root/api-ready.json" \
+  /run/agent-saas-staging/config-identity.json "$config_identity" \
+  "$config_identity_reader" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [manifestPath, readyPath, snapshotPath, expectedJson, readerPath] = process.argv.slice(2);
+const { validateCandidateReleaseReadiness } = await import(pathToFileURL(readerPath));
+await validateCandidateReleaseReadiness({
+  environment: 'staging',
+  manifest: JSON.parse(fs.readFileSync(manifestPath, 'utf8')),
+  readiness: JSON.parse(fs.readFileSync(readyPath, 'utf8')),
+  privateSnapshotPath: snapshotPath,
+  expectedConfigIdentity: JSON.parse(expectedJson),
+});
+NODE
+
+node - "$MANIFEST_PATH" "$state_root/acs-health.json" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, apiPath, acsPath] = process.argv.slice(2);
+const [manifestPath, acsPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-const api = JSON.parse(fs.readFileSync(apiPath, 'utf8'));
 const acs = JSON.parse(fs.readFileSync(acsPath, 'utf8'));
-const release = api.release ?? {};
-if (release.releaseId !== manifest.releaseId || release.releaseSha !== manifest.releaseSha)
-  throw new Error('Staging API readiness identity does not match Manifest');
-if (api.configIdentity?.status !== 'consistent')
-  throw new Error('Staging config identity is not consistent with the release binding');
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
 if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging')

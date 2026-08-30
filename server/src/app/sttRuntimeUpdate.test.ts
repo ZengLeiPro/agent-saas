@@ -9,7 +9,7 @@ const CALLER = {
 };
 
 describe('createSttRuntimeUpdatePreparer', () => {
-  it('SecretVault 解析完成前无副作用，commit 后才替换执行侧配置', async () => {
+  it('SecretVault 解析完成前无副作用，commit 同步替换工具与 WebChannel 配置', async () => {
     const vault = new InMemorySecretVault();
     const [apiKey, accessKeyId, accessKeySecret] = await Promise.all([
       vault.putSecret('global', 'stt', 'api-key', CALLER),
@@ -17,7 +17,14 @@ describe('createSttRuntimeUpdatePreparer', () => {
       vault.putSecret('global', 'stt', 'access-secret', CALLER),
     ]);
     const target: SttRuntimeUpdateTarget = {};
-    const prepare = createSttRuntimeUpdatePreparer({ target, secretVault: vault });
+    const webChannelTarget = {
+      sttConfig: {
+        apiKey: 'old-api-key',
+        ossAccessKeyId: 'old-access-id',
+        ossAccessKeySecret: 'old-access-secret',
+      },
+    };
+    const prepare = createSttRuntimeUpdatePreparer({ target, webChannelTarget, secretVault: vault });
 
     const commit = await prepare({
       enabled: true,
@@ -27,10 +34,18 @@ describe('createSttRuntimeUpdatePreparer', () => {
       pricing: { creditsPerCall: 3, costYuanPerCall: 0.08 },
     });
     expect(target.audioTranscribeTools).toBeUndefined();
+    expect(webChannelTarget.sttConfig.apiKey).toBe('old-api-key');
+    expect(webChannelTarget.sttConfig.ossAccessKeyId).toBe('old-access-id');
 
     commit();
     expect(target.audioTranscribeTools?.enabled).toBe(true);
     expect(target.audioTranscribeTools?.sttConfig.apiKey).toBe('api-key');
+    expect(webChannelTarget.sttConfig.apiKey).toBe('api-key');
+
+    const disable = await prepare(undefined);
+    disable();
+    expect(target.audioTranscribeTools).toBeUndefined();
+    expect(webChannelTarget.sttConfig).toBeUndefined();
   });
 
   it('SecretVault 解析失败时不返回 commit，也不修改执行侧配置', async () => {

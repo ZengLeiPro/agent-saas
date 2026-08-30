@@ -1,0 +1,159 @@
+{
+  "manifest": {
+    "releaseId": "rc-20260831-01",
+    "productionBaseline": {
+      "acs": {
+        "gitSha": "1111111111111111111111111111111111111111",
+        "orchestratorArtifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sandboxImageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "api": {
+        "gitSha": "1111111111111111111111111111111111111111",
+        "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "runtimeWorker": {
+        "gitSha": "1111111111111111111111111111111111111111",
+        "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "web": {
+        "gitSha": "1111111111111111111111111111111111111111",
+        "artifactDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "components": {
+      "acs": {
+        "action": "deploy",
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "orchestratorArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sandboxImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "api": {
+        "action": "deploy",
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "runtimeWorker": {
+        "action": "deploy",
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "web": {
+        "action": "deploy",
+        "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "artifactDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    }
+  },
+  "apiKeepManifest": {
+    "releaseId": "rc-20260831-02",
+    "components": {
+      "acs": { "action": "deploy" },
+      "api": { "action": "keep" },
+      "runtimeWorker": { "action": "keep" },
+      "web": { "action": "deploy" }
+    }
+  },
+  "observerBaselines": {
+    "firstMigrationTrustedConfigIdentity": null,
+    "regularReleaseTrustedConfigIdentity": {
+      "schemaVersion": 1,
+      "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "retries": [
+    {
+      "failedStage": "acs",
+      "productionState": {
+        "apiReleaseId": "legacy-production-release",
+        "components": {
+          "acs": {
+            "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "orchestratorArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sandboxImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "api": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "runtimeWorker": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "web": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        }
+      },
+      "requiresApiUpgrade": true
+    },
+    {
+      "failedStage": "app",
+      "productionState": {
+        "apiReleaseId": "legacy-production-release",
+        "components": {
+          "acs": {
+            "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "orchestratorArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sandboxImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "api": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "runtimeWorker": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+          },
+          "web": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        }
+      },
+      "requiresApiUpgrade": true
+    },
+    {
+      "failedStage": "web",
+      "productionState": {
+        "apiReleaseId": "rc-20260831-01",
+        "components": {
+          "acs": {
+            "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "orchestratorArtifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sandboxImageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "api": {
+            "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          "runtimeWorker": {
+            "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "artifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          "web": {
+            "gitSha": "1111111111111111111111111111111111111111",
+            "artifactDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+          }
+        },
+        "configIdentity": {
+          "schemaVersion": 1,
+          "status": "consistent",
+          "releaseId": "rc-20260831-01",
+          "expected": {
+            "schemaVersion": 1,
+            "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "observed": {
+            "schemaVersion": 1,
+            "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "credentialVersionDigest": null,
+            "versionResolution": "resolved",
+            "secretRefCount": 0
+          }
+        }
+      },
+      "requiresApiUpgrade": false
+    }
+  ]
+}

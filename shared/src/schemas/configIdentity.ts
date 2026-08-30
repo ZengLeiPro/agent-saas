@@ -117,11 +117,16 @@ export const configIdentitySummarySchema = z
       });
     }
     if (value.status === 'unverifiable' && value.reason) {
+      // 原因必须服从 evaluator 的优先级：缺 binding、schema、config drift、版本解析。
       const reasonMatches =
         (value.reason === 'expected_not_bound' && !value.expected && Boolean(value.observed)) ||
         (value.reason === 'observed_unavailable' && !value.observed) ||
         (value.reason === 'secret_ref_version_unresolved' &&
+          Boolean(value.expected) &&
           Boolean(value.observed) &&
+          value.expected?.schemaVersion === value.schemaVersion &&
+          value.observed?.schemaVersion === value.schemaVersion &&
+          value.expected?.digest === value.observed?.digest &&
           value.observed?.versionResolution !== 'resolved') ||
         (value.reason === 'schema_version_unsupported' &&
           Boolean(value.expected) &&

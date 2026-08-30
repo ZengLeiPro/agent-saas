@@ -54,7 +54,16 @@ export function reconcilePromotion(input) {
     };
   }
   if (matrixEquals(observed, target)) {
-    return { outcome: 'completed', reason: 'all components match the Manifest target' };
+    if (input.configIdentityConfirmed !== true) {
+      return {
+        outcome: 'needs_human',
+        reason: 'component convergence lacks complete ConfigIdentity and trusted identity confirmation',
+      };
+    }
+    return {
+      outcome: 'completed',
+      reason: 'all components match the Manifest target with confirmed ConfigIdentity',
+    };
   }
   if (input.externalSideEffects === 'unknown') {
     return {

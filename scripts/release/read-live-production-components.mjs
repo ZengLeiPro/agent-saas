@@ -4,7 +4,11 @@ import { readFileSync as defaultReadFileSync, realpathSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
 import { verifyInstalledRelease } from './verify-installed-release.mjs';
-import { validateConfigIdentitySummary } from './read-production-state.mjs';
+import {
+  readPrivateConfigIdentitySnapshot,
+  selectConfigIdentitySummary,
+  validateExpectedConfigIdentityObservers,
+} from './read-production-state.mjs';
 
 function requiredString(value, label, pattern) {
   if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`${label} is invalid`);
@@ -121,6 +125,47 @@ function activeUnit(role, markerPath, readFileSync, execFileSync) {
   return { color, unit, systemdEnvironment };
 }
 
+export { selectConfigIdentitySummary };
+
+const LIVE_CONFIG_IDENTITY_STAGES = new Set([
+  'candidate-readback',
+  'legacy-api-upgrade-retry-baseline',
+  'steady-state',
+]);
+
+export function validateLiveConfigIdentityStage(stage) {
+  if (!LIVE_CONFIG_IDENTITY_STAGES.has(stage)) {
+    throw new Error(`Unknown live ConfigIdentity stage: ${stage}`);
+  }
+  return stage;
+}
+
+export function selectLiveConfigIdentity({
+  privateConfigIdentity,
+  publicConfigIdentity,
+  apiReleaseId,
+  configIdentityStage,
+}) {
+  const stage = validateLiveConfigIdentityStage(configIdentityStage);
+  if (typeof apiReleaseId !== 'string' || !apiReleaseId.trim()) {
+    throw new Error('Active Production API releaseId is required');
+  }
+  if (stage !== 'legacy-api-upgrade-retry-baseline' && privateConfigIdentity === undefined) {
+    throw new Error(`Private Production ConfigIdentity snapshot is required during ${stage}`);
+  }
+  const selected = selectConfigIdentitySummary(
+    privateConfigIdentity,
+    stage === 'legacy-api-upgrade-retry-baseline' ? publicConfigIdentity : undefined,
+    { allowCompletelyMissing: stage === 'legacy-api-upgrade-retry-baseline' },
+  );
+  if (selected !== undefined && selected.releaseId !== apiReleaseId) {
+    throw new Error(
+      'Selected Production ConfigIdentity releaseId disagrees with active API release identity',
+    );
+  }
+  return selected;
+}
+
 export async function readJson(url, { cacheBust = true } = {}) {
   const requestUrl = new URL(url);
   if (cacheBust) requestUrl.searchParams.set('release_observation', String(Date.now()));
@@ -145,6 +190,9 @@ function parse(argv) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const options = parse(process.argv);
+  const configIdentityStage = validateLiveConfigIdentityStage(
+    options['config-identity-stage'] ?? 'steady-state',
+  );
   const apiUnit = activeUnit(
     'api',
     '/etc/agent-saas/active-color',
@@ -163,10 +211,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       defaultReadFileSync(`/etc/agent-saas/runtime-worker-${workerUnit.color}.release.env`, 'utf8'),
     ),
   };
-  const [api, web, acs] = await Promise.all([
+  const [api, web, acs, privateConfigIdentity] = await Promise.all([
     readJson(options['api-url'] ?? 'https://api.agent.kaiyan.net/api/healthz/ready'),
     readJson(options['web-url'] ?? 'https://agent.kaiyan.net/release-identity.json'),
     readJson(options['acs-url'] ?? 'http://127.0.0.1:3400/health', { cacheBust: false }),
+    readPrivateConfigIdentitySnapshot(
+      options['api-config-identity-file'] ??
+        `/run/agent-saas-server-${apiUnit.color}.config-identity.json`,
+    ).catch((error) => {
+      if (error?.code === 'ENOENT') return undefined;
+      throw error;
+    }),
   ]);
   const apiRoot = realpathSync(`/opt/agent-saas-app/color/${apiUnit.color}`);
   const workerRoot = realpathSync(`/opt/agent-saas-app/worker/${workerUnit.color}`);
@@ -193,16 +248,33 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'Live component identity does not match independently recomputed installed bytes',
     );
   }
-  const configIdentity =
-    api.configIdentity === undefined
-      ? undefined
-      : validateConfigIdentitySummary(api.configIdentity);
+  // retry baseline is the sole live-read exception: a legacy API may have neither a private
+  // snapshot nor a public summary, but the workflow has already proven this Manifest deploys API.
+  // Candidate/steady-state convergence requires the root-only private snapshot and never falls
+  // back to an anonymous API field.
+  const configIdentity = selectLiveConfigIdentity({
+    privateConfigIdentity,
+    publicConfigIdentity: api.configIdentity,
+    apiReleaseId: api.release.releaseId,
+    configIdentityStage,
+  });
+  const trustedRuntime = JSON.parse(
+    defaultReadFileSync('/etc/agent-saas/runtime-identity.json', 'utf8'),
+  );
+  if (!trustedRuntime || typeof trustedRuntime !== 'object' || Array.isArray(trustedRuntime)) {
+    throw new Error('Trusted production runtime identity must be an object');
+  }
+  // retry/readback 时 live topology 允许先于 trusted component matrix 切换；API 已切换的
+  // retry baseline 与 candidate readback 均以 active-release-bound private summary 为准。
+  validateExpectedConfigIdentityObservers(trustedRuntime.configIdentity, configIdentity, {
+    configIdentityStage,
+  });
   const output = {
     schemaVersion: 1,
     environment: 'production',
     observedAt: new Date().toISOString(),
     components,
-    // TASK-318：透传经严格白名单重建的只读摘要（旧 API 无字段时向后兼容）。
+    // Undefined is serialized only for the explicit legacy API upgrade retry baseline.
     ...(configIdentity ? { configIdentity } : {}),
     topology: {
       api: { color: apiUnit.color, unit: apiUnit.unit },

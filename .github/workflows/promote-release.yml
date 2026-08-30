@@ -194,18 +194,29 @@ jobs:
       - name: Read authoritative production baseline before any write
         run: |
           set -euo pipefail
-          remote="/tmp/release-preflight-$GITHUB_RUN_ID"
+          remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
-          reader=read-production-state.mjs
-          [ "$PROMOTION_RETRY_MODE" = retry_after_change ] && reader=read-live-production-components.mjs
+          api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
+          worker_action="$(jq -r .components.runtimeWorker.action "$RUNNER_TEMP/manifest.json")"
+          baseline_plan="$(node scripts/release/promotion-config-identity-state.mjs plan \
+            --retry-mode "$PROMOTION_RETRY_MODE" --api-action "$api_action" \
+            --runtime-worker-action "$worker_action")"
+          reader="$(printf '%s' "$baseline_plan" | jq -r .reader)"
+          reader_stage="$(printf '%s' "$baseline_plan" | jq -r .configIdentityStage)"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/$reader' --output '$remote/production-before.json' >/dev/null"
+            "node '$remote/$reader' --config-identity-stage '$reader_stage' --output '$remote/production-before.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-before.json" \
             "$RUNNER_TEMP/production-before.json"
+          # This gate is deliberately before promotionGate, payload prefetch, the durable promoting
+          # marker, receipts, and every production mutation.
+          migration_gate="$(node scripts/release/promotion-config-identity-state.mjs assert-write-gate \
+            --manifest "$RUNNER_TEMP/manifest.json" \
+            --production-state "$RUNNER_TEMP/production-before.json")"
+          legacy_api_requires_upgrade="$(printf '%s' "$migration_gate" | jq -r .legacyApiRequiresUpgrade)"
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json" \
@@ -214,7 +225,8 @@ jobs:
           if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
             jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
               "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
-            if diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
+            if [ "$legacy_api_requires_upgrade" = false ] && \
+               diff -q <(jq -S .components "$RUNNER_TEMP/production-before.json") \
                 <(jq -S . "$RUNNER_TEMP/production-target.json") >/dev/null; then
               production_already_target=true
             fi
@@ -310,7 +322,7 @@ jobs:
       - name: Upload immutable deploy payload and managed units
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           echo "PROMOTION_REMOTE=$remote" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote/artifacts'"
           if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
@@ -322,6 +334,7 @@ jobs:
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/selected/"*.tgz "$ECS_USER@$ECS_HOST:$remote/artifacts/"
           scp -i ~/.ssh/production_key "$RUNNER_TEMP/manifest.json" \
             scripts/release/deploy-production-release.sh scripts/release/write-production-identity.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
           scp -i ~/.ssh/production_key \
@@ -565,14 +578,18 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          remote="/tmp/release-readback-$GITHUB_RUN_ID"
+          remote="/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
+          api_action="$(jq -r .components.api.action "$RUNNER_TEMP/manifest.json")"
+          # Final convergence is always strict: both stages require a root-only private snapshot.
+          config_identity_readback_stage=steady-state
+          [ "$api_action" = deploy ] && config_identity_readback_stage=candidate-readback
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-live-production-components.mjs' --output '$remote/production-after.json' >/dev/null"
+            "node '$remote/read-live-production-components.mjs' --config-identity-stage '$config_identity_readback_stage' --output '$remote/production-after.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-after.json" "$RUNNER_TEMP/production-after.json"
           jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
             "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
@@ -581,12 +598,26 @@ jobs:
             echo 'target_match=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-after.json")" = consistent
+          expected_config_release_id="$RELEASE_ID"
+          if [ "$api_action" = keep ]; then
+            expected_config_release_id="$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-before.json")"
+          fi
+          test "$expected_config_release_id" != null
+          test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-after.json")" = "$expected_config_release_id"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "sudo node '$PROMOTION_REMOTE/write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
             "node '$remote/read-production-state.mjs' --output '$remote/production-confirmed.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-confirmed.json" \
             "$RUNNER_TEMP/production-confirmed.json"
+          test "$(jq -r .configIdentity.status "$RUNNER_TEMP/production-confirmed.json")" = consistent
+          test "$(jq -r .configIdentity.releaseId "$RUNNER_TEMP/production-confirmed.json")" = \
+            "$expected_config_release_id"
+          config_identity_projection='.configIdentity | {schemaVersion,status,expected,observed,releaseId}'
+          diff -u \
+            <(jq -S "$config_identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
+            <(jq -S "$config_identity_projection" "$RUNNER_TEMP/production-after.json")
           identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
           diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
             <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
@@ -602,6 +633,11 @@ jobs:
             observation_complete=true
             observed="$(jq -c .components "$RUNNER_TEMP/production-after.json")"
           fi
+          config_identity_confirmed=false
+          if [ "${{ steps.readback.outcome }}" = success ] && \
+             [ "${{ steps.readback.outputs.target_match }}" = true ]; then
+            config_identity_confirmed=true
+          fi
           target="$(jq -c '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
           before="$(jq -c .components "$RUNNER_TEMP/production-before.json")"
           external_side_effects=none_observed
@@ -616,10 +652,11 @@ jobs:
           fi
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
+            --argjson configIdentityConfirmed "$config_identity_confirmed" \
             --arg externalSideEffects "$external_side_effects" \
             --argjson rollbackAttempted "$rollback_attempted" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,configIdentityConfirmed:$configIdentityConfirmed,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 

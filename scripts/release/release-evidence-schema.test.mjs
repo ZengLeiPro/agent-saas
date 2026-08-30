@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   createValidReleaseEvidence,
@@ -7,7 +8,7 @@ import {
 import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 
-test('accepts a complete release evidence document', () => {
+test('accepts a complete release evidence document with a bound baseline contract', () => {
   assert.deepEqual(
     validateReleaseEvidenceDocument(createValidReleaseEvidence(), {
       expectedSha: RELEASE_EVIDENCE_SHA,
@@ -34,7 +35,17 @@ test('continues to accept immutable legacy Taskboard Integration evidence', () =
   assert.equal(validateReleaseEvidenceDocument(legacy).releaseSha, RELEASE_EVIDENCE_SHA);
 });
 
+const relationshipContradictions = JSON.parse(
+  readFileSync(
+    new URL('./fixtures/config-identity-relationship-contradictions.json', import.meta.url),
+  ),
+);
+
 const invalidMutations = [
+  ...Object.entries(relationshipContradictions).map(([name, summary]) => [
+    `config identity unresolved-version contradiction: ${name}`,
+    (value) => (value.configIdentity = summary),
+  ]),
   ['release PR SHA', (value) => (value.releasePullRequest.mergeCommitOid = 'b'.repeat(40))],
   ['release PR membership', (value) => (value.sourcePullRequests = [202])],
   ['merge receipt', (value) => delete value.checks.mergeReceipt],
@@ -60,6 +71,23 @@ const invalidMutations = [
         schemaVersion: 1,
         status: 'consistent',
         expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+        observed: {
+          schemaVersion: 1,
+          digest: `sha256:${'a'.repeat(64)}`,
+          credentialVersionDigest: null,
+          versionResolution: 'resolved',
+          secretRefCount: 0,
+        },
+      }),
+  ],
+  [
+    'config identity expected binding disappeared',
+    (value) =>
+      (value.configIdentity = {
+        schemaVersion: 1,
+        status: 'unverifiable',
+        reason: 'expected_not_bound',
+        releaseId: 'rc-evidence-test',
         observed: {
           schemaVersion: 1,
           digest: `sha256:${'a'.repeat(64)}`,

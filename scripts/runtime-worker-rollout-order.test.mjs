@@ -3,12 +3,44 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const rollbackHelper = readFileSync(
+  new URL('./release/production-deploy-rollback.sh', import.meta.url),
+  'utf8',
+);
 
 function position(text) {
   const index = workflow.indexOf(text);
   assert.notEqual(index, -1, `missing workflow marker: ${text}`);
   return index;
 }
+
+test('rollback bridge preserves latest authority semantics and restores candidate release env', () => {
+  const sourceHelper = position('source "$RELEASE_DIR/scripts/release/production-deploy-rollback.sh"');
+  const armRollback = workflow.indexOf('ROLLBACK_ARMED=1', sourceHelper);
+  const switchIdle = position('log "switch color/$IDLE:');
+  const backupEnv = position('PREV_API_RELEASE_ENV="$RELEASE_DIR/.rollback-env/server-${IDLE}.release.env"');
+  const writeEnv = position('if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs"');
+  const rollbackStart = position('rollback_idle_and_exit()');
+  const rollbackEnd = workflow.indexOf('recover_interrupted_runtime_worker_drain()', rollbackStart);
+  const rollbackBlock = workflow.slice(rollbackStart, rollbackEnd);
+
+  assert.ok(sourceHelper < armRollback);
+  assert.ok(armRollback < switchIdle);
+  assert.ok(backupEnv < writeEnv);
+  assert.match(rollbackHelper, /declare -F rollback_idle_and_exit/u);
+  assert.match(rollbackHelper, /TRAFFIC_SWITCHED:-0/u);
+  assert.ok(workflow.split('production_deploy_restore_file "$UPSTREAM_CONF"').length >= 5);
+  assert.match(
+    rollbackHelper,
+    /TRAFFIC_SWITCHED=0[\s\S]{0,160}rollback_idle_and_exit/u,
+  );
+  assert.match(rollbackBlock, /production_deploy_restore_file "\$WORKER_RELEASE_ENV"/u);
+  assert.match(rollbackBlock, /production_deploy_restore_file "\$API_RELEASE_ENV"/u);
+  assert.equal(workflow.includes('[ ! -f "$UPSTREAM_BAK" ]'), false);
+  assert.equal(rollbackBlock.includes('systemctl stop "${SERVICE_NAME}@${IDLE}"'), false);
+  assert.match(rollbackBlock, /trap - ERR\s+set -e/u);
+  assert.match(rollbackBlock, /systemctl disable --now "\$\{SERVICE_NAME\}@\$\{IDLE\}"/u);
+});
 
 test('runtime worker rollback restores drained authority before candidate stop', () => {
   const drainStarted = position('WORKER_ACTIVE_DRAIN_STARTED=1');
@@ -73,7 +105,7 @@ test('legacy runtime sources exit before an execution-fencing candidate can star
   const deploymentBudgetGuard = position('insufficient remote deployment budget for legacy drain; rolling back before signal');
   const legacyWorkerExit = position('legacy runtime worker exited before candidate start');
   const legacyAllExit = position('legacy bootstrap all exited before candidate start');
-  const compatibilityEnvGuard = position('if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs"');
+  const configIdentityEnvGuard = position('if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs"');
   const candidateMarkerGuard = position('if ! rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid"');
   const candidateStart = position('systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"');
   const rollbackCandidateStop = position('stop runtime worker candidate before legacy rollback');
@@ -85,9 +117,9 @@ test('legacy runtime sources exit before an execution-fencing candidate can star
   assert.ok(capabilityCheck < deploymentBudgetGuard);
   assert.ok(deploymentBudgetGuard < legacyWorkerExit);
   assert.ok(deploymentBudgetGuard < legacyAllExit);
-  assert.ok(legacyWorkerExit < compatibilityEnvGuard);
-  assert.ok(legacyAllExit < compatibilityEnvGuard);
-  assert.ok(compatibilityEnvGuard < candidateMarkerGuard);
+  assert.ok(legacyWorkerExit < configIdentityEnvGuard);
+  assert.ok(legacyAllExit < configIdentityEnvGuard);
+  assert.ok(configIdentityEnvGuard < candidateMarkerGuard);
   assert.ok(candidateMarkerGuard < candidateStart);
   assert.ok(rollbackCandidateStop < rollbackWorkerTemplate);
   assert.ok(rollbackWorkerTemplate < rollbackWorkerRestore);
@@ -95,8 +127,9 @@ test('legacy runtime sources exit before an execution-fencing candidate can star
   assert.ok(rollbackAllTemplate < rollbackAllRestore);
   assert.ok(workflow.includes('LEGACY_DRAIN_DEADLINE_EPOCH=$((START_EPOCH + 1600))'));
   assert.ok(workflow.includes('graceful drain timed out; forcing rollback before remote timeout'));
-  assert.ok(workflow.includes('failed to write compatibility env after runtime preflight'));
+  assert.ok(workflow.includes('failed to persist candidate config identity and compatibility env'));
   assert.ok(workflow.includes('failed to clear candidate runtime markers'));
+  assert.ok(workflow.includes('preserving idle service and candidate release for manual recovery'));
   assert.ok(workflow.includes('failed to arm active runtime worker drain guard'));
   assert.ok(workflow.includes('previous runtime service template and enablement restored before rollback'));
   assert.ok(workflow.includes('active runtime supports execution fencing; candidate-first handoff is allowed'));

@@ -20,6 +20,17 @@ mkdir -p "$(dirname "$lock")"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
 
+# Promotion preflight already uploads this contract module. Local/manual harnesses may keep it
+# next to this script; the production workflow's immutable remote uses the preflight directory.
+config_identity_reader="${CONFIG_IDENTITY_READER:-$(dirname "$0")/read-production-state.mjs}"
+if [ ! -f "$config_identity_reader" ]; then
+  config_identity_reader="/tmp/release-preflight-$GITHUB_RUN_ID/read-production-state.mjs"
+fi
+test -f "$config_identity_reader" || {
+  echo 'Missing shared ConfigIdentity readiness contract module' >&2
+  exit 1
+}
+
 upsert_env() {
   local manifest="$1" target="$2" role="$3" config_identity="$4"
   node - "$manifest" "$target" "$role" "$config_identity" <<'NODE'
@@ -168,7 +179,7 @@ port_for_color() { [ "$1" = blue ] && echo 3200 || echo 3201; }
 deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root
-  local had_api_env=false had_worker_env=false nginx_changed=false app_committed=false
+  local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false app_committed=false
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
   if [ -d "$target" ]; then
@@ -209,37 +220,88 @@ deploy_app() {
     cp -a "$worker_env" "$rollback_root/worker.release.env"
   fi
   cleanup_app_failure() {
+    local api_restored=false worker_restored=false
+    local rollback_pid rollback_ready
     if [ "$app_committed" = false ]; then
-      systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
-      systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || true
-      if [ -n "$worker_idle_previous" ]; then
-        ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle"
+      # 清除旧 API drain 状态并恢复 ready，再翻回 nginx；只有流量确认回旧色后才停候选与恢复其 env。
+      rm -f "/run/agent-saas-server-$api_active.pid" \
+        "/run/agent-saas-server-$api_active.ready" \
+        "/run/agent-saas-server-$api_active.draining" || true
+      systemctl reset-failed "agent-saas-server@$api_active" >/dev/null 2>&1 || true
+      if systemctl enable "agent-saas-server@$api_active" >/dev/null 2>&1 \
+        && systemctl restart "agent-saas-server@$api_active" >/dev/null 2>&1; then
+        for _ in $(seq 1 180); do
+          if curl -fsS "http://127.0.0.1:$(port_for_color "$api_active")/api/healthz/ready" >/dev/null 2>&1; then
+            api_restored=true
+            break
+          fi
+          sleep 1
+        done
+      fi
+      if [ "$api_restored" = true ] && [ "$nginx_changed" = true ]; then
+        if [ "$had_nginx" = true ]; then
+          cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
+        else
+          rm -f /etc/nginx/conf.d/agent-saas-upstream.conf
+        fi
+        if ! { nginx -t >/dev/null 2>&1 && systemctl reload nginx; }; then
+          api_restored=false
+        fi
+      fi
+      if [ "$api_restored" = true ] \
+        && systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 \
+        && ! systemctl is-active --quiet "agent-saas-server@$api_idle"; then
+        printf '%s\n' "$api_active" >/etc/agent-saas/active-color
+        if [ -n "$api_idle_previous" ]; then
+          ln -sfn "$api_idle_previous" "/opt/agent-saas-app/color/$api_idle" || true
+        else
+          rm -f "/opt/agent-saas-app/color/$api_idle" || true
+        fi
+        if [ "$had_api_env" = true ]; then
+          cp -a "$rollback_root/api.release.env" "$api_env" || true
+        else
+          rm -f "$api_env" || true
+        fi
       else
-        rm -f "/opt/agent-saas-app/worker/$worker_idle"
+        echo 'ERROR: preserving candidate API release/env because old traffic or candidate stop is unverified' >&2
       fi
-      if [ -n "$api_idle_previous" ]; then
-        ln -sfn "$api_idle_previous" "/opt/agent-saas-app/color/$api_idle"
+
+      # 旧 Worker 必须重新 ready，随后停候选、翻 marker，最后才能恢复候选 env。
+      rm -f "/run/agent-saas-runtime-worker-$worker_active.pid" \
+        "/run/agent-saas-runtime-worker-$worker_active.ready" \
+        "/run/agent-saas-runtime-worker-$worker_active.draining" || true
+      systemctl reset-failed "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
+      if systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 \
+        && systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1; then
+        for _ in $(seq 1 180); do
+          rollback_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
+          rollback_ready="$(cat "/run/agent-saas-runtime-worker-$worker_active.ready" 2>/dev/null || true)"
+          if systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active" \
+            && [ -n "$rollback_pid" ] && [ "$rollback_pid" = "$rollback_ready" ] \
+            && kill -0 "$rollback_pid" 2>/dev/null; then
+            worker_restored=true
+            break
+          fi
+          sleep 1
+        done
+      fi
+      if [ "$worker_restored" = true ] \
+        && systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 \
+        && ! systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
+        printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
+        if [ -n "$worker_idle_previous" ]; then
+          ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
+        else
+          rm -f "/opt/agent-saas-app/worker/$worker_idle" || true
+        fi
+        if [ "$had_worker_env" = true ]; then
+          cp -a "$rollback_root/worker.release.env" "$worker_env" || true
+        else
+          rm -f "$worker_env" || true
+        fi
       else
-        rm -f "/opt/agent-saas-app/color/$api_idle"
+        echo 'ERROR: preserving candidate Worker release/env because old authority or candidate stop is unverified' >&2
       fi
-      if [ "$had_api_env" = true ]; then
-        cp -a "$rollback_root/api.release.env" "$api_env"
-      else
-        rm -f "$api_env"
-      fi
-      if [ "$had_worker_env" = true ]; then
-        cp -a "$rollback_root/worker.release.env" "$worker_env"
-      else
-        rm -f "$worker_env"
-      fi
-      printf '%s\n' "$api_active" >/etc/agent-saas/active-color
-      printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
-      if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
-        cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
-      fi
-      systemctl enable --now "agent-saas-server@$api_active" >/dev/null 2>&1 || true
-      systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
     fi
   }
   trap cleanup_app_failure EXIT
@@ -262,16 +324,26 @@ deploy_app() {
     if curl -fsS "http://127.0.0.1:$api_idle_port/api/healthz/ready" >/tmp/api-candidate-ready.json; then break; fi
     sleep 1
   done
-  node - "$MANIFEST_PATH" /tmp/api-candidate-ready.json <<'NODE'
-const fs = require('node:fs');
-const [manifestPath, readyPath] = process.argv.slice(2);
-const m = JSON.parse(fs.readFileSync(manifestPath));
-const ready = JSON.parse(fs.readFileSync(readyPath));
-const r = ready.release;
-if (r.environment !== 'production' || r.releaseId !== m.releaseId || r.releaseSha !== m.components.api.sourceSha || r.serverDigest !== m.components.api.artifactDigest || ready.configIdentity?.status !== 'consistent') process.exit(1);
+  node --input-type=module - "$MANIFEST_PATH" /tmp/api-candidate-ready.json \
+    "/run/agent-saas-server-$api_idle.config-identity.json" "$config_identity" \
+    "$config_identity_reader" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [manifestPath, readyPath, snapshotPath, expectedJson, readerPath] = process.argv.slice(2);
+const { validateCandidateReleaseReadiness } = await import(pathToFileURL(readerPath));
+await validateCandidateReleaseReadiness({
+  environment: 'production',
+  manifest: JSON.parse(fs.readFileSync(manifestPath, 'utf8')),
+  readiness: JSON.parse(fs.readFileSync(readyPath, 'utf8')),
+  privateSnapshotPath: snapshotPath,
+  expectedConfigIdentity: JSON.parse(expectedJson),
+});
 NODE
 
-  cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"
+  if [ -e /etc/nginx/conf.d/agent-saas-upstream.conf ]; then
+    had_nginx=true
+    cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"
+  fi
   nginx_changed=true
   cat > /etc/nginx/conf.d/agent-saas-upstream.conf <<EOF
 # active=$api_idle release=$release_id
@@ -280,7 +352,14 @@ upstream agent_saas_backend {
     server 127.0.0.1:$(port_for_color "$api_active") backup;
 }
 EOF
-  nginx -t || { cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf; exit 1; }
+  if ! nginx -t; then
+    if [ "$had_nginx" = true ]; then
+      cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
+    else
+      rm -f /etc/nginx/conf.d/agent-saas-upstream.conf
+    fi
+    exit 1
+  fi
   systemctl reload nginx
   curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
   echo "$api_idle" >/etc/agent-saas/active-color

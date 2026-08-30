@@ -2519,15 +2519,16 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
-    // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
-
-    // 6) 语音消息: STT 转文字
+    // 5) 仍未 accepted；chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
+    const configFresh = await this.config.refreshSharedConfig?.(true);
+    if (configFresh === false) { chatLogger.warn('Shared config refresh failed; rejecting stale runtime config'); if (voiceFile) this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别配置刷新失败]', error: true }); this.idempotencySet(user?.sub, clientMsgId, 'failed', ''); this.sendChatRejected(ws, clientMsgId, voiceFile ? 'stt_failed' : 'model_not_allowed', '共享配置刷新失败，请重试'); return; }
+    // 6) 语音消息: STT 转文字。刷新后现取最新配置，禁用后不得回退启动快照。
     let resolvedMessage = message || '';
-    if (voiceFile && this.config.sttConfig) {
+    const sttConfig = this.config.getSttConfig ? this.config.getSttConfig() : this.config.sttConfig;
+    if (voiceFile && sttConfig) {
       try {
         chatLogger.info(`Voice STT: processing ${voiceFile.savedPath} (${voiceFile.duration}ms)`);
-        const sttResult = await speechToText(voiceFile.savedPath, this.config.sttConfig);
+        const sttResult = await speechToText(voiceFile.savedPath, sttConfig);
         if (sttResult.text) {
           const displayText = sttResult.text;
           resolvedMessage = VOICE_STT_TAG + displayText;
@@ -2551,7 +2552,7 @@ export class WebChannel implements BaseChannel {
         this.sendChatRejected(ws, clientMsgId, 'stt_failed', '语音识别服务调用失败');
         return;
       }
-    } else if (voiceFile && !this.config.sttConfig) {
+    } else if (voiceFile && !sttConfig) {
       chatLogger.warn('Voice message received but STT not configured (missing doubaoCluster)');
       this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
       this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
@@ -2966,9 +2967,8 @@ export class WebChannel implements BaseChannel {
       try {
         const enqueueCwd = targetCwd || resolveUserCwd(this.config.agentCwd!, userIdentity);
         const existingSessionRecord = await enqueueRuntime.sessionCatalog.get(enqueueSessionId);
-        // policy 必须在首条消息入队前 pin；先刷新共享配置，避免 Web 预建 Session
+        // policy 必须在首条消息入队前 pin；共享配置已在 STT 前刷新，避免 Web 预建 Session
         // 把刚开启 delegation 的新会话永久写成 v1。
-        this.config.refreshSharedConfig?.();
         const enqueueOwner = sessionOwner ?? userIdentity;
         titleOwnerId = enqueueOwner?.id;
         const enqueueWorkspaceId = existingSessionRecord?.workspaceId
@@ -4235,7 +4235,7 @@ export class WebChannel implements BaseChannel {
     fallbackUserMessage = '',
     fallbackAssistantReply = '',
   ): Promise<string | null> {
-    this.config.refreshSharedConfig?.();
+    if (await this.config.refreshSharedConfig?.(true) === false) return null;
     const titleConfigs = this.config.titleGeneratorConfigs;
     const agentCwd = this.config.agentCwd;
     if (!titleConfigs?.length || !agentCwd) return null;
@@ -4248,7 +4248,7 @@ export class WebChannel implements BaseChannel {
       });
       const transcriptPath = getTranscriptPath(userCwd, sessionId, { tenantId: userInfo.tenantId, userId: userInfo.id });
       const meta = await readSessionMeta(transcriptPath);
-      // 没有 meta 无法持久化，等 session 初始化/后续终态再次触发；已有命名不覆盖。
+      // 没有 meta 无法持久化，等待 session 初始化/后续终态再次触发；已有命名不覆盖。
       if (!meta || meta.customTitle || meta.generatedTitle) return null;
 
       // 优先从 transcript 读首两轮（命名素材稳定，与手动 /auto-title 一致）；

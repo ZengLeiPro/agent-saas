@@ -5,9 +5,7 @@ set -euo pipefail
 export MEMORY_CONSOLIDATION_TEST_PG_URL="${MEMORY_CONSOLIDATION_TEST_PG_URL:-$TEST_DATABASE_URL}"
 
 task_script="$(dirname "$0")/pr-preflight-task.sh"
-config_identity_test="$(dirname "$0")/release/config-identity-release.test.mjs"
 
-node --test "$config_identity_test"
 bash "$task_script" checks
 bash "$task_script" coverage shared
 bash "$task_script" coverage server

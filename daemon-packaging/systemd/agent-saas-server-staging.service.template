@@ -11,6 +11,7 @@ Group=agent-saas-staging
 RuntimeDirectory=agent-saas-staging
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
+# ConfigIdentity 摘要只落在私有 RuntimeDirectory，不进入匿名 health 响应。
 WorkingDirectory=/mnt/agent-saas-staging/runtime/server
 Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
@@ -19,6 +20,7 @@ Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
 Environment=AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/server.pid
 Environment=AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready
+Environment=AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-staging/config-identity.json
 Environment=KB_PREVIEW_AUTO_GENERATE=false
 EnvironmentFile=/etc/agent-saas-staging/server.env
 ExecStart=/usr/bin/node --enable-source-maps /opt/agent-saas-staging/current/server/dist/index.js

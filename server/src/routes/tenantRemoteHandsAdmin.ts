@@ -1,3 +1,4 @@
+
 import { Router } from 'express';
 import { applyEdits, modify } from 'jsonc-parser';
 
@@ -21,6 +22,7 @@ export interface CreateTenantRemoteHandsAdminRouterOptions {
   configMutationService?: AdminConfigMutationService;
 }
 
+/** JSON 配置对象的窄类型。 */
 type RawObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is RawObject {
@@ -203,6 +205,7 @@ export function createTenantRemoteHandsAdminRouter(
           options.onTenantRemoteHandsUpdated?.(next);
         },
       });
+
       res.json({
         tenantRemoteHands: sanitizeTenantRemoteHands(result.config.tenantRemoteHands),
       });

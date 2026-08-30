@@ -122,11 +122,11 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 - Production 在应用新配置前先跑 inline-secret 安全门禁，并异步解析候选配置中
   所有受管 ref 的 version；任一校验失败则整次重载保留旧内存配置。校验期间热路径
   继续使用旧配置。webTools 与 STT 都使用 prepare/commit 两阶段：SecretVault 明文解析只
-  产生无副作用 commit，候选文件仍为最新版且前置回调全部成功后，执行侧配置、AppConfig
-  与 observed identity 才在同一发布点更新。身份重算若失败则保留上一份 observed identity
-  并告警，不发布半成品摘要。
-- overview snapshot 15s 轮询读取摘要；`getSummary` 有 5s 节流，避免每次轮询
-  都解密 vault 文件。
+  产生无副作用 commit，候选文件仍为最新版且前置回调全部成功后，执行侧配置与 AppConfig
+  才在同一发布点更新；旧 observed identity 同步失效为 `not_collected`，随后异步重算。
+  身份重算若失败则维持保守态并告警，不恢复旧 `consistent` 或发布半成品摘要。
+- overview snapshot 15s 轮询读取摘要；前端用单调 generation 丢弃晚到的旧响应。
+  `getSummary` 有 5s 节流，避免每次轮询都解密 vault 文件。
 
 ## 6. 发布链路
 
@@ -145,9 +145,12 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
    active target 内不可变 Manifest 的 API artifact digest 与上一份 trusted API digest；
    `AGENT_SAAS_RELEASE_ID` 必须绑定同一 Manifest 的 releaseId。任一来源缺失或冲突都 fail
    closed（`configIdentity` 字段；legacy `configFingerprint` 语义不变）。
-   `read-production-state.mjs` 把 API `/api/healthz/ready` 返回的 observed 摘要透传进 Production
-   State 与 Release Evidence；legacy API 可以完全不提供 `configIdentity`，但一旦提供该对象，
-   非空 `releaseId` 必须存在并等于 `api.release.releaseId`，Evidence schema 同样强制此绑定。
+   Runtime 将严格摘要原子写入每色 `/run/agent-saas-server-<color>.config-identity.json`
+   私有快照（0600）；匿名 `/api/healthz/ready` 只用一致性做 readiness 门禁，不返回摘要。
+   `read-live-production-components.mjs` / `read-production-state.mjs` 从活动色私有快照读取并
+   二次严格校验后写入 Production State 与 Release Evidence；legacy API 可以完全没有
+   `configIdentity`，但一旦提供该对象，非空 `releaseId` 必须存在并等于
+   `api.release.releaseId`，Evidence schema 同样强制此绑定。
 4. `read-runtime-identity.mjs` 的校验器对 `configIdentity` 做结构校验
    （存在时必须合法），旧 identity 文件（无该字段）保持兼容。
 
@@ -155,7 +158,8 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 
 `OverviewPage` 新增「配置身份」只读卡片：四态徽章、Release ID、schema 版本、
 expected/observed digest 截断摘要、最近观察/变化时间。`null`/`unknown` 一律
-显式渲染为占位符或状态，不显示为正常值。**没有**修改配置、接受漂移、查看
+显式渲染为占位符或状态；首次、手动或定时刷新失败都会撤销旧 `consistent` 绿态。
+**没有**修改配置、接受漂移、查看
 raw config 的任何入口。drifted / unverifiable 同时进入待关注队列（high）。
 
 ## 8. 版本迁移

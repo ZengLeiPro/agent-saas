@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { createComponentArtifactIndex } from './create-component-artifact-index.mjs';
@@ -154,19 +155,16 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     appWorkflow,
     /failed to persist candidate config identity[\s\S]{0,160}rollback_idle_and_exit/u,
   );
-  assert.match(appWorkflow, /candidate config identity status=\$CONFIG_IDENTITY_STATUS/u);
   const postReadyIdentityProbe = appWorkflow.slice(
-    appWorkflow.indexOf('if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL"'),
+    appWorkflow.indexOf('CONFIG_IDENTITY_SNAPSHOT="/run/${SERVICE_NAME}-${IDLE}.config-identity.json"'),
     appWorkflow.indexOf('# ── 7. warmup'),
   );
-  assert.match(postReadyIdentityProbe, /if ! CONFIG_IDENTITY_STATUS=\$\(curl[\s\S]+JSON\.parse/u);
+  assert.match(postReadyIdentityProbe, /readPrivateConfigIdentitySnapshot/u);
+  assert.match(postReadyIdentityProbe, /summary\.status !== "consistent"/u);
+  assert.match(postReadyIdentityProbe, /summary\.releaseId !== expectedReleaseId/u);
   assert.match(
     postReadyIdentityProbe,
-    /failed to inspect candidate config identity after readiness[\s\S]{0,120}rollback_idle_and_exit/u,
-  );
-  assert.match(
-    postReadyIdentityProbe,
-    /candidate config identity status=\$CONFIG_IDENTITY_STATUS[\s\S]{0,120}rollback_idle_and_exit/u,
+    /candidate private config identity validation failed[\s\S]{0,120}rollback_idle_and_exit/u,
   );
   assert.match(appWorkflow, /--config-identity-digest/u);
   assert.ok(
@@ -185,27 +183,40 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
 });
 
 
-test('post-ready ConfigIdentity probe sends curl, empty-body, and malformed-JSON failures to rollback', async () => {
+test('post-ready ConfigIdentity 私有快照缺失、畸形或不一致时触发 rollback', async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
-  const prefix = 'if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL" | node -e \'';
+  const prefix = "if ! node --input-type=module -e '\n";
   const start = workflow.indexOf(prefix);
   assert.notEqual(start, -1);
   const scriptStart = start + prefix.length;
-  const scriptEnd = workflow.indexOf("\n          '); then", scriptStart);
+  const scriptEnd = workflow.indexOf("\n          ' \"file://$RELEASE_DIR/scripts/release/read-production-state.mjs\"", scriptStart);
   assert.notEqual(scriptEnd, -1);
   const parser = workflow.slice(scriptStart, scriptEnd);
-
-  assert.equal(spawnSync(process.execPath, ['-e', parser], { input: '' }).status, 1);
-  assert.notEqual(spawnSync(process.execPath, ['-e', parser], { input: '{bad-json' }).status, 0);
-  const valid = spawnSync(process.execPath, ['-e', parser], {
-    input: JSON.stringify({ configIdentity: { status: 'consistent' } }),
-    encoding: 'utf8',
-  });
-  assert.equal(valid.status, 0);
-  assert.equal(valid.stdout, 'consistent');
-
-  const curlFailure = spawnSync('bash', ['-c',
-    'set -euo pipefail; rollback=0; if ! value=$( (exit 22) | cat); then rollback=1; fi; test "$rollback" -eq 1',
+  const root = await mkdtemp(join(tmpdir(), 'compat-config-identity-'));
+  const snapshotPath = join(root, 'config-identity.json');
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'scripts/release/read-production-state.mjs')).href;
+  const runParser = () => spawnSync(process.execPath, [
+    '--input-type=module', '-e', parser, '--', moduleUrl, snapshotPath, RELEASE_ID,
   ]);
-  assert.equal(curlFailure.status, 0);
+
+  assert.notEqual(runParser().status, 0);
+  await writeFile(snapshotPath, '{bad-json');
+  assert.notEqual(runParser().status, 0);
+  const summary = {
+    schemaVersion: 1,
+    status: 'consistent',
+    releaseId: RELEASE_ID,
+    expected: { schemaVersion: 1, digest: DIGEST },
+    observed: {
+      schemaVersion: 1,
+      digest: DIGEST,
+      credentialVersionDigest: null,
+      versionResolution: 'resolved',
+      secretRefCount: 0,
+    },
+  };
+  await writeFile(snapshotPath, JSON.stringify({ ...summary, releaseId: 'rc-wrong' }));
+  assert.notEqual(runParser().status, 0);
+  await writeFile(snapshotPath, JSON.stringify(summary));
+  assert.equal(runParser().status, 0);
 });

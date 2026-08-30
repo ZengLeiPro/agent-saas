@@ -39,7 +39,7 @@ describe('SharedConfigRefresher STT 两阶段提交', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('异步准备失败保留旧状态，重试成功后再一致提交', async () => {
+  it('异步准备失败保留旧状态，并在节流窗口内立即重试一致提交', async () => {
     const writeCandidate = (enabled: boolean) =>
       writeFileSync(
         join(dir, 'config.json'),
@@ -81,17 +81,15 @@ describe('SharedConfigRefresher STT 两阶段提交', () => {
 
     writeCandidate(true);
     clock += 5_000;
-    refresher.refreshIfChanged();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await refresher.refreshIfChanged()).toBe(false);
     expect(config.stt?.enabled).toBe(false);
     expect(runtimeEnabled).toBe(false);
     expect(reloadCalls).toBe(0);
     expect(refresher.getAppliedStamps().config).toEqual(initialStamp);
     expect(warns.some((message) => message.includes('STT SecretVault resolve failed'))).toBe(true);
 
-    clock += 5_000;
-    refresher.refreshIfChanged();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // 失败后即使仍在 stat 节流窗口，也必须立即重试，而不是误报 true 后使用旧配置。
+    expect(await refresher.refreshIfChanged()).toBe(true);
     expect(config.stt?.enabled).toBe(true);
     expect(runtimeEnabled).toBe(true);
     expect(reloadCalls).toBe(1);
@@ -141,17 +139,16 @@ describe('SharedConfigRefresher STT 两阶段提交', () => {
 
     writeCandidate(111);
     clock += 5_000;
-    refresher.refreshIfChanged();
+    const firstRefresh = refresher.refreshIfChanged(true);
     writeCandidate(9_999);
     releaseFirst();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await firstRefresh).toBe(false);
     expect(config.stt?.pricing?.creditsPerCall).toBe(0);
     expect(runtimeCredits).toBe(0);
     expect(reloadCalls).toBe(0);
 
     clock += 5_000;
-    refresher.refreshIfChanged();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
     expect(config.stt?.pricing?.creditsPerCall).toBe(9_999);
     expect(runtimeCredits).toBe(9_999);
     expect(reloadCalls).toBe(1);

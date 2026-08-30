@@ -23,16 +23,19 @@ import type { UploadManager } from '../../uploads/manager.js';
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
 export interface WebChannelRuntimeConfig {
+  /** 运行期可变配置均优先通过 getter 读取。 */
   /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
   authEnabled?: boolean;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;
-  /** 标题生成前主动对齐共享 config.json，覆盖无主模型解析的手动命名路径。 */
-  refreshSharedConfig?: () => void;
+  /** 标题/STT 前对齐共享配置；force 用于安全敏感请求，false 表示候选未安全提交。 */
+  refreshSharedConfig?: (force?: boolean) => boolean | Promise<boolean>;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
   sttConfig?: SttConfig;
+  /** 语音识别在强制刷新完成后读取最新配置；未提供时兼容启动快照。 */
+  getSttConfig?: () => SttConfig | undefined;
   userOverrides?: UserOverrides;
   /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
   tokenUsageStore?: TokenUsageStore;

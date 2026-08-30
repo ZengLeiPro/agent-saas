@@ -22,8 +22,27 @@ const target = {
 };
 const base = { releaseId: 'rc-20260826-01', before, target, observationComplete: true };
 
-test('classifies complete, before-change failure and proven rollback', () => {
-  assert.equal(reconcilePromotion({ ...base, observed: target }).outcome, 'completed');
+test('completes target convergence only with explicit ConfigIdentity confirmation', () => {
+  const completed = reconcilePromotion({
+    ...base,
+    observed: target,
+    configIdentityConfirmed: true,
+  });
+  assert.equal(completed.outcome, 'completed');
+  assert.match(completed.reason, /confirmed ConfigIdentity/u);
+
+  for (const configIdentityConfirmed of [false, undefined]) {
+    const input = { ...base, observed: target };
+    if (configIdentityConfirmed !== undefined) {
+      input.configIdentityConfirmed = configIdentityConfirmed;
+    }
+    const result = reconcilePromotion(input);
+    assert.equal(result.outcome, 'needs_human');
+    assert.match(result.reason, /ConfigIdentity and trusted identity confirmation/u);
+  }
+});
+
+test('classifies before-change failure and proven rollback without ConfigIdentity confirmation', () => {
   assert.equal(reconcilePromotion({ ...base, observed: before }).outcome, 'failed_before_change');
   assert.equal(
     reconcilePromotion({ ...base, observed: before, rollbackAttempted: true }).outcome,
@@ -44,7 +63,7 @@ test('keeps mixed or unknown production state explicit', () => {
   );
 });
 
-test('compares only authoritative component identities, not observation metadata', () => {
+test('compares only authoritative component identities after confirmation, not metadata', () => {
   const observed = Object.fromEntries(
     Object.entries(target).map(([name, value]) => [
       name,
@@ -52,12 +71,20 @@ test('compares only authoritative component identities, not observation metadata
     ]),
   );
   assert.deepEqual(componentIdentityMatrix(observed), target);
-  assert.equal(reconcilePromotion({ ...base, observed }).outcome, 'completed');
+  assert.equal(
+    reconcilePromotion({ ...base, observed, configIdentityConfirmed: true }).outcome,
+    'completed',
+  );
 });
 
 test('never completes after a forbidden contract migration even when components match', () => {
   assert.equal(
-    reconcilePromotion({ ...base, observed: target, databaseChange: 'contract_started' }).outcome,
+    reconcilePromotion({
+      ...base,
+      observed: target,
+      configIdentityConfirmed: true,
+      databaseChange: 'contract_started',
+    }).outcome,
     'needs_human',
   );
 });

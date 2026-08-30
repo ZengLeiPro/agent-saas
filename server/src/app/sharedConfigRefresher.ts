@@ -10,46 +10,73 @@
  * 「模型配置 + 组织白名单」这条同样需要跨进程新鲜度的路径补齐。
  *
  * 设计取舍：
- *   - 用 statSync 的 mtimeMs+size 做变更判据，未变化时零解析开销；
- *   - 带最小间隔节流，避免热路径高频 stat；
+ *   - 安全入口以稳定 stat + SHA-256 内容版本判定，避免同尺寸/时间戳覆盖与 TOCTOU；
+ *   - 首轮强制对齐磁盘，后续可节流；安全敏感入口使用 force；
  *   - 解析失败保留旧配置并告警，绝不因为一次坏写入把正在服务的进程打挂。
  */
-import { statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
+import { parse as parseJsonc } from 'jsonc-parser';
 import type { AppConfig } from './config.js';
-import { getAppConfigPath, loadAppConfig } from './config.js';
+import { getAppConfigPath, parseAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
-import { applyModelsHotUpdate, type ModelsHotUpdateTarget } from './modelsHotUpdate.js';
+import {
+  prepareModelsHotUpdate,
+  type ModelsHotUpdateCommit,
+  type ModelsHotUpdateTarget,
+} from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
 
-/** 同一文件两次 stat 的最小间隔，避免 resolver 热路径打满 IO。 */
+/** 非安全入口的最小检查间隔；模型、消息等安全入口会用 force 绕过。 */
 const DEFAULT_MIN_STAT_INTERVAL_MS = 1000;
 
 interface FileStamp {
   mtimeMs: number;
   size: number;
+  digest: string;
+  stable: boolean;
 }
 
-function readStamp(filePath: string): FileStamp | undefined {
+interface FileSnapshot { stamp: FileStamp; text: string }
+
+function readSnapshot(filePath: string): FileSnapshot | undefined {
   try {
-    const st = statSync(filePath);
-    return { mtimeMs: st.mtimeMs, size: st.size };
+    const before = statSync(filePath);
+    const content = readFileSync(filePath);
+    const after = statSync(filePath);
+    return {
+      text: content.toString('utf-8'),
+      stamp: {
+        mtimeMs: after.mtimeMs,
+        size: after.size,
+        digest: createHash('sha256').update(content).digest('hex'),
+        stable: before.mtimeMs === after.mtimeMs && before.size === after.size,
+      },
+    };
   } catch {
     return undefined;
   }
 }
 
+function readStamp(filePath: string): FileStamp | undefined {
+  return readSnapshot(filePath)?.stamp;
+}
+
 function sameStamp(a: FileStamp | undefined, b: FileStamp | undefined): boolean {
   if (!a || !b) return a === b;
-  return a.mtimeMs === b.mtimeMs && a.size === b.size;
+  return a.stable && b.stable && a.mtimeMs === b.mtimeMs && a.size === b.size && a.digest === b.digest;
 }
 
 export interface SharedConfigRefresher {
   /**
    * 若磁盘上的 config.json / tenants.json 已被其他进程改写，则重新加载并应用。
-   * 幂等、可高频调用；未发生变化时开销为一次 statSync（受节流保护）。
+   * 幂等、可高频调用；普通入口受节流保护，force 会读取稳定内容摘要以强校验。
+   * 返回 false 表示磁盘候选未安全提交，安全敏感调用方应 fail closed。
    */
-  refreshIfChanged(): void;
+  refreshIfChanged(force?: boolean): boolean | Promise<boolean>;
+  /** 管理端提交后仅在稳定磁盘快照仍是本次精确文本时推进指纹。 */
+  acknowledgeConfigApplied(expectedConfigText: string): boolean;
   /** 供测试与诊断：返回已应用的磁盘指纹。 */
   getAppliedStamps(): { config?: FileStamp; tenants?: FileStamp };
 }
@@ -58,7 +85,10 @@ export function createSharedConfigRefresher(params: {
   config: AppConfig;
   processCwd: string;
   target: ModelsHotUpdateTarget;
-  onSystemPromptOverridesUpdated?: (next: NonNullable<AppConfig['systemPrompts']>) => void;
+  /** 系统提示语先完成纯校验/规范化，再返回只做同步赋值的 commit。 */
+  prepareSystemPromptOverridesUpdate?: (
+    next: NonNullable<AppConfig['systemPrompts']>,
+  ) => () => void;
   /**
    * webTools 两阶段更新：先异步解析凭据并返回无副作用的 commit；仅当候选文件仍
    * 是最新版且所有门禁成功时，才与 AppConfig / observed identity 同步提交。
@@ -70,8 +100,10 @@ export function createSharedConfigRefresher(params: {
   prepareSttUpdate?: (
     next: AppConfig['stt'],
   ) => SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit>;
-  /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
-  onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
+  /** 模型候选变化后异步解析 SecretRef，再返回无失败的执行快照提交。 */
+  onModelsUpdated?: (
+    nextConfig: AppConfig,
+  ) => ModelsHotUpdateCommit | Promise<ModelsHotUpdateCommit>;
   /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
   onConfigReloaded?: () => void;
   /** 应用新配置前的门禁；支持异步校验，失败时保留旧内存配置。 */
@@ -87,7 +119,7 @@ export function createSharedConfigRefresher(params: {
     config,
     processCwd,
     target,
-    onSystemPromptOverridesUpdated,
+    prepareSystemPromptOverridesUpdate,
     prepareWebToolsUpdate,
     prepareSttUpdate,
     onModelsUpdated,
@@ -101,14 +133,19 @@ export function createSharedConfigRefresher(params: {
   } = params;
 
   const configPath = getAppConfigPath(processCwd);
-  // 进程启动时已经读过一次盘，把当时的指纹作为基线，避免首次调用做无谓重载。
-  let appliedConfigStamp = readStamp(configPath);
+  // config/tenant 内存快照早于本刷新器装配；不能把构造时磁盘指纹冒充已应用版本，
+  // 否则启动窗口内的跨进程写入会被永久漏掉。首轮调用必须重新加载确认。
+  let appliedConfigStamp: FileStamp | undefined;
   let pendingConfigStamp: FileStamp | undefined;
-  let appliedTenantsStamp = tenantsFilePath ? readStamp(tenantsFilePath) : undefined;
+  let pendingConfigRefresh: Promise<boolean> | undefined;
+  let configRefreshNeedsRetry = false;
+  let appliedTenantsStamp: FileStamp | undefined;
+  let tenantRefreshNeedsRetry = false;
   let lastCheckedAtMs = 0;
 
   function warnConfigReload(error: unknown): void {
-    // 别人正写到一半、写坏了，或未通过 Production 安全门禁：保留当前
+    configRefreshNeedsRetry = true;
+    // 别人正写到一半、写坏了，或未通过 Production 安全门禁：拒绝推进指纹并重试
     // 内存配置，且不推进 appliedConfigStamp，修好后可立刻重新拾取。
     logger?.warn(
       `[SharedConfig] config.json 已变化但解析失败或安全校验失败，继续使用当前内存配置：${
@@ -120,6 +157,8 @@ export function createSharedConfigRefresher(params: {
   function applyConfigFile(
     nextConfig: AppConfig,
     stamp: FileStamp | undefined,
+    commitModelsUpdate?: ModelsHotUpdateCommit,
+    commitSystemPromptOverridesUpdate?: () => void,
     commitWebToolsUpdate?: WebToolsRuntimeUpdateCommit,
     commitSttUpdate?: SttRuntimeUpdateCommit,
   ): void {
@@ -131,6 +170,21 @@ export function createSharedConfigRefresher(params: {
       !== JSON.stringify(nextConfig.titleGenerator ?? null);
     const guardrailChanged = JSON.stringify(config.guardrail ?? null)
       !== JSON.stringify(nextConfig.guardrail ?? null);
+    const systemPromptsChanged = JSON.stringify(config.systemPrompts ?? null)
+      !== JSON.stringify(nextConfig.systemPrompts ?? null);
+    const toolControlsChanged = JSON.stringify(config.toolControls ?? null)
+      !== JSON.stringify(nextConfig.toolControls ?? null);
+    const codexSubscriptionChanged = JSON.stringify(config.codexSubscription ?? null)
+      !== JSON.stringify(nextConfig.codexSubscription ?? null);
+    const sttChanged = JSON.stringify(config.stt ?? null)
+      !== JSON.stringify(nextConfig.stt ?? null);
+
+    // 所有可失败的解析、校验与 SecretVault 读取均已在 prepare 阶段完成。
+    // 以下 commit 只允许同步赋值；同一 JS 调用栈内发布执行侧与 AppConfig。
+    commitModelsUpdate?.();
+    commitSystemPromptOverridesUpdate?.();
+    commitSttUpdate?.();
+    commitWebToolsUpdate?.();
 
     if (modelsChanged) config.models = nextConfig.models;
     if (titleGeneratorChanged) {
@@ -142,37 +196,36 @@ export function createSharedConfigRefresher(params: {
       else delete config.guardrail;
     }
 
-    if ((modelsChanged || titleGeneratorChanged || guardrailChanged) && config.models) {
-      if (modelsChanged && onModelsUpdated) onModelsUpdated(config.models);
-      else applyModelsHotUpdate({ config, target, models: config.models });
-      logger?.info(
-        `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${config.models.groups.length} 组 / ` +
-          `${config.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
-      );
-    }
-
-    const systemPromptsChanged = JSON.stringify(config.systemPrompts ?? null)
-      !== JSON.stringify(nextConfig.systemPrompts ?? null);
     if (systemPromptsChanged) {
       if (nextConfig.systemPrompts) config.systemPrompts = nextConfig.systemPrompts;
       else delete config.systemPrompts;
-      onSystemPromptOverridesUpdated?.(nextConfig.systemPrompts ?? {});
-      logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
     }
-
-    const toolControlsChanged = JSON.stringify(config.toolControls ?? null)
-      !== JSON.stringify(nextConfig.toolControls ?? null);
     if (toolControlsChanged) {
       if (nextConfig.toolControls) config.toolControls = nextConfig.toolControls;
       else delete config.toolControls;
-      logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
     }
-
-    const codexSubscriptionChanged = JSON.stringify(config.codexSubscription ?? null)
-      !== JSON.stringify(nextConfig.codexSubscription ?? null);
     if (codexSubscriptionChanged) {
       if (nextConfig.codexSubscription) config.codexSubscription = nextConfig.codexSubscription;
       else delete config.codexSubscription;
+    }
+    if (sttChanged) {
+      if (nextConfig.stt) config.stt = nextConfig.stt;
+      else delete config.stt;
+    }
+    if (webToolsChanged) {
+      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
+      else delete config.webTools;
+    }
+
+    if ((modelsChanged || titleGeneratorChanged || guardrailChanged) && nextConfig.models) {
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${nextConfig.models.groups.length} 组 / ` +
+          `${nextConfig.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,
+      );
+    }
+    if (systemPromptsChanged) logger?.info('[SharedConfig] 已从磁盘热更新系统提示语配置');
+    if (toolControlsChanged) logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    if (codexSubscriptionChanged) {
       const refs = nextConfig.codexSubscription?.credentialRefs?.length
         ? nextConfig.codexSubscription.credentialRefs
         : nextConfig.codexSubscription?.credentialRef
@@ -184,32 +237,19 @@ export function createSharedConfigRefresher(params: {
           + `credentialCount=${new Set(refs).size}`,
       );
     }
-
-    const sttChanged = JSON.stringify(config.stt ?? null)
-      !== JSON.stringify(nextConfig.stt ?? null);
     if (sttChanged) {
-      commitSttUpdate?.();
-      if (nextConfig.stt) config.stt = nextConfig.stt;
-      else delete config.stt;
       logger?.info(
         `[SharedConfig] 已从磁盘热更新语音转写配置：enabled=${nextConfig.stt?.enabled === true}`,
       );
     }
-
-    /**
-     * webTools 的凭据已在 prepare 阶段解析；所有其他同步回调成功后才执行无失败 commit，
-     * 避免任一前置配置回调抛错时执行侧先于 AppConfig 与 observed identity 更新。
-     */
     if (webToolsChanged) {
-      commitWebToolsUpdate?.();
-      if (nextConfig.webTools) config.webTools = nextConfig.webTools;
-      else delete config.webTools;
       logger?.info(
         `[SharedConfig] 已从磁盘热更新 Web 工具配置：search provider=${nextConfig.webTools?.search?.provider ?? 'none'}`,
       );
     }
 
     appliedConfigStamp = stamp;
+    configRefreshNeedsRetry = false;
     try {
       // 整体重载成功：即便逐段都没命中，身份层也需要重算。
       onConfigReloaded?.();
@@ -222,17 +262,43 @@ export function createSharedConfigRefresher(params: {
     }
   }
 
-  function refreshConfigFile(): void {
-    const stamp = readStamp(configPath);
-    if (sameStamp(stamp, appliedConfigStamp) || (pendingConfigStamp !== undefined && sameStamp(stamp, pendingConfigStamp))) return;
+  function refreshConfigFile(): boolean | Promise<boolean> {
+    const snapshot = readSnapshot(configPath);
+    const stamp = snapshot?.stamp;
+    if (stamp && !configRefreshNeedsRetry && sameStamp(stamp, appliedConfigStamp)) { configRefreshNeedsRetry = false; return true; }
+    if (pendingConfigStamp !== undefined && sameStamp(stamp, pendingConfigStamp)) {
+      return pendingConfigRefresh ?? false;
+    }
 
     let nextConfig: AppConfig;
     let validation: void | Promise<void>;
+    let modelsPreparation: ModelsHotUpdateCommit | Promise<ModelsHotUpdateCommit> | undefined;
+    let systemPromptPreparation: (() => void) | undefined;
     let webToolsPreparation: WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit> | undefined;
     let sttPreparation: SttRuntimeUpdateCommit | Promise<SttRuntimeUpdateCommit> | undefined;
     try {
-      nextConfig = loadAppConfig(processCwd);
+      if (!snapshot) throw new Error(`配置文件不可读取：${configPath}`);
+      nextConfig = parseAppConfig(parseJsonc(snapshot.text));
+      if (config.models && !nextConfig.models) {
+        throw new Error('运行中移除 models 需要重启，拒绝推进共享配置指纹');
+      }
       validation = validateConfigReload?.(nextConfig);
+      const modelsChanged = Boolean(nextConfig.models)
+        && JSON.stringify(config.models ?? null) !== JSON.stringify(nextConfig.models);
+      const titleGeneratorChanged = JSON.stringify(config.titleGenerator ?? null)
+        !== JSON.stringify(nextConfig.titleGenerator ?? null);
+      const guardrailChanged = JSON.stringify(config.guardrail ?? null)
+        !== JSON.stringify(nextConfig.guardrail ?? null);
+      modelsPreparation = (modelsChanged || titleGeneratorChanged || guardrailChanged)
+        && nextConfig.models
+        ? onModelsUpdated?.(nextConfig)
+          ?? prepareModelsHotUpdate({ config: nextConfig, target, models: nextConfig.models })
+        : undefined;
+      const systemPromptsChanged = JSON.stringify(config.systemPrompts ?? null)
+        !== JSON.stringify(nextConfig.systemPrompts ?? null);
+      systemPromptPreparation = systemPromptsChanged
+        ? prepareSystemPromptOverridesUpdate?.(nextConfig.systemPrompts ?? {})
+        : undefined;
       const webToolsChanged = JSON.stringify(config.webTools ?? null)
         !== JSON.stringify(nextConfig.webTools ?? null);
       webToolsPreparation = webToolsChanged
@@ -243,56 +309,109 @@ export function createSharedConfigRefresher(params: {
       sttPreparation = sttChanged ? prepareSttUpdate?.(nextConfig.stt) : undefined;
     } catch (error) {
       warnConfigReload(error);
-      return;
+      return false;
     }
 
     const validationAsync = validation && typeof validation.then === 'function';
+    const modelsPreparationAsync = modelsPreparation
+      && typeof (modelsPreparation as Promise<ModelsHotUpdateCommit>).then === 'function';
     const webToolsPreparationAsync = webToolsPreparation
       && typeof (webToolsPreparation as Promise<WebToolsRuntimeUpdateCommit>).then === 'function';
     const sttPreparationAsync = sttPreparation
       && typeof (sttPreparation as Promise<SttRuntimeUpdateCommit>).then === 'function';
-    if (validationAsync || webToolsPreparationAsync || sttPreparationAsync) {
+    if (validationAsync || modelsPreparationAsync || webToolsPreparationAsync || sttPreparationAsync) {
       pendingConfigStamp = stamp;
-      void Promise.all([
+      pendingConfigRefresh = Promise.all([
         Promise.resolve(validation),
+        Promise.resolve(modelsPreparation),
         Promise.resolve(webToolsPreparation),
         Promise.resolve(sttPreparation),
       ])
-        .then(([, commitWebToolsUpdate, commitSttUpdate]) => {
-          // 校验/凭据解析期间文件若再次变化，丢弃无副作用候选并读取最新版。
-          if (!sameStamp(readStamp(configPath), stamp)) return;
-          applyConfigFile(nextConfig, stamp, commitWebToolsUpdate, commitSttUpdate);
+        .then(([, commitModelsUpdate, commitWebToolsUpdate, commitSttUpdate]) => {
+          // 校验/凭据解析期间文件若再次变化，丢弃无副作用候选并让当前请求 fail closed。
+          if (!sameStamp(readStamp(configPath), stamp)) { configRefreshNeedsRetry = true; return false; }
+          applyConfigFile(
+            nextConfig,
+            stamp,
+            commitModelsUpdate,
+            systemPromptPreparation,
+            commitWebToolsUpdate,
+            commitSttUpdate,
+          );
+          if (!sameStamp(readStamp(configPath), stamp)) { configRefreshNeedsRetry = true; appliedConfigStamp = undefined; return false; }
+          return true;
         })
-        .catch(warnConfigReload)
+        .catch((error) => { warnConfigReload(error); return false; })
         .finally(() => {
           pendingConfigStamp = undefined;
+          pendingConfigRefresh = undefined;
         });
-      return;
+      return pendingConfigRefresh;
     }
-    applyConfigFile(
-      nextConfig,
-      stamp,
-      webToolsPreparation as WebToolsRuntimeUpdateCommit | undefined,
-      sttPreparation as SttRuntimeUpdateCommit | undefined,
-    );
+    try {
+      if (!sameStamp(readStamp(configPath), stamp)) { configRefreshNeedsRetry = true; return false; }
+      applyConfigFile(
+        nextConfig,
+        stamp,
+        modelsPreparation as ModelsHotUpdateCommit | undefined,
+        systemPromptPreparation,
+        webToolsPreparation as WebToolsRuntimeUpdateCommit | undefined,
+        sttPreparation as SttRuntimeUpdateCommit | undefined,
+      );
+      if (!sameStamp(readStamp(configPath), stamp)) { configRefreshNeedsRetry = true; appliedConfigStamp = undefined; return false; }
+      return true;
+    } catch (error) {
+      warnConfigReload(error);
+      return false;
+    }
   }
 
-  function refreshTenantsFile(): void {
-    if (!tenantStore || !tenantsFilePath) return;
-    const stamp = readStamp(tenantsFilePath);
-    if (sameStamp(stamp, appliedTenantsStamp)) return;
-    tenantStore.reload();
-    appliedTenantsStamp = stamp;
-    logger?.info('[SharedConfig] 已从磁盘重载组织配置（模型白名单/功能开关）');
+  function refreshTenantsFile(): boolean {
+    if (!tenantStore || !tenantsFilePath) return true;
+    const snapshot = readSnapshot(tenantsFilePath);
+    const stamp = snapshot?.stamp;
+    if (sameStamp(stamp, appliedTenantsStamp)) { tenantRefreshNeedsRetry = false; return true; }
+    try {
+      const prepared = snapshot ? tenantStore.prepareReloadSnapshot(snapshot.text) : undefined;
+      if (!sameStamp(stamp, readStamp(tenantsFilePath))) { tenantRefreshNeedsRetry = true; return false; }
+      if (prepared) prepared.commit();
+      else tenantStore.reload();
+      const afterReload = readStamp(tenantsFilePath);
+      if (!sameStamp(stamp, afterReload)) { prepared?.rollback(); tenantRefreshNeedsRetry = true; return false; }
+      appliedTenantsStamp = afterReload;
+      tenantRefreshNeedsRetry = false;
+      logger?.info('[SharedConfig] 已两阶段提交组织配置快照（模型白名单/功能开关）');
+      return true;
+    } catch (error) {
+      tenantRefreshNeedsRetry = true;
+      logger?.warn(`[SharedConfig] 组织配置读取失败，保留现有白名单并拒绝本次解析：${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   return {
-    refreshIfChanged(): void {
+    refreshIfChanged(force = false): boolean | Promise<boolean> {
+      if (pendingConfigRefresh) { const tenantsFresh = refreshTenantsFile(); return pendingConfigRefresh.then((configFresh) => configFresh && tenantsFresh); }
       const ts = now();
-      if (ts - lastCheckedAtMs < minStatIntervalMs) return;
+      if (!force && !configRefreshNeedsRetry && !tenantRefreshNeedsRetry && ts - lastCheckedAtMs < minStatIntervalMs) return true;
       lastCheckedAtMs = ts;
-      refreshConfigFile();
-      refreshTenantsFile();
+      const configFresh = refreshConfigFile();
+      const tenantsFresh = refreshTenantsFile();
+      return configFresh instanceof Promise
+        ? configFresh.then((fresh) => fresh && tenantsFresh)
+        : configFresh && tenantsFresh;
+    },
+    acknowledgeConfigApplied(expectedConfigText) {
+      const snapshot = readSnapshot(configPath);
+      if (!snapshot?.stamp.stable || snapshot.text !== expectedConfigText) {
+        configRefreshNeedsRetry = true;
+        appliedConfigStamp = undefined;
+        return false;
+      }
+      appliedConfigStamp = snapshot.stamp;
+      configRefreshNeedsRetry = false;
+      lastCheckedAtMs = now();
+      return true;
     },
     getAppliedStamps() {
       return { config: appliedConfigStamp, tenants: appliedTenantsStamp };

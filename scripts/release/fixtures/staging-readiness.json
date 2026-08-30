@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "draining": false,
+  "warmup": { "state": "done" },
+  "release": {
+    "environment": "staging",
+    "releaseId": "rc-20260831-01",
+    "releaseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "serverDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "webDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "safetyAttested": true
+  }
+}

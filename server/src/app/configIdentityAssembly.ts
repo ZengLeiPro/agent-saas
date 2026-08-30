@@ -1,15 +1,41 @@
 import type { ConfigIdentitySummary } from '@agent/shared';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import type { SecretVault } from '../security/secretVault.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
 import type { AppConfig } from './config.js';
 
+export function createPrivateSummaryPublisher(
+  snapshotPath: string,
+  logger: { warn: (message: string) => void },
+): (summary: ConfigIdentitySummary) => void {
+  const tempPath = `${snapshotPath}.${process.pid}.tmp`;
+  return (summary) => {
+    try {
+      mkdirSync(dirname(snapshotPath), { recursive: true });
+      writeFileSync(tempPath, `${JSON.stringify(summary)}\n`, { mode: 0o600 });
+      renameSync(tempPath, snapshotPath);
+    } catch (error) {
+      // 私有观察面写失败时删除旧快照，宁可阻断 Evidence 也不能伪装旧 consistent。
+      try { rmSync(tempPath, { force: true }); } catch {}
+      try { rmSync(snapshotPath, { force: true }); } catch {}
+      logger.warn(
+        `[ConfigIdentity] private snapshot publish failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
+}
+
 export interface RuntimeConfigIdentityAssembly {
   modelResolverHooks: {
     validateConfigReload?: (next: AppConfig) => Promise<void>;
     onConfigReloaded: () => void;
   };
+  invalidate: () => void;
   getSummary: () => ConfigIdentitySummary;
 }
 
@@ -23,6 +49,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
   logger: { info: (message: string) => void; warn: (message: string) => void };
 }): Promise<RuntimeConfigIdentityAssembly> {
   const runtimeIdentity = readRuntimeIdentity(process.env);
+  const snapshotPath = process.env.AGENT_SAAS_CONFIG_IDENTITY_PATH?.trim();
   const runtime = createConfigIdentityRuntime({
     config: options.config,
     secretVault: options.secretVault,
@@ -32,6 +59,9 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
     environment: runtimeIdentity.environment,
     ...(runtimeIdentity.releaseId ? { releaseId: runtimeIdentity.releaseId } : {}),
     logger: options.logger,
+    ...(snapshotPath
+      ? { onSummaryUpdated: createPrivateSummaryPublisher(snapshotPath, options.logger) }
+      : {}),
   });
   await runtime.initialize();
   return {
@@ -41,6 +71,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
         : {}),
       onConfigReloaded: () => runtime.notifyConfigChanged('config_file_hot_reload'),
     },
+    invalidate: () => runtime.invalidateObservation(),
     getSummary: () => runtime.getSummary(),
   };
 }

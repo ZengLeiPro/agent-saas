@@ -765,12 +765,22 @@ jobs:
             write_color_marker "$WORKER_ACTIVE_COLOR_FILE" "$1"
           }
           INSTALL_CLEANUP_ARMED=0
+          RELEASE_CREATED_BY_DEPLOY=0
           TRAFFIC_SWITCHED=0
+          WEB_ACTIVE_DRAIN_STARTED=0
+          ROLLBACK_ARMED=0
+          ROLLBACK_RUNNING=0
+          ROLLBACK_DONE=0
+          NGINX_CONFIG_WRITTEN=0
           on_error() {
-            local status=$?
+            local line="$1" status="${2:-1}"
             trap - ERR
-            log "ERROR status=$status line=$1 release=$RELEASE_ID"
-            if [ "$TRAFFIC_SWITCHED" -eq 0 ]; then
+            set +e
+            log "ERROR status=$status line=$line release=$RELEASE_ID"
+            if [ "$ROLLBACK_ARMED" -eq 1 ] && command -v production_deploy_rollback >/dev/null 2>&1; then
+              production_deploy_rollback "status=$status line=$line" \
+                || log "ERROR: unified rollback requires manual recovery"
+            else
               if [ "$INSTALL_CLEANUP_ARMED" -eq 1 ]; then
                 case "$RELEASE_DIR" in
                   "$RELEASES_DIR"/*)
@@ -786,7 +796,7 @@ jobs:
             fi
             exit "$status"
           }
-          trap 'on_error $LINENO' ERR
+          trap 'on_error "$LINENO" "$?"' ERR
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
 
@@ -933,6 +943,7 @@ jobs:
           log "prepare release dir: $RELEASE_DIR"
           INSTALL_CLEANUP_ARMED=1
           mkdir -p "$RELEASE_DIR"
+          RELEASE_CREATED_BY_DEPLOY=1
           log "extract release archive: $RELEASE_TGZ"
           tar -xzf "$RELEASE_TGZ" -C "$RELEASE_DIR"
           mkdir -p "$RELEASE_DIR/.release"
@@ -1010,6 +1021,13 @@ jobs:
           WORKER_PREACTIVATED=0
           WORKER_IDLE=""
           PREV_WORKER_IDLE_TARGET=""
+
+          # 首次修改候选 symlink 前启用统一 rollback。函数尚未加载完时 helper
+          # 处理早期恢复；加载最新内联状态机后，helper 会委托给它。
+          # shellcheck source=scripts/release/production-deploy-rollback.sh
+          source "$RELEASE_DIR/scripts/release/production-deploy-rollback.sh"
+          ROLLBACK_ARMED=1
+
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
           log "switch current: ${PREV_CURRENT:-<none>} -> $RELEASE_DIR"
@@ -1224,6 +1242,9 @@ jobs:
           # 切流前失败：legacy 先停候选再恢复旧来源；新版旧 worker 仍按 authority reclaim。
           # 首次 bootstrap 在候选停止前由仍在服务的 all 进程 reclaim；不支持 reclaim 时保留候选。
           rollback_idle_and_exit() {
+            ROLLBACK_ARMED=0
+            trap - ERR
+            set -e
             log "deploy FAILED before traffic switch; restoring the previous runtime source and Web color"
             if [ "$WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY" -eq 1 ] \
               && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
@@ -1314,7 +1335,17 @@ jobs:
               systemctl status "${WORKER_SERVICE}@${WORKER_IDLE}" --no-pager -l || true
               journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 120 --no-pager || true
               log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
-              systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" || true
+              if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" \
+                || systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed to stop runtime worker candidate; preserving candidate release env"
+                exit 1
+              fi
+              if [ -n "${WORKER_RELEASE_ENV:-}" ] \
+                && ! production_deploy_restore_file "$WORKER_RELEASE_ENV" \
+                  "${PREV_WORKER_RELEASE_ENV:-}" "${WORKER_RELEASE_ENV_EXISTED:-0}"; then
+                log "ERROR: failed to restore runtime Worker release env"
+                exit 1
+              fi
               rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
               if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
                 ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
@@ -1324,8 +1355,28 @@ jobs:
             fi
             log "Web idle diagnostics: ${SERVICE_NAME}@${IDLE}"
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
-            log "stop idle unit ${SERVICE_NAME}@${IDLE}"
-            systemctl stop "${SERVICE_NAME}@${IDLE}" || true
+            log "disable and stop idle unit ${SERVICE_NAME}@${IDLE}"
+            if ! systemctl disable --now "${SERVICE_NAME}@${IDLE}" \
+              || systemctl is-active --quiet "${SERVICE_NAME}@${IDLE}"; then
+              log "ERROR: failed to disable idle Web candidate; preserving candidate release env"
+              exit 1
+            fi
+            if [ -n "${API_RELEASE_ENV:-}" ] \
+              && ! production_deploy_restore_file "$API_RELEASE_ENV" \
+                "${PREV_API_RELEASE_ENV:-}" "${API_RELEASE_ENV_EXISTED:-0}"; then
+              log "ERROR: failed to restore Web release env"
+              exit 1
+            fi
+            if [ "$NGINX_CONFIG_WRITTEN" -eq 1 ]; then
+              production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
+              production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
+              if ! { nginx -t && systemctl reload nginx; }; then
+                log "ERROR: failed to validate or reload restored nginx configuration"
+                exit 1
+              fi
+              NGINX_CONFIG_WRITTEN=0
+              log "managed nginx configuration restored before candidate cleanup"
+            fi
             if [ -n "$PREV_CURRENT" ]; then
               ln -sfn "$PREV_CURRENT" "$APP_LINK"
             fi
@@ -1685,10 +1736,19 @@ jobs:
             )
           fi
 
+          API_RELEASE_ENV="/etc/agent-saas/server-${IDLE}.release.env"
+          WORKER_RELEASE_ENV="/etc/agent-saas/runtime-worker-${WORKER_IDLE}.release.env"
+          PREV_API_RELEASE_ENV="$RELEASE_DIR/.rollback-env/server-${IDLE}.release.env"
+          PREV_WORKER_RELEASE_ENV="$RELEASE_DIR/.rollback-env/runtime-worker-${WORKER_IDLE}.release.env"
+          install -d -m 0700 "$RELEASE_DIR/.rollback-env"
+          API_RELEASE_ENV_EXISTED=0
+          WORKER_RELEASE_ENV_EXISTED=0
+          if [ -f "$API_RELEASE_ENV" ]; then API_RELEASE_ENV_EXISTED=1; cp -a "$API_RELEASE_ENV" "$PREV_API_RELEASE_ENV"; fi
+          if [ -f "$WORKER_RELEASE_ENV" ]; then WORKER_RELEASE_ENV_EXISTED=1; cp -a "$WORKER_RELEASE_ENV" "$PREV_WORKER_RELEASE_ENV"; fi
           if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs" \
             --identity /etc/agent-saas/runtime-identity.json \
-            --api-output "/etc/agent-saas/server-${IDLE}.release.env" \
-            --worker-output "/etc/agent-saas/runtime-worker-${WORKER_IDLE}.release.env" \
+            --api-output "$API_RELEASE_ENV" \
+            --worker-output "$WORKER_RELEASE_ENV" \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" \
             --server-digest "$SERVER_ARTIFACT_DIGEST" \
             "${CONFIG_IDENTITY_ARGS[@]}" >/dev/null; then
@@ -1816,7 +1876,7 @@ jobs:
             log "runtime worker handoff completed before Web readiness: color=$WORKER_IDLE release=$RELEASE_ID"
           fi
 
-          # ── 6. 启动 idle 色 + ready 门禁（180s）──
+          # ── 6. 启动 idle 色 + ready/私有 ConfigIdentity 门禁（180s）──
           # enable --now：候选色先具备开机自启；切流成功后立即 disable 旧色，
           # 避免整机重启时两色同时启动并争用启动期 PG 锁。
           rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"
@@ -1846,20 +1906,22 @@ jobs:
             log "ready FAILED after 180s"
             rollback_idle_and_exit
           fi
-          if ! CONFIG_IDENTITY_STATUS=$(curl -fsS -m 5 "$READY_URL" | node -e '
-            let body = "";
-            process.stdin.setEncoding("utf8");
-            process.stdin.on("data", chunk => { body += chunk; });
-            process.stdin.on("end", () => {
-              const parsed = JSON.parse(body);
-              process.stdout.write(String(parsed.configIdentity?.status ?? "not_collected"));
-            });
-          '); then
-            log "ERROR: failed to inspect candidate config identity after readiness"
-            rollback_idle_and_exit
-          fi
-          if [ "$CONFIG_IDENTITY_STATUS" != "consistent" ]; then
-            log "ERROR: candidate config identity status=$CONFIG_IDENTITY_STATUS"
+          # readiness 已在服务端对绑定 expected 的 identity fail closed；摘要通过
+          # 本机私有快照再做严格 schema/releaseId 校验，不从匿名 HTTP 响应读取。
+          CONFIG_IDENTITY_SNAPSHOT="/run/${SERVICE_NAME}-${IDLE}.config-identity.json"
+          if ! node --input-type=module -e '
+            const [moduleUrl, snapshotPath, expectedReleaseId] = process.argv.slice(1);
+            const { readPrivateConfigIdentitySnapshot } = await import(moduleUrl);
+            const summary = await readPrivateConfigIdentitySnapshot(snapshotPath);
+            if (summary.status !== "consistent") {
+              throw new Error(`candidate config identity status=${summary.status}`);
+            }
+            if (summary.releaseId !== expectedReleaseId) {
+              throw new Error("candidate config identity releaseId mismatch");
+            }
+          ' "file://$RELEASE_DIR/scripts/release/read-production-state.mjs" \
+            "$CONFIG_IDENTITY_SNAPSHOT" "$COMPAT_RELEASE_ID"; then
+            log "ERROR: candidate private config identity validation failed"
             rollback_idle_and_exit
           fi
 
@@ -1943,13 +2005,19 @@ jobs:
           # ── 9. 切流：重写 nginx upstream（新色 primary、旧色 backup）→ nginx -t → reload ──
           UPSTREAM_BAK="/tmp/agent-saas-upstream.conf.bak.$$"
           API_SITE_BAK="/tmp/agent-api-kaiyan.conf.bak.$$"
+          UPSTREAM_HAD_ORIGINAL=0
+          API_SITE_HAD_ORIGINAL=0
           if [ -f "$UPSTREAM_CONF" ]; then
+            UPSTREAM_HAD_ORIGINAL=1
             cp "$UPSTREAM_CONF" "$UPSTREAM_BAK"
           fi
           if [ -f "$API_SITE_CONF" ]; then
+            API_SITE_HAD_ORIGINAL=1
             cp "$API_SITE_CONF" "$API_SITE_BAK"
           fi
           install -d -m 0770 -o nginx -g nginx /mnt/agent-saas/runtime/nginx-client-body
+          # 写前置位：任一 managed nginx 文件发生部分写入，ERR trap 都必须恢复二者。
+          NGINX_CONFIG_WRITTEN=1
           install -m 0644 "$RELEASE_DIR/daemon-packaging/nginx/agent-api-kaiyan.conf.example" "$API_SITE_CONF"
           log "installed managed API nginx config with direct-streaming /api/upload"
           log "rewrite nginx upstream: primary=127.0.0.1:$IDLE_PORT ($IDLE) backup=127.0.0.1:$ACTIVE_PORT ($ACTIVE)"
@@ -1963,14 +2031,8 @@ jobs:
           EOF
           if ! nginx -t; then
             log "nginx -t FAILED; restoring previous upstream conf (running nginx config unchanged)"
-            if [ -f "$UPSTREAM_BAK" ]; then
-              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-            else
-              rm -f "$UPSTREAM_CONF"
-            fi
-            if [ -f "$API_SITE_BAK" ]; then
-              cp "$API_SITE_BAK" "$API_SITE_CONF"
-            fi
+            production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
+            production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
             nginx -t || log "WARN: nginx -t still failing after restore; manual attention needed"
             rollback_idle_and_exit
           fi
@@ -1986,20 +2048,21 @@ jobs:
           done
           if [ "$SWITCH_VERIFIED" -ne 1 ]; then
             log "post-reload verification FAILED; flipping nginx back to $ACTIVE and rolling back"
-            if [ -f "$UPSTREAM_BAK" ]; then
-              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+            production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
+            production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
+            if ! { nginx -t && systemctl reload nginx; }; then
+              TRAFFIC_SWITCHED=1
+              ROLLBACK_ARMED=0
+              log "ERROR: failed to flip nginx back; preserving idle service and candidate release for manual recovery"
+              exit 1
             fi
-            if [ -f "$API_SITE_BAK" ]; then
-              cp "$API_SITE_BAK" "$API_SITE_CONF"
-            fi
-            { nginx -t && systemctl reload nginx; } || log "WARN: failed to flip nginx back; manual attention needed"
             rollback_idle_and_exit
           fi
           # ── 10. 原子更新活动色标记；失败时先安全翻回 nginx ──
           if ! write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE"; then
             log "ERROR: failed to atomically update active color; flipping nginx back to $ACTIVE"
-            [ ! -f "$UPSTREAM_BAK" ] || cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-            [ ! -f "$API_SITE_BAK" ] || cp "$API_SITE_BAK" "$API_SITE_CONF"
+            production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
+            production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
             if ! { nginx -t && systemctl reload nginx; }; then
               TRAFFIC_SWITCHED=1
               log "ERROR: failed to flip nginx back; preserving idle service for manual recovery"
@@ -2050,12 +2113,8 @@ jobs:
               log "ERROR: failed to restore active color; preserving new traffic for manual recovery"
               exit 1
             fi
-            if [ -f "$UPSTREAM_BAK" ]; then
-              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-            fi
-            if [ -f "$API_SITE_BAK" ]; then
-              cp "$API_SITE_BAK" "$API_SITE_CONF"
-            fi
+            production_deploy_restore_file "$UPSTREAM_CONF" "$UPSTREAM_BAK" "$UPSTREAM_HAD_ORIGINAL"
+            production_deploy_restore_file "$API_SITE_CONF" "$API_SITE_BAK" "$API_SITE_HAD_ORIGINAL"
             if ! { nginx -t && systemctl reload nginx; }; then
               write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE" || true
               log "ERROR: failed to restore old nginx upstream; preserving idle service"
@@ -2169,6 +2228,7 @@ jobs:
           ROLLBACK
           chmod +x "$DEPLOY_ROOT/rollback.sh"
           log "rollback.sh regenerated (blue-green semantics)"
+          ROLLBACK_ARMED=0
 
           # ── 12. drain 旧色：SIGUSR2 精确送 node 主进程（拒新流量→停 cron→活跃流清空→自行 exit 0）──
           # 绝不能用 systemctl kill：默认 cgroup 广播，SIGUSR2 会终止无 handler 的 SDK 子进程。

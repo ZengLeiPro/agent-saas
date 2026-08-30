@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChartNoAxesColumn, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -50,8 +50,11 @@ export function OverviewPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadGeneration = useRef(0);
 
   const load = useCallback(async (mode: "initial" | "refresh" = "refresh") => {
+    const generation = ++loadGeneration.current;
+    // snapshot 主请求是配置身份唯一真源；辅助趋势失败不影响该状态。
     if (mode === "initial") setLoading(true);
     else setRefreshing(true);
     try {
@@ -60,15 +63,21 @@ export function OverviewPage() {
         platformAdminApi.billingTrend(14).catch(() => null),
         platformAdminApi.overviewTrends(14).catch(() => null),
       ]);
+      if (generation !== loadGeneration.current) return;
       setSnapshot(data);
       setCostTrend(trend?.audit.daily ?? []);
       setPlatformTrend(usageTrend);
       setError(null);
     } catch (err) {
+      if (generation !== loadGeneration.current) return;
+      // 保留其他最近指标供排障，但配置身份必须立刻降级，不能继续显示旧 consistent。
+      setSnapshot((current) => current ? { ...current, configIdentity: null } : current);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (generation === loadGeneration.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 

@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { Router } from 'express';
-import { applyEdits, modify } from 'jsonc-parser';
+import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getPublicModelList } from '../app/models.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
+import { ConfigWriteConflictError, configRevision, withConfigWriteLock } from './configWriteLock.js';
 import type {
   AppConfig,
   MemoryIndexAppConfig,
@@ -28,9 +30,16 @@ export interface CreateModelsAdminRouterOptions {
   onSystemPromptOverridesUpdated?: (next: SystemPromptsConfig) => void;
   configMutationService?: AdminConfigMutationService;
   secretVault?: SecretVault;
+  validateConfigReload?: (next: AppConfig) => void | Promise<void>;
+  /** 兼容两阶段直写调用方；集中式 mutation service 路径由 applyRuntime 接管。 */
+  prepareConfigUpdate?: (next: AppConfig) => () => void;
+  onConfigReloaded?: (expectedConfigText: string) => void | Promise<void>;
+  requireRevision?: boolean;
+  ensureConfigBaselineApplied?: (expectedText: string) => Promise<boolean>;
 }
 
 type ModelsAdminUpdate = {
+  candidateConfig: AppConfig;
   models: ModelsConfig;
   memoryIndex: MemoryIndexAppConfig | null;
   memoryIndexProvided: boolean;
@@ -86,6 +95,7 @@ function titleSystemPromptView(config: AppConfig) {
   };
 }
 
+// 辅助模型主链与全部 fallback 必须随 models 候选一起验证，避免写盘后才派生失败。
 function validateTitleGeneratorModels(models: ModelsConfig, titleGenerator: TitleGeneratorAppConfig | undefined): void {
   if (!titleGenerator) return;
   const refs = [titleGenerator.model, ...(titleGenerator.fallbackModels ?? [])];
@@ -275,7 +285,16 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
   const parsed = parseAppConfig(merged);
   if (!parsed.models) throw new Error('models 未配置');
   validateTitleGeneratorModels(parsed.models, parsed.titleGenerator);
+  if (parsed.guardrail?.model) {
+    const available = new Set(parsed.models.groups.flatMap((group) => (
+      group.models.map((model) => `${group.id}/${model.id}`)
+    )));
+    for (const ref of [parsed.guardrail.model, ...(parsed.guardrail.fallbackModels ?? [])]) {
+      if (!available.has(ref)) throw new Error(`门禁模型引用不存在：${ref}`);
+    }
+  }
   return {
+    candidateConfig: parsed,
     models: parsed.models,
     memoryIndex: parsed.memory?.index ?? null,
     memoryIndexProvided,
@@ -298,16 +317,16 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    if (!options.config.models) {
-      res.status(404).json({ error: 'models 未配置' });
-      return;
-    }
+    const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
+    const diskConfig = parseAppConfig(parseJsonc(configText));
+    if (!diskConfig.models) { res.status(404).json({ error: 'models 未配置' }); return; }
     res.json({
-      models: redactModels(options.config.models),
-      memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
-      titleGenerator: titleGeneratorView(options.config),
-      titleSystemPrompt: titleSystemPromptView(options.config),
-      publicModelList: getPublicModelList(options.config.models),
+      revision: configRevision(configText),
+      models: redactModels(diskConfig.models),
+      memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
+      titleGenerator: titleGeneratorView(diskConfig),
+      titleSystemPrompt: titleSystemPromptView(diskConfig),
+      publicModelList: getPublicModelList(diskConfig.models),
     });
   });
 
@@ -377,6 +396,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       await revokeModelRefs(options.secretVault, replacedRefs);
       res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
       res.json({
+        revision: result.effectiveConfigFingerprint,
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),

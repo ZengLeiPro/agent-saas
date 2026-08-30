@@ -88,6 +88,8 @@ export class AdminConfigMutationService {
       environment: RuntimeEnvironment;
       processRole: string;
       now?: () => Date;
+      /** durable commit 完成后发布实际落盘文本对应的运行时配置身份。 */
+      onCommitted?: (candidateText: string) => void | Promise<void>;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -123,6 +125,7 @@ export class AdminConfigMutationService {
         if (configFingerprint(readbackRaw) !== effectiveConfigFingerprint) {
           throw new Error('配置落盘读回指纹不一致');
         }
+        await this.options.onCommitted?.(candidateText);
         await this.appendAudit({
           at: appliedAt,
           actor: input.actor,
@@ -137,6 +140,7 @@ export class AdminConfigMutationService {
       } catch (error) {
         await this.replaceConfig(currentText);
         await Promise.resolve(input.applyRuntime(previousConfig, config)).catch(() => undefined);
+        await Promise.resolve(this.options.onCommitted?.(currentText)).catch(() => undefined);
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: input.actor,

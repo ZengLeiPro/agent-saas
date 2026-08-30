@@ -5,6 +5,11 @@ import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
+import {
+  ConfigWriteConflictError,
+  configRevision,
+  publishConfigIfUnchanged,
+} from './configWriteLock.js';
 import type {
   AppConfig,
   ToolControlsConfig,
@@ -35,6 +40,11 @@ export interface CreateToolControlsAdminRouterOptions {
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
   onToolSettingsUpdated?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
   configMutationService?: AdminConfigMutationService;
+  /** 写候选前强制将精确磁盘快照完整应用到运行时。 */
+  ensureConfigBaselineApplied?: (expectedText: string) => Promise<boolean>;
+  /** durable commit 后用精确落盘文本推进共享 ConfigIdentity。 */
+  onConfigReloaded?: (expectedConfigText: string) => Promise<void> | void;
+  requireRevision?: boolean;
 }
 
 type RawObject = Record<string, unknown>;
@@ -305,7 +315,7 @@ function mergeSingleToolPatch(
 }
 
 /**
- * 单工具 PUT 端点的落盘 helper：验证 → 写 config.json → 热更 → 返回完整 catalog 视图。
+ * 单工具 PUT 端点的落盘 helper：基线已确认后写 config.json → 热更 → 返回完整 catalog 视图。
  * 与整包 PUT 共用最终的 writeFileSync/热更逻辑，避免写不同分支导致行为漂移。
  */
 async function persistUpdatedSettings(
@@ -313,7 +323,7 @@ async function persistUpdatedSettings(
   configMutationService: AdminConfigMutationService,
   req: Request,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
-): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
+): Promise<{ settings: Pick<AppConfig, 'toolControls' | 'webTools'>; revision: string }> {
   const result = await configMutationService.mutate({
     ...mutationRequestContext(req),
     changedPaths: ['toolControls', 'webTools'],
@@ -334,11 +344,15 @@ async function persistUpdatedSettings(
       });
     },
   });
-  return { toolControls: result.config.toolControls, webTools: result.config.webTools };
+  return {
+    settings: { toolControls: result.config.toolControls, webTools: result.config.webTools },
+    revision: result.effectiveConfigFingerprint,
+  };
 }
 
-function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>) {
+function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>, revision: string) {
   return {
+    revision,
     toolControls: sanitizeToolControlsConfig(settings.toolControls),
     tools: toolCatalogWithState(settings.toolControls),
     webTools: sanitizeWebToolsConfig(settings.webTools),
@@ -358,31 +372,34 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
-    res.json(catalogResponse({
-      toolControls: options.config.toolControls,
-      webTools: options.config.webTools,
-    }));
+    const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
+    const diskConfig = parseAppConfig(parseJsonc(configText));
+    res.json(catalogResponse({ toolControls: diskConfig.toolControls, webTools: diskConfig.webTools }, configRevision(configText)));
   });
 
   router.put('/', async (req, res) => {
     const configPath = getAppConfigPath(options.processCwd);
-    let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
+    let configText: string; let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
 
     try {
-      const configText = readFileSync(configPath, 'utf-8');
+      configText = readFileSync(configPath, 'utf-8');
+      if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) { res.status(409).json({ error: '配置版本已变化，请刷新后重试' }); return; }
+      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
+      if (readFileSync(configPath, 'utf-8') !== configText) throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
       const rawConfig = parseJsonc(configText);
       nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
       await options.validateToolSettingsConfig?.(nextSettings);
       nextSettings = await persistSearchCredential(nextSettings, options.secretVault);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
+        .json({ error: error instanceof Error ? error.message : String(error) });
       return;
     }
 
     try {
       const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
-      auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.toolControls));
-      res.json(catalogResponse(persisted));
+      auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
+      res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
       sendConfigMutationError(res, error);
     }
@@ -400,10 +417,13 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     const configPath = getAppConfigPath(options.processCwd);
-    let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
+    let configText: string; let nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>;
 
     try {
-      const configText = readFileSync(configPath, 'utf-8');
+      configText = readFileSync(configPath, 'utf-8');
+      if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) { res.status(409).json({ error: '配置版本已变化，请刷新后重试' }); return; }
+      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
+      if (readFileSync(configPath, 'utf-8') !== configText) throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
       const rawConfig = parseJsonc(configText);
       // 管理端可能运行在蓝绿切换后的旧进程中：内存 config 未必包含其他进程
       // 已落盘的 override。单工具 patch 必须以刚读到的磁盘快照为基线，否则
@@ -421,14 +441,15 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       );
       await options.validateToolSettingsConfig?.(nextSettings);
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
+        .json({ error: error instanceof Error ? error.message : String(error) });
       return;
     }
 
     try {
       const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
-      auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.toolControls, toolId)}`);
-      res.json(catalogResponse(persisted));
+      auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
+      res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
       sendConfigMutationError(res, error);
     }

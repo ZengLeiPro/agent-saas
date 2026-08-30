@@ -3,6 +3,7 @@ import type { AppConfig } from '../types/index.js';
 import { parseAppConfig } from '../app/config.js';
 import { InMemorySecretVault, type SecretVault, type SecretRef } from '../security/secretVault.js';
 import { createConfigIdentityRuntime } from './configIdentityRuntime.js';
+import { publishAdminCommittedConfigIdentity } from '../app/audioTranscribeAdminRoute.js';
 import {
   calculateConfigIdentityDigest,
   buildCanonicalConfigProjection,
@@ -79,7 +80,7 @@ describe('createConfigIdentityRuntime', () => {
     expect(runtime.getSummary().status).toBe('drifted');
   });
 
-  it('notifyConfigChanged 热更新后重算并追踪 lastChangedAt', async () => {
+  it('refresh 热更新后重算并追踪 lastChangedAt', async () => {
     const config = baseConfig();
     let currentTime = '2026-08-29T12:00:00.000Z';
     const runtime = createConfigIdentityRuntime({
@@ -101,6 +102,205 @@ describe('createConfigIdentityRuntime', () => {
     expect(summary.status).toBe('drifted');
     expect(summary.lastChangedAt).toBe(currentTime);
     expect(summary.lastObservedAt).toBe(currentTime);
+  });
+
+  it('notifyConfigChanged 在异步重算期间立即同步撤销旧 consistent 快照', async () => {
+    let resolveMetadata!: (value: SecretRef) => void;
+    const metadata = new Promise<SecretRef>((resolve) => { resolveMetadata = resolve; });
+    const vault = {
+      inspectRef: vi.fn(() => metadata),
+    } as unknown as SecretVault;
+    const config = baseConfig(PG);
+    const published: Array<{ status: string; reason?: string }> = [];
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: vault,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      onSummaryUpdated: (summary) => published.push(summary),
+    });
+    await runtime.initialize();
+    expect(runtime.getSummary().status).toBe('consistent');
+
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'next', baseUrl: 'https://next.internal', authTokenRef: 'next-ref' }],
+      },
+    }).tenantRemoteHands;
+    runtime.notifyConfigChanged('config_file_hot_reload');
+
+    expect(runtime.getSummary()).toMatchObject({ status: 'not_collected' });
+    expect(published.at(-1)).toMatchObject({ status: 'not_collected' });
+
+    resolveMetadata({
+      id: 'next-ref',
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version: 2,
+      metadata: {},
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.getSummary().status).toBe('drifted');
+  });
+
+  it('notifyConfigChanged 重算失败后不恢复旧 consistent observation', async () => {
+    const config = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'h1', baseUrl: 'https://hand.internal', authTokenRef: 'hand-ref' }],
+      },
+    });
+    const metadata: SecretRef = {
+      id: 'hand-ref',
+      ownerId: 'global',
+      kind: 'tenant-hand',
+      version: 1,
+      metadata: {},
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+    };
+    const inspectRef = vi.fn().mockResolvedValue(metadata);
+    const warn = vi.fn();
+    let failClock = false;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: { inspectRef } as unknown as SecretVault,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      logger: { info: () => undefined, warn },
+      now: () => {
+        if (failClock) throw new Error('identity recompute failed');
+        return new Date('2026-08-30T00:00:00.000Z');
+      },
+    });
+    await runtime.initialize();
+    expect(runtime.getSummary().status).toBe('consistent');
+
+    let resolveMetadata!: (value: SecretRef) => void;
+    inspectRef.mockReturnValue(new Promise<SecretRef>((resolve) => { resolveMetadata = resolve; }));
+    runtime.notifyConfigChanged('admin_save');
+    expect(runtime.getSummary().status).toBe('not_collected');
+    failClock = true;
+    resolveMetadata(metadata);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    failClock = false;
+
+    expect(runtime.getSummary().status).toBe('not_collected');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('identity recompute failed'));
+  });
+
+  it('并发胜出 refresh 等待与失败期间，纯失效不计算或发布失选候选', async () => {
+    let currentTime = '2026-08-30T00:00:00.000Z';
+    const metadata = (id: string): SecretRef => ({
+      id, ownerId: 'global', kind: 'tenant-hand', version: 1, metadata: {},
+      createdAt: currentTime, updatedAt: currentTime,
+    });
+    const inspectRef = vi.fn((id: string) => Promise.resolve(metadata(id)));
+    const config = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'baseline', baseUrl: 'https://baseline.internal', authTokenRef: 'baseline-ref' }],
+      },
+    });
+    const published: Array<{ status: string; observed?: { digest: string } }> = [];
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: { inspectRef } as unknown as SecretVault,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      now: () => new Date(currentTime),
+      onSummaryUpdated: (summary) => published.push(summary),
+    });
+    await runtime.initialize();
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'loser', baseUrl: 'https://loser.internal', authTokenRef: 'loser-ref' }],
+      },
+    }).tenantRemoteHands;
+
+    let finishRefresh!: (fresh: boolean) => void;
+    const refreshPending = new Promise<boolean>((resolve) => { finishRefresh = resolve; });
+    const publication = publishAdminCommittedConfigIdentity({
+      acknowledgeSharedConfigApplied: () => false,
+      invalidateSharedConfigIdentity: runtime.invalidateObservation,
+      notifySharedConfigChanged: () => runtime.notifyConfigChanged('winner_applied'),
+      refreshSharedConfig: () => refreshPending,
+    }, 'losing-candidate-text');
+
+    currentTime = '2026-08-30T00:00:10.000Z';
+    expect(runtime.getSummary().status).toBe('not_collected');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(inspectRef.mock.calls.map(([id]) => id)).not.toContain('loser-ref');
+    finishRefresh(false);
+    await expect(publication).rejects.toThrow('配置文件被并发改写且重载失败');
+    currentTime = '2026-08-30T00:00:20.000Z';
+    expect(runtime.getSummary().status).toBe('not_collected');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(inspectRef.mock.calls.map(([id]) => id)).not.toContain('loser-ref');
+    expect(published.some((summary) => summary.observed?.digest === digestOf(config))).toBe(false);
+  });
+
+  it('并发胜出 refresh 后只重算胜出内存配置，并沿用失效前 observation 比较变化时间', async () => {
+    let currentTime = '2026-08-30T00:00:00.000Z';
+    const metadata = (id: string): SecretRef => ({
+      id, ownerId: 'global', kind: 'tenant-hand', version: 1, metadata: {},
+      createdAt: currentTime, updatedAt: currentTime,
+    });
+    const inspectRef = vi.fn((id: string) => Promise.resolve(metadata(id)));
+    const config = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'baseline', baseUrl: 'https://baseline.internal', authTokenRef: 'baseline-ref' }],
+      },
+    });
+    const runtime = createConfigIdentityRuntime({
+      config,
+      secretVault: { inspectRef } as unknown as SecretVault,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      now: () => new Date(currentTime),
+    });
+    await runtime.initialize();
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'loser', baseUrl: 'https://loser.internal', authTokenRef: 'loser-ref' }],
+      },
+    }).tenantRemoteHands;
+
+    let finishRefresh!: (fresh: boolean) => void;
+    const refreshPending = new Promise<boolean>((resolve) => { finishRefresh = resolve; });
+    const publication = publishAdminCommittedConfigIdentity({
+      acknowledgeSharedConfigApplied: () => false,
+      invalidateSharedConfigIdentity: runtime.invalidateObservation,
+      notifySharedConfigChanged: () => runtime.notifyConfigChanged('winner_applied'),
+      refreshSharedConfig: () => refreshPending,
+    }, 'losing-candidate-text');
+    expect(runtime.getSummary().status).toBe('not_collected');
+    expect(inspectRef.mock.calls.map(([id]) => id)).not.toContain('loser-ref');
+
+    config.tenantRemoteHands = baseConfig({
+      ...PG,
+      tenantRemoteHands: {
+        hands: [{ id: 'winner', baseUrl: 'https://winner.internal', authTokenRef: 'winner-ref' }],
+      },
+    }).tenantRemoteHands;
+    const winnerDigest = digestOf(config);
+    currentTime = '2026-08-30T00:00:10.000Z';
+    finishRefresh(true);
+    await publication;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const summary = runtime.getSummary();
+    const inspectedIds = inspectRef.mock.calls.map(([id]) => id);
+    expect(inspectedIds).not.toContain('loser-ref');
+    expect(inspectedIds).toContain('winner-ref');
+    expect(summary.observed?.digest).toBe(winnerDigest);
+    expect(summary.lastChangedAt).toBe(currentTime);
   });
 
   it('notifyConfigChanged 重算失败不打断调用方（只告警）', async () => {

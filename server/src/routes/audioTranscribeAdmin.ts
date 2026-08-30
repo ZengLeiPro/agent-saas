@@ -10,6 +10,7 @@ import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
 import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { ConfigWriteConflictError } from './configWriteLock.js';
 
 const DEFAULT_BUCKET = 'ky-azeroth-upload';
 const DEFAULT_ENDPOINT = 'https://oss-cn-shenzhen.aliyuncs.com';
@@ -24,6 +25,10 @@ export interface CreateAudioTranscribeAdminRouterOptions {
   /** 配置落盘并更新进程内对象后触发热更新。 */
   onUpdated?: (stt: AppConfig['stt']) => Promise<void> | void;
   configMutationService?: AdminConfigMutationService;
+  /** 写候选前强制将精确磁盘快照完整应用到运行时。 */
+  ensureConfigBaselineApplied?: (expectedText: string) => Promise<boolean>;
+  /** durable commit 后用精确落盘文本推进共享 ConfigIdentity。 */
+  onConfigReloaded?: (expectedConfigText: string) => Promise<void> | void;
 }
 
 type RawObject = Record<string, unknown>;
@@ -233,6 +238,12 @@ export function createAudioTranscribeAdminRouter(
 
     try {
       configText = readFileSync(configPath, 'utf-8');
+      if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) {
+        throw new Error('当前配置基线未完整应用，拒绝写入');
+      }
+      if (readFileSync(configPath, 'utf-8') !== configText) {
+        throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
+      }
       const merged = mergeRequestedStt(parseJsonc(configText), req.body);
       rawRecord = merged.rawRecord;
       // 先整份校验，确保非法价格等错误不会产生 SecretVault 或磁盘副作用。
@@ -243,7 +254,8 @@ export function createAudioTranscribeAdminRouter(
       staged = parseAppConfig({ ...rawRecord, stt: staged }).stt;
       await options.validate?.(staged);
     } catch (error) {
-      res.status(400).json({ error: safeErrorMessage(error, staged, req.body) });
+      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
+        .json({ error: safeErrorMessage(error, staged, req.body) });
       return;
     }
 
@@ -261,7 +273,8 @@ export function createAudioTranscribeAdminRouter(
       });
       res.json(adminView(options.config));
     } catch (error) {
-      res.status(500).json({ error: safeErrorMessage(error, staged, req.body) });
+      res.status(error instanceof ConfigWriteConflictError ? 409 : 500)
+        .json({ error: safeErrorMessage(error, staged, req.body) });
     }
   });
 

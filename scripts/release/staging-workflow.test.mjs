@@ -181,7 +181,10 @@ test('Staging browser authentication is preloaded without recording the password
 });
 
 test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {
-  const deploy = await readFile(deployPath, 'utf8');
+  const [deploy, workflow] = await Promise.all([
+    readFile(deployPath, 'utf8'),
+    readFile(workflowPath, 'utf8'),
+  ]);
   assert.doesNotMatch(deploy, /pnpm (install|build)|npm (install|run)/u);
   assert.doesNotMatch(deploy, /\/opt\/agent-saas-app|agent-saas-server@|active-color/u);
   assert.match(deploy, /\/opt\/agent-saas-staging/u);
@@ -202,8 +205,15 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
   assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
-  assert.match(deploy, /Staging config identity is not consistent with the release binding/u);
+  assert.match(deploy, /validateCandidateReleaseReadiness/u);
+  assert.match(deploy, /\/run\/agent-saas-staging\/config-identity\.json/u);
+  assert.doesNotMatch(deploy, /api\.configIdentity/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);
+  assert.match(deploy, /Missing shared ConfigIdentity readiness contract module/u);
+  assert.match(
+    workflow,
+    /read-production-state\.mjs scripts\/release\/read-runtime-identity\.mjs/u,
+  );
   assert.match(deploy, /kill -USR2/u);
   assert.match(deploy, /orchestratorArtifactDigest/u);
   assert.match(deploy, /sandboxImageDigest/u);

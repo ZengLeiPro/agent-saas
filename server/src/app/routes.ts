@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { Express, Request, Response } from 'express';
 import type { AppRuntime } from './runtime.js';
 import { resolveRuntimeAdmissionSnapshotReader } from '../runtime/runtimeWorkerReadiness.js';
-import { registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
+import { publishAdminCommittedConfigIdentity, registerAudioTranscribeAdminRoute } from './audioTranscribeAdminRoute.js';
 import { registerGovernanceRoutes } from './governanceRoutes.js';
 import { activeOffboardingWriteFence, tenantFeatureGuard } from './routeGuards.js';
 import { createContextRecallRuntime } from './runtimeMemoryContextTools.js';
@@ -19,10 +19,10 @@ import {
   getUserPublicModelList,
   resolveContextAccountingFromModels,
 } from './models.js';
-import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { enforcePlatformWritePolicy } from '../auth/platformGovernance.js';
 import { createRuntimeTaskboardTitleGenerator } from '../taskboard/taskTitle.js';
+import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 import {
   createHealthRouter,
   createUploadRouter,
@@ -126,7 +126,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
   const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
-    config, processCwd, processRole: runtime.processRole,
+    config,
+    processCwd,
+    processRole: runtime.processRole,
+    onConfigCommitted: (expectedText) =>
+      publishAdminCommittedConfigIdentity(runtime, expectedText),
   });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
   const legacyWriteGate = runtime.governanceWriteGate ?? {
@@ -150,9 +154,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
       getActiveStreamCount: () => channelManager.getActiveStreamCount(),
       getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
-      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts
-        ? () => runtime.runtimeRunStore!.getActiveCounts!()
-        : undefined,
+      getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts ? () => runtime.runtimeRunStore!.getActiveCounts!() : undefined,
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
@@ -362,7 +364,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       deliveryService: dingtalkDeps.deliveryService,
     }),
   );
-  // 模型列表 API
+
+  // 模型列表与配置版本 CAS 管理 API；保存前先同步完整共享配置基线。
   if (config.models) {
     configureModelPricing(config.models);
     app.get('/api/models', (req: Request, res: Response) => {
@@ -382,11 +385,15 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         configMutationService,
         secretVault: runtime.secretVault,
-        // 热更新逻辑与 runtime-worker 侧共用同一实现（modelsHotUpdate.ts），
-        // 避免两个进程对同一份 config 产生不一致的内存状态。
+        ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+        ...(runtime.validateSharedConfigCandidate
+          ? { validateConfigReload: runtime.validateSharedConfigCandidate }
+          : {}),
+        // 热更新逻辑与 runtime-worker 侧共用同一实现，并先解析模型 SecretRef。
         onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
         }),
+        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
         onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
         onSystemPromptOverridesUpdated: (next) =>
           runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
@@ -429,9 +436,11 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       configMutationService,
-      secretVault: runtime.secretVault,
+      ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+      secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+      onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
     }),
   );
   // 连接器映射词典（2026-08-03）：决定工具行怎么把命令行还原成业务语言、
@@ -654,7 +663,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       eventStore: runtime.runtimePgEventStore,
       toolInvocationStore: runtime.runtimeToolInvocationStore,
       systemMetricsStore: runtime.systemMetricsStore,
-      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(),
+      getDispatchMetrics: () => dispatchMetricsStore.getSnapshot(), getConfigIdentitySummary: runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
     }),
   );
 

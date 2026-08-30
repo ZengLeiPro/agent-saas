@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FilePreviewProvider } from '@/contexts/FilePreviewContext';
 import { MessageItem } from './MessageItem';
@@ -17,6 +17,10 @@ vi.mock('@/lib/authFetch', () => ({
 }));
 
 describe('MessageItem Artifact 卡片', () => {
+  beforeEach(() => {
+    authFetchMock.mockReset();
+  });
+
   it('点击文件卡时按需加载 Artifact 预览弹窗', async () => {
     const message: MessageItemType = {
       id: 'artifact-card-1',
@@ -74,6 +78,31 @@ describe('MessageItem Artifact 卡片', () => {
     } finally {
       clickSpy.mockRestore();
     }
+  });
+
+  it('匿名 Session Share 中 Artifact 明确只读，不提供预览或下载入口', async () => {
+    const openPreview = vi.fn();
+    render(
+      <FilePreviewProvider value={{ openPreview, shareToken: 'session-share-token' }}>
+        <MessageItem message={{
+          id: 'public-artifact-card',
+          type: 'file_download',
+          fileName: '公开清单.xlsx',
+          fileType: 'xlsx',
+          filePath: 'artifacts/artifact-public/公开清单.xlsx',
+          fileSize: 2048,
+          artifactId: 'artifact-public',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }} index={0} />
+      </FilePreviewProvider>,
+    );
+
+    expect(screen.getByText('公开分享中仅展示')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '下载 公开清单.xlsx' })).toBeNull();
+    fireEvent.click(screen.getByText('公开清单.xlsx'));
+    expect(screen.queryByRole('dialog', { name: 'Artifact 预览' })).toBeNull();
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(authFetchMock).not.toHaveBeenCalled();
   });
 
   it('下载地址获取失败时显示明确提示', async () => {

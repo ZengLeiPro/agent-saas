@@ -176,7 +176,7 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     vi.mocked(fetchPublicSessionShare).mockResolvedValue(sharedResponse());
   });
 
-  it("按需加载主卡后通过只读 Sheet 查看结果、过程、依据与 Artifact", async () => {
+  it("按需加载主卡后通过只读 Sheet 查看结果、过程、依据与只读 Artifact", async () => {
     render(<SessionSharePage token="share-token" />);
 
     const stepRow = await screen.findByRole(
@@ -195,6 +195,8 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     expect(within(sheet).getByText("公开字段完整")).toBeTruthy();
     expect(within(sheet).getByText("核验统计")).toBeTruthy();
     expect(within(sheet).getByText("分享核验报告.xlsx")).toBeTruthy();
+    expect(within(sheet).getByText("公开分享中仅展示")).toBeTruthy();
+    expect(within(sheet).queryByRole("button", { name: "下载 分享核验报告.xlsx" })).toBeNull();
 
     fireEvent.click(within(sheet).getByRole("tab", { name: "过程" }));
     expect(within(sheet).getByText(/读取公开数据/)).toBeTruthy();

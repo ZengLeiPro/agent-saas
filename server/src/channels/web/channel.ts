@@ -1987,8 +1987,8 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    const bufferAccessError = bufferEntry.userId
-      ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
+    const bufferAccessError = durableBinding?.active && !durableBinding.accessError ? null
+      : bufferEntry.userId ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
       : this.anonymousBindingAccessError(client, activeEntry?.ws);
     if (durableBinding?.accessError || bufferAccessError) {
       this.wsSend(client.ws, {

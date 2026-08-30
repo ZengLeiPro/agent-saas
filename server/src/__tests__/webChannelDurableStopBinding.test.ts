@@ -75,4 +75,80 @@ describe('WebChannel durable stop binding', () => {
       },
     });
   });
+
+  it('跨进程 ownerless buffer 不得覆盖 durable run 的授权运行态', async () => {
+    const getActiveBySession = vi.fn().mockResolvedValue({
+      runId: 'taskboard-run-cross-process',
+      sessionId: 'taskboard-session-cross-process',
+      userId: 'admin-1',
+      tenantId: 'kaiyan',
+      status: 'running',
+      metadata: {},
+    });
+    const channel = new WebChannel(
+      {
+        authEnabled: true,
+        agentCwd: '/tmp/workspace',
+        enqueueRuntime: { runStore: { getActiveBySession } } as never,
+      },
+      noopDispatch,
+    );
+    channels.push(channel);
+    const ws = new FakeWebSocket();
+    // PG NOTIFY 投影可能先于当前 Web 进程的本地 stream 到达，此时 buffer 没有 owner。
+    (channel as any).eventBufferStore.create('taskboard-session-cross-process');
+
+    await (channel as any).handleResumeAsync(
+      {
+        ws,
+        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: 'kaiyan' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      {
+        action: 'resume',
+        sessionId: 'taskboard-session-cross-process',
+        requestId: 'resume-cross-process',
+        lastEventId: 0,
+        skipReplay: true,
+      },
+    );
+
+    expect(ws.sent[0]).toEqual({
+      data: {
+        type: 'active_stream',
+        sessionId: 'taskboard-session-cross-process',
+        active: true,
+        streamId: 'taskboard-run-cross-process',
+        runId: 'taskboard-run-cross-process',
+        status: 'running',
+        requestId: 'resume-cross-process',
+      },
+    });
+
+    const foreignWs = new FakeWebSocket();
+    await (channel as any).handleResumeAsync(
+      {
+        ws: foreignWs,
+        user: { sub: 'other-user', username: 'other', role: 'user', tenantId: 'kaiyan' },
+        alive: true,
+        lastActivityAt: Date.now(),
+      },
+      {
+        action: 'resume',
+        sessionId: 'taskboard-session-cross-process',
+        requestId: 'resume-cross-process-foreign',
+        lastEventId: 0,
+        skipReplay: true,
+      },
+    );
+    expect(foreignWs.sent[0]).toEqual({
+      data: {
+        type: 'active_stream',
+        sessionId: 'taskboard-session-cross-process',
+        active: false,
+        requestId: 'resume-cross-process-foreign',
+      },
+    });
+  });
 });

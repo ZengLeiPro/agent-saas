@@ -21,11 +21,13 @@ const REQUIRED_ANDROID_PERMISSIONS = new Set([
   'android.permission.CAMERA',
   'android.permission.INTERNET',
   'android.permission.RECORD_AUDIO',
+  'android.permission.USE_BIOMETRIC',
 ]);
 const ALLOWED_ANDROID_PERMISSIONS = new Set([
   ...REQUIRED_ANDROID_PERMISSIONS,
   'android.permission.MODIFY_AUDIO_SETTINGS',
   'android.permission.VIBRATE',
+  'android.permission.USE_FINGERPRINT',
   INSTALL_PERMISSION,
 ]);
 const ALLOWED_IOS_ENTITLEMENTS = new Set([
@@ -36,7 +38,6 @@ const ALLOWED_IOS_ENTITLEMENTS = new Set([
 const FORBIDDEN_IOS_INFO_KEYS = Object.freeze([
   'NSAppTransportSecurity',
   'NSBonjourServices',
-  'NSFaceIDUsageDescription',
   'NSLocalNetworkUsageDescription',
   'NSLocationAlwaysAndWhenInUseUsageDescription',
   'NSLocationAlwaysUsageDescription',
@@ -47,6 +48,7 @@ const REQUIRED_IOS_USAGE_DESCRIPTIONS = Object.freeze({
   NSCameraUsageDescription: '用于在用户选择拍照时拍摄并上传附件',
   NSMicrophoneUsageDescription: '用于录制并发送语音消息',
   NSPhotoLibraryUsageDescription: '用于在用户选择图库时选取图片或视频作为附件、头像',
+  NSFaceIDUsageDescription: '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面',
 });
 
 function fail(message) {

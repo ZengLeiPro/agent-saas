@@ -14,6 +14,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { ChevronRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../src/contexts/AuthContext";
+import { useLocalAppLock } from "../../../src/contexts/LocalAppLockContext";
 import { useTtsPlayer } from "../../../src/hooks/useTtsPlayer";
 import { mobileConfig } from "../../../src/platform/mobileConfig";
 import Constants from "expo-constants";
@@ -61,6 +62,8 @@ export default function SettingsScreen() {
     changeServiceOrigin,
   } = useAuth();
   const tts = useTtsPlayer();
+  const localLock = useLocalAppLock();
+  const [localLockBusy, setLocalLockBusy] = useState(false);
   const router = useRouter();
   const tenantFeatures =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
@@ -268,6 +271,16 @@ export default function SettingsScreen() {
     ]);
   };
 
+  const handleLocalLockChange = async (enabled: boolean) => {
+    setLocalLockBusy(true);
+    try {
+      const result = enabled ? await localLock.enable() : await localLock.disable();
+      if (!result.ok) Alert.alert(enabled ? "无法开启应用锁" : "无法关闭应用锁", result.error);
+    } finally {
+      setLocalLockBusy(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -363,6 +376,27 @@ export default function SettingsScreen() {
                 />
               </TouchableOpacity>
             )}
+          </View>
+        </View>
+
+        {/* M30-02 Security Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>安全</Text>
+          <View style={styles.card}>
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1, paddingRight: spacing.md }}>
+                <Text style={styles.rowLabel}>生物识别应用锁</Text>
+                <Text style={styles.rowValue}>离开后台 30 秒后锁定；不替代服务端登录</Text>
+              </View>
+              <Switch
+                value={localLock.enabled}
+                disabled={localLockBusy || !localLock.availability?.supported || !localLock.availability?.enrolled}
+                onValueChange={(value) => { void handleLocalLockChange(value); }}
+                trackColor={{ false: colors.muted, true: colors.success }}
+                thumbColor={colors.card}
+                ios_backgroundColor={colors.muted}
+              />
+            </View>
           </View>
         </View>
 

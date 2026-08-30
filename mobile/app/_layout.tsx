@@ -9,6 +9,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View } from 'react-native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { AuthProvider } from '../src/contexts/AuthContext';
+import { LocalAppLockProvider } from '../src/contexts/LocalAppLockContext';
+import { LocalAppLockGate } from '../src/components/LocalAppLockGate';
 import { ChatAppStateProvider } from '../src/contexts/ChatAppStateContext';
 import { PendingSharedFilesProvider } from '../src/contexts/PendingSharedFilesContext';
 import { useActivityReporter } from '../src/hooks/useActivityReporter';
@@ -125,9 +127,13 @@ function ThemedApp() {
             在 ChatAppStateProvider 外侧，让 chat 页面可消费分享落地的文件 */}
         <ShareIntentProvider>
           <AuthProvider>
-            <PendingSharedFilesProvider>
-              <AuthGate />
-            </PendingSharedFilesProvider>
+            <LocalAppLockProvider>
+              <LocalAppLockGate>
+                <PendingSharedFilesProvider>
+                  <AuthGate />
+                </PendingSharedFilesProvider>
+              </LocalAppLockGate>
+            </LocalAppLockProvider>
           </AuthProvider>
         </ShareIntentProvider>
       </AppErrorBoundary>

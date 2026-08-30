@@ -418,6 +418,20 @@ export type {
   ScenarioSanitizeReport,
 } from './security/sanitizeCustomerFacingText';
 
+// M30-02 optional local app-lock kernel
+export {
+  DEFAULT_LOCAL_LOCK_BACKGROUND_MS,
+  INITIAL_LOCAL_APP_LOCK_STATE,
+  SYSTEM_PROMPT_GRACE_MS,
+  canUseSensitiveTransport,
+  localAppLockReducer,
+} from './lib/localAppLock';
+export type {
+  LocalAppAccess,
+  LocalAppLockEvent,
+  LocalAppLockState,
+} from './lib/localAppLock';
+
 // M20-04 account/session boundary identity kernel
 export {
   INITIAL_IDENTITY_STATE,
@@ -455,7 +469,13 @@ export {
 export { registerRefresh, unregisterRefresh, refreshAll } from './lib/refreshBus';
 
 // Lib - auth fetch
-export { authFetch, setOnUnauthorized } from './lib/authFetch';
+export {
+  authFetch,
+  authFetchForLocalUnlockValidation,
+  isSensitiveTransportAllowed,
+  setOnUnauthorized,
+  setSensitiveTransportAllowed,
+} from './lib/authFetch';
 
 // Lib - 安全 JSON 解析（content-type 非 JSON 时抛带上下文错误）
 export { parseJsonResponse } from './lib/parseJsonResponse';

@@ -2,6 +2,16 @@ import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
 
 let onUnauthorized: (() => void) | null = null;
+let sensitiveTransportAllowed = true;
+
+/** Mobile M30-02 gate. Locked/offline-shell modes fail closed before reading tokens. */
+export function setSensitiveTransportAllowed(allowed: boolean): void {
+  sensitiveTransportAllowed = allowed;
+}
+
+export function isSensitiveTransportAllowed(): boolean {
+  return sensitiveTransportAllowed;
+}
 
 export function setOnUnauthorized(fn: () => void) {
   onUnauthorized = fn;
@@ -16,7 +26,14 @@ function requestUrl(input: RequestInfo | URL): string {
   return String(input);
 }
 
-export async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function guardedAuthFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  localUnlockValidation = false,
+): Promise<Response> {
+  if (!sensitiveTransportAllowed && !localUnlockValidation) {
+    throw new Error('LOCAL_APP_LOCK_BLOCKED');
+  }
   const platform = getPlatform();
 
   // Prepend baseUrl for relative paths (RN needs absolute URLs), then enforce
@@ -48,11 +65,23 @@ export async function authFetch(input: RequestInfo | URL, init?: RequestInit): P
 
   // 滑动过期：后端在 token 即将过期时签发新 token
   const refreshToken = response.headers.get('X-Refresh-Token');
-  if (refreshToken) {
+  if (refreshToken && sensitiveTransportAllowed) {
     platform.secureStorage.setItem(TOKEN_KEY, refreshToken).catch((e) => {
       console.warn('[authFetch] Failed to save refreshed token:', e);
     });
   }
 
   return response;
+}
+
+export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return guardedAuthFetch(input, init);
+}
+
+/** Dedicated credential revalidation path; it cannot refresh tokens while the local gate is closed. */
+export function authFetchForLocalUnlockValidation(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  return guardedAuthFetch(input, init, true);
 }

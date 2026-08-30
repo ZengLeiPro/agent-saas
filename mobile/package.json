@@ -67,7 +67,8 @@
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
     "react-native-webview": "13.16.0",
-    "expo-constants": "^55.0.17"
+    "expo-constants": "^55.0.17",
+    "expo-local-authentication": "~55.0.18"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

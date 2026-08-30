@@ -95,12 +95,12 @@ describe('M10-05 mobile privacy config plugin', () => {
     }
   });
 
-  it('strips location, Face ID, and background audio in every profile', () => {
+  it('strips location/background audio while preserving the audited Face ID purpose', () => {
     const plist = applyIosPrivacyInfoPlist(
       {
         NSLocationWhenInUseUsageDescription: 'fixture',
         NSLocationAlwaysUsageDescription: 'fixture',
-        NSFaceIDUsageDescription: 'fixture',
+        NSFaceIDUsageDescription: '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面',
         UIBackgroundModes: ['audio'],
         LSApplicationQueriesSchemes: ['iosamap'],
       },
@@ -108,13 +108,14 @@ describe('M10-05 mobile privacy config plugin', () => {
     );
     assert.equal(plist.NSLocationWhenInUseUsageDescription, undefined);
     assert.equal(plist.NSLocationAlwaysUsageDescription, undefined);
-    assert.equal(plist.NSFaceIDUsageDescription, undefined);
+    assert.equal(plist.NSFaceIDUsageDescription, '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面');
     assert.equal(plist.UIBackgroundModes, undefined);
     assert.equal(plist.LSApplicationQueriesSchemes, undefined);
   });
 
   it('keeps development local-network behavior profile-scoped and removes it in production', () => {
     const makePlist = () => ({
+      NSFaceIDUsageDescription: '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面',
       NSLocalNetworkUsageDescription: 'fixture',
       NSBonjourServices: ['_fixture._tcp'],
       NSAppTransportSecurity: {

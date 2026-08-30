@@ -136,8 +136,12 @@ function applyAndroidPrivacyManifest(androidManifest, { usesCleartextTraffic }) 
 
 function applyIosPrivacyInfoPlist(infoPlist, profile) {
   for (const key of IOS_LOCATION_USAGE_KEYS) delete infoPlist[key];
-  // SecureStore is not configured with requireAuthentication in V1.
-  delete infoPlist.NSFaceIDUsageDescription;
+  // M30-02 local app lock uses Face ID through expo-local-authentication.
+  // Tokens remain in SecureStore without requireAuthentication; this purpose is UI unlock only.
+  if (infoPlist.NSFaceIDUsageDescription !==
+      '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面') {
+    throw new Error('[M30-02] missing or inaccurate NSFaceIDUsageDescription');
+  }
 
   if (Array.isArray(infoPlist.UIBackgroundModes)) {
     infoPlist.UIBackgroundModes = infoPlist.UIBackgroundModes.filter((mode) => mode !== 'audio');

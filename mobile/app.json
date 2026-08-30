@@ -28,7 +28,8 @@
         "NSMicrophoneUsageDescription": "用于录制并发送语音消息",
         "NSCameraUsageDescription": "用于在用户选择拍照时拍摄并上传附件",
         "NSPhotoLibraryUsageDescription": "用于在用户选择图库时选取图片或视频作为附件、头像",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面"
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [],
@@ -78,6 +79,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面"
+        }
+      ],
       [
         "expo-secure-store",
         {

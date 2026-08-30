@@ -45,6 +45,7 @@ function productionManifest(distribution = 'store') {
     iosBuildNumber: 84,
     androidVersionCode: 85,
   };
+  fixture.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
   fixture.target = {
     profile: 'production',
     distribution,
@@ -69,6 +70,7 @@ function validAndroidManifest() {
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
   <uses-permission android:name="android.permission.VIBRATE"/>
   <application android:allowBackup="false" android:fullBackupContent="@xml/m10_05_backup_rules" android:dataExtractionRules="@xml/m10_05_data_extraction_rules" android:usesCleartextTraffic="false">
@@ -80,6 +82,7 @@ const VALID_IOS_INFO = `<?xml version="1.0"?><plist><dict>
 <key>NSCameraUsageDescription</key><string>用于在用户选择拍照时拍摄并上传附件</string>
 <key>NSMicrophoneUsageDescription</key><string>用于录制并发送语音消息</string>
 <key>NSPhotoLibraryUsageDescription</key><string>用于在用户选择图库时选取图片或视频作为附件、头像</string>
+<key>NSFaceIDUsageDescription</key><string>用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面</string>
 </dict></plist>`;
 const VALID_IOS_ENTITLEMENTS = `<?xml version="1.0"?><plist><dict>
 <key>com.apple.security.application-groups</key><array><string>group.fixture</string></array>
@@ -236,6 +239,9 @@ test('M10-05 Expo config profiles cleartext and backup without weakening product
   assert.deepEqual(pluginOptions(production, 'expo-secure-store'), {
     faceIDPermission: false,
     configureAndroidBackup: false,
+  });
+  assert.deepEqual(pluginOptions(production, 'expo-local-authentication'), {
+    faceIDPermission: '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面',
   });
   assert.deepEqual(production.ios.privacyManifests, {
     NSPrivacyAccessedAPITypes: [],

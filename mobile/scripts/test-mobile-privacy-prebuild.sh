@@ -36,6 +36,7 @@ manifest.version.latestPublished = {
   iosBuildNumber: 84,
   androidVersionCode: 85,
 };
+manifest.oauthCallback.profiles.production = ['https://mobile.example.test/oauth/callback'];
 manifest.target = {
   profile: 'production',
   distribution: process.env.M10_05_TEST_DISTRIBUTION,

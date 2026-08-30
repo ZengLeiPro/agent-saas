@@ -19,7 +19,8 @@ import { textContentCache } from '../services/textContentCache';
 import { clearFileListCache } from '../hooks/useFileList';
 import { clearPreviewTokenCache } from '../services/previewTokenCache';
 import { cancelNativeOAuthTransaction } from '../services/nativeOAuthHandoff';
-import { clearGroupsCache, getPlatform } from '@agent/shared';
+import { clearGroupsCache, getPlatform, setSensitiveTransportAllowed } from '@agent/shared';
+import { clearAllLocalAppLockPolicies } from '../platform/localAppLockStorage';
 
 const CACHED_USER_KEY = 'agentChat.cachedUser';
 const IDENTITY_META_KEY = 'agentChat.identity.v1';
@@ -82,11 +83,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearAccountData = useCallback(async (_disconnectRealtime: boolean) => {
     // M20-04: offline logout uses the same local atomic boundary and never waits for server.
+    setSensitiveTransportAllowed(false);
     wsClient.freezeSending();
     wsClient.disconnect();
     wsClient.resetRecovery({ sessionId: null });
     resetChatStore();
     await mobileSecureStorage.removeItem(TOKEN_KEY);
+    await clearAllLocalAppLockPolicies();
     await cancelNativeOAuthTransaction();
     // Clear in-memory auth immediately after the credential is gone; later
     // cache cleanup failures must not leave the UI authenticated.

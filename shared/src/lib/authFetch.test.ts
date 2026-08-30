@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
-import { authFetch, setOnUnauthorized } from './authFetch';
+import { authFetch, authFetchForLocalUnlockValidation, setOnUnauthorized, setSensitiveTransportAllowed } from './authFetch';
 
 // ── 构造一个最小可用的 platform，用真实的 initPlatform 注入 ──────────────
 // secureStorage 用 in-memory 版，platformConfig 可注入最终传输策略。
@@ -64,6 +64,7 @@ describe('authFetch', () => {
     store = built.store;
     initPlatform(built.platform);
     setOnUnauthorized(() => {}); // 复位回调，避免测试间串扰
+    setSensitiveTransportAllowed(true);
     vi.restoreAllMocks();
   });
 
@@ -166,6 +167,27 @@ describe('authFetch', () => {
     await Promise.resolve();
 
     expect(store.get(TOKEN_KEY)).toBe('new-token');
+  });
+
+  it('M30-02 blocks locked/offline sensitive transport before token read', async () => {
+    store.set(TOKEN_KEY, 'secret');
+    setSensitiveTransportAllowed(false);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(authFetch('/api/send', { method: 'POST' })).rejects.toThrow('LOCAL_APP_LOCK_BLOCKED');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('M30-02 dedicated server validation cannot refresh the token while locked', async () => {
+    store.set(TOKEN_KEY, 'old-token');
+    setSensitiveTransportAllowed(false);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse({
+      status: 200,
+      headers: { 'X-Refresh-Token': 'must-not-save' },
+    })));
+    await authFetchForLocalUnlockValidation('/api/auth/me');
+    await Promise.resolve();
+    expect(store.get(TOKEN_KEY)).toBe('old-token');
   });
 
   it('网络错误（fetch reject）向上抛出', async () => {

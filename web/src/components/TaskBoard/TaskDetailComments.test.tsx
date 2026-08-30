@@ -121,7 +121,7 @@ describe("TaskDetailComments", () => {
     await waitFor(() => expect(scrollContainer.scrollTop).toBe(480));
   });
 
-  it("讨论栏整行控制详情，并在展开时移动到输入区上方", () => {
+  it("展开详情时隐藏评论列表，并让讨论栏紧贴输入区", () => {
     const onToggleDetails = vi.fn();
     renderComments({ detailsExpanded: true, onToggleDetails });
 
@@ -135,6 +135,8 @@ describe("TaskDetailComments", () => {
     expect(chevron?.classList.contains("ml-1")).toBe(true);
     expect(chevron?.classList.contains("right-1")).toBe(false);
     expect(chevron?.classList.contains("rotate-180")).toBe(true);
+    expect(screen.getByTestId("task-comments-scroll").className).toContain("hidden");
+    expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("shrink-0");
     expect(discussion.nextElementSibling).toBe(form);
     expect(discussion.className).toContain("slide-in-from-bottom-1");
     expect(screen.queryByText(/^评论（/)).toBeNull();

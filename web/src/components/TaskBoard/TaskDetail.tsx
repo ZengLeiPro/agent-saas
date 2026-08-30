@@ -716,8 +716,8 @@ export function TaskDetail({
             <div data-testid="task-detail-columns" className="flex min-h-0 flex-1 flex-col">
               {/* @ts-expect-error -- inert is a valid HTML attribute, React types lag behind */}
               <div id="task-detail-information" data-testid="task-detail-information" aria-hidden={!detailsExpanded} inert={!detailsExpanded}
-                className={`shrink-0 overflow-hidden transition-[max-height,opacity] duration-300 ease-in-out ${detailsExpanded ? "max-h-[52vh] border-b opacity-100" : "max-h-0 opacity-0"}`}>
-                <div className="max-h-[52vh] overflow-y-auto p-4 sm:p-6">
+                className={`grid min-h-0 overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-in-out ${detailsExpanded ? "flex-1 grid-rows-[1fr] border-b opacity-100" : "shrink-0 grid-rows-[0fr] opacity-0"}`}>
+                <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
               <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">流程与执行</h3>
                 {latestExecution ? (

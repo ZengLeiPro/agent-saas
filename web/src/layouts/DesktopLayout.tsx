@@ -176,7 +176,9 @@ export function DesktopLayout(props: LayoutProps) {
     ? subagentTranscript?.childSessionId ?? null
     : rightPanelKind === 'preview' ? previewFilePath : rightPanelKind;
   const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
-  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.5, 0.25, 0.75, dockedPanelKey);
+  // 任务详情略窄于正文；聊天侧栏仍保持对半分栏。
+  const dockedPanelInitialRatio = showTaskDetailPanel ? 0.46 : 0.5;
+  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey);
 
   // 侧边栏折叠
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");

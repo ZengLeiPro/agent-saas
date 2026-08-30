@@ -105,9 +105,9 @@ export function TaskDetailComments({
   );
 
   return (
-    <section aria-label="任务讨论" className="flex min-h-0 flex-1 flex-col bg-muted/10">
+    <section aria-label="任务讨论" className={`flex flex-col bg-muted/10 ${detailsExpanded ? "shrink-0" : "min-h-0 flex-1"}`}>
       {!detailsExpanded ? detailsToggle : null}
-      <div ref={commentsScrollRef} data-testid="task-comments-scroll" className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div ref={commentsScrollRef} data-testid="task-comments-scroll" className={detailsExpanded ? "hidden" : "min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"}>
         {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
         {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载讨论...</p> : null}
         <div className="space-y-0">

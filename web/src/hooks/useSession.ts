@@ -51,6 +51,10 @@ export interface SessionCallbacks {
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
   ) => void;
+  onQueueSnapshot?: (
+    sessionId: string,
+    snapshot: NonNullable<ApiSessionDetail["queueSnapshot"]>,
+  ) => void;
   onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void; onNewSession?: () => void;
 }
 export interface SessionState {

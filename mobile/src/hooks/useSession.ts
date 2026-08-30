@@ -30,6 +30,7 @@ export interface SessionCallbacks {
   triggerScroll: () => void;
   cancelActiveStream: () => void;
   clearComposer: () => void;
+  onQueueSnapshot?: (sessionId: string, snapshot: NonNullable<ApiSessionDetail['queueSnapshot']>) => void;
 }
 
 export interface SessionState {
@@ -285,6 +286,7 @@ export function useSession(
         if (response.ok) {
           const data = (await response.json()) as ApiSessionDetail;
           if (isStale()) return;
+          if (data.queueSnapshot) cbRef.current.onQueueSnapshot?.(id, data.queueSnapshot);
           const sessionOwner =
             data.owner?.username ??
             sessionsRef.current.find((s) => s.sessionId === id)?.owner

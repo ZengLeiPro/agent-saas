@@ -115,6 +115,7 @@ import {
 } from '@agent/shared/lib/chatSubmission';
 import type { MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
+import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
 export type { ModelResolver } from './channelConfig.js';
@@ -345,6 +346,7 @@ export class WebChannel implements BaseChannel {
     meta: {
       sessionId?: string;
       runId?: string;
+      sourceRunId?: string;
       status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
       deliveryMode?: 'queue' | 'steer';
       queuePosition?: number;
@@ -1696,6 +1698,18 @@ export class WebChannel implements BaseChannel {
     }
   }
 
+  private async sendQueueSnapshot(client: WsClient, sessionId: string): Promise<void> {
+    const runStore = this.config.enqueueRuntime?.runStore;
+    if (!runStore?.listUserMessagesBySession) return;
+    const runs = await runStore.listUserMessagesBySession(sessionId);
+    const first = runs[0];
+    if (first && this.sensitiveActionAccessError(client, {
+      tenantId: first.tenantId,
+      ownerUserId: first.userId,
+    })) return;
+    this.wsSend(client.ws, { type: 'queue_snapshot', snapshot: buildChatQueueSnapshot(sessionId, runs) });
+  }
+
   /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
   private async handleCancelQueued(client: WsClient, msg: import('./wsTypes.js').WsCancelQueuedMessage): Promise<void> {
     const runStore = this.config.enqueueRuntime?.runStore;
@@ -1728,12 +1742,24 @@ export class WebChannel implements BaseChannel {
         reason: 'user_withdrew',
       });
     }
+    const current = await runStore.get(sourceRunId);
+    const item = current ? projectChatQueueItem(current) : undefined;
+    const snapshot = result.sessionId && runStore.listUserMessagesBySession
+      ? buildChatQueueSnapshot(result.sessionId, await runStore.listUserMessagesBySession(result.sessionId))
+      : undefined;
     this.wsSend(client.ws, {
       type: 'cancel_queued_result',
       ok: result.ok,
       sourceRunId,
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      ...(result.clientMsgId ? { clientMsgId: result.clientMsgId } : {}),
+      ...(item ? { item } : {}),
+      ...(snapshot ? { snapshot } : {}),
       ...(result.reason ? { reason: result.reason } : {}),
     });
+    if (result.ok && current && item && current.userId && this.eventBus) {
+      this.eventBus.emitUser(current.userId, { type: 'queue_item_updated', item }, client.ws);
+    }
   }
 
   /** abort 联动：撤销 session 内全部排队插话并广播。 */
@@ -1958,6 +1984,9 @@ export class WebChannel implements BaseChannel {
   private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {
     const { sessionId: sid, requestId, lastEventId, lastEventCursor, skipReplay } = msg;
     this.wsSessionAffinity.set(client.ws, sid);
+    await this.sendQueueSnapshot(client, sid).catch((error) => {
+      chatLogger.warn(`[resume] queue snapshot failed session=${sid}: ${error instanceof Error ? error.message : String(error)}`);
+    });
 
     const prevUnsub = this.resumeSubscriptions.get(client.ws);
     if (prevUnsub) {
@@ -3212,7 +3241,7 @@ export class WebChannel implements BaseChannel {
             runId: acceptedRunId,
             status: authoritative.status,
             deliveryMode: acceptedDeliveryMode,
-            ...(queuePosition ? { queuePosition } : {}),
+            ...(queuePosition !== undefined ? { queuePosition } : {}),
           });
           if (acceptedStreamId) {
             this.eventBus!.emitReply(ws, {
@@ -3222,7 +3251,7 @@ export class WebChannel implements BaseChannel {
               runId: acceptedRunId,
               client_msg_id: clientMsgId,
               ...(queuedTargetRunId
-                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) }
+                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition !== undefined ? { queuePosition } : {}) }
                 : {}),
             });
           }
@@ -3281,7 +3310,7 @@ export class WebChannel implements BaseChannel {
           runId: acceptedRunId,
           status: authoritative.status,
           deliveryMode: acceptedDeliveryMode,
-          ...(queuePosition ? { queuePosition } : {}),
+          ...(queuePosition !== undefined ? { queuePosition } : {}),
         });
         send({
           type: 'stream_id',
@@ -3289,7 +3318,7 @@ export class WebChannel implements BaseChannel {
           sessionId: acceptedSessionId,
           runId: acceptedRunId,
           client_msg_id: clientMsgId,
-          ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) } : {}),
+          ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition !== undefined ? { queuePosition } : {}) } : {}),
         });
         send({ type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId, sandboxProfile: sessionRecord.sandboxProfile });
         // 首条长消息不等待 Agent 输出；续聊时若仍无标题，也在本次输入后立即补偿。
@@ -3312,6 +3341,10 @@ export class WebChannel implements BaseChannel {
             client_msg_id: clientMsgId,
           }));
         }
+        if (user?.sub && this.eventBus) {
+          const queueItem = projectChatQueueItem(enqueuedRun, queuePosition);
+          if (queueItem) this.eventBus.emitUser(user.sub, { type: 'queue_item_updated', item: queueItem });
+        }
         if (user?.sub && this.eventBus && queuedTargetRunId) {
           // 多端统一队列快照：普通 queue 与显式 steer 都广播，按 clientMsgId 幂等 upsert。
           this.eventBus.emitUser(user.sub, {
@@ -3321,7 +3354,7 @@ export class WebChannel implements BaseChannel {
             clientMsgId,
             deliveryMode: acceptedDeliveryMode,
             targetRunId: queuedTargetRunId,
-            ...(queuePosition ? { queuePosition } : {}),
+            ...(queuePosition !== undefined ? { queuePosition } : {}),
             content: userDisplayContent ?? resolvedMessage,
             ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
             timestamp: Date.now(),

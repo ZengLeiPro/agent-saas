@@ -102,7 +102,7 @@ onChatAck: (clientMsgId, ackEvent) => {
         status: 'queued' as const,
         sourceRunId: ackEvent.runId ?? entry.sourceRunId,
         deliveryMode: ackEvent.deliveryMode ?? entry.deliveryMode,
-        ...(ackEvent.queuePosition ? { queuePosition: ackEvent.queuePosition } : {}),
+        ...(ackEvent.queuePosition !== undefined ? { queuePosition: ackEvent.queuePosition } : {}),
         reason: undefined,
       } : entry));
     } else if (
@@ -200,7 +200,7 @@ onSteeringAckQueued: (clientMsgId, sourceRunId, targetRunId, queuedDeliveryMode,
         ...entry,
         status: 'queued' as const,
         deliveryMode: queuedDeliveryMode === 'steer' ? 'steer' as const : entry.deliveryMode,
-        ...(queuePosition ? { queuePosition } : {}),
+        ...(queuePosition !== undefined ? { queuePosition } : {}),
         ...(sourceRunId ? { sourceRunId } : {}),
         ...(targetRunId ? { targetRunId } : {}),
       }
@@ -224,7 +224,7 @@ onMessageQueued: (event) => {
         sourceRunId: event.runId,
         deliveryMode: event.deliveryMode,
         ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
-        ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+        ...(event.queuePosition !== undefined ? { queuePosition: event.queuePosition } : {}),
       } : entry);
     }
     return [...prev, {
@@ -233,7 +233,7 @@ onMessageQueued: (event) => {
       sourceRunId: event.runId,
       ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
       deliveryMode: event.deliveryMode,
-      ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+      ...(event.queuePosition !== undefined ? { queuePosition: event.queuePosition } : {}),
       content: event.content,
       ...(event.attachments?.length ? { attachments: event.attachments } : {}),
       status: 'queued' as const,

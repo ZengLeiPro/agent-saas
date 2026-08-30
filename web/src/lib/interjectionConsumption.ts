@@ -100,7 +100,7 @@ export function reconcileQueuedInterjections(
         sourceRunId: entry.runId ?? entry.sourceRunId,
         ...(entry.targetRunId ? { targetRunId: entry.targetRunId } : {}),
         deliveryMode: entry.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const,
-        ...(entry.queuePosition ? { queuePosition: entry.queuePosition } : {}),
+        ...(entry.queuePosition !== undefined ? { queuePosition: entry.queuePosition } : {}),
         content: entry.content,
         ...(entry.attachments?.length ? { attachments: entry.attachments } : {}),
         ...(local?.uploadedFiles?.length

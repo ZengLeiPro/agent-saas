@@ -17,7 +17,7 @@ import {
   toWebChatWireMessage,
   validateWebUploadedFiles,
 } from "@/lib/chatSubmissionAdapter";
-import { canonicalChatAttachmentToDisplay } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay, chatQueueReducerEventsFromWsEvent, createChatQueueState, reduceChatQueueEvent, selectChatQueueItems, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -242,6 +242,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // 运行中发送的消息不进时间线，在输入框上方的队列区排队，被目标 run 消费
   //（user_message 投影）或回退接管（非 queued stream_id）时才进时间线。
   const [queuedInterjections, setQueuedInterjectionsState] = useState<QueuedInterjection[]>([]);
+  const chatQueueStateRef = useRef<ChatQueueState>(createChatQueueState());
   const queuedInterjectionsRef = useRef<QueuedInterjection[]>([]);
   const consumedInterjectionsRef = useRef(new InterjectionConsumptionRegistry());
   const mutateQueuedInterjections = useCallback(
@@ -255,6 +256,33 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     },
     [],
   );
+  const projectAuthoritativeQueue = useCallback((state: ChatQueueState) => {
+    const projected: QueuedInterjection[] = selectChatQueueItems(state)
+      .filter((item) => ['queued', 'cancel_pending', 'cancelled', 'failed'].includes(item.status))
+      .map((item) => ({
+      clientMsgId: item.clientMsgId,
+      sessionId: item.sessionId,
+      sourceRunId: item.sourceRunId,
+      ...(item.targetRunId ? { targetRunId: item.targetRunId } : {}),
+      deliveryMode: item.deliveryMode,
+      ...(item.queuePosition !== undefined ? { queuePosition: item.queuePosition } : {}),
+      content: item.content ?? '',
+      ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+      status: (item.status === 'cancelled' ? 'cancelled' : item.status === 'failed' ? 'failed' : 'queued') as QueuedInterjection['status'],
+      ...(item.reason ? { reason: item.reason } : {}),
+      createdAt: Date.parse(item.acceptedAt ?? '') || Date.now(),
+    }));
+    mutateQueuedInterjections((previous) => [
+      ...projected.map((item) => {
+        const local = previous.find((candidate) => candidate.clientMsgId === item.clientMsgId);
+        return local ? { ...local, ...item, ...(local.uploadedFiles ? { uploadedFiles: local.uploadedFiles } : {}) } : item;
+      }),
+      ...previous.filter((item) => (
+        !projected.some((candidate) => candidate.clientMsgId === item.clientMsgId)
+        && (item.status === 'sending' || item.status === 'verifying')
+      )),
+    ]);
+  }, [mutateQueuedInterjections]);
   const failProvisionalBatch = useCallback((rootClientMsgId: string, reason: string) => {
     const failedIds = new Set(
       provisionalSubmissionsRef.current
@@ -730,12 +758,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     },
     // 队列区真源同步（2026-08-04 终态设计）：以服务端仍在排队的插话为基底重建；
     // 本地 sending（未 ACK）与 cancelled/failed（展示态）条目保留，其余以服务端为准。
+    onQueueSnapshot: (sessionId: string, snapshot: ChatQueueSnapshot) => {
+      const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+      if (!sid || sessionId !== sid) return;
+      chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, { type: 'snapshot', snapshot });
+      projectAuthoritativeQueue(chatQueueStateRef.current);
+    },
     onQueuedMessages: (sessionId: string, serverQueued: NonNullable<ApiSessionDetail["queuedMessages"]>) => {
       const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
       if (!sid || sessionId !== sid) return;
       reconcileServerInterjections(sessionId, serverQueued);
     }, onSandboxProfile: hydrateSandboxProfile, onSessionInvalidated: (id: string) => { const current = immediateSessionIdRef.current === id || sessionIdRef.current === id; if (immediateSessionIdRef.current === id) immediateSessionIdRef.current = null; if (sessionIdRef.current === id) sessionIdRef.current = null; if (queuedSessionIdRef.current === id) queuedSessionIdRef.current = null; if (wsLatestSessionIdRef.current?.value === id) wsLatestSessionIdRef.current = { value: null }; if (current) { mutateQueuedInterjections((prev) => prev); startNewSandboxProfile(); } }, onNewSession: startNewSandboxProfile,
-  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
+  }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, projectAuthoritativeQueue, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
   const markingReadSessionIdsRef = useRef(new Set<string>());
@@ -1508,6 +1542,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
+      // M20-02 thin path consumes structured V1 frames. Legacy frames stay on the existing
+      // N-1 projector below so they cannot reintroduce local dispatch authority.
+      const isQueueLifecycleFrame = data.type === 'queue_snapshot' || data.type === 'queue_item_updated'
+        || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
+        || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result';
+      const queueEvents = isQueueLifecycleFrame
+        ? chatQueueReducerEventsFromWsEvent(data, immediateSessionIdRef.current ?? sessionIdRef.current ?? undefined)
+        : [];
+      if (queueEvents.length > 0) {
+        let nextQueueState = chatQueueStateRef.current;
+        for (const queueEvent of queueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
+        chatQueueStateRef.current = nextQueueState;
+        const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+        if (sid && nextQueueState.sessionId === sid) projectAuthoritativeQueue(nextQueueState);
+      }
 
       // 追踪 eventId / cursor。元数据事件可能属于后台会话，不能写进当前 UI 会话；
       // 无 sessionId 的流事件则归属当前已 attach 的会话。
@@ -1667,7 +1716,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                   sourceRunId: e.runId,
                   ...(e.targetRunId ? { targetRunId: e.targetRunId } : {}),
                   deliveryMode: e.deliveryMode,
-                  ...(e.queuePosition ? { queuePosition: e.queuePosition } : {}),
+                  ...(e.queuePosition !== undefined ? { queuePosition: e.queuePosition } : {}),
                   content: e.content,
                   ...(e.attachments?.length ? { attachments: e.attachments } : {}),
                   status: 'queued' as const,
@@ -2287,7 +2336,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 status: 'queued' as const,
                 sourceRunId: status.runId,
                 deliveryMode: status.deliveryMode,
-                ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
+                ...(status.queuePosition !== undefined ? { queuePosition: status.queuePosition } : {}),
                 reason: undefined,
               } : item)
               : [...prev, {
@@ -2295,7 +2344,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
                 sessionId: status.sessionId,
                 sourceRunId: status.runId,
                 deliveryMode: status.deliveryMode,
-                ...(status.queuePosition ? { queuePosition: status.queuePosition } : {}),
+                ...(status.queuePosition !== undefined ? { queuePosition: status.queuePosition } : {}),
                 content: currentEntry.input,
                 ...(currentEntry.attachments.length ? {
                   attachments: currentEntry.attachments.flatMap((file) => file.attachmentId ? [{

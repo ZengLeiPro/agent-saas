@@ -308,7 +308,7 @@ describe('processWsEvent 结果处理', () => {
     expect(finalizeRunningSubagents).not.toHaveBeenCalled();
   });
 
-  it('done 且有排队消息（非 stopping）→ 触发 sendChatViaWs(showBubble=false)', () => {
+  it('M20-02: done never dispatches the next business message', () => {
     const store = getChatStore();
     store.setState({
       isAttached: true, loading: true, stopping: false,
@@ -319,10 +319,9 @@ describe('processWsEvent 结果处理', () => {
 
     emit({ data: { type: 'done' } });
 
-    expect(store.getState().pendingMessage).toBeNull();
-    expect(sendChatMock).toHaveBeenCalledWith(expect.objectContaining({
-      inputText: '排队问题', showBubble: false,
-    }));
+    expect(store.getState().pendingMessage).toEqual({ input: '排队问题', attachments: [] });
+    expect(sendChatMock).not.toHaveBeenCalled();
+    expect(store.getState().loading).toBe(false);
   });
 
   it('done + stopping=true 即使有排队消息也不重发', () => {

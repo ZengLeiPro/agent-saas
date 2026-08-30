@@ -432,6 +432,38 @@ export type {
   ChatSubmissionResult,
 } from './lib/chatSubmission';
 
+// Lib - server-authoritative durable chat queue state machine (M20-02)
+export {
+  CHAT_QUEUE_SNAPSHOT_VERSION,
+  chatQueueItemKey,
+  chatQueueReducer,
+  chatQueueStatusToMessageStatus,
+  createChatQueueState,
+  hydrateChatQueueSnapshot,
+  isChatQueueTerminalStatus,
+  reduceChatQueueEvent,
+  selectCancellableChatQueueItems,
+  selectChatQueueItem,
+  selectChatQueueItems,
+  selectChatQueueLocalIntents,
+  selectChatQueueMessageStatus,
+  selectPendingChatQueueItems,
+  selectRunningChatQueueItem,
+} from './lib/chatQueue';
+export type {
+  ChatQueueAttachment,
+  ChatQueueDeliveryMode,
+  ChatQueueItem,
+  ChatQueueItemPatch,
+  ChatQueueLocalIntent,
+  ChatQueueReducerEvent,
+  ChatQueueSnapshot,
+  ChatQueueState,
+  ChatQueueStatus,
+  ChatQueueTerminalStatus,
+} from './lib/chatQueue';
+export { chatQueueReducerEventsFromWsEvent } from './lib/chatQueueWs';
+
 // Lib - WebSocket client
 export { wsClient } from './lib/wsClient';
 export type {

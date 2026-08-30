@@ -775,13 +775,16 @@ export class PgRunStore implements RunStore {
       }
       if (row.status !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const now = new Date().toISOString();
       await client.query(`
         UPDATE ${this.runsTable}
         SET status = 'cancelled', status_reason = $2, updated_at = $3, cancelled_at = $3,
-            worker_id = NULL, lease_expires_at = NULL, metadata = metadata - 'wakeMessage'
+            worker_id = NULL, lease_expires_at = NULL, metadata = (metadata || jsonb_build_object('cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [runId, reason, now]);
       await client.query('COMMIT');
@@ -815,6 +818,9 @@ export class PgRunStore implements RunStore {
       const clientMsgId = typeof row.metadata?.clientMsgId === 'string' ? row.metadata.clientMsgId : undefined;
       if (row.status !== 'pending' || row.metadata?.steeringState !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const inputUpdate = await client.query(`
@@ -834,7 +840,7 @@ export class PgRunStore implements RunStore {
             status_reason = $2,
             updated_at = $3,
             completed_at = $3,
-            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'
+            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled', 'cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [sourceRunId, reason, now]);
       await client.query('COMMIT');
@@ -1093,6 +1099,19 @@ export class PgRunStore implements RunStore {
         AND run.status = 'pending'
         AND run.channel = 'web'
         AND run.metadata ? 'wakeMessage'
+        AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
+      ORDER BY run.enqueue_seq ASC
+    `, [sessionId]);
+    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+  }
+
+  async listUserMessagesBySession(sessionId: string): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE run.session_id = $1
+        AND run.channel = 'web'
+        AND (run.metadata ? 'clientMsgId' OR run.idempotency_key IS NOT NULL)
         AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
       ORDER BY run.enqueue_seq ASC
     `, [sessionId]);

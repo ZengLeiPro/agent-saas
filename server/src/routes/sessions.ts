@@ -79,6 +79,9 @@ import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, proje
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
 import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
+import type { ChatQueueSnapshot } from '@agent/shared';
+import { buildChatQueueSnapshot } from '../channels/web/chatQueueSnapshot.js';
+import type { RunRecord } from '../runtime/runStoreTypes.js';
 import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
 import {
@@ -474,6 +477,8 @@ export interface SessionsRouterOptions {
     requestedAt: string;
     metadata: Record<string, unknown>;
   }>>;
+  /** M20-02：所有 durable V1 用户提交，供 lifecycle snapshot 投影。 */
+  listUserMessagesBySession?: (sessionId: string) => Promise<RunRecord[]>;
   /** clientMessageId 权威状态核验（ACK 超时/断线重连）。 */
   findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
     runId: string;
@@ -890,6 +895,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     const parseDurationMs = Date.now() - parseStartedAt;
     const lastRunState = await getLastRunState(detailEventStore, tenantId, sessionId);
     // 尚未开始执行的用户消息不进 transcript，统一从 durable run.wakeMessage 恢复。
+    let queueSnapshot: ChatQueueSnapshot = buildChatQueueSnapshot(sessionId, []);
     let queuedMessages: Array<{
       sourceRunId: string;
       runId?: string;
@@ -907,6 +913,16 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }>;
       acceptedAt: string;
     }> = [];
+    if (options.listUserMessagesBySession) {
+      try {
+        queueSnapshot = buildChatQueueSnapshot(
+          sessionId,
+          await options.listUserMessagesBySession(sessionId),
+        );
+      } catch (err) {
+        apiLogger.warn(`[sessions] queue snapshot lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     if (options.listPendingUserMessagesBySession) {
       try {
         const queriedPending = await options.listPendingUserMessagesBySession(sessionId);
@@ -1022,6 +1038,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ...(source ? { source } : {}),
         sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
         ...(lastRunState ? { lastRunState } : {}),
+        ...({ queueSnapshot }),
         ...(queuedMessages.length ? { queuedMessages } : {}),
       },
     };
@@ -2293,7 +2310,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         sessionId: run.sessionId,
         status,
         deliveryMode,
-        ...(queuePosition ? { queuePosition } : {}),
+        ...(queuePosition !== undefined ? { queuePosition } : {}),
         ...(run.statusReason ? { reason: run.statusReason } : {}),
       });
     } catch (err) {

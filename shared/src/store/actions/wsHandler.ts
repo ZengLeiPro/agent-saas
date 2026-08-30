@@ -16,7 +16,6 @@ import {
 } from '../../lib/wsEventProcessor';
 import type { WsEvent } from '../../types/ws';
 import { loadSessions, refreshCurrentSession, fetchTokenUsage } from './sessionLoader';
-import { sendChatViaWs } from './sendChat';
 
 /** 元数据事件白名单（不受 isAttached 守卫过滤） */
 const METADATA_EVENTS = new Set([
@@ -274,29 +273,17 @@ export function setupWsHandler(): () => void {
         triggerScroll: s.triggerScroll,
       });
 
-      // 检查排队消息
-      const pending = s.pendingMessage;
-      if (!s.stopping && pending) {
-        store.setState({ pendingMessage: null });
-        void sendChatViaWs({
-          inputText: pending.input,
-          attachments: pending.attachments as SendChatOptions['attachments'],
-          showBubble: false,
-        });
-      } else {
-        store.setState({
-          streamId: null,
-          runId: null,
-          isAttached: false,
-          loading: false,
-          stopping: false,
-        });
-        s.dispatchConnection('complete');
-      }
+      // M20-02: terminal callbacks only settle UI. pendingMessage remains an editable local
+      // intent; durable RunStore queue state is the only business dispatch authority.
+      store.setState({
+        streamId: null,
+        runId: null,
+        isAttached: false,
+        loading: false,
+        stopping: false,
+      });
+      s.dispatchConnection('complete');
       return;
     }
   });
 }
-
-// Re-export type for sendChat
-import type { SendChatOptions } from './sendChat';

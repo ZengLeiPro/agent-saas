@@ -22,6 +22,7 @@ const METADATA_EVENT_TYPES = new Set([
   'stream_started',
   'interaction_resolved',
   'message_queued',
+  'queue_item_updated',
   'steering_queued',
   'steering_cancelled',
 ]);

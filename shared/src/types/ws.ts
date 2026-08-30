@@ -8,6 +8,7 @@ import type {
 import type { MessageAttachmentDisplay, SubagentStatus } from './message';
 import type { TenantFeatureFlags } from './auth';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
+import type { ChatQueueItem, ChatQueueSnapshot } from '../lib/chatQueue';
 
 export type WsBlockType = 'thinking' | 'text' | 'tool_use';
 export type ChatDeliveryMode = 'queue' | 'steer';
@@ -43,12 +44,14 @@ export type WsEvent =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
     // 统一排队区：普通 queue 与显式 steer 都由服务端 durable 快照恢复。
+    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot }
+    | { type: 'queue_item_updated'; item: ChatQueueItem }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     // 旧 steering 广播保留兼容。
     | { type: 'steering_queued'; sessionId: string; sourceRunId: string; targetRunId: string; clientMsgId: string; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number }
     | { type: 'steering_cancelled'; sessionId: string; sourceRunId: string; clientMsgId?: string; reason: string }
-    | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
-    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
+    | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; clientMsgId?: string; sessionId?: string; status?: ChatQueueItem['status']; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
+    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; sourceRunId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }

@@ -202,6 +202,8 @@ export interface RunStore {
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
   /** 当前会话尚未开始执行的普通/插话消息，按服务端接受顺序返回。 */
   listPendingUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
+  /** M20-02：会话内所有 durable V1 用户提交，供统一 queue/runtime snapshot 投影。 */
+  listUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
   /** 在写入 durable user_message、构造模型上下文前原子取得输入所有权。 */
   reserveSteeringInputs?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;

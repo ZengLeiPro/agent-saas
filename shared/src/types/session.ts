@@ -2,6 +2,7 @@ import type { AgentProfile } from './agent';
 import type { MessageAttachmentDisplay } from './message';
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
+import type { ChatQueueSnapshot } from '../lib/chatQueue';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -97,7 +98,10 @@ export interface ApiSessionDetail {
    * 旧 transcript（无 run_state_changed 事件）会缺省此字段,前端走 legacy 路径。
    */
   lastRunState?: ApiLastRunState;
+  /** M20-02 structured server-authoritative queue/runtime snapshot. */
+  queueSnapshot?: ChatQueueSnapshot;
   /**
+   * @deprecated N-1 pending-only projection. V1 clients consume queueSnapshot.
    * 服务端已持久接收、尚未开始执行的消息。普通 queue 与显式 steer 共用该权威快照，
    * 刷新、切会话和重连都据此恢复，客户端本地临时状态不得覆盖它。
    */

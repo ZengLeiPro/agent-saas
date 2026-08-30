@@ -5,7 +5,7 @@
  * 下行事件复用原 SSE 事件类型，包裹在带 eventId 的信封中。
  */
 
-import type { MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
+import type { ChatQueueItem, ChatQueueSnapshot, MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
 import type {
     CanonicalChatSubmissionWireMessage,
     ChatClientCapability,
@@ -195,8 +195,11 @@ export interface WsAskUserQuestion {
 export type WsDownstreamEvent =
     | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
-    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
+    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; sourceRunId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
+    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot }
+    | { type: 'queue_item_updated'; item: ChatQueueItem }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
+    | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; sessionId?: string; clientMsgId?: string; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
     | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }

@@ -13,6 +13,9 @@ import type {
   WsEnvelope,
   WsProcessingContext,
   WsBlockState,
+  ChatQueueSnapshot,
+  ChatQueueState,
+  ChatQueueItem,
 } from "@agent/shared";
 import {
   wsClient,
@@ -23,6 +26,10 @@ import {
   useConnectionState,
   fetchAgentProfile,
   INPUT_DRAFT_KEY,
+  chatQueueReducerEventsFromWsEvent,
+  createChatQueueState,
+  reduceChatQueueEvent,
+  selectChatQueueItems,
 } from "@agent/shared";
 import type {
   ConnectionState,
@@ -56,6 +63,8 @@ type PendingInteractionResponse = {
 
 export interface ChatAppState {
   messages: MessageItem[];
+  /** Server-authoritative queue/runtime projection for queue UI and cold recovery. */
+  chatQueueItems: ChatQueueItem[];
   input: string;
   loading: boolean;
   sessionId: string | null;
@@ -341,6 +350,13 @@ export function useChatAppStateCore(): ChatAppState {
   }, [user?.username, fetchModelList]);
 
   const msg = useMessages();
+  const chatQueueStateRef = useRef<ChatQueueState>(createChatQueueState());
+  const [chatQueueItems, setChatQueueItems] = useState(() => selectChatQueueItems(chatQueueStateRef.current));
+  const applyQueueSnapshot = useCallback((sessionId: string, snapshot: ChatQueueSnapshot) => {
+    if (snapshot.sessionId !== sessionId) return;
+    chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, { type: 'snapshot', snapshot });
+    setChatQueueItems(selectChatQueueItems(chatQueueStateRef.current));
+  }, []);
   const fileUpload = useFileUpload();
   const { connectionState, dispatchConnection } = useConnectionState();
 
@@ -384,43 +400,6 @@ export function useChatAppStateCore(): ChatAppState {
   const wsUserMsgIndexRef = useRef(-1);
   /** 是否已挂载到某个流（detach 后为 false，发起/订阅流时为 true） */
   const wsAttachedRef = useRef(false);
-  /** 引用 sendChatViaWs（定义在下面），用于在它之前定义的 callback 中 flush 排队消息 */
-  const sendChatViaWsRef = useRef<
-    | ((
-        inputText: string,
-        attachments: UploadedFile[],
-        showBubble: boolean,
-        voiceFile?: {
-          savedPath: string;
-          relativePath: string;
-          duration: number;
-        },
-        existingClientMsgId?: string,
-      ) => Promise<void>)
-    | null
-  >(null);
-
-  /**
-   * 在 loading reset 路径（ACK 超时 / chat_rejected / watchdog 后 done 到达）上推进
-   * outbox 队列头部——若不调用，queued 消息会永远留在数组里 bubble pending。
-   * stopping 状态下跳过（用户主动中止不自动续发）。
-   */
-  const flushQueuedHead = useCallback(() => {
-    if (stoppingRef.current) return;
-    const nextQueued = outboxRef.current.find((e) => e.state === "queued");
-    if (!nextQueued) return;
-    outboxRef.current = outboxRef.current.filter(
-      (e) => e.clientMsgId !== nextQueued.clientMsgId,
-    );
-    void sendChatViaWsRef.current?.(
-      nextQueued.input,
-      nextQueued.attachments,
-      false,
-      nextQueued.voiceFile,
-      nextQueued.clientMsgId,
-    );
-  }, []);
-
   const saveRuntimeForSession = useCallback(
     (sid: string | null = sessionIdRef.current) => {
       if (!sid) return;
@@ -554,6 +533,7 @@ export function useChatAppStateCore(): ChatAppState {
       triggerScroll: msg.triggerScroll,
       cancelActiveStream: detachFromStream,
       clearComposer,
+      onQueueSnapshot: applyQueueSnapshot,
     }),
     [
       msg.resetMessages,
@@ -562,6 +542,7 @@ export function useChatAppStateCore(): ChatAppState {
       msg.triggerScroll,
       detachFromStream,
       clearComposer,
+      applyQueueSnapshot,
     ],
   );
 
@@ -831,12 +812,10 @@ export function useChatAppStateCore(): ChatAppState {
           clearRuntimeForSession();
           setLoading(false);
         }
-        // H-1 修复：ACK 超时路径必须主动推进排队消息
-        flushQueuedHead();
       }, ACK_TIMEOUT_MS);
       ackTimersRef.current.set(clientMsgId, timer);
     },
-    [markBubbleFailed, flushQueuedHead, clearRuntimeForSession],
+    [markBubbleFailed, clearRuntimeForSession],
   );
 
   // Send chat via WS
@@ -953,10 +932,6 @@ export function useChatAppStateCore(): ChatAppState {
     [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId],
   );
 
-  // 同步 sendChatViaWs 到 ref，让 flushQueuedHead 等前置 callback 可调用
-  useEffect(() => {
-    sendChatViaWsRef.current = sendChatViaWs;
-  }, [sendChatViaWs]);
 
   const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: "respond_ok" | "respond_error" }>) => {
     const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
@@ -1008,6 +983,13 @@ export function useChatAppStateCore(): ChatAppState {
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
+      const queueEvents = chatQueueReducerEventsFromWsEvent(data, sessionIdRef.current ?? undefined);
+      if (queueEvents.length > 0) {
+        let nextQueueState = chatQueueStateRef.current;
+        for (const queueEvent of queueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
+        chatQueueStateRef.current = nextQueueState;
+        if (nextQueueState.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(nextQueueState));
+      }
 
       if (envelope.eventId != null) {
         lastEventIdRef.current = envelope.eventId;
@@ -1104,10 +1086,7 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(false);
           setStopping(false);
           setCompacting(false);
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.state === "queued",
-          );
-          flushQueuedHead();
+          outboxRef.current = [];
           dispatchConnection("complete");
           sessionRef.current.refreshCurrentSession();
         }
@@ -1269,8 +1248,6 @@ export function useChatAppStateCore(): ChatAppState {
             wsAttachedRef.current = false;
             setLoading(false);
           }
-          // H-2 修复：rejected 后必须推进排队消息
-          flushQueuedHead();
         },
         onChatDone: (clientMsgId) => {
           if (!clientMsgId) return;
@@ -1324,11 +1301,7 @@ export function useChatAppStateCore(): ChatAppState {
         // 已 detach（切换会话后）或 loading 已被其他路径清掉：
         // 仍需清理本轮 acked/sending，并推进排队消息。
         if (!loadingRef.current) {
-          // H-3 修复：done 晚到路径也要排空 outbox 并推进队列
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.state === "queued",
-          );
-          flushQueuedHead();
+          outboxRef.current = outboxRef.current.filter((e) => e.state !== "sending" && e.state !== "acked");
           return;
         }
         clearWatchdog();
@@ -1367,24 +1340,7 @@ export function useChatAppStateCore(): ChatAppState {
           (e) => e.state === "queued",
         );
 
-        // stopping 时不发排队消息，因为是用户主动中止
-        if (!stoppingRef.current) {
-          const nextQueued = outboxRef.current.find(
-            (e) => e.state === "queued",
-          );
-          if (nextQueued) {
-            outboxRef.current = outboxRef.current.filter(
-              (e) => e.clientMsgId !== nextQueued.clientMsgId,
-            );
-            void sendChatViaWs(
-              nextQueued.input,
-              nextQueued.attachments,
-              false,
-              nextQueued.voiceFile,
-              nextQueued.clientMsgId,
-            );
-          }
-        }
+        // M20-02: done only settles presentation; it never dispatches business work.
       }
     });
     return unsub;
@@ -1588,37 +1544,7 @@ export function useChatAppStateCore(): ChatAppState {
     const capturedFiles = fileUpload.consumeFiles();
     setInput("");
 
-    if (loadingRef.current) {
-      // 排队：新一条消息入 outbox.queued + 渲染 pending bubble
-      const queuedClientMsgId = genClientMsgId();
-      outboxRef.current.push({
-        clientMsgId: queuedClientMsgId,
-        input: trimmedInput,
-        attachments: attachmentValidation.value.map((attachment) => ({
-          attachmentId: attachment.attachmentId,
-          originalName: attachment.display.originalName,
-          relativePath: '',
-          size: attachment.display.size ?? 0,
-          mimeType: attachment.display.mimeType ?? 'application/octet-stream',
-          isImage: attachment.display.isImage ?? false,
-        })),
-        state: "queued",
-        createdAt: Date.now(),
-      });
-      msgRef.current.triggerScroll();
-      msgRef.current.addMessage({
-        type: "user",
-        content: trimmedInput,
-        ...(attachmentValidation.value.length > 0
-          ? { attachments: attachmentValidation.value.map(canonicalChatAttachmentToDisplay) }
-          : {}),
-        status: "pending",
-        timestamp: Date.now(),
-        clientMsgId: queuedClientMsgId,
-      });
-      return;
-    }
-
+    // Busy sessions are submitted immediately; durable RunStore decides queue order.
     void sendChatViaWs(trimmedInput, capturedFiles, true);
   }, [input, fileUpload, sendChatViaWs, genClientMsgId]);
 
@@ -1738,28 +1664,8 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
       // 用户手动 retry：生成新 clientMsgId；附件仍使用上传时的同一 attachmentId。
-      if (loadingRef.current) {
-        setInput("");
-        const queuedClientMsgId = genClientMsgId();
-        outboxRef.current.push({
-          clientMsgId: queuedClientMsgId,
-          input: text,
-          attachments: retryFiles,
-          state: "queued",
-          createdAt: Date.now(),
-        });
-        msg.addMessage({
-          type: "user",
-          content: text,
-          ...(message.attachments?.length ? { attachments: message.attachments } : {}),
-          status: "pending",
-          timestamp: Date.now(),
-          clientMsgId: queuedClientMsgId,
-        });
-      } else {
-        setInput("");
-        void sendChatViaWs(text, retryFiles, true);
-      }
+      setInput("");
+      void sendChatViaWs(text, retryFiles, true);
     },
     [msg, sendChatViaWs, genClientMsgId, fileUpload],
   );
@@ -1871,6 +1777,7 @@ export function useChatAppStateCore(): ChatAppState {
 
   return {
     messages: msg.messages,
+    chatQueueItems,
     input,
     loading,
     sessionId: session.sessionId,

@@ -261,7 +261,8 @@ export async function loadSessionDetailRequest(
       }
       deps.callbacksRef.current.onLastRunState?.(id, lastRunState);
     }
-    deps.callbacksRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
+    if (data.queueSnapshot) deps.callbacksRef.current.onQueueSnapshot?.(id, data.queueSnapshot);
+    else deps.callbacksRef.current.onQueuedMessages?.(id, data.queuedMessages ?? []);
     deps.callbacksRef.current.onSandboxProfile?.(id, data.sandboxProfile);
 
     if (isStale()) return;

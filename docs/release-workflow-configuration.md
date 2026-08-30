@@ -35,16 +35,16 @@ Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`EC
 `ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
 
 `PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
-`Prepare Release Evidence` 写后回读使用；
+`准备发布证据` 写后回读使用；
 `RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于自动任务调用不可覆盖 `POST /release-evidence` 的独立写
-身份。二者禁止复用。写 Token 只进入受 `main` 分支策略保护的 `Prepare Release Evidence`
+身份。二者禁止复用。写 Token 只进入受 `main` 分支策略保护的 `准备发布证据`
 Workflow，不进入 Staging 部署或 Production Promotion Workflow。
 
 Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
 地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。
 `PRODUCTION_OBSERVATION_URL` 目前仅作为同域 Evidence Service 的兼容基址，
-`Prepare Release Evidence` 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
+`准备发布证据` 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
 读取 `/production-observation`，也不把 Agent、浏览器或业务验收放进部署门禁。
 
 ## 权威证据服务
@@ -67,7 +67,7 @@ Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无
 Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
 Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
 比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。Production
-`Prepare Release Evidence` 只持有读身份完成写后回读。相关端点都必须带
+`准备发布证据` 只持有读身份完成写后回读。相关端点都必须带
 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
 evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度；它不会在缺少真实探针时
 合成生产观察样本。运行参数：
@@ -76,7 +76,7 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
 
-`Prepare Release Evidence` 在 `main` 的 `App CI / Deploy` 成功结束后自动运行，无需管理员手工生成
+`准备发布证据` 在 `main` 的 `App CI / Deploy` 成功结束后自动运行，无需管理员手工生成
 或上传 JSON。它锁定该 CI 的完整 SHA，验证唯一关联的已合并 GitHub PR，使用与 ACS Workflow 相同
 的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。随后通过固定
 host key 的 SSH 只读生产状态，在 `RELEASE_RECORD_OSS_URI` 的 `baselines/` 与 `records/` 中按每个
@@ -128,7 +128,7 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   需要完整发布证据链时使用 `promote-release.yml`，但不得因此关闭两个既有人工入口。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
-  `Staging Acceptance` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。
+  `预发验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
 - main ruleset 按单人维护模式配置：不要求人工审批、CODEOWNER 审批或 Last Push Approval，但仍要求

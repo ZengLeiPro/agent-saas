@@ -14,6 +14,7 @@ test('ACS Orchestrator 重启后同一会话 Sandbox 工作区仍可读回', asy
     page,
     'acs-restart-seed',
     '使用 Shell 把 acs-restart-proof 写入 acs-restart-proof.txt，再使用 Read 核对文件内容。',
+    request,
   );
   await restartStagingService('agent-saas-acs-orchestrator-staging.service');
   const expectedContent = 'acs-restart-proof';
@@ -21,6 +22,7 @@ test('ACS Orchestrator 重启后同一会话 Sandbox 工作区仍可读回', asy
     page,
     'acs-restart-readback',
     `使用 Read 读取 acs-restart-proof.txt；只有内容严格等于 ${expectedContent} 才报告成功。`,
+    request,
   );
   const token = await apiLogin();
   await assertAcsToolEvidence(request, token, currentSessionId(page), ['Read'], expectedContent);

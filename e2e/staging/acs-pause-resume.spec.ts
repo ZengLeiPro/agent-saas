@@ -37,6 +37,7 @@ test('Sandbox Running 到 Paused 再 Resume 后有权威 Read trace', async ({ p
     page,
     'pause-seed',
     `必须使用 Write 工具写入 ${required('STAGING_RELEASE_ID')}-pause-proof.txt，内容为 pause-resume-proof。`,
+    request,
   );
   const sessionId = currentSessionId(page);
   const token = await apiLogin();
@@ -72,6 +73,7 @@ test('Sandbox Running 到 Paused 再 Resume 后有权威 Read trace', async ({ p
     page,
     'pause-resume',
     `恢复后必须使用 Read 工具读取 ${required('STAGING_RELEASE_ID')}-pause-proof.txt，并核对内容为 pause-resume-proof。`,
+    request,
   );
   await assertAcsToolEvidence(
     request,

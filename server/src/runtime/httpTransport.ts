@@ -10,6 +10,7 @@ import type {
   ToolInvocationStream,
   ToolInvocationStreamChunk,
 } from './handProtocol.js';
+import { controlPlaneFetch } from './controlPlaneFetch.js';
 
 const DEFAULT_INVOKE_TIMEOUT_MS = 60_000;
 const MAX_SSE_BUFFER_BYTES = 1024 * 1024;
@@ -125,7 +126,7 @@ export class HttpTransport implements ExecutionTransport {
     this.authToken = options.authToken;
     this.invokeTimeoutMs = options.invokeTimeoutMs ?? DEFAULT_INVOKE_TIMEOUT_MS;
     this.internalTools = options.internalTools ?? WORKSPACE_HAND_TOOLS;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = controlPlaneFetch(options.baseUrl, options.fetchImpl);
     this.envResolver = options.envResolver;
     this.connectRetryBackoffMs = options.connectRetryBackoffMs ?? DEFAULT_CONNECT_RETRY_BACKOFF_MS;
     this.streamCleanupGraceMs = Math.max(0, options.streamCleanupGraceMs ?? DEFAULT_STREAM_CLEANUP_GRACE_MS);

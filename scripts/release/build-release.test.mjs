@@ -2,11 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertProductionBuildPlatform,
+  STAGING_SHARED_ASSET_ENTRIES,
   packArgs,
   packRootedArgs,
   productionDeployArgs,
   sbomListArgs,
 } from './build-release.mjs';
+
+test('Staging immutable bundle includes runtime assets but excludes mutable settings and tenant data', () => {
+  assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('.ky-agent/skills-pool'));
+  assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('prompts'));
+  assert.ok(STAGING_SHARED_ASSET_ENTRIES.includes('PERSONA.template.md'));
+  assert.ok(!STAGING_SHARED_ASSET_ENTRIES.includes('.ky-agent/settings.json'));
+  assert.ok(!STAGING_SHARED_ASSET_ENTRIES.includes('tenants'));
+});
 
 test('production deploy tolerates workspace patches unused by the selected package', () => {
   assert.deepEqual(productionDeployArgs('server', '/tmp/release/server'), [

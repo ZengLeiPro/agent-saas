@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { canonicalJson, digestBuffer, digestFile, SHA_PATTERN } from './artifact-lib.mjs';
 import { ADMIN_RUNNER_ENTRIES, MANIFEST_KIND } from '../../server/scripts/build-admin-runner.mjs';
@@ -39,6 +39,26 @@ export function packArgs(directory, target) {
 
 export function packRootedArgs(directory, entry, target) {
   return ['--no-xattrs', '-czf', target, '-C', directory, entry];
+}
+
+export const STAGING_SHARED_ASSET_ENTRIES = [
+  '.browser-profile-seed',
+  '.ky-agent/scripts',
+  '.ky-agent/skills-pool',
+  'prompts',
+  'MEMORY.template.md',
+  'PERSONA.template.md',
+  'questions.template.md',
+];
+
+export async function copyStagingSharedAssets(root, serverRoot) {
+  const sourceRoot = join(root, 'workspace-shared');
+  const targetRoot = join(serverRoot, 'workspace-shared');
+  for (const entry of STAGING_SHARED_ASSET_ENTRIES) {
+    const target = join(targetRoot, entry);
+    await mkdir(join(target, '..'), { recursive: true });
+    await cp(join(sourceRoot, entry), target, { recursive: true, errorOnExist: true });
+  }
 }
 
 export function assertProductionBuildPlatform(platform = process.platform) {
@@ -121,6 +141,7 @@ export async function buildRelease(argv = process.argv) {
     join(root, 'server/src/agent/descriptions'),
     join(stage, 'server/descriptions'),
   ]);
+  await copyStagingSharedAssets(root, join(stage, 'server'));
   run('cp', ['-R', join(root, 'web/dist'), join(stage, 'web')]);
 
   const artifacts = {

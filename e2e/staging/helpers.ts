@@ -77,15 +77,81 @@ export async function sendAgentCase(
   page: Page,
   caseName: string,
   instructions: string,
+  request?: APIRequestContext,
 ): Promise<string> {
   const expected = marker(caseName);
   const input = messageInput(page);
+  const priorSessionId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
+  const priorRunIds = request && priorSessionId
+    ? await recentSessionRunIds(request, page, priorSessionId)
+    : new Set<string>();
   await input.fill(`${instructions}\n全部完成后，在最终回答中原样输出：${expected}`);
   await page.getByRole('button', { name: '发送消息' }).click();
-  await expect(page.locator('.prose-chat').filter({ hasText: expected }).last()).toBeVisible({
-    timeout: 8 * 60_000,
-  });
+  await waitForAgentMarker(page, expected, request, priorRunIds);
   return expected;
+}
+
+async function recentSessionRunIds(
+  request: APIRequestContext,
+  page: Page,
+  sessionId: string,
+): Promise<Set<string>> {
+  const token = await page.evaluate(() => localStorage.getItem('agentChat.authToken'));
+  if (!token) return new Set();
+  const response = await request.get(
+    `${required('STAGING_API_URL')}/api/admin/runtime/trace/recent-runs?hours=1&limit=200`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  if (!response.ok()) return new Set();
+  const body = (await response.json()) as { runs?: Array<{ runId?: string; sessionId?: string }> };
+  return new Set(
+    (body.runs ?? [])
+      .filter((run) => run.sessionId === sessionId && run.runId)
+      .map((run) => String(run.runId)),
+  );
+}
+
+async function waitForAgentMarker(
+  page: Page,
+  expected: string,
+  request: APIRequestContext | undefined,
+  priorRunIds: ReadonlySet<string>,
+): Promise<void> {
+  const markerLocator = page.locator('.prose-chat').filter({ hasText: expected }).last();
+  const deadline = Date.now() + 4 * 60_000;
+  let completedWithoutMarkerAt: number | undefined;
+  while (Date.now() < deadline) {
+    if (await markerLocator.isVisible().catch(() => false)) return;
+    const sessionId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
+    if (request && sessionId) {
+      const token = await page.evaluate(() => localStorage.getItem('agentChat.authToken'));
+      if (token) {
+        const response = await request.get(
+          `${required('STAGING_API_URL')}/api/admin/runtime/trace/recent-runs?hours=1&limit=200`,
+          { headers: { authorization: `Bearer ${token}` } },
+        );
+        if (response.ok()) {
+          const body = (await response.json()) as {
+            runs?: Array<{ runId?: string; sessionId?: string; status?: string }>;
+          };
+          const run = body.runs?.find(
+            (candidate) => candidate.sessionId === sessionId
+              && candidate.runId
+              && !priorRunIds.has(String(candidate.runId)),
+          );
+          if (run?.status === 'failed' || run?.status === 'cancelled')
+            throw new Error(`Staging Agent run ${String(run.runId)} reached terminal status ${run.status}`);
+          if (run?.status === 'completed') {
+            completedWithoutMarkerAt ??= Date.now();
+            if (Date.now() - completedWithoutMarkerAt > 3_000)
+              throw new Error(`Staging Agent run ${String(run.runId)} completed without the required marker`);
+          }
+        }
+      }
+    }
+    await page.waitForTimeout(1_000);
+  }
+  await expect(markerLocator).toBeVisible({ timeout: 1 });
 }
 
 export async function authorizedJson(

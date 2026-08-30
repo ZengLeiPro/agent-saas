@@ -150,7 +150,7 @@ afterEach(() => {
 });
 
 describe("useChatAppState queue consistency lifecycle", () => {
-  it("reattaches a cold switched session before accepting text and done", async () => {
+  it("keeps a reattached run alive across an unrelated sessionless done", async () => {
     harness.session.sessionId = "session-old";
     harness.session.isNewSession = false;
     const { result, rerender } = renderHook(() => useChatAppState());
@@ -172,19 +172,26 @@ describe("useChatAppState queue consistency lifecycle", () => {
     harness.session.sessionId = "session-active";
     rerender();
     act(() => {
+      emit({ type: "done", client_msg_id: "unrelated-reject", error: "rejected" });
       emit({ type: "block_start", blockType: "text", runId: "run-active" });
       emit({ type: "text", content: "recovered reply" });
-      emit({
-        type: "done",
-        sessionId: "session-active",
-        streamId: "stream-active",
-        runId: "run-active",
-      });
     });
 
     await waitFor(() => expect(result.current.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "text", content: "recovered reply" }),
     ])));
+    vi.useFakeTimers();
+    act(() => emit({
+      type: "done",
+      sessionId: "session-active",
+      streamId: "stream-active",
+      runId: "run-active",
+    }));
+    expect(result.current.loading).toBe(true);
+    await act(async () => {
+      vi.advanceTimersByTime(750);
+      await Promise.resolve(); await Promise.resolve();
+    });
     expect(result.current.loading).toBe(false);
   });
 

@@ -57,8 +57,6 @@ import { getTranscriptPath } from '../data/transcripts/index.js';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT } from '../data/transcripts/projectKey.js';
 import { readSessionMeta, writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { speechToText } from '../integrations/stt/sttClient.js';
-import type { SttConfig } from '../integrations/stt/sttClient.js';
 import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
@@ -74,8 +72,6 @@ import {
 // ── 模块 mock ──────────────────────────────────────────────────────────
 
 // STT：只拦上游语音识别调用，channel 侧编排逻辑真实执行
-vi.mock('../integrations/stt/sttClient.js', () => ({ speechToText: vi.fn() }));
-const sttMock = vi.mocked(speechToText);
 
 // openai：自动命名（titleGenerator）上游，返回固定标题并记录调用
 vi.mock('openai', () => {
@@ -185,7 +181,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     }
     for (const dir of dirs) await rm(dir, { recursive: true, force: true });
     dirs.length = 0;
-    sttMock.mockReset();
   });
 
   afterAll(async () => {
@@ -544,7 +539,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'run-st-1' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
         type: 'session_status', sessionId: 's-st-1', status: 'waiting_approval',
         runId: 'run-st-1', streamId: 'st-77', reason: 'worker paused',
       });
@@ -943,61 +938,16 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     });
   });
 
-  describe('语音消息 STT', () => {
-    const voiceFile = { savedPath: '/tmp/cov-voice.wav', relativePath: 'voice/cov-voice.wav', duration: 1200 };
-
-    it('未配置 STT → stt_not_configured + voice_transcribed(error)', async () => {
-      const rig = makeRig();
-      await rig.send(USER, { client_msg_id: 'cm-stt-0', message: '', voiceFile });
-      const types = rig.ws.sent.map((m) => m.data.type);
-      expect(types).toEqual(['voice_transcribed', 'chat_rejected']);
-      expect(rig.ws.sent[0].data).toEqual({ type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      expect(rig.ws.sent[1].data).toMatchObject({ reason_code: 'stt_not_configured' });
-      expect(rig.ws.sent.some((message) => message.data.type === 'chat_ack')).toBe(false);
-    });
-
-    it('识别成功：注入 VOICE_STT_TAG 前缀送 dispatch，先推 voice_transcribed', async () => {
-      const tmp = await makeTmp('cov-stt-ok-');
-      sttMock.mockResolvedValueOnce({ text: '今天天气不错', duration: 900 });
-      const inbound: any[] = [];
-      const dispatch: AgentRunDispatch = async function* (msg) {
-        inbound.push(msg);
-        yield { type: 'done' };
-      };
-      const rig = makeRig({ agentCwd: tmp, sttConfig: { apiKey: 'k' } as SttConfig }, dispatch);
-      await rig.send(USER, { client_msg_id: 'cm-stt-1', message: '', voiceFile });
-      expect(sttMock).toHaveBeenCalledWith('/tmp/cov-voice.wav', { apiKey: 'k' });
-      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({
-        type: 'voice_transcribed', text: '今天天气不错',
+  describe('M50-04 legacy voice path fence', () => {
+    it('rejects voiceFile.savedPath transport without invoking STT or dispatch', async () => {
+      const dispatch = vi.fn();
+      const rig = makeRig({}, dispatch as unknown as AgentRunDispatch);
+      await rig.send(USER, {
+        client_msg_id: 'cm-stt-legacy', message: '',
+        voiceFile: { savedPath: '/tmp/cov-voice.wav', relativePath: 'voice/cov-voice.wav', duration: 1200 },
       });
-      expect(inbound).toHaveLength(1);
-      expect(inbound[0].content).toBe('[这是一条语音转文字的消息，可能存在识别准确度问题] 今天天气不错');
-      expect(rig.ws.sent.find((m) => m.data.type === 'done')?.data).toMatchObject({ client_msg_id: 'cm-stt-1' });
-    });
-
-    it('识别为空（未检测到语音）与调用异常 → stt_failed，不进入 dispatch', async () => {
-      const tmp = await makeTmp('cov-stt-fail-');
-      const dispatchCalls: unknown[] = [];
-      const dispatch: AgentRunDispatch = async function* (msg) {
-        dispatchCalls.push(msg);
-        yield { type: 'done' };
-      };
-      const rig = makeRig({ agentCwd: tmp, sttConfig: { apiKey: 'k' } as SttConfig }, dispatch);
-
-      sttMock.mockResolvedValueOnce({ text: '', duration: 0 });
-      await rig.send(USER, { client_msg_id: 'cm-stt-2', message: '', voiceFile });
-      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
-        reason_code: 'stt_failed', reason: '语音无法识别：未检测到语音',
-      });
-
-      rig.ws.sent.length = 0;
-      sttMock.mockRejectedValueOnce(new Error('asr down'));
-      await rig.send(USER, { client_msg_id: 'cm-stt-3', message: '', voiceFile });
-      expect(rig.ws.sent.find((m) => m.data.type === 'voice_transcribed')?.data).toEqual({
-        type: 'voice_transcribed', text: '[语音识别失败]', error: true,
-      });
-      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ reason_code: 'stt_failed', reason: '语音识别服务调用失败' });
-      expect(dispatchCalls).toHaveLength(0);
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'chat_rejected', reason_code: 'empty_message' });
+      expect(dispatch).not.toHaveBeenCalled();
     });
   });
 

@@ -40,6 +40,15 @@ export interface CanonicalChatTarget {
  * Deliberately absent: savedPath, relativePath, URI and any client-local/absolute path.
  * Queue snapshots and replay persist this value (or a projection of it), never an upload path.
  */
+export interface CanonicalVoiceSubmission {
+  voiceIntentId: string;
+  uploadRequestId: string;
+  attachmentId: string;
+  transcriptionId: string;
+  durationMs: number;
+  transcript: { status: 'ready'; text: string; edited: boolean; source: 'server_stt' };
+}
+
 export interface CanonicalChatSubmission {
   version: typeof CHAT_SUBMISSION_VERSION;
   text: string;
@@ -48,6 +57,7 @@ export interface CanonicalChatSubmission {
   deliveryMode: ChatDeliveryMode;
   model?: string;
   attachments: CanonicalChatAttachment[];
+  voice?: CanonicalVoiceSubmission;
 }
 
 /** Upload/client view accepted by the pure builder. Path fields may exist on the source object and are ignored. */
@@ -68,6 +78,7 @@ export interface ChatSubmissionInput {
   deliveryMode?: unknown;
   model?: unknown;
   attachments?: readonly ChatSubmissionAttachmentInput[] | unknown;
+  voice?: unknown;
 }
 
 export type ChatSubmissionIssueCode =
@@ -79,7 +90,8 @@ export type ChatSubmissionIssueCode =
   | 'attachment_id_missing'
   | 'attachment_id_invalid'
   | 'attachment_path_forbidden'
-  | 'attachment_metadata_invalid';
+  | 'attachment_metadata_invalid'
+  | 'voice_metadata_invalid';
 
 export interface ChatSubmissionIssue {
   code: ChatSubmissionIssueCode;
@@ -206,6 +218,32 @@ export function normalizeChatSubmissionAttachments(
   return { ok: true, value: attachments };
 }
 
+function normalizeVoice(value: unknown): ChatSubmissionResult<CanonicalVoiceSubmission | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (!isRecord(value) || !isRecord(value.transcript)) {
+    return { ok: false, issue: { code: 'voice_metadata_invalid', message: 'voice metadata 无效', field: 'voice' } };
+  }
+  const voiceIntentId = nonEmptyString(value.voiceIntentId, 64);
+  const uploadRequestId = nonEmptyString(value.uploadRequestId, 64);
+  const attachmentId = nonEmptyString(value.attachmentId, 64);
+  const transcriptionId = nonEmptyString(value.transcriptionId, 64);
+  const durationMs = value.durationMs;
+  const transcriptText = typeof value.transcript.text === 'string' ? value.transcript.text.trim() : '';
+  if (!voiceIntentId || !uploadRequestId || !attachmentId || !transcriptionId
+    || !ATTACHMENT_ID_PATTERN.test(voiceIntentId) || !ATTACHMENT_ID_PATTERN.test(uploadRequestId)
+    || !ATTACHMENT_ID_PATTERN.test(attachmentId) || !ATTACHMENT_ID_PATTERN.test(transcriptionId)
+    || !Number.isSafeInteger(durationMs) || (durationMs as number) < 1_000 || (durationMs as number) > 180_000
+    || value.transcript.status !== 'ready' || value.transcript.source !== 'server_stt'
+    || typeof value.transcript.edited !== 'boolean' || !transcriptText || transcriptText.length > 100_000) {
+    return { ok: false, issue: { code: 'voice_metadata_invalid', message: 'voice metadata 无效', field: 'voice' } };
+  }
+  return { ok: true, value: {
+    voiceIntentId, uploadRequestId, attachmentId, transcriptionId,
+    durationMs: durationMs as number,
+    transcript: { status: 'ready', text: transcriptText, edited: value.transcript.edited, source: 'server_stt' },
+  } };
+}
+
 function normalizeTarget(value: unknown): ChatSubmissionResult<CanonicalChatTarget> {
   if (value === undefined) return { ok: true, value: {} };
   if (!isRecord(value)) {
@@ -273,7 +311,12 @@ export function normalizeChatSubmission(input: ChatSubmissionInput | unknown): C
   }
   const attachments = normalizeChatSubmissionAttachments(input.attachments);
   if (!attachments.ok) return attachments;
-  if (!text.trim() && attachments.value.length === 0) {
+  const voice = normalizeVoice(input.voice);
+  if (!voice.ok) return voice;
+  if (voice.value && !attachments.value.some((attachment) => attachment.attachmentId === voice.value!.attachmentId)) {
+    return { ok: false, issue: { code: 'voice_metadata_invalid', message: 'voice attachmentId 必须关联 canonical attachment', field: 'voice.attachmentId' } };
+  }
+  if (!text.trim() && attachments.value.length === 0 && !voice.value) {
     return { ok: false, issue: { code: 'empty_submission', message: '消息内容不能为空' } };
   }
 
@@ -287,6 +330,7 @@ export function normalizeChatSubmission(input: ChatSubmissionInput | unknown): C
       deliveryMode,
       ...(model ? { model } : {}),
       attachments: attachments.value,
+      ...(voice.value ? { voice: voice.value } : {}),
     },
   };
 }
@@ -298,6 +342,13 @@ export function normalizeChatSubmission(input: ChatSubmissionInput | unknown): C
 export function parseCanonicalChatSubmission(value: unknown): ChatSubmissionResult {
   if (!isRecord(value) || value.version !== CHAT_SUBMISSION_VERSION) {
     return { ok: false, issue: { code: 'invalid_submission', message: 'chat submission version 无效', field: 'version' } };
+  }
+  if (isRecord(value.voice)) {
+    for (const key of FORBIDDEN_ATTACHMENT_PATH_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(value.voice, key)) {
+        return { ok: false, issue: { code: 'attachment_path_forbidden', message: `canonical voice 不允许字段 ${key}`, field: `voice.${key}` } };
+      }
+    }
   }
   if (Array.isArray(value.attachments)) {
     for (let index = 0; index < value.attachments.length; index += 1) {

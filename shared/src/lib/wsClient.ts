@@ -42,12 +42,6 @@ interface WsChatControlFields {
         /** 「低风险常开」档：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
         lowRiskOnly?: boolean;
     };
-    /** M50-04 范围：语音路径仍在隔离的旧通道中；M20-01 不扩大其信任。 */
-    voiceFile?: {
-        savedPath: string;
-        relativePath: string;
-        duration: number;
-    };
 }
 
 /** M20-01 canonical chat wire message. Path-shaped attachment fields are not representable. */

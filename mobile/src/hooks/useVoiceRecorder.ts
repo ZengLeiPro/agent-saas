@@ -1,27 +1,25 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { AppState, Alert } from 'react-native';
 import { useAudioRecorder, setAudioModeAsync, type RecordingOptions } from 'expo-audio';
 import { File } from 'expo-file-system';
-import { requestMicrophoneForUserAction } from '../platform/jitMediaPermissions';
+import {
+  VOICE_MAX_DURATION_MS,
+  VOICE_MAX_FILE_BYTES,
+  VOICE_MIN_DURATION_MS,
+  type VoiceStatus,
+} from '@agent/shared';
+import {
+  openAppSettingsForPermissionFallback,
+  requestMicrophoneForUserAction,
+} from '../platform/jitMediaPermissions';
 
-const MIN_DURATION_MS = 1000;
-const MAX_DURATION_MS = 1800000;
-
-/** 16kHz mono WAV — 与服务端 ASR 格式一致 */
+/** Explicit mobile recording contract: 16kHz mono 16-bit PCM WAV, 1s..180s, <=10MiB. */
 const WAV_PCM_PRESET: RecordingOptions = {
-  extension: '.wav',
-  sampleRate: 16000,
-  numberOfChannels: 1,
-  bitRate: 256000,
-  android: {
-    outputFormat: 'default',
-    audioEncoder: 'default',
-  },
+  extension: '.wav', sampleRate: 16000, numberOfChannels: 1, bitRate: 256000,
+  android: { outputFormat: 'default', audioEncoder: 'default' },
   ios: {
-    outputFormat: 'lpcm',
-    audioQuality: 127,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
+    outputFormat: 'lpcm', audioQuality: 127, linearPCMBitDepth: 16,
+    linearPCMIsBigEndian: false, linearPCMIsFloat: false,
   },
   web: {},
 };
@@ -29,7 +27,8 @@ const WAV_PCM_PRESET: RecordingOptions = {
 export interface UseVoiceRecorderReturn {
   isRecording: boolean;
   isCancelled: boolean;
-  duration: number; // seconds
+  status: VoiceStatus;
+  duration: number;
   startRecording: () => Promise<void>;
   stopAndSend: () => Promise<void>;
   cancelRecording: () => void;
@@ -38,101 +37,149 @@ export interface UseVoiceRecorderReturn {
 interface UseVoiceRecorderOptions {
   onVoiceSend: (fileUri: string, durationMs: number) => Promise<void>;
   onTooShort?: () => void;
+  /** Recording is fenced whenever the authenticated identity changes. */
+  identityKey?: string;
 }
 
-export function useVoiceRecorder({ onVoiceSend, onTooShort }: UseVoiceRecorderOptions): UseVoiceRecorderReturn {
-  const [isRecording, setIsRecording] = useState(false);
-  const [isCancelled, setIsCancelled] = useState(false);
+export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVoiceRecorderOptions): UseVoiceRecorderReturn {
+  const [status, setStatus] = useState<VoiceStatus>('idle');
   const [duration, setDuration] = useState(0);
-
   const recorder = useAudioRecorder(WAV_PCM_PRESET);
   const startTimeRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeRef = useRef(false);
   const cancelledRef = useRef(false);
-  const recordingActiveRef = useRef(false);
+  const singleFlightRef = useRef(false);
+  const identityRef = useRef(identityKey);
 
-  const cleanup = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsRecording(false);
-    setIsCancelled(false);
-    setDuration(0);
-    cancelledRef.current = false;
-    recordingActiveRef.current = false;
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
   }, []);
 
-  // Auto-stop at max duration
-  useEffect(() => {
-    if (isRecording && duration >= MAX_DURATION_MS / 1000) {
-      void stopAndSend();
-    }
-  }, [isRecording, duration]);
+  const reset = useCallback((terminal: VoiceStatus = 'idle') => {
+    clearTimer();
+    activeRef.current = false;
+    singleFlightRef.current = false;
+    setDuration(0);
+    setStatus(terminal);
+    void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
+  }, [clearTimer]);
 
-  const startRecording = useCallback(async () => {
-    try {
-      // This function is invoked only from the user's microphone control.
-      const granted = await requestMicrophoneForUserAction();
-      if (!granted) return;
-
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-
-      startTimeRef.current = Date.now();
-      cancelledRef.current = false;
-      recordingActiveRef.current = true;
-      setIsRecording(true);
-      setIsCancelled(false);
-      setDuration(0);
-
-      timerRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-        setDuration(elapsed);
-      }, 200);
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-      cleanup();
-    }
-  }, [recorder, cleanup]);
-
-  const stopAndSend = useCallback(async () => {
-    if (!recordingActiveRef.current) return;
-
-    const elapsed = Date.now() - startTimeRef.current;
-    const wasCancelled = cancelledRef.current;
-    cleanup();
-
+  const stopInternal = useCallback(async (send: boolean, terminalReason: VoiceStatus = 'cancelled') => {
+    if (!activeRef.current || status === 'stopping') return;
+    activeRef.current = false;
+    clearTimer();
+    setStatus('stopping');
+    const elapsed = Math.min(VOICE_MAX_DURATION_MS, Date.now() - startTimeRef.current);
     try {
       await recorder.stop();
       const uri = recorder.uri;
-
-      if (wasCancelled) {
-        if (uri) try { new File(uri).delete(); } catch {};
+      if (!uri) { reset('failed'); return; }
+      const file = new File(uri);
+      const shouldSend = send && !cancelledRef.current;
+      if (!shouldSend) {
+        try { file.delete(); } catch {}
+        reset(terminalReason);
         return;
       }
-
-      if (elapsed < MIN_DURATION_MS) {
+      if (elapsed < VOICE_MIN_DURATION_MS) {
         onTooShort?.();
-        if (uri) try { new File(uri).delete(); } catch {};
+        try { file.delete(); } catch {}
+        reset('failed');
         return;
       }
-
-      if (!uri) return;
+      if (elapsed > VOICE_MAX_DURATION_MS || (file.size ?? 0) > VOICE_MAX_FILE_BYTES) {
+        try { file.delete(); } catch {}
+        Alert.alert('录音无法发送', elapsed > VOICE_MAX_DURATION_MS ? '录音超过 3 分钟上限' : '录音超过 10 MiB 上限');
+        reset('failed');
+        return;
+      }
+      setStatus('uploading');
       await onVoiceSend(uri, elapsed);
-    } catch (error) {
-      console.error('Failed to stop recording:', error);
+      reset('idle');
+    } catch {
+      reset('failed');
     }
-  }, [recorder, cleanup, onVoiceSend, onTooShort]);
+  }, [clearTimer, onTooShort, onVoiceSend, recorder, reset, status]);
 
+  const startRecording = useCallback(async () => {
+    // This is called only by the microphone press. The fence is set before awaiting permission.
+    if (singleFlightRef.current || activeRef.current) return;
+    singleFlightRef.current = true;
+    cancelledRef.current = false;
+    setStatus('requesting_permission');
+    try {
+      const permission = await requestMicrophoneForUserAction();
+      if (cancelledRef.current || AppState.currentState !== 'active') {
+        reset('cancelled');
+        return;
+      }
+      if (!permission.granted) {
+        singleFlightRef.current = false;
+        setStatus('failed');
+        if (permission.permanentlyDenied) {
+          Alert.alert('需要麦克风权限', '请在系统设置中允许麦克风权限。', [
+            { text: '取消', style: 'cancel' },
+            { text: '打开设置', onPress: () => { void openAppSettingsForPermissionFallback(); } },
+          ]);
+        }
+        return;
+      }
+      // No background mode is enabled; this mode is reset immediately on every stop/fence.
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      startTimeRef.current = Date.now();
+      activeRef.current = true;
+      setDuration(0);
+      setStatus('recording');
+      timerRef.current = setInterval(() => {
+        const elapsed = Math.min(VOICE_MAX_DURATION_MS, Date.now() - startTimeRef.current);
+        setDuration(Math.floor(elapsed / 1000));
+        if (elapsed >= VOICE_MAX_DURATION_MS) void stopInternal(true);
+      }, 200);
+    } catch {
+      reset('failed');
+    }
+  }, [recorder, reset, stopInternal]);
+
+  const stopAndSend = useCallback(() => stopInternal(true), [stopInternal]);
   const cancelRecording = useCallback(() => {
     cancelledRef.current = true;
-    setIsCancelled(true);
-    if (recordingActiveRef.current) {
-      void stopAndSend();
+    if (!activeRef.current && singleFlightRef.current) {
+      reset('cancelled');
+      return;
     }
-  }, [stopAndSend]);
+    void stopInternal(false, 'cancelled');
+  }, [reset, stopInternal]);
 
-  return { isRecording, isCancelled, duration, startRecording, stopAndSend, cancelRecording };
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next !== 'active' && (activeRef.current || singleFlightRef.current)) {
+        cancelledRef.current = true;
+        if (!activeRef.current) reset('cancelled');
+        else void stopInternal(false, 'cancelled');
+      }
+    });
+    return () => subscription.remove();
+  }, [reset, stopInternal]);
+
+  useEffect(() => {
+    if (identityRef.current !== identityKey) {
+      identityRef.current = identityKey;
+      cancelledRef.current = true;
+      if (!activeRef.current && singleFlightRef.current) reset('cancelled');
+      else void stopInternal(false, 'cancelled');
+    }
+  }, [identityKey, reset, stopInternal]);
+
+  useEffect(() => () => {
+    cancelledRef.current = true;
+    clearTimer();
+    if (activeRef.current) void recorder.stop().catch(() => undefined);
+    void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
+  }, [clearTimer, recorder]);
+
+  return { isRecording: status === 'recording', isCancelled: status === 'cancelled', status, duration, startRecording, stopAndSend, cancelRecording };
 }

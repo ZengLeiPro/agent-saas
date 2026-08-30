@@ -410,7 +410,6 @@ export class UploadManager {
           info: {
             attachmentId: file.attachmentId,
             originalName: file.originalName,
-            ...(file.isVoiceUpload ? { savedPath: finalPath } : {}),
             relativePath,
             size: file.size,
             mimeType: file.mimeType,

@@ -1076,7 +1076,7 @@ export const MessageItem = memo(function MessageItem({
         transcribedText={message.transcribedText}
         status={message.status}
         playState={voicePlayState ?? 'idle'}
-        onPlay={() => voicePlayer?.play(voiceId, message.audioUrl)}
+        onPlay={() => message.attachmentId && voicePlayer?.play(voiceId, message.attachmentId)}
         onTogglePause={() => voicePlayer?.togglePause(voiceId)}
         timestamp={message.timestamp}
       />

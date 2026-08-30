@@ -136,4 +136,27 @@ describe('M20-01 canonical chat submission', () => {
       isImage: false,
     });
   });
+  it('keeps all voice correlation IDs stable in a path-free canonical submission and rejects forged local success', () => {
+    const voiceIntentId = '33333333-3333-4333-8333-333333333333';
+    const uploadRequestId = '44444444-4444-4444-8444-444444444444';
+    const transcriptionId = '55555555-5555-4555-8555-555555555555';
+    const input = {
+      text: '用户编辑后的转写', clientMsgId: 'voice-client-1', attachments: [sourceAttachment({
+        originalName: 'voice.wav', mimeType: 'audio/wav', isImage: false,
+      })],
+      voice: {
+        voiceIntentId, uploadRequestId, attachmentId: IMAGE_ID, transcriptionId, durationMs: 1_500,
+        transcript: { status: 'ready', text: '用户编辑后的转写', edited: true, source: 'server_stt' },
+      },
+    };
+    const normalized = normalizeChatSubmission(input);
+    expect(normalized).toMatchObject({ ok: true, value: { voice: {
+      voiceIntentId, uploadRequestId, attachmentId: IMAGE_ID, transcriptionId,
+      transcript: { edited: true, source: 'server_stt' },
+    } } });
+    expect(JSON.stringify(normalized)).not.toMatch(/voiceFile|savedPath|absolutePath|file:\/\//);
+    expect(parseCanonicalChatSubmission({ ...(normalized as any).value, voice: { ...(normalized as any).value.voice, savedPath: '/tmp/forged.wav' } }))
+      .toMatchObject({ ok: false, issue: { code: 'attachment_path_forbidden' } });
+  });
+
 });

@@ -101,6 +101,7 @@ import type { SystemPromptRegistry } from '../runtime/systemPrompts.js';
 import type { AgentRuntimeProfileStore } from '../data/agentProfiles/types.js';
 import type { ConnectorDictionaryStore } from '../data/connectorDictionaryStore.js';
 import type { UploadManager } from '../uploads/manager.js';
+import type { VoiceTranscriptionService } from '../services/voiceTranscriptionService.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { TokenUsageStore } from '../data/usage/store.js';
 import type { BillingService } from '../data/billing/service.js';
@@ -138,6 +139,7 @@ export interface AppRuntime {
   tenantSkillsRootDir: string;
   uploadsDir: string;
   uploadManager: UploadManager;
+  voiceTranscriptionService: VoiceTranscriptionService;
   channelManager: ChannelManager;
   dispatchMetricsStore: DispatchMetricsStore;
   dingtalkDeps: DingtalkDeps;

@@ -51,7 +51,6 @@ import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
-import { speechToText } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
@@ -2465,7 +2464,7 @@ export class WebChannel implements BaseChannel {
     const model = adaptedSubmission.model;
     const sandboxProfile = adaptedSubmission.sandboxProfile;
     const requestedOrgAgentId = adaptedSubmission.orgAgentId;
-    const voiceFile = msg.voiceFile;
+    const canonicalVoice = adaptedSubmission.canonical?.voice;
     let attachments: UploadedFileInfo[] | undefined;
     let canonicalAttachments = adaptedSubmission.canonical?.attachments ?? [];
     let deliveryMode: 'queue' | 'steer' = adaptedSubmission.deliveryMode === 'steer' && !isCompactCommand(message)
@@ -2569,7 +2568,7 @@ export class WebChannel implements BaseChannel {
     const hasSubmittedAttachments = adaptedSubmission.protocol === 'canonical_v1'
       ? Boolean(adaptedSubmission.canonical?.attachments.length)
       : Boolean(adaptedSubmission.legacyAttachments?.length);
-    if (!message && !voiceFile && !hasSubmittedAttachments) {
+    if (!message && !canonicalVoice && !hasSubmittedAttachments) {
       this.sendChatRejected(ws, clientMsgId, 'empty_message', '消息内容不能为空');
       return;
     }
@@ -2702,41 +2701,23 @@ export class WebChannel implements BaseChannel {
     // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
     // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
 
-    // 6) 语音消息: STT 转文字
+    // 6) M50-04 voice is transcribed before submission. The server registry, not a local path or
+    // client status, proves that transcriptionId belongs to this owner and attachmentId. Edited text
+    // is accepted only after that authoritative linkage succeeds.
     let resolvedMessage = message || '';
-    if (voiceFile && this.config.sttConfig) {
-      try {
-        chatLogger.info(`Voice STT: processing ${voiceFile.savedPath} (${voiceFile.duration}ms)`);
-        const sttResult = await speechToText(voiceFile.savedPath, this.config.sttConfig);
-        if (sttResult.text) {
-          const displayText = sttResult.text;
-          resolvedMessage = VOICE_STT_TAG + displayText;
-          chatLogger.info(`Voice STT result: "${displayText}" (duration=${sttResult.duration}ms, hasText=true)`);
-          this.wsSend(ws, { type: 'voice_transcribed', text: displayText });
-        } else {
-          // STT 返回空文本（静音 / ASR 异常）→ 视为拒绝，不再送给 Agent
-          const reason = sttResult.duration === 0
-            ? '语音无法识别：未检测到语音'
-            : '语音无法识别：识别结果为空';
-          chatLogger.warn(`Voice STT empty: duration=${sttResult.duration}ms`);
-          this.wsSend(ws, { type: 'voice_transcribed', text: `[${reason}]`, error: true });
-          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-          this.sendChatRejected(ws, clientMsgId, 'stt_failed', reason);
-          return;
-        }
-      } catch (err) {
-        chatLogger.error('Voice STT failed:', err);
-        this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别失败]', error: true });
+    if (canonicalVoice) {
+      const cwd = resolveUserCwd(this.config.agentCwd!, user ? {
+        id: user.sub, username: user.username, role: user.role, tenantId: user.tenantId,
+      } : undefined);
+      const authoritativeVoice = this.config.voiceTranscriptionService?.getAuthoritative(cwd, canonicalVoice.transcriptionId);
+      if (!authoritativeVoice
+        || authoritativeVoice.attachmentId !== canonicalVoice.attachmentId
+        || !canonicalAttachments.some((attachment) => attachment.attachmentId === canonicalVoice.attachmentId)) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'stt_failed', '语音识别服务调用失败');
+        this.sendChatRejected(ws, clientMsgId, 'stt_failed', '语音转写结果无效或不属于当前用户');
         return;
       }
-    } else if (voiceFile && !this.config.sttConfig) {
-      chatLogger.warn('Voice message received but STT not configured (missing doubaoCluster)');
-      this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-      this.sendChatRejected(ws, clientMsgId, 'stt_not_configured', '服务端未配置语音识别');
-      return;
+      resolvedMessage = VOICE_STT_TAG + canonicalVoice.transcript.text;
     }
 
     // 构造 ChannelContext
@@ -3150,7 +3131,7 @@ export class WebChannel implements BaseChannel {
         ip: client.ip || 'unknown',
         userAgent: client.userAgent || 'unknown',
         channel: detectLoginChannel(client.userAgent || ''),
-        detail: buildChatMessageActivityDetail(validSessionId, attachments?.length ?? 0, voiceFile?.duration),
+        detail: buildChatMessageActivityDetail(validSessionId, attachments?.length ?? 0, canonicalVoice?.durationMs),
       }, this.config.loginLogFilePath).catch(() => {});
     }
 

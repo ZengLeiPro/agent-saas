@@ -2361,7 +2361,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     inputText: string,
     attachments: UploadedFile[],
     showBubble: boolean,
-    voiceFile?: { savedPath: string; relativePath: string; duration: number },
+    _voice?: never,
     existingClientMsgId?: string,
     autoApproveRunShellForMessage = autoApproveRunShellRef.current,
     preserveActiveStream = false,
@@ -2468,7 +2468,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       // Outbox is an in-memory UI/retry model. Keep local metadata here; the canonical adapter below
       // still strips every path from the durable/wire DTO.
       attachments: attachments.map((file) => ({ ...file })),
-      ...(voiceFile ? { voiceFile } : {}),
       ...(autoApproveRunShellForMessage ? { autoApproveRunShell: true } : {}),
       preserveActiveStream,
       state: 'sending',
@@ -2489,7 +2488,6 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       ...(autoApproveRunShellForMessage ? {
         approvalPolicy: approvalPolicyPayloadForTier(approvalTierRef.current === "low-risk" ? "low-risk" : "full"),
       } : {}),
-      ...(voiceFile ? { voiceFile } : {}),
     });
 
     if (!ok) {
@@ -3098,49 +3096,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     isTrashPreview,
     previewTrashSession: (id: string | null) => { void previewTrashSession(id); },
     trashPreviewSessionId,
-    sendVoiceMessage: async (wavBlob: Blob, durationMs: number) => {
-      // 1. 上传 WAV 文件（仍用 HTTP）
-      const durationSec = Math.round(durationMs / 1000);
-      const voiceMsgIndex = msg.addMessage({
-        type: 'user-voice',
-        audioUrl: '',
-        duration: durationSec,
-        status: 'uploading',
-        timestamp: Date.now(),
-      });
-      msg.triggerScroll();
-
-      let savedPath: string;
-      let relativePath: string;
-      try {
-        const formData = new FormData();
-        const filename = `voice_${Date.now()}_${crypto.randomUUID().slice(0, 8)}.wav`;
-        formData.append('files', wavBlob, filename);
-
-        const uploadRes = await authFetch('/api/upload', { method: 'POST', body: formData });
-        if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
-        const uploadData = await uploadRes.json();
-        if (!uploadData.success || !uploadData.files?.[0]) throw new Error('Upload response invalid');
-
-        savedPath = uploadData.files[0].savedPath;
-        relativePath = uploadData.files[0].relativePath;
-      } catch (err) {
-        console.error('Voice upload failed:', err);
-        msg.updateMessageAt(voiceMsgIndex, (m) =>
-          m.type === 'user-voice' ? { ...m, status: 'failed' as const } : m
-        );
-        return;
-      }
-
-      // 2. 更新消息状态为 transcribing
-      const audioUrl = `/api/voice/play?path=${encodeURIComponent(relativePath)}`;
-      msg.updateMessageAt(voiceMsgIndex, (m) =>
-        m.type === 'user-voice' ? { ...m, audioUrl, status: 'transcribing' as const } : m
-      );
-
-      // 3. 通过 WS 发送 chat 消息（带 voiceFile）
-      wsUserMsgIndexRef.current = -1;
-      sendChatViaWs('[语音消息]', [], false, { savedPath, relativePath, duration: durationMs });
+    sendVoiceMessage: async (_wavBlob: Blob, _durationMs: number) => {
+      fileUpload.reportUploadError('Web 端不新增录音；请使用 Mobile 录音，Web 可安全回放已有语音');
     },
   };
 }

@@ -45,7 +45,7 @@ export type RenderContentSegment =
   | { type: 'code'; text: string; language?: string }
   | { type: 'attachment'; name: string; attachmentId?: string; mimeType?: string; size?: number; isImage?: boolean }
   | { type: 'tool'; toolName: string; input?: string; result?: string; presentation?: ToolPresentation }
-  | { type: 'voice'; state: 'placeholder' | 'uploading' | 'transcribing' | 'ready' | 'failed'; transcript?: string }
+  | { type: 'voice'; state: 'placeholder' | 'uploading' | 'transcribing' | 'ready' | 'failed'; durationMs?: number; attachmentId?: string; transcriptionId?: string; transcript?: string }
   | { type: 'unsupported'; label: string };
 
 export interface RenderActionCapabilities {
@@ -187,7 +187,7 @@ function statusOf(message: MessageItem): RenderTimelineStatus {
           : message.status === 'running' || message.status === 'sending' || message.status === 'reconnecting' ? 'running' : 'unknown';
     case 'permission_request': return message.status === 'pending' ? 'waiting' : message.status === 'denied' ? 'blocked' : 'completed';
     case 'ask_user': return message.status === 'pending' ? 'waiting' : 'completed';
-    case 'user-voice': return message.status === 'sent' ? 'completed' : message.status === 'failed' ? 'failed' : 'running';
+    case 'user-voice': return message.status === 'sent' || message.status === 'ready' ? 'completed' : message.status === 'failed' ? 'failed' : 'running';
     case 'system-error': return message.severity === 'cancelled' ? 'cancelled' : 'failed';
     default: return 'completed';
   }
@@ -305,9 +305,15 @@ function messageSemantics(message: MessageItem): {
       };
     case 'user-voice':
       return {
-        kind: 'voice_placeholder', role: 'user', content: [{ type: 'voice', state: message.status === 'sent' ? 'ready' : message.status, ...(message.transcribedText ? { transcript: message.transcribedText } : {}) }],
-        accessibility: { role: message.status === 'failed' ? 'alert' : 'status', label: `用户语音：${message.status}`, ...(message.status === 'failed' ? { live: 'assertive' as const } : {}) },
-        actions: actions({ playVoice: message.status === 'sent', retry: message.status === 'failed' }),
+        kind: 'voice_placeholder', role: 'user', content: [{
+          type: 'voice', state: message.status === 'sent' || message.status === 'ready' ? 'ready' : message.status,
+          durationMs: Math.max(0, Math.round(message.duration * 1000)),
+          ...(message.attachmentId ? { attachmentId: message.attachmentId } : {}),
+          ...(message.transcriptionId ? { transcriptionId: message.transcriptionId } : {}),
+          ...(message.transcribedText ? { transcript: message.transcribedText } : {}),
+        }],
+        accessibility: { role: message.status === 'failed' ? 'alert' : 'status', label: `用户语音 ${Math.max(0, Math.round(message.duration))} 秒：${message.status}`, ...(message.status === 'failed' ? { live: 'assertive' as const } : {}) },
+        actions: actions({ playVoice: (message.status === 'sent' || message.status === 'ready') && !!message.attachmentId, retry: message.status === 'failed' }),
       };
     case 'system-error': {
       const retryability: RenderRetryability = message.recoveryAction ? 'user_action' : 'unknown';

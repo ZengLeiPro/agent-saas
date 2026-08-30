@@ -252,7 +252,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-  // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
+  // Azeroth 透明反向代理层：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
   app.use('/api', createAzerothProxyRouter());
@@ -263,7 +263,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-  app.use('/api', createVoiceRouter({ agentCwd }));
+  app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
   // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）

@@ -19,6 +19,7 @@ import type { EventStore } from '../../runtime/types.js';
 import type { UserOverrides } from '../../security/extraDirs.js';
 import type { OutboundEvent } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';
+import type { VoiceTranscriptionService } from '../../services/voiceTranscriptionService.js';
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
@@ -32,7 +33,9 @@ export interface WebChannelRuntimeConfig {
   refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
+  /** @deprecated legacy voice path channel only; M50-04 uses voiceTranscriptionService. */
   sttConfig?: SttConfig;
+  voiceTranscriptionService?: VoiceTranscriptionService;
   userOverrides?: UserOverrides;
   /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
   tokenUsageStore?: TokenUsageStore;

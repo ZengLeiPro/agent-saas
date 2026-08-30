@@ -14,6 +14,8 @@ vi.mock('expo-audio', () => ({
   },
 }));
 
+vi.mock('react-native', () => ({ Linking: { openSettings: vi.fn() } }));
+
 vi.mock('expo-image-picker', () => ({
   getCameraPermissionsAsync: nativeMocks.getCameraPermissionsAsync,
   requestCameraPermissionsAsync: nativeMocks.requestCameraPermissionsAsync,
@@ -41,12 +43,17 @@ describe('M10-05 JIT media permission boundary', () => {
   });
 
   it('requests microphone only when the voice user-action function runs', async () => {
-    nativeMocks.requestRecordingPermissionsAsync.mockResolvedValue({ granted: false });
+    nativeMocks.requestRecordingPermissionsAsync.mockResolvedValue({ granted: false, canAskAgain: true });
 
-    await expect(requestMicrophoneForUserAction()).resolves.toBe(false);
+    await expect(requestMicrophoneForUserAction()).resolves.toEqual({ granted: false, permanentlyDenied: false });
     expect(nativeMocks.requestRecordingPermissionsAsync).toHaveBeenCalledOnce();
     expect(nativeMocks.launchCameraAsync).not.toHaveBeenCalled();
     expect(nativeMocks.launchImageLibraryAsync).not.toHaveBeenCalled();
+  });
+
+  it('reports permanent microphone denial for the settings fallback', async () => {
+    nativeMocks.requestRecordingPermissionsAsync.mockResolvedValue({ granted: false, canAskAgain: false });
+    await expect(requestMicrophoneForUserAction()).resolves.toEqual({ granted: false, permanentlyDenied: true });
   });
 
   it('does not launch the camera after the user denies its JIT request', async () => {

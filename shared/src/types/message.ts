@@ -173,10 +173,15 @@ export type MessageItem =
   | {
       id: string;
       type: "user-voice";
+      /** Same-origin authenticated attachment route; never file://. */
       audioUrl: string;
+      attachmentId?: string;
+      voiceIntentId?: string;
+      uploadRequestId?: string;
+      transcriptionId?: string;
       duration: number;
       transcribedText?: string;
-      status: 'uploading' | 'transcribing' | 'sent' | 'failed';
+      status: 'uploading' | 'transcribing' | 'ready' | 'sent' | 'failed';
       timestamp?: number;
       clientMsgId?: string;
       failedReason?: string;

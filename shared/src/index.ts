@@ -33,6 +33,25 @@ export type {
 export { fetchAuthConnectionCapability } from './lib/capabilityApi';
 
 export {
+  assertNoLocalVoiceReference,
+  createVoiceIntent,
+  reduceVoiceIntent,
+  selectVoiceRenderCard,
+  VOICE_MAX_DURATION_MS,
+  VOICE_MAX_FILE_BYTES,
+  VOICE_MIME_TYPES,
+  VOICE_MIN_DURATION_MS,
+} from './lib/voiceRecording';
+export type {
+  VoiceErrorCode,
+  VoiceEvent,
+  VoiceIntent,
+  VoiceRenderCard,
+  VoiceStatus,
+  VoiceTranscriptMetadata,
+} from './lib/voiceRecording';
+
+export {
   assertNoLocalAttachmentReference,
   createAttachmentUploadIntent,
   recoverAttachmentUploadIntent,
@@ -542,6 +561,7 @@ export type {
   CanonicalChatSubmission,
   CanonicalChatSubmissionWireMessage,
   CanonicalChatTarget,
+  CanonicalVoiceSubmission,
   ChatClientCapability,
   ChatDeliveryMode as CanonicalChatDeliveryMode,
   ChatSubmissionAttachmentInput,

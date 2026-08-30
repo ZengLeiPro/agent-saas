@@ -26,7 +26,6 @@ export interface SendChatOptions {
     isImage?: boolean;
   }>;
   showBubble?: boolean;
-  voiceFile?: { savedPath: string; relativePath: string; duration: number };
   selectedModel?: string | null;
   autoApproveRunShell?: boolean;
 }
@@ -40,7 +39,6 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     inputText,
     attachments = [],
     showBubble = true,
-    voiceFile,
     selectedModel,
     autoApproveRunShell,
   } = opts;
@@ -115,7 +113,6 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
   const wsMsg: CanonicalWsChatMessage = {
     ...toCanonicalChatSubmissionWireMessage(submission, ['replaceable_drafts']),
     ...(autoApproveRunShell ? { approvalPolicy: { autoApproveTools: true } } : {}),
-    ...(voiceFile ? { voiceFile } : {}),
   };
 
   // 发送

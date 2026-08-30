@@ -177,7 +177,6 @@ export interface OutboxEntry {
   deliveryMode: 'queue' | 'steer';
   input: string;
   attachments: UploadedFile[];
-  voiceFile?: { savedPath: string; relativePath: string; duration: number };
   autoApproveRunShell?: boolean;
   preserveActiveStream: boolean;
   state: 'sending' | 'acked';

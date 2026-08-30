@@ -15,6 +15,7 @@ import type {
   WsBlockState,
   ChatQueueSnapshot,
   ChatQueueItem,
+  CanonicalVoiceSubmission,
 } from "@agent/shared";
 import {
   wsClient,
@@ -53,6 +54,12 @@ import {
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
+
+function createVoiceId(): string {
+  const id = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto?.randomUUID?.();
+  if (!id) throw new Error('设备安全随机数能力不可用');
+  return id;
+}
 
 type PendingInteractionResponse = {
   type: "permission_request" | "ask_user";
@@ -276,11 +283,12 @@ export function useChatAppStateCore(): ChatAppState {
     clientMsgId: string;
     input: string;
     attachments: UploadedFile[];
-    voiceFile?: { savedPath: string; relativePath: string; duration: number };
+    voice?: CanonicalVoiceSubmission;
     state: "sending" | "acked";
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
+  const pendingVoiceRef = useRef<{ base: CanonicalVoiceSubmission; serverText: string } | null>(null);
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -391,6 +399,15 @@ export function useChatAppStateCore(): ChatAppState {
     available: !localAppLock.locked && !localAppLock.offlineShell && connectionState !== 'disconnected',
     identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
   });
+
+  const voiceIdentityKey = identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous';
+  const voiceIdentityRef = useRef(voiceIdentityKey);
+  useEffect(() => {
+    if (voiceIdentityRef.current !== voiceIdentityKey) {
+      pendingVoiceRef.current = null;
+      voiceIdentityRef.current = voiceIdentityKey;
+    }
+  }, [voiceIdentityKey]);
 
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
@@ -856,7 +873,7 @@ export function useChatAppStateCore(): ChatAppState {
       inputText: string,
       attachments: UploadedFile[],
       showBubble: boolean,
-      voiceFile?: { savedPath: string; relativePath: string; duration: number },
+      voice?: CanonicalVoiceSubmission,
       existingClientMsgId?: string,
     ) => {
       if (localAppLock.locked || localAppLock.offlineShell || connectionState === 'disconnected') {
@@ -872,6 +889,7 @@ export function useChatAppStateCore(): ChatAppState {
         deliveryMode: 'queue',
         model: selectedModelRef.current ?? undefined,
         attachments,
+        ...(voice ? { voice } : {}),
       });
       if (!normalized.ok) {
         fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
@@ -911,7 +929,7 @@ export function useChatAppStateCore(): ChatAppState {
           if (
             (m.type === "user" && m.status === "pending") ||
             (m.type === "user-voice" &&
-              (m.status === "transcribing" || m.status === "uploading"))
+              (m.status === "transcribing" || m.status === "uploading" || m.status === "ready"))
           ) {
             wsUserMsgIndexRef.current = i;
             msgRef.current.updateMessageAt(i, (prev) => {
@@ -935,7 +953,7 @@ export function useChatAppStateCore(): ChatAppState {
           mimeType: attachment.display.mimeType ?? 'application/octet-stream',
           isImage: attachment.display.isImage ?? false,
         })),
-        ...(voiceFile ? { voiceFile } : {}),
+        ...(submission.voice ? { voice: submission.voice } : {}),
         state: "sending",
         createdAt: Date.now(),
       });
@@ -947,7 +965,6 @@ export function useChatAppStateCore(): ChatAppState {
 
       const ok = await wsClient.ensureConnectedSend({
         ...toMobileChatWireMessage(submission),
-        ...(voiceFile ? { voiceFile } : {}),
       });
 
       if (!ok) {
@@ -1614,84 +1631,75 @@ export function useChatAppStateCore(): ChatAppState {
       return;
     }
     const capturedFiles = fileUpload.consumeFiles();
+    const pendingVoice = pendingVoiceRef.current;
+    const voice = pendingVoice && capturedFiles.some((file) => file.attachmentId === pendingVoice.base.attachmentId)
+      ? { ...pendingVoice.base, transcript: { ...pendingVoice.base.transcript, text: trimmedInput, edited: trimmedInput !== pendingVoice.serverText } }
+      : undefined;
+    pendingVoiceRef.current = null;
+    if (voice) {
+      const voiceIndex = msg.messagesRef.current.findIndex((message) => message.type === 'user-voice' && message.attachmentId === voice.attachmentId);
+      if (voiceIndex >= 0) msg.updateMessageAt(voiceIndex, (message) => message.type === 'user-voice'
+        ? { ...message, transcribedText: voice.transcript.text }
+        : message);
+    }
     setInput("");
 
-    // Busy sessions are submitted immediately; durable RunStore decides queue order.
-    void sendChatViaWs(trimmedInput, capturedFiles, true);
-  }, [input, fileUpload, sendChatViaWs, genClientMsgId]);
+    // Voice reaches chat only after the user reviews/edits the authoritative transcript and presses Send.
+    void sendChatViaWs(trimmedInput, capturedFiles, !voice, voice);
+  }, [input, fileUpload, msg, sendChatViaWs]);
 
-  // Send voice message
-  const sendVoiceMessage = useCallback(
-    async (fileUri: string, durationMs: number) => {
-      const durationSec = Math.round(durationMs / 1000);
-      const voiceMsgIndex = msg.addMessage({
-        type: "user-voice",
-        audioUrl: "",
-        duration: durationSec,
-        status: "uploading",
-        timestamp: Date.now(),
+  // Record -> controlled M50-03 upload -> authoritative STT -> editable draft. No automatic dispatch.
+  const sendVoiceMessage = useCallback(async (fileUri: string, durationMs: number) => {
+    const voiceIntentId = createVoiceId();
+    const uploadRequestId = createVoiceId();
+    const transcriptionRequestId = createVoiceId();
+    const durationSec = Math.round(durationMs / 1000);
+    const voiceMsgIndex = msg.addMessage({
+      type: "user-voice", audioUrl: "", duration: durationSec, status: "uploading", timestamp: Date.now(),
+    });
+    msg.triggerScroll();
+    try {
+      const formData = new FormData();
+      formData.append("files", { uri: fileUri, name: `voice_${voiceIntentId}.wav`, type: "audio/wav" } as unknown as Blob);
+      const uploadRes = await authFetch("/api/upload", {
+        method: "POST", body: formData, headers: { "X-Upload-Request-Id": uploadRequestId },
       });
-      msg.triggerScroll();
-
-      let savedPath: string;
-      let relativePath: string;
-      try {
-        const formData = new FormData();
-        const filename = `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.wav`;
-        formData.append("files", {
-          uri: fileUri,
-          name: filename,
-          type: "audio/wav",
-        } as unknown as Blob);
-
-        const uploadRes = await authFetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (!uploadRes.ok) throw new Error(`上传失败: ${uploadRes.status}`);
-        const uploadData = (await uploadRes.json()) as {
-          success: boolean;
-          files?: Array<{ savedPath: string; relativePath: string }>;
-        };
-        if (!uploadData.success || !uploadData.files?.[0])
-          throw new Error("上传响应无效");
-
-        savedPath = uploadData.files[0].savedPath;
-        relativePath = uploadData.files[0].relativePath;
-      } catch (err) {
-        console.error("Voice upload failed:", err);
-        msg.updateMessageAt(voiceMsgIndex, (m) =>
-          m.type === "user-voice" ? { ...m, status: "failed" as const } : m,
-        );
-        // Clean up temp file
-        try {
-          new File(fileUri).delete();
-        } catch {}
-        return;
-      }
-
-      // Update message with audio URL
-      const audioUrl = `/api/voice/play?path=${encodeURIComponent(relativePath)}`;
-      msg.updateMessageAt(voiceMsgIndex, (m) =>
-        m.type === "user-voice"
-          ? { ...m, audioUrl, status: "transcribing" as const }
-          : m,
-      );
-
-      // Clean up temp file
-      try {
-        new File(fileUri).delete();
-      } catch {}
-
-      // Send via WS
-      void sendChatViaWs("[voice message]", [], false, {
-        savedPath,
-        relativePath,
-        duration: durationMs,
+      const uploadData = await uploadRes.json() as { success?: boolean; files?: Array<{ attachmentId?: string; originalName?: string; size?: number; mimeType?: string; isImage?: boolean }> };
+      const uploaded = uploadData.files?.[0];
+      if (!uploadRes.ok || !uploadData.success || !uploaded?.attachmentId) throw new Error("upload_failed");
+      const audioUrl = `/api/attachments/${encodeURIComponent(uploaded.attachmentId)}/content`;
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, audioUrl, attachmentId: uploaded.attachmentId, voiceIntentId, uploadRequestId, status: "transcribing" as const }
+        : m);
+      const sttRes = await authFetch('/api/voice/transcriptions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: transcriptionRequestId, attachmentId: uploaded.attachmentId, durationMs }),
       });
-    },
-    [msg, sendChatViaWs],
-  );
+      const sttData = await sttRes.json() as { success?: boolean; result?: { transcriptionId: string; text: string; durationMs: number }; error?: { code?: string; message?: string } };
+      if (!sttRes.ok || !sttData.success || !sttData.result) throw new Error(sttData.error?.code || 'stt_provider_error');
+      const base: CanonicalVoiceSubmission = {
+        voiceIntentId, uploadRequestId, attachmentId: uploaded.attachmentId,
+        transcriptionId: sttData.result.transcriptionId, durationMs: sttData.result.durationMs,
+        transcript: { status: 'ready', text: sttData.result.text, edited: false, source: 'server_stt' },
+      };
+      pendingVoiceRef.current = { base, serverText: sttData.result.text };
+      fileUpload.addUploadedFiles([{
+        attachmentId: uploaded.attachmentId, originalName: uploaded.originalName || '语音.wav', relativePath: '',
+        size: uploaded.size ?? 0, mimeType: uploaded.mimeType || 'audio/wav', isImage: false,
+      }]);
+      setInput(sttData.result.text);
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, transcribedText: sttData.result!.text, transcriptionId: sttData.result!.transcriptionId, status: "ready" as const }
+        : m);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'stt_provider_error';
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, status: "failed" as const, failedReason: code }
+        : m);
+    } finally {
+      try { new File(fileUri).delete(); } catch {}
+    }
+  }, [fileUpload, msg]);
 
   const retryMessage = useCallback(
     (message: MessageItem) => {

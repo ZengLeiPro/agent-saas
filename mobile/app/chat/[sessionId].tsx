@@ -133,6 +133,7 @@ export default function ChatDetailScreen() {
 
   const recorder = useVoiceRecorder({
     onVoiceSend: handleVoiceSend,
+    identityKey: authUser ? `${authUser.tenantId}:${authUser.id}` : 'anonymous',
     onTooShort: () => {
       setTooShortTip(true);
       setTimeout(() => setTooShortTip(false), 2000);

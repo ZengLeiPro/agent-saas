@@ -8,7 +8,7 @@ export type VoicePlayState = 'idle' | 'loading' | 'playing' | 'paused';
 export interface UseVoicePlayerReturn {
   activeId: string | null;
   getState: (id: string) => VoicePlayState;
-  play: (id: string, audioUrl: string) => void;
+  play: (id: string, attachmentId: string) => void;
   togglePause: (id: string) => void;
   stop: () => void;
 }
@@ -32,7 +32,7 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
     setActiveId(null);
   }, [player, setState]);
 
-  const play = useCallback((id: string, audioUrl: string) => {
+  const play = useCallback((id: string, attachmentId: string) => {
     void (async () => {
       stopCurrent();
 
@@ -43,7 +43,8 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
       try {
         await setAudioModeAsync({ playsInSilentMode: true });
 
-        const response = await authFetch(audioUrl);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) throw new Error('Invalid voice attachmentId');
+        const response = await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/content`);
         if (!response.ok) throw new Error(`Failed to fetch audio: ${response.status}`);
         const blob = await response.blob();
 

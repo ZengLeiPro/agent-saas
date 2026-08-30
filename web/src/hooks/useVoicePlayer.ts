@@ -17,7 +17,7 @@ export interface UseVoicePlayerReturn {
   /** 获取指定消息的播放状态 */
   getState: (id: string) => VoicePlayState;
   /** 播放 */
-  play: (id: string, audioUrl: string) => void;
+  play: (id: string, attachmentId: string) => void;
   /** 暂停/恢复 */
   togglePause: (id: string) => void;
   /** 停止 */
@@ -49,7 +49,7 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
     setState('idle');
   }, [cleanup]);
 
-  const play = useCallback(async (id: string, audioUrl: string) => {
+  const play = useCallback(async (id: string, attachmentId: string) => {
     // 如果正在播放别的，先停止
     stop();
 
@@ -58,7 +58,8 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
 
     try {
       // 通过 authFetch 获取音频数据，携带 JWT token
-      const res = await authFetch(audioUrl);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) throw new Error('Invalid voice attachmentId');
+      const res = await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/content`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }

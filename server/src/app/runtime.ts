@@ -248,6 +248,7 @@ import {
 } from './runtimeGovernanceCredentials.js';
 import { initializeRuntimeGovernancePreflight } from './runtimeGovernancePreflight.js';
 import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
+import { VoiceTranscriptionService } from '../services/voiceTranscriptionService.js';
 import {
   SAFE_SKILL_NAME_RE,
   createMemoryIndexService,
@@ -692,6 +693,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedFeishuConnector,
     feishuConnectorScopes,
   } = await initializeRuntimeGovernanceCredentials(config, processCwd);
+  const voiceTranscriptionService = new VoiceTranscriptionService({ uploadManager, sttConfig: resolvedSttRuntimeConfig.sttConfig });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -2571,6 +2573,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
+    voiceTranscriptionService,
     ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
@@ -2922,7 +2925,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,
-    uploadManager, sessionCatalog,
+    uploadManager, voiceTranscriptionService, sessionCatalog,
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,

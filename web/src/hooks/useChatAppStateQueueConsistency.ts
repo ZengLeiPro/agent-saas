@@ -372,7 +372,7 @@ export type SendChatViaWs = (
   inputText: string,
   attachments: import("@/components/types").UploadedFile[],
   showBubble: boolean,
-  voiceFile?: { savedPath: string; relativePath: string; duration: number },
+  voice?: never,
   existingClientMsgId?: string,
   autoApproveRunShellForMessage?: boolean,
   preserveActiveStream?: boolean,

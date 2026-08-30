@@ -13,6 +13,6 @@ test('高风险工具在批准前不执行，批准后结果回写', async ({ pa
   await expect(page.locator('.prose-chat').filter({ hasText: expected })).toHaveCount(0);
   await approve.click();
   await expect(page.locator('.prose-chat').filter({ hasText: expected }).last()).toBeVisible({
-    timeout: 8 * 60_000,
+    timeout: 4 * 60_000,
   });
 });

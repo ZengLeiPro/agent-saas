@@ -36,11 +36,13 @@ describe('promotion gate evidence', () => {
 
   it('requires structured approval bound to the exact release and Manifest', () => {
     const e2eBody = {
-      schemaVersion: 1,
-      scenarioCount: 12,
-      executionCount: 24,
+      schemaVersion: 2,
+      scenarioCount: 14,
+      executionCount: 16,
       projects: ['desktop-chromium', 'mobile-chromium'],
-      traceMode: 'on',
+      responsiveScenarioFiles: ['auth.spec.ts', 'chat-stream.spec.ts'],
+      traceMode: 'off',
+      artifactMode: 'json-html-screenshot-video',
       status: 'passed',
     };
     const valid = JSON.stringify({

@@ -480,6 +480,7 @@ jobs:
           echo "STAGING_ISOLATION_SUMMARY=$RUNNER_TEMP/isolation-summary.json" >> "$GITHUB_ENV"
 
       - name: Run real browser and ACS E2E
+        timeout-minutes: 80
         run: |
           set -euo pipefail
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \

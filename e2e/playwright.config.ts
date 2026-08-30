@@ -13,6 +13,7 @@ export default defineConfig({
   expect: { timeout: 3 * 60_000 },
   fullyParallel: false,
   workers: 1,
+  maxFailures: process.env.CI ? 1 : 0,
   retries: 0,
   reporter: [
     ['json', { outputFile: 'test-results/staging-results.json' }],
@@ -21,17 +22,20 @@ export default defineConfig({
   use: {
     baseURL,
     storageState: stagingStorageStatePath,
-    trace: 'on',
+    // storageState contains a Staging bearer token; traces persist context options.
+    trace: 'off',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
   projects: [
     {
       name: 'desktop-chromium',
+      testMatch: /.*\.spec\.ts/u,
       use: { browserName: 'chromium', viewport: { width: 1440, height: 1000 } },
     },
     {
       name: 'mobile-chromium',
+      testMatch: /(?:auth|chat-stream)\.spec\.ts/u,
       use: { browserName: 'chromium', viewport: { width: 390, height: 844 }, isMobile: true },
     },
   ],

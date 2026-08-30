@@ -20,6 +20,10 @@ const REQUIRED_SCENARIO_FILES = Object.freeze([
   'timeout-recovery.spec.ts',
   'tool-approval.spec.ts',
 ]);
+const REQUIRED_RESPONSIVE_SCENARIO_FILES = Object.freeze([
+  'auth.spec.ts',
+  'chat-stream.spec.ts',
+]);
 
 function flattenSuites(suites, inheritedFile = '') {
   const rows = [];
@@ -56,22 +60,23 @@ export function summarizeStagingE2e(report) {
     if (!scenarioFiles.includes(requiredFile))
       throw new Error(`Staging E2E report is missing required scenario ${requiredFile}`);
   }
-  for (const scenario of scenarios) {
-    const scenarioProjects = new Set(
-      executions
-        .filter((item) => `${item.file}\0${item.title}` === scenario)
-        .map((item) => item.projectName),
-    );
-    if (!scenarioProjects.has('desktop-chromium') || !scenarioProjects.has('mobile-chromium'))
-      throw new Error('Every Staging business scenario must pass both required viewports');
+  for (const requiredFile of REQUIRED_SCENARIO_FILES) {
+    if (!executions.some((item) => basename(item.file) === requiredFile && item.projectName === 'desktop-chromium'))
+      throw new Error(`Staging scenario ${requiredFile} did not pass the desktop project`);
+  }
+  for (const requiredFile of REQUIRED_RESPONSIVE_SCENARIO_FILES) {
+    if (!executions.some((item) => basename(item.file) === requiredFile && item.projectName === 'mobile-chromium'))
+      throw new Error(`Responsive Staging scenario ${requiredFile} did not pass the mobile project`);
   }
   const body = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scenarioCount: scenarios.size,
     executionCount: executions.length,
     scenarioFiles,
     projects,
-    traceMode: 'on',
+    responsiveScenarioFiles: [...REQUIRED_RESPONSIVE_SCENARIO_FILES],
+    traceMode: 'off',
+    artifactMode: 'json-html-screenshot-video',
     status: 'passed',
   };
   return { ...body, evidenceDigest: digestBuffer(Buffer.from(canonicalJson(body))) };
@@ -80,15 +85,18 @@ export function summarizeStagingE2e(report) {
 export function validateStagingE2eSummary(summary) {
   const { evidenceDigest, ...body } = summary ?? {};
   if (
-    body.schemaVersion !== 1 ||
+    body.schemaVersion !== 2 ||
     body.status !== 'passed' ||
-    body.traceMode !== 'on' ||
+    body.traceMode !== 'off' ||
+    body.artifactMode !== 'json-html-screenshot-video' ||
     !Number.isSafeInteger(body.scenarioCount) ||
     body.scenarioCount < 1 ||
     !Number.isSafeInteger(body.executionCount) ||
     body.executionCount < body.scenarioCount ||
     !Array.isArray(body.scenarioFiles) ||
     REQUIRED_SCENARIO_FILES.some((file) => !body.scenarioFiles.includes(file)) ||
+    !Array.isArray(body.responsiveScenarioFiles) ||
+    REQUIRED_RESPONSIVE_SCENARIO_FILES.some((file) => !body.responsiveScenarioFiles.includes(file)) ||
     !Array.isArray(body.projects) ||
     !body.projects.includes('desktop-chromium') ||
     !body.projects.includes('mobile-chromium') ||

@@ -124,6 +124,9 @@ test('Staging browser authentication is preloaded without recording the password
   const chatInput = await readFile(chatInputPath, 'utf8');
   assert.match(config, /globalSetup: '\.\/staging\/global-setup\.ts'/u);
   assert.match(config, /storageState: stagingStorageStatePath/u);
+  assert.match(config, /maxFailures: process\.env\.CI \? 1 : 0/u);
+  assert.match(config, /trace: 'off'/u);
+  assert.match(config, /testMatch: \/\(\?:auth\|chat-stream\)\\\.spec\\\.ts\/u/u);
   assert.match(globalSetup, /fetch\(`\$\{apiUrl\}\/api\/auth\/login`/u);
   assert.match(globalSetup, /writeFile\([\s\S]*\{ mode: 0o600 \}/u);
   assert.match(globalSetup, /chromium\.launch\(\)/u);
@@ -194,6 +197,8 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
+  assert.match(deploy, /server\/workspace-shared\/\.ky-agent\/skills-pool\/_manifest\.json/u);
+  assert.match(deploy, /Staging immutable shared asset conflicts with persistent path/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
   assert.match(
     deploy,

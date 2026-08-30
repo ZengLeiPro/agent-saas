@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs'; // integration fixtures / durable events
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -19,7 +19,7 @@ import { EventBackedApprovalStore } from '../runtime/approvalStore.js';
 import { buildContextProjection } from '../runtime/contextProjection.js';
 import { FileEventStore } from '../runtime/fileEventStore.js';
 import { LegacyTranscriptProjection } from '../runtime/legacyTranscriptProjection.js';
-import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
+import { RawAgentLoop, compactionOperationForEvents } from '../runtime/rawAgentLoop.js';
 import { MODEL_TOOL_RESULT_MAX_CHARS } from '../runtime/replayEventBounds.js';
 import { SessionContextService, SessionToolProvider } from '../runtime/sessionContext.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
@@ -672,7 +672,7 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
   return events;
 }
 
-describe('RawAgentLoop', () => {
+describe('RawAgentLoop', () => { it('reuses a compaction epoch before append and advances after persisted compactions',()=>{ const before=[{type:'user_message'}] as const; expect(compactionOperationForEvents(before as never)).toBe('compaction:1'); expect(compactionOperationForEvents(before as never)).toBe('compaction:1'); expect(compactionOperationForEvents([...before,{type:'compaction'}] as never)).toBe('compaction:2'); expect(compactionOperationForEvents([...before,{type:'compaction'},{type:'compaction'}] as never)).toBe('compaction:3'); });
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {

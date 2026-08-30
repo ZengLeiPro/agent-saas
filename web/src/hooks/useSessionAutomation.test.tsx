@@ -21,10 +21,10 @@ function response(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
-function automation(projectionVersion: number) {
+function automation(projectionVersion: number, status: 'active' | 'paused' = 'active') {
   return {
     automationId: 'automation-1', incarnationId: 'incarnation-1', kind: 'goal' as const,
-    status: 'active', controlVersion: 1, projectionVersion,
+    status, controlVersion: 1, projectionVersion,
   };
 }
 
@@ -46,6 +46,14 @@ describe('useSessionAutomation projection', () => {
     expect(result.current.snapshot?.projectionVersion).toBe(5);
     act(() => mocks.messageHandler?.({ data: { type: 'automation_state_changed', eventId: 'event-4', sessionId: 'session-1', snapshot: automation(4) } }));
     expect(result.current.snapshot?.projectionVersion).toBe(5);
+  });
+
+  it('drops equal projectionVersion websocket state for the same automation', async () => {
+    const { result } = renderHook(() => useSessionAutomation({ sessionId: 'session-1' }));
+    await waitFor(() => expect(result.current.snapshot?.projectionVersion).toBe(1));
+
+    act(() => mocks.messageHandler?.({ data: { type: 'automation_state_changed', eventId: 'event-equal', sessionId: 'session-1', snapshot: automation(1, 'paused') } }));
+    expect(result.current.snapshot).toMatchObject({ projectionVersion: 1, status: 'active' });
   });
 
   it('deduplicates notification event ids and refetches snapshot on reconnect', async () => {

@@ -4,7 +4,7 @@ export type SessionAutomationStatus =
   | 'active' | 'paused' | 'blocked' | 'completing' | 'cancelling'
   | 'completed' | 'cancelled' | 'failed' | 'expired' | 'reconcile_required';
 export type SessionAutomationPhase =
-  | 'idle' | 'waiting' | 'dispatching' | 'running' | 'evaluating' | 'terminal';
+  | 'idle' | 'waiting' | 'dispatching' | 'running' | 'evaluating' | 'draining' | 'terminal';
 
 export interface SessionAutomationBudget {
   maxRuns?: number;
@@ -42,25 +42,18 @@ export interface SessionAutomationSnapshot {
   createdAt: string;
   updatedAt: string;
 }
-export type SessionAutomationControlAction = 'pause' | 'resume' | 'run' | 'clear' | 'reconcile';
+export type SessionAutomationControlAction = 'pause' | 'resume' | 'run' | 'clear';
 export interface SessionAutomationCommandRequest {
   clientMessageId: string;
   command: string;
   expectedControlVersion?: number;
   expectedIncarnationId?: string;
 }
-export interface SessionAutomationReconciliationEvidence {
-  providerAttemptId: string;
-  receiptKey: string;
-  observedState: 'completed' | 'not_found' | 'still_running' | 'ambiguous';
-  receiptPayload: Record<string, unknown>;
-}
 export interface SessionAutomationControlRequest {
   clientMessageId: string;
   action: SessionAutomationControlAction;
   expectedControlVersion: number;
   expectedIncarnationId: string;
-  reconciliation?: SessionAutomationReconciliationEvidence;
 }
 export interface SessionAutomationCommandResponse {
   result: 'created' | 'updated' | 'status' | 'accepted' | 'idempotent_replay';

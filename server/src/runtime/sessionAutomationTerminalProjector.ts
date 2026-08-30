@@ -60,10 +60,13 @@ export class SessionAutomationTerminalProjector {
       if (Number(cursor.rows[0]?.last_global_sequence) >= event.globalSequence) return false;
 
       const execution = await client.query(
-        `SELECT e.*,a.status,a.mode,a.active_run_id,a.no_progress_count,a.last_progress_fingerprint,
+        `SELECT e.*,w.due_at AS wakeup_due_at,w.continuation_epoch AS wakeup_continuation_epoch,
+                a.status,a.mode,a.active_run_id,a.desired_terminal_status,a.no_progress_count,a.last_progress_fingerprint,
                 a.incarnation_id AS current_incarnation,a.generation AS current_generation,
                 a.control_version AS current_control_version,s.spec
            FROM ${this.store.tables.executions} e
+           JOIN ${this.store.tables.outbox} o ON o.outbox_id=e.outbox_id
+           JOIN ${this.store.tables.wakeups} w ON w.wakeup_id=o.wakeup_id
            JOIN ${this.store.tables.automations} a USING(automation_id)
            JOIN ${this.store.tables.specs} s ON s.automation_id=a.automation_id AND s.spec_version=a.spec_version
           WHERE e.tenant_id=$1 AND e.session_id=$2 AND e.run_id=$3
@@ -106,10 +109,10 @@ export class SessionAutomationTerminalProjector {
         const ownsActiveRun = row.active_run_id === event.runId;
         const fenced = row.incarnation_id === row.current_incarnation
           && Number(row.generation) === Number(row.current_generation);
-        if (ownsActiveRun && row.status === 'cancelling') {
+        if (ownsActiveRun && row.desired_terminal_status) {
           await client.query(
             `UPDATE ${this.store.tables.automations}
-                SET status='cancelled',phase='terminal',active_run_id=NULL,next_wakeup_at=NULL,
+                SET phase='draining',active_run_id=NULL,next_wakeup_at=NULL,
                     projection_version=projection_version+1,updated_at=now()
               WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$3`,
             [event.tenantId, row.automation_id, event.runId],
@@ -117,8 +120,14 @@ export class SessionAutomationTerminalProjector {
           await client.query(
             `UPDATE ${this.store.tables.cancellations}
                 SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-              WHERE tenant_id=$1 AND run_id=$2`,
+              WHERE tenant_id=$1 AND run_id=$2 AND state<>'dead'`,
             [event.tenantId, event.runId],
+          );
+          await client.query(
+            `UPDATE ${this.store.tables.lifecycleWork}
+                SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+              WHERE tenant_id=$1 AND automation_id=$2 AND object_type='run' AND object_id=$3 AND state IN ('pending','claimed')`,
+            [event.tenantId, row.automation_id, event.runId],
           );
         } else if (ownsActiveRun && row.status === 'paused') {
           await client.query(
@@ -140,7 +149,10 @@ export class SessionAutomationTerminalProjector {
             );
           } else if (row.mode === 'fixed') {
             const interval = Number(row.spec.intervalMs);
-            const slot = Math.floor(Date.now() / interval) + 1;
+            const anchorDueAt = new Date(row.wakeup_due_at).getTime();
+            const elapsedSlots = Math.floor((Date.now() - anchorDueAt) / interval) + 1;
+            const slotsToAdvance = Math.max(1, elapsedSlots);
+            const slot = Number(row.wakeup_continuation_epoch) + slotsToAdvance;
             await this.store.scheduleTx(client, {
               tenantId: event.tenantId,
               sessionId: event.sessionId,
@@ -150,20 +162,23 @@ export class SessionAutomationTerminalProjector {
               specVersion: Number(row.spec_version),
               continuationEpoch: slot,
               triggerKey: `fixed:${row.automation_id}:g${row.generation}:slot${slot}`,
-              dueAt: new Date(slot * interval),
+              dueAt: new Date(anchorDueAt + slotsToAdvance * interval),
               payload: { sourceRunId: event.runId },
             });
             await client.query(
               `UPDATE ${this.store.tables.automations}
-                  SET active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4
+                  SET phase='waiting',active_run_id=NULL,continuation_epoch=$6,
+                      no_progress_count=$3,last_progress_fingerprint=$4,
+                      projection_version=projection_version+1,updated_at=now()
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
-              [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
+              [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId, slot],
             );
           } else {
             await client.query(
               `UPDATE ${this.store.tables.automations}
                   SET phase=CASE WHEN mode='goal' THEN 'evaluating' ELSE 'idle' END,
-                      active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4
+                      active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
+                      projection_version=projection_version+1,updated_at=now()
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
               [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
             );
@@ -187,6 +202,7 @@ export class SessionAutomationTerminalProjector {
             );
           }
         }
+        await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);
         const next=await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
         if(next)await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
       }

@@ -40,7 +40,7 @@ import {
 import { tryParseToolInput } from '../agent/toolRuntimePaths.js';
 import { DefaultToolPolicy } from './toolPolicy.js';
 import { refreshRunApprovalPolicy } from './approvalPolicyResolution.js';
-import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js';
+import { DEFAULT_COMPACTION_REQUEST_PROMPT } from '../systemPrompts/compaction.js'; // compaction calls use durable epochs
 import { standardizeToolError } from './agentPlanDefense.js';
 import { LegacyTranscriptProjection } from './legacyTranscriptProjection.js';
 import { buildModelUserContent } from './imageAttachments.js';
@@ -205,8 +205,8 @@ export interface RawAgentLoopOptions {
    * 默认 35 分钟，可通过 env `AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS` 覆盖。
    * 设 0 表示「任意 invocationStarted 都立刻视为 zombie」（仅测试用）。
    */
-  zombieToolCallTimeoutMs?: number; automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard;
-}
+  zombieToolCallTimeoutMs?: number; automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard; modelMaxOutputTokens?: number;
+} export function compactionOperationForEvents(events: readonly Pick<PlatformEvent, 'type'>[]): string { return `compaction:${events.reduce((count,event)=>count+(event.type==='compaction'?1:0),0)+1}`; }
 export interface CompactInput {
   message: InboundMessage;
   /**
@@ -244,7 +244,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly toolInvocationStore?: ToolInvocationStore;
   private readonly handStore?: HandStore;
   private readonly runtimeIsolationRequirement?: RuntimeIsolationRequirement;
-  private readonly runStore?: RunStore; private readonly automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard;
+  private readonly runStore?: RunStore; private readonly automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard; private readonly modelMaxOutputTokens: number;
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode; private readonly compactionPrompt: string;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
@@ -272,7 +272,7 @@ export class RawAgentLoop implements AgentLoop {
     this.toolInvocationStore = options.toolInvocationStore;
     this.handStore = options.handStore;
     this.runtimeIsolationRequirement = options.runtimeIsolationRequirement;
-    this.runStore = options.runStore; this.automationGuard = options.automationGuard;
+    this.runStore = options.runStore; this.automationGuard = options.automationGuard; this.modelMaxOutputTokens=Math.max(64,options.modelMaxOutputTokens??4096);
     this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager'; this.compactionPrompt = options.compactionPrompt?.trim() || DEFAULT_COMPACTION_REQUEST_PROMPT;
     this.streamEventBatch = {
       maxEvents: options.streamEventBatch?.maxEvents ?? 25,
@@ -1284,7 +1284,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName,
         });
-        let modelStreamError: unknown; const automationContext=context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`turn:${turn}`);
+        let modelStreamError: unknown; const automationContext=context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`turn:${turn}`,{model:context.model,inputTokens:estimateContextTokens([messages,requestTools]),maxOutputTokens:this.modelMaxOutputTokens});
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: context.model,
@@ -1954,7 +1954,7 @@ export class RawAgentLoop implements AgentLoop {
     priorEvents: PlatformEvent[],
     options: CompactionOptions,
   ): AsyncGenerator<OutboundEvent, CompactionOutcome> {
-    yield { type: 'compaction_start' };
+    yield { type: 'compaction_start' }; const compactionOperation = compactionOperationForEvents(priorEvents);
     let totalUsage: ModelUsage | undefined;
     let summaryText = '';
     try {
@@ -2022,7 +2022,7 @@ export class RawAgentLoop implements AgentLoop {
         throw new Error(`compaction request exceeds context window: ${requestUpperTokens}/${contextWindow}`);
       }
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
-      await context.authorizeModelTurn?.(); const automationAttempt = await this.automationGuard?.beforeModel(context,'compaction'); let compactionStreamError:unknown;
+      await context.authorizeModelTurn?.(); const automationAttempt = await this.automationGuard?.beforeModel(context,compactionOperation,{model:context.model,inputTokens:estimateContextTokens([requestMessages,tools]),maxOutputTokens:plan.summaryBudgetTokens}); let compactionStreamError:unknown;
       // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容。
       for await (const event of captureModelStreamError(this.modelAdapter.stream({
         model: context.model,
@@ -3437,7 +3437,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName: args.descriptorsByName,
         });
-        let modelStreamError: unknown; const automationContext=args.context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`resume-turn:${turn}`);
+        let modelStreamError: unknown; const automationContext=args.context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`resume-turn:${turn}`,{model:args.context.model,inputTokens:estimateContextTokens([args.messages,requestTools]),maxOutputTokens:this.modelMaxOutputTokens});
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: args.context.model,

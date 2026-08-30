@@ -1,4 +1,4 @@
-import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as delay } from 'node:timers/promises'; // cross-process meta locking uses delayed retries
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from './projectKey.js';
@@ -233,6 +233,22 @@ export async function writeSessionMetaIfAbsent(
     );
     if (created) notifySessionMetaPersisted(transcriptPath, meta);
     return created;
+  });
+}
+
+/** Compare-and-delete an orphan meta under the same cross-process lock used by creation. */
+export async function deleteSessionMetaIfMatches(
+  transcriptPath: string,
+  matches: (meta: SessionMeta) => boolean,
+): Promise<boolean> {
+  const metaPath = getMetaPath(transcriptPath);
+  return withMetaLock(metaPath, async () => {
+    const meta = await readSessionMeta(transcriptPath);
+    if (!meta || !matches(meta)) return false;
+    const location = trustedMetaLocation(metaPath);
+    await removeTrustedPath(location.root, location.relativePath);
+    notifySessionMetaDeleted(meta.workspaceId ?? basename(transcriptPath, '.jsonl'));
+    return true;
   });
 }
 

@@ -1481,7 +1481,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
     // 普通前台 Run 的保守墙钟上限。CAS 只终止当前 running 执行段；
@@ -2106,7 +2106,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
@@ -2589,7 +2589,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, ...(modelProviderOptions?.maxOutputTokens ? { modelMaxOutputTokens: modelProviderOptions.maxOutputTokens } : {}), compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 

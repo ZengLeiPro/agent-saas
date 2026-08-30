@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response } from 'express'; // command creation is a durable receipt saga
 import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
 import {
   SessionAutomationConflictError,
@@ -14,6 +14,7 @@ export interface SessionAutomationsRouterOptions {
   service: SessionAutomationCommandService;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
   createSession?: (req: Request, sessionId: string) => Promise<AutomationIdentity>;
+  compensateSession?: (req: Request, sessionId: string) => Promise<boolean>;
   broadcastToUser?: (userId: string, payload: Record<string, unknown>) => void;
 }
 
@@ -37,11 +38,11 @@ function sendError(res: Response, error: unknown): void {
   if (error instanceof SessionAutomationConflictError) {
     const status = error.code === 'NOT_FOUND'
       ? 404
-      : error.code === 'FORBIDDEN'
+      : error.code === 'FORBIDDEN' || error.code === 'GOVERNANCE_DENIED'
         ? 403
-        : error.code === 'INVALID_COMMAND'
+        : error.code === 'INVALID_COMMAND' || error.code === 'ATTACHMENTS_UNSUPPORTED'
           ? 400
-          : error.code === 'FEATURE_DISABLED' || error.code === 'EXECUTION_DISABLED'
+          : error.code === 'FEATURE_DISABLED' || error.code === 'EXECUTION_DISABLED' || error.code === 'GOVERNANCE_UNAVAILABLE'
             ? 503
             : 409;
     res.status(status).json({ code: error.code, message: error.message, current: error.current });
@@ -69,6 +70,9 @@ function parseCommandBody(body: Record<string, unknown>): {
     : typeof body.rawCommand === 'string'
       ? body.rawCommand
       : undefined;
+  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+    throw new SessionAutomationConflictError('ATTACHMENTS_UNSUPPORTED', 'automation commands do not support attachments');
+  }
   if (!clientMessageId || !command) {
     throw new SessionAutomationConflictError('INVALID_COMMAND', 'clientMessageId/command required');
   }
@@ -95,7 +99,10 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
       const requestedSessionId = typeof body.sessionId === 'string' && body.sessionId.trim()
         ? body.sessionId.trim()
         : null;
+      const canonicalRequest={command:commandInput.command.trim(),sessionId:requestedSessionId,expectedControlVersion:commandInput.expectedControlVersion??null,expectedIncarnationId:commandInput.expectedIncarnationId??null,attachments:[]};
+      const requestDigest=commandDigest(canonicalRequest);
       let id: AutomationIdentity;
+      let creationSaga:{tenantId:string;ownerUserId:string;clientMessageId:string;commandDigest:string;sessionId:string}|undefined;
       if (requestedSessionId) {
         id = await authorizeSession(req, requestedSessionId, options.sessionCatalog);
       } else {
@@ -105,15 +112,29 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
           tenantId: req.user.tenantId,
           ownerUserId: req.user.sub,
           clientMessageId: commandInput.clientMessageId,
-          commandDigest: commandDigest(commandInput.command),
+          commandDigest: requestDigest,
+          canonicalRequest,
           sessionId: randomUUID(),
         });
-        id = await options.createSession(req, sessionId);
+        creationSaga={tenantId:req.user.tenantId,ownerUserId:req.user.sub,clientMessageId:commandInput.clientMessageId,commandDigest:requestDigest,sessionId};
+        try{
+          id = await options.createSession(req, sessionId);
+          await options.store.markCommandFileReady({...creationSaga,sessionMetaCreated:id.sessionMetaCreated===true});
+        }catch(error){
+          await options.store.compensateCommand({...creationSaga,error});
+          // Exact canonical-meta matching makes this safe even when markCommandFileReady
+          // failed before session_meta_created could be durably recorded.
+          await options.compensateSession?.(req,sessionId).catch(()=>false);
+          throw error;
+        }
       }
-      const result = await options.service.command(id, commandInput);
-      const cursor = result.snapshot
-        ? await options.store.latestEventCursor(id.tenantId, id.sessionId, result.snapshot.automationId)
-        : null;
+      let result;
+      try{result=await options.service.command(id, {...commandInput,requestDigest,canonicalRequest});}
+      catch(error){
+        if(creationSaga){await options.store.compensateCommand({...creationSaga,error});await options.compensateSession?.(req,creationSaga.sessionId).catch(()=>false);}
+        throw error;
+      }
+      const cursor = result.cursor ?? null;
       res.json({
         status: result.result,
         replayed: result.result === 'idempotent_replay',
@@ -126,18 +147,20 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
     }
   });
 
+  router.get('/session-automations/commands/:clientMessageId', async (req,res)=>{
+    try{
+      if(!req.user?.sub||!req.user.tenantId)throw new SessionAutomationConflictError('FORBIDDEN','Authentication required');
+      const receipt=await options.store.getCommandReceipt(req.user.tenantId,req.user.sub,req.params.clientMessageId!);
+      if(!receipt)throw new SessionAutomationConflictError('NOT_FOUND','command receipt 不存在');
+      res.json(receipt);
+    }catch(error){sendError(res,error);}
+  });
+
   router.get('/sessions/:sessionId/automation', async (req, res) => {
     try {
       const id = await authorizeSession(req, req.params.sessionId!, options.sessionCatalog);
-      const items = (await options.store.list(id.tenantId, id.sessionId))
-        .filter(item => item.ownerUserId === id.ownerUserId);
-      const snapshot = items.find(item => !['completed', 'cancelled', 'failed', 'expired'].includes(item.status))
-        ?? items[0]
-        ?? null;
-      const cursor = snapshot
-        ? await options.store.latestEventCursor(id.tenantId, id.sessionId, snapshot.automationId)
-        : null;
-      res.json({ automation: snapshot, cursor });
+      const view=await options.store.getSessionAutomationView(id.tenantId,id.sessionId,id.ownerUserId);
+      res.json({ automation: view.snapshot, cursor: view.cursor });
     } catch (error) {
       sendError(res, error);
     }
@@ -187,6 +210,7 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
         throw new SessionAutomationConflictError('INVALID_COMMAND', 'control fence required');
       }
       const action = body.action === 'run_now' ? 'run' : body.action;
+      if(!['pause','resume','run','clear','edit'].includes(action))throw new SessionAutomationConflictError('INVALID_COMMAND','invalid public control action');
       const result = action === 'edit'
         ? await options.service.edit(id, snapshot.automationId, {
           clientMessageId,
@@ -196,7 +220,7 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
         })
         : await options.service.control(id, snapshot.automationId, {
           clientMessageId,
-          action: action as 'pause' | 'resume' | 'run' | 'clear' | 'reconcile',
+          action: action as 'pause' | 'resume' | 'run' | 'clear',
           expectedControlVersion: body.expectedControlVersion,
           expectedIncarnationId: body.expectedIncarnationId,
         });
@@ -249,16 +273,8 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
         || typeof body.expectedIncarnationId !== 'string') {
         throw new SessionAutomationConflictError('INVALID_COMMAND', 'control fence required');
       }
-      if (!['pause', 'resume', 'run', 'clear', 'reconcile'].includes(body.action)) {
-        throw new SessionAutomationConflictError('INVALID_COMMAND', 'invalid action');
-      }
-      if (body.action === 'reconcile') {
-        const evidence = body.reconciliation as Record<string, unknown> | undefined;
-        if (!evidence || typeof evidence.providerAttemptId !== 'string' || typeof evidence.receiptKey !== 'string'
-          || !['completed', 'not_found', 'still_running', 'ambiguous'].includes(String(evidence.observedState))
-          || !evidence.receiptPayload || typeof evidence.receiptPayload !== 'object') {
-          throw new SessionAutomationConflictError('INVALID_COMMAND', 'reconciliation evidence required');
-        }
+      if (!['pause', 'resume', 'run', 'clear'].includes(body.action)) {
+        throw new SessionAutomationConflictError('INVALID_COMMAND', 'invalid public control action');
       }
       res.json(await options.service.control(id, req.params.automationId!, body as never));
     } catch (error) {

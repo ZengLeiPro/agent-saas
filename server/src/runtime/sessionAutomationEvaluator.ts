@@ -7,7 +7,9 @@ import type { ModelProviderOptions } from '../types/index.js';
 import type { ModelAdapter, ModelUsage, RunContext } from './types.js';
 import { SessionAutomationRuntimeGuard, type AutomationAttemptHandle } from './sessionAutomationRuntimeGuard.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import { estimateContextTokens } from './contextBreakdown.js';
 
+/** Evidence consumed by the monotonically versioned automation projection. */
 export interface GoalEvidence {
   summary: string;
   evidenceRefs: string[];
@@ -103,20 +105,28 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
     let completed = false;
     let usage: ModelUsage | undefined;
     let attempt: AutomationAttemptHandle | undefined;
+    let transportStarted = false;
     try {
-      attempt = await this.options.runtimeGuard?.beforeModel(context, `goal-evaluation:${input.evaluatorRunId ?? evaluatorRunId}`);
+      const evaluationMessages = [
+        { role: 'system' as const, content: 'You are an independent completion verifier. Never trust a claimant assertion without evidence. Return only JSON: {"decision":"met|continue|blocked|unverifiable","reason":"...","confidence":0..1}.' },
+        { role: 'user' as const, content: JSON.stringify({ completionCondition: input.condition, evidence: input.evidence }) },
+      ];
+      attempt = await this.options.runtimeGuard?.beforeModel(context, `goal-evaluation:${input.executionId}`, {
+        model: resolved.model, inputTokens: estimateContextTokens(evaluationMessages), maxOutputTokens: 500, purpose: 'goal_evaluation',
+      });
       if (attempt) await input.onAttemptPrepared?.(attempt.providerAttemptId);
+      // Evaluator owns this transport boundary: authorize before any provider bytes are sent.
+      await context.authorizeModelTurn?.();
+      transportStarted = true;
+      const transportContext = { ...context, authorizeModelTurn: undefined };
       for await (const event of adapter.stream({
         model: resolved.model,
-        messages: [
-          { role: 'system', content: 'You are an independent completion verifier. Never trust a claimant assertion without evidence. Return only JSON: {"decision":"met|continue|blocked|unverifiable","reason":"...","confidence":0..1}.' },
-          { role: 'user', content: JSON.stringify({ completionCondition: input.condition, evidence: input.evidence }) },
-        ],
+        messages: evaluationMessages,
         tools: [],
         toolChoice: 'none',
         maxOutputTokens: 500,
         signal: new AbortController().signal,
-      }, context)) {
+      }, transportContext)) {
         if (event.type === 'text_delta') text += event.content;
         if (event.type === 'completed') {
           completed = true;
@@ -141,10 +151,17 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
       };
     } catch (error) {
       if (attempt) {
-        await this.options.runtimeGuard?.finishModel(context, attempt, usage, error);
-        throw new GoalEvaluationResultUnknownError(
+        if (transportStarted) {
+          await this.options.runtimeGuard?.finishModel(context, attempt, usage, error);
+          throw new GoalEvaluationResultUnknownError(
+            error instanceof Error ? error.message : String(error),
+            attempt.providerAttemptId,
+          );
+        }
+        await this.options.runtimeGuard?.releaseModel(
+          context,
+          attempt,
           error instanceof Error ? error.message : String(error),
-          attempt.providerAttemptId,
         );
       }
       throw error;
@@ -229,7 +246,7 @@ export class SessionAutomationEvaluator {
         && durableInteractions.rows[0]?.pending !== true,
       noActiveResources: Number(active.rows[0]?.count ?? 0) === 0
         && durableResources.rows[0]?.active !== true,
-      budgetValid: !automation.rows[0]?.limit_hit_reason && budgetReason === undefined,
+      budgetValid: !automation.rows[0]?.limit_hit_reason && (budgetReason === undefined || budgetReason.startsWith('max_')),
     };
   }
 
@@ -296,7 +313,7 @@ export class SessionAutomationEvaluator {
         );
         await client.query(
           `UPDATE ${this.store.tables.automations} a
-              SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,updated_at=now()
+              SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now()
              FROM ${this.store.tables.evaluations} e,${this.store.tables.executions} x
             WHERE e.execution_id=x.execution_id AND e.state='result_unknown' AND e.provider_attempt_id IS NOT NULL
               AND a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
@@ -359,10 +376,16 @@ export class SessionAutomationEvaluator {
       const result = await client.query(
         `SELECT e.*,a.owner_user_id,x.run_id
            FROM ${this.store.tables.evaluations} e
-           JOIN ${this.store.tables.automations} a USING(automation_id)
-           JOIN ${this.store.tables.executions} x ON x.execution_id=e.execution_id
+           JOIN ${this.store.tables.automations} a
+             ON a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
+            AND a.incarnation_id=e.incarnation_id AND a.generation=e.generation
+            AND a.spec_version=e.spec_version AND a.status='active'
+           JOIN ${this.store.tables.executions} x
+             ON x.tenant_id=e.tenant_id AND x.session_id=e.session_id AND x.automation_id=e.automation_id
+            AND x.execution_id=e.execution_id AND x.incarnation_id=e.incarnation_id
+            AND x.generation=e.generation AND x.spec_version=e.spec_version
           WHERE e.state='pending' AND x.state='terminal'
-          ORDER BY e.created_at FOR UPDATE OF e SKIP LOCKED LIMIT $1`,
+          ORDER BY e.created_at FOR UPDATE OF e,a SKIP LOCKED LIMIT $1`,
         [limit],
       );
       for (const job of result.rows) {
@@ -395,6 +418,27 @@ export class SessionAutomationEvaluator {
               SET state='blocked',decision=$2,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
             WHERE evaluation_id=$1 AND lease_token=$3`,
           [job.evaluation_id, JSON.stringify({ decision: 'blocked', reason: 'hard_gate', confidence: 1, gates }), job.lease_token],
+        );
+        continue;
+      }
+
+      // Close the claim-to-provider race: revalidate the complete automation fence immediately
+      // before the evaluator can reserve budget or send provider bytes.
+      const admitted = await this.store.pool.query(
+        `SELECT 1 FROM ${this.store.tables.evaluations} e
+          JOIN ${this.store.tables.automations} a
+            ON a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
+           AND a.incarnation_id=e.incarnation_id AND a.generation=e.generation
+           AND a.spec_version=e.spec_version AND a.status='active'
+         WHERE e.evaluation_id=$1 AND e.lease_token=$2 AND e.state='claimed'`,
+        [job.evaluation_id, job.lease_token],
+      );
+      if (!admitted.rowCount) {
+        await this.store.pool.query(
+          `UPDATE ${this.store.tables.evaluations}
+              SET state='cancelled',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE evaluation_id=$1 AND lease_token=$2 AND state='claimed'`,
+          [job.evaluation_id, job.lease_token],
         );
         continue;
       }
@@ -462,13 +506,7 @@ export class SessionAutomationEvaluator {
         );
         if (!fenced) return;
         if (decision.decision === 'met') {
-          await client.query(
-            `UPDATE ${this.store.tables.automations}
-                SET status='completed',phase='terminal',active_run_id=NULL,next_wakeup_at=NULL,
-                    control_version=control_version+1,projection_version=projection_version+1,updated_at=now()
-              WHERE tenant_id=$1 AND automation_id=$2 AND generation=$3 AND incarnation_id=$4`,
-            [job.tenant_id, job.automation_id, job.generation, job.incarnation_id],
-          );
+          await this.store.beginTerminalDrainLocked(client,current!,'completed','goal_met');
         } else if (decision.decision === 'continue') {
           const epoch = Number(job.decision_epoch) + 1;
           await this.store.scheduleTx(client, {

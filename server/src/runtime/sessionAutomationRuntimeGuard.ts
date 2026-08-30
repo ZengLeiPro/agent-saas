@@ -1,13 +1,36 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'; // durable attempt and ledger identifiers
 import type pg from 'pg';
 import type { ModelUsage, RunContext } from './types.js';
 import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
 import { sessionAutomationTables } from './sessionAutomationStoreSchema.js';
+import { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import { computeCostMicro, computeUsageTotalTokens, resolveModelPrice } from '../data/usage/pricing.js';
+import { creditsToMicrocredits } from './sessionAutomationBudgetProgress.js';
+import { costUsdMicroToCreditsMicro } from '../data/billing/pgBillingStore.js';
+import { DEFAULT_CREDIT_VALUE_YUAN_MICRO, DEFAULT_FX_RATE_TO_CNY, DEFAULT_TARGET_MARGIN_BPS } from '../data/billing/types.js';
+import type { SessionAutomationSpec } from '@agent/shared/types/sessionAutomation.js';
+
+/** PostgreSQL NUMERIC parser for budget ledger values: scale is allowed only when fractional digits are all zero. */
+export function parseWholeNumeric(value: string, field = 'amount'): bigint {
+  if (!/^[+-]?\d+(?:\.0+)?$/.test(value)) throw new Error(`invalid whole NUMERIC ${field}: ${value}`);
+  const integer = value.split('.', 1)[0]!;
+  return BigInt(integer === '+0' || integer === '-0' ? '0' : integer);
+}
 
 export interface AutomationAttemptHandle {
   providerAttemptId: string;
-  reservationId: string;
+  reservationIds: string[];
   sourceKey: string;
+  model: string;
+  purpose: 'work' | 'goal_evaluation';
+  allowanceUsed?: boolean;
+}
+
+export interface AutomationModelAdmission {
+  model: string;
+  inputTokens: number;
+  maxOutputTokens: number;
+  purpose?: 'work' | 'goal_evaluation';
 }
 
 interface AutomationLineage {
@@ -107,15 +130,45 @@ export class SessionAutomationRuntimeGuard {
     lineage: AutomationLineage,
     reason: string,
   ): Promise<void> {
-    await client.query(
-      `UPDATE ${this.tables.automations}
-          SET status='expired',phase='terminal',limit_hit_reason=COALESCE(limit_hit_reason,$8),
-              limit_hit_at=COALESCE(limit_hit_at,now()),next_wakeup_at=NULL,updated_at=now()
-        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
-          AND generation=$5 AND spec_version=$6 AND active_run_id=$7 AND status='active'`,
-      [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-        lineage.generation, lineage.specVersion, lineage.executionRunId, reason],
+    const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);
+    const current=await store.getLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);
+    if(!current){await client.query(`UPDATE ${this.tables.automations} SET desired_terminal_status='expired',status='completing',phase='draining',generation=generation+1,limit_hit_reason=COALESCE(limit_hit_reason,$4),limit_hit_at=COALESCE(limit_hit_at,now()),next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$5 AND generation=$6 AND status='active'`,[lineage.tenantId,lineage.sessionId,lineage.automationId,reason,lineage.incarnationId,lineage.generation]);return;}
+    if(current.incarnationId!==lineage.incarnationId||current.generation!==lineage.generation)return;
+    await client.query(`UPDATE ${this.tables.automations} SET limit_hit_reason=COALESCE(limit_hit_reason,$4),limit_hit_at=COALESCE(limit_hit_at,now()) WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[lineage.tenantId,lineage.sessionId,lineage.automationId,reason]);
+    await store.beginTerminalDrainLocked(client,current,'expired',reason);
+  }
+
+  private async estimateCreditsMicro(
+    client: pg.PoolClient,
+    tenantId: string,
+    model: string,
+    tokens: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number },
+  ): Promise<number> {
+    if (!resolveModelPrice(model)) throw new AutomationFenceRejectedError('unknown_model_price');
+    const result = await client.query<{
+      credit_value_yuan_micro: string | number;
+      fx_rate_to_cny: string | number;
+      default_target_margin_bps: string | number;
+      organization_multiplier_bps: string | number;
+    }>(
+      `SELECT p.credit_value_yuan_micro,p.fx_rate_to_cny,
+              COALESCE(tp.default_target_margin_bps,p.default_target_margin_bps) AS default_target_margin_bps,
+              COALESCE(tp.organization_multiplier_bps,10000) AS organization_multiplier_bps
+         FROM ${this.tablePrefix}_billing_pricing_versions p
+         LEFT JOIN ${this.tablePrefix}_billing_tenant_policies tp ON tp.tenant_id=$1
+        WHERE p.status='active' ORDER BY p.effective_from DESC LIMIT 1`,
+      [tenantId],
     );
+    const row = result.rows[0];
+    const value = costUsdMicroToCreditsMicro({
+      costUsdMicro: computeCostMicro(model, tokens),
+      fxRateToCny: Number(row?.fx_rate_to_cny ?? DEFAULT_FX_RATE_TO_CNY),
+      creditValueYuanMicro: Number(row?.credit_value_yuan_micro ?? DEFAULT_CREDIT_VALUE_YUAN_MICRO),
+      defaultTargetMarginBps: Number(row?.default_target_margin_bps ?? DEFAULT_TARGET_MARGIN_BPS),
+      organizationMultiplierBps: Number(row?.organization_multiplier_bps ?? 10_000),
+    });
+    if (!Number.isSafeInteger(value) || value < 0) throw new AutomationFenceRejectedError('credits_unverifiable');
+    return value;
   }
 
   async barrier(context: RunContext): Promise<void> {
@@ -125,7 +178,9 @@ export class SessionAutomationRuntimeGuard {
     let committed = false;
     try {
       await client.query('BEGIN');
-      const budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      let budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      // run_count includes the already-admitted active run. maxRuns only gates the next dispatch.
+      if (budgetReason === 'max_runs') budgetReason = undefined;
       if (budgetReason) await this.expireForBudget(client, lineage, budgetReason);
       await client.query('COMMIT');
       committed = true;
@@ -138,140 +193,189 @@ export class SessionAutomationRuntimeGuard {
     }
   }
 
-  async beforeModel(context: RunContext, operation: string): Promise<AutomationAttemptHandle | undefined> {
+  async beforeModel(
+    context: RunContext,
+    operation: string,
+    admission: AutomationModelAdmission,
+  ): Promise<AutomationAttemptHandle | undefined> {
     const lineage = this.lineage(context);
     if (!lineage) return undefined;
+    const estimatedInputTokens = Math.max(0, Math.ceil(admission.inputTokens));
+    const maxOutputTokens = Math.max(0, Math.ceil(admission.maxOutputTokens));
+    if (!admission.model || !Number.isSafeInteger(estimatedInputTokens) || !Number.isSafeInteger(maxOutputTokens)) {
+      throw new AutomationFenceRejectedError('model_admission_unverifiable');
+    }
+    // Estimators are approximate; reserve a deterministic 10% input margin plus framing overhead.
+    const inputTokens = Math.ceil(estimatedInputTokens * 1.1) + 16;
+    const purpose = admission.purpose ?? 'work';
+    const sourceKey = `model:${lineage.executionId}:${operation}`;
     const client = await this.pool.connect();
     let committed = false;
     try {
       await client.query('BEGIN');
-      const budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      let budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      if (budgetReason === 'max_runs') budgetReason = undefined;
+
+      const budgetRow = await client.query<{spec: SessionAutomationSpec;run_count:string|number}>(
+        `SELECT s.spec,a.run_count FROM ${this.tables.automations} a JOIN ${this.tables.specs} s ON s.automation_id=a.automation_id AND s.spec_version=a.spec_version WHERE a.tenant_id=$1 AND a.automation_id=$2`,
+        [lineage.tenantId,lineage.automationId],
+      );
+      const budget = budgetRow.rows[0]?.spec.budget ?? {};
+      if (Number(budgetRow.rows[0]?.run_count ?? 0) > (budget.maxRuns ?? Number.MAX_SAFE_INTEGER)) budgetReason='max_runs';
+
+      const existing = await client.query<{provider_attempt_id:string;state:string;request_payload:Record<string,unknown>}>(
+        `SELECT provider_attempt_id,state,request_payload FROM ${this.tables.providerAttempts}
+          WHERE tenant_id=$1 AND provider='model' AND idempotency_key=$2 FOR UPDATE`,
+        [lineage.tenantId,sourceKey],
+      );
+      let replayReservations: Array<{reservation_id:string;purpose:'work'|'goal_evaluation'}> | undefined;
+      if (existing.rows[0]) {
+        const row = existing.rows[0];
+        if (row.request_payload.model !== admission.model || row.request_payload.purpose !== purpose
+          || Number(row.request_payload.inputTokens) !== inputTokens || Number(row.request_payload.maxOutputTokens) !== maxOutputTokens) {
+          throw new AutomationFenceRejectedError('idempotency_payload_mismatch');
+        }
+        if (!['dispatched','cancelled'].includes(row.state)) throw new Error(`automation provider attempt is not replayable: ${row.provider_attempt_id}:${row.state}`);
+        const reservations = await client.query<{reservation_id:string;purpose:'work'|'goal_evaluation'}>(
+          `SELECT reservation_id,purpose FROM ${this.tables.budgetReservations} WHERE tenant_id=$1 AND idempotency_key LIKE $2 ORDER BY budget_kind`,
+          [lineage.tenantId,`${sourceKey}:%`],
+        );
+        if (row.state === 'dispatched') {
+          await client.query('COMMIT'); committed=true;
+          return { providerAttemptId: row.provider_attempt_id, reservationIds: reservations.rows.map(item => item.reservation_id), sourceKey, model: admission.model, purpose, allowanceUsed: reservations.rows[0]?.purpose === 'goal_evaluation' };
+        }
+        replayReservations=reservations.rows;
+      }
+
+      const prospectiveTokens = inputTokens + maxOutputTokens;
+      const prospectiveCreditsMicro = await this.estimateCreditsMicro(client,lineage.tenantId,admission.model,{
+        inputTokens,outputTokens:maxOutputTokens,cacheReadTokens:0,cacheCreationTokens:0,
+      });
+      const totals = await client.query<{turns:string;tokens:string;credits:string}>(
+        `SELECT COALESCE(SUM(turns),0)::text turns,COALESCE(SUM(tokens),0)::text tokens,COALESCE(SUM(credits),0)::text credits FROM ${this.tables.usage} WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
+        [lineage.tenantId,lineage.automationId],
+      );
+      const reserved = await client.query<{turns:string;tokens:string;credits:string}>(
+        `SELECT COALESCE(SUM(amount) FILTER(WHERE budget_kind='turns'),0)::text turns,COALESCE(SUM(amount) FILTER(WHERE budget_kind='tokens'),0)::text tokens,COALESCE(SUM(amount) FILTER(WHERE budget_kind='credits'),0)::text credits FROM ${this.tables.budgetReservations} WHERE tenant_id=$1 AND automation_id=$2 AND purpose='work' AND state IN ('reserved','result_unknown','reconcile')`,
+        [lineage.tenantId,lineage.automationId],
+      );
+      const used=totals.rows[0]!, held=reserved.rows[0]!;
+      const maxCreditsMicro = budget.maxCredits === undefined ? undefined : creditsToMicrocredits(budget.maxCredits);
+      if (budget.maxCredits !== undefined && maxCreditsMicro === undefined) budgetReason='credits_unverifiable';
+      if (!budgetReason && budget.maxTurns !== undefined && parseWholeNumeric(used.turns,'used.turns')+parseWholeNumeric(held.turns,'held.turns')+1n > BigInt(budget.maxTurns)) budgetReason='max_turns';
+      else if (!budgetReason && budget.maxTokens !== undefined && parseWholeNumeric(used.tokens,'used.tokens')+parseWholeNumeric(held.tokens,'held.tokens')+BigInt(prospectiveTokens) > BigInt(budget.maxTokens)) budgetReason='max_tokens';
+      else if (!budgetReason && maxCreditsMicro !== undefined && parseWholeNumeric(used.credits,'used.credits')+parseWholeNumeric(held.credits,'held.credits')+BigInt(prospectiveCreditsMicro) > maxCreditsMicro) budgetReason='max_credits';
+
+      let usingAllowance = false;
+      if (purpose === 'goal_evaluation' && (!budgetReason || budgetReason.startsWith('max_'))) {
+        if (maxOutputTokens !== 500) throw new AutomationFenceRejectedError('completion_allowance_output_mismatch');
+        const allowance = await client.query(
+          `UPDATE ${this.tables.completionAllowances} SET remaining_attempts=remaining_attempts-1,updated_at=now()
+            WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND remaining_attempts>0 AND max_output_tokens=$4
+            RETURNING remaining_attempts`,
+          [lineage.tenantId,lineage.sessionId,lineage.automationId,maxOutputTokens],
+        );
+        if (allowance.rows[0]) { usingAllowance=true; budgetReason=undefined; }
+        else budgetReason='completion_allowance_exhausted';
+      }
       if (budgetReason) {
-        await this.expireForBudget(client, lineage, budgetReason);
-        await client.query('COMMIT');
-        committed = true;
+        await this.expireForBudget(client,lineage,budgetReason);
+        await client.query('COMMIT'); committed=true;
         throw new AutomationBudgetExceededError(budgetReason);
       }
 
-      const unresolved = await client.query<{ provider_attempt_id: string; state: string }>(
-        `SELECT provider_attempt_id,state FROM ${this.tables.providerAttempts}
-          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4 AND run_id=$5
-            AND state IN ('prepared','dispatched','result_unknown','reconcile')
-          FOR UPDATE`,
-        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.executionId, lineage.executionRunId],
-      );
-      if (unresolved.rowCount) {
-        throw new Error(`automation provider attempt requires reconciliation: ${unresolved.rows[0]!.provider_attempt_id}:${unresolved.rows[0]!.state}`);
+      if (replayReservations) {
+        await client.query(`UPDATE ${this.tables.budgetReservations} SET state='reserved',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='released'`,[replayReservations.map(item=>item.reservation_id)]);
+        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='dispatched',version=version+1,last_error=NULL,dispatched_at=now(),updated_at=now() WHERE tenant_id=$1 AND provider='model' AND idempotency_key=$2 AND state='cancelled'`,[lineage.tenantId,sourceKey]);
+        await client.query('COMMIT'); committed=true;
+        return {providerAttemptId:existing.rows[0]!.provider_attempt_id,reservationIds:replayReservations.map(item=>item.reservation_id),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
       }
 
-      const prepared = await client.query<{ prepared_dispatch_attempt_id: string }>(
-        `SELECT prepared_dispatch_attempt_id FROM ${this.tables.preparedDispatchAttempts}
-          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
-            AND generation=$5 AND execution_id=$6 AND run_id=$7
-          ORDER BY prepared_at LIMIT 1`,
-        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-          lineage.generation, lineage.executionId, lineage.executionRunId],
+      const unresolved = await client.query<{provider_attempt_id:string;state:string}>(
+        `SELECT provider_attempt_id,state FROM ${this.tables.providerAttempts} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4 AND run_id=$5 AND state IN ('prepared','dispatched','result_unknown','reconcile') FOR UPDATE`,
+        [lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.executionId,lineage.executionRunId],
+      );
+      if (unresolved.rowCount) throw new Error(`automation provider attempt requires reconciliation: ${unresolved.rows[0]!.provider_attempt_id}:${unresolved.rows[0]!.state}`);
+      const prepared = await client.query<{prepared_dispatch_attempt_id:string}>(
+        `SELECT prepared_dispatch_attempt_id FROM ${this.tables.preparedDispatchAttempts} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND execution_id=$6 AND run_id=$7 ORDER BY prepared_at LIMIT 1`,
+        [lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId],
       );
       if (!prepared.rows[0]) throw new Error('automation prepared dispatch attribution unavailable');
-
-      const reservationId = randomUUID();
-      const providerAttemptId = randomUUID();
-      const sourceKey = `model:${lineage.invokingRunId}:${operation}:${randomUUID()}`;
-      await client.query(
-        `INSERT INTO ${this.tables.budgetReservations}
-          (reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,budget_kind,amount,unit,idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'turns',1,'turn',$9)`,
-        [reservationId, lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-          lineage.generation, lineage.executionId, lineage.executionRunId, sourceKey],
+      const providerAttemptId=randomUUID();
+      const reservations:[string,string,number,string][]=[
+        [randomUUID(),'runs',0,'run'],[randomUUID(),'turns',1,'turn'],[randomUUID(),'tokens',prospectiveTokens,'token'],[randomUUID(),'credits',prospectiveCreditsMicro,'microcredit'],
+      ];
+      for (const [id,kind,amount,unit] of reservations) await client.query(
+        `INSERT INTO ${this.tables.budgetReservations}(reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,budget_kind,purpose,amount,unit,idempotency_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,kind,purpose,amount,unit,`${sourceKey}:${kind}`],
       );
       await client.query(
-        `INSERT INTO ${this.tables.providerAttempts}
-          (provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,provider,operation,idempotency_key,request_payload,state,dispatched_at)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'model',$10,$11,$12,'prepared',NULL)`,
-        [providerAttemptId, prepared.rows[0].prepared_dispatch_attempt_id, lineage.tenantId,
-          lineage.sessionId, lineage.automationId, lineage.incarnationId, lineage.generation,
-          lineage.executionId, lineage.executionRunId, operation, sourceKey, JSON.stringify({ model: context.model, invokingRunId: lineage.invokingRunId })],
+        `INSERT INTO ${this.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,provider,operation,idempotency_key,request_payload,state,dispatched_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'model',$10,$11,$12,'dispatched',now())`,
+        [providerAttemptId,prepared.rows[0].prepared_dispatch_attempt_id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,operation,sourceKey,JSON.stringify({model:admission.model,inputTokens,maxOutputTokens,purpose,invokingRunId:lineage.invokingRunId})],
       );
-      await client.query(
-        `UPDATE ${this.tables.providerAttempts}
-            SET state='dispatched',version=version+1,dispatched_at=now(),updated_at=now()
-          WHERE provider_attempt_id=$1 AND state='prepared'`,
-        [providerAttemptId],
-      );
-      await client.query('COMMIT');
-      committed = true;
-      return { providerAttemptId, reservationId, sourceKey };
-    } catch (error) {
-      if (!committed) await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+      await client.query('COMMIT'); committed=true;
+      return {providerAttemptId,reservationIds:reservations.map(x=>x[0]),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
+    } catch(error) { if(!committed) await client.query('ROLLBACK').catch(()=>undefined); throw error; }
+    finally { client.release(); }
   }
 
-  async finishModel(
-    context: RunContext,
-    handle: AutomationAttemptHandle | undefined,
-    usage: ModelUsage | undefined,
-    error?: unknown,
-  ): Promise<void> {
+  /** Release a prepared evaluator attempt when platform authorization fails before transport. */
+  async releaseModel(context: RunContext, handle: AutomationAttemptHandle | undefined, reason: string): Promise<void> {
     if (!handle) return;
-    const lineage = this.lineage(context)!;
-    const tokens = Object.values(usage ?? {}).reduce((sum, value) => sum + (typeof value === 'number' ? value : 0), 0);
-    const client = await this.pool.connect();
+    const lineage=this.lineage(context)!;
+    const client=await this.pool.connect();
     try {
       await client.query('BEGIN');
-      if (error) {
-        await client.query(
-          `UPDATE ${this.tables.providerAttempts} SET state='result_unknown',version=version+1,last_error=$2,updated_at=now()
-            WHERE provider_attempt_id=$1 AND state='dispatched'`,
-          [handle.providerAttemptId, error instanceof Error ? error.message : String(error)],
-        );
-        await client.query(
-          `UPDATE ${this.tables.budgetReservations} SET state='result_unknown',version=version+1,updated_at=now()
-            WHERE reservation_id=$1 AND state='reserved'`,
-          [handle.reservationId],
-        );
-        await client.query(
-          `UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,updated_at=now()
-            WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND active_run_id=$4`,
-          [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.executionRunId],
-        );
-      } else {
-        await client.query(
-          `UPDATE ${this.tables.providerAttempts} SET state='completed',version=version+1,result_payload=$2,completed_at=now(),updated_at=now()
-            WHERE provider_attempt_id=$1 AND state='dispatched'`,
-          [handle.providerAttemptId, JSON.stringify({ usage: usage ?? null })],
-        );
-        await client.query(
-          `UPDATE ${this.tables.budgetReservations} SET state='settled',version=version+1,updated_at=now()
-            WHERE reservation_id=$1 AND state='reserved'`,
-          [handle.reservationId],
-        );
-        await client.query(
-          `INSERT INTO ${this.tables.budgetSettlements}
-            (settlement_id,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,idempotency_key,amount,outcome,provider_receipt)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,'charged',$11)`,
-          [randomUUID(), handle.reservationId, lineage.tenantId, lineage.sessionId, lineage.automationId,
-            lineage.incarnationId, lineage.generation, lineage.executionId, lineage.executionRunId,
-            `settle:${handle.sourceKey}`, JSON.stringify({ usage: usage ?? null })],
-        );
-        await client.query(
-          `INSERT INTO ${this.tables.usage}
-            (usage_id,tenant_id,session_id,automation_id,execution_id,source_key,source_kind,turns,tokens,credits)
-           VALUES($1,$2,$3,$4,$5,$6,'model',1,$7,0)
-           ON CONFLICT(tenant_id,automation_id,source_key) DO NOTHING`,
-          [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId,
-            lineage.executionId, handle.sourceKey, tokens],
-        );
-      }
+      await client.query(`UPDATE ${this.tables.providerAttempts} SET state='cancelled',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,reason]);
+      await client.query(`UPDATE ${this.tables.budgetReservations} SET state='released',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
+      if(handle.allowanceUsed) await client.query(`UPDATE ${this.tables.completionAllowances} SET remaining_attempts=LEAST(2,remaining_attempts+1),updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[lineage.tenantId,lineage.sessionId,lineage.automationId]);
       await client.query('COMMIT');
-    } catch (finishError) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw finishError;
-    } finally {
-      client.release();
-    }
+    }catch(e){await client.query('ROLLBACK').catch(()=>undefined);throw e}finally{client.release()}
+  }
+
+  async finishModel(context: RunContext, handle: AutomationAttemptHandle | undefined, usage: ModelUsage | undefined, error?: unknown): Promise<void> {
+    if (!handle) return;
+    const lineage=this.lineage(context)!;
+    const client=await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      let unknown=!!error || !usage;
+      let amounts: {runs:number;turns:number;tokens:number;credits:number} | undefined;
+      if (usage) {
+        const tokens={inputTokens:usage.inputTokens??0,outputTokens:usage.outputTokens??0,cacheReadTokens:usage.cacheReadInputTokens??0,cacheCreationTokens:usage.cacheCreationInputTokens??0};
+        amounts={
+          runs:0,turns:1,
+          tokens:computeUsageTotalTokens(handle.model,tokens),
+          credits:await this.estimateCreditsMicro(client,lineage.tenantId,handle.model,tokens),
+        };
+        const heldResult=await client.query<{budget_kind:string;amount:string}>(
+          `SELECT budget_kind,amount::text FROM ${this.tables.budgetReservations} WHERE reservation_id=ANY($1::uuid[]) FOR UPDATE`,
+          [handle.reservationIds],
+        );
+        const held=new Map(heldResult.rows.map(row=>[row.budget_kind,parseWholeNumeric(row.amount,`reservation.${row.budget_kind}`)]));
+        if(Object.entries(amounts).some(([kind,amount])=>BigInt(amount)> (held.get(kind)??-1n))){
+          unknown=true;
+          error=new Error('actual_usage_exceeded_reservation');
+        }
+      }
+      if(unknown){
+        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='result_unknown',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,error instanceof Error?error.message:error?String(error):'usage_unavailable']);
+        await client.query(`UPDATE ${this.tables.budgetReservations} SET state='result_unknown',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
+        await client.query(`UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND active_run_id=$4`,[lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.executionRunId]);
+      }else{
+        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='completed',version=version+1,result_payload=$2,completed_at=now(),updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,JSON.stringify({usage})]);
+        await client.query(`UPDATE ${this.tables.budgetReservations} SET state='settled',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
+        for(const [kind,amount] of Object.entries(amounts!)) await client.query(
+          `INSERT INTO ${this.tables.budgetSettlements}(settlement_id,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,idempotency_key,amount,outcome,provider_receipt) SELECT $1,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,$2,$3,'charged',$4 FROM ${this.tables.budgetReservations} WHERE reservation_id=ANY($5::uuid[]) AND budget_kind=$6 ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,
+          [randomUUID(),`settle:${handle.sourceKey}:${kind}`,amount,JSON.stringify({usage}),handle.reservationIds,kind],
+        );
+        await client.query(`INSERT INTO ${this.tables.usage}(usage_id,tenant_id,session_id,automation_id,execution_id,source_key,source_kind,turns,tokens,credits) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9) ON CONFLICT(tenant_id,automation_id,source_key) DO NOTHING`,[randomUUID(),lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.executionId,handle.sourceKey,handle.purpose==='goal_evaluation'?'goal_evaluation':'model',amounts!.tokens,amounts!.credits]);
+        await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed','result_unknown') AND ((object_type='provider_attempt' AND object_id=$3) OR (object_type='budget_reservation' AND object_id=ANY($4::text[])))`,[lineage.tenantId,lineage.automationId,handle.providerAttemptId,handle.reservationIds]);
+      }
+      // A stale-generation attempt can still close authority owned by the current drain.
+      await new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable).tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);
+      await client.query('COMMIT');
+    }catch(e){await client.query('ROLLBACK').catch(()=>undefined);throw e}finally{client.release()}
   }
 
   async recordInteraction(
@@ -294,6 +398,7 @@ export class SessionAutomationRuntimeGuard {
         lineage.generation, lineage.executionId, lineage.executionRunId, key, kind, state, JSON.stringify(payload),
         state === 'completed' ? JSON.stringify(payload) : null],
     );
+    if(state==='completed'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='interaction' AND object_id IN (SELECT interaction_id::text FROM ${this.tables.interactions} WHERE tenant_id=$1 AND interaction_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,key]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
   }
 
   async recordBackgroundResource(
@@ -315,5 +420,6 @@ export class SessionAutomationRuntimeGuard {
         lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, childRunId, state,
         JSON.stringify({ childRunId, parentRunId: lineage.executionRunId })],
     );
+    if(state==='released'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource' AND object_id IN (SELECT background_resource_id::text FROM ${this.tables.backgroundResources} WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,resourceKey]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
   }
 }

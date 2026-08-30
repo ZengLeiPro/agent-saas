@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto'; // isolated real-PG fixture identities
 import pg from 'pg';
-import { afterAll,beforeAll,describe,expect,it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import { parseWholeNumeric } from './sessionAutomationRuntimeGuard.js';
 import { PgSessionAutomationAttributionStore } from './sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
 import { SessionAutomationToolProvider } from '../agent/tools/sessionAutomationTools.js';
@@ -19,6 +20,53 @@ describePg('session automation real PostgreSQL integration',()=>{
  it('multi-worker claims exactly once and crash lease is recovered',async()=>{await wake('multi');await Promise.all([store.claimDue(10,10),store.claimDue(10,10)]);const [a,b]=await Promise.all([store.claimDispatch(10,10),store.claimDispatch(10,10)]);expect([...a,...b]).toHaveLength(1);await new Promise(r=>setTimeout(r,20));await store.recoverLeases();expect(await store.claimDispatch(10,1000)).toHaveLength(1);});
  it('cancel/generation fence prevents stale dispatch',async()=>{await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);await wake('old-generation');await store.claimDue();await pool.query(`UPDATE ${store.tables.automations} SET generation=2,status='cancelled' WHERE automation_id=$1`,[automation]);expect(await store.claimDispatch()).toEqual([]);});
  it('tool visibility requires matching host fence',()=>{const provider=new SessionAutomationToolProvider({} as never);expect(provider.list()).toEqual([]);const base={channelContext:{channel:'web'},workspace:{root:'.',executionTarget:'server-local'},sessionId:session,runId:'run-a'} as any;expect(provider.list(base)).toEqual([]);expect(provider.list({...base,automationFence:{automationId:automation,incarnationId:incarnation,generation:2,specVersion:1,executionId:'e',runId:'run-a'}}).map(t=>t.id)).toEqual(['ScheduleWakeup','UpdateGoal']);});
+ it('fixed terminal schedules from the durable wakeup slot and advances the projection',async()=>{
+  const dueAt=new Date(Date.now()-1_000);
+  await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);
+  await pool.query(`UPDATE ${store.tables.wakeups} SET state='superseded' WHERE state IN ('pending','claimed')`);
+  await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'fixed',prompt:'continue',intervalMs:60_000,budget:{}})]);
+  await pool.query(`UPDATE ${store.tables.automations} SET generation=3,status='active',mode='fixed',phase='idle',active_run_id=NULL,continuation_epoch=7,projection_version=100 WHERE automation_id=$1`,[automation]);
+  await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId:session,automationId:automation,incarnationId:incarnation,generation:3,specVersion:1,continuationEpoch:7,triggerKey:'fixed-source-slot-7',dueAt,payload:{}}));
+  expect(await store.claimDue()).toBe(1);
+  const [dispatch]=await store.claimDispatch();
+  await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});
+  await store.markDispatched(dispatch!);
+  const before=await store.get(tenant,session,automation);
+  await new SessionAutomationTerminalProjector(store,`fixed-terminal-${randomUUID()}`).project({globalSequence:1,tenantId:tenant,sessionId:session,runId:dispatch!.targetRunId,status:'completed'});
+  const snapshot=await store.get(tenant,session,automation);
+  expect(snapshot).toMatchObject({phase:'waiting',projectionVersion:before!.projectionVersion+1});
+  const next=await pool.query(`SELECT continuation_epoch,trigger_key,due_at FROM ${store.tables.wakeups} WHERE automation_id=$1 AND trigger_key=$2`,[automation,`fixed:${automation}:g3:slot8`]);
+  expect(next.rows[0]).toMatchObject({continuation_epoch:'8',trigger_key:`fixed:${automation}:g3:slot8`});
+  expect(new Date(next.rows[0].due_at).getTime()).toBe(dueAt.getTime()+60_000);
+  await pool.query(`UPDATE ${store.tables.wakeups} SET state='superseded' WHERE automation_id=$1 AND state='pending'`,[automation]);
+  await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
+ });
+ it('fixed terminal skips missed periods, synchronizes its epoch, and is idempotent on repeated projection',async()=>{
+  const interval=60_000;
+  const dueAt=new Date(Date.now()-(3*interval+30_000));
+  await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);
+  await pool.query(`UPDATE ${store.tables.wakeups} SET state='superseded' WHERE state IN ('pending','claimed')`);
+  await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'fixed',prompt:'continue',intervalMs:interval,budget:{}})]);
+  await pool.query(`UPDATE ${store.tables.automations} SET generation=4,status='active',mode='fixed',phase='idle',active_run_id=NULL,continuation_epoch=7,projection_version=200 WHERE automation_id=$1`,[automation]);
+  await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId:session,automationId:automation,incarnationId:incarnation,generation:4,specVersion:1,continuationEpoch:7,triggerKey:'fixed-delayed-source-slot-7',dueAt,payload:{}}));
+  expect(await store.claimDue()).toBe(1);
+  const [dispatch]=await store.claimDispatch();
+  await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});
+  await store.markDispatched(dispatch!);
+  const projector=new SessionAutomationTerminalProjector(store,`fixed-delayed-${randomUUID()}`);
+  const terminal={globalSequence:1,tenantId:tenant,sessionId:session,runId:dispatch!.targetRunId,status:'completed' as const};
+  expect(await projector.project(terminal)).toBe(true);
+  expect(await projector.project(terminal)).toBe(false);
+  const next=await pool.query(`SELECT continuation_epoch,trigger_key,due_at,state FROM ${store.tables.wakeups} WHERE automation_id=$1 AND trigger_key=$2`,[automation,`fixed:${automation}:g4:slot11`]);
+  expect(next.rows).toHaveLength(1);
+  expect(next.rows[0]).toMatchObject({continuation_epoch:'11',trigger_key:`fixed:${automation}:g4:slot11`,state:'pending'});
+  expect(new Date(next.rows[0].due_at).getTime()).toBe(dueAt.getTime()+4*interval);
+  expect(new Date(next.rows[0].due_at).getTime()).toBeGreaterThan(Date.now());
+  const current=await pool.query(`SELECT continuation_epoch,projection_version FROM ${store.tables.automations} WHERE automation_id=$1`,[automation]);
+  expect(current.rows[0]).toMatchObject({continuation_epoch:'11',projection_version:'201'});
+  await pool.query(`UPDATE ${store.tables.wakeups} SET state='superseded' WHERE automation_id=$1 AND state='pending'`,[automation]);
+  await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
+ });
  it('terminal recovery scan advances durable cursor and survives restart',async()=>{await pool.query(`UPDATE ${store.tables.automations} SET generation=3,status='active',mode='adaptive',active_run_id=NULL WHERE automation_id=$1`,[automation]);await wake('terminal',3);await store.claimDue();const [dispatch]=await store.claimDispatch();await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});await store.markDispatched(dispatch!);await events.append({type:'run_finished',runId:dispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:1},{tenantId:tenant});const first=new SessionAutomationTerminalProjector(store);expect(await first.recover(events)).toBeGreaterThan(0);const cursor=await first.cursor();const second=new SessionAutomationTerminalProjector(store);expect(await second.recover(events)).toBe(0);expect(await second.cursor()).toBe(cursor);const execution=await pool.query(`SELECT state,terminal_status FROM ${store.tables.executions} WHERE run_id=$1`,[dispatch!.targetRunId]);expect(execution.rows[0]).toMatchObject({state:'terminal',terminal_status:'completed'});});
  it('pause keeps the active run alive and stale-generation terminal still releases the one-live slot',async()=>{await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);await pool.query(`UPDATE ${store.tables.automations} SET generation=10,status='active',mode='adaptive',phase='idle',active_run_id=NULL WHERE automation_id=$1`,[automation]);await wake('pause-running',10);await store.claimDue();const [dispatch]=await store.claimDispatch();await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});await store.markDispatched(dispatch!);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'pause');});expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.cancellations} WHERE run_id=$1`,[dispatch!.targetRunId])).rows[0].count).toBe(0);await events.append({type:'run_finished',runId:dispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:2},{tenantId:tenant});await new SessionAutomationTerminalProjector(store,'pause-terminal-test').recover(events);const snapshot=await store.get(tenant,session,automation);expect(snapshot).toMatchObject({status:'paused',phase:'idle'});expect(snapshot?.activeRunId).toBeUndefined();});
  it('clear writes a durable cancellation intent and converges after a retry',async()=>{const runId=randomUUID();await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await pool.query(`UPDATE ${store.tables.automations} SET generation=20,status='active',phase='running',active_run_id=$2 WHERE automation_id=$1`,[automation,runId]);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'clear');});let [item]=await store.claimCancellations();expect(item?.runId).toBe(runId);await store.failCancellation(item!,new Error('transient'));await pool.query(`UPDATE ${store.tables.cancellations} SET next_attempt_at=now() WHERE run_id=$1`,[runId]);[item]=await store.claimCancellations();await store.completeCancellation(item!);await runs.markStatus(runId,'cancelled','test cleanup');expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});});
@@ -90,6 +138,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   const [second]=await store.claimCancellations();
   await store.completeCancellation(first!);
   expect((await store.get(tenant,session,automation))?.activeRunId).toBe(runId);
+  await runs.markStatus(runId,'cancelled','authoritative cancellation receipt');
   await store.completeCancellation(second!);
   expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});
  });
@@ -114,6 +163,81 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect((await pool.query(`SELECT count(*)::int count FROM ${store.tables.reconciliationReceipts} WHERE provider_attempt_id=$1`,[reconcile!.providerAttemptId])).rows[0].count).toBe(1);
   const constraints=await pool.query(`SELECT count(*)::int count FROM pg_constraint WHERE conrelid=$1::regclass AND condeferrable`,[store.tables.providerAttempts]);expect(constraints.rows[0].count).toBeGreaterThanOrEqual(2);
   await expect(pool.query(`INSERT INTO ${store.tables.interactions}(interaction_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,interaction_key,interaction_kind,request_payload) VALUES($1,$2,$3,$4,$5,99,$6,$7,'bad-lineage','tool','{}')`,[randomUUID(),tenant,session,automationId,incarnationId,executionId,runId])).rejects.toMatchObject({code:'23503'});
+ });
+
+ it('clear drains evaluator/provider/resource/interaction/reservation authorities before the last-item terminal projection',async()=>{
+  const automationId=randomUUID(),incarnationId=randomUUID(),runId=randomUUID(),wakeupId=randomUUID(),outboxId=randomUUID(),executionId=randomUUID(),preparedId=randomUUID();
+  await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await runs.markStatus(runId,'completed','fixture');
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'goal','goal','active',1,1,1,1)`,[automationId,tenant,session,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'typed-drain',$4)`,[automationId,tenant,session,JSON.stringify({kind:'goal',mode:'goal',condition:'done',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.wakeups}(wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,due_at,state) VALUES($1,$2,$3,$4,$5,1,1,0,$6,now(),'consumed')`,[wakeupId,tenant,session,automationId,incarnationId,`typed-${automationId}`]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,0,$7,$8,'{}','completed')`,[outboxId,wakeupId,tenant,session,automationId,incarnationId,`typed-${automationId}`,runId]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state,terminal_status) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'terminal','completed')`,[executionId,tenant,session,automationId,incarnationId,outboxId,runId]);
+  await pool.query(`INSERT INTO ${store.tables.preparedDispatchAttempts}(prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,outbox_id,idempotency_key,request_payload,state) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9,'{}','completed')`,[preparedId,tenant,session,automationId,incarnationId,executionId,runId,outboxId,`dispatch:${outboxId}`]);
+  const providerId=randomUUID(),reservationId=randomUUID(),evaluationId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,provider,operation,idempotency_key,request_payload,state) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,'test','prepared',$9,'{}','prepared')`,[providerId,preparedId,tenant,session,automationId,incarnationId,executionId,runId,`attempt:${providerId}`]);
+  await pool.query(`INSERT INTO ${store.tables.budgetReservations}(reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,budget_kind,amount,unit,idempotency_key) VALUES($1,$2,$3,$4,$5,1,$6,$7,'turns',1,'turn',$8)`,[reservationId,tenant,session,automationId,incarnationId,executionId,runId,`reservation:${reservationId}`]);
+  await pool.query(`INSERT INTO ${store.tables.evaluations}(evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence) VALUES($1,$2,$3,$4,$5,$6,1,1,1,'{}')`,[evaluationId,tenant,session,automationId,executionId,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.interactions}(interaction_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,interaction_key,interaction_kind,request_payload) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,'tool','{}')`,[randomUUID(),tenant,session,automationId,incarnationId,executionId,runId,`interaction:${automationId}`]);
+  await pool.query(`INSERT INTO ${store.tables.backgroundResources}(background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key) VALUES($1,$2,$3,$4,$5,1,$6,$7,'child_run',$8)`,[randomUUID(),tenant,session,automationId,incarnationId,executionId,runId,`resource:${automationId}`]);
+  await store.tx(async c=>{const live=await store.getLocked(c,tenant,session,automationId);await store.control(c,live!,'clear');});
+  expect(await store.get(tenant,session,automationId)).toMatchObject({status:'cancelling',phase:'draining'});
+  const adapter = { execute: async (job: import('./sessionAutomationStore.js').SessionAutomationLifecycleJob) => {
+    // Simulate the authoritative runtime side effect; it intentionally happens outside the store transaction.
+    if (job.objectType === 'run') await pool.query(`UPDATE ${runs.runsTable} SET status='cancelled',updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3`, [job.tenantId, job.sessionId, job.objectId]);
+    const { attemptCount: _attemptCount, details: _details, ...fence } = job;
+    return { ...fence, receiptKey: `test-runtime:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const, payload: {} };
+  } };
+  await store.processLifecycleWork({ run: adapter, execution: adapter, evaluation: adapter, provider_attempt: adapter, interaction: adapter, background_resource: adapter, budget_reservation: adapter }, 20);
+  expect(await store.get(tenant,session,automationId)).toMatchObject({status:'cancelled',phase:'terminal'});
+  const states=await pool.query(`SELECT (SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1) evaluation,(SELECT state FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$2) provider,(SELECT state FROM ${store.tables.budgetReservations} WHERE reservation_id=$3) reservation`,[evaluationId,providerId,reservationId]);
+  expect(states.rows[0]).toMatchObject({evaluation:'cancelled',provider:'cancelled',reservation:'released'});
+ });
+
+ it('old-generation lifecycle receipts are fenced and cannot mutate a new generation',async()=>{
+  const automationId=randomUUID(),incarnationId=randomUUID(),evaluationId=randomUUID(),executionId=randomUUID(),runId=randomUUID(),wakeupId=randomUUID(),outboxId=randomUUID();
+  await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'goal','goal','cancelling',2,1,1,1)`,[automationId,tenant,session,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'old-fence',$4)`,[automationId,tenant,session,JSON.stringify({kind:'goal',mode:'goal',condition:'done',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.wakeups}(wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,due_at,state) VALUES($1,$2,$3,$4,$5,1,1,0,$6,now(),'consumed')`,[wakeupId,tenant,session,automationId,incarnationId,`old-${automationId}`]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,0,$7,$8,'{}','completed')`,[outboxId,wakeupId,tenant,session,automationId,incarnationId,`old-${automationId}`,runId]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'terminal')`,[executionId,tenant,session,automationId,incarnationId,outboxId,runId]);
+  await pool.query(`INSERT INTO ${store.tables.evaluations}(evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence) VALUES($1,$2,$3,$4,$5,$6,1,1,1,'{}')`,[evaluationId,tenant,session,automationId,executionId,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action) VALUES($1,$2,$3,$4,$5,1,$5,1,'evaluation',$6,'cancel')`,[randomUUID(),tenant,session,automationId,incarnationId,evaluationId]);
+  await store.processLifecycleWork();
+  expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`,[evaluationId])).rows[0].state).toBe('pending');
+ });
+
+ it('dead typed work forces reconcile_required instead of a false terminal state',async()=>{
+  const automationId=randomUUID(),incarnationId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version,desired_terminal_status) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','cancelling','draining',1,1,1,1,'cancelled')`,[automationId,tenant,session,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'dead-work',$4)`,[automationId,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'x',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action,state) VALUES($1,$2,$3,$4,$5,1,$5,1,'provider_attempt',$6,'reconcile','dead')`,[randomUUID(),tenant,session,automationId,incarnationId,randomUUID()]);
+  await store.tx(c=>store.tryFinalizeLocked(c,tenant,session,automationId));
+  expect(await store.get(tenant,session,automationId)).toMatchObject({status:'reconcile_required',phase:'draining'});
+ });
+
+ it('parses scaled PG NUMERIC as strict whole values and upgrades legacy scheduling columns',async()=>{
+  const numeric=await pool.query<{amount:string}>(`SELECT 1::numeric(20,6)::text amount`);
+  expect(parseWholeNumeric(numeric.rows[0]!.amount)).toBe(1n);
+  await pool.query(`ALTER TABLE ${store.tables.outbox} DROP COLUMN updated_at`);
+  await pool.query(`DROP INDEX IF EXISTS ${prefix}_automation_lifecycle_due`);
+  await pool.query(`ALTER TABLE ${store.tables.lifecycleWork} DROP COLUMN next_attempt_at`);
+  await store.init();
+  const columns=await pool.query(`SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=current_schema() AND ((table_name=$1 AND column_name='updated_at') OR (table_name=$2 AND column_name='next_attempt_at'))`,[store.tables.outbox,store.tables.lifecycleWork]);
+  expect(columns.rowCount).toBe(2);
+ });
+
+ it('parks external authority work until an authoritative receipt wakes it',async()=>{
+  const automationId=randomUUID(),incarnationId=randomUUID(),workId=randomUUID(),objectId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','reconcile_required','waiting',1,1,1,1)`,[automationId,tenant,session,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'waiting-work',$4)`,[automationId,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'x',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action) VALUES($1,$2,$3,$4,$5,1,$5,1,'provider_attempt',$6,'reconcile')`,[workId,tenant,session,automationId,incarnationId,objectId]);
+  await store.processLifecycleWork({provider_attempt:{execute:async job=>{const {attemptCount:_,details:__,...fence}=job;return{...fence,receiptKey:'await-provider',authority:'runtime',outcome:'pending',payload:{}};}}});
+  expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE work_id=$1`,[workId])).rows[0].state).toBe('waiting');
+  const receipt={workId,tenantId:tenant,sessionId:session,automationId,incarnationId,generation:1,objectIncarnationId:incarnationId,objectGeneration:1,objectType:'provider_attempt' as const,objectId,action:'reconcile' as const,receiptKey:'provider-final',authority:'provider' as const,outcome:'completed' as const,payload:{providerState:'completed'}};
+  expect(await store.applyAuthoritativeLifecycleReceipt(receipt)).toBe(true);
+  expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE work_id=$1`,[workId])).rows[0].state).toBe('completed');
  });
 
 });

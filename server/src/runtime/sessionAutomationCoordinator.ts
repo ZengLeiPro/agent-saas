@@ -1,6 +1,6 @@
 import type { RuntimeScheduler } from './scheduler.js';
 import type { SessionCatalog } from './sessionCatalog.js';
-import type { ClaimedDispatch, PgSessionAutomationStore } from './sessionAutomationStore.js';
+import type { ClaimedDispatch, PgSessionAutomationStore, SessionAutomationLifecycleAdapters } from './sessionAutomationStore.js';
 
 export interface AutomationRunDispatcher {
   stage(input: { tenantId: string; sessionId: string; runId: string; prompt: string; metadata: Record<string, unknown> }): Promise<void>;
@@ -55,7 +55,7 @@ export class SessionAutomationCoordinator {
   constructor(
     readonly store: PgSessionAutomationStore,
     readonly dispatcher: AutomationRunDispatcher,
-    readonly options: { executionEnabled: () => boolean; cancelRun?: (runId:string,reason:string)=>Promise<void>; pollMs?: number; batchSize?: number; onError?: (error: unknown) => void } = { executionEnabled: () => false },
+    readonly options: { executionEnabled: () => boolean; cancelRun?: (runId:string,reason:string)=>Promise<void>; lifecycleAdapters?:SessionAutomationLifecycleAdapters; pollMs?: number; batchSize?: number; onError?: (error: unknown) => void } = { executionEnabled: () => false },
   ) {}
   start(): void { if (this.timer) return; void this.tick(); this.timer = setInterval(() => void this.tick(), this.options.pollMs ?? 1_000); this.timer.unref(); }
   async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = undefined; while (this.running) await new Promise(r => setTimeout(r, 10)); }
@@ -65,6 +65,7 @@ export class SessionAutomationCoordinator {
     try {
       await this.store.recoverLeases();
       await this.processCancellations();
+      await this.store.processLifecycleWork?.(this.options.lifecycleAdapters, this.options.batchSize ?? 25);
       await this.recoverStagedActivations();
       await this.store.claimDue(this.options.batchSize ?? 25);
       for (const item of await this.store.claimDispatch(this.options.batchSize ?? 10)) await this.dispatchOne(item);

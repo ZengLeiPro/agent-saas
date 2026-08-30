@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import { getTranscriptPath } from '../data/transcripts/store.js';
-import { writeSessionMetaIfAbsent } from '../data/transcripts/meta.js';
+import { deleteSessionMetaIfMatches, readSessionMeta, writeSessionMetaIfAbsent } from '../data/transcripts/meta.js';
 import { SessionAutomationConflictError, type AutomationIdentity } from '../runtime/sessionAutomationStore.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 
@@ -20,7 +20,7 @@ export async function ensureAutomationSession(req: Request, sessionId: string, a
     userId: req.user.sub,
   });
   const now = new Date().toISOString();
-  await writeSessionMetaIfAbsent(transcriptPath, {
+  const sessionMetaCreated = await writeSessionMetaIfAbsent(transcriptPath, {
     userId: req.user.sub,
     username: req.user.username,
     userRole: req.user.role,
@@ -34,5 +34,24 @@ export async function ensureAutomationSession(req: Request, sessionId: string, a
     createdAt: now,
     updatedAt: now,
   });
-  return { tenantId: req.user.tenantId, ownerUserId: req.user.sub, sessionId };
+  const meta=await readSessionMeta(transcriptPath);
+  const incompatible=!meta||meta.tenantId!==req.user.tenantId||meta.userId!==req.user.sub||meta.cwd!==cwd
+    ||meta.workspaceId!==sessionId||meta.transcriptPath!==transcriptPath||meta.orgAgentId!==undefined
+    ||meta.profileId!==undefined||meta.profileKey!==undefined||meta.profileVersionId!==undefined;
+  if(incompatible)throw new SessionAutomationConflictError('SESSION_META_CONFLICT','existing session metadata conflicts with automation creation intent');
+  return { tenantId: req.user.tenantId, ownerUserId: req.user.sub, sessionId, sessionMetaCreated };
+}
+
+/** Delete only the exact orphan meta created by this command intent. */
+export async function compensateAutomationSession(req: Request, sessionId: string, agentCwd: string): Promise<boolean> {
+  if (!req.user?.sub || !req.user.tenantId) return false;
+  const cwd = resolveUserCwd(agentCwd, { id:req.user.sub,username:req.user.username,role:req.user.role,tenantId:req.user.tenantId });
+  const transcriptPath = getTranscriptPath(cwd,sessionId,{tenantId:req.user.tenantId,userId:req.user.sub});
+  return deleteSessionMetaIfMatches(transcriptPath, meta =>
+    meta.tenantId===req.user!.tenantId && meta.userId===req.user!.sub && meta.username===req.user!.username
+    && meta.userRole===req.user!.role && meta.channel==='web' && meta.cwd===cwd
+    && meta.transcriptPath===transcriptPath && meta.workspaceId===sessionId
+    && meta.sandboxProfile==='daily' && meta.orgAgentId===undefined && meta.profileId===undefined
+    && meta.profileKey===undefined && meta.profileVersionId===undefined
+  );
 }

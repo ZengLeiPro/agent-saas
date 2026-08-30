@@ -58,7 +58,7 @@ export async function resolveAutomationBudgetReason(input: {
   const usageResult = await input.client.query(
     `SELECT COALESCE(SUM(turns),0) AS turns,COALESCE(SUM(tokens),0) AS tokens,
             COALESCE(SUM(credits),0)::text AS credits
-       FROM ${input.tables.usage} WHERE tenant_id=$1 AND automation_id=$2`,
+       FROM ${input.tables.usage} WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
     [input.tenantId, input.automationId],
   );
   const totals = usageResult.rows[0] ?? {};
@@ -67,13 +67,13 @@ export async function resolveAutomationBudgetReason(input: {
             COALESCE(SUM(amount) FILTER (WHERE budget_kind='tokens'),0)::text AS tokens,
             COALESCE(SUM(amount) FILTER (WHERE budget_kind='credits'),0)::text AS credits
        FROM ${input.tables.budgetReservations}
-      WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('reserved','result_unknown','reconcile')`,
+      WHERE tenant_id=$1 AND automation_id=$2 AND purpose='work' AND state IN ('reserved','result_unknown','reconcile')`,
     [input.tenantId, input.automationId],
   );
   const reserved = reservedResult.rows[0] ?? {};
   const budget = (row.spec as SessionAutomationSpec).budget ?? {};
-  let usedMicrocredits = creditsToMicrocredits(String(totals.credits ?? '0'));
-  const reservedMicrocredits = creditsToMicrocredits(String(reserved.credits ?? '0'));
+  let usedMicrocredits = wholeNumericToBigInt(totals.credits);
+  const reservedMicrocredits = wholeNumericToBigInt(reserved.credits);
   if (usedMicrocredits === undefined || reservedMicrocredits === undefined) return 'credits_unverifiable';
   usedMicrocredits += reservedMicrocredits;
 

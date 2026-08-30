@@ -31,7 +31,7 @@ describe('automation evaluator reducers', () => {
   it('treats every returned budget reason as a hard-gate failure', async () => {
     const rows = [
       [{ run_count: '1', spec: { budget: { maxCredits: 1 } } }],
-      [{ turns: '0', tokens: '0', credits: '1.000000' }],
+      [{ turns: '0', tokens: '0', credits: '1000000' }],
       [{ turns: '0', tokens: '0', credits: '0' }],
       [{ ledger: null, events: null }],
     ];

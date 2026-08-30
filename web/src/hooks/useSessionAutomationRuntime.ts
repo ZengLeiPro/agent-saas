@@ -32,7 +32,7 @@ export function useSessionAutomationRuntime({ sessionId, onSessionCommitted, onN
   const [controlPending, setControlPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sessionIdRef = useRef(sessionId);
-  const snapshotRef = useRef(snapshot);
+  const snapshotRef = useRef<SessionAutomationSnapshot | null>(snapshot);
   const cursorRef = useRef<string | null>(null);
   const requestGenerationRef = useRef(0);
   const seenEventIdsRef = useRef(new Set<string>());
@@ -47,7 +47,7 @@ export function useSessionAutomationRuntime({ sessionId, onSessionCommitted, onN
     const next = incoming ? normalizeAutomationSnapshot(incoming) : null;
     if (next && snapshotRef.current
       && next.automationId === snapshotRef.current.automationId
-      && projectionVersion(next) < projectionVersion(snapshotRef.current)) return false;
+      && projectionVersion(next) <= projectionVersion(snapshotRef.current)) return false;
     snapshotRef.current = next;
     setSnapshot(next);
     return true;

@@ -7,7 +7,7 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'crypto'; import { parseSessionAutomationCommand } from '@agent/shared/lib/sessionAutomationCommands.js';
 import { homedir } from 'os';
 import { resolve as resolvePath } from 'path';
 import type { Express } from 'express';
@@ -269,10 +269,10 @@ export class WebChannel implements BaseChannel {
    *
    * 大小上限 500，单条 TTL 60s；TTL 过后允许用户手动"重试"生成新 client_msg_id。
    */
-  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' }>();
+  private idempotencyCache = new Map<string, { streamId: string; status: 'in_flight' | 'done' | 'failed'; at: number; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string } }>();
   private static readonly IDEMPOTENCY_MAX = 500;
   private static readonly IDEMPOTENCY_TTL_MS = 60_000;
-  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } | undefined {
+  private idempotencyGet(userId: string | undefined, clientMsgId: string): { streamId: string; status: 'in_flight' | 'done' | 'failed'; sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string } } | undefined {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     const entry = this.idempotencyCache.get(key);
     if (!entry) return undefined;
@@ -291,7 +291,7 @@ export class WebChannel implements BaseChannel {
       ...(entry.deliveryMode ? { deliveryMode: entry.deliveryMode } : {}),
       ...(entry.queuedBehindRunId ? { queuedBehindRunId: entry.queuedBehindRunId } : {}),
       ...(entry.steeringTargetRunId ? { steeringTargetRunId: entry.steeringTargetRunId } : {}),
-      ...(entry.terminalStatus ? { terminalStatus: entry.terminalStatus } : {}),
+      ...(entry.terminalStatus ? { terminalStatus: entry.terminalStatus } : {}), ...(entry.rejection ? { rejection: entry.rejection } : {}),
     };
   }
   private idempotencySet(
@@ -299,7 +299,7 @@ export class WebChannel implements BaseChannel {
     clientMsgId: string,
     status: 'in_flight' | 'done' | 'failed',
     streamId: string,
-    meta: { sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled' } = {},
+    meta: { sessionId?: string; runId?: string; deliveryMode?: 'queue' | 'steer'; queuedBehindRunId?: string; steeringTargetRunId?: string; terminalStatus?: 'completed' | 'failed' | 'cancelled'; rejection?: { reasonCode: ChatRejectReasonCode; reason: string } } = {},
   ): void {
     const key = `${userId ?? 'anon'}|${clientMsgId}`;
     this.idempotencyCache.set(key, {
@@ -311,7 +311,7 @@ export class WebChannel implements BaseChannel {
       ...(meta.deliveryMode ? { deliveryMode: meta.deliveryMode } : {}),
       ...(meta.queuedBehindRunId ? { queuedBehindRunId: meta.queuedBehindRunId } : {}),
       ...(meta.steeringTargetRunId ? { steeringTargetRunId: meta.steeringTargetRunId } : {}),
-      ...(meta.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}),
+      ...(meta.terminalStatus ? { terminalStatus: meta.terminalStatus } : {}), ...(meta.rejection ? { rejection: meta.rejection } : {}),
     });
     // LRU 驱逐
     while (this.idempotencyCache.size > WebChannel.IDEMPOTENCY_MAX) {
@@ -2504,7 +2504,7 @@ export class WebChannel implements BaseChannel {
           this.wsSend(ws, { type: 'session', sessionId: dupEntry.sessionId, client_msg_id: clientMsgId });
         }
         return;
-      }
+      } if (dupEntry.rejection) { this.sendChatRejected(ws, clientMsgId, dupEntry.rejection.reasonCode, dupEntry.rejection.reason); return; }
       // done/failed 仍返回原提交的终态关联；传输层重试不是新的业务消息。
       this.sendChatAck(ws, clientMsgId, {
         ...(dupEntry.sessionId ? { sessionId: dupEntry.sessionId } : {}),
@@ -2557,7 +2557,7 @@ export class WebChannel implements BaseChannel {
       this.sendChatRejected(ws, clientMsgId, 'stt_not_configured', '服务端未配置语音识别');
       return;
     }
-
+    let automationCommandRejection: string | undefined; try { if (parseSessionAutomationCommand(resolvedMessage)) automationCommandRejection = 'Session automation 命令不能通过普通 WebSocket chat 提交；请使用 session automation 命令接口'; } catch (error) { if (!/^\s*\/(?:loop|goal)(?:\s|$)/i.test(resolvedMessage)) throw error; automationCommandRejection = `无效的 session automation 命令${error instanceof Error ? `：${error.message}` : ''}`; } if (automationCommandRejection) { const rejection = { reasonCode: 'access_denied' as const, reason: automationCommandRejection }; this.idempotencySet(user?.sub, clientMsgId, 'failed', '', { rejection }); this.sendChatRejected(ws, clientMsgId, rejection.reasonCode, rejection.reason); return; }
     // Log attachment info
     if (attachments && attachments.length > 0) {
       const imageCount = attachments.filter((a: UploadedFileInfo) => a.isImage).length;

@@ -107,7 +107,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       await store.control(client, current!, 'clear');
     });
     await lockedPromise;
-    const admission = guard.beforeModel(setup.context, 'turn:1');
+    const admission = guard.beforeModel(setup.context, 'turn:1', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20});
     unlock();
     await clear;
     await expect(admission).rejects.toBeInstanceOf(AutomationFenceRejectedError);
@@ -121,9 +121,9 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('the first reservation consumes the final turn atomically and a concurrent admission fails closed', async () => {
     const setup = await activeExecution({ maxTurns: 1 });
-    const first = await guard.beforeModel(setup.context, 'turn:first');
+    const first = await guard.beforeModel(setup.context, 'turn:first', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20});
     expect(first).toBeDefined();
-    await expect(guard.beforeModel(setup.context, 'turn:second')).rejects.toBeInstanceOf(AutomationBudgetExceededError);
+    await expect(guard.beforeModel(setup.context, 'turn:second', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationBudgetExceededError);
     const automation = await pool.query(
       `SELECT status,limit_hit_reason FROM ${store.tables.automations} WHERE tenant_id=$1 AND automation_id=$2`,
       [tenantId, setup.automationId],
@@ -133,7 +133,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       `SELECT count(*)::int AS count FROM ${store.tables.budgetReservations} WHERE automation_id=$1`,
       [setup.automationId],
     );
-    expect(rows.rows[0].count).toBe(1);
+    expect(rows.rows[0].count).toBe(4);
   });
 
   it('a lease-expired evaluator admitted before a crash is frozen for explicit reconciliation', async () => {
@@ -147,7 +147,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
         JSON.stringify({ summary: 'done', evidenceRefs: ['event:1'], hardGates: {} }), randomUUID()],
     );
-    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${evaluationId}`);
+    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${evaluationId}`, {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
     const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
     expect(await evaluator.reconcileUnknown()).toBe(1);
     expect((await pool.query(`SELECT state,provider_attempt_id FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0]).toMatchObject({
@@ -190,7 +190,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('explicit evaluator receipts are idempotent and only completed/not_found resolve result_unknown', async () => {
     const setup = await activeExecution();
-    const attempt = await guard.beforeModel(setup.context, 'goal-evaluation:receipt-test');
+    const attempt = await guard.beforeModel(setup.context, 'goal-evaluation:receipt-test', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
     expect(attempt).toBeDefined();
     const evaluationId = randomUUID();
     await pool.query(
@@ -207,6 +207,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       await store.tx(client => store.control(client, current!, 'reconcile', {
         providerAttemptId: attempt!.providerAttemptId,
         receiptKey: `receipt-${observedState}`,
+        receiptAuthority: 'provider_adapter',
         observedState,
         receiptPayload: { providerRequestId: 'provider-1' },
       }));
@@ -217,6 +218,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     const notFound = {
       providerAttemptId: attempt!.providerAttemptId,
       receiptKey: 'receipt-not-found',
+      receiptAuthority: 'operator' as const,
       observedState: 'not_found' as const,
       receiptPayload: { providerRequestId: 'provider-1' },
     };
@@ -231,7 +233,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     }))).rejects.toMatchObject({ code: 'CONFLICT' });
 
     const completedSetup = await activeExecution();
-    const completedAttempt = await guard.beforeModel(completedSetup.context, 'goal-evaluation:completed-receipt');
+    const completedAttempt = await guard.beforeModel(completedSetup.context, 'goal-evaluation:completed-receipt', {model: completedSetup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
     const completedEvaluationId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
@@ -246,6 +248,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     await store.tx(client => store.control(client, completedCurrent!, 'reconcile', {
       providerAttemptId: completedAttempt!.providerAttemptId,
       receiptKey: 'receipt-completed',
+      receiptAuthority: 'provider_adapter',
       observedState: 'completed',
       receiptPayload: { rawResult: '{"decision":"met"}' },
     }));
@@ -282,4 +285,25 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(evaluate).toHaveBeenCalledTimes(1);
     expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0].state).toBe('unverifiable');
   });
+  it('does not claim or call the provider for a stale evaluator fence', async () => {
+    const setup = await activeExecution();
+    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    const evaluationId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tables.evaluations}
+        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence)
+       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7)`,
+      [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
+        JSON.stringify({ summary: 'done', evidenceRefs: ['event:stale'], hardGates: {} })],
+    );
+    await pool.query(`UPDATE ${store.tables.automations} SET generation=2 WHERE tenant_id=$1 AND automation_id=$2`, [tenantId, setup.automationId]);
+    const evaluate = vi.fn(async () => ({ decision: 'met' as const, reason: 'must-not-run', confidence: 1 }));
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate } as GoalEvaluatorPort);
+    expect(await evaluator.evaluatePending()).toBe(0);
+    expect(evaluate).not.toHaveBeenCalled();
+    expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0].state).toBe('pending');
+    expect((await pool.query(`SELECT count(*)::int n FROM ${store.tables.providerAttempts} WHERE automation_id=$1`, [setup.automationId])).rows[0].n).toBe(0);
+    expect((await pool.query(`SELECT count(*)::int n FROM ${store.tables.budgetReservations} WHERE automation_id=$1`, [setup.automationId])).rows[0].n).toBe(0);
+  });
+
 });

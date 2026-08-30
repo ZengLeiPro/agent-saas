@@ -1,14 +1,15 @@
-import type pg from 'pg';
+import type pg from 'pg'; // mirror pg: NUMERIC values are always strings
 import { describe, expect, it } from 'vitest';
 import {
   AutomationBudgetExceededError,
   AutomationFenceRejectedError,
   SessionAutomationRuntimeGuard,
+  parseWholeNumeric,
 } from './sessionAutomationRuntimeGuard.js';
 import type { RunContext } from './types.js';
 
 const context = {
-  tenantId: 'tenant-a', sessionId: 'session-a', runId: 'run-a', model: 'model-a',
+  tenantId: 'tenant-a', sessionId: 'session-a', runId: 'run-a', model: 'claude-sonnet-4-5',
   automationFence: {
     automationId: '11111111-1111-4111-8111-111111111111',
     incarnationId: '22222222-2222-4222-8222-222222222222',
@@ -24,7 +25,10 @@ class FakePool {
     generation: 2, spec_version: 3, active_run_id: 'run-a',
   };
   budget: Record<string, unknown> = {};
+  runCount = 0;
   reserved = { turns: '0', tokens: '0', credits: '0' };
+  allowanceRemaining = 2;
+  settlementReservations: Array<{ budget_kind: string; amount: string }> = [];
 
   async connect(): Promise<pg.PoolClient> {
     return { query: this.query.bind(this), release() {} } as unknown as pg.PoolClient;
@@ -37,13 +41,24 @@ class FakePool {
       return { rows: [this.automation] as T[], rowCount: 1 };
     }
     if (normalized.includes('SELECT a.run_count')) {
-      return { rows: [{ run_count: 0, spec: { budget: this.budget } }] as T[], rowCount: 1 };
+      return { rows: [{ run_count: this.runCount, spec: { budget: this.budget } }] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith('SELECT s.spec,a.run_count FROM runtime_session_automations')) {
+      return { rows: [{ run_count: this.runCount, spec: { budget: this.budget } }] as T[], rowCount: 1 };
     }
     if (normalized.includes('COALESCE(SUM(turns)') && normalized.includes('FROM runtime_session_automation_usage')) {
-      return { rows: [{ turns: 0, tokens: 0, credits: '0' }] as T[], rowCount: 1 };
+      return { rows: [{ turns: '0', tokens: '0', credits: '0' }] as T[], rowCount: 1 };
     }
     if (normalized.includes('FROM runtime_session_automation_budget_reservations') && normalized.includes('FILTER')) {
       return { rows: [this.reserved] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith('UPDATE runtime_session_automation_completion_allowances')) {
+      if (this.allowanceRemaining <= 0) return { rows: [] as T[], rowCount: 0 };
+      this.allowanceRemaining -= 1;
+      return { rows: [{ remaining_attempts: this.allowanceRemaining }] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith('SELECT budget_kind,amount::text FROM runtime_session_automation_budget_reservations')) {
+      return { rows: this.settlementReservations as T[], rowCount: this.settlementReservations.length };
     }
     if (normalized.includes('FROM runtime_session_automation_provider_attempts') && normalized.includes('FOR UPDATE')) {
       return { rows: [] as T[], rowCount: 0 };
@@ -55,18 +70,27 @@ class FakePool {
   }
 }
 
+describe('strict whole PostgreSQL NUMERIC parsing', () => {
+  it('accepts integral scale and rejects fractional/exponent/non-canonical values', () => {
+    expect(parseWholeNumeric('1.000000')).toBe(1n);
+    expect(parseWholeNumeric('-0.000000')).toBe(0n);
+    for (const value of ['1.000001', '1e0', 'NaN', '', ' 1.0']) expect(() => parseWholeNumeric(value)).toThrow(/invalid whole NUMERIC/);
+  });
+});
+
 describe('SessionAutomationRuntimeGuard', () => {
   it('在同一事务内校验 fence、预算并提交 reservation 与 provider attempt', async () => {
     const pool = new FakePool();
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
-    const handle = await guard.beforeModel(context, 'turn:1');
+    const handle = await guard.beforeModel(context, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20});
 
     expect(handle).toBeDefined();
     const joined = pool.statements.join('\n');
     expect(pool.statements.filter((sql) => sql === 'BEGIN')).toHaveLength(1);
     expect(joined.indexOf('SELECT status,incarnation_id')).toBeLessThan(joined.indexOf('INSERT INTO runtime_session_automation_budget_reservations'));
     expect(joined).toContain('INSERT INTO runtime_session_automation_provider_attempts');
-    expect(joined).toContain("SET state='dispatched'");
+    expect(joined).toContain("'dispatched',now()");
+    expect(pool.statements.filter((sql) => sql.includes('INSERT INTO runtime_session_automation_budget_reservations'))).toHaveLength(4);
     expect(pool.statements.at(-1)).toBe('COMMIT');
   });
 
@@ -74,7 +98,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     const stale = new FakePool();
     stale.automation.generation = 3;
     const staleGuard = new SessionAutomationRuntimeGuard(stale as unknown as pg.Pool);
-    await expect(staleGuard.beforeModel(context, 'turn:1')).rejects.toBeInstanceOf(AutomationFenceRejectedError);
+    await expect(staleGuard.beforeModel(context, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationFenceRejectedError);
     expect(stale.statements.some((sql) => sql.startsWith('INSERT INTO'))).toBe(false);
 
     const cancelling = new FakePool();
@@ -88,8 +112,9 @@ describe('SessionAutomationRuntimeGuard', () => {
     pool.budget = { maxTurns: 1 };
     pool.reserved.turns = '1';
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
-    await expect(guard.beforeModel(context, 'turn:last')).rejects.toBeInstanceOf(AutomationBudgetExceededError);
-    expect(pool.statements.join('\n')).toContain("SET status='expired'");
+    await expect(guard.beforeModel(context, 'turn:last', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationBudgetExceededError);
+    expect(pool.statements.join('\n')).toContain("desired_terminal_status='expired'");
+    expect(pool.statements.join('\n')).toContain("phase='draining'");
     expect(pool.statements.some((sql) => sql.includes('INSERT INTO runtime_session_automation_provider_attempts'))).toBe(false);
     expect(pool.statements.at(-1)).toBe('COMMIT');
   });
@@ -99,7 +124,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
     await guard.finishModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
-      reservationId: '66666666-6666-4666-8666-666666666666', sourceKey: 'model:run-a:turn:1',
+      reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model, purpose: 'work', sourceKey: 'model:run-a:turn:1',
     }, undefined, new Error('connection reset after dispatch'));
 
     const joined = pool.statements.join('\n');
@@ -108,10 +133,109 @@ describe('SessionAutomationRuntimeGuard', () => {
     expect(pool.statements.at(-1)).toBe('COMMIT');
   });
 
+  it('配置 credit 上限时未知模型价格 fail-closed', async () => {
+    const pool = new FakePool();
+    pool.budget = { maxCredits: 1 };
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    await expect(guard.beforeModel(context, 'turn:priced', { model: 'unknown-model', inputTokens: 10, maxOutputTokens: 20 }))
+      .rejects.toMatchObject({ reason: 'unknown_model_price' });
+    expect(pool.statements.some((sql) => sql.includes('INSERT INTO runtime_session_automation_provider_attempts'))).toBe(false);
+  });
+
+  it('runs/tokens/credits 使用 current+reserved+prospective 的 inclusive 上界', async () => {
+    const exactTokens = new FakePool(); exactTokens.budget = { maxTokens: 47 };
+    await expect(new SessionAutomationRuntimeGuard(exactTokens as unknown as pg.Pool).beforeModel(context, 'tokens:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
+    const overTokens = new FakePool(); overTokens.budget = { maxTokens: 46 };
+    await expect(new SessionAutomationRuntimeGuard(overTokens as unknown as pg.Pool).beforeModel(context, 'tokens:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_tokens' });
+
+    const exactCredits = new FakePool(); exactCredits.budget = { maxCredits: 0.69 };
+    await expect(new SessionAutomationRuntimeGuard(exactCredits as unknown as pg.Pool).beforeModel(context, 'credits:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
+    const overCredits = new FakePool(); overCredits.budget = { maxCredits: 0.689999 };
+    await expect(new SessionAutomationRuntimeGuard(overCredits as unknown as pg.Pool).beforeModel(context, 'credits:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_credits' });
+
+    const exactRuns = new FakePool(); exactRuns.budget = { maxRuns: 1 }; exactRuns.runCount = 1;
+    await expect(new SessionAutomationRuntimeGuard(exactRuns as unknown as pg.Pool).beforeModel(context, 'runs:exact', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).resolves.toBeDefined();
+    const overRuns = new FakePool(); overRuns.budget = { maxRuns: 1 }; overRuns.runCount = 2;
+    await expect(new SessionAutomationRuntimeGuard(overRuns as unknown as pg.Pool).beforeModel(context, 'runs:over', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).rejects.toMatchObject({ reason: 'max_runs' });
+  });
+
+  it('completion allowance 只供 evaluator、固定 500 output 且最多两次', async () => {
+    const pool = new FakePool();
+    pool.budget = { maxTurns: 0 };
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const evalAdmission = { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation' as const };
+    await expect(guard.beforeModel(context, 'goal:1', evalAdmission)).resolves.toBeDefined();
+    await expect(guard.beforeModel(context, 'goal:2', evalAdmission)).resolves.toBeDefined();
+    await expect(guard.beforeModel(context, 'goal:3', evalAdmission)).rejects.toBeInstanceOf(AutomationBudgetExceededError);
+    await expect(guard.beforeModel(context, 'work', { model: evalAdmission.model, inputTokens: 10, maxOutputTokens: 500 }))
+      .rejects.toBeInstanceOf(AutomationBudgetExceededError);
+  });
+
+
+  it('已 admitted 的第 N 个 run 在 maxRuns 边界通过工具 barrier', async () => {
+    const pool = new FakePool(); pool.budget = { maxRuns: 1 }; pool.runCount = 1;
+    await expect(new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool).barrier(context)).resolves.toBeUndefined();
+    expect(pool.statements.join('\n')).not.toContain("desired_terminal_status='expired'");
+  });
+
+  it('prospective 越限时 evaluator 可使用平台外 allowance，普通 work 不可消费', async () => {
+    const evaluator = new FakePool(); evaluator.budget = { maxTokens: 46 };
+    const guard = new SessionAutomationRuntimeGuard(evaluator as unknown as pg.Pool);
+    await expect(guard.beforeModel(context, 'goal:prospective', {
+      model: context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation',
+    })).resolves.toMatchObject({ allowanceUsed: true, purpose: 'goal_evaluation' });
+    expect(evaluator.allowanceRemaining).toBe(1);
+
+    const work = new FakePool(); work.budget = { maxTokens: 46 };
+    await expect(new SessionAutomationRuntimeGuard(work as unknown as pg.Pool).beforeModel(
+      context, 'work:prospective', { model: context.model, inputTokens: 10, maxOutputTokens: 20 },
+    )).rejects.toMatchObject({ reason: 'max_tokens' });
+    expect(work.allowanceRemaining).toBe(2);
+  });
+
+  it('source/idempotency key 稳定绑定 execution+operation，不含随机重试后缀', async () => {
+    const first = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+      .beforeModel(context, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+    const retry = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+      .beforeModel(context, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+    expect(first?.sourceKey).toBe(`model:${context.automationFence!.executionId}:turn:stable`);
+    expect(retry?.sourceKey).toBe(first?.sourceKey);
+  });
+
+  it('实际用量超过 reservation 时进入 reconcile，不能静默结算', async () => {
+    const pool = new FakePool();
+    pool.settlementReservations = [
+      { budget_kind: 'runs', amount: '0' }, { budget_kind: 'turns', amount: '1' },
+      { budget_kind: 'tokens', amount: '1' }, { budget_kind: 'credits', amount: '1' },
+    ];
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    await guard.finishModel(context, {
+      providerAttemptId: '55555555-5555-4555-8555-555555555555',
+      reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
+      purpose: 'work', sourceKey: `model:${context.automationFence!.executionId}:turn:over`,
+    }, { inputTokens: 10, outputTokens: 20 });
+    expect(pool.statements.join('\n')).toContain("status='reconcile_required'");
+  });
+
+  it('transport 前授权失败可释放 reservation 并返还 evaluator allowance', async () => {
+    const pool = new FakePool();
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    await guard.releaseModel(context, {
+      providerAttemptId: '55555555-5555-4555-8555-555555555555',
+      reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
+      purpose: 'goal_evaluation', allowanceUsed: true,
+      sourceKey: `model:${context.automationFence!.executionId}:goal`,
+    }, 'billing denied');
+    const joined = pool.statements.join('\n');
+    expect(joined).toContain("state='cancelled'");
+    expect(joined).toContain("state='released'");
+    expect(joined).toContain('remaining_attempts=LEAST(2,remaining_attempts+1)');
+  });
+
   it('普通会话没有 automation fence 时不访问账本', async () => {
     const pool = new FakePool();
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
-    await expect(guard.beforeModel({ ...context, automationFence: undefined }, 'turn:1')).resolves.toBeUndefined();
+    await expect(guard.beforeModel({ ...context, automationFence: undefined }, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).resolves.toBeUndefined();
     expect(pool.statements).toEqual([]);
   });
 });

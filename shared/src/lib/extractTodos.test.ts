@@ -517,6 +517,41 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     expect(result.hiddenMessageIds.has("reset")).toBe(true);
   });
 
+  it.each([
+    ["无 user 边界", [] as MessageItem[]],
+    ["有 user 边界", [user("next-run")] as MessageItem[]],
+  ])("closes the old plan when a new Run starts: %s", (_label, boundary) => {
+    const result = projectBusinessStepEvents([
+      todo("run-1-start", todos([step("a", "in_progress")]), "run-1"),
+      ...boundary,
+      todo("run-2-start", todos([step("a", "in_progress")]), "run-2"),
+    ], true);
+    const plans = result.events.filter((event) => event.kind === "plan");
+    const starts = result.events.filter((event) => event.kind === "start");
+
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({ runId: "run-1", isClosed: true });
+    expect(plans[1]).toMatchObject({ runId: "run-2" });
+    expect(plans[1].isClosed).toBeUndefined();
+    expect(starts.filter((event) => event.isCurrent)).toEqual([
+      expect.objectContaining({ runId: "run-2" }),
+    ]);
+  });
+
+  it.each([
+    ["system-error", { id: "interrupted-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "interrupted-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "interrupted-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("closes an active plan when an interrupted run ends without terminal TodoWrite: %s", (_label, terminal) => {
+    const result = projectBusinessStepEvents([
+      todo("interrupted-start", todos([step("a", "in_progress")]), "run-1"),
+      terminal,
+    ], false);
+
+    expect(result.events.find((event) => event.kind === "plan")).toMatchObject({ isClosed: true });
+    expect(result.events.every((event) => event.isCurrent !== true)).toBe(true);
+  });
+
   it("closes the previous plan on explicit reset and plans fresh afterwards", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")])),
@@ -544,6 +579,7 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
 
     const idle = projectBusinessStepEvents(messages, false);
     expect(idle.events.every((event) => event.isCurrent !== true)).toBe(true);
+    expect(idle.events.find((event) => event.kind === "plan")?.isClosed).toBe(true);
   });
 
   it("marks the first snapshot's start as current when it is still the latest", () => {

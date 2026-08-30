@@ -141,10 +141,12 @@ function Harness({
   messages,
   sessionId = "session-a",
   debugMode = false,
+  loading,
 }: {
   messages: MessageItem[];
   sessionId?: string;
   debugMode?: boolean;
+  loading?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
@@ -153,7 +155,7 @@ function Harness({
       <div className="h-[600px]">
         <MessageList
           messages={messages}
-          loading={messages.some((message) => message.id === "todo-start")}
+          loading={loading ?? messages.some((message) => message.id === "todo-start")}
           sessionId={sessionId}
           debugModeOverride={debugMode}
           businessStepDetailMode="desktop"
@@ -173,6 +175,55 @@ async function waitForBusinessPlan(): Promise<void> {
 }
 
 describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离", () => {
+  it("新 Run 启动后旧 Run 固定关闭，且新 Run 保持唯一 current 并继续推进", async () => {
+    const oldRun = todoSnapshot("old-run-start", [
+      { id: "same", kind: "business", content: "旧 Run 步骤", status: "in_progress" },
+    ], "run-old");
+    const boundary: MessageItem = { id: "new-run-user", type: "user", content: "开始新任务" };
+    const newRun = todoSnapshot("new-run-start", [
+      { id: "first", kind: "business", content: "新 Run 第一步", status: "in_progress" },
+      { id: "second", kind: "business", content: "新 Run 第二步", status: "pending" },
+    ], "run-new");
+    const newRunProgress = todoSnapshot("new-run-progress", [
+      { id: "first", kind: "business", content: "新 Run 第一步", status: "completed" },
+      { id: "second", kind: "business", content: "新 Run 第二步", status: "in_progress" },
+    ], "run-new");
+    const { rerender } = render(<Harness messages={[oldRun, boundary, newRun]} loading />);
+    await waitFor(() => expect(document.querySelectorAll("[data-business-step-plan]")).toHaveLength(2));
+    expect(document.querySelectorAll('[data-business-step-current="true"]')).toHaveLength(1);
+    expect(screen.getByLabelText("已结束")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /旧 Run 步骤/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：旧 Run 步骤")).toBeTruthy());
+    expect(screen.getByText("已暂停跟随")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /新 Run 第一步/ }));
+    expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
+
+    rerender(<Harness messages={[oldRun, boundary, newRun, newRunProgress]} loading />);
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：新 Run 第二步")).toBeTruthy());
+    expect(document.querySelectorAll('[data-business-step-current="true"]')).toHaveLength(1);
+  });
+
+  it.each([
+    ["system-error", { id: "run-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "run-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "run-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("无终态 TodoWrite 的中断 Run 显示已结束且只能固定查看：%s", async (_label, terminal) => {
+    render(<Harness messages={[
+      todoSnapshot("interrupted-run", [
+        { id: "interrupted", kind: "business", content: "中断步骤", status: "in_progress" },
+      ], "run-interrupted"),
+      terminal,
+    ]} loading={false} />);
+    await waitForBusinessPlan();
+    expect(screen.getByLabelText("已结束")).toBeTruthy();
+    expect(document.querySelector('[data-business-step-current="true"]')).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /中断步骤/ }));
+    await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
+    expect(screen.queryByText("正在跟随当前步骤")).toBeNull();
+  });
+
   it("同一 Run 的多次 TodoWrite 快照只生成一个主卡，每个步骤只出现一次", async () => {
     const { container } = render(<Harness messages={workflowMessages(3)} />);
     await waitForBusinessPlan();
@@ -287,12 +338,12 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       { id: "verify", kind: "business", content: "重置跟随步骤", status: "in_progress" },
     ], "run-follow-reset");
     const reset = todoSnapshot("follow-reset-end", [], "run-follow-reset");
-    const { rerender } = render(<Harness messages={[active]} />);
+    const { rerender } = render(<Harness messages={[active]} loading />);
     await waitForBusinessPlan();
     fireEvent.click(screen.getByRole("button", { name: /重置跟随步骤/ }));
     expect(screen.getByText("正在跟随当前步骤")).toBeTruthy();
 
-    rerender(<Harness messages={[active, reset]} />);
+    rerender(<Harness messages={[active, reset]} loading={false} />);
 
     await waitFor(() => expect(screen.getByText("已暂停跟随")).toBeTruthy());
     expect(screen.queryByText("正在跟随当前步骤")).toBeNull();

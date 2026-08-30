@@ -454,6 +454,7 @@ export function projectBusinessStepEvents(
     const resumesCurrentRunAfterSectionBoundary = pendingSectionBoundary && continuesCurrentRun;
     if (!continuesCurrentRun
       && (pendingSectionBoundary || (currentPlanRunId !== null && message.runId !== undefined))) {
+      if (resetPlanEvent) resetPlanEvent.isClosed = true;
       baseline = null;
       latestActiveKey = null;
       latestResumeKey = null;
@@ -616,6 +617,10 @@ export function projectBusinessStepEvents(
     const latestOpening = [...resumeOpenings, ...openings].at(-1);
     if (latestOpening) lastProgressEvent = latestOpening;
     baseline = new Map(businessTodos.map((todo) => [todoItemKey(todo), todo]));
+  }
+
+  if (!loading && latestActiveKey && currentPlanEvent) {
+    currentPlanEvent.isClosed = true;
   }
 
   if (

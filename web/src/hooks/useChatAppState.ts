@@ -17,7 +17,7 @@ import {
   toWebChatWireMessage,
   validateWebUploadedFiles,
 } from "@/lib/chatSubmissionAdapter";
-import { canonicalChatAttachmentToDisplay, chatQueueReducerEventsFromWsEvent, createChatQueueState, reduceChatQueueEvent, selectChatQueueItems, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay, chatQueueReducerEventsFromWsEvent, createChatQueueState, createInteractionRequestId, reduceChatQueueEvent, selectChatQueueItems, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -3073,10 +3073,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- Interaction responses (via WS) ----
   const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
     if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1, attemptId = `${interactionId}:${generation}:${Date.now()}`; interactionResponseGenerationRef.current.set(interactionId, generation);
+    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1; const currentSessionId = sessionIdRef.current; if (!currentSessionId) return; const attemptId = createInteractionRequestId(currentSessionId, interactionId, response); interactionResponseGenerationRef.current.set(interactionId, generation);
     const pending: PendingInteractionResponse = { type, response, generation, attemptId };
     pendingInteractionResponsesRef.current.set(interactionId, pending);
-    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: sessionIdRef.current, clientAttemptId: attemptId, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
+    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: currentSessionId, requestId: attemptId, clientAttemptId: attemptId, response, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
     if (pendingInteractionResponsesRef.current.get(interactionId) !== pending) return;
     pending.ackTimer = setTimeout(() => releaseInteractionResponse(interactionId, generation, '等待服务端确认超时'), INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
   }, [releaseInteractionResponse]);

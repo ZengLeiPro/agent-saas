@@ -1,6 +1,28 @@
 export * from './types/correlation';
 
-// Platform abstraction and transport policy
+export {
+  buildInteractionResponseRequest,
+  canInteract,
+  createInteractionReducerState,
+  createInteractionRequestId,
+  interactionKey,
+  isInteractionSubmitting,
+  reduceInteraction,
+  selectInteraction,
+} from './lib/interactionProtocol';
+export type {
+  InteractionAck,
+  InteractionAckStatus,
+  InteractionEvent,
+  InteractionIdentity,
+  InteractionOutcome,
+  InteractionPhase,
+  InteractionReducerState,
+  InteractionResponseRequest,
+  InteractionState,
+} from './lib/interactionProtocol';
+
+// Platform abstraction and trusted transport policy
 export { initPlatform, getPlatform } from './platform/context';
 export type {
   IStorage,

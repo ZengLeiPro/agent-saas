@@ -720,7 +720,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await expect(pending).resolves.toEqual({ allow: true, message: '同意执行' });
       // respond_ok 在 appendDurableWebCommand（真实 fs 扫描）之后发出 → 等宏任务
       await vi.waitFor(() => { expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: id, clientAttemptId: 'attempt-success', response: { allow: true, message: '同意执行' } }); }, { timeout: 5_000 });
-      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, response: { allow: true, message: '同意执行' } });
+      expect(rig.userEvents).toContainEqual({ type: 'interaction_resolved', sessionId, interactionId: id, status: 'resolved', response: { allow: true, message: '同意执行' } });
       expect(interactionStore.get(id)).toBeUndefined();
     });
     it('未知交互且无持久化兜底 → Interaction not found or expired', async () => {

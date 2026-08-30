@@ -87,6 +87,9 @@ export interface WsRespondMessage {
   action: 'respond';
   interactionId: string;
   sessionId?: string | null;
+  requestId?: string;
+  clientAttemptId?: string;
+  response?: Record<string, unknown>;
   [key: string]: unknown;
 }
 

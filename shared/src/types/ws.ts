@@ -119,13 +119,13 @@ export type WsEvent =
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
     | { type: 'error'; message: string }
-    | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
-    | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string; response?: Record<string, unknown> }
+    | { type: 'respond_error'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; status?: 'rejected' | 'not_found' | 'expired'; error: string; reason?: string; retryable?: boolean }
+    | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
-    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
+    | { type: 'interaction_resolved'; sessionId: string; interactionId: string; status?: 'resolved' | 'rejected' | 'failed' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean }
     | { type: 'session_deleted'; sessionId: string }
     | { type: 'session_read_state_changed'; sessionId: string; hasUnreadAiReply: boolean }
     | { type: 'user_message'; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; client_msg_id?: string; sourceRunId?: string; sessionId?: string }

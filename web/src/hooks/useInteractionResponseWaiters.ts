@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { wsClient } from "@/lib/wsClient";
+import { createInteractionRequestId } from "@agent/shared";
 
 interface InteractionResponseWaiter {
   resolve: () => void;
@@ -31,6 +32,8 @@ export function useInteractionResponseWaiters() {
     if (waitersRef.current.has(interactionId)) {
       throw new Error("回答正在提交，请勿重复操作");
     }
+    if (!sessionId) throw new Error("缺少会话标识，回答未提交");
+    const requestId = createInteractionRequestId(sessionId, interactionId, response);
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -43,6 +46,9 @@ export function useInteractionResponseWaiters() {
         action: "respond",
         interactionId,
         sessionId,
+        requestId,
+        clientAttemptId: requestId,
+        response,
         ...response,
       }).then((sent) => {
         if (sent) return;

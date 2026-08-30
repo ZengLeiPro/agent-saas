@@ -983,6 +983,13 @@ export function processWsEvent(
           // Legacy broadcasts carry no response; preserve pending instead of
           // inventing an approval decision.
           applyInteractionResolution(msg, i, data.response);
+          if ((data.status === 'rejected' || data.status === 'failed' || data.status === 'expired') && data.reason) {
+            msg.addMessage({
+              type: 'system-error', severity: 'error',
+              content: data.status === 'expired' ? `交互已超时：${data.reason}` : `交互未完成：${data.reason}`,
+              timestamp: Date.now(),
+            });
+          }
         }
         break;
       }

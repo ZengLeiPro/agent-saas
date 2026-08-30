@@ -26,6 +26,7 @@ export interface PendingInteraction {
   toolInput?: Record<string, unknown>;
   /** ExitPlanMode 专用：plan 文件内容 */
   planContent?: string;
+  onExpired?: (entry: PendingInteraction) => void;
 }
 
 /** SSE 断开后允许存活的交互类型（等待用户重连回答） */
@@ -41,8 +42,36 @@ function shouldSurviveDisconnect(entry: PendingInteraction): boolean {
 
 const INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
 
+export interface CompletedInteractionResponse {
+  sessionId: string;
+  interactionId: string;
+  requestId: string;
+  response: InteractionResponse;
+  completedAt: number;
+}
+
 class InteractionStore {
   private pending = new Map<string, PendingInteraction>();
+  private completed = new Map<string, CompletedInteractionResponse>();
+
+  private completedKey(sessionId: string, interactionId: string): string { return `${sessionId}\u0000${interactionId}`; }
+
+  getCompleted(sessionId: string, interactionId: string): CompletedInteractionResponse | undefined {
+    const key = this.completedKey(sessionId, interactionId);
+    const value = this.completed.get(key);
+    if (value && Date.now() - value.completedAt > INTERACTION_TIMEOUT_MS) { this.completed.delete(key); return undefined; }
+    return value;
+  }
+
+  recordCompleted(sessionId: string, interactionId: string, requestId: string, response: InteractionResponse): void {
+    this.completed.set(this.completedKey(sessionId, interactionId), { sessionId, interactionId, requestId, response, completedAt: Date.now() });
+  }
+
+  classifyCompleted(sessionId: string, interactionId: string, response: InteractionResponse): 'missing' | 'duplicate' | 'conflict' {
+    const completed = this.getCompleted(sessionId, interactionId);
+    if (!completed) return 'missing';
+    return JSON.stringify(completed.response) === JSON.stringify(response) ? 'duplicate' : 'conflict';
+  }
 
   create(
     interactionId: string,
@@ -61,12 +90,15 @@ class InteractionStore {
       displayName?: string;
       toolInput?: Record<string, unknown>;
       planContent?: string;
+      onExpired?: (entry: PendingInteraction) => void;
     },
   ): Promise<InteractionResponse> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (this.pending.has(interactionId)) {
+        const expired = this.pending.get(interactionId);
+        if (expired) {
           this.pending.delete(interactionId);
+          expired.onExpired?.(expired);
           reject(new Error('Interaction timed out'));
         }
       }, INTERACTION_TIMEOUT_MS);
@@ -89,6 +121,7 @@ class InteractionStore {
         displayName: options?.displayName,
         toolInput: options?.toolInput,
         planContent: options?.planContent,
+        onExpired: options?.onExpired,
       });
     });
   }

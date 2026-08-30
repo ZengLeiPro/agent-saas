@@ -28,6 +28,7 @@ import {
   INPUT_DRAFT_KEY,
   chatQueueReducerEventsFromWsEvent,
   createChatQueueState,
+  createInteractionRequestId,
   reduceChatQueueEvent,
   selectChatQueueItems,
   scopedSensitiveKey,
@@ -1735,8 +1736,10 @@ export function useChatAppStateCore(): ChatAppState {
       // A live attempt owns the submit slot; timeout/disconnect/error releases it.
       if (pendingInteractionResponsesRef.current.has(interactionId)) return;
       const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1;
+      const currentSessionId = sessionIdRef.current;
+      if (!currentSessionId) return;
       interactionResponseGenerationRef.current.set(interactionId, generation);
-      const attemptId = `${interactionId}:${generation}:${Date.now()}`;
+      const attemptId = createInteractionRequestId(currentSessionId, interactionId, response);
       pendingInteractionResponsesRef.current.set(interactionId, { type, response, generation, attemptId });
 
       let ok = false;
@@ -1744,8 +1747,10 @@ export function useChatAppStateCore(): ChatAppState {
         ok = await wsClient.ensureConnectedSend({
           action: "respond",
           interactionId,
-          sessionId: sessionIdRef.current,
+          sessionId: currentSessionId,
+          requestId: attemptId,
           clientAttemptId: attemptId,
+          response,
           ...response,
         });
       } catch {

@@ -90,8 +90,12 @@ export interface WsRespondMessage {
     action: 'respond';
     interactionId: string;
     sessionId?: string;
-    /** Client-generated retry token, echoed only by the matching respond ACK. */
+    /** Stable idempotency key. Reuse it after an ACK loss. */
+    requestId?: string;
+    /** N-1 alias for requestId. */
     clientAttemptId?: string;
+    /** Current protocol payload; flattened fields below remain accepted from N-1 clients. */
+    response?: Record<string, unknown>;
     [key: string]: unknown;
 }
 

@@ -327,7 +327,7 @@ describe('TASK-200 staged interaction lifecycle', () => {
     );
 
     await (channel as any).resolveInteraction(wsClient(ws, USER), 'interaction-staged', { answers: { q: 'new' } }, sessionId);
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_ok', interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });
+    expect(ws.sent.at(-1)?.data).toEqual({ type: 'respond_error', interactionId: 'interaction-staged', error: 'Interaction response conflict' });
     expect(activations).toEqual(['run-staged']);
     expect((await store.list(TENANT, sessionId)).filter((event) => event.type === 'interaction_resolved')).toHaveLength(1);
     expect((await runs.get('run-staged'))?.metadata?.resumeInteraction).toEqual({ interactionId: 'interaction-staged', response: { answers: { q: 'yes' } } });

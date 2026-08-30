@@ -666,6 +666,12 @@ describe('processWsEvent - 交互事件', () => {
     expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', status: 'answered', answers: { q: '否' } });
   });
 
+  it('interaction_resolved：denied/workflow failure/expired 显示服务端原因', () => {
+    const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'failed', toolName: 'T', toolInput: '', status: 'pending' }]);
+    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'failed', status: 'failed', response: { allow: false }, reason: 'Workflow approval unavailable' }, makeCtx(ctrl).ctx);
+    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'system-error', content: '交互未完成：Workflow approval unavailable' }));
+  });
+
   it('interaction_resolved：兼容旧事件但不臆造审批结果', () => {
     const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'legacy', toolName: 'T', toolInput: '', status: 'pending' }]);
     dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'legacy' }, makeCtx(ctrl).ctx);

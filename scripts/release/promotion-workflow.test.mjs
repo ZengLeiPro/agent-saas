@@ -104,8 +104,12 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.doesNotMatch(workflow, /oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
+  assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
+  assert.match(workflow, /already equals the immutable target/u);
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
+  assert.match(workflow, /identity_projection=/u);
+  assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
   assert.match(workflow, /sha256sum/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);

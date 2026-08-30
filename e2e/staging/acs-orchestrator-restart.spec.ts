@@ -22,6 +22,6 @@ test('ACS Orchestrator 重启后同一会话 Sandbox 工作区仍可读回', asy
     'acs-restart-readback',
     `使用 Read 读取 acs-restart-proof.txt；只有内容严格等于 ${expectedContent} 才报告成功。`,
   );
-  const token = await apiLogin(request);
+  const token = await apiLogin();
   await assertAcsToolEvidence(request, token, currentSessionId(page), ['Read'], expectedContent);
 });

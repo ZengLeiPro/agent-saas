@@ -1,4 +1,5 @@
 import { defineConfig } from 'playwright/test';
+import { stagingStorageStatePath } from './staging/global-setup';
 
 const baseURL = process.env.STAGING_WEB_URL;
 if (!baseURL || new URL(baseURL).hostname !== 'staging-agent.kaiyan.net') {
@@ -7,6 +8,7 @@ if (!baseURL || new URL(baseURL).hostname !== 'staging-agent.kaiyan.net') {
 
 export default defineConfig({
   testDir: './staging',
+  globalSetup: './staging/global-setup.ts',
   timeout: 10 * 60_000,
   expect: { timeout: 3 * 60_000 },
   fullyParallel: false,
@@ -18,6 +20,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
+    storageState: stagingStorageStatePath,
     trace: 'on',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

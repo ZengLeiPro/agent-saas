@@ -275,7 +275,7 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
-  it('drops future capacity series points while preserving a valid latest snapshot', async () => {
+  it('treats a future capacity series point as making the whole capacity contract unavailable', async () => {
     const latest = metric({});
     const future = metric({ id: 2, sampledAt: '2099-01-01T00:00:00.000Z' });
     const store = {
@@ -285,9 +285,36 @@ describe('GET /api/admin/system/event-store', () => {
     const server = await startServer({ store });
     servers.push(server);
 
-    const body = await (await server.get()).json() as any;
-    expect(body.capacity).toMatchObject({ available: true, sampledAt: latest.sampledAt });
-    expect(body.capacity.series).toEqual([expect.objectContaining({ sampledAt: latest.sampledAt })]);
+    expect(await (await server.get()).json()).toMatchObject({
+      capacity: { available: false, sampledAt: null, series: [] },
+    });
+  });
+
+  it.each([
+    ['旧格式', () => metric({ id: 2, detailJson: { table: 'runtime_events' } })],
+    ['负数', () => metric({ id: 2, detailJson: { tableBytes: 100, indexBytes: -1, totalBytes: 99 } })],
+    ['总量小于表与索引和', () => metric({ id: 2, detailJson: { tableBytes: 100, indexBytes: 60, totalBytes: 150 } })],
+    ['非法时间', () => metric({ id: 2, sampledAt: 'not-a-time' })],
+  ])('treats a valid latest capacity plus an invalid historical %s sample as wholly unavailable', async (_name, invalidMetric) => {
+    const latest = metric({ id: 3 });
+    const validOld = metric({ id: 1, sampledAt: new Date(Date.now() - 60_000).toISOString() });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? latest : null),
+      listMetricSeries: vi.fn(async () => [validOld, invalidMetric(), latest]),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      capacity: {
+        available: false,
+        totalBytes: null,
+        tableBytes: null,
+        indexBytes: null,
+        sampledAt: null,
+        series: [],
+      },
+    });
   });
 
   it('returns never-run with an unknown legal watermark when the store has no retention snapshot', async () => {

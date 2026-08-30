@@ -160,6 +160,20 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
+  it.each([
+    ["缺三分量", { totalBytes: 100, tableBytes: null, indexBytes: null, sampledAt: "2026-08-29T13:30:00.000Z" }],
+    ["负数", { totalBytes: 100, tableBytes: 101, indexBytes: -1, sampledAt: "2026-08-29T13:30:00.000Z" }],
+    ["总量小于表与索引和", { totalBytes: 150, tableBytes: 100, indexBytes: 60, sampledAt: "2026-08-29T13:30:00.000Z" }],
+    ["非法时间", { totalBytes: 100, tableBytes: 60, indexBytes: 40, sampledAt: "not-a-time" }],
+  ])("容量历史窗口夹杂%s样本时整体降级为不可用", (_name, invalidSample) => {
+    const data = fixture();
+    data.capacity.series = [data.capacity.series[0]!, invalidSample, data.capacity.series[1]!];
+    render(<EventStoreSection data={data} />);
+    expect(screen.queryByText("健康")).toBeNull();
+    expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
+    expect(screen.getByText("容量不可用")).toBeTruthy();
+  });
+
   it("容量不可用时总体健康降级为不可用", () => {
     const data = fixture();
     data.capacity.available = false;
@@ -192,7 +206,7 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
-  it("旧格式新鲜容量样本含 null 时显示不可用，绝不显示绿色健康或 0", () => {
+  it("旧格式新鲜容量最新样本含 null 时显示不可用，绝不显示绿色健康或 0", () => {
     const data = fixture();
     data.retention.durationMs = null;
     data.retention.watermarks.billing = null;

@@ -44,7 +44,8 @@ function hasCompleteCapacityValues(capacity: {
 
 function hasCompleteCapacity(data: EventStoreStatusResponse): boolean {
   return data.capacity.available && isValidTimestamp(data.capacity.sampledAt)
-    && hasCompleteCapacityValues(data.capacity);
+    && hasCompleteCapacityValues(data.capacity)
+    && data.capacity.series.every((sample) => isValidCapacitySample(sample, data.generatedAt));
 }
 
 function isValidTimestamp(value: string | null): value is string {
@@ -63,8 +64,14 @@ function hasPlausibleRunTimestamps(data: EventStoreStatusResponse): boolean {
   ));
 }
 
-function isValidCapacitySample(sample: EventStoreStatusResponse["capacity"]["series"][number]): boolean {
-  return isValidTimestamp(sample.sampledAt) && hasCompleteCapacityValues(sample);
+function isValidCapacitySample(
+  sample: EventStoreStatusResponse["capacity"]["series"][number],
+  generatedAt?: string,
+): boolean {
+  if (!isValidTimestamp(sample.sampledAt) || !hasCompleteCapacityValues(sample)) return false;
+  if (generatedAt === undefined) return true;
+  const generatedMs = Date.parse(generatedAt);
+  return Number.isFinite(generatedMs) && Date.parse(sample.sampledAt) <= generatedMs + 5 * 60_000;
 }
 
 function hasConsistentRetentionWatermarks(
@@ -88,7 +95,8 @@ function hasConsistentRetentionWatermarks(
 }
 
 function hasSufficientCapacityTrend(data: EventStoreStatusResponse): boolean {
-  return data.capacity.series.filter(isValidCapacitySample).length >= 2;
+  return data.capacity.series.length >= 2
+    && data.capacity.series.every((sample) => isValidCapacitySample(sample, data.generatedAt));
 }
 
 function hasTrustworthyRetention(data: EventStoreStatusResponse): boolean {
@@ -191,9 +199,9 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
   const capacityStale = data.capacity.stale;
   const trendInsufficient = capacityAvailable && !hasSufficientCapacityTrend(data);
   const categories = Object.entries(data.retention.categories);
-  const samples = data.capacity.series
-    .filter(isValidCapacitySample)
-    .sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt));
+  const samples = capacityAvailable
+    ? [...data.capacity.series].sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt))
+    : [];
   const firstSample = samples[0];
   const lastSample = samples.at(-1);
   const trend = samples.length < 2

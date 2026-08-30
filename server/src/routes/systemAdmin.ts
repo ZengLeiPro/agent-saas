@@ -582,18 +582,25 @@ function serializeCapacity(
   const sampledMs = Date.parse(latest.sampledAt);
   const latestAllowedMs = now.getTime() + 5 * 60_000;
   if (sampledMs > latestAllowedMs) return unavailableCapacity(tableName);
+  const capacitySeries: Array<{
+    sampledAt: string;
+    totalBytes: number;
+    tableBytes: number;
+    indexBytes: number;
+  }> = [];
+  for (const metric of series) {
+    const values = capacityValues(metric);
+    if (!values || !isIsoTimestamp(metric.sampledAt)
+      || Date.parse(metric.sampledAt) > latestAllowedMs) return unavailableCapacity(tableName);
+    capacitySeries.push({ sampledAt: metric.sampledAt, ...values });
+  }
   return {
     available: true,
     tableName,
     ...capacity,
     sampledAt: latest.sampledAt,
     stale: !Number.isFinite(sampledMs) || now.getTime() - sampledMs > 30 * 60_000,
-    series: series.flatMap((metric) => {
-      const values = capacityValues(metric);
-      return values && isIsoTimestamp(metric.sampledAt) && Date.parse(metric.sampledAt) <= latestAllowedMs
-        ? [{ sampledAt: metric.sampledAt, ...values }]
-        : [];
-    }).sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
+    series: capacitySeries.sort((a, b) => Date.parse(a.sampledAt) - Date.parse(b.sampledAt)),
   };
 }
 

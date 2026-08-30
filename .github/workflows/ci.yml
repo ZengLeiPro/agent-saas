@@ -570,6 +570,7 @@ jobs:
           MAINTENANCE_TIMER="agent-saas-deploy-maintenance.timer"
 
           START_EPOCH=$(date +%s)
+          LEGACY_DRAIN_DEADLINE_EPOCH=$((START_EPOCH + 1600))
           elapsed_seconds() {
             echo $(( $(date +%s) - START_EPOCH ))
           }
@@ -760,6 +761,7 @@ jobs:
           mkdir -p "$RELEASE_DIR/.release"
           install -m 0444 "$RELEASE_TGZ" "$RELEASE_DIR/.release/server-bundle.tgz"
           install -m 0444 /dev/null "$RELEASE_DIR/.release/runtime-worker-authority-refresh-v1"
+          install -m 0444 /dev/null "$RELEASE_DIR/.release/runtime-worker-execution-fencing-v1"
           mkdir -p "$RELEASE_DIR/server/data" "$RELEASE_DIR/workspace-shared"
           node "$RELEASE_DIR/scripts/release/seal-compatibility-release.mjs" \
             --root "$RELEASE_DIR" --component server \
@@ -825,6 +827,9 @@ jobs:
           WORKER_PROCESS_READY=0
           WORKER_ACTIVE_DRAIN_STARTED=0
           WORKER_ACTIVE_DRAIN_COMPLETED=0
+          WORKER_LEGACY_PRE_DRAINED=0
+          WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED=0
+          WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=0
           WORKER_PREACTIVATED=0
           WORKER_IDLE=""
           PREV_WORKER_IDLE_TARGET=""
@@ -903,10 +908,153 @@ jobs:
             log "bootstrap all runtime retention authority reclaimed before candidate stop: color=$ACTIVE"
           }
 
-          # 切流前失败：已 drain 的旧 worker 才 restart；仍存活的新版旧 worker 原地 reclaim。
+          restore_previous_runtime_service_configuration() {
+            local previous_target previous_template previous_unit
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              previous_target=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              previous_template="$previous_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template"
+              previous_unit="${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              if [ -z "$previous_target" ] || [ ! -f "$previous_template" ]; then
+                log "ERROR: previous runtime worker template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$previous_template" "/etc/systemd/system/${WORKER_SERVICE}@.service"
+            else
+              previous_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+              previous_template="$previous_target/daemon-packaging/systemd/agent-saas-server@.service.template"
+              previous_unit="${SERVICE_NAME}@${ACTIVE}"
+              if [ -z "$previous_target" ] || [ ! -f "$previous_template" ]; then
+                log "ERROR: previous bootstrap all template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$previous_template" "/etc/systemd/system/${SERVICE_NAME}@.service"
+            fi
+            systemctl daemon-reload
+            if ! systemctl enable "$previous_unit"; then
+              log "ERROR: failed to re-enable previous runtime unit during rollback: $previous_unit"
+              exit 1
+            fi
+            WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=0
+            log "previous runtime service template and enablement restored before rollback: unit=$previous_unit"
+          }
+
+          restore_pre_drained_legacy_runtime() {
+            local restored_pid restored_ready_pid restored_main_pid legacy_worker_target legacy_bootstrap_target
+            if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
+              log "stop runtime worker candidate before legacy rollback: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed to stop candidate before restoring legacy runtime source"
+                exit 1
+              fi
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
+              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
+                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
+              else
+                rm -f "$WORKER_DIR/$WORKER_IDLE"
+              fi
+              WORKER_CANDIDATE_STARTED=0
+              WORKER_CANDIDATE_PROCESS_STARTED=0
+              WORKER_PROCESS_READY=0
+            fi
+            if [ "$WORKER_PREACTIVATED" -eq 1 ] && [ -n "${WORKER_ACTIVE:-}" ]; then
+              if ! write_worker_active_color "$WORKER_ACTIVE"; then
+                log "ERROR: failed to restore legacy runtime worker marker: color=$WORKER_ACTIVE"
+                exit 1
+              fi
+              WORKER_PREACTIVATED=0
+            elif [ "$WORKER_PREACTIVATED" -eq 1 ]; then
+              rm -f "$WORKER_ACTIVE_COLOR_FILE"
+              WORKER_PREACTIVATED=0
+            fi
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              legacy_worker_target=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+              if [ -z "$legacy_worker_target" ] \
+                || [ ! -f "$legacy_worker_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" ]; then
+                log "ERROR: legacy runtime worker service template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$legacy_worker_target/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
+                "/etc/systemd/system/${WORKER_SERVICE}@.service"
+              systemctl daemon-reload
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" \
+                "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              systemctl reset-failed "${WORKER_SERVICE}@${WORKER_ACTIVE}" 2>/dev/null || true
+              systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                restored_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && [ "$restored_pid" = "$restored_main_pid" ] && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: legacy runtime worker failed readiness during rollback"
+                exit 1
+              fi
+              log "legacy runtime worker and its service template restored only after candidate stop: color=$WORKER_ACTIVE"
+            elif [ "$WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED" -eq 1 ]; then
+              legacy_bootstrap_target=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+              if [ -z "$legacy_bootstrap_target" ] \
+                || [ ! -f "$legacy_bootstrap_target/daemon-packaging/systemd/agent-saas-server@.service.template" ]; then
+                log "ERROR: legacy bootstrap all service template is unavailable during rollback"
+                exit 1
+              fi
+              install -m 0644 "$legacy_bootstrap_target/daemon-packaging/systemd/agent-saas-server@.service.template" \
+                "/etc/systemd/system/${SERVICE_NAME}@.service"
+              systemctl daemon-reload
+              rm -f "/run/${SERVICE_NAME}-${ACTIVE}.pid" "/run/${SERVICE_NAME}-${ACTIVE}.ready" \
+                "/run/${SERVICE_NAME}-${ACTIVE}.draining"
+              systemctl reset-failed "${SERVICE_NAME}@${ACTIVE}" 2>/dev/null || true
+              systemctl enable "${SERVICE_NAME}@${ACTIVE}"
+              systemctl restart "${SERVICE_NAME}@${ACTIVE}"
+              WORKER_ACTIVE_RESTORED=0
+              for _ in $(seq 1 180); do
+                restored_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.pid" 2>/dev/null || true)
+                restored_ready_pid=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+                restored_main_pid=$(systemctl show "${SERVICE_NAME}@${ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}" \
+                  && [ -n "$restored_pid" ] && [ "$restored_pid" = "$restored_ready_pid" ] \
+                  && [ "$restored_pid" = "$restored_main_pid" ] && kill -0 "$restored_pid" 2>/dev/null; then
+                  WORKER_ACTIVE_RESTORED=1
+                  break
+                fi
+                sleep 1
+              done
+              if [ "$WORKER_ACTIVE_RESTORED" -ne 1 ]; then
+                log "ERROR: legacy bootstrap all failed readiness during rollback"
+                exit 1
+              fi
+              log "legacy bootstrap all and its service template restored only after candidate stop: color=$ACTIVE"
+            else
+              log "ERROR: legacy pre-drain rollback has no runtime source to restore"
+              exit 1
+            fi
+            WORKER_ACTIVE_DRAIN_STARTED=0
+            WORKER_ACTIVE_DRAIN_COMPLETED=0
+            WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED=0
+            WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=0
+            WORKER_LEGACY_PRE_DRAINED=0
+          }
+
+          # 切流前失败：legacy 先停候选再恢复旧来源；新版旧 worker 仍按 authority reclaim。
           # 首次 bootstrap 在候选停止前由仍在服务的 all 进程 reclaim；不支持 reclaim 时保留候选。
           rollback_idle_and_exit() {
-            log "deploy FAILED before traffic switch; old color $ACTIVE untouched and still serving"
+            log "deploy FAILED before traffic switch; restoring the previous runtime source and Web color"
+            if [ "$WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY" -eq 1 ] \
+              && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
+              restore_previous_runtime_service_configuration
+            fi
+            if [ "$WORKER_LEGACY_PRE_DRAINED" -eq 1 ]; then
+              restore_pre_drained_legacy_runtime
+            fi
             if [ "$WORKER_ACTIVE_DRAIN_STARTED" -eq 1 ] && [ "$WORKER_ACTIVE_DRAIN_COMPLETED" -ne 1 ]; then
               log "ERROR: previous runtime worker has not completed drain; preserving candidate and refusing restart"
               preserve_candidate_authority_and_exit
@@ -1115,8 +1263,8 @@ jobs:
           }
 
           # ── 5.5 Runtime Worker 候选：在 Web readiness 前完成接管 ──
-          # 候选 worker 就绪后先切 authority marker，再排空旧 worker，避免长 drain 期间 readiness 空窗。
-          # 旧 worker 完全退出后才启动 Web；失败回退会先恢复旧 marker 与 worker，再停止候选。
+          # 支持 execution fencing 的旧 runtime 走候选优先；legacy runtime 必须先完全退出再启动候选。
+          # 旧 runtime 完全退出后才启动 Web；失败回退按 capability 恢复旧来源或 authority。
           WORKER_ACTIVE=""
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
             # ClientDaemonGateway 目前仍是进程内连接表，不能跨 ws-only/runtime-worker
@@ -1217,19 +1365,128 @@ jobs:
             log "runtime worker unchanged: active=$WORKER_ACTIVE (pure Web/non-runtime release)"
           fi
 
-          node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs" \
+          if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
+            if [ -n "${WORKER_ACTIVE:-}" ]; then
+              LEGACY_RUNTIME_TARGET=$(readlink "$WORKER_DIR/$WORKER_ACTIVE" 2>/dev/null || true)
+            else
+              LEGACY_RUNTIME_TARGET=$(readlink "$COLOR_DIR/$ACTIVE" 2>/dev/null || true)
+            fi
+            if [ ! -f "$LEGACY_RUNTIME_TARGET/.release/runtime-worker-execution-fencing-v1" ]; then
+              WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=1
+              if [ "$(date +%s)" -ge "$LEGACY_DRAIN_DEADLINE_EPOCH" ]; then
+                log "ERROR: insufficient remote deployment budget for legacy drain; rolling back before signal"
+                rollback_idle_and_exit
+              fi
+              log "legacy runtime lacks execution fencing; complete drain is required before candidate start: target=${LEGACY_RUNTIME_TARGET:-<unknown>}"
+              if [ -n "${WORKER_ACTIVE:-}" ]; then
+                OLD_WORKER_PID=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid" 2>/dev/null || true)
+                OLD_WORKER_READY_PID=$(cat "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.ready" 2>/dev/null || true)
+                OLD_WORKER_MAIN_PID=$(systemctl show "${WORKER_SERVICE}@${WORKER_ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if ! systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                  || [ -z "$OLD_WORKER_PID" ] || [ "$OLD_WORKER_PID" != "$OLD_WORKER_READY_PID" ] \
+                  || [ "$OLD_WORKER_PID" != "$OLD_WORKER_MAIN_PID" ] || ! kill -0 "$OLD_WORKER_PID" 2>/dev/null; then
+                  log "ERROR: legacy runtime worker identity is inconsistent before pre-candidate drain"
+                  rollback_idle_and_exit
+                fi
+                if ! systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                  log "ERROR: failed to disable legacy runtime worker before pre-candidate drain"
+                  rollback_idle_and_exit
+                fi
+                if ! install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"; then
+                  log "ERROR: failed to arm legacy runtime worker pre-candidate drain"
+                  rollback_idle_and_exit
+                fi
+                WORKER_ACTIVE_DRAIN_STARTED=1
+                if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
+                  WORKER_ACTIVE_DRAIN_STARTED=0
+                  rm -f "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+                  log "ERROR: failed to signal legacy runtime worker before candidate start"
+                  rollback_idle_and_exit
+                fi
+                WORKER_OLD_WAITED=0
+                while systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; do
+                  if [ "$WORKER_OLD_WAITED" -ge 960 ] \
+                    || [ "$(date +%s)" -ge "$LEGACY_DRAIN_DEADLINE_EPOCH" ]; then
+                    log "ERROR: legacy runtime worker graceful drain timed out; forcing rollback before remote timeout"
+                    if ! systemctl stop "${WORKER_SERVICE}@${WORKER_ACTIVE}" \
+                      || systemctl is-active --quiet "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                      log "ERROR: legacy runtime worker could not be stopped for safe single-writer rollback"
+                      exit 1
+                    fi
+                    WORKER_ACTIVE_DRAIN_COMPLETED=1
+                    WORKER_LEGACY_PRE_DRAINED=1
+                    rollback_idle_and_exit
+                  fi
+                  sleep 5
+                  WORKER_OLD_WAITED=$((WORKER_OLD_WAITED + 5))
+                done
+                WORKER_ACTIVE_DRAIN_COMPLETED=1
+                WORKER_LEGACY_PRE_DRAINED=1
+                log "legacy runtime worker exited before candidate start: color=$WORKER_ACTIVE"
+              else
+                LEGACY_ALL_PID=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.pid" 2>/dev/null || true)
+                LEGACY_ALL_READY_PID=$(cat "/run/${SERVICE_NAME}-${ACTIVE}.ready" 2>/dev/null || true)
+                LEGACY_ALL_MAIN_PID=$(systemctl show "${SERVICE_NAME}@${ACTIVE}" -p MainPID --value 2>/dev/null || true)
+                if ! systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}" \
+                  || [ -z "$LEGACY_ALL_PID" ] || [ "$LEGACY_ALL_PID" != "$LEGACY_ALL_READY_PID" ] \
+                  || [ "$LEGACY_ALL_PID" != "$LEGACY_ALL_MAIN_PID" ] || ! kill -0 "$LEGACY_ALL_PID" 2>/dev/null; then
+                  log "ERROR: legacy bootstrap all identity is inconsistent before pre-candidate drain"
+                  rollback_idle_and_exit
+                fi
+                if ! install -m 0644 /dev/null "/run/${SERVICE_NAME}-${ACTIVE}.draining"; then
+                  log "ERROR: failed to arm legacy bootstrap all pre-candidate drain"
+                  rollback_idle_and_exit
+                fi
+                if ! kill -USR2 "$LEGACY_ALL_PID" 2>/dev/null; then
+                  rm -f "/run/${SERVICE_NAME}-${ACTIVE}.draining"
+                  log "ERROR: failed to signal legacy bootstrap all before candidate start"
+                  rollback_idle_and_exit
+                fi
+                LEGACY_ALL_WAITED=0
+                while systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}"; do
+                  if [ "$LEGACY_ALL_WAITED" -ge 960 ] \
+                    || [ "$(date +%s)" -ge "$LEGACY_DRAIN_DEADLINE_EPOCH" ]; then
+                    log "ERROR: legacy bootstrap all graceful drain timed out; forcing rollback before remote timeout"
+                    if ! systemctl stop "${SERVICE_NAME}@${ACTIVE}" \
+                      || systemctl is-active --quiet "${SERVICE_NAME}@${ACTIVE}"; then
+                      log "ERROR: legacy bootstrap all could not be stopped for safe single-writer rollback"
+                      exit 1
+                    fi
+                    WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED=1
+                    WORKER_LEGACY_PRE_DRAINED=1
+                    rollback_idle_and_exit
+                  fi
+                  sleep 5
+                  LEGACY_ALL_WAITED=$((LEGACY_ALL_WAITED + 5))
+                done
+                WORKER_BOOTSTRAP_ALL_DRAIN_COMPLETED=1
+                WORKER_LEGACY_PRE_DRAINED=1
+                log "legacy bootstrap all exited before candidate start: color=$ACTIVE"
+              fi
+            else
+              log "active runtime supports execution fencing; candidate-first handoff is allowed"
+            fi
+          fi
+
+          if ! node "$RELEASE_DIR/scripts/release/write-compatibility-app-env.mjs" \
             --identity /etc/agent-saas/runtime-identity.json \
             --api-output "/etc/agent-saas/server-${IDLE}.release.env" \
             --worker-output "/etc/agent-saas/runtime-worker-${WORKER_IDLE}.release.env" \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" \
-            --server-digest "$SERVER_ARTIFACT_DIGEST" >/dev/null
+            --server-digest "$SERVER_ARTIFACT_DIGEST" >/dev/null; then
+            log "ERROR: failed to write compatibility env after runtime preflight"
+            rollback_idle_and_exit
+          fi
 
 
           if [ "$WORKER_DEPLOY_REQUIRED" = "true" ]; then
-            rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
+            if ! rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.pid" \
               "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready" \
               "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority" \
-              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"
+              "/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"; then
+              log "ERROR: failed to clear candidate runtime markers"
+              rollback_idle_and_exit
+            fi
             if ! systemctl enable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
               WORKER_CANDIDATE_PROCESS_STARTED=1
               log "ERROR: runtime worker candidate failed to start: ${WORKER_SERVICE}@${WORKER_IDLE}"
@@ -1254,7 +1511,7 @@ jobs:
               rollback_idle_and_exit
             fi
 
-            if [ -n "${WORKER_ACTIVE:-}" ]; then
+            if [ -n "${WORKER_ACTIVE:-}" ] && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
               OLD_WORKER_PIDFILE="/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.pid"
               if [ ! -f "$OLD_WORKER_PIDFILE" ]; then
                 log "ERROR: active runtime worker pidfile is missing: $OLD_WORKER_PIDFILE"
@@ -1277,11 +1534,18 @@ jobs:
             WORKER_PREACTIVATED=1
             log "runtime worker authority promoted before old drain: color=$WORKER_IDLE release=$RELEASE_ID"
 
-            if [ -n "${WORKER_ACTIVE:-}" ]; then
-              systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"
-              install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+            if [ -n "${WORKER_ACTIVE:-}" ] && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
+              WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY=1
+              if ! systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"; then
+                log "ERROR: failed to disable active runtime worker before drain"
+                rollback_idle_and_exit
+              fi
+              if ! install -m 0644 /dev/null "/run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"; then
+                log "ERROR: failed to arm active runtime worker drain guard"
+                rollback_idle_and_exit
+              fi
               WORKER_ACTIVE_DRAIN_STARTED=1
-              log "runtime worker drain restart guard armed: /run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
+              log "runtime worker drain restart guard armed after disable: /run/agent-saas-runtime-worker-${WORKER_ACTIVE}.draining"
               if ! kill -USR2 "$OLD_WORKER_PID" 2>/dev/null; then
                 log "ERROR: failed to drain active runtime worker $WORKER_ACTIVE pid=$OLD_WORKER_PID"
                 rollback_idle_and_exit

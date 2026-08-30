@@ -226,7 +226,7 @@ describe('RuntimeEventRetention', () => {
     retention.stop();
   });
 
-  it('does not arm startup scheduling until the current status can be persisted', async () => {
+  it('supports explicit startup retry without arming the sweep timer', async () => {
     const pool = new FakePool();
     const snapshots: any[] = [];
     const warn = vi.fn();
@@ -260,6 +260,150 @@ describe('RuntimeEventRetention', () => {
     retention.stop();
   });
 
+  it('fails dedicated worker startup when status authority cannot be established', async () => {
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      startupFailureMode: 'throw',
+      statusRecorder: async () => { throw new Error('db down'); },
+      logger: { warn: vi.fn() },
+    });
+
+    await expect(retention.start()).rejects.toThrow(
+      'runtime-worker failed to establish RuntimeEventRetention status authority',
+    );
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
+    retention.stop();
+  });
+
+  it('retries status-only startup for the all role and stops retrying after recovery', async () => {
+    vi.useFakeTimers();
+    const snapshots: any[] = [];
+    let persistenceAvailable = false;
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      startupFailureMode: 'retry',
+      statusRecorder: async (snapshot) => {
+        if (!persistenceAvailable) throw new Error('db down');
+        snapshots.push(snapshot);
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      await retention.start();
+      expect(retention.isStatusPersistenceAvailable()).toBe(false);
+      expect(vi.getTimerCount()).toBe(1);
+
+      persistenceAvailable = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(snapshots).toEqual([
+        expect.objectContaining({ state: 'scheduled', nextScheduledAt: expect.any(String) }),
+      ]);
+      expect(retention.isStatusPersistenceAvailable()).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      retention.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['旧 startup 成功不得覆盖新失败', true, false, false],
+    ['旧失败不得覆盖新成功', false, true, true],
+  ])('%s', async (_label, firstSucceeds, secondSucceeds, expectedAvailable) => {
+    vi.useFakeTimers();
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve; });
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let recorderCalls = 0;
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async () => {
+        recorderCalls += 1;
+        if (recorderCalls === 1) {
+          markFirstEntered();
+          await firstCanFinish;
+          if (!firstSucceeds) throw new Error('old generation failed');
+        } else if (!secondSucceeds) {
+          throw new Error('current generation failed');
+        }
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      const firstStart = retention.start();
+      await firstEntered;
+      retention.stop();
+      const secondStart = retention.start();
+      releaseFirst();
+      await firstStart;
+      await secondStart;
+
+      expect(retention.isStatusPersistenceAvailable()).toBe(expectedAvailable);
+      expect(vi.getTimerCount()).toBe(expectedAvailable ? 1 : 0);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('serializes restart after an in-flight sweep and preserves Store write order', async () => {
+    vi.useFakeTimers();
+    let releaseRunning!: () => void;
+    let markRunningEntered!: () => void;
+    const runningEntered = new Promise<void>((resolve) => { markRunningEntered = resolve; });
+    const runningCanFinish = new Promise<void>((resolve) => { releaseRunning = resolve; });
+    const states: string[] = [];
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async (snapshot) => {
+        states.push(snapshot.state);
+        if (snapshot.state === 'running') {
+          markRunningEntered();
+          await runningCanFinish;
+        }
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      await retention.start();
+      const sweep = retention.runOnce();
+      await runningEntered;
+      retention.stop();
+      expect(retention.isStatusPersistenceAvailable()).toBe(false);
+      let restarted = false;
+      const restart = retention.start().then(() => { restarted = true; });
+      await Promise.resolve();
+      expect(restarted).toBe(false);
+
+      releaseRunning();
+      await sweep;
+      await restart;
+      expect(retention.isStatusPersistenceAvailable()).toBe(true);
+      expect(states).toEqual(['scheduled', 'running', 'scheduled']);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
   it('never arms execute scheduling without a status recorder', async () => {
     vi.useFakeTimers();
     const retention = new RuntimeEventRetention({
@@ -282,7 +426,36 @@ describe('RuntimeEventRetention', () => {
     }
   });
 
-  it('does not leave a hidden timer when stop and restart overlap startup persistence', async () => {
+  it('waits for in-flight startup persistence before quiesce completes', async () => {
+    let releaseStartup!: () => void;
+    let markStartupEntered!: () => void;
+    const startupEntered = new Promise<void>((resolve) => { markStartupEntered = resolve; });
+    const startupCanFinish = new Promise<void>((resolve) => { releaseStartup = resolve; });
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async () => {
+        markStartupEntered();
+        await startupCanFinish;
+      },
+    });
+    const startup = retention.start();
+    await startupEntered;
+    let quiesced = false;
+    const quiesce = retention.quiesce().then(() => { quiesced = true; });
+    await Promise.resolve();
+    expect(quiesced).toBe(false);
+
+    releaseStartup();
+    await startup;
+    await quiesce;
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
+  });
+
+  it('does not leave a hidden timer when successful stop and restart overlap startup persistence', async () => {
     vi.useFakeTimers();
     let releaseFirst!: () => void;
     let markFirstEntered!: () => void;
@@ -309,9 +482,10 @@ describe('RuntimeEventRetention', () => {
       const firstStart = retention.start();
       await firstEntered;
       retention.stop();
-      await retention.start();
+      const secondStart = retention.start();
       releaseFirst();
       await firstStart;
+      await secondStart;
 
       expect(recorderCalls).toBe(2);
       expect(info).toHaveBeenCalledOnce();
@@ -347,7 +521,7 @@ describe('RuntimeEventRetention', () => {
     retention.stop();
   });
 
-  it('does not reschedule an old in-flight sweep after stop and restart', async () => {
+  it('waits for an old in-flight sweep and arms only the restarted schedule', async () => {
     vi.useFakeTimers();
     const pool = new FakePool();
     const query = pool.query.bind(pool);
@@ -364,8 +538,6 @@ describe('RuntimeEventRetention', () => {
       }
       return query(text, params);
     };
-    let markRunSucceeded!: () => void;
-    const runSucceeded = new Promise<void>((resolve) => { markRunSucceeded = resolve; });
     const retention = new RuntimeEventRetention({
       pool: pool as any,
       eventsTable: 'runtime_events',
@@ -373,18 +545,16 @@ describe('RuntimeEventRetention', () => {
       billingProjectionStateTable: 'runtime_billing_projection_state',
       enabled: true,
       sweepIntervalMinutes: 1,
-      statusRecorder: async (snapshot) => {
-        if (snapshot.state === 'dry_run_succeeded') markRunSucceeded();
-      },
+      statusRecorder: async () => undefined,
     });
     try {
       await retention.start();
       vi.advanceTimersByTime(60_000);
       await billingEntered;
       retention.stop();
-      await retention.start();
+      const restart = retention.start();
       releaseBilling();
-      await runSucceeded;
+      await restart;
       await Promise.resolve();
       await Promise.resolve();
 

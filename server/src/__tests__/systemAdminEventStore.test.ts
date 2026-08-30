@@ -9,7 +9,11 @@ import type { PgSystemMetricsStore, SystemMetricRecord } from '../runtime/system
 const ADMIN = { sub: 'admin1', role: 'admin', tenantId: 'pantheon' };
 const NON_PLATFORM_ADMIN = { sub: 'user1', role: 'admin', tenantId: 'tenant-a' };
 
-async function startServer(options: { user?: unknown; store?: unknown }) {
+async function startServer(options: {
+  user?: unknown;
+  store?: unknown;
+  getRuntimeWorkerAdmissionSnapshot?: () => { state: 'healthy' | 'paused'; admitting: boolean };
+}) {
   const app = express();
   app.use((req, _res, next) => {
     (req as unknown as { user: unknown }).user = options.user ?? ADMIN;
@@ -19,6 +23,7 @@ async function startServer(options: { user?: unknown; store?: unknown }) {
     agentCwd: '/workspace',
     systemMetricsStore: options.store as PgSystemMetricsStore | undefined,
     runtimeEventRetention: { enabled: true, executionMode: 'execute', sweepIntervalMinutes: 10 },
+    getRuntimeWorkerAdmissionSnapshot: options.getRuntimeWorkerAdmissionSnapshot,
     eventsTable: 'runtime_events',
   }));
   const server: Server = await new Promise((resolve) => {
@@ -128,6 +133,39 @@ describe('GET /api/admin/system/event-store', () => {
     });
 
     statusAvailable = true;
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'execute_succeeded', stale: false },
+    });
+  });
+
+  it('uses active runtime-worker readiness instead of the API Store local availability flag', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      detailJson: retentionDetail(),
+    });
+    const capacity = metric({});
+    let workerReady = false;
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : capacity),
+      listMetricSeries: vi.fn(async () => [capacity]),
+      isRuntimeEventRetentionStatusAvailable: () => true,
+    };
+    const server = await startServer({
+      store,
+      getRuntimeWorkerAdmissionSnapshot: () => ({
+        state: workerReady ? 'healthy' : 'paused',
+        admitting: workerReady,
+      }),
+    });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'unavailable', stale: false },
+      capacity: { available: true, totalBytes: 140 },
+    });
+
+    workerReady = true;
     expect(await (await server.get()).json()).toMatchObject({
       retention: { status: 'execute_succeeded', stale: false },
     });
@@ -374,6 +412,25 @@ describe('GET /api/admin/system/event-store', () => {
 
     expect(await (await server.get()).json()).toMatchObject({
       retention: { status: 'unavailable', errorCategory: null },
+    });
+  });
+
+  it('rejects a retention status sampled beyond the clock-skew allowance', async () => {
+    const retention = metric({
+      metric: 'runtime_event_retention',
+      label: 'status',
+      sampledAt: '2099-01-01T00:00:00.000Z',
+      detailJson: retentionDetail(),
+    });
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'runtime_event_retention' ? retention : null),
+      listMetricSeries: vi.fn(async () => []),
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: 'unavailable', stale: false },
     });
   });
 

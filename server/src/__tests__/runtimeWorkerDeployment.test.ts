@@ -51,7 +51,7 @@ describe('Runtime Worker 生产部署契约', () => {
     });
   });
 
-  it('Web 蓝绿固定 ws-only，独立 worker 固定 runtime-worker 并有 pid/ready 门禁', async () => {
+  it('Web 蓝绿固定 ws-only，独立 worker 固定 runtime-worker 并有 pid/ready 与 retention drain 门禁', async () => {
     const webUnit = await readFile(
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-server@.service.template'),
       'utf-8',
@@ -70,6 +70,15 @@ describe('Runtime Worker 生产部署契约', () => {
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
+    const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
+    const readinessSource = await readFile(
+      join(repoRoot, 'server/src/runtime/runtimeWorkerReadiness.ts'),
+      'utf-8',
+    );
+    const retentionSource = await readFile(
+      join(repoRoot, 'server/src/runtime/runtimeEventRetention.ts'),
+      'utf-8',
+    );
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
     expect(webUnit).toContain('EnvironmentFile=-/etc/agent-saas/server-%i.release.env');
@@ -176,5 +185,13 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(serverEntry).toContain(
       'runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000)',
     );
+    expect(runtimeSource).toContain('createRuntimeEventRetentionAdmissionGuard(');
+    expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');
+    expect(runtimeSource).toContain('enableSingletonWorkers && config.runtimeEventRetention?.enabled === true');
+    expect(runtimeSource).toContain("startupFailureMode: processRole === 'runtime-worker' ? 'throw'");
+    expect(retentionSource).toContain('runtime-worker failed to establish RuntimeEventRetention status authority');
+    expect(retentionSource).toContain('this.startupRetryTimer = setTimeout(');
+    expect(runtimeSource).toContain('await runtimeEventRetention?.quiesce()');
+    expect(readinessSource).toContain('runtime_event_retention_status_unavailable');
   });
 });

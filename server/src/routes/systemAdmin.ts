@@ -13,6 +13,7 @@ import {
 } from '../data/governance-audit/index.js';
 import type { UserStore } from '../data/users/store.js';
 import type { AlertNotifier } from '../runtime/alertNotifier.js';
+import type { RuntimeAdmissionSnapshot } from '../runtime/memoryPressureGuard.js';
 import type { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { WorkspaceScanAlreadyRunningError } from '../runtime/systemMetricsCollector.js';
 import type {
@@ -34,6 +35,7 @@ export interface SystemAdminRouterOptions {
     executionMode?: 'dry-run' | 'execute';
     sweepIntervalMinutes?: number;
   };
+  getRuntimeWorkerAdmissionSnapshot?: () => RuntimeAdmissionSnapshot | undefined;
   eventsTable?: string;
 }
 
@@ -120,11 +122,12 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
           ? store.listMetricSeries('pg_table_size', options.eventsTable, hours)
           : Promise.resolve([]),
       ]);
+      const runtimeWorkerReady = options.getRuntimeWorkerAdmissionSnapshot?.()?.admitting !== false;
       res.json({
         schemaVersion: 1,
         available: true,
         generatedAt: generatedAt.toISOString(),
-        retention: store.isRuntimeEventRetentionStatusAvailable?.() === false
+        retention: !runtimeWorkerReady || store.isRuntimeEventRetentionStatusAvailable?.() === false
           ? unavailableRetention(retentionBase)
           : serializeRetentionStatus(
               retentionBase,
@@ -417,6 +420,7 @@ function serializeRetentionStatus(
   if (!persistedRetentionStates.has(persistedState)) return unavailableRetention(base);
   if (!isIsoTimestamp(metric.sampledAt)) return unavailableRetention(base);
   const sampledMs = Date.parse(metric.sampledAt);
+  if (sampledMs > now.getTime() + 5 * 60_000) return unavailableRetention(base);
   const persistedWatermarks = isObject(detail.watermarks) ? detail.watermarks : null;
   const categories = parseRetentionCategories(detail.categories);
   if (

@@ -56,6 +56,8 @@ export interface RuntimeEventRetentionOptions {
   projectBillingRuntimeEvents?: (limit: number) => Promise<{ lastProjectedSequence: number }>;
   /** 持久化稳定、脱敏的运行快照；首次未运行状态由只读投影在无记录时派生。 */
   statusRecorder?: (snapshot: RuntimeEventRetentionStatusSnapshot) => Promise<void> | void;
+  /** 专用 worker 启动失败时退出；兼容 all 角色仅重试状态写入。 */
+  startupFailureMode?: 'none' | 'throw' | 'retry';
   logger?: {
     info?: (message: string, ...args: unknown[]) => void;
     warn?: (message: string, ...args: unknown[]) => void;
@@ -93,8 +95,11 @@ const HAND_RETENTION_TYPES = ['hand_provisioning_log', 'hand_health_changed', 'h
  */
 export class RuntimeEventRetention {
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private startupRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = true;
   private inFlight = false;
+  private inFlightCompletion: Promise<void> = Promise.resolve();
+  private statusWriteTail: Promise<void> = Promise.resolve();
   private readonly eventsTable: string;
   private readonly toolInvocationsTable: string;
   private readonly billingProjectionStateTable: string;
@@ -145,6 +150,10 @@ export class RuntimeEventRetention {
 
   async start(): Promise<void> {
     if (this.options.enabled !== true || !this.stopped) return;
+    const requestedGeneration = this.startGeneration;
+    await this.inFlightCompletion;
+    await this.statusWriteTail;
+    if (!this.stopped || requestedGeneration !== this.startGeneration) return;
     const generation = ++this.startGeneration;
     this.stopped = false;
     this.lastStartedAt = null;
@@ -156,18 +165,25 @@ export class RuntimeEventRetention {
       const now = new Date().toISOString();
       this.lastStartedAt = now;
       this.lastCompletedAt = now;
-      statusRecorded = await this.recordStatus(this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }));
+      statusRecorded = await this.recordStatus(
+        this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category }), generation,
+      );
       this.options.logger?.warn?.(`RuntimeEventRetention configuration blocked: category=${gateError.category}`);
     } else {
-      statusRecorded = await this.recordStatus(this.snapshot('scheduled'));
+      statusRecorded = await this.recordStatus(this.snapshot('scheduled'), generation);
     }
     if (generation !== this.startGeneration || this.stopped) return;
     if (!statusRecorded) {
       this.stopped = true;
       this.nextScheduledAt = null;
       this.options.logger?.warn?.('RuntimeEventRetention startup not scheduled: status persistence unavailable');
+      if (this.options.startupFailureMode === 'throw') {
+        throw new Error('runtime-worker failed to establish RuntimeEventRetention status authority');
+      }
+      if (this.options.startupFailureMode === 'retry') this.scheduleStartupRetry();
       return;
     }
+    this.clearStartupRetry();
     this.scheduleNext();
     this.options.logger?.info?.(
       `RuntimeEventRetention started: mode=${this.executionMode} interval=${this.sweepIntervalMinutes}m `
@@ -183,16 +199,27 @@ export class RuntimeEventRetention {
   stop(): void {
     this.stopped = true;
     this.startGeneration += 1;
+    if (this.options.enabled === true) this.statusPersistenceAvailable = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
+    this.clearStartupRetry();
     this.nextScheduledAt = null;
+  }
+
+  async quiesce(): Promise<void> {
+    this.stop();
+    await this.inFlightCompletion;
+    await this.statusWriteTail;
   }
 
   async runOnce(): Promise<RuntimeEventRetentionResult> {
     if (this.inFlight) throw new Error('RuntimeEventRetention is already running');
     this.inFlight = true;
+    let completeInFlight!: () => void;
+    this.inFlightCompletion = new Promise<void>((resolve) => { completeInFlight = resolve; });
+    const generation = this.startGeneration;
     const startedMs = Date.now();
     this.lastStartedAt = new Date(startedMs).toISOString();
     this.lastCompletedAt = null;
@@ -201,7 +228,7 @@ export class RuntimeEventRetention {
     let effectiveDeleteThrough: string | null = null;
     let maxGlobalSequence: string | null = null;
     try {
-      const runningStatusRecorded = await this.recordStatus(this.snapshot('running', { categories }));
+      const runningStatusRecorded = await this.recordStatus(this.snapshot('running', { categories }), generation);
       if (this.executionMode === 'execute' && this.options.enabled === true && !runningStatusRecorded) {
         throw new RetentionGateError('status_persistence_unavailable');
       }
@@ -251,7 +278,7 @@ export class RuntimeEventRetention {
       await this.recordStatus(this.snapshot(
         this.executionMode === 'dry-run' ? 'dry_run_succeeded' : 'execute_succeeded',
         { durationMs: Date.now() - startedMs, billingWatermark, effectiveDeleteThrough, maxGlobalSequence, categories },
-      ));
+      ), generation);
       this.options.logger?.info?.(
         `RuntimeEventRetention finished: mode=${result.mode} deleted=${deleted} `
         + `eligible=${JSON.stringify(eligibleByCategory)} authorizationRef=${this.authorizationRef ?? 'none'} `
@@ -270,10 +297,11 @@ export class RuntimeEventRetention {
         effectiveDeleteThrough,
         maxGlobalSequence,
         categories,
-      }));
+      }), generation);
       throw err;
     } finally {
       this.inFlight = false;
+      completeInFlight();
     }
   }
 
@@ -302,6 +330,23 @@ export class RuntimeEventRetention {
         .finally(() => this.scheduleNext(generation));
     }, delayMs);
     this.timer.unref?.();
+  }
+
+  private scheduleStartupRetry(): void {
+    if (this.startupRetryTimer) return;
+    this.startupRetryTimer = setTimeout(() => {
+      this.startupRetryTimer = undefined;
+      void this.start().catch((err) => {
+        this.options.logger?.warn?.(`RuntimeEventRetention startup retry failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, 30_000);
+    this.startupRetryTimer.unref?.();
+  }
+
+  private clearStartupRetry(): void {
+    if (!this.startupRetryTimer) return;
+    clearTimeout(this.startupRetryTimer);
+    this.startupRetryTimer = undefined;
   }
 
   private prepareNextScheduledAt(): void {
@@ -342,20 +387,34 @@ export class RuntimeEventRetention {
     };
   }
 
-  private async recordStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<boolean> {
+  private async recordStatus(
+    snapshot: RuntimeEventRetentionStatusSnapshot,
+    generation?: number,
+  ): Promise<boolean> {
+    const isCurrent = () => generation === undefined || generation === this.startGeneration;
     if (!this.options.statusRecorder) {
+      if (!isCurrent()) return false;
       this.statusPersistenceAvailable = this.executionMode !== 'execute';
       return this.statusPersistenceAvailable;
     }
-    try {
-      await this.options.statusRecorder(snapshot);
-      this.statusPersistenceAvailable = true;
-      return true;
-    } catch {
-      this.statusPersistenceAvailable = false;
-      this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
-      return false;
-    }
+    let recorded = false;
+    const write = async (): Promise<void> => {
+      if (!isCurrent()) return;
+      try {
+        await this.options.statusRecorder!(snapshot);
+        if (!isCurrent()) return;
+        this.statusPersistenceAvailable = true;
+        recorded = true;
+      } catch {
+        if (!isCurrent()) return;
+        this.statusPersistenceAvailable = false;
+        this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
+      }
+    };
+    const completion = this.statusWriteTail.then(write, write);
+    this.statusWriteTail = completion;
+    await completion;
+    return recorded;
   }
 
   private buildCategories(billingWatermark: bigint): RetentionCategory[] {

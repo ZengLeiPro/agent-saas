@@ -1,5 +1,5 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
-import type { RuntimeAdmissionSnapshot } from './memoryPressureGuard.js';
+import type { RuntimeAdmissionGuard, RuntimeAdmissionSnapshot } from './memoryPressureGuard.js';
 
 const ACTIVE_COLOR_FILE = '/etc/agent-saas/runtime-worker-active-color';
 
@@ -11,6 +11,7 @@ export interface RuntimeWorkerReadinessOptions {
   now?: () => number;
 }
 
+// runtime-worker 的 readyfile 同时代表运行准入与必要 singleton worker 已建立权威状态。
 export function projectRuntimeWorkerReadyFile(
   readyFile: string,
   snapshot: RuntimeAdmissionSnapshot | undefined,
@@ -59,6 +60,41 @@ export function readActiveRuntimeWorkerAdmissionSnapshot(
   } catch {
     return unavailableSnapshot(sampledAt);
   }
+}
+
+// retention 权威与内存压力共享准入门禁，避免 readyfile 与 Scheduler 语义分裂。
+export function createRuntimeEventRetentionAdmissionGuard(
+  base: RuntimeAdmissionGuard,
+  retentionEnabled: () => boolean,
+  statusPersistenceAvailable: () => boolean,
+): RuntimeAdmissionGuard {
+  return {
+    start: () => base.start(),
+    stop: () => base.stop(),
+    canAcquire: () => base.canAcquire()
+      && (!retentionEnabled() || statusPersistenceAvailable()),
+    getSnapshot: () => includeRuntimeEventRetentionReadiness(
+      base.getSnapshot(),
+      retentionEnabled(),
+      statusPersistenceAvailable(),
+    ),
+  };
+}
+
+export function includeRuntimeEventRetentionReadiness(
+  snapshot: RuntimeAdmissionSnapshot,
+  retentionEnabled: boolean,
+  statusPersistenceAvailable: boolean,
+  now: () => number = Date.now,
+): RuntimeAdmissionSnapshot {
+  if (!retentionEnabled || statusPersistenceAvailable) return snapshot;
+  return {
+    ...snapshot,
+    state: 'paused',
+    admitting: false,
+    sampledAt: new Date(now()).toISOString(),
+    reason: 'runtime_event_retention_status_unavailable',
+  };
 }
 
 export function resolveRuntimeAdmissionSnapshotReader(

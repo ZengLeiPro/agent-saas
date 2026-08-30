@@ -210,7 +210,9 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');
     expect(runtimeSource).toContain('enableSingletonWorkers && config.runtimeEventRetention?.enabled === true');
     expect(runtimeSource).toContain("startupFailureMode: processRole === 'runtime-worker' ? 'throw'");
+    expect(runtimeSource).toContain('statusAuthorityTable: systemMetricsStore?.systemMetricsTable');
     expect(retentionSource).toContain('runtime-worker failed to establish RuntimeEventRetention status authority');
+    expect(retentionSource).toContain('withExecutionAuthority');
     expect(retentionSource).toContain('this.startupRetryTimer = setTimeout(');
     expect(runtimeSource).toContain('await runtimeEventRetention?.quiesce()');
     expect(readinessSource).toContain('runtime_event_retention_status_unavailable');

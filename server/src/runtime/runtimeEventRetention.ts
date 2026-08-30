@@ -60,6 +60,8 @@ export interface RuntimeEventRetentionOptions {
   projectBillingRuntimeEvents?: (limit: number) => Promise<{ lastProjectedSequence: number }>;
   /** 持久化稳定、脱敏的运行快照；首次未运行状态由只读投影在无记录时派生。 */
   statusRecorder?: (snapshot: RuntimeEventRetentionStatusSnapshot) => Promise<void> | void;
+  /** execute projection/DELETE 复用状态单例行做跨进程事务 fencing。 */
+  statusAuthorityTable?: string;
   /** 专用 worker 启动失败时退出；兼容 all 角色仅重试状态写入。 */
   startupFailureMode?: 'none' | 'throw' | 'retry';
   logger?: {
@@ -107,6 +109,7 @@ export class RuntimeEventRetention {
   private readonly eventsTable: string;
   private readonly toolInvocationsTable: string;
   private readonly billingProjectionStateTable: string;
+  private readonly statusAuthorityTable: string | undefined;
   private readonly executionMode: 'dry-run' | 'execute';
   private readonly legalDeleteThroughGlobalSequence: bigint;
   private readonly authorizationRef: string | undefined;
@@ -127,14 +130,17 @@ export class RuntimeEventRetention {
   private nextScheduledAt: string | null = null;
   private startGeneration = 0;
   private statusPersistenceAvailable = true;
-  // 仅在串行状态写成功后更新，handoff refresh 在队列执行时读取。
-  private lastPublishedStatus: RuntimeEventRetentionStatusSnapshot | undefined;
+  // 只随逻辑状态转换更新；authority refresh 不覆盖并发产生的更新末态。
+  private lastObservedStatus: RuntimeEventRetentionStatusSnapshot | undefined;
   private readonly statusAuthority = { writerId: randomUUID() };
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
     this.toolInvocationsTable = sanitizeIdentifier(options.toolInvocationsTable);
     this.billingProjectionStateTable = sanitizeIdentifier(options.billingProjectionStateTable);
+    this.statusAuthorityTable = options.statusAuthorityTable
+      ? sanitizeIdentifier(options.statusAuthorityTable)
+      : undefined;
     this.executionMode = options.executionMode ?? 'dry-run';
     this.legalDeleteThroughGlobalSequence = parseWatermark(options.legalDeleteThroughGlobalSequence);
     this.authorizationRef = options.authorizationRef?.trim() || undefined;
@@ -206,16 +212,19 @@ export class RuntimeEventRetention {
   async reassertStatusAuthority(claim = false): Promise<void> {
     if (this.options.enabled !== true) return;
     const write = async (): Promise<void> => {
-      if (!this.options.statusRecorder || !this.lastPublishedStatus) {
-        throw new Error('RuntimeEventRetention has no published status to reassert');
+      if (!this.options.statusRecorder || !this.lastObservedStatus) {
+        throw new Error('RuntimeEventRetention has no observed status to reassert');
       }
       const snapshot = {
-        ...this.lastPublishedStatus,
+        ...this.lastObservedStatus,
+        lastStartedAt: this.lastStartedAt,
+        lastCompletedAt: this.lastCompletedAt,
+        lastSuccessAt: this.lastSuccessAt,
+        nextScheduledAt: this.stopped ? null : this.nextScheduledAt,
         authority: { ...this.statusAuthority, claim },
       };
       await this.options.statusRecorder(snapshot);
       this.statusPersistenceAvailable = true;
-      this.lastPublishedStatus = snapshot;
     };
     const completion = this.statusWriteTail.then(write, write);
     this.statusWriteTail = completion;
@@ -268,7 +277,7 @@ export class RuntimeEventRetention {
       if (gateError) throw gateError;
       // dry-run 必须严格只读，不能为了预览推进 billing projection。
       const projection = this.executionMode === 'execute'
-        ? await this.advanceBillingProjection()
+        ? await this.withExecutionAuthority(() => this.advanceBillingProjection())
         : await this.readBillingProjectionLag();
       billingWatermark = projection.billingWatermark.toString();
       maxGlobalSequence = projection.maxGlobalSequence.toString();
@@ -426,8 +435,9 @@ export class RuntimeEventRetention {
     generation?: number,
   ): Promise<boolean> {
     const isCurrent = () => generation === undefined || generation === this.startGeneration;
+    if (!isCurrent()) return false;
+    this.lastObservedStatus = snapshot;
     if (!this.options.statusRecorder) {
-      if (!isCurrent()) return false;
       this.statusPersistenceAvailable = this.executionMode !== 'execute';
       return this.statusPersistenceAvailable;
     }
@@ -438,7 +448,6 @@ export class RuntimeEventRetention {
         await this.options.statusRecorder!(snapshot);
         if (!isCurrent()) return;
         this.statusPersistenceAvailable = true;
-        this.lastPublishedStatus = snapshot;
         recorded = true;
       } catch {
         if (!isCurrent()) return;
@@ -627,8 +636,10 @@ export class RuntimeEventRetention {
   private async deleteCategory(category: RetentionCategory, onProgress: (deleted: number) => void): Promise<number> {
     let deleted = 0;
     for (let batchNo = 0; batchNo < this.maxBatchesPerCategory; batchNo++) {
-      const batch = await this.options.pool.query(category.deleteSql, category.params);
-      const batchDeleted = batch.rowCount ?? 0;
+      const batchDeleted = await this.withExecutionAuthority(async (query) => {
+        const batch = await query(category.deleteSql, category.params);
+        return batch.rowCount ?? 0;
+      });
       deleted += batchDeleted;
       onProgress(deleted);
       if (batchDeleted < this.batchLimit) break;
@@ -659,6 +670,38 @@ export class RuntimeEventRetention {
     return lag;
   }
 
+  private async withExecutionAuthority<T>(
+    operation: (query: pg.Pool['query']) => Promise<T>,
+  ): Promise<T> {
+    if (!this.statusAuthorityTable) {
+      return operation(this.options.pool.query.bind(this.options.pool));
+    }
+    const client = await this.options.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query<{ writer_id: string | null }>(
+        `SELECT detail_json->'authority'->>'writerId' AS writer_id
+         FROM ${this.statusAuthorityTable}
+         WHERE metric = 'runtime_event_retention' AND label = 'status'
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+      );
+      if (current.rows[0]?.writer_id !== this.statusAuthority.writerId) {
+        throw new RetentionAuthoritySupersededError();
+      }
+      const result = await operation(client.query.bind(client));
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      this.statusPersistenceAvailable = false;
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   private async readBillingProjectionLag(): Promise<{ billingWatermark: bigint; maxGlobalSequence: bigint }> {
     const [state, maxSeq] = await Promise.all([
       this.options.pool.query<{ last_global_sequence: string }>(
@@ -676,6 +719,13 @@ export class RuntimeEventRetention {
       billingWatermark: BigInt(state.rows[0]?.last_global_sequence ?? '0'),
       maxGlobalSequence: BigInt(maxSeq.rows[0]?.max_global_sequence ?? '0'),
     };
+  }
+}
+
+class RetentionAuthoritySupersededError extends Error {
+  constructor() {
+    super('RuntimeEventRetention execution authority superseded');
+    this.name = 'RetentionAuthoritySupersededError';
   }
 }
 

@@ -378,6 +378,99 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     oldAll.stop();
   });
 
+  it('候选 claim 与旧 execute 事务串行，失权旧 sweep 不再 DELETE 且 reclaim 发布真实末态', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    await pool.query(`DELETE FROM ${eventsTable}`);
+    await pool.query(
+      `UPDATE ${billingProjectionStateTable} SET last_global_sequence = 0 WHERE key = 'runtime_events'`,
+    );
+    await pool.query(
+      `INSERT INTO ${eventsTable} (tenant_id, session_id, run_id, event_type, timestamp)
+       VALUES
+         ('tenant-fence', 'session-fence', 'run-fence', 'assistant_stream_event', now() - interval '1 hour'),
+         ('tenant-fence', 'session-fence', 'run-fence', 'run_finished', now() - interval '1 hour')`,
+    );
+
+    let announceProjection!: () => void;
+    let resumeProjection!: () => void;
+    const projectionEntered = new Promise<void>((resolve) => { announceProjection = resolve; });
+    const projectionCanContinue = new Promise<void>((resolve) => { resumeProjection = resolve; });
+    let projectionCalls = 0;
+    const oldAll = createRetention(pool, {
+      enabled: true,
+      executionMode: 'execute',
+      authorizationRef: 'CHG-fence-old',
+      batchLimit: 1,
+      maxBatchesPerCategory: 2,
+      projectBillingRuntimeEvents: async () => {
+        projectionCalls += 1;
+        announceProjection();
+        await projectionCanContinue;
+        const max = await pool.query<{ max_sequence: string }>(
+          `SELECT COALESCE(MAX(global_sequence), 0)::text AS max_sequence FROM ${eventsTable}`,
+        );
+        const lastProjectedSequence = Number(max.rows[0]?.max_sequence ?? '0');
+        await pool.query(
+          `UPDATE ${billingProjectionStateTable} SET last_global_sequence = $1 WHERE key = 'runtime_events'`,
+          [lastProjectedSequence],
+        );
+        return { lastProjectedSequence };
+      },
+    });
+    await oldAll.start();
+    const oldRun = oldAll.runOnce();
+    const oldRejected = expect(oldRun).rejects.toThrow('execution authority superseded');
+    await projectionEntered;
+
+    let announceCandidateClaim!: () => void;
+    const candidateClaimAttempted = new Promise<void>((resolve) => { announceCandidateClaim = resolve; });
+    const candidateStorePool = {
+      async connect() {
+        const client = await pool.connect();
+        return {
+          async query(text: string, values: unknown[] = []) {
+            if (text.includes(metricsStore.systemMetricsTable) && text.includes('FOR UPDATE')) {
+              announceCandidateClaim();
+            }
+            return client.query(text, values);
+          },
+          release: () => client.release(),
+        };
+      },
+    };
+    const candidateStore = new PgSystemMetricsStore({
+      pool: candidateStorePool as unknown as InstanceType<typeof Pool>,
+      tablePrefix: prefix,
+    });
+    const candidate = createRetention(pool, {
+      enabled: true,
+      executionMode: 'execute',
+      authorizationRef: 'CHG-fence-candidate',
+      statusRecorder: (snapshot) => candidateStore.recordRuntimeEventRetentionStatus(snapshot),
+    });
+    let candidateStarted = false;
+    const candidateStart = candidate.start().then(() => { candidateStarted = true; });
+    await candidateClaimAttempted;
+    expect(candidateStarted).toBe(false);
+
+    resumeProjection();
+    await candidateStart;
+    await oldRejected;
+    expect(projectionCalls).toBe(1);
+    expect(await countAssistantStreamEvents()).toBe(1);
+    expect(await latestDetail()).toMatchObject({ state: 'scheduled' });
+
+    await oldAll.reassertStatusAuthority(true);
+    expect(await latestDetail()).toMatchObject({
+      state: 'failed',
+      lastCompletedAt: expect.any(String),
+      errorCategory: 'execution_failed',
+    });
+
+    candidate.stop();
+    oldAll.stop();
+  }, 10_000);
+
   it('从长历史按索引权威行合并并收敛为单例，不执行 JSON 历史排序', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
     await pool.query(`
@@ -465,6 +558,7 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
       billingProjectionStateTable,
       legalDeleteThroughGlobalSequence: '100',
       statusRecorder: (snapshot) => metricsStore.recordRuntimeEventRetentionStatus(snapshot),
+      statusAuthorityTable: metricsStore.systemMetricsTable,
       ...overrides,
     });
   }

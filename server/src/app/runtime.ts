@@ -1079,7 +1079,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       ...retentionWorkerOptions(config.runtimeEventRetention),
       startupFailureMode: processRole === 'runtime-worker' ? 'throw' : processRole === 'all' ? 'retry' : 'none',
       projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
-      statusRecorder: systemMetricsStore ? (snapshot) => systemMetricsStore!.recordRuntimeEventRetentionStatus(snapshot) : undefined,
+      statusRecorder: systemMetricsStore ? (snapshot) => systemMetricsStore!.recordRuntimeEventRetentionStatus(snapshot) : undefined, statusAuthorityTable: systemMetricsStore?.systemMetricsTable,
       logger: serverLogger.child('RuntimeEventRetention'),
     });
     if (enableSingletonWorkers) {

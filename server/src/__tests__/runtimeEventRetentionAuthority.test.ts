@@ -37,7 +37,7 @@ describe('RuntimeEventRetention authority refresh', () => {
     await expect(retention.reassertStatusAuthority()).resolves.toBeUndefined();
   });
 
-  it('以非 claim 写在队列执行时刷新最新快照，不回写调用时的旧结果', async () => {
+  it('以非 claim 写在队列执行时刷新调用时的真实状态', async () => {
     const snapshots: any[] = [];
     let blockNextRunning = false;
     let announceRunning!: () => void;
@@ -70,5 +70,34 @@ describe('RuntimeEventRetention authority refresh', () => {
     ]);
     expect(snapshots.map((snapshot) => snapshot.authority.claim)).toEqual([false, false, false]);
     expect(new Set(snapshots.map((snapshot) => snapshot.authority.writerId)).size).toBe(1);
+  });
+
+  it('末态写被 fencing 后 reclaim 发布真实末态而不是旧 running', async () => {
+    const snapshots: any[] = [];
+    let rejectTerminal = false;
+    const retention = new RuntimeEventRetention(retentionOptions({
+      enabled: true,
+      statusRecorder: async (snapshot: any) => {
+        if (rejectTerminal && snapshot.state === 'dry_run_succeeded' && snapshot.authority.claim !== true) {
+          throw new Error('authority superseded');
+        }
+        snapshots.push(snapshot);
+      },
+    }));
+    await retention.start();
+    snapshots.length = 0;
+    rejectTerminal = true;
+
+    await retention.runOnce();
+    expect(snapshots.map((snapshot) => snapshot.state)).toEqual(['running']);
+
+    rejectTerminal = false;
+    await retention.reassertStatusAuthority(true);
+    expect(snapshots.at(-1)).toMatchObject({
+      state: 'dry_run_succeeded',
+      lastCompletedAt: expect.any(String),
+      authority: { claim: true },
+    });
+    retention.stop();
   });
 });

@@ -39,7 +39,7 @@ test('Sandbox Running 到 Paused 再 Resume 后有权威 Read trace', async ({ p
     `必须使用 Write 工具写入 ${required('STAGING_RELEASE_ID')}-pause-proof.txt，内容为 pause-resume-proof。`,
   );
   const sessionId = currentSessionId(page);
-  const token = await apiLogin(request);
+  const token = await apiLogin();
   const seedRun = await waitForSessionRun(request, token, sessionId);
   const inventory = (await authorizedJson(
     request,

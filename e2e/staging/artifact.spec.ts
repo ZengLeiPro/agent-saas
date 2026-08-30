@@ -10,7 +10,7 @@ test('Agent 生成的制品可从同一会话持久化读回', async ({ page, re
   );
   const sessionId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1);
   expect(sessionId).toBeTruthy();
-  const token = await apiLogin(request);
+  const token = await apiLogin();
   const artifacts = (await authorizedJson(
     request,
     token,

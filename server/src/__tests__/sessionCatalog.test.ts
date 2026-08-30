@@ -12,7 +12,7 @@ import {
   resolveSessionMemoryPolicy,
 } from '../runtime/sessionCatalog.js';
 
-describe('FileSessionCatalog', () => {
+describe('FileSessionCatalog compatibility', () => {
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -55,6 +55,21 @@ describe('FileSessionCatalog', () => {
       sandboxProfile: 'daily',
       executionTarget: 'server-local',
       status: 'running',
+    });
+  });
+
+  it('defaults newly-created and legacy records without workload facts to interactive', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-workload-'));
+    cleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const created = createRuntimeSessionRecord({ sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd });
+    expect(created.sandboxWorkloadDescriptor).toEqual({ kind: 'interactive' });
+    cleanupDirs.add(dirname(created.transcriptPath));
+    const { sandboxWorkloadDescriptor: _legacyMissing, ...legacy } = created;
+    await catalog.upsert(legacy);
+    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+      sandboxWorkloadDescriptor: { kind: 'interactive' },
     });
   });
 

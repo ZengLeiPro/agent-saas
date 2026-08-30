@@ -97,6 +97,13 @@ export type ExecutionTargetKind = 'server-local' | 'server-container' | 'server-
  *
  * 未来阶段 3 客户 daemon 上线时，`root` 字段会彻底消失，只留 `id`。
  */
+/** Stable ACS-side workload wire contract (`class`, never shared `kind`). */
+export interface SandboxWorkloadWireDescriptor {
+  class: 'interactive' | 'taskboard' | 'cron' | 'memory';
+  taskKind?: 'delivery' | 'advisory' | 'integration' | 'remediation';
+  purpose?: 'work' | 'review' | 'merge';
+}
+
 export interface WorkspaceRef {
   /**
    * Workspace 逻辑标识。brain 端用 sessionId 或 `${userId}:${sessionId}` 之类生成；
@@ -128,6 +135,8 @@ export interface WorkspaceRef {
    */
   topLevelSessionId?: string;
   sandboxScopeId?: string; mountSubPath?: string;
+  /** ACS wire classification; Server maps the shared `{kind}` fact to stable `{class}`. */
+  workload?: SandboxWorkloadWireDescriptor;
   /** Standalone connector ACS resource target; normal Agent calls inherit their profile. */ sandboxResources?: { cpu: string; memoryMb: number };
   executionTarget: ExecutionTargetKind;
   /**
@@ -315,6 +324,7 @@ export interface WorkspaceProvider {
     topLevelSessionId?: string;
     workspaceId?: string;
     sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+    workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef;
@@ -520,6 +530,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     topLevelSessionId?: string;
     workspaceId?: string;
     sandboxScopeId?: string; mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+    workload?: WorkspaceRef['workload'];
     executionTarget?: ExecutionTargetKind;
     sandboxPolicy?: WorkspaceRef['sandboxPolicy'];
   }): WorkspaceRef {
@@ -543,6 +554,7 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
       topLevelSessionId: args.topLevelSessionId ?? args.sessionId,
       sandboxScopeId: args.sandboxScopeId, mountSubPath: args.mountSubPath,
       sandboxResources: args.sandboxResources,
+      ...(args.workload ? { workload: args.workload } : {}),
       executionTarget: args.executionTarget ?? this.defaultExecutionTarget,
       ...(args.sandboxPolicy ? { sandboxPolicy: args.sandboxPolicy } : {}),
     };

@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from './projectKey.js';
-import type { SandboxProfile } from '@agent/shared';
+import type { SandboxProfile, SandboxWorkloadDescriptor } from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 import {
   atomicWriteTrustedFile,
@@ -78,6 +78,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   /** 平台内部来源；memory_consolidation 会话保留审计数据但不对用户展示。 */
   sessionSource?: 'taskboard_execution' | 'memory_consolidation';
   memoryAutomationEligible?: boolean;
+  /** 顶层 Sandbox workload 分类；子会话继承父值，禁止按 sessionId 形状推断。 */
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
 }
 
 export function getMetaPath(transcriptPath: string): string {

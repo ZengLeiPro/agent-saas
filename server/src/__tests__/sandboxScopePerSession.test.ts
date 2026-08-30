@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveSandboxScopeId } from '../runtime/runtimeHandRegistration.js';
+import { deriveSandboxScopeId, toAcsSandboxWorkloadDescriptor } from '../runtime/runtimeHandRegistration.js';
 
 /**
  * per-session Sandbox（A 方案，2026-08-10）的 scope 归属语义。
@@ -8,6 +8,15 @@ import { deriveSandboxScopeId } from '../runtime/runtimeHandRegistration.js';
  * 核心不变量：**「顶层会话 + 其全部后代」必须落在同一个 sandboxScopeId**（决策 7），
  * 而不同顶层会话必须落在不同 scope（这正是并发惩罚的解法）。
  */
+describe('workload mapping at the hand registration boundary', () => {
+  it('keeps ACS class stable and places Taskboard detail only in the descriptor', () => {
+    expect(toAcsSandboxWorkloadDescriptor({ kind: 'interactive' })).toEqual({ class: 'interactive' });
+    expect(toAcsSandboxWorkloadDescriptor({
+      kind: 'taskboard', taskKind: 'remediation', purpose: 'merge',
+    })).toEqual({ class: 'taskboard', taskKind: 'remediation', purpose: 'merge' });
+  });
+});
+
 describe('deriveSandboxScopeId（per-session Sandbox）', () => {
   const workspaceId = 'ws_kaiyan__kyvynk4r399zsr';
 

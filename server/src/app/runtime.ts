@@ -83,6 +83,7 @@ import { AutoCompactionService } from '../runtime/autoCompaction.js';
 import { runtimeRunController } from '../runtime/runController.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
 import { SandboxWarmupService } from '../runtime/sandboxWarmup.js';
+import { PgSandboxLifecycleStore, SandboxLifecycleService } from '../runtime/sandboxLifecycleService.js';
 import { createMiddlewareRunDispatch } from '../engine/dispatch.js';
 import { DispatchMetricsStore } from '../engine/metricsStore.js';
 import { getPublicModelList } from './models.js';
@@ -672,6 +673,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
   };
   let billingAuditTimer: NodeJS.Timeout | undefined;
+  let sandboxLifecycleService: SandboxLifecycleService | undefined;
   let runtimeEventRetention: RuntimeEventRetention | undefined, runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined, runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
@@ -1099,6 +1101,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
       await taskboardExecutionCoordinator?.stop();
       terminalEventOutboxDispatcher.stop();
+      sandboxLifecycleService?.stop();
       await runtimeScheduler?.stop();
       await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
@@ -1500,6 +1503,18 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     isExecutionEnabled: isRuntimeExecutionEnabled,
     logger: serverLogger.child('SandboxWarmup'),
   });
+  if (pgRunStore) {
+    sandboxLifecycleService = new SandboxLifecycleService({
+      agentCwd,
+      store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable),
+      runStore: pgRunStore,
+      sessionCatalog,
+      handStore: pgHandStore,
+      tenantRemoteHands: () => config.tenantRemoteHands?.hands,
+      tenantRemoteHandResolver,
+      logger: serverLogger.child('SandboxLifecycle'),
+    });
+  }
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
   // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
   // authToken 直接透传。两者互斥由 schema 保证。
@@ -2696,6 +2711,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           serverLogger.info(`Run cancel delivered via event bridge: run=${event.runId} reason=${event.reason ?? 'run_cancel_requested'}`);
         }
       }
+      if (enableSingletonWorkers) sandboxLifecycleService?.observeRuntimeEvent(event);
       if (event.type === 'run_finished' || event.type === 'run_started') {
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();
@@ -2715,6 +2731,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }, 5_000);
       cancelDeliveryRetryTimer.unref?.();
     }
+    // Live events reduce latency; the periodic scanner remains the durable correctness fallback.
+    if (enableSingletonWorkers) sandboxLifecycleService?.start();
     serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
   }
   if (runtimeScheduler && enableSchedulerWorker) {
@@ -2919,6 +2937,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sessionBasePath,
     agentCwd,
     sandboxWarmupService,
+    ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,

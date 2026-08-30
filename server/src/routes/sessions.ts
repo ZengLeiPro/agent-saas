@@ -455,6 +455,10 @@ export interface SessionsRouterOptions {
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
   sandboxWarmup?: (sessionId: string) => void;
+  /** Cancel the exact session scope and durably enqueue exact ACS deletion. */
+  sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>;
+  /** Cancel a pending exact-scope cleanup before restoring a soft-deleted session. */
+  sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
@@ -1826,6 +1830,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             ownerUserId: meta.userId,
             hasTranscript: item.hasTranscript,
             artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+            beforePhysicalDelete: async () => { await options.sandboxSessionDeletion?.(item.sessionId); },
             deleteTranscriptPreservingMeta: async () => !item.hasTranscript || (await deleteSession(item.sessionId, { preserveMeta: true })).deleted,
             deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true })).deleted,
           });
@@ -3106,7 +3111,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             return;
           }
 
-          // 移除 deletedAt/deletedBy
+          // 先取消 durable cleanup，再移除 tombstone；否则网络/busy 重试可能在恢复后删除新建 Sandbox。
+          await options.sandboxSessionRestore?.(sessionId);
           const { deletedAt, deletedBy, ...rest } = meta;
           await writeSessionMeta(transcriptPath, rest as SessionMeta);
           auditLog(req, "session_restored", sessionId);
@@ -3170,6 +3176,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           ownerUserId: req.user.sub,
           hasTranscript,
           artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub),
+          beforePhysicalDelete: async () => { await options.sandboxSessionDeletion?.(sessionId); },
           deleteTranscriptPreservingMeta: async () => !hasTranscript || (await deleteSession(sessionId, { preserveMeta: true })).deleted,
           deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(sessionId, { deleteSidecarDir: true })).deleted,
         });
@@ -3277,7 +3284,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const applySoftDelete = async (): Promise<boolean> => {
         // 会话锁内重读 tombstone，避免排队期间的 restore/delete 改变被旧快照覆盖。
         const currentMeta = await readSessionMeta(transcriptPath);
-        if (!currentMeta) throw new Error("Session not found"); if (currentMeta.deletedAt) return false;
+        if (!currentMeta) throw new Error("Session not found");
+        // Keep exact Sandbox cleanup under the same session lock as tombstone mutation.
+        // This prevents restore from cancelling an old outbox before delete queues a new one.
+        await options.sandboxSessionDeletion?.(sessionId);
+        if (currentMeta.deletedAt) return false;
         await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
           apiLogger.warn(
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,

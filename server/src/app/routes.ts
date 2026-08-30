@@ -337,6 +337,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionProjectionStore: runtime.runtimeSessionProjectionStore,
       sessionReadStateStore: runtime.sessionReadStateStore,
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
+      // Cleanup is queued durably before transcript/meta deletion; restore cancels pending retries.
+      sandboxSessionDeletion: runtime.sandboxLifecycleService
+        ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletion(sessionId)
+        : undefined,
+      sandboxSessionRestore: runtime.sandboxLifecycleService
+        ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId)
+        : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
         : undefined,

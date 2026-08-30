@@ -15,6 +15,9 @@ import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/r
 import { sandboxResourceOverride } from './provision.js';
 import { summarizeRunnerStderr } from './runnerLog.js';
 
+const ACTIVE_INVOCATION_LEASE_MS = 2 * 60_000;
+const ACTIVE_INVOCATION_LEASE_RENEW_MS = 60_000;
+
 interface InvocationEntry {
   controller: AbortController;
   child?: ChildProcessWithoutNullStreams;
@@ -61,6 +64,7 @@ export class AcsExecutor {
       sandboxScopeId: workspace.sandboxScopeId,
       mountSubPath: workspace.mountSubPath,
       ...(resourceOverride ? { resources: resourceOverride } : {}),
+      ...(workspace.workload ? { workload: workspace.workload } : {}),
     };
     const ref = this.sandboxManager.ref(sandboxIdentity);
     const invocationId = request.context.invocationId;
@@ -78,8 +82,30 @@ export class AcsExecutor {
     if (options.signal?.aborted) controller.abort();
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
+    let leasePersisted = false;
+    let leaseClosed = false;
+    let leaseRenewal: Promise<void> | undefined;
+    let leaseRenewTimer: ReturnType<typeof setInterval> | undefined;
+    const renewLease = () => {
+      if (leaseClosed || leaseRenewal) return;
+      leaseRenewal = this.sandboxManager.setActiveInvocationLease(
+        ref.name,
+        invocationKey,
+        new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
+      ).catch((err) => {
+        this.logger.warn(`invocation_lease_renew_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
+      }).finally(() => { leaseRenewal = undefined; });
+    };
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
+      await this.sandboxManager.setActiveInvocationLease(
+        ref.name,
+        invocationKey,
+        new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
+      );
+      leasePersisted = true;
+      leaseRenewTimer = setInterval(renewLease, ACTIVE_INVOCATION_LEASE_RENEW_MS);
+      leaseRenewTimer.unref?.();
       if (controller.signal.aborted) return;
       // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
       // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
@@ -140,6 +166,22 @@ export class AcsExecutor {
       options.signal?.removeEventListener('abort', onExternalAbort);
       this.invocations.delete(invocationKey);
       releaseActive?.();
+      leaseClosed = true;
+      if (leaseRenewTimer) clearInterval(leaseRenewTimer);
+      if (leaseRenewal) await leaseRenewal;
+      if (leasePersisted) {
+        try {
+          await this.sandboxManager.setActiveInvocationLease(ref.name, invocationKey);
+        } catch (err) {
+          this.logger.warn(`invocation_lease_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        try {
+          await this.sandboxManager.touch(ref.name);
+        } catch (err) {
+          // Lease/touch cleanup is lifecycle bookkeeping. Never replace a completed tool result.
+          this.logger.warn(`invocation_touch_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     }
   }
 
@@ -209,6 +251,7 @@ export class AcsExecutor {
       sandboxScopeId?: string;
       mountSubPath?: string;
       resources?: SandboxResourceOverride;
+      workload?: import('./sandboxLifecyclePolicy.js').SandboxWorkloadDescriptor;
     },
     invocationKey: string,
   ): Promise<void> {

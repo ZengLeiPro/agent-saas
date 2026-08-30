@@ -15,6 +15,7 @@ import type {
   RuntimeRecoveryAction,
 } from '../types/index.js';
 import type { ExecutionTargetKind } from './toolRuntime.js';
+import type { SandboxWorkloadDescriptor } from '@agent/shared';
 
 export type PermissionMode =
   | 'default'
@@ -175,6 +176,8 @@ export interface AgentRunOptions {
    * API 指定。见 runtime/toolProfiles.ts。
    */
   toolProfile?: 'memory_poll' | 'memory_consolidate';
+  /** Server-only workload fact; ordinary clients must not author this field. */
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   /**
    * L2 会话结束记忆审查的内部入口。模型上下文从指定父会话完整重放，
    * 当前隐藏 Run 的事件仍写入新会话；普通 API/通道不得设置。

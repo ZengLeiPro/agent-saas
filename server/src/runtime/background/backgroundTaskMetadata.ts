@@ -1,4 +1,5 @@
 import type { ChannelContext } from '../../types/index.js';
+import type { SandboxWorkloadWireDescriptor } from '../../agent/toolRuntime.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
 import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
@@ -53,6 +54,7 @@ interface CommonBackgroundTaskMetadata {
   mountSubPath?: string;
   sandboxScopeId?: string;
   sandboxResources?: SandboxResources;
+  workload?: SandboxWorkloadWireDescriptor;
   sandboxPolicy?: { denyRead: string[] };
   timezone?: string;
   parentChannel: ChannelContext['channel'];
@@ -99,6 +101,8 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
   const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
+  // This metadata is durable and may predate the current ACS descriptor schema.
+  const workload = parseWorkload(value.workload);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
   const dwsCompletionRouteVersion = dwsCompletionRoute?.version
     ?? (value.dwsCompletionRouteVersion === 'invalid' ? 'invalid' as const : undefined);
@@ -130,6 +134,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'mountSubPath') ? { mountSubPath: metadataString(value, 'mountSubPath') } : {}),
     ...(metadataString(value, 'sandboxScopeId') ? { sandboxScopeId: metadataString(value, 'sandboxScopeId') } : {}),
     ...(sandboxResources ? { sandboxResources } : {}),
+    ...(workload ? { workload } : {}),
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
@@ -170,6 +175,22 @@ export function deriveBackgroundRuntimeIsolationRequirement(
   child: { runId: string; sessionId: string; workspaceId: string },
 ): RuntimeIsolationRequirement | undefined {
   return deriveRuntimeIsolationRequirement(metadata.runtimeIsolationRequirement, child);
+}
+
+function parseWorkload(value: unknown): SandboxWorkloadWireDescriptor | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (!['interactive', 'taskboard', 'cron', 'memory'].includes(String(raw.class))) return undefined;
+  if (raw.class !== 'taskboard') return { class: raw.class as 'interactive' | 'cron' | 'memory' };
+  const taskKind = ['delivery', 'advisory', 'integration', 'remediation'].includes(String(raw.taskKind))
+    ? raw.taskKind as SandboxWorkloadWireDescriptor['taskKind'] : undefined;
+  const purpose = ['work', 'review', 'merge'].includes(String(raw.purpose))
+    ? raw.purpose as SandboxWorkloadWireDescriptor['purpose'] : undefined;
+  return {
+    class: 'taskboard',
+    ...(taskKind ? { taskKind } : {}),
+    ...(purpose ? { purpose } : {}),
+  };
 }
 
 export function metadataString(metadata: Record<string, unknown>, key: string): string | undefined {

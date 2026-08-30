@@ -17,7 +17,7 @@ import {
   MAX_BODY_BYTES,
   buildToolsResponse,
   parseProvisionRecipe,
-  parseWarmupResources,
+  parseWarmupRequest,
   parseWireRequest,
 } from './protocol.js';
 import { Provisioner, sandboxResourceOverride } from './provision.js';
@@ -40,6 +40,7 @@ import {
 } from './sandboxHttp.js';
 import { AlertDispatcher, type AcsAlert } from './alerts.js';
 import { SandboxLifecycleController } from './lifecycleController.js';
+import { handleSandboxLifecycleRoute, matchSandboxLifecycleRoute } from './sandboxLifecycleRoutes.js';
 const config = loadConfigFromEnv();
 
 const logger = {
@@ -157,6 +158,16 @@ const server = createServer((req, res) => {
     if (draining)
       return sendJson(res, 503, { status: 'error', error: 'orchestrator draining, retry shortly' });
     void withInflight(() => snatOperations.handleRestoreCancel(req, res));
+    return;
+  }
+
+  const sandboxLifecycleRoute = matchSandboxLifecycleRoute(req.url);
+  if (sandboxLifecycleRoute) {
+    void withInflight(() => handleSandboxLifecycleRoute(req, res, sandboxLifecycleRoute, {
+      sandboxManager,
+      authorize,
+      busySandboxNames: activeBusySandboxNames,
+    }));
     return;
   }
 
@@ -604,26 +615,11 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
   }
   const body = await readJson(req, res);
   if (!body.ok) return;
-  const raw = body.value as Record<string, unknown>;
-  const workspaceId = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
-  const sessionId = typeof raw.sessionId === 'string' ? raw.sessionId.trim() : '';
-  const sandboxScopeId =
-    typeof raw.sandboxScopeId === 'string' && raw.sandboxScopeId.trim()
-      ? raw.sandboxScopeId.trim()
-      : undefined;
-  const mountSubPath =
-    typeof raw.mountSubPath === 'string' && raw.mountSubPath.trim()
-      ? raw.mountSubPath.trim()
-      : undefined;
-  if (!workspaceId || !sessionId) {
-    return sendJson(res, 400, { status: 'error', error: 'workspaceId and sessionId are required' });
-  }
-  const parsedResources = parseWarmupResources(raw.resources);
-  if (!parsedResources.ok) {
-    return sendJson(res, 400, { status: 'error', error: parsedResources.error });
-  }
-  const resourceOverride = parsedResources.value
-    ? sandboxResourceOverride({ workspaceId, resources: parsedResources.value }, config)
+  const parsed = parseWarmupRequest(body.value);
+  if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
+  const { workspaceId, sessionId, sandboxScopeId, mountSubPath, workload } = parsed.value;
+  const resourceOverride = parsed.value.resources
+    ? sandboxResourceOverride({ workspaceId, resources: parsed.value.resources }, config)
     : undefined;
   const ensureInput = {
     workspaceId,
@@ -631,6 +627,7 @@ async function handleWarmup(req: IncomingMessage, res: ServerResponse): Promise<
     sandboxScopeId,
     mountSubPath,
     ...(resourceOverride ? { resources: resourceOverride } : {}),
+    ...(workload ? { workload } : {}),
   };
   let ref: ReturnType<typeof sandboxManager.ref>;
   try {

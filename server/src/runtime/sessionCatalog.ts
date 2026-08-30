@@ -8,7 +8,7 @@ import {
   type SessionIdentityBackfill,
   type SessionMeta,
 } from '../data/transcripts/meta.js';
-import type { SandboxProfile } from '@agent/shared';
+import type { SandboxProfile, SandboxWorkloadDescriptor } from '@agent/shared';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import { DEFAULT_SANDBOX_PROFILE, resolveSessionSandboxProfile } from './sandboxProfile.js';
 import type { AgentProfileSessionBinding } from '../data/agentProfiles/types.js';
@@ -127,6 +127,8 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   sessionSource?: RuntimeSessionSource;
   /** 是否允许后台自动记忆；false 永久 fail-closed。 */
   memoryAutomationEligible?: boolean;
+  /** Server-authored top-level Sandbox workload classification. Legacy records may omit it. */
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   createdAt: string;
   updatedAt: string;
 }
@@ -235,6 +237,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
       ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
       ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
+      ...(record.sandboxWorkloadDescriptor ? { sandboxWorkloadDescriptor: record.sandboxWorkloadDescriptor } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
       ...(record.profileKey ? { profileKey: record.profileKey } : {}),
       ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
@@ -277,6 +280,8 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(typeof meta.memoryAutomationEligible === 'boolean'
         ? { memoryAutomationEligible: meta.memoryAutomationEligible }
         : {}),
+      sandboxWorkloadDescriptor: parseSandboxWorkloadDescriptor(meta.sandboxWorkloadDescriptor)
+        ?? { kind: 'interactive' },
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
       ...(meta.profileVersionId ? { profileVersionId: meta.profileVersionId } : {}),
@@ -311,6 +316,7 @@ export function createRuntimeSessionRecord(args: {
   memoryPolicyVersion?: MemoryPolicyVersion;
   sessionSource?: RuntimeSessionSource;
   memoryAutomationEligible?: boolean;
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   profileBinding?: AgentProfileSessionBinding;
 }): RuntimeSessionRecord {
   const now = new Date().toISOString();
@@ -340,10 +346,27 @@ export function createRuntimeSessionRecord(args: {
     ...(args.memoryPolicyVersion ? { memoryPolicyVersion: args.memoryPolicyVersion } : {}),
     ...(sessionSource ? { sessionSource } : {}),
     ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
+    sandboxWorkloadDescriptor: args.sandboxWorkloadDescriptor ?? { kind: 'interactive' },
     ...(args.profileBinding ?? {}),
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function parseSandboxWorkloadDescriptor(value: unknown): SandboxWorkloadDescriptor | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind === 'interactive' || candidate.kind === 'cron' || candidate.kind === 'memory') {
+    return { kind: candidate.kind };
+  }
+  if (candidate.kind !== 'taskboard') return undefined;
+  const taskKind = ['delivery', 'advisory', 'integration', 'remediation'].includes(String(candidate.taskKind))
+    ? candidate.taskKind as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['taskKind']
+    : undefined;
+  const purpose = ['work', 'review', 'merge'].includes(String(candidate.purpose))
+    ? candidate.purpose as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['purpose']
+    : undefined;
+  return { kind: 'taskboard', ...(taskKind ? { taskKind } : {}), ...(purpose ? { purpose } : {}) };
 }
 
 function isExecutionTargetKind(value: unknown): value is ExecutionTargetKind {
@@ -365,7 +388,7 @@ function isRuntimeSessionStatus(value: unknown): value is RuntimeSessionStatus {
     || value === 'error';
 }
 
-/** 新普通用户会话仅计算一次 policy；历史缺 pin 的会话始终按 v1。 */
+/** 新普通用户会话仅计算一次 memory policy；历史缺 pin 的会话始终按 v1。 */
 export function resolveSessionMemoryPolicy(input: {
   existing?: Pick<RuntimeSessionRecord, 'memoryPolicyVersion' | 'sessionSource' | 'memoryAutomationEligible'> | null;
   delegationEnabled: boolean;

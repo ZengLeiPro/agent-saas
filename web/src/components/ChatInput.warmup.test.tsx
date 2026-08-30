@@ -86,6 +86,22 @@ describe("ChatInput Sandbox 预热", () => {
     expect((textarea as HTMLTextAreaElement).value).toBe("abc");
   });
 
+  it("输入清空后，下一轮有效输入可以再次触发", () => {
+    render(<ControlledInput sessionId="warmup-next-round" />);
+    const textarea = screen.getByPlaceholderText("输入消息...");
+
+    fireEvent.change(textarea, { target: { value: "第一轮" } });
+    fireEvent.change(textarea, { target: { value: "   " } });
+    fireEvent.change(textarea, { target: { value: "第二轮" } });
+
+    expect(authFetchMock).toHaveBeenCalledTimes(2);
+    expect(authFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/sessions/warmup-next-round/warmup",
+      { method: "POST" },
+    );
+  });
+
   it("中文 IME composition 结束后只触发一次且不破坏输入", async () => {
     render(<ControlledInput sessionId="warmup-ime" />);
     const textarea = screen.getByPlaceholderText("输入消息...");
@@ -139,6 +155,9 @@ describe("ChatInput Sandbox 预热", () => {
     first.unmount();
 
     render(<ControlledInput sessionId="warmup-remount" />);
+    fireEvent.change(screen.getByPlaceholderText("输入消息..."), {
+      target: { value: "   " },
+    });
     fireEvent.change(screen.getByPlaceholderText("输入消息..."), {
       target: { value: "第二次" },
     });

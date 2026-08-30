@@ -55,7 +55,10 @@ export interface RunContext {
    */
   topLevelSessionId?: string;
   sandboxScopeId?: string;
-  mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
+  mountSubPath?: string;
+  sandboxResources?: WorkspaceRef['sandboxResources'];
+  /** Stable ACS-side workload wire descriptor. */
+  workload?: WorkspaceRef['workload'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */

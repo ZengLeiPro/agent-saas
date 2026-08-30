@@ -51,6 +51,8 @@ async function startServer(
       markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
       listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
     };
+    sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>;
+    sandboxSessionRestore?: (sessionId: string) => Promise<void>;
     sessionProjectionStore?: {
       get?(sessionId: string, options?: { tenantId?: string; includeDeleted?: boolean }): Promise<{
         sessionId: string;
@@ -76,6 +78,8 @@ async function startServer(
     artifactLifecycle: createSessionArtifactLifecycle(opts.artifactShareStore, opts.artifactService),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
+    ...(opts.sandboxSessionDeletion ? { sandboxSessionDeletion: opts.sandboxSessionDeletion } : {}),
+    ...(opts.sandboxSessionRestore ? { sandboxSessionRestore: opts.sandboxSessionRestore } : {}),
   }));
 
   return new Promise((resolve) => {
@@ -314,7 +318,8 @@ describe('sessions routes lifecycle coverage', () => {
     const { sessionId, transcriptPath } = await writeSession(OWNER);
     const artifactShareStore = new InMemoryArtifactShareStore();
     const revokeBySession = vi.spyOn(artifactShareStore, 'revokeBySession');
-    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore });
+    const sandboxSessionDeletion = vi.fn(async () => 'deleted' as const);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore, sandboxSessionDeletion });
     servers.push(server);
 
     // 软删除 → 200 softDeleted，meta 写入 deletedAt
@@ -325,11 +330,13 @@ describe('sessions routes lifecycle coverage', () => {
     expect(meta?.deletedAt).toBeTruthy();
     expect(meta?.deletedBy).toBe(OWNER.username);
     expect(revokeBySession).toHaveBeenCalledWith(sessionId, OWNER.id);
+    expect(sandboxSessionDeletion).toHaveBeenCalledWith(sessionId);
 
     // 重复删除 → 幂等 200
     const again = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(again.status).toBe(200);
     expect((await again.json() as { softDeleted: boolean }).softDeleted).toBe(true);
+    expect(sandboxSessionDeletion).toHaveBeenCalledTimes(2);
 
     // 他人删除本人未删除会话 → 403
     const { sessionId: mySession } = await writeSession(OWNER);
@@ -339,14 +346,17 @@ describe('sessions routes lifecycle coverage', () => {
     expect(foreign.status).toBe(403);
   });
 
-  it('POST /sessions/:id/restore：未删除 400、非 owner 403、成功恢复', async () => {
+  it('POST /sessions/:id/restore：未删除 400、非 owner 403、取消 pending Sandbox 清理后恢复', async () => {
     // 已软删除的会话
     const deletedAt = new Date().toISOString();
     const { sessionId, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
     // 未删除会话
     const { sessionId: liveSession } = await writeSession(OWNER);
 
-    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore: new InMemoryArtifactShareStore() });
+    const sandboxSessionRestore = vi.fn(async () => undefined);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      artifactShareStore: new InMemoryArtifactShareStore(), sandboxSessionRestore,
+    });
     servers.push(server);
 
     // 未删除会话不能 restore → 400
@@ -366,32 +376,36 @@ describe('sessions routes lifecycle coverage', () => {
     expect((await ok.json() as { restored: boolean }).restored).toBe(true);
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.deletedAt).toBeUndefined();
+    expect(sandboxSessionRestore).toHaveBeenCalledWith(sessionId);
   });
 
   it('永久删除在 session lock 内重验 tombstone，已恢复时不执行任何物理清理', async () => {
     const purge = vi.fn(async () => ({ scanned: 0, deleted: 0 }));
     const lifecycle = createSessionArtifactLifecycle(new InMemoryArtifactShareStore(), { deleteArtifactsForSessions: purge })!;
     const revokeShares = vi.spyOn(lifecycle, 'revokeShares');
+    const beforePhysicalDelete = vi.fn(async () => undefined);
     const deleteTranscriptPreservingMeta = vi.fn(async () => true);
     const deleteMetaAndSidecar = vi.fn(async () => true);
     await expect(permanentlyDeleteSession({
       sessionId: randomUUID(), ownerUserId: OWNER.id, hasTranscript: true, artifactLifecycle: lifecycle,
-      isStillDeleted: async () => false, deleteTranscriptPreservingMeta, deleteMetaAndSidecar,
+      isStillDeleted: async () => false, beforePhysicalDelete, deleteTranscriptPreservingMeta, deleteMetaAndSidecar,
     })).resolves.toBe(false);
     expect(revokeShares).not.toHaveBeenCalled();
+    expect(beforePhysicalDelete).not.toHaveBeenCalled();
     expect(deleteTranscriptPreservingMeta).not.toHaveBeenCalled();
     expect(deleteMetaAndSidecar).not.toHaveBeenCalled();
     expect(purge).not.toHaveBeenCalled();
   });
 
-  it('DELETE /sessions/:id/permanent：未在回收站 400、回收站内成功永久删除', async () => {
+  it('DELETE /sessions/:id/permanent：未在回收站 400、精确 Sandbox 清理后永久删除', async () => {
     const { sessionId: live } = await writeSession(OWNER);
     const deletedAt = new Date().toISOString();
     const { sessionId: trashed, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
 
     const deleteArtifactsForSessions = vi.fn(async (_sessionIds: string[]) => ({ scanned: 1, deleted: 1 }));
+    const sandboxSessionDeletion = vi.fn(async () => 'queued' as const);
     const { server, baseUrl } = await startServer(agentCwd, OWNER, {
-      artifactService: { deleteArtifactsForSessions },
+      artifactService: { deleteArtifactsForSessions }, sandboxSessionDeletion,
     });
     servers.push(server);
 
@@ -404,6 +418,7 @@ describe('sessions routes lifecycle coverage', () => {
     expect(ok.status).toBe(200);
     expect((await ok.json() as { permanentlyDeleted: boolean }).permanentlyDeleted).toBe(true);
     expect(deleteArtifactsForSessions).toHaveBeenCalledWith([trashed]);
+    expect(sandboxSessionDeletion).toHaveBeenCalledWith(trashed);
     // transcript 已被物理删除
     await expect(readSessionMeta(transcriptPath)).resolves.toBeNull();
   });

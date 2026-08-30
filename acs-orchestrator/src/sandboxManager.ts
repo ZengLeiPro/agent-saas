@@ -13,6 +13,21 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
+import {
+  RETENTION_DEADLINE_ANNOTATION,
+  TERMINAL_AT_ANNOTATION,
+  TERMINAL_OUTCOME_ANNOTATION,
+  TERMINAL_STATE_ANNOTATION,
+  WORKLOAD_CLASS_LABEL,
+  WORKLOAD_DESCRIPTOR_ANNOTATION,
+  activeInvocationLeaseAnnotationKey,
+  decideSandboxLifecycle,
+  isActiveInvocationLeaseProtected,
+  lifecycleStateFromMetadata,
+  type SandboxLifecycleIdentity,
+  type SandboxLifecycleUpdate,
+  type SandboxWorkloadDescriptor,
+} from './sandboxLifecyclePolicy.js';
 import { hasSandboxResourceDrift, sameResourceTarget, sandboxResourceTarget } from './sandboxResourceDrift.js';
 import {
   type ManagedSandbox,
@@ -108,6 +123,8 @@ export class SandboxManager {
   readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
   private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
+  /** Serializes lifecycle deletion against ensureRunning so a new invocation waits and recreates safely. */
+  private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
@@ -129,6 +146,7 @@ export class SandboxManager {
     sandboxScopeId?: string;
     mountSubPath?: string;
     resources?: SandboxResourceOverride;
+    workload?: SandboxWorkloadDescriptor;
   }): SandboxRef {
     const workspaceId = validateWorkspaceId(input.workspaceId);
     const sessionId = validateSessionId(input.sessionId);
@@ -141,6 +159,7 @@ export class SandboxManager {
       sandboxScopeId,
       mountSubPath,
       ...(input.resources && Object.keys(input.resources).length ? { resources: input.resources } : {}),
+      ...(input.workload ? { workload: input.workload } : {}),
     };
   }
   async ensureRunning(
@@ -150,11 +169,18 @@ export class SandboxManager {
       sandboxScopeId?: string;
       mountSubPath?: string;
       resources?: SandboxResourceOverride;
+      workload?: SandboxWorkloadDescriptor;
     },
     options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
   ): Promise<SandboxRef> {
     const ref = this.ref(input);
     while (true) {
+      const deleting = this.deleteInFlight.get(ref.name);
+      if (deleting) {
+        this.logger.info(`sandbox_ensure_wait_delete name=${ref.name}`);
+        await deleting.catch(() => undefined);
+        continue;
+      }
       const inFlight = this.ensureInFlight.get(ref.name);
       if (inFlight) {
         this.logger.info(`sandbox_ensure_join name=${ref.name}`);
@@ -182,6 +208,9 @@ export class SandboxManager {
       await timing.step('waitPrewarm', () => this.waitForPrewarm(ref.name));
       await timing.step('ensureHostWorkspace', () => this.ensureHostWorkspace(ref));
       let existing = await timing.step('getStatus', () => this.getStatus(ref.name));
+      if (existing && ref.workload) {
+        await timing.step('workloadDescriptor', () => this.patchWorkloadDescriptor(ref.name, ref.workload!));
+      }
       const brokenState = existing ? brokenSandboxStateReason(existing) : undefined;
       if (existing && brokenState) {
         path = `recreate_broken_${brokenState}`;
@@ -308,7 +337,9 @@ export class SandboxManager {
     const names = sandboxes.map((sandbox) => sandbox.name);
     const skippedBusy: string[] = [];
     for (const sandbox of sandboxes) {
-      if (this.isBusy(sandbox.name, input.busySandboxNames) || isBackgroundShellProtected(sandbox, Date.now())) {
+      if (this.isBusy(sandbox.name, input.busySandboxNames)
+        || isActiveInvocationLeaseProtected(sandbox, Date.now())
+        || isBackgroundShellProtected(sandbox, Date.now())) {
         skippedBusy.push(sandbox.name);
         continue;
       }
@@ -323,9 +354,14 @@ export class SandboxManager {
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
     const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const input = { workspaceId: 'network-probe', sessionId: probeId, sandboxScopeId: `network-probe-${probeId}` };
+    const input = {
+      workspaceId: 'network-probe',
+      sessionId: probeId,
+      sandboxScopeId: `network-probe-${probeId}`,
+      workload: { class: 'probe' as const },
+    };
     const plannedRef = this.ref(input);
-    const activeKey = `probe:${probeId}`;
+    const activeKey = `probe:${probeId}`; // probe workload is capped at a 5 minute residue grace
     let releaseActive: (() => void) | undefined;
     return await this.networkPolicyProbe.run(async () => {
       releaseActive = this.activeRegistry?.acquire(plannedRef.name, activeKey);
@@ -425,6 +461,7 @@ export class SandboxManager {
         createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
         backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
+        ...lifecycleStateFromMetadata(labels, annotations),
         image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
         cpuRequest: stringValue(requests.cpu),
         cpuLimit: stringValue(limits.cpu),
@@ -446,10 +483,20 @@ export class SandboxManager {
       const ttlRemainingMs = idleMs === undefined || effectiveTtlMs <= 0
         ? undefined
         : Math.max(0, effectiveTtlMs - idleMs);
+      const active = this.isBusy(sandbox.name, input.busySandboxNames)
+        || isActiveInvocationLeaseProtected(sandbox, nowMs);
+      const backgroundProtected = isBackgroundShellProtected(sandbox, nowMs);
+      const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs, active, backgroundProtected });
       return {
         ...sandbox,
-        busy: this.isBusy(sandbox.name, input.busySandboxNames) || isBackgroundShellProtected(sandbox, nowMs),
+        workloadClass: lifecycle.workloadClass,
+        workloadDescriptor: sandbox.workloadDescriptor ?? { class: lifecycle.workloadClass },
+        busy: active || backgroundProtected,
         imageStale: Boolean(sandbox.image && sandbox.image !== this.config.sandboxImage),
+        lifecycleDecision: lifecycle.decision,
+        lifecycleDecisionReason: lifecycle.reason,
+        ...(lifecycle.deadlineAt ? { lifecycleDeadlineAt: lifecycle.deadlineAt } : {}),
+        ...(lifecycle.terminalDeadlineAt ? { terminalDeadlineAt: lifecycle.terminalDeadlineAt } : {}),
         ...(idleMs === undefined ? {} : { idleMs }),
         ...(effectiveTtlMs > 0 ? { effectiveTtlMs } : {}),
         ...(ttlRemainingMs === undefined ? {} : { ttlRemainingMs }),
@@ -501,7 +548,9 @@ export class SandboxManager {
       if (!sandbox.image) { skipped.push(sandbox.name); continue; }
       if (sandbox.image === currentImage) continue;
       if (!sandbox.workspaceId || !sandbox.sessionId) { skipped.push(sandbox.name); continue; }
-      if (this.isBusy(sandbox.name, busySandboxNames) || isBackgroundShellProtected(sandbox, Date.now())) {
+      if (this.isBusy(sandbox.name, busySandboxNames)
+        || isActiveInvocationLeaseProtected(sandbox, Date.now())
+        || isBackgroundShellProtected(sandbox, Date.now())) {
         skippedBusy.push(sandbox.name);
         continue;
       }
@@ -561,11 +610,22 @@ export class SandboxManager {
   async inventorySummary(): Promise<SandboxInventorySummary> {
     const sandboxes = await this.listManagedSandboxes();
     const phaseCounts: Record<string, number> = {};
+    const workloadClassCounts = { interactive: 0, taskboard: 0, cron: 0, memory: 0, 'deploy-smoke': 0, probe: 0, unknown: 0 };
+    const lifecycleDecisionCounts: Record<string, number> = {};
+    const nowMs = Date.now();
     let oldestCreatedAt: string | undefined;
     let newestLastActiveAt: string | undefined;
     for (const sandbox of sandboxes) {
       const phase = sandbox.phase ?? 'Unknown';
       phaseCounts[phase] = (phaseCounts[phase] ?? 0) + 1;
+      const lifecycle = decideSandboxLifecycle({
+        ...sandbox,
+        nowMs,
+        active: this.isBusy(sandbox.name) || isActiveInvocationLeaseProtected(sandbox, nowMs),
+        backgroundProtected: isBackgroundShellProtected(sandbox, nowMs),
+      });
+      workloadClassCounts[lifecycle.workloadClass] += 1;
+      lifecycleDecisionCounts[lifecycle.decision] = (lifecycleDecisionCounts[lifecycle.decision] ?? 0) + 1;
       if (sandbox.createdAt && (!oldestCreatedAt || Date.parse(sandbox.createdAt) < Date.parse(oldestCreatedAt))) {
         oldestCreatedAt = sandbox.createdAt;
       }
@@ -576,7 +636,9 @@ export class SandboxManager {
     const pendingUsage = this.capacityReservations.pendingUsage(new Set(sandboxes.map((sandbox) => sandbox.name)), '');
     const capacity = summarizeSandboxCapacity({
       sandboxes, pendingUsage, config: this.config,
-      canEvict: (sandbox) => !this.isBusy(sandbox.name) && !isBackgroundShellProtected(sandbox, Date.now()),
+      canEvict: (sandbox) => !this.isBusy(sandbox.name)
+        && !isActiveInvocationLeaseProtected(sandbox, Date.now())
+        && !isBackgroundShellProtected(sandbox, Date.now()),
     });
     return {
       totalCount: sandboxes.length,
@@ -594,6 +656,9 @@ export class SandboxManager {
       availableMemoryBytes: capacity.snapshot.availableMemoryBytes,
       ...(oldestCreatedAt ? { oldestCreatedAt } : {}),
       ...(newestLastActiveAt ? { newestLastActiveAt } : {}),
+      workloadClassCounts,
+      lifecycleDecisionCounts,
+      lifecyclePolicyMode: this.config.lifecyclePolicyMode ?? 'shadow',
     };
   }
 
@@ -607,12 +672,29 @@ export class SandboxManager {
     const brokenRecycled: string[] = [];
     const skippedBusy: string[] = [];
     const snatDeleted: string[] = [];
+    const decisionCounts: Record<string, number> = {};
+    const policyMode = this.config.lifecyclePolicyMode ?? 'shadow';
 
     for (const sandbox of sandboxes) {
-      if (this.isBusy(sandbox.name, busySandboxNames) || isBackgroundShellProtected(sandbox, nowMs)) {
+      // Protection order is intentional: process-local registry, persisted invocation lease,
+      // then background-task protection. No cleanup decision runs before all three pass.
+      if (this.isBusy(sandbox.name, busySandboxNames)) {
         skippedBusy.push(sandbox.name);
+        decisionCounts['retain-active-registry'] = (decisionCounts['retain-active-registry'] ?? 0) + 1;
         continue;
       }
+      if (isActiveInvocationLeaseProtected(sandbox, nowMs)) {
+        skippedBusy.push(sandbox.name);
+        decisionCounts['retain-active-lease'] = (decisionCounts['retain-active-lease'] ?? 0) + 1;
+        continue;
+      }
+      if (isBackgroundShellProtected(sandbox, nowMs)) {
+        skippedBusy.push(sandbox.name);
+        decisionCounts['retain-background-protected'] = (decisionCounts['retain-background-protected'] ?? 0) + 1;
+        continue;
+      }
+      const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs });
+      decisionCounts[lifecycle.decision] = (decisionCounts[lifecycle.decision] ?? 0) + 1;
       const phase = sandbox.phase ?? 'Unknown';
       const createdAtMs = parseDateMs(sandbox.createdAt);
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
@@ -634,22 +716,32 @@ export class SandboxManager {
             `sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason} `
             + `brokenForMs=${nowMs - brokenSinceMs}`,
           );
-          this.invalidateEnsureFastPath(sandbox.name);
-          snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
+          const reclaimed = await this.deleteWhenIdle(sandbox.name, busySandboxNames);
+          if (!reclaimed) {
+            skippedBusy.push(sandbox.name);
+            continue;
+          }
+          snatDeleted.push(...reclaimed);
           brokenRecycled.push(sandbox.name);
           continue;
         }
       }
-      const shouldDeleteByTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
+      // broken > orphan > workload deadline: keep the long-standing recovery priority.
+      // Probe CRs are the exception to generic orphan grace and are capped at five minutes.
       const orphanPhase = !['Running', 'Paused'].includes(phase);
-      const shouldDeleteOrphan = this.config.sandboxOrphanGraceMs > 0 && orphanPhase && ageMs >= this.config.sandboxOrphanGraceMs;
-      if (shouldDeleteByTtl || shouldDeleteOrphan) {
-        if (this.isBusy(sandbox.name, busySandboxNames)) {
+      const orphanGraceMs = lifecycle.workloadClass === 'probe'
+        ? 5 * 60_000
+        : this.config.sandboxOrphanGraceMs;
+      const shouldDeleteOrphan = orphanGraceMs > 0 && orphanPhase && ageMs >= orphanGraceMs;
+      const shouldDeleteByLegacyTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
+      const shouldDeleteByPolicy = policyMode === 'enforce' && lifecycle.delete;
+      if (shouldDeleteOrphan || (policyMode === 'shadow' ? shouldDeleteByLegacyTtl : shouldDeleteByPolicy)) {
+        const reclaimed = await this.deleteWhenIdle(sandbox.name, busySandboxNames);
+        if (!reclaimed) {
           skippedBusy.push(sandbox.name);
           continue;
         }
-        this.invalidateEnsureFastPath(sandbox.name);
-        snatDeleted.push(...await this.deleteSandboxAndReclaimNetwork(sandbox.name));
+        snatDeleted.push(...reclaimed);
         deleted.push(sandbox.name);
         continue;
       }
@@ -681,6 +773,8 @@ export class SandboxManager {
         && sandbox.phase === 'Running'
       )).length,
       totalCount: sandboxes.length,
+      policyMode,
+      decisionCounts,
     };
   }
 
@@ -720,6 +814,103 @@ export class SandboxManager {
       JSON.stringify({ spec: { paused } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`patch sandbox paused=${paused} 失败: ${result.stderr || result.stdout}`);
+  }
+
+  async updateLifecycle(input: SandboxLifecycleUpdate): Promise<{ name: string; retentionDeadline?: string }> {
+    const ref = this.ref(input);
+    const status = await this.getStatus(ref.name);
+    if (!status) throw new SandboxNotFoundError(`ACS Sandbox ${ref.name} not found`);
+    const actual = this.refFromStatus(ref.name, status);
+    if (actual.workspaceId !== input.workspaceId
+      || actual.sessionId !== input.sessionId
+      || actual.sandboxScopeId !== input.sandboxScopeId) {
+      throw new SandboxNotFoundError('ACS Sandbox lifecycle identity not found');
+    }
+    const result = await this.kubectl.run([
+      'patch', this.resourceName(ref.name), '--type=merge', '-p',
+      JSON.stringify({
+        metadata: {
+          annotations: {
+            [TERMINAL_STATE_ANNOTATION]: input.terminalState,
+            [TERMINAL_AT_ANNOTATION]: input.terminalAt,
+            [TERMINAL_OUTCOME_ANNOTATION]: input.outcome === undefined ? null : JSON.stringify(input.outcome),
+            [RETENTION_DEADLINE_ANNOTATION]: input.retentionDeadline ?? null,
+          },
+        },
+      }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`更新 Sandbox lifecycle 失败: ${result.stderr || result.stdout}`);
+    return { name: ref.name, ...(input.retentionDeadline ? { retentionDeadline: input.retentionDeadline } : {}) };
+  }
+
+  async deleteByScope(
+    input: SandboxLifecycleIdentity,
+    options: { busySandboxNames?: Set<string> } = {},
+  ): Promise<{ name: string; deleted: boolean; missing: boolean }> {
+    const ref = this.ref(input);
+    const status = await this.getStatus(ref.name);
+    if (!status) return { name: ref.name, deleted: false, missing: true };
+    const actual = this.refFromStatus(ref.name, status);
+    if (actual.workspaceId !== input.workspaceId
+      || actual.sessionId !== input.sessionId
+      || actual.sandboxScopeId !== input.sandboxScopeId) {
+      return { name: ref.name, deleted: false, missing: true };
+    }
+    const reclaimed = await this.deleteWhenIdle(ref.name, options.busySandboxNames);
+    if (!reclaimed) throw new SandboxBusyError(`ACS Sandbox ${ref.name} is active; refuse to delete scope`);
+    return { name: ref.name, deleted: true, missing: false };
+  }
+
+  private async deleteWhenIdle(name: string, busySandboxNames: Set<string> = new Set()): Promise<string[] | null> {
+    const existing = this.deleteInFlight.get(name);
+    if (existing) return await existing;
+    const promise = Promise.resolve().then(async () => {
+      if (this.isBusy(name, busySandboxNames)) return null;
+      const status = await this.getStatus(name);
+      if (!status) return [];
+      if (this.statusHasActiveInvocationLease(status) || backgroundShellProtectionFromStatus(status)) return null;
+      if (this.isBusy(name, busySandboxNames)) return null;
+      this.invalidateEnsureFastPath(name);
+      return await this.deleteSandboxAndReclaimNetwork(name);
+    });
+    this.deleteInFlight.set(name, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.deleteInFlight.get(name) === promise) this.deleteInFlight.delete(name);
+    }
+  }
+
+  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string): Promise<void> {
+    if (leaseUntil && !Number.isFinite(Date.parse(leaseUntil))) throw new Error('invocation leaseUntil 必须是合法 ISO 时间');
+    const key = activeInvocationLeaseAnnotationKey(invocationKey);
+    const result = await this.kubectl.run([
+      'patch', this.resourceName(name), '--type=merge', '-p',
+      JSON.stringify({ metadata: { annotations: {
+        [key]: leaseUntil ? JSON.stringify({ invocationKey, until: leaseUntil }) : null,
+      } } }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`更新 invocation lease 失败: ${result.stderr || result.stdout}`);
+  }
+
+  private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
+    // This patch also transitions a reused scope back to non-terminal lifecycle state.
+    const result = await this.kubectl.run([
+      'patch', this.resourceName(name), '--type=merge', '-p',
+      JSON.stringify({ metadata: {
+        labels: { [WORKLOAD_CLASS_LABEL]: workload.class },
+        annotations: {
+          [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
+          // ensureRunning means this scope is active again. Clear a previous run's terminal
+          // receipt so enforce mode cannot delete the reused Sandbox on a stale deadline.
+          [TERMINAL_STATE_ANNOTATION]: null,
+          [TERMINAL_AT_ANNOTATION]: null,
+          [TERMINAL_OUTCOME_ANNOTATION]: null,
+          [RETENTION_DEADLINE_ANNOTATION]: null,
+        },
+      } }),
+    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`更新 workload descriptor 失败: ${result.stderr || result.stdout}`);
   }
 
   async touch(name: string, now: Date = new Date()): Promise<void> {
@@ -967,8 +1158,21 @@ export class SandboxManager {
 
   private async assertNotBackgroundShellProtected(name: string, reason: string): Promise<void> {
     const status = await this.getStatus(name);
-    if (!status || !backgroundShellProtectionFromStatus(status)) return;
-    throw new SandboxBusyError(`ACS Sandbox ${name} has active background shell tasks; refuse to ${reason}`);
+    if (!status) return;
+    if (this.statusHasActiveInvocationLease(status)) {
+      throw new SandboxBusyError(`ACS Sandbox ${name} has an active invocation lease; refuse to ${reason}`);
+    }
+    if (backgroundShellProtectionFromStatus(status)) {
+      throw new SandboxBusyError(`ACS Sandbox ${name} has active background shell tasks; refuse to ${reason}`);
+    }
+  }
+
+  private statusHasActiveInvocationLease(status: SandboxStatus, nowMs = Date.now()): boolean {
+    const raw = status.raw ?? {};
+    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
+    const annotations = metadata.annotations && typeof metadata.annotations === 'object'
+      ? metadata.annotations as Record<string, unknown> : {};
+    return isActiveInvocationLeaseProtected(lifecycleStateFromMetadata({}, annotations), nowMs);
   }
 
   private refFromStatus(name: string, status: SandboxStatus): SandboxRef {
@@ -1009,6 +1213,7 @@ export class SandboxManager {
       [SANDBOX_SCOPE_LABEL]: labelValue(ref.sandboxScopeId),
       [SESSION_LABEL]: labelValue(ref.sessionId),
       [NETWORK_POLICY_MODE_LABEL]: this.config.networkPolicy.mode,
+      [WORKLOAD_CLASS_LABEL]: ref.workload?.class ?? 'unknown',
       'alibabacloud.com/acs': 'true',
       'alibabacloud.com/compute-class': 'agent-sandbox',
     };
@@ -1019,6 +1224,7 @@ export class SandboxManager {
       [MOUNT_SUBPATH_ANNOTATION]: ref.mountSubPath,
       [CREATED_AT_ANNOTATION]: now,
       [LAST_ACTIVE_AT_ANNOTATION]: now,
+      [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(ref.workload ?? { class: 'unknown' }),
       [NETWORK_POLICY_MODE_ANNOTATION]: this.config.networkPolicy.mode,
       [NETWORK_POLICY_DENY_PRIVATE_ANNOTATION]: String(this.config.networkPolicy.denyPrivateNetworks),
       [ACS_NETWORK_POLICY_AGENT_ANNOTATION]: 'true',

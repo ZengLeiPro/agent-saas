@@ -64,6 +64,10 @@ function warmupSessionOnce(sessionId: string | null | undefined, value: string):
   void warmupSessionSandbox(sessionId).catch(() => undefined);
 }
 
+function releaseSessionWarmup(sessionId: string | null | undefined): void {
+  if (sessionId) warmedSessionIds.delete(sessionId);
+}
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -109,6 +113,22 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const warmupInputStateRef = useRef({
+    sessionId,
+    hasValidText: Boolean(input.trim()),
+  });
+
+  const observeWarmupInput = useCallback((value: string, shouldWarmup: boolean) => {
+    const hasValidText = Boolean(value.trim());
+    const previous = warmupInputStateRef.current;
+
+    if (previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
+      releaseSessionWarmup(sessionId);
+    }
+    warmupInputStateRef.current = { sessionId, hasValidText };
+
+    if (shouldWarmup) warmupSessionOnce(sessionId, value);
+  }, [sessionId]);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -134,6 +154,18 @@ export function ChatInput({
   useEffect(() => {
     adjustHeight();
   }, [input, adjustHeight]);
+
+  useEffect(() => {
+    const hasValidText = Boolean(input.trim());
+    const previous = warmupInputStateRef.current;
+
+    // 只把同一挂载实例中真实观察到的“有效 → 空白”视为一轮结束。
+    // 初始空白或切换 session 时的空白不能解锁，否则重挂载会反复预热。
+    if (previous.sessionId === sessionId && previous.hasValidText && !hasValidText) {
+      releaseSessionWarmup(sessionId);
+    }
+    warmupInputStateRef.current = { sessionId, hasValidText };
+  }, [input, sessionId]);
 
   // 通过 visualViewport resize 检测键盘弹出/收起
   useEffect(() => {
@@ -412,7 +444,7 @@ export function ChatInput({
                   if (isDisabled) return;
                   const value = e.target.value;
                   onInputChange(value);
-                  if (!isComposingRef.current) warmupSessionOnce(sessionId, value);
+                  observeWarmupInput(value, !isComposingRef.current);
                 }}
                 onKeyDown={handleKeyDown}
                 onCompositionStart={handleCompositionStart}
@@ -437,6 +469,7 @@ export function ChatInput({
             {/* 底部工具栏 */}
             <div className="flex items-center justify-between px-4 pb-3">
               <div className="flex items-center gap-0.5">
+                {/* Keep controls mounted while the Popover closes so the lazy asset dialog retains its state. */}
                 <Popover open={attachmentMenuOpen} onOpenChange={setAttachmentMenuOpen}>
                   <PopoverTrigger asChild>
                     <button
@@ -455,17 +488,15 @@ export function ChatInput({
                       <Plus className="size-5" />
                     </button>
                   </PopoverTrigger>
-                  {attachmentMenuOpen && (
-                    <AttachmentControls
-                      onLocalFile={() => {
-                        setAttachmentMenuOpen(false);
-                        localFileInputRef.current?.click();
-                      }}
-                      onMenuOpenChange={setAttachmentMenuOpen}
-                      onAssetConfirm={onAssetSelect}
-                      disabled={attachmentDisabled}
-                    />
-                  )}
+                  <AttachmentControls
+                    onLocalFile={() => {
+                      setAttachmentMenuOpen(false);
+                      localFileInputRef.current?.click();
+                    }}
+                    onMenuOpenChange={setAttachmentMenuOpen}
+                    onAssetConfirm={onAssetSelect}
+                    disabled={attachmentDisabled}
+                  />
                 </Popover>
                 <input
                   ref={localFileInputRef}

@@ -1,4 +1,5 @@
 import { deriveSandboxScopeId, deriveWorkspaceMountSubPath, type TenantRemoteHandDispatchConfig } from './rawRuntimeRunDispatch.js';
+import { toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
 import { selectTenantRemoteHandsForRegistration, type TenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
 import type { SessionCatalog } from './sessionCatalog.js';
 import type { HandStore } from './handStore.js';
@@ -130,6 +131,7 @@ export class SandboxWarmupService {
             ...(sandboxScopeId ? { sandboxScopeId } : {}),
             ...(mountSubPath ? { mountSubPath } : {}),
             ...(resources ? { resources } : {}),
+            workload: toAcsSandboxWorkloadDescriptor(record.sandboxWorkloadDescriptor),
           }),
           signal: controller.signal,
         },

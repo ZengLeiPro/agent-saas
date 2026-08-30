@@ -1,9 +1,34 @@
 import type { PgPool } from './runStoreTypes.js';
 
-interface TaskboardSessionActivityStore {
+export interface TaskboardSessionActivityStore {
   pool: PgPool;
   runsTable: string;
   steeringInputsTable: string;
+}
+
+export async function hasSandboxScopeActivity(
+  store: TaskboardSessionActivityStore,
+  input: { sandboxScopeId: string; topLevelSessionId: string; tenantId?: string },
+): Promise<boolean> {
+  const result = await store.pool.query<{ active: boolean }>(`
+    SELECT (
+      EXISTS (
+        SELECT 1 FROM ${store.runsTable} run
+        WHERE ($1::text = run.sandbox_scope_id OR run.metadata->>'topLevelSessionId' = $2)
+          AND ($3::text IS NULL OR run.tenant_id = $3)
+          AND run.status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')
+      )
+      OR EXISTS (
+        SELECT 1 FROM ${store.runsTable} background
+        WHERE background.metadata->>'backgroundTask' = 'true'
+          AND ($1::text = background.sandbox_scope_id OR background.metadata->>'topLevelSessionId' = $2)
+          AND ($3::text IS NULL OR background.tenant_id = $3)
+          AND background.status IN ('completed','failed','cancelled','orphaned')
+          AND COALESCE(background.metadata->>'wakeState', 'pending') IN ('pending','delivering')
+      )
+    ) AS active
+  `, [input.sandboxScopeId, input.topLevelSessionId, input.tenantId ?? null]);
+  return result.rows[0]?.active === true;
 }
 
 export async function hasTaskboardSessionActivity(

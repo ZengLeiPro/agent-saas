@@ -166,6 +166,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       executionRole: 'worker',
       ...(parentSession.orgAgentId ? { orgAgentId: parentSession.orgAgentId } : {}),
       ...(parentSession.orgAgentSnapshot ? { orgAgentSnapshot: parentSession.orgAgentSnapshot } : {}),
+      sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
     });
     if (boundProfile && this.config.agentRuntimeProfileResolver) {
       taskSession = this.config.agentRuntimeProfileResolver.bindSessionRecord(taskSession, boundProfile);
@@ -214,6 +215,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
         ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
         ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}),
+        ...(context.workspace.workload ? { workload: context.workspace.workload } : {}),
         ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
         ...(context.runtimeIsolationRequirement ? { runtimeIsolationRequirement: context.runtimeIsolationRequirement } : {}),
         ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
@@ -274,6 +276,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       workspaceId: context.workspace.id ?? taskSessionId,
       status: 'idle',
       kind: 'subagent',
+      sandboxWorkloadDescriptor: parentSession.sandboxWorkloadDescriptor,
     });
     await sessionCatalog.upsert(taskSession);
     try {
@@ -307,6 +310,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(context.workspace.mountSubPath ? { mountSubPath: context.workspace.mountSubPath } : {}),
           ...(context.workspace.sandboxScopeId ? { sandboxScopeId: context.workspace.sandboxScopeId } : {}),
           ...(context.workspace.sandboxResources ? { sandboxResources: context.workspace.sandboxResources } : {}),
+          ...(context.workspace.workload ? { workload: context.workspace.workload } : {}),
           ...(context.workspace.sandboxPolicy ? { sandboxPolicy: context.workspace.sandboxPolicy } : {}),
           ...(context.channelContext.timezone ? { timezone: context.channelContext.timezone } : {}),
           parentChannel: context.channelContext.channel,
@@ -457,6 +461,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
           ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
           ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
+          ...(metadata.workload ? { workload: metadata.workload } : {}),
           ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
         },
         sessionId: record.sessionId,
@@ -850,6 +855,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
         ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
         ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
+        ...(metadata.workload ? { workload: metadata.workload } : {}),
         ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
       },
       sessionId: metadata.parentSessionId, runId: record.runId,

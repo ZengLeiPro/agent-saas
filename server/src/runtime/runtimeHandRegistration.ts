@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
 
-import type { SandboxProfile } from '@agent/shared';
+import type { SandboxProfile, SandboxWorkloadDescriptor } from '@agent/shared';
 import type { PgEnvironmentStore } from '../data/environments/index.js';
-import type { ExecutionTargetKind, ToolDescriptor } from '../agent/toolRuntime.js';
+import type { ExecutionTargetKind, SandboxWorkloadWireDescriptor, ToolDescriptor } from '../agent/toolRuntime.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
 import { HandManager } from './handManager.js';
 import {
@@ -59,6 +59,18 @@ export function deriveSandboxScopeId(input: {
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
 }
 
+export function toAcsSandboxWorkloadDescriptor(
+  descriptor: SandboxWorkloadDescriptor | undefined,
+): SandboxWorkloadWireDescriptor {
+  const value = descriptor ?? { kind: 'interactive' as const };
+  if (value.kind !== 'taskboard') return { class: value.kind };
+  return {
+    class: 'taskboard',
+    ...(value.taskKind ? { taskKind: value.taskKind } : {}),
+    ...(value.purpose ? { purpose: value.purpose } : {}),
+  };
+}
+
 function buildWorkspaceRecipe(
   workspaceId: string,
   override?: Partial<WorkspaceRecipe>,
@@ -95,6 +107,7 @@ export async function ensureRuntimeHandRegistered(params: {
   endpoint?: string;
   serverRemoteRecipe?: Partial<WorkspaceRecipe>;
   sandboxProfile?: SandboxProfile;
+  sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
   sandboxResources?: SandboxResources;
   tenantRemoteHands?: TenantRemoteHandDispatchConfig[];
   tenantRemoteHandResolver?: TenantRemoteHandAuthTokenResolver;
@@ -165,7 +178,9 @@ export async function ensureRuntimeHandRegistered(params: {
     : profileRecipeBase;
   const baseRecipe = buildWorkspaceRecipe(
     params.workspaceId,
-    params.executionTarget === 'server-remote' ? profileRecipe : undefined,
+    params.executionTarget === 'server-remote'
+      ? { ...profileRecipe, workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor) }
+      : undefined,
     params.sessionId,
     params.workspaceMountSubPath,
     params.topLevelSessionId,

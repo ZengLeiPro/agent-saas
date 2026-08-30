@@ -3,6 +3,8 @@
  * 未指定的字段回落到全局 env 默认值，因此可以只覆盖其中一项。
  * 该对象参与 provision 指纹，改规格会触发 pod 重建——正是期望行为。
  */
+import type { SandboxLifecycleDecisionName, SandboxWorkloadClass, SandboxWorkloadDescriptor } from './sandboxLifecyclePolicy.js';
+
 export interface SandboxResourceOverride {
   cpuRequest?: string;
   memoryRequest?: string;
@@ -18,10 +20,12 @@ export interface SandboxRef {
   mountSubPath: string;
   /** per-tenant/workspace 规格覆盖；缺省时用全局默认。 */
   resources?: SandboxResourceOverride;
+  workload?: SandboxWorkloadDescriptor;
   /** ensure 发现目标资源但因 busy/protection 暂未收敛；调用方不得写入成功快缓存。 */
   resourceDriftDeferred?: true;
 }
 
+/** Result of one lifecycle cleanup pass. */
 export interface SandboxCleanupReport {
   checked: number;
   paused: string[];
@@ -38,6 +42,8 @@ export interface SandboxCleanupReport {
   snatUnexpected: number;
   runningCount: number;
   totalCount: number;
+  policyMode?: 'shadow' | 'enforce';
+  decisionCounts?: Record<string, number>;
 }
 
 export interface SandboxStaleImagePrewarmReport {
@@ -73,4 +79,7 @@ export interface SandboxInventorySummary {
   availableMemoryBytes: number | null;
   oldestCreatedAt?: string;
   newestLastActiveAt?: string;
+  workloadClassCounts: Record<SandboxWorkloadClass, number>;
+  lifecycleDecisionCounts: Partial<Record<SandboxLifecycleDecisionName, number>>;
+  lifecyclePolicyMode: 'shadow' | 'enforce';
 }

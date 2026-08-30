@@ -1,6 +1,7 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import { parseDateMs, type ManagedSandbox } from './sandboxState.js';
 import type { SandboxRef } from './sandboxManagerTypes.js';
+import { decideSandboxLifecycle } from './sandboxLifecyclePolicy.js';
 
 export interface SandboxResourceUsage {
   count: number;
@@ -52,9 +53,15 @@ export async function enforceSandboxCapacity(input: {
 
   const evicted: string[] = [];
   if (input.allowEviction) {
+    const nowMs = Date.now();
     const candidates = quotaSandboxes
       .filter((sandbox) => sandbox.name !== input.currentName && sandbox.phase === 'Paused' && input.canEvict(sandbox))
-      .sort((left, right) => (parseDateMs(left.lastActiveAt) ?? 0) - (parseDateMs(right.lastActiveAt) ?? 0));
+      .sort((left, right) => {
+        const leftExpired = decideSandboxLifecycle({ ...left, nowMs }).delete ? 0 : 1;
+        const rightExpired = decideSandboxLifecycle({ ...right, nowMs }).delete ? 0 : 1;
+        return leftExpired - rightExpired
+          || (parseDateMs(left.lastActiveAt) ?? 0) - (parseDateMs(right.lastActiveAt) ?? 0);
+      });
     for (const candidate of candidates) {
       if (!await input.evict(candidate)) continue;
       usage = subtractUsage(usage, usageForSandbox(candidate, input.config));

@@ -40,7 +40,9 @@ export type {
 } from "./search";
 
 export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
+// Sandbox workload ownership is authored by the Server runtime.
 export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
+export type { SandboxWorkloadDescriptor } from "./sandboxWorkload";
 
 export type {
   AuthUser,

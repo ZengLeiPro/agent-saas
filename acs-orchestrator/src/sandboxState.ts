@@ -1,4 +1,10 @@
 import { createHash } from 'node:crypto';
+import type {
+  SandboxLifecycleDecisionName,
+  SandboxLifecycleState,
+  SandboxWorkloadClass,
+  SandboxWorkloadDescriptor,
+} from './sandboxLifecyclePolicy.js';
 
 /**
  * Sandbox 的状态模型与纯判定函数。
@@ -13,7 +19,7 @@ export interface SandboxStatus {
   raw?: Record<string, unknown>;
 }
 
-export interface ManagedSandbox {
+export interface ManagedSandbox extends SandboxLifecycleState {
   name: string;
   workspaceId?: string;
   sessionId?: string;
@@ -43,6 +49,12 @@ export interface ManagedSandbox {
 
 export interface ManagedSandboxInventory extends ManagedSandbox {
   busy: boolean;
+  workloadClass: SandboxWorkloadClass;
+  workloadDescriptor: SandboxWorkloadDescriptor;
+  lifecycleDecision: SandboxLifecycleDecisionName;
+  lifecycleDecisionReason: string;
+  lifecycleDeadlineAt?: string;
+  terminalDeadlineAt?: string;
   imageStale: boolean;
   idleMs?: number;
   ttlRemainingMs?: number;

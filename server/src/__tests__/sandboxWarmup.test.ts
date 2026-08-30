@@ -73,6 +73,19 @@ describe('SandboxWarmupService', () => {
       // 否则会预热到一个稍后根本不会被用到的 pod。
       sandboxScopeId: 'ws-kaiyan-u1__workspaces_kaiyan_u-1__s_sess-1',
       mountSubPath: 'workspaces/kaiyan/u-1',
+      workload: { class: 'interactive' },
+    });
+  });
+
+  it('maps shared taskboard `{kind}` to the stable ACS `{class}` wire descriptor', async () => {
+    const { service, fetchImpl } = buildService({
+      record: record({ sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' } }),
+      hands: [acsHand()],
+    });
+    expect(await service.fireForSessionAsync('sess-1')).toBe('fired');
+    const [, init] = fetchImpl.mock.calls[0]!;
+    expect(JSON.parse((init as { body: string }).body).workload).toEqual({
+      class: 'taskboard', taskKind: 'delivery', purpose: 'review',
     });
   });
 

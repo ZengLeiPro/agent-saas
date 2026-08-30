@@ -3,6 +3,8 @@ import type { CodexCredentialManager } from '../runtime/responses/codexCredentia
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
+import type { PgSessionAutomationStore } from '../runtime/sessionAutomationStore.js';
+import type { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
 import type { EventStore } from '../runtime/types.js';
 import type { PgRunStore } from '../runtime/runStore.js';
 import type { PgHandStore } from '../runtime/handStore.js';
@@ -355,6 +357,8 @@ export interface AppRuntime {
    * 运行监测读 API 复用其 pool / eventsTable 做聚合查询，避免另开第二份连接池。
    */
   runtimePgEventStore?: PgEventStore;
+  sessionAutomationStore?: PgSessionAutomationStore;
+  sessionAutomationCommandService?: SessionAutomationCommandService;
   /** 校验平台工具配置，包括 WebSearch SecretVault ref 解析。 */
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void>;
   /** 更新平台工具配置并热写入后续 raw runtime dispatch。 */

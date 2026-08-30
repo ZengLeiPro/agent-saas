@@ -26,7 +26,7 @@ import { getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaiti
 import type { SessionGroup } from "@/types/sessionGroup";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import { SessionGroupGlyph, sessionGroupKindLabel } from "./sessionGroupPresentation";
-
+import { getSessionAutomationBadge } from "@/lib/sessionAutomation";
 interface MobileSessionListProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
@@ -65,7 +65,6 @@ interface MobileSessionListProps {
   trashPreviewSessionId?: string | null;
   personalAgentEnabled?: boolean;
 }
-
 export function MobileSessionList({
   sessions,
   activeSessionId,
@@ -108,7 +107,6 @@ export function MobileSessionList({
   const [showTrash, setShowTrash] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const avatarInputRef = useRef<HTMLInputElement>(null);
-
   const handleAvatarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -139,7 +137,6 @@ export function MobileSessionList({
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
   const swipeDismissedAt = useRef(0);
-
   // 重命名弹窗状态
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
 
@@ -330,6 +327,7 @@ export function MobileSessionList({
     (s: ChatSessionIndexItem, inGroup?: boolean) => {
       const active = s.id === activeSessionIdRef.current;
       const waitingLabel = getSessionWaitingLabel(s.runtimeStatus);
+      const automationBadge = getSessionAutomationBadge(s);
       const rowContent = (
         <div
           className={cn(
@@ -357,7 +355,9 @@ export function MobileSessionList({
               )}
             </span>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground/60">
+          <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground/60">
+            {automationBadge && <span className="max-w-40 truncate font-medium text-primary" title={automationBadge}>{automationBadge}</span>}
+            {automationBadge && <span>·</span>}
             <span>{sourceDisplayText(s.source)}</span>
             {s.orgAgentName && <span> · {s.orgAgentName}</span>}
             {isAdmin && s.owner && (

@@ -9,7 +9,6 @@ import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import { cleanupSteeringPgTest, describePg, testPgUrl, waitForBlockedQuery } from './pgRunStoreSteering.pg.testHelpers.js';
 import { assertStagedInteractionRecovery } from './pgRunStoreStagedInteraction.testHelper.js';
 const { Pool } = pg;
-
 describePg('PgRunStore steering PostgreSQL contract', () => {
   const prefix = `steering_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
@@ -32,7 +31,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await cleanupSteeringPgTest(pool, eventStore, prefix);
   }, 30_000);
 
-  it('同一 clientMessageId 并发提交只创建一个 run', async () => {
+  it('同一 tenant/clientMessageId 并发提交只创建一个 run', async () => {
     const base = {
       sessionId: 'session-idempotent',
       userId: 'user-1',
@@ -49,6 +48,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     const rows = await pool.query(`SELECT run_id FROM ${prefix}_runs WHERE idempotency_key = $1`, ['client-message-1']);
     expect(rows.rows).toHaveLength(1);
   });
+
 
   it('staged pending 激活前不可恢复或取得 lease，ready 后可领取', async () => {
     const runId = 'staged-pending-run';

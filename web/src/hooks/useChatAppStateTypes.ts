@@ -12,6 +12,7 @@ import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { QueuedInterjection } from "@/lib/interjectionConsumption";
 import type { TerminalRuntimeStatus } from "./chatRuntimeHelpers";
 import type { SandboxProfile } from "@/types/sandboxProfile";
+import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
 
 export interface ChatAppState {
   messages: MessageItem[];
@@ -125,6 +126,12 @@ export interface ChatAppState {
   /** 活跃会话的精确运行态，供列表区分执行中与人工等待。 */
   sessionRuntimeStatuses: ReadonlyMap<string, SessionRuntimeStatus>;
   connectionState: ConnectionState;
+  automation: SessionAutomationSnapshot | null;
+  automationTimeline: AutomationTimelineEvent[];
+  automationPending: boolean;
+  automationError: string | null;
+  controlAutomation: (request: AutomationControlRequest) => Promise<void>;
+  refreshAutomation: (sessionId?: string | null) => Promise<void>;
   refreshCurrentSession: () => void;
   resumeCurrentStream: () => Promise<void>;
   hasMoreSessions: boolean;

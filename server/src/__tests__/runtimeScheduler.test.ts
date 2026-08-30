@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-
 import {
   RuntimeScheduler,
   SCHEDULER_STATE_METADATA_KEY,
@@ -9,7 +8,7 @@ import {
 import type { UpsertRunInput } from '../runtime/runStore.js';
 import { deferred, MemoryEventStore, MemoryRunStore } from './runtimeScheduler.testHelpers.js';
 
-async function flushSchedulerMicrotasks(): Promise<void> {
+async function flushSchedulerMicrotasks(): Promise<void> { // settle fire-and-forget scheduler launches
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
@@ -462,7 +461,7 @@ describe('RuntimeScheduler', () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
     await runStore.upsertPending({ runId: 'run-release-lost', sessionId: 'session-release-lost' });
-    vi.spyOn(runStore, 'releaseLease').mockResolvedValue(null);
+    runStore.markStatusIfCurrent = vi.fn(async () => null);
     const logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -489,6 +488,7 @@ describe('RuntimeScheduler', () => {
       'Runtime scheduler wake terminalization failed for run-release-lost: current=running',
     ));
   });
+
 
   it('defers recoverable runs before leasing while another brain holds the session', async () => {
     const runStore = new MemoryRunStore();

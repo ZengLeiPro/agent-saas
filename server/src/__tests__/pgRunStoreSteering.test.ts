@@ -10,7 +10,7 @@ describe('PgRunStore steering inbox', () => {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push({ sql: sql.trim(), params });
         if (sql.includes('INSERT INTO runtime_message_submissions')) {
-          return { rows: [{ run_id: String(params[2]) }] };
+          return { rows: [{ run_id: String(params[3]) }] };
         }
         if (sql.includes('SELECT target.run_id')) {
           return { rows: [{ run_id: 'target-run' }] };
@@ -61,7 +61,7 @@ describe('PgRunStore steering inbox', () => {
       'COMMIT',
     ]));
     const steeringInsert = queries.find(({ sql }) => sql.includes('INSERT INTO runtime_steering_inputs'));
-    expect(steeringInsert?.params.slice(0, 3)).toEqual(['source-run', 'target-run', 'session-1']);
+    expect(steeringInsert?.params.slice(0, 4)).toEqual(['source-run', 'tenant-1', 'target-run', 'session-1']);
   });
 
   it('rejects a chat accepted before the latest session stop', async () => {
@@ -69,7 +69,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
-        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[3]) }] };
         if (sql.includes('SELECT stopped_at')) {
           return { rows: [{ stopped_at: '2026-08-06T04:00:01.000Z' }] };
         }
@@ -94,7 +94,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
-        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[3]) }] };
         if (sql.includes('SELECT target.run_id')) return { rows: [] };
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
@@ -204,7 +204,8 @@ describe('PgRunStore steering inbox', () => {
       .resolves.toEqual(['source-run']);
     const reserveQuery = queries.find(({ sql }) => sql.includes("SET state = 'reserved'"));
     expect(reserveQuery?.sql).toContain("AND state = 'pending'");
-    expect(reserveQuery?.sql).toContain('$3::timestamptz');
+    expect(reserveQuery?.sql).toContain('$5::timestamptz');
+    expect(reserveQuery?.sql).toContain('tenant_id = $1 AND session_id = $2');
     expect(queries.at(-1)?.sql).toBe('COMMIT');
   });
 
@@ -333,7 +334,7 @@ describe('PgRunStore steering inbox', () => {
       release: vi.fn(),
     };
     const pool = {
-      query: vi.fn(async () => ({ rows: [{ session_id: 'session-1' }] })),
+      query: vi.fn(async () => ({ rows: [{ session_id: 'session-1', tenant_id: 'tenant-1' }] })),
       connect: vi.fn(async () => client),
     };
     const store = new PgRunStore({ pool: pool as any });
@@ -352,7 +353,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
-        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[3]) }] };
         if (sql.includes('SELECT target.run_id')) return { rows: [] };
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
@@ -380,7 +381,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
-        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[2]) }] };
+        if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [{ run_id: String(params[3]) }] };
         if (sql.includes('SELECT candidate.run_id')) return { rows: [] };
         if (sql.includes('INSERT INTO runtime_runs')) {
           return { rows: [{ row_json: {
@@ -542,7 +543,7 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     const targetLockIndex = queries.findIndex((sql) => (
       sql.includes('SELECT status')
-      && sql.includes('WHERE session_id = $1 AND run_id = $2')
+      && sql.includes('WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3')
       && sql.includes('FOR UPDATE')
     ));
     const steeringLockIndex = queries.findIndex((sql) => sql.includes('FOR UPDATE OF input, source'));
@@ -553,7 +554,8 @@ describe('PgRunStore steering inbox', () => {
     const targetUpdate = queries.find((sql) => sql.includes("status = 'cancelled'"));
     expect(sourceUpdate).toContain("ELSE (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'");
     expect(targetUpdate).toContain("- 'wakeMessage'");
-    expect(queries.some((sql) => sql.includes('run_id = $2'))).toBe(true);
+    expect(targetUpdate).toContain('tenant_id = $1');
+    expect(queries.some((sql) => sql.includes('run_id = $3'))).toBe(true);
     expect(queries.at(-1)).toBe('COMMIT');
   });
 
@@ -635,8 +637,8 @@ describe('PgRunStore steering inbox', () => {
 
     const inputUpdate = queries.find(({ sql }) => sql.includes('UPDATE runtime_steering_inputs'));
     const sourceUpdate = queries.find(({ sql }) => sql.includes('UPDATE runtime_runs') && sql.includes("'steeringState', 'released'"));
-    expect(inputUpdate?.params[1]).toEqual([]);
-    expect(sourceUpdate?.params[1]).toEqual([]);
+    expect(inputUpdate?.params[2]).toEqual([]);
+    expect(sourceUpdate?.params[3]).toEqual([]);
     expect(sourceUpdate?.sql).toContain("ELSE 'cancelled'");
     expect(sourceUpdate?.sql).toContain("'steeringState', 'cancelled'");
   });

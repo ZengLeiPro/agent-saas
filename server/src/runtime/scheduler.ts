@@ -9,6 +9,7 @@ import {
 import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
 import type { EventStore, PlatformEvent } from './types.js';
+import { finalizeTerminalRun } from './runTerminalCoordinator.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 const STALE_APPROVAL_REASON = 'stale_waiting_approval_timeout';
@@ -44,7 +45,7 @@ export interface RuntimeSchedulerOptions {
   admissionGuard?: RuntimeAdmissionGuard;
   approvalTimeoutMs?: number;
   autoWake?: boolean;
-  /** acquire run lease 前先确认目标 session 当前没有被其他 brain 持有。 */
+  /** acquire run lease 前先确认目标 tenant/session 当前没有被其他 brain 持有。 */
   canWake?: (record: RunRecord) => Promise<boolean>;
   wake?: (record: RunRecord, lease: RunLease) => Promise<void>;
   /** 每轮恢复扫描前执行 durable outbox 等轻量协调工作。 */
@@ -566,25 +567,61 @@ export class RuntimeScheduler {
       return;
     }
     const lease = this.createLease(acquired);
-    await this.options.eventStore.append({
-      type: 'run_lease_acquired',
-      runId: acquired.runId,
-      sessionId: acquired.sessionId,
-      workerId: this.workerId,
-      leaseExpiresAt: lease.expiresAt,
-    }, { tenantId: requireTenantId(acquired.tenantId) });
-
-    if (!this.options.autoWake || !this.options.wake) {
-      await lease.release('orphaned', 'scheduler_recovery_scan');
+    try {
       await this.options.eventStore.append({
-        type: 'run_state_changed',
+        type: 'run_lease_acquired',
         runId: acquired.runId,
         sessionId: acquired.sessionId,
-        status: 'orphaned',
-        previousStatus: acquired.status,
-        reason: 'scheduler_recovery_scan',
+        workerId: this.workerId,
+        leaseExpiresAt: lease.expiresAt,
       }, { tenantId: requireTenantId(acquired.tenantId) });
-      this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
+    } catch (error) {
+      const message = `scheduler_pre_wake_event_failed: ${error instanceof Error ? error.message : String(error)}`;
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'failed',
+        reason: message,
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'failed',
+          previousStatus: acquired.status,
+          reason: message,
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      this.options.logger?.error(
+        `Runtime scheduler failed before wake for ${acquired.runId}: ${message}; terminal=${terminal.won ? 'claimed' : terminal.record?.status ?? 'missing'}`,
+      );
+      return;
+    }
+
+    if (!this.options.autoWake || !this.options.wake) {
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'orphaned',
+        reason: 'scheduler_recovery_scan',
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'orphaned',
+          previousStatus: acquired.status,
+          reason: 'scheduler_recovery_scan',
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      if (terminal.won) this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
+      else this.options.logger?.error(`Runtime scheduler orphan terminal CAS lost for ${acquired.runId}: current=${terminal.record?.status ?? 'missing'}`);
       return;
     }
 
@@ -607,10 +644,27 @@ export class RuntimeScheduler {
           this.options.logger?.error(`Failed to freeze background task ${acquired.runId}: ${freezeMessage}`);
         });
       }
-      await lease.release('failed', message);
-      const terminalized = await this.options.runStore.get(acquired.runId);
-      if (terminalized?.status !== 'failed') {
-        if (terminalized && !['completed', 'cancelled', 'orphaned'].includes(terminalized.status)) {
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
+        runId: acquired.runId,
+        status: 'failed',
+        reason: message,
+        expectedStatuses: ['running'],
+        events: [{
+          type: 'run_state_changed',
+          runId: acquired.runId,
+          sessionId: acquired.sessionId,
+          status: 'failed',
+          previousStatus: acquired.status,
+          reason: message,
+        }],
+        ctx: { tenantId: requireTenantId(acquired.tenantId) },
+        logger: this.options.logger,
+      });
+      if (!terminal.won) {
+        const terminalized = terminal.record;
+        if (terminalized && !['completed', 'cancelled', 'orphaned', 'failed'].includes(terminalized.status)) {
           this.deferRun(acquired.runId, Math.max(30_000, this.pollIntervalMs * 5));
         }
         this.options.logger?.error(
@@ -618,14 +672,6 @@ export class RuntimeScheduler {
         );
         return;
       }
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: acquired.runId,
-        sessionId: acquired.sessionId,
-        status: 'failed',
-        previousStatus: acquired.status,
-        reason: message,
-      }, { tenantId: requireTenantId(acquired.tenantId) });
       this.deferredUntilByRun.delete(acquired.runId);
       this.options.logger?.error(`Runtime scheduler wake failed for ${acquired.runId}: ${message}`);
     }

@@ -70,12 +70,9 @@ import { readWorkspaceFile } from './workspaceRead.js';
 const exec = promisify(execCb);
 const MEMORY_SHELL_MAYBE_CHANGED_INTERVAL_MS = 120_000;
 const MEMORY_SHELL_MAYBE_CHANGED_DEBOUNCE_MS = 30_000;
-
 export { MAX_FILE_BYTES, MAX_READ_LINES, MAX_READ_OUTPUT_BYTES };
-
 export type ToolRisk = 'safe' | 'workspace_write' | 'dangerous';
 export type ToolApprovalMode = 'never' | 'web';
-
 /**
  * Hand 部署位置维度。
  *
@@ -146,6 +143,8 @@ export interface ToolCallContext {
   env?: Record<string, string>;
   sessionId?: string;
   runId?: string;
+  /** Host-derived immutable fence; present only on a matching session automation Run. */
+  automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string };
   /** Runtime 内部记忆维护模式；不改变模型可见 descriptor。 */ memoryMaintenanceMode?: 'consolidation';
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   toolCallId?: string;
@@ -345,6 +344,7 @@ export interface ToolRuntime {
   invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult>;
 }
 
+/** Runtime tool provider. */
 export interface ToolProvider {
   list(context?: ToolCallContext): ToolDescriptor[];
   invoke<TInput>(call: AuthorizedToolCall<TInput>, context: ToolCallContext): Promise<ToolResult | undefined>;

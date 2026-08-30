@@ -102,6 +102,32 @@ export class MemoryRunStore implements RunStore {
     return updated;
   }
 
+  async markStatusIfCurrent(
+    runId: string,
+    expectedStatuses: readonly RunStatus[],
+    status: RunStatus,
+    reason?: string,
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record || !expectedStatuses.includes(record.status)) return null;
+    const now = new Date().toISOString();
+    const updated: RunRecord = {
+      ...record,
+      status,
+      statusReason: reason,
+      updatedAt: now,
+      workerId: undefined,
+      leaseExpiresAt: undefined,
+      metadata: { ...record.metadata, ...metadataPatch },
+      ...(status === 'completed' ? { completedAt: now } : {}),
+      ...(status === 'failed' || status === 'orphaned' ? { failedAt: now } : {}),
+      ...(status === 'cancelled' ? { cancelledAt: now } : {}),
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
 
   async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
@@ -153,7 +179,7 @@ export class MemoryRunStore implements RunStore {
   async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
     const record = this.records.get(runId);
     if (!record) return null;
-    // 忠实复刻 pgRunStore.acquireLease 的原子 CAS 守卫（runStore.ts:433-437）：
+    // 忠实复刻 pgRunStore.acquireLease 的原子 CAS 守卫：
     //   status='pending' OR (status='running' AND (lease_expires_at IS NULL OR lease_expires_at < now))
     // 只有满足其一才能夺得 lease；running 且 lease 未过期 → 返回 null（互斥）。
     const leaseExpired =

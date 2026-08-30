@@ -45,6 +45,7 @@ import {
   createFeishuRouter,
   createContextCitationsRouter,
   createContextAdminRouter,
+  createSessionAutomationsRouter,
 } from '../routes/index.js';
 import { createAuthRouter } from '../routes/auth.js';
 import { createSignupRouters } from '../routes/signup.js';
@@ -165,6 +166,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  if (runtime.sessionAutomationStore && runtime.sessionAutomationCommandService) {
+    app.use('/api', createSessionAutomationsRouter({
+      store: runtime.sessionAutomationStore,
+      service: runtime.sessionAutomationCommandService,
+    }));
+  }
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
@@ -338,10 +345,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       sessionReadStateStore: runtime.sessionReadStateStore,
       sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId),
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId, tenantId)
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
-        ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
         ? (userId, clientMessageId) =>

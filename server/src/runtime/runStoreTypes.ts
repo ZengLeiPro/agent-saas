@@ -201,7 +201,7 @@ export interface RunStore {
   /** 兼容旧调用：等价于 enqueueUserMessage(input, 'steer')。 */
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
   /** 当前会话尚未开始执行的普通/插话消息，按服务端接受顺序返回。 */
-  listPendingUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
+  listPendingUserMessagesBySession?(sessionId: string, tenantId?: string): Promise<RunRecord[]>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
   /** 在写入 durable user_message、构造模型上下文前原子取得输入所有权。 */
   reserveSteeringInputs?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;
@@ -226,11 +226,12 @@ export interface RunStore {
   cancelPendingSteeringSourceRun?(sourceRunId: string, reason?: string): Promise<CancelSteeringResult>;
   /** 撤回尚未取得执行权的普通 queue 或 steer 消息。 */
   cancelPendingUserMessage?(runId: string, reason?: string): Promise<CancelSteeringResult>;
-  /** stop-all 专用：同 session 的 pending/reserved 输入在 steering advisory lock 内原子取消。 */
+  /** stop-all 专用：同 tenant/session 的 pending/reserved 输入在 steering advisory lock 内原子取消。 */
   cancelSteeringBeforeDispatchBySession?(
     sessionId: string,
     reason: string,
     targetRunId?: string,
+    tenantId?: string,
   ): Promise<SteeringInputRecord[]>;
   /** stop 专用：steering/target 取消与 run_cancel_requested 同事务提交。 */
   cancelSteeringBeforeDispatchBySessionWithEvent?(
@@ -241,7 +242,7 @@ export interface RunStore {
     tenantId: string,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }>;
   /** 会话内仍可由用户单条撤回的 pending 插话（供 detail API 恢复队列区）。 */
-  listPendingSteeringBySession?(sessionId: string): Promise<SteeringInputRecord[]>;
+  listPendingSteeringBySession?(sessionId: string, tenantId?: string): Promise<SteeringInputRecord[]>;
   markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch?: Record<string, unknown>): Promise<RunRecord | null>;
   /** 仅 pending + schedulerState=staged 时原子切到 ready；未命中返回当前记录。 */
   activateStagedRun?(runId: string): Promise<RunRecord | null>;

@@ -4,6 +4,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { z } from 'zod';
 import { buildWebToolsSchemas } from './webToolsSchema.js';
 import { runtimeEventRetentionConfigSchema } from './runtimeEventRetentionConfig.js';
+import { sessionAutomationConfigSchema } from './sessionAutomationConfig.js';
 import {
   DEFAULT_CODING_HAND_NETWORK_POLICY,
   NETWORK_POLICY_MODES,
@@ -1252,6 +1253,7 @@ export const appConfigSchema = z.object({
   runtimeScheduler: runtimeSchedulerConfigSchema.optional(),
   runtimeHandHealthScanner: runtimeHandHealthScannerConfigSchema.optional(),
   runtimeEventRetention: runtimeEventRetentionConfigSchema.optional(),
+  sessionAutomation: sessionAutomationConfigSchema.optional(),
   clientDaemon: clientDaemonConfigSchema,
   secretVault: secretVaultConfigSchema.optional(),
   webTools: webToolsConfigSchema,

@@ -16,6 +16,8 @@ import { AskUserPromptPanel } from "@/components/AskUserPromptPanel";
 import { QueuedMessageBar } from "@/components/QueuedMessageBar";
 import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import type { SandboxProfile } from "@/types/sandboxProfile";
+import { SessionAutomationCard } from "@/components/SessionAutomationCard";
+import type { AutomationControlRequest, AutomationTimelineEvent, SessionAutomationSnapshot } from "@/lib/sessionAutomation";
 
 interface ChatTabContentProps {
   messages: MessageItem[];
@@ -84,6 +86,11 @@ interface ChatTabContentProps {
   onEditQueuedInterjection?: (clientMsgId: string) => Promise<void>;
   onResendQueuedInterjection?: (clientMsgId: string) => void;
   onDismissQueuedInterjection?: (clientMsgId: string) => void;
+  automation?: SessionAutomationSnapshot | null;
+  automationTimeline?: AutomationTimelineEvent[];
+  automationPending?: boolean;
+  automationError?: string | null;
+  onAutomationControl?: (request: AutomationControlRequest) => Promise<void> | void;
 }
 
 export function OrgAgentComposerChip({
@@ -225,6 +232,11 @@ export function ChatTabContent({
   onEditQueuedInterjection,
   onResendQueuedInterjection,
   onDismissQueuedInterjection,
+  automation,
+  automationTimeline,
+  automationPending,
+  automationError,
+  onAutomationControl,
 }: ChatTabContentProps) {
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const handleSwitchModel = useCallback(() => setModelSelectorOpen(true), []);
@@ -283,6 +295,15 @@ export function ChatTabContent({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {automation && onAutomationControl && !readOnly && (
+        <SessionAutomationCard
+          snapshot={automation}
+          timeline={automationTimeline}
+          pending={automationPending}
+          error={automationError}
+          onControl={onAutomationControl}
+        />
+      )}
       <div
         className={cn(
           "relative flex min-h-0 basis-0 overflow-hidden transition-[flex-grow,opacity] duration-300 ease-out",

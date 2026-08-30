@@ -139,6 +139,9 @@ export interface RawRuntimeRunDispatchConfig {
    * PlatformToolRuntime，但可见性由 profile 与 memoryPolicyVersion 过滤。
    */
   memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
+  /** Host-fenced tools visible only to matching session automation Runs. */
+  sessionAutomationProvider?: import('../agent/toolRuntime.js').ToolProvider;
+  /** Optional personal agent registry. */
   agentStore?: AgentStore;
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */
   orgAgentStore?: OrgAgentStore;

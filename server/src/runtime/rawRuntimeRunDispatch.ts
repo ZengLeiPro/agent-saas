@@ -1,7 +1,7 @@
+import { automationFenceFromMetadata } from './automationFence.js';
 import { randomUUID } from 'crypto';
 import { mkdir } from 'fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'path';
-
 import type {
   AgentRunDispatch,
   AgentRunHooks,
@@ -119,7 +119,6 @@ import {
   resolveWakePrompt,
   WAKE_EVENT_LIST_TYPES,
 } from './wakeDispatchHelpers.js';
-
 // wake/续跑相关的常量与纯判定函数已迁至 ./wakeDispatchHelpers.ts，这里按既有 import 路径继续对外转发。
 export {
   HIDDEN_WAKE_CONTINUE_PROMPT,
@@ -161,7 +160,6 @@ import type { SecretVault } from '../security/secretVault.js';
 import type { NetworkPolicyConfig } from './networkPolicy.js';
 import { runtimeRunController } from './runController.js';
 import { appendRunStateChanged, armRuntimeRunWallClock, coordinateRunFinishedEvent, markRunState, trackRunStateAfterEvent, type TerminalEventLogger } from './runTerminalCoordinator.js';
-
 export {
   failRunningRunForWallClock,
   markRunState,
@@ -185,7 +183,6 @@ import type { BackgroundTaskRuntime } from './background/backgroundTaskRuntime.j
 import { BackgroundTaskToolProvider } from './background/backgroundTaskToolProvider.js';
 export { deriveSandboxScopeId, ensureRuntimeHandRegistered };
 const logger = createLogger('RawRuntime');
-
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 
@@ -471,6 +468,8 @@ export async function collectRuntimeTooling(
   providers: ToolProvider[];
 }> {
   const providers: ToolProvider[] = [];
+  if (config.sessionAutomationProvider) providers.push(config.sessionAutomationProvider);
+  // Session automation provider self-hides unless a trusted host fence is present.
   // Skill 工具：注入 EffectiveSkillsResolver，SkillToolProvider.list(context) 会用它
   // 派生用户实际可用清单并拼进工具 description（模型注意力最集中的位置）。原
   // <available-skills> xml section 已废弃（2026-07-03）。
@@ -1515,6 +1514,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         env: runtimeEnv,
         sandboxPolicy,
         workerId: options.runtimeWorkerId,
+        ...(automationFenceFromMetadata(options.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(options.runtimeIsolationMetadata)! } : {}),
         channelContext: context,
         approvalPolicy,
         ...(replaySourceSession ? {

@@ -72,13 +72,11 @@ import { useCapabilityNavigation } from "@/components/CapabilityCenter/navigatio
 import type { CatalogScenarioPublic, ScenarioItem } from "@agent/shared";
 const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
 const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
-
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
     <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
-
 export function DesktopLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, confirmDeleteSessions, renameSession, autoTitleSession, compactSession,
@@ -92,6 +90,7 @@ export function DesktopLayout(props: LayoutProps) {
     sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
     previewArtifact, closeArtifactPreview,
@@ -610,6 +609,11 @@ export function DesktopLayout(props: LayoutProps) {
               onEditQueuedInterjection={editQueuedInterjection}
               onResendQueuedInterjection={resendQueuedInterjection}
               onDismissQueuedInterjection={dismissQueuedInterjection}
+              automation={automation}
+              automationTimeline={automationTimeline}
+              automationPending={automationPending}
+              automationError={automationError}
+              onAutomationControl={controlAutomation}
               onFileSelect={(event) => { void handleFileSelect(event); }}
               onAssetSelect={handleAssetSelect}
               onPaste={(event) => { void handlePaste(event); }}

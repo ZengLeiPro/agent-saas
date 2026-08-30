@@ -33,6 +33,7 @@ export interface BillingServiceOptions {
   isMemoryPollBillable?: (tenantId: string) => boolean;
 }
 
+/** Independently billed utility-model invocation. */
 export interface BillingUtilityModelRun {
   runId: string;
   beforeModelCall(): Promise<void>;
@@ -262,7 +263,7 @@ export class BillingService {
     userId?: string;
     username: string;
     sessionId?: string;
-    channel: 'guardrail' | 'title' | 'memory_embedding';
+    channel: 'guardrail' | 'title' | 'memory_embedding' | 'automation_evaluator';
   }): Promise<BillingUtilityModelRun> {
     const runId = `utility-${input.channel}-${randomUUID()}`;
     const initial = await this.authorizeRun({

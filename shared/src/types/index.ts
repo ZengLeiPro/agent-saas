@@ -41,6 +41,13 @@ export type {
 
 export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
 export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
+export type {
+  SessionAutomationKind, SessionAutomationMode, SessionAutomationStatus, SessionAutomationPhase,
+  SessionAutomationBudget, SessionAutomationSpec, SessionAutomationSnapshot,
+  SessionAutomationControlAction, SessionAutomationCommandRequest, SessionAutomationControlRequest,
+  SessionAutomationCommandResponse, SessionAutomationListResponse, SessionAutomationApiErrorBody,
+  ScheduleWakeupInput, UpdateGoalInput,
+} from "./sessionAutomation";
 
 export type {
   AuthUser,

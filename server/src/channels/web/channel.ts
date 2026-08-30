@@ -1753,7 +1753,7 @@ export class WebChannel implements BaseChannel {
       return { targetCancelled, eventAppended: Boolean(event), newCancellation: eventCreated };
     }
     if (runStore.cancelSteeringBeforeDispatchBySession) {
-      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId);
+      const cancelled = await runStore.cancelSteeringBeforeDispatchBySession(sessionId, reason, targetRunId, tenantId);
       // 非 PG/旧实现无法跨 store 原子提交：先落取消事实，再追加事件。事件绝不先行撒谎；
       // 即使 append 失败，run status 仍是可恢复权威事实。
       if (cancelEvent) await this.appendDurableWebCommand(sessionId, cancelEvent, tenantId);
@@ -1779,7 +1779,7 @@ export class WebChannel implements BaseChannel {
     if (!runStore.listPendingSteeringBySession || !runStore.cancelPendingSteeringSourceRun) {
       return { targetCancelled: false, eventAppended: false, newCancellation: true };
     }
-    const pending = await runStore.listPendingSteeringBySession(sessionId);
+    const pending = await runStore.listPendingSteeringBySession(sessionId, tenantId);
     for (const input of pending) {
       const result = await runStore.cancelPendingSteeringSourceRun(input.sourceRunId, reason);
       if (!result.ok) continue;
@@ -3086,10 +3086,10 @@ export class WebChannel implements BaseChannel {
         const steeringTargetRunId = acceptedDeliveryMode === 'steer' ? queuedTargetRunId : undefined;
         const queuedBehindRunId = acceptedDeliveryMode === 'queue' ? queuedTargetRunId : undefined;
         durableAcceptedQueuedTargetRunId = queuedTargetRunId;
-        let queuePosition: number | undefined;
+        let queuePosition: number | undefined; // position is scoped to the accepted run's tenant/session
         if (queuedTargetRunId && enqueueRuntime.runStore.listPendingUserMessagesBySession) {
           try {
-            const pendingMessages = await enqueueRuntime.runStore.listPendingUserMessagesBySession(acceptedSessionId);
+            const pendingMessages = await enqueueRuntime.runStore.listPendingUserMessagesBySession(acceptedSessionId, enqueuedRun.tenantId);
             const pendingIndex = pendingMessages.findIndex((run) => run.runId === acceptedRunId);
             if (pendingIndex >= 0) queuePosition = pendingIndex + 1;
           } catch (queueError) {

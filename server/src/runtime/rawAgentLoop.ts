@@ -139,7 +139,6 @@ export {
   ToolStreamSummaryBuilder,
   type StreamEventBatchOptions,
 } from './rawAgentLoopSupport.js';
-
 /**
  * RawAgentLoop 自身原本完全依赖 EventStore 留痕,不打 logger 日志。
  * 但 enqueue-only 异步路径绕过 dispatch wrapper,导致 server.log 里完全
@@ -176,7 +175,6 @@ const CONTEXT_SYNTHESIS_PROMPT = [
 ].join('\n');
 const INVALID_PROMPT_RECOVERY_INPUT = '继续';
 const INVALID_PROMPT_CUSTOMER_ERROR = 'Agent 开小差了，请发送「继续」';
-
 export interface RawAgentLoopOptions {
   modelAdapter: ModelAdapter;
   eventStore: EventStore;
@@ -209,7 +207,6 @@ export interface RawAgentLoopOptions {
    */
   zombieToolCallTimeoutMs?: number;
 }
-
 export interface CompactInput {
   message: InboundMessage;
   /**
@@ -652,6 +649,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,
@@ -2411,6 +2409,7 @@ export class RawAgentLoop implements AgentLoop {
       env: resumeContext.env,
       sessionId: resumeContext.sessionId,
       runId: resumeContext.runId,
+      ...(resumeContext.automationFence ? { automationFence: resumeContext.automationFence } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: resumeContext.hooks,
       signal: resumeContext.signal,
@@ -2575,6 +2574,7 @@ export class RawAgentLoop implements AgentLoop {
       env: context.env,
       sessionId: context.sessionId,
       runId: context.runId,
+      ...(context.automationFence ? { automationFence: context.automationFence } : {}),
       ...(context.memoryMaintenanceMode ? { memoryMaintenanceMode: context.memoryMaintenanceMode } : {}),
       ...(this.runtimeIsolationRequirement ? { runtimeIsolationRequirement: this.runtimeIsolationRequirement } : {}),
       hooks: context.hooks,

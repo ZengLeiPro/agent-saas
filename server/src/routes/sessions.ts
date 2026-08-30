@@ -88,7 +88,6 @@ import {
   stripMarkdown,
   type CronSessionInfo,
 } from "./sessionListHelpers.js";
-
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
@@ -459,14 +458,14 @@ export interface SessionsRouterOptions {
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
    */
-  listPendingSteeringBySession?: (sessionId: string) => Promise<Array<{
+  listPendingSteeringBySession?: (sessionId: string, tenantId?: string) => Promise<Array<{
     sourceRunId: string;
     targetRunId: string;
     sourceRun: { metadata?: Record<string, unknown> };
     acceptedAt: string;
   }>>;
   /** 普通 queue + 显式 steer 的统一权威 pending 快照。 */
-  listPendingUserMessagesBySession?: (sessionId: string) => Promise<Array<{
+  listPendingUserMessagesBySession?: (sessionId: string, tenantId?: string) => Promise<Array<{
     runId: string;
     sessionId: string;
     status: string;
@@ -477,6 +476,7 @@ export interface SessionsRouterOptions {
   findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
     runId: string;
     sessionId: string;
+    tenantId?: string;
     status: string;
     statusReason?: string;
     metadata: Record<string, unknown>;
@@ -910,7 +910,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     }> = [];
     if (options.listPendingUserMessagesBySession) {
       try {
-        const queriedPending = await options.listPendingUserMessagesBySession(sessionId);
+        const queriedPending = await options.listPendingUserMessagesBySession(sessionId, tenantId);
         // 普通 queue 与 steer 共用本分支：transcript 窗口 + durable user_message 双对账，
         // 过滤「已投影但 source run 尚未转出 pending」的消息，防止刷新/切回时复活（TASK-70）。
         const projectedRunIds = new Set(await listDurablyProjectedQueuedRunIds(detailEventStore, tenantId, sessionId, queriedPending, parsed.blocks));
@@ -941,7 +941,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
     } else if (options.listPendingSteeringBySession) {
       try {
-        const queriedPending = await options.listPendingSteeringBySession(sessionId);
+        const queriedPending = await options.listPendingSteeringBySession(sessionId, tenantId);
         const durableProjectedSourceRunIds = await listDurablyProjectedQueuedRunIds(
           detailEventStore, tenantId, sessionId, queriedPending, parsed.blocks,
         );
@@ -2274,9 +2274,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             : run.status === 'cancelled'
               ? 'cancelled'
               : 'failed';
-      let queuePosition: number | undefined;
+      let queuePosition: number | undefined; // resolved within the acknowledged run's tenant/session
       if (status === 'queued' && options.listPendingUserMessagesBySession) {
-        const pending = await options.listPendingUserMessagesBySession(run.sessionId);
+        const pending = await options.listPendingUserMessagesBySession(run.sessionId, run.tenantId ?? req.user?.tenantId);
         const index = pending.findIndex((candidate) => candidate.runId === run.runId);
         if (index >= 0) queuePosition = index + 1;
       }

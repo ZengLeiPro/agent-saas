@@ -3,7 +3,7 @@ import { markRunStatusIfCurrent } from './runStatusCas.js';
 import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 
-export class PgRunStoreQueries {
+export class PgRunStoreQueries { // all steering joins preserve tenant/session identity
   constructor(
     readonly pool: PgPool,
     readonly runsTable: string,
@@ -326,8 +326,13 @@ export class PgRunStoreQueries {
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
+          JOIN ${this.runsTable} target
+            ON target.tenant_id = input.tenant_id
+           AND target.session_id = input.session_id
+           AND target.run_id = input.target_run_id
+          WHERE input.tenant_id = run.tenant_id
+            AND input.session_id = run.session_id
+            AND input.source_run_id = run.run_id
             AND (
               (
                 input.state = 'reserved'
@@ -373,8 +378,13 @@ export class PgRunStoreQueries {
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
+          JOIN ${this.runsTable} target
+            ON target.tenant_id = input.tenant_id
+           AND target.session_id = input.session_id
+           AND target.run_id = input.target_run_id
+          WHERE input.tenant_id = run.tenant_id
+            AND input.session_id = run.session_id
+            AND input.source_run_id = run.run_id
             AND (
               (
                 input.state = 'reserved'
@@ -461,8 +471,13 @@ export class PgRunStoreQueries {
         AND NOT EXISTS (
           SELECT 1
           FROM ${this.steeringInputsTable} input
-          JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-          WHERE input.source_run_id = run.run_id
+          JOIN ${this.runsTable} target
+            ON target.tenant_id = input.tenant_id
+           AND target.session_id = input.session_id
+           AND target.run_id = input.target_run_id
+          WHERE input.tenant_id = run.tenant_id
+            AND input.session_id = run.session_id
+            AND input.source_run_id = run.run_id
             AND (
               (
                 input.state = 'reserved'
@@ -640,7 +655,8 @@ export class PgRunStoreQueries {
             OR NOT EXISTS (
               SELECT 1
               FROM ${this.runsTable} predecessor
-              WHERE predecessor.session_id = candidate.session_id
+              WHERE predecessor.tenant_id = candidate.tenant_id
+                AND predecessor.session_id = candidate.session_id
                 AND predecessor.status = 'pending'
                 AND predecessor.run_id <> candidate.run_id
                 AND predecessor.enqueue_seq < candidate.enqueue_seq
@@ -649,15 +665,21 @@ export class PgRunStoreQueries {
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.runsTable} active
-            WHERE active.session_id = candidate.session_id
+            WHERE active.tenant_id = candidate.tenant_id
+              AND active.session_id = candidate.session_id
               AND active.run_id <> candidate.run_id
               AND active.status IN ('running','waiting_hand')
           )
           AND NOT EXISTS (
             SELECT 1
             FROM ${this.steeringInputsTable} input
-            JOIN ${this.runsTable} target ON target.run_id = input.target_run_id
-            WHERE input.source_run_id = candidate.run_id
+            JOIN ${this.runsTable} target
+              ON target.tenant_id = input.tenant_id
+             AND target.session_id = input.session_id
+             AND target.run_id = input.target_run_id
+            WHERE input.tenant_id = candidate.tenant_id
+              AND input.session_id = candidate.session_id
+              AND input.source_run_id = candidate.run_id
               AND (
                 (
                   input.state = 'reserved'

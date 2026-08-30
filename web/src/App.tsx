@@ -25,7 +25,7 @@ import type { ApiSessionListItem } from "@/lib/sessionsApi";
 import type { LayoutProps } from "@/layouts/types";
 import type { AgentProfile, SessionRuntimeStatus } from "@agent/shared";
 
-/** 将 API 会话列表转换为 sidebar 所需的格式 */
+/** 将 API 会话列表（含自动化 compact projection）转换为 sidebar 所需格式 */
 function toSidebarSessions(
   sessions: ApiSessionListItem[],
   runningSessionIds: ReadonlySet<string>,
@@ -49,6 +49,10 @@ function toSidebarSessions(
     orgAgentId: s.orgAgentId,
     orgAgentName: s.orgAgentName,
     orgAgentAvailable: s.orgAgentAvailable,
+    // Shared API adds this compact projection in TASK-338. Keep the bridge structural so
+    // this Web branch remains typecheckable while the shared agent lands its export.
+    automation: (s as unknown as { automation?: unknown }).automation,
+    automationSummary: (s as unknown as { automationSummary?: unknown }).automationSummary,
   }));
 }
 
@@ -82,6 +86,7 @@ function App() {
     handlePermissionResponse, handleAskUserResponse,
     modelList, selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell,
     tokenUsage, contextUsage, connectionState, resumeCurrentStream,
+    automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     notifications, dismissNotification,
     lastMemoryRecall, dismissMemoryRecall, pluginInstallStatus,
     runningSessionIds, sessionRuntimeStatuses,
@@ -249,6 +254,7 @@ function App() {
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     ttsStateMap: ttsPlayer.ttsStateMap, modelList,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
+    automation, automationTimeline, automationPending, automationError, controlAutomation, refreshAutomation,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview: openPreview, dockFilePreview, expandFilePreview, closeFilePreview,

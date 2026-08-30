@@ -67,6 +67,7 @@ import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { compareSessionActivity, formatBillingCredits } from "./desktopSessionSidebarUtils";
+import { getSessionAutomationBadge } from "@/lib/sessionAutomation";
 import {
   CompactSessionGroupLeadingIcon,
   SessionGroupGlyph,
@@ -79,7 +80,6 @@ import {
   SessionSelectionActions,
   SidebarNav,
 } from "./DesktopSessionSidebarControls";
-
 interface DesktopSessionSidebarProps {
   sessions: ChatSessionIndexItem[];
   activeSessionId: string | null;
@@ -119,11 +119,9 @@ interface DesktopSessionSidebarProps {
   sidebarLayout?: "double" | "single";
   personalAgentEnabled?: boolean;
 }
-
 const USER_MENU_ITEM =
   "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] text-foreground transition-colors hover:bg-accent";
 const USER_MENU_SECTION = "border-t border-border/60 py-1.5";
-
 /** 左栏视图/分组标签上的聚合未读小红点 */
 function GroupUnreadDot() {
   return (
@@ -133,7 +131,6 @@ function GroupUnreadDot() {
     />
   );
 }
-
 /* ------------------------------------------------------------------ */
 /*  SessionRow: 复用的会话行                                           */
 /* ------------------------------------------------------------------ */
@@ -145,7 +142,6 @@ function SessionLeadingIcon({ session, selected = false }: { session: ChatSessio
       </span>
     );
   }
-
   return (
     <AgentAvatar
       avatar={session.agent?.avatar}
@@ -156,7 +152,6 @@ function SessionLeadingIcon({ session, selected = false }: { session: ChatSessio
     />
   );
 }
-
 /** 紧凑模式（不显示头像）下的会话前缀小图标：普通会话=灰色气泡；批量选中态=绿色小勾。 */
 function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean }) {
   if (selected) {
@@ -168,7 +163,6 @@ function CompactSessionLeadingIcon({ selected = false }: { selected?: boolean })
   }
   return <MessageSquare className="size-4 shrink-0 text-muted-foreground/70" aria-hidden="true" />;
 }
-
 function SessionRow({
   session,
   active,
@@ -217,6 +211,7 @@ function SessionRow({
 }) {
   const menuOpen = actionMenuId === session.id;
   const waitingLabel = getSessionWaitingLabel(session.runtimeStatus);
+  const automationBadge = getSessionAutomationBadge(session);
   const hasMenu = !selectionMode && Boolean(onDelete || onRename || onAutoTitle || onShare || onAddToGroup || onRemoveFromGroup || onCompact);
 
   const menuDropdown = menuOpen ? (
@@ -341,6 +336,9 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
+        {automationBadge && (
+          <span className="max-w-32 shrink-0 truncate rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary" title={automationBadge}>{automationBadge}</span>
+        )}
         {session.orgAgentId && (
           <span
             className="flex max-w-24 shrink-0 items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
@@ -428,8 +426,10 @@ function SessionRow({
               </span>
             )}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground/60">
-            <span className="block truncate pr-28">{metaText}</span>
+          <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground/60">
+            {automationBadge && <span className="max-w-40 shrink-0 truncate font-medium text-primary" title={automationBadge}>{automationBadge}</span>}
+            {automationBadge && metaText && <span>·</span>}
+            <span className="block min-w-0 truncate pr-28">{metaText}</span>
           </div>
         </div>
       </div>

@@ -5,6 +5,7 @@ import AttachmentControls from "@/components/AttachmentControls";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { warmupSessionSandbox } from "@/lib/sessionsApi";
+import { matchingSlashCommands } from "@/lib/slashCommandRegistry";
 import type { ModelList } from "@/types/models";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
@@ -109,6 +110,10 @@ export function ChatInput({
   const localFileInputRef = useRef<HTMLInputElement>(null);
   const [tooShortTip, setTooShortTip] = useState(false);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [slashSelection, setSlashSelection] = useState(0);
+  const slashCommands = useMemo(() => matchingSlashCommands(input), [input]);
+  const slashMenuOpen = !isDisabled && slashCommands.length > 0;
+  const slashCompletionActive = /^\s*\/\S*$/.test(input);
 
   const voiceRecorder = useVoiceRecorder({
     onVoiceSend: async (wavBlob, durationMs) => {
@@ -192,9 +197,34 @@ export function ChatInput({
     }, 0);
   };
 
+  const applySlashCommand = useCallback((index: number) => {
+    const command = slashCommands[index];
+    if (!command) return;
+    onInputChange(`${command.name} `);
+    setSlashSelection(0);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [onInputChange, slashCommands]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isDisabled) return;
     if (e.nativeEvent.isComposing || isComposingRef.current) return;
+    if (slashCompletionActive && slashMenuOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setSlashSelection((current) => e.key === "ArrowDown"
+        ? (current + 1) % slashCommands.length
+        : (current - 1 + slashCommands.length) % slashCommands.length);
+      return;
+    }
+    if (slashCompletionActive && slashMenuOpen && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+      e.preventDefault();
+      applySlashCommand(slashSelection);
+      return;
+    }
+    if (e.key === "Escape" && slashMenuOpen) {
+      e.preventDefault();
+      onInputChange('');
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       onSend();
@@ -381,6 +411,29 @@ export function ChatInput({
             className="relative z-10 flex flex-col rounded-[24px] border border-border bg-card shadow-sm"
             onClick={() => !isDisabled && !voiceRecorder.isRecording && textareaRef.current?.focus()}
           >
+            {slashMenuOpen && (
+              <div role="listbox" aria-label="Slash 命令" className="absolute bottom-full left-0 right-0 z-30 mb-2 overflow-hidden rounded-xl border bg-popover shadow-xl">
+                {slashCommands.map((command, index) => (
+                  <button
+                    key={command.name}
+                    type="button"
+                    role="option"
+                    aria-selected={index === slashSelection}
+                    className={cn(
+                      "block w-full px-3 py-2 text-left transition-colors",
+                      index === slashSelection ? "bg-accent" : "hover:bg-accent/60",
+                    )}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => applySlashCommand(index)}
+                  >
+                    <span className="flex items-center gap-2"><code className="font-semibold text-primary">{command.name}</code><span className="text-xs text-foreground">{command.summary}</span></span>
+                    <span className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{command.syntax}</span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">示例：{command.examples[0]} · {command.budgetHint}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* 文本输入区 / 录音指示器 */}
             {voiceRecorder.isRecording ? (
               <div className="flex items-center gap-3 px-4 py-3">

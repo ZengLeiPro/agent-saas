@@ -9,6 +9,7 @@ import {
 import { governanceAccessApi, type OAuthGrantResponse } from "@agent/shared/lib/governanceApi";
 
 import { beginNativeOAuthTransaction, cancelNativeOAuthTransaction } from "../../src/services/nativeOAuthHandoff";
+import { hydrateMobileCapability } from "../../src/services/authConnectionCapabilityAdapter";
 import { useAuth } from "../../src/contexts/AuthContext";
 import { radius, spacing, typography, useColors } from "../../src/theme";
 
@@ -54,10 +55,20 @@ export default function ConnectionsScreen() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  const requireConnectionCapability = async (provider: string) => {
+    if (!identity) throw new Error("必须先登录才能发起 OAuth");
+    const hydrated = await hydrateMobileCapability({
+      userId: identity.userId, tenantId: identity.tenantId, provider,
+      channel: "mobile", operation: "connection",
+    });
+    if (hydrated.status.mode !== "normal") throw new Error(`${hydrated.presentation.title}：${hydrated.presentation.detail}`);
+  };
+
   const connectGoogle = async () => {
     setBusyId("google-workspace");
     try {
       if (!identity) throw new Error("必须先登录才能发起 OAuth");
+      await requireConnectionCapability("google-workspace");
       const binding = await beginNativeOAuthTransaction("google-workspace", identity);
       const started = await startGoogleWorkspaceOAuth(binding);
       const authorizationUrl = assertHttps(started.authorizationUrl);
@@ -80,6 +91,7 @@ export default function ConnectionsScreen() {
     setBusyId(server.id);
     try {
       if (!identity) throw new Error("必须先登录才能发起 OAuth");
+      await requireConnectionCapability(server.id);
       const binding = await beginNativeOAuthTransaction(server.id, identity);
       const started = await startMyMcpOAuth(server.id, "/settings/connections", binding);
       if (started.status === "connected") { await cancelNativeOAuthTransaction(); await load(); }

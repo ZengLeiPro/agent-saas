@@ -13,6 +13,26 @@ export type {
 } from './lib/sessionMetadataReducer';
 
 export {
+  evaluateCapability,
+  reduceCapabilityStatus,
+  unknownServerCapability,
+  isSensitiveCapabilityAllowed,
+  presentCapability,
+} from './lib/authConnectionCapability';
+export type {
+  AuthConnectionCapabilityStatus,
+  CapabilityAction,
+  CapabilityChannel,
+  CapabilityEvent,
+  CapabilityKind,
+  CapabilityMode,
+  CapabilityObservation,
+  CapabilityReasonCode,
+  CapabilityPresentation,
+} from './lib/authConnectionCapability';
+export { fetchAuthConnectionCapability } from './lib/capabilityApi';
+
+export {
   buildInteractionResponseRequest,
   canInteract,
   createInteractionReducerState,
@@ -45,7 +65,7 @@ export type {
   PlatformDeps,
 } from './platform/types';
 
-// Types - re-export the public type surface
+// Types - re-export the complete public type surface
 export {
   ACTIVITY_TYPES,
   formatTokenCount,

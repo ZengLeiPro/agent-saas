@@ -30,6 +30,7 @@ const TenantManager = lazy(() => import("@/components/TenantManager").then(m => 
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const FilePreviewDialog = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewDialog })));
 const FilePreviewPanel = lazy(() => import("@/components/FilePreviewPanel").then(m => ({ default: m.FilePreviewPanel })));
+const ArtifactPreviewPanel = lazy(() => import("@/components/artifacts/ArtifactPreviewDialog").then(m => ({ default: m.ArtifactPreviewPanel })));
 const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
@@ -93,6 +94,7 @@ export function DesktopLayout(props: LayoutProps) {
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
+    previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
@@ -154,13 +156,14 @@ export function DesktopLayout(props: LayoutProps) {
     businessStepPanelOpen, businessStepDetailHost, setBusinessStepDetailHost,
     rightPanelKind, rightPanelKey,
     handleBusinessStepPanelOpenChange, handleOpenFilePreview, handleCloseFilePreview,
-    handleDockFilePreview, handleExpandFilePreview, handleToggleFileBrowser,
-    handleCloseFileBrowser, handleCloseSubagentTranscript,
+    handleCloseArtifactPreview, handleDockFilePreview, handleExpandFilePreview,
+    handleToggleFileBrowser, handleCloseFileBrowser, handleCloseSubagentTranscript,
   } = useChatRightPanelController({
-    sessionId, previewFilePath, previewMode, fileBrowserOpen,
+    sessionId, previewFilePath, previewMode, previewArtifact, fileBrowserOpen,
     subagentTranscript: subagentTranscript ?? null,
     systemPanelOpen,
-    openFilePreview, closeFilePreview, dockFilePreview, expandFilePreview,
+    openFilePreview, closeFilePreview, closeArtifactPreview,
+    dockFilePreview, expandFilePreview,
     toggleFileBrowser, closeFileBrowser, closeSubagentTranscript,
   });
   const rightPanelOpen = rightPanelKind !== null;
@@ -950,6 +953,11 @@ export function DesktopLayout(props: LayoutProps) {
                     title={subagentTranscript.title}
                     onClose={handleCloseSubagentTranscript}
                   />
+                </Suspense>
+              ) : null}
+              {rightPanelKind === 'artifact' && previewArtifact ? (
+                <Suspense fallback={SuspenseFallback}>
+                  <ArtifactPreviewPanel {...previewArtifact} onClose={handleCloseArtifactPreview} />
                 </Suspense>
               ) : null}
               {rightPanelKind === 'preview' && previewFilePath ? (

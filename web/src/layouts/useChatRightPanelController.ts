@@ -8,11 +8,13 @@ export function useChatRightPanelController({
   sessionId,
   previewFilePath,
   previewMode,
+  previewArtifact,
   fileBrowserOpen,
   subagentTranscript,
   systemPanelOpen,
   openFilePreview,
   closeFilePreview,
+  closeArtifactPreview,
   dockFilePreview,
   expandFilePreview,
   toggleFileBrowser,
@@ -22,11 +24,13 @@ export function useChatRightPanelController({
   sessionId: string | null;
   previewFilePath: string | null;
   previewMode: 'dialog' | 'side';
+  previewArtifact: { artifactId: string } | null;
   fileBrowserOpen: boolean;
   subagentTranscript: { childSessionId: string } | null;
   systemPanelOpen: boolean;
   openFilePreview: (path: string, owner?: string, options?: PreviewOptions) => void;
   closeFilePreview: () => void;
+  closeArtifactPreview: () => void;
   dockFilePreview: () => void;
   expandFilePreview: () => void;
   toggleFileBrowser: () => void;
@@ -40,6 +44,7 @@ export function useChatRightPanelController({
   const rightPanelKind = resolveChatRightPanelKind(intent, {
     businessStep: businessStepPanelOpen,
     subagent: !!subagentTranscript,
+    artifact: !!previewArtifact,
     preview: sidePreviewOpen,
     system: systemPanelOpen,
     browser: fileBrowserOpen,
@@ -68,6 +73,13 @@ export function useChatRightPanelController({
       current === 'preview' ? (fileBrowserOpen ? 'browser' : null) : current,
     );
   }, [closeFilePreview, fileBrowserOpen]);
+
+  const handleCloseArtifactPreview = useCallback(() => {
+    closeArtifactPreview();
+    setIntent((current) =>
+      current === 'artifact' ? (fileBrowserOpen ? 'browser' : null) : current,
+    );
+  }, [closeArtifactPreview, fileBrowserOpen]);
 
   const handleDockFilePreview = useCallback(() => {
     setBusinessStepPanelOpen(false);
@@ -121,6 +133,15 @@ export function useChatRightPanelController({
   }, [subagentTranscript?.childSessionId]);
 
   useEffect(() => {
+    if (previewArtifact) {
+      setBusinessStepPanelOpen(false);
+      setIntent('artifact');
+      return;
+    }
+    setIntent((current) => (current === 'artifact' ? null : current));
+  }, [previewArtifact?.artifactId]);
+
+  useEffect(() => {
     if (sidePreviewOpen) {
       setBusinessStepPanelOpen(false);
       setIntent('preview');
@@ -134,9 +155,11 @@ export function useChatRightPanelController({
       ? 'business-step'
       : rightPanelKind === 'subagent'
         ? (subagentTranscript?.childSessionId ?? null)
-        : rightPanelKind === 'preview'
-          ? previewFilePath
-          : rightPanelKind;
+        : rightPanelKind === 'artifact'
+          ? (previewArtifact?.artifactId ?? null)
+          : rightPanelKind === 'preview'
+            ? previewFilePath
+            : rightPanelKind;
 
   return {
     businessStepPanelOpen,
@@ -147,6 +170,7 @@ export function useChatRightPanelController({
     handleBusinessStepPanelOpenChange,
     handleOpenFilePreview,
     handleCloseFilePreview,
+    handleCloseArtifactPreview,
     handleDockFilePreview,
     handleExpandFilePreview,
     handleToggleFileBrowser,

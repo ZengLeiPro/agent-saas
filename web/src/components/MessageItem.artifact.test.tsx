@@ -6,8 +6,11 @@ import { MessageItem } from './MessageItem';
 import type { MessageItem as MessageItemType } from './types';
 
 vi.mock('@/components/artifacts/ArtifactPreviewDialog', () => ({
-  ArtifactPreviewDialog: ({ artifactId }: { artifactId: string }) => (
-    <div role="dialog" aria-label="Artifact 预览">{artifactId}</div>
+  ArtifactPreviewDialog: ({ artifactId, onDock }: { artifactId: string; onDock?: () => void }) => (
+    <div role="dialog" aria-label="Artifact 预览">
+      {artifactId}
+      {onDock ? <button type="button" onClick={onDock}>右侧打开</button> : null}
+    </div>
   ),
 }));
 
@@ -41,6 +44,35 @@ describe('MessageItem Artifact 卡片', () => {
     expect(screen.queryByRole('dialog', { name: 'Artifact 预览' })).toBeNull();
     fireEvent.click(screen.getByText('客户清单.xlsx'));
     expect((await screen.findByRole('dialog', { name: 'Artifact 预览' })).textContent).toBe('artifact-1');
+  });
+
+  it('桌面预览可切换到右侧 Artifact 面板', async () => {
+    const openArtifactPreview = vi.fn();
+    render(
+      <FilePreviewProvider value={{ openPreview: vi.fn(), openArtifactPreview }}>
+        <MessageItem message={{
+          id: 'artifact-card-dock',
+          type: 'file_download',
+          fileName: '验收报告.pdf',
+          fileType: 'pdf',
+          filePath: 'artifacts/artifact-1/验收报告.pdf',
+          fileSize: 1024,
+          artifactId: 'artifact-1',
+          mimeType: 'application/pdf',
+        }} index={0} />
+      </FilePreviewProvider>,
+    );
+
+    fireEvent.click(screen.getByText('验收报告.pdf'));
+    fireEvent.click(await screen.findByRole('button', { name: '右侧打开' }));
+
+    expect(openArtifactPreview).toHaveBeenCalledWith({
+      artifactId: 'artifact-1',
+      fileName: '验收报告.pdf',
+      fileSize: 1024,
+      mimeType: 'application/pdf',
+    });
+    expect(screen.queryByRole('dialog', { name: 'Artifact 预览' })).toBeNull();
   });
 
   it('下载按钮请求 attachment URL 而不影响文件卡预览', async () => {

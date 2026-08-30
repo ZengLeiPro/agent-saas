@@ -1,9 +1,10 @@
-export type ChatRightPanelIntent = 'business-step' | 'subagent' | 'preview' | 'browser' | null;
+export type ChatRightPanelIntent = 'business-step' | 'subagent' | 'artifact' | 'preview' | 'browser' | null;
 export type ChatRightPanelKind = Exclude<ChatRightPanelIntent, null> | 'system' | null;
 
 export interface ChatRightPanelAvailability {
   businessStep: boolean;
   subagent: boolean;
+  artifact: boolean;
   preview: boolean;
   system: boolean;
   browser: boolean;
@@ -16,10 +17,12 @@ export function resolveChatRightPanelKind(
 ): ChatRightPanelKind {
   if (intent === 'business-step' && available.businessStep) return 'business-step';
   if (intent === 'subagent' && available.subagent) return 'subagent';
+  if (intent === 'artifact' && available.artifact) return 'artifact';
   if (intent === 'preview' && available.preview) return 'preview';
   if (intent === 'browser' && available.browser) return 'browser';
 
   if (available.subagent) return 'subagent';
+  if (available.artifact) return 'artifact';
   if (available.preview) return 'preview';
   if (available.system) return 'system';
   if (available.browser) return 'browser';

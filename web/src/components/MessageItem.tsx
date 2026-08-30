@@ -295,7 +295,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
   owner?: string;
   /** legacy artifact_created 事件：优先走 artifact 签名 URL,不依赖 workspace 文件仍在原位。 */
   artifactId?: string;
-  /** Artifact 内容寻址存储侧记录的真实 MIME，用于专用预览器选择。 */
+  /** Artifact 内容寻址存储记录的真实 MIME，用于专用预览器选择。 */
   mimeType?: string;
   /** 只读分享页使用 share token 读取快照关联文件，不依赖登录态。 */
   shareToken?: string;
@@ -418,7 +418,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
         </div>
       </div>
       {downloadError ? <p className="mt-1 text-xs text-destructive" role="alert">{downloadError}</p> : null}
-      {artifactId && !isPublicArtifact && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} /></Suspense> : null}
+      {artifactId && !isPublicArtifact && artifactPreviewOpen ? <Suspense fallback={null}><LazyArtifactPreviewDialog open artifactId={artifactId} fileName={fileName} fileSize={resolvedSize} mimeType={mimeType} onOpenChange={setArtifactPreviewOpen} onDock={filePreview?.openArtifactPreview ? () => { setArtifactPreviewOpen(false); filePreview.openArtifactPreview?.({ artifactId, fileName, fileSize: resolvedSize, mimeType }); } : undefined} /></Suspense> : null}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}
@@ -431,7 +431,7 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
 }
 
 /**
- * 用户消息气泡内的附件 chip。
+ * 用户消息气泡中的附件 chip。
  * 有 relativePath（2026-07-14 起 transcript/WS meta 携带）时可点击：
  * 图片走 lightbox，可预览文件走 FilePreviewDialog（默认弹窗），其余类型直接下载。
  * 存量消息无 relativePath，保持静态展示。

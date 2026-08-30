@@ -9,7 +9,7 @@ import { useChatAppState } from "@/hooks/useChatAppState";
 import { useTtsPlayer } from "@/hooks/useTtsPlayer";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useAuth } from "@/contexts/AuthContext";
-import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
+import { FilePreviewProvider, type ArtifactPreviewTarget } from "@/contexts/FilePreviewContext";
 import { MessageFeedbackProvider } from "@/contexts/MessageFeedbackContext";
 import { SubagentTranscriptProvider, type SubagentTranscriptTarget } from "@/contexts/SubagentTranscriptContext";
 import { useOrgAgents } from "@/hooks/useOrgAgents";
@@ -58,7 +58,6 @@ function App() {
   const ttsPlayer = useTtsPlayer();
   const isMobile = useIsMobile();
 
-
   const handleVoiceEvent = useCallback(
     (key: string, text: string, voice?: string, speed?: number) => {
       if (ttsPlayer.autoPlay && ttsPlayer.available) {
@@ -95,20 +94,35 @@ function App() {
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
 
   const [subagentTranscript, setSubagentTranscript] = useState<SubagentTranscriptTarget | null>(null);
+  const [previewArtifact, setPreviewArtifact] = useState<ArtifactPreviewTarget | null>(null);
   const closeSubagentTranscript = useCallback(() => setSubagentTranscript(null), []);
+  const closeArtifactPreview = useCallback(() => setPreviewArtifact(null), []);
   const openSubagentTranscript = useCallback((target: SubagentTranscriptTarget) => {
     closeFilePreview();
     closeFileBrowser();
+    closeArtifactPreview();
     setSubagentTranscript(target);
-  }, [closeFileBrowser, closeFilePreview]);
+  }, [closeArtifactPreview, closeFileBrowser, closeFilePreview]);
   const openPreview = useCallback((path: string, owner?: string, options?: { mode?: "dialog" | "side" }) => {
     setSubagentTranscript(null);
+    closeArtifactPreview();
     openFilePreview(path, owner, options);
-  }, [openFilePreview]);
+  }, [closeArtifactPreview, openFilePreview]);
+  const openArtifactPreview = useCallback((artifact: ArtifactPreviewTarget) => {
+    setSubagentTranscript(null);
+    closeFilePreview();
+    closeFileBrowser();
+    setPreviewArtifact(artifact);
+  }, [closeFileBrowser, closeFilePreview]);
   const toggleBrowser = useCallback(() => {
     setSubagentTranscript(null);
+    closeArtifactPreview();
     toggleFileBrowser();
-  }, [toggleFileBrowser]);
+  }, [closeArtifactPreview, toggleFileBrowser]);
+  useEffect(() => {
+    closeArtifactPreview();
+  }, [closeArtifactPreview, sessionId]);
+
   const subagentTranscriptContextValue = useMemo(() => ({
     transcript: subagentTranscript,
     openTranscript: openSubagentTranscript,
@@ -238,6 +252,7 @@ function App() {
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
     agentProfile, sessionParticipants,
     previewFilePath, previewFileOwner, previewMode, openFilePreview: openPreview, dockFilePreview, expandFilePreview, closeFilePreview,
+    previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
@@ -264,7 +279,11 @@ function App() {
       ) : null}
 
       <SubagentTranscriptProvider value={subagentTranscriptContextValue}>
-        <FilePreviewProvider value={{ openPreview, owner: previewFileOwner }}>
+        <FilePreviewProvider value={{
+          openPreview,
+          openArtifactPreview: isMobile ? undefined : openArtifactPreview,
+          owner: previewFileOwner,
+        }}>
           <MessageFeedbackProvider sessionId={feedbackSessionId}>
             {layoutNode}
           </MessageFeedbackProvider>

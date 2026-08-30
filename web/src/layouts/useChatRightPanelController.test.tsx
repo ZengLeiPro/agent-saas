@@ -7,6 +7,7 @@ function callbacks() {
   return {
     openFilePreview: vi.fn(),
     closeFilePreview: vi.fn(),
+    closeArtifactPreview: vi.fn(),
     dockFilePreview: vi.fn(),
     expandFilePreview: vi.fn(),
     toggleFileBrowser: vi.fn(),
@@ -19,6 +20,7 @@ interface ControllerStateProps {
   sessionId: string;
   previewFilePath: string | null;
   previewMode: 'dialog' | 'side';
+  previewArtifact: { artifactId: string } | null;
   fileBrowserOpen: boolean;
   subagentTranscript: { childSessionId: string } | null;
   systemPanelOpen: boolean;
@@ -28,6 +30,7 @@ const baseProps: ControllerStateProps = {
   sessionId: 'session-1',
   previewFilePath: null,
   previewMode: 'dialog',
+  previewArtifact: null,
   fileBrowserOpen: false,
   subagentTranscript: null,
   systemPanelOpen: false,
@@ -60,6 +63,22 @@ describe('useChatRightPanelController', () => {
     act(() => result.current.handleExpandFilePreview());
     expect(fns.expandFilePreview).toHaveBeenCalledTimes(1);
     expect(fns.closeFileBrowser).not.toHaveBeenCalled();
+    expect(result.current.rightPanelKind).toBe('browser');
+  });
+
+  it('Artifact 贴靠接管右栏，关闭后恢复已打开的文件浏览器', () => {
+    const fns = callbacks();
+    const { result, rerender } = renderHook(
+      (props: ControllerStateProps) => useChatRightPanelController({ ...props, ...fns }),
+      { initialProps: { ...baseProps, fileBrowserOpen: true } },
+    );
+
+    rerender({ ...baseProps, fileBrowserOpen: true, previewArtifact: { artifactId: 'artifact-1' } });
+    expect(result.current.rightPanelKind).toBe('artifact');
+    expect(result.current.rightPanelKey).toBe('artifact-1');
+
+    act(() => result.current.handleCloseArtifactPreview());
+    expect(fns.closeArtifactPreview).toHaveBeenCalledTimes(1);
     expect(result.current.rightPanelKind).toBe('browser');
   });
 

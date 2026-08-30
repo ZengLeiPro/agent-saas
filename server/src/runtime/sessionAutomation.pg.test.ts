@@ -36,6 +36,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   const [cancel]=await store.claimCancellations();
   expect(cancel?.runId).toBe(oldRun);
   await store.completeCancellation(cancel!);
+  await runs.markStatus(oldRun,'cancelled','test cleanup');
   expect(await store.get(tenant,session,automation)).toMatchObject({status:'active',phase:'waiting',generation:41});
   expect(await store.claimDue()).toBe(1);
  });
@@ -67,6 +68,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   await store.tx(c=>store.control(c,paused!,'resume'));
   expect(await store.claimDue()).toBe(0);
   await events.append({type:'run_finished',runId:dispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:1},{tenantId:tenant});
+  await runs.markStatus(dispatch!.targetRunId,'completed','test terminal event');
   await new SessionAutomationTerminalProjector(store,`resume-drain-${randomUUID()}`).recover(events);
   expect(await store.claimDue()).toBe(0);
   const [cancel]=await store.claimCancellations();

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import {
@@ -18,6 +19,7 @@ const describePg = url ? describe : describe.skip;
 describePg('session automation runtime fence and evaluator recovery on PostgreSQL', () => {
   const prefix = `automation_recovery_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   let pool: InstanceType<typeof Pool>;
+  let events: PgEventStore;
   let runs: PgRunStore;
   let store: PgSessionAutomationStore;
   let guard: SessionAutomationRuntimeGuard;
@@ -26,6 +28,8 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: url!, max: 8 });
+    events = new PgEventStore({ connectionString: url!, tablePrefix: prefix, poolMax: 4 });
+    await events.init();
     runs = new PgRunStore({ pool, tablePrefix: prefix });
     await runs.init();
     store = new PgSessionAutomationStore(pool, prefix, runs.runsTable);
@@ -35,6 +39,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   afterAll(async () => {
     if (!pool) return;
+    await events.close();
     await pool.query(`DO $$ DECLARE r record; BEGIN
       FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%'
       LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP;
@@ -119,9 +124,11 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     const first = await guard.beforeModel(setup.context, 'turn:first');
     expect(first).toBeDefined();
     await expect(guard.beforeModel(setup.context, 'turn:second')).rejects.toBeInstanceOf(AutomationBudgetExceededError);
-    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({
-      status: 'expired', limitHitReason: 'max_turns',
-    });
+    const automation = await pool.query(
+      `SELECT status,limit_hit_reason FROM ${store.tables.automations} WHERE tenant_id=$1 AND automation_id=$2`,
+      [tenantId, setup.automationId],
+    );
+    expect(automation.rows[0]).toMatchObject({ status: 'expired', limit_hit_reason: 'max_turns' });
     const rows = await pool.query(
       `SELECT count(*)::int AS count FROM ${store.tables.budgetReservations} WHERE automation_id=$1`,
       [setup.automationId],

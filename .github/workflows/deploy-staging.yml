@@ -41,9 +41,6 @@ jobs:
       STAGING_ECS_USER: ${{ secrets.STAGING_ECS_USER }}
       STAGING_ECS_SSH_KEY: ${{ secrets.STAGING_ECS_SSH_KEY }}
       RELEASE_EVIDENCE_TOKEN: ${{ secrets.RELEASE_EVIDENCE_TOKEN }}
-      STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
-      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
-      STAGING_SSH_KEY_PATH: /home/runner/.ssh/staging_key
       STAGING_WEB_URL: https://staging-agent.kaiyan.net
       STAGING_API_URL: https://staging-agent-api.kaiyan.net
       RELEASE_EVIDENCE_URL: ${{ vars.RELEASE_EVIDENCE_URL }}
@@ -437,11 +434,9 @@ jobs:
           done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
 
-      - name: Verify migrations and create isolated Integration fixture
+      - name: Verify migrations and isolated Integration fixture
         run: |
           set -euo pipefail
-          touch "$RUNNER_TEMP/staging-fixtures-touched"
-          test "$STAGING_E2E_USERNAME" = staging-e2e-admin
           remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
           scp -i ~/.ssh/staging_key scripts/staging/ensure-integration-fixture.mjs \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
@@ -456,7 +451,6 @@ jobs:
             storage-and-authenticated-readback-only
           integration_task_id="$(jq -r .fixture.taskId "$RUNNER_TEMP/staging-integration-fixture.json")"
           test "$integration_task_id" = staging-e2e-integration-task
-          echo "STAGING_E2E_INTEGRATION_TASK_ID=$integration_task_id" >> "$GITHUB_ENV"
 
       - name: Verify live reverse-isolation evidence
         run: |
@@ -495,29 +489,7 @@ jobs:
             <(jq -S 'del(.observedAt)' "$RUNNER_TEMP/isolation-summary.json")
           echo "STAGING_ISOLATION_SUMMARY=$RUNNER_TEMP/isolation-summary.json" >> "$GITHUB_ENV"
 
-      - name: Run real browser and ACS E2E
-        timeout-minutes: 80
-        run: |
-          set -euo pipefail
-          node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
-            > "$RUNNER_TEMP/staging-fixture-reset-before.json"
-          pnpm exec playwright install --with-deps chromium
-          pnpm exec playwright test -c e2e/playwright.config.ts
-          node scripts/staging/summarize-e2e.mjs test-results/staging-results.json \
-            "$RUNNER_TEMP/staging-e2e-summary.json"
-
-      - name: Clean and read back Staging E2E fixtures
-        if: always()
-        run: |
-          set -euo pipefail
-          if [ ! -f "$RUNNER_TEMP/staging-fixtures-touched" ]; then
-            echo 'Staging fixture phase was not reached; cleanup is not required'
-            exit 0
-          fi
-          node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
-            > "$RUNNER_TEMP/staging-fixture-reset-after.json"
-
-      - name: Record Staging deployment and verification
+      - name: Record deterministic Staging deployment and verification
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -526,11 +498,13 @@ jobs:
           log_root="$RUNNER_TEMP/attestations"
           current="$(tail -n1 "$log_root/$STAGING_RELEASE_ID.jsonl" | jq -r .state)"
           if [ "$current" = built ]; then
-            staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg e2eRunId "$GITHUB_RUN_ID" \
+            verification_summary="$(jq -nc \
+              '{schemaVersion:1,mode:"deterministic-deployment-gates-v1",status:"passed",checks:["immutable-artifacts","runtime-identity","api-readiness","acs-health","web-readback","migration-readback","reverse-isolation"]}')"
+            staging_reason="$(jq -nc --arg deploymentId "$STAGING_DEPLOYMENT_ID" --arg stagingRunId "$GITHUB_RUN_ID" \
               --arg manifestDigest "$MANIFEST_DIGEST" \
               --argjson runtimeSummary "$(cat "$RUNNER_TEMP/staging-runtime-summary.json")" \
-              --argjson e2eSummary "$(cat "$RUNNER_TEMP/staging-e2e-summary.json")" \
-              '{stagingDeploymentId:$deploymentId,e2eRunId:$e2eRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,e2eSummary:$e2eSummary}')"
+              --argjson verificationSummary "$verification_summary" \
+              '{stagingDeploymentId:$deploymentId,stagingRunId:$stagingRunId,manifestDigest:$manifestDigest,runtimeSummary:$runtimeSummary,verificationSummary:$verificationSummary}')"
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
               --state staging_deployed --operation "staging:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -540,7 +514,8 @@ jobs:
           if [ "$current" = staging_deployed ]; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$log_root" --release-id "$STAGING_RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state verified --operation "e2e:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR"
+              --state verified --operation "deterministic:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+              --actor "$GITHUB_ACTOR"
             current=verified
           fi
           test "$current" = verified
@@ -582,9 +557,8 @@ jobs:
         if: success()
         run: |
           set -euo pipefail
-          for evidence in manifest.json isolation-summary.json staging-e2e-summary.json \
-            staging-runtime-summary.json staging-fixture-reset-before.json \
-            staging-fixture-reset-after.json; do
+          for evidence in manifest.json isolation-summary.json staging-runtime-summary.json \
+            staging-integration-fixture.json; do
             test -f "$RUNNER_TEMP/$evidence"
           done
 
@@ -596,11 +570,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
           path: |
-            test-results/
-            playwright-report/
             ${{ runner.temp }}/manifest.json
             ${{ runner.temp }}/isolation-summary.json
-            ${{ runner.temp }}/staging-e2e-summary.json
             ${{ runner.temp }}/staging-runtime-summary.json
-            ${{ runner.temp }}/staging-fixture-reset-before.json
-            ${{ runner.temp }}/staging-fixture-reset-after.json
+            ${{ runner.temp }}/staging-integration-fixture.json

@@ -1,0 +1,200 @@
+name: Staging Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: '当前已部署到 Staging 的 RC ID'
+        required: true
+        type: string
+      reason:
+        description: '本轮测试范围或说明'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: staging-acceptance
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  acceptance:
+    name: Run optional browser and Agent acceptance
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: staging
+    env:
+      ALIBABACLOUD_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIBABACLOUD_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      STAGING_ECS_HOST: ${{ secrets.STAGING_ECS_HOST }}
+      STAGING_ECS_USER: ${{ secrets.STAGING_ECS_USER }}
+      STAGING_ECS_SSH_KEY: ${{ secrets.STAGING_ECS_SSH_KEY }}
+      STAGING_E2E_USERNAME: ${{ secrets.STAGING_E2E_USERNAME }}
+      STAGING_E2E_PASSWORD: ${{ secrets.STAGING_E2E_PASSWORD }}
+      STAGING_SSH_HOST_KEY_SHA256: ${{ vars.STAGING_SSH_HOST_KEY_SHA256 }}
+      STAGING_SSH_KEY_PATH: /home/runner/.ssh/staging_key
+      STAGING_WEB_URL: https://staging-agent.kaiyan.net
+      STAGING_API_URL: https://staging-agent-api.kaiyan.net
+      STAGING_E2E_INTEGRATION_TASK_ID: staging-e2e-integration-task
+      RELEASE_ID_INPUT: ${{ inputs.release_id }}
+
+    steps:
+      - name: Validate acceptance dispatch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_ID_INPUT" =~ ^rc-[0-9]{8}-[0-9]{2,}$ ]]
+          printf 'STAGING_RELEASE_ID=%s\n' "$RELEASE_ID_INPUT" >> "$GITHUB_ENV"
+
+      - name: Checkout immutable RC revision
+        uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ inputs.release_id }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify exact RC is still active on Staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$STAGING_RELEASE_ID" --dir "$RUNNER_TEMP/release" \
+            --pattern manifest.json
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/release/manifest.json" "$STAGING_RELEASE_ID"
+          release_sha="$(jq -r .releaseSha "$RUNNER_TEMP/release/manifest.json")"
+          manifest_digest="$(jq -r .digest "$RUNNER_TEMP/release/manifest.json")"
+          test "$(git rev-parse HEAD)" = "$release_sha"
+          test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$release_sha"
+          git cat-file -p "$STAGING_RELEASE_ID^{tag}" | grep -Fx "manifest-digest: $manifest_digest"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$release_sha" origin/main
+          curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?run=$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/staging-web-identity.json"
+          curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
+            > "$RUNNER_TEMP/staging-api-ready.json"
+          test "$(jq -r .releaseId "$RUNNER_TEMP/staging-web-identity.json")" = "$STAGING_RELEASE_ID"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/staging-web-identity.json")" = "$release_sha"
+          test "$(jq -r .release.releaseId "$RUNNER_TEMP/staging-api-ready.json")" = "$STAGING_RELEASE_ID"
+          test "$(jq -r .release.releaseSha "$RUNNER_TEMP/staging-api-ready.json")" = "$release_sha"
+          {
+            echo "STAGING_RELEASE_SHA=$release_sha"
+            echo "MANIFEST_DIGEST=$manifest_digest"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Alibaba Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
+      - name: Authorize current runner for Staging SSH
+        run: |
+          set -euo pipefail
+          runner_ip="$(curl -4 -fsS --retry 5 https://api.ipify.org)"
+          node -e "if (!require('node:net').isIPv4(process.argv[1])) process.exit(1)" "$runner_ip"
+          security_group_id="$(jq -r .resources.api.securityGroupId infra/staging/resource-plan.json)"
+          printf '%s' "$security_group_id" | grep -Eq '^sg-[a-z0-9]+$'
+          source_cidr="$runner_ip/32"
+          {
+            echo "STAGING_SSH_SECURITY_GROUP_ID=$security_group_id"
+            echo "STAGING_SSH_SOURCE_CIDR=$source_cidr"
+          } >> "$GITHUB_ENV"
+          aliyun --region cn-shenzhen ecs AuthorizeSecurityGroup \
+            --RegionId cn-shenzhen --SecurityGroupId "$security_group_id" \
+            --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$source_cidr" \
+            --Policy accept --Priority 1 \
+            --Description "GitHub Staging acceptance $GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT" \
+            --ClientToken "staging-acceptance-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >/dev/null
+
+      - name: Configure Staging SSH
+        run: |
+          set -euo pipefail
+          : "${STAGING_ECS_HOST:?Missing secret STAGING_ECS_HOST}"
+          : "${STAGING_ECS_USER:?Missing secret STAGING_ECS_USER}"
+          : "${STAGING_ECS_SSH_KEY:?Missing secret STAGING_ECS_SSH_KEY}"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$STAGING_ECS_SSH_KEY" > ~/.ssh/staging_key
+          chmod 600 ~/.ssh/staging_key
+          : "${STAGING_SSH_HOST_KEY_SHA256:?Missing pinned Staging SSH host key fingerprint}"
+          scan_path="$RUNNER_TEMP/staging-known-host"
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 10 -t ed25519 -H "$STAGING_ECS_HOST" > "$scan_path"; then
+              break
+            fi
+            test "$attempt" -lt 5
+            sleep 2
+          done
+          test -s "$scan_path"
+          test "$(ssh-keygen -lf "$scan_path" -E sha256 | awk '{print $2}')" = \
+            "$STAGING_SSH_HOST_KEY_SHA256"
+          cat "$scan_path" >> ~/.ssh/known_hosts
+
+      - name: Run browser and Agent acceptance suite
+        timeout-minutes: 80
+        run: |
+          set -euo pipefail
+          touch "$RUNNER_TEMP/staging-acceptance-fixtures-touched"
+          node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
+            > "$RUNNER_TEMP/staging-fixture-reset-before.json"
+          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright test -c e2e/playwright.config.ts
+          node scripts/staging/summarize-e2e.mjs test-results/staging-results.json \
+            "$RUNNER_TEMP/staging-acceptance-summary.json"
+
+      - name: Clean and read back Staging acceptance fixtures
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/staging-acceptance-fixtures-touched" ]; then
+            echo 'Acceptance fixture phase was not reached; cleanup is not required'
+            exit 0
+          fi
+          node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
+            > "$RUNNER_TEMP/staging-fixture-reset-after.json"
+
+      - name: Revoke temporary Staging SSH ingress
+        if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if aliyun --region cn-shenzhen ecs RevokeSecurityGroup \
+              --RegionId cn-shenzhen --SecurityGroupId "$STAGING_SSH_SECURITY_GROUP_ID" \
+              --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$STAGING_SSH_SOURCE_CIDR" \
+              --Policy accept --Priority 1 >/dev/null; then
+              exit 0
+            fi
+            test "$attempt" -lt 5
+            sleep 2
+          done
+
+      - name: Upload optional Staging acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-acceptance-${{ env.STAGING_RELEASE_ID }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            test-results/
+            playwright-report/
+            ${{ runner.temp }}/staging-web-identity.json
+            ${{ runner.temp }}/staging-api-ready.json
+            ${{ runner.temp }}/staging-acceptance-summary.json
+            ${{ runner.temp }}/staging-fixture-reset-before.json
+            ${{ runner.temp }}/staging-fixture-reset-after.json

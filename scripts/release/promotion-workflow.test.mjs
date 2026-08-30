@@ -54,10 +54,14 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /PRODUCTION_SSH_HOST_KEY_SHA256/u);
   assert.match(workflow, /RELEASE_ID_INPUT: \$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
+  assert.match(workflow, /tr -d '\[:space:\]'/u);
   assert.doesNotMatch(workflow, /printf[^\n]*\$\{\{ inputs\./u);
   assert.match(workflow, /Latest release attestation is not approved|--state approved/u);
   assert.match(workflow, /deployments\/\$deployment_id\/statuses/u);
-  assert.match(workflow, /actions\/runs\/\$e2e_run_id/u);
+  assert.match(workflow, /actions\/runs\/\$staging_run_id/u);
+  assert.match(workflow, /deterministic-deployment-gates-v1/u);
+  assert.match(workflow, /verificationSummary/u);
+  assert.doesNotMatch(workflow, /e2eRunId|e2eSummary|summarize-e2e/u);
   assert.match(workflow, /runtime_summary=/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.match(workflow, /expected_runtime_summary/u);

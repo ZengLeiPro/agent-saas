@@ -16,7 +16,7 @@ test('Staging RC collects, publishes, and reads back fresh isolation evidence', 
   assert.doesNotMatch(workflow, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.ok(
     workflow.indexOf('Verify live reverse-isolation evidence') <
-      workflow.indexOf('Run real browser and ACS E2E'),
+      workflow.indexOf('Record deterministic Staging deployment and verification'),
   );
 });
 

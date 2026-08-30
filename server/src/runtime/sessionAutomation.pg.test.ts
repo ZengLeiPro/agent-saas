@@ -63,14 +63,31 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect(new Date(next.rows[0].due_at).getTime()).toBe(dueAt.getTime()+4*interval);
   expect(new Date(next.rows[0].due_at).getTime()).toBeGreaterThan(Date.now());
   const current=await pool.query(`SELECT continuation_epoch,projection_version FROM ${store.tables.automations} WHERE automation_id=$1`,[automation]);
-  expect(current.rows[0]).toMatchObject({continuation_epoch:'11',projection_version:'201'});
+  // markDispatched and the terminal projector are both externally visible projections.
+  expect(current.rows[0]).toMatchObject({continuation_epoch:'11',projection_version:'202'});
   await pool.query(`UPDATE ${store.tables.wakeups} SET state='superseded' WHERE automation_id=$1 AND state='pending'`,[automation]);
   await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
  });
  it('terminal recovery scan advances durable cursor and survives restart',async()=>{await pool.query(`UPDATE ${store.tables.automations} SET generation=3,status='active',mode='adaptive',active_run_id=NULL WHERE automation_id=$1`,[automation]);await wake('terminal',3);await store.claimDue();const [dispatch]=await store.claimDispatch();await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});await store.markDispatched(dispatch!);await events.append({type:'run_finished',runId:dispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:1},{tenantId:tenant});const first=new SessionAutomationTerminalProjector(store);expect(await first.recover(events)).toBeGreaterThan(0);const cursor=await first.cursor();const second=new SessionAutomationTerminalProjector(store);expect(await second.recover(events)).toBe(0);expect(await second.cursor()).toBe(cursor);const execution=await pool.query(`SELECT state,terminal_status FROM ${store.tables.executions} WHERE run_id=$1`,[dispatch!.targetRunId]);expect(execution.rows[0]).toMatchObject({state:'terminal',terminal_status:'completed'});});
  it('pause keeps the active run alive and stale-generation terminal still releases the one-live slot',async()=>{await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);await pool.query(`UPDATE ${store.tables.automations} SET generation=10,status='active',mode='adaptive',phase='idle',active_run_id=NULL WHERE automation_id=$1`,[automation]);await wake('pause-running',10);await store.claimDue();const [dispatch]=await store.claimDispatch();await runs.createPending({runId:dispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});await store.markDispatched(dispatch!);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'pause');});expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.cancellations} WHERE run_id=$1`,[dispatch!.targetRunId])).rows[0].count).toBe(0);await events.append({type:'run_finished',runId:dispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:2},{tenantId:tenant});await new SessionAutomationTerminalProjector(store,'pause-terminal-test').recover(events);const snapshot=await store.get(tenant,session,automation);expect(snapshot).toMatchObject({status:'paused',phase:'idle'});expect(snapshot?.activeRunId).toBeUndefined();});
- it('clear writes a durable cancellation intent and converges after a retry',async()=>{const runId=randomUUID();await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await pool.query(`UPDATE ${store.tables.automations} SET generation=20,status='active',phase='running',active_run_id=$2 WHERE automation_id=$1`,[automation,runId]);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'clear');});let [item]=await store.claimCancellations();expect(item?.runId).toBe(runId);await store.failCancellation(item!,new Error('transient'));await pool.query(`UPDATE ${store.tables.cancellations} SET next_attempt_at=now() WHERE run_id=$1`,[runId]);[item]=await store.claimCancellations();await store.completeCancellation(item!);await runs.markStatus(runId,'cancelled','test cleanup');expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});});
- it('the first budget limit wins and prevents another dispatch',async()=>{await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{maxRuns:1}})]);await pool.query(`UPDATE ${store.tables.automations} SET generation=30,status='active',phase='idle',active_run_id=NULL,run_count=1,limit_hit_reason=NULL,limit_hit_at=NULL WHERE automation_id=$1`,[automation]);await wake('budget-stop',30);expect(await store.claimDue()).toBe(0);const result=await pool.query(`SELECT status,limit_hit_reason,limit_hit_at FROM ${store.tables.automations} WHERE automation_id=$1`,[automation]);expect(result.rows[0]).toMatchObject({status:'expired',limit_hit_reason:'max_runs'});expect(result.rows[0].limit_hit_at).toBeTruthy();});
+ it('clear writes a durable cancellation intent and converges after a retry',async()=>{const runId=randomUUID();await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await pool.query(`UPDATE ${store.tables.automations} SET generation=20,status='active',phase='running',active_run_id=$2 WHERE automation_id=$1`,[automation,runId]);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'clear');});let [item]=await store.claimCancellations();expect(item?.runId).toBe(runId);await store.failCancellation(item!,new Error('transient'));await pool.query(`UPDATE ${store.tables.cancellations} SET next_attempt_at=now() WHERE run_id=$1`,[runId]);[item]=await store.claimCancellations();await runs.markStatus(runId,'cancelled','authoritative cancel adapter');await store.completeCancellation(item!);expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});});
+ it('the first budget limit drains typed lifecycle work before expiring and prevents another dispatch',async()=>{
+  await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{maxRuns:1}})]);
+  const budgetRun=randomUUID();
+  await runs.createPending({runId:budgetRun,sessionId:session,tenantId:tenant,userId:'user-a'});
+  await pool.query(`UPDATE ${store.tables.automations} SET generation=30,status='active',phase='running',active_run_id=$2,run_count=1,limit_hit_reason=NULL,limit_hit_at=NULL WHERE automation_id=$1`,[automation,budgetRun]);
+  await wake('budget-stop',30);
+  expect(await store.claimDue()).toBe(0);
+  expect(await store.get(tenant,session,automation)).toMatchObject({status:'completing',phase:'draining',desiredTerminalStatus:'expired',limitHitReason:'max_runs'});
+  const adapter={execute:async(job:import('./sessionAutomationStore.js').SessionAutomationLifecycleJob)=>{if(job.objectType==='run')await runs.markStatus(job.objectId,'cancelled','authoritative cancel adapter');const{attemptCount:_,details:__,...fence}=job;return{...fence,receiptKey:`budget-test:${job.workId}`,authority:'runtime' as const,outcome:'completed' as const,payload:{}};}};
+  await store.processLifecycleWork({run:adapter,execution:adapter,evaluation:adapter,provider_attempt:adapter,interaction:adapter,background_resource:adapter,budget_reservation:adapter},20);
+  const [cancel]=await store.claimCancellations();
+  expect(cancel?.runId).toBe(budgetRun);
+  await store.completeCancellation(cancel!);
+  const result=await pool.query(`SELECT status,phase,desired_terminal_status,limit_hit_reason,limit_hit_at FROM ${store.tables.automations} WHERE automation_id=$1`,[automation]);
+  expect(result.rows[0]).toMatchObject({status:'expired',phase:'terminal',desired_terminal_status:null,limit_hit_reason:'max_runs'});
+  expect(result.rows[0].limit_hit_at).toBeTruthy();
+ });
 
  it('replace drains the active run before the new generation can claim',async()=>{
   const oldRun=randomUUID();
@@ -83,8 +100,8 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect(await store.claimDue()).toBe(0);
   const [cancel]=await store.claimCancellations();
   expect(cancel?.runId).toBe(oldRun);
+  await runs.markStatus(oldRun,'cancelled','authoritative cancel adapter');
   await store.completeCancellation(cancel!);
-  await runs.markStatus(oldRun,'cancelled','test cleanup');
   expect(await store.get(tenant,session,automation)).toMatchObject({status:'active',phase:'waiting',generation:41});
   expect(await store.claimDue()).toBe(1);
  });
@@ -122,6 +139,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect(await store.claimDue()).toBe(0);
   const [cancel]=await store.claimCancellations();
   expect(cancel?.runId).toBe(dispatch!.targetRunId);
+  await runs.markStatus(dispatch!.targetRunId,'cancelled','authoritative cancel adapter');
   await store.completeCancellation(cancel!);
   expect(await store.get(tenant,session,automation)).toMatchObject({status:'active',phase:'waiting',generation:52});
   expect((await store.get(tenant,session,automation))?.activeRunId).toBeUndefined();
@@ -136,9 +154,9 @@ describePg('session automation real PostgreSQL integration',()=>{
   const [first]=await store.claimCancellations(1,1);
   await pool.query(`UPDATE ${store.tables.cancellations} SET lease_expires_at=now()-interval '1 second',next_attempt_at=now() WHERE cancellation_id=$1`,[first!.cancellationId]);
   const [second]=await store.claimCancellations();
+  await runs.markStatus(runId,'cancelled','authoritative cancel adapter');
   await store.completeCancellation(first!);
   expect((await store.get(tenant,session,automation))?.activeRunId).toBe(runId);
-  await runs.markStatus(runId,'cancelled','authoritative cancellation receipt');
   await store.completeCancellation(second!);
   expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});
  });

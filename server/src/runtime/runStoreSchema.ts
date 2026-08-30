@@ -78,8 +78,22 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           PRIMARY KEY (tenant_id, session_id)
         )
       `);
-      // Runtime identity must exist before auxiliary backfill on pre-tenant deployments.
-      await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+      const existingColumns = new Set((await client.query<{ column_name: string }>(`
+        SELECT attname AS column_name
+        FROM pg_attribute
+        WHERE attrelid = $1::regclass
+          AND attnum > 0
+          AND NOT attisdropped
+      `, [store.runsTable])).rows.map((row) => row.column_name));
+      // Runtime identity must exist before auxiliary backfill on pre-tenant deployments. Catalog
+      // gating keeps compatibility init lock-free once the complete schema is already present.
+      if (!existingColumns.has('tenant_id')) {
+        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
+        existingColumns.add('tenant_id');
+      }
+      // A composite FK may only target a matching unique key. Install the parent key before any
+      // session-automation schema can add its (tenant, session, run) FK (rolling deploy order).
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_run_uidx ON ${store.runsTable} (tenant_id, session_id, run_id)`);
       // Existing auxiliary rows inherit tenant from their globally unique source run.
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
@@ -115,13 +129,6 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMPTZ`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.steeringInputsTable}_target_sequence_idx ON ${store.steeringInputsTable} (target_run_id, state, sequence)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.steeringInputsTable}_source_idx ON ${store.steeringInputsTable} (source_run_id, state)`);
-      const existingColumns = new Set((await client.query<{ column_name: string }>(`
-        SELECT attname AS column_name
-        FROM pg_attribute
-        WHERE attrelid = $1::regclass
-          AND attnum > 0
-          AND NOT attisdropped
-      `, [store.runsTable])).rows.map((row) => row.column_name));
       // 严格 FIFO 使用数据库分配的单调序号，避免同毫秒 client runId 的随机后缀打乱顺序。
       if (!existingColumns.has('enqueue_seq')) {
         await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN enqueue_seq BIGSERIAL`);
@@ -171,9 +178,6 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       }
       // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
       // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
-      if (!existingColumns.has('tenant_id')) {
-        await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
-      }
       if (!existingColumns.has('submitter_scope')) {
         await client.query(`ALTER TABLE ${store.runsTable} ADD COLUMN submitter_scope TEXT`);
       }
@@ -194,9 +198,13 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_session_last_response_idx ON ${store.runsTable} (session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_active_idempotency_idx`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_active_idempotency_v2_idx`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_active_idempotency_v3_idx ON ${store.runsTable} ((COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')`);
+      // v3 accidentally made idempotency global across tenants. Drop it before installing the
+      // tenant-native key so equal authenticated identities/client ids remain isolated.
+      await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_active_idempotency_v3_idx`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_active_idempotency_v4_idx ON ${store.runsTable} (tenant_id, (COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')`);
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_idempotency_lookup_idx`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_idempotency_lookup_v2_idx ON ${store.runsTable} ((COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key, updated_at DESC) WHERE idempotency_key IS NOT NULL`);
+      await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_idempotency_lookup_v2_idx`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_idempotency_lookup_v3_idx ON ${store.runsTable} (tenant_id, (COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key, updated_at DESC) WHERE idempotency_key IS NOT NULL`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.messageSubmissionsTable}_session_idx ON ${store.messageSubmissionsTable} (tenant_id, session_id, accepted_at)`);
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);

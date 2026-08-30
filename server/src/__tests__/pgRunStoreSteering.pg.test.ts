@@ -374,7 +374,7 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
       );
       await waitForBlockedQuery(
         pool,
-        `%SELECT status%FROM ${prefix}_runs%WHERE session_id = $1 AND run_id = $2%FOR UPDATE%`,
+        `%SELECT status%FROM ${prefix}_runs%WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3%FOR UPDATE%`,
       );
 
       await blocker.query('COMMIT');

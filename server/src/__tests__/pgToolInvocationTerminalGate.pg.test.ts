@@ -335,7 +335,9 @@ describePg('PgToolInvocationStore terminal run gate', () => {
   it('重复 stop 不重复投递取消事件或工具取消等外部副作用触发源', async () => {
     const sessionId = 'session-stop-idempotency';
     const runId = 'run-stop-idempotency';
-    await runStore.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await runStore.upsertPending({
+      runId, sessionId, userId: 'user-1', tenantId: LEGACY_TENANT_ID, channel: 'web',
+    });
     await runStore.markStatus(runId, 'running');
     const event = { type: 'run_cancel_requested' as const, sessionId, runId, reason: 'web_abort' };
 
@@ -345,12 +347,16 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     const firstStopped = await pool.query<{ stopped_at: Date }>(`
       SELECT stopped_at FROM ${prefix}_steering_sessions WHERE session_id = $1
     `, [sessionId]);
-    await runStore.upsertPending({ runId: 'run-stop-idempotency-next', sessionId, userId: 'user-1', channel: 'web' });
+    await runStore.upsertPending({
+      runId: 'run-stop-idempotency-next', sessionId, userId: 'user-1',
+      tenantId: LEGACY_TENANT_ID, channel: 'web',
+    });
     await runStore.markStatus('run-stop-idempotency-next', 'running');
     await runStore.enqueueSteeringAware({
       runId: 'source-stop-idempotency-next',
       sessionId,
       userId: 'user-1',
+      tenantId: LEGACY_TENANT_ID,
       channel: 'web',
       metadata: { wakeMessage: { channel: 'web', chatId: sessionId, content: 'stop 后新消息' } },
     });
@@ -379,12 +385,15 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     const sessionId = 'session-terminal-stop-preserves-queue';
     const runId = 'run-terminal-stop-preserves-queue';
     const sourceRunId = 'source-terminal-stop-preserves-queue';
-    await runStore.upsertPending({ runId, sessionId, userId: 'user-1', channel: 'web' });
+    await runStore.upsertPending({
+      runId, sessionId, userId: 'user-1', tenantId: LEGACY_TENANT_ID, channel: 'web',
+    });
     await runStore.markStatus(runId, 'running');
     await runStore.enqueueSteeringAware({
       runId: sourceRunId,
       sessionId,
       userId: 'user-1',
+      tenantId: LEGACY_TENANT_ID,
       channel: 'web',
       metadata: { wakeMessage: { channel: 'web', chatId: sessionId, content: '后续任务' } },
     });
@@ -415,7 +424,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
               AND wait_event_type = 'Lock'
               AND query LIKE $1
           ) AS waiting
-        `, [`%SELECT status%FROM ${prefix}_runs%FOR UPDATE%`]);
+        `, [`%FROM ${prefix}_runs%WHERE tenant_id = $1 AND session_id = $2 AND run_id = $3%FOR UPDATE%`]);
         waitingOnTargetLock = waiting.rows[0]?.waiting ?? false;
         if (!waitingOnTargetLock) await new Promise((resolve) => setTimeout(resolve, 5));
       }

@@ -186,26 +186,29 @@ function resolveAuthorizedProfile(
   const baselineBySelector = new Map(
     profilesBefore.filter(hasExactProfileCandidate).map(profile => [profile.profileId, profile]),
   );
+  // current is only a pointer; it cannot disambiguate concurrent fresh authorization evidence.
   const evidenceCandidates = candidates.filter(profile => {
     if (!hasExactProfileCandidate(profile)) return false;
     const previous = baselineBySelector.get(profile.profileId);
     return !previous || hasFreshAuthorizationEvidence(previous, profile);
   });
 
-  let selected = current[0];
-  if (selected) {
-    if (account.corpId && selected.corpId !== account.corpId) {
-      throw new Error('当前授权账号不属于配置的钉钉组织');
+  const currentProfile = current[0];
+  if (currentProfile && account.corpId && currentProfile.corpId !== account.corpId) {
+    throw new Error('当前授权账号不属于配置的钉钉组织');
+  }
+  if (evidenceCandidates.length > 1) {
+    throw new Error('授权生成多个新鲜钉钉账号，已拒绝自动选择');
+  }
+  const selected = evidenceCandidates[0];
+  if (!selected) {
+    if (currentProfile) {
+      throw new Error('授权后的 current profile 缺少新鲜授权证据，已拒绝自动选择');
     }
-    if (!evidenceCandidates.some(profile => profile.profileId === selected!.profileId)) {
-      throw new Error('授权后的 current profile 与新增账号证据冲突或缺少新鲜授权证据，已拒绝自动选择');
-    }
-  } else if (evidenceCandidates.length === 1) {
-    selected = evidenceCandidates[0];
-  } else if (evidenceCandidates.length > 1) {
-    throw new Error('授权生成多个新鲜钉钉账号且没有唯一 current profile，已拒绝自动选择');
-  } else {
     throw new Error('授权后没有唯一 current profile 或新鲜账号证据，已拒绝自动选择旧账号');
+  }
+  if (currentProfile && currentProfile.profileId !== selected.profileId) {
+    throw new Error('授权后的 current profile 与新增账号证据冲突，已拒绝自动选择');
   }
 
   const dingtalkUserId = selected.dingtalkUserId?.trim();

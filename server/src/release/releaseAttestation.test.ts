@@ -54,7 +54,7 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
-  it('allows human-reviewed recovery after a durable promotion reached needs_human', () => {
+  it('allows explicitly human-reviewed recovery after a durable promotion reached needs_human', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -190,7 +190,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -203,7 +203,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: `sha256:${'b'.repeat(64)}`,
         isMainAncestor: true,
         minimumPromotableShaSatisfied: true,
-        productionBaselineMatches: true,
+        productionStateIsResumable: true,
         expiresAt: '2026-08-26T12:00:00.000Z',
       },
       { now: () => NOW },
@@ -219,7 +219,7 @@ describe('ReleaseAttestationLog', () => {
         expectedManifestDigest: DIGEST,
         isMainAncestor: false,
         minimumPromotableShaSatisfied: false,
-        productionBaselineMatches: false,
+        productionStateIsResumable: false,
         expiresAt: '2000-01-01T00:00:00.000Z',
       },
       { now: () => NOW },
@@ -229,7 +229,7 @@ describe('ReleaseAttestationLog', () => {
       blockingReasons: expect.arrayContaining([
         'Release SHA is not reachable from main.',
         'Release SHA is below the minimum promotable SHA.',
-        'Current production component matrix drifted from the frozen baseline.',
+        'Current production component matrix is outside the resumable Manifest prefix.',
         'Release promotion approval has expired.',
       ]),
     });
@@ -247,7 +247,7 @@ describe('ReleaseAttestationLog', () => {
       expectedManifestDigest: DIGEST,
       isMainAncestor: true,
       minimumPromotableShaSatisfied: true,
-      productionBaselineMatches: true,
+      productionStateIsResumable: true,
       expiresAt: '2026-08-25T12:00:00.001Z',
     };
 

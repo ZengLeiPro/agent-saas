@@ -357,10 +357,10 @@ FROM deps AS server
 WORKDIR /app
 
 # Integration v3 performs server-owned mirror operations. Pin the supported Git
-# package instead of inheriting an unspecified host binary.
+# package instead of inheriting an unspecified host binary; the semantic version stays contract-bound.
 ARG SERVER_GIT_PACKAGE_VERSION=2.49.1-r0
 RUN apk add --no-cache "git=${SERVER_GIT_PACKAGE_VERSION}" \
-    && git --version
+    && test "$(git --version)" = "git version 2.49.1"
 
 # X 凭据保存前由服务端运行 bird whoami 做端到端验证；版本须与 Sandbox 保持一致。
 RUN npm install -g @steipete/bird@0.8.0 \

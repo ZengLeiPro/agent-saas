@@ -59,13 +59,30 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /tr -d '\[:space:\]'/u);
   assert.doesNotMatch(workflow, /printf[^\n]*\$\{\{ inputs\./u);
-  assert.match(workflow, /Latest release attestation is not approved|--state approved/u);
+  assert.match(
+    workflow,
+    /verified\|approved\|promoting\|failed_before_change\|partial_failed\|rolled_back\|needs_human/u,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /verified\|approved\|promoting\|rejected|verified\|approved\|promoting\|revoked/u,
+  );
+  assert.match(
+    workflow,
+    /--state approved --operation "approval:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u,
+  );
+  assert.match(
+    workflow,
+    /--state promoting --operation "promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u,
+  );
   assert.match(workflow, /deployments\/\$deployment_id\/statuses/u);
   assert.match(workflow, /actions\/runs\/\$staging_run_id/u);
   assert.match(workflow, /deterministic-deployment-gates-v1/u);
   assert.match(workflow, /verificationSummary/u);
   assert.doesNotMatch(workflow, /e2eRunId|e2eSummary|summarize-e2e/u);
   assert.match(workflow, /runtime_summary=/u);
+  assert.match(workflow, /\.artifacts\.stagingRuntimeAssets\?\.path \/\/ empty/u);
+  assert.match(workflow, /if \[ -n "\$staging_runtime_path" \]; then/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.match(workflow, /expected_runtime_summary/u);
   assert.match(workflow, /assert-promotion-retry\.mjs/u);
@@ -87,10 +104,12 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
-test('all validation, built evidence, selected artifacts, and RC-bound units precede ordered convergence', async () => {
+test('validation, built evidence, selected artifacts, and RC-bound units precede ordered convergence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
-    '- name: Read authoritative production baseline before any write',
+    'node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"',
+    '- name: Revalidate Staging evidence and record human approval',
+    '- name: Read authoritative live production prefix before any write',
     '- name: Prefetch and verify built evidence plus selected Manifest artifacts',
     '- name: Mark and persist promotion started before any production write',
     '- name: Upload immutable deploy payload and RC-bound managed units',
@@ -117,6 +136,10 @@ test('all validation, built evidence, selected artifacts, and RC-bound units pre
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
   assert.match(workflow, /runtimeDependencies\.path/u);
+  assert.match(
+    workflow,
+    /if \[ "\$\(jq -r \.schemaVersion "\$RUNNER_TEMP\/built\/artifact-index\.json"\)" = 2 \]; then/u,
+  );
   assert.match(workflow, /\.artifacts\[\] \| \.path/u);
   assert.doesNotMatch(workflow, /selected\/artifact-index\.json/u);
   assert.match(workflow, /runtimeDependencies\.server\.uri/u);
@@ -126,6 +149,21 @@ test('all validation, built evidence, selected artifacts, and RC-bound units pre
     workflow.indexOf('node scripts/release/verify-artifact.mjs') <
       workflow.indexOf('verify-selected-release-artifacts.mjs'),
   );
+  assert.match(
+    workflow,
+    /node scripts\/release\/verify-promotion-entry\.mjs "\$RUNNER_TEMP\/manifest\.json"/u,
+  );
+  assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(
+    workflow,
+    /read-live-production-components\.mjs' --output '\$remote\/production-before\.json/u,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /node '\$remote\/read-production-state\.mjs' --output '\$remote\/production-before\.json/u,
+  );
+  assert.doesNotMatch(workflow, /install -m 0444 daemon-packaging\/systemd/u);
   assert.match(workflow, /selected-server\/server\/daemon-packaging\/systemd/u);
   assert.match(workflow, /selected-acs\/acs-orchestrator\/daemon-packaging\/systemd/u);
   assert.match(workflow, /selected-units\/agent-saas-acs-orchestrator\.service\.template/u);
@@ -148,6 +186,16 @@ test('all validation, built evidence, selected artifacts, and RC-bound units pre
   assert.match(workflow, /PHASE=app VERIFY_ONLY='\$verify_only'/u);
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
+  assert.match(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /WEB_LOCK_READY='\$web_lock_ready'/u);
+  assert.match(workflow, /timeout-minutes: 180/u);
+  assert.match(workflow, /timeout --signal=TERM --kill-after=10 1800 sudo PHASE=web/u);
+  assert.match(workflow, /WEB_LOCK_TIMEOUT_SECONDS=1700/u);
+  assert.match(workflow, /web_operation_deadline=\$\(\(SECONDS \+ 1200\)\)/u);
+  assert.match(workflow, /web_operation_deadline=\$\(\(SECONDS \+ 300\)\)/u);
+  assert.match(workflow, /setsid timeout --signal=TERM --kill-after=10 "\$remaining" "\$@"/u);
+  assert.match(workflow, /run_with_web_lock/u);
+  assert.match(workflow, /release_web_lock/u);
   assert.match(workflow, /keep without restart/u);
   assert.match(workflow, /\boptional_staging_acceptance\b/u);
   assert.doesNotMatch(workflow, /observe-production\.mjs|duration-ms 900000/u);
@@ -157,7 +205,7 @@ test('all validation, built evidence, selected artifacts, and RC-bound units pre
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('workflow preserves exact retry matrices, rollback evidence, migrations, and acceptance boundaries', async () => {
+test('workflow preserves exact retries, locked rollback evidence, migrations, and acceptance boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
   const buildRelease = await readFile(buildReleasePath, 'utf8');
@@ -165,6 +213,11 @@ test('workflow preserves exact retry matrices, rollback evidence, migrations, an
   const acsUnit = await readFile(acsUnitPath, 'utf8');
   const serverUnit = await readFile(serverUnitPath, 'utf8');
   const workerUnit = await readFile(workerUnitPath, 'utf8');
+  // Web 锁断言只检查发布步骤，避免命中其他 SSH 辅助函数。
+  const webStep = workflow.slice(
+    workflow.indexOf('- name: Publish Web entry last'),
+    workflow.indexOf('- name: Persist Web operation receipt'),
+  );
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(
     buildRelease,
@@ -188,6 +241,21 @@ test('workflow preserves exact retry matrices, rollback evidence, migrations, an
   assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
+  assert.doesNotMatch(webStep, /^\s+aliyun --secure oss/mu);
+  assert.match(webStep, /while kill -0 "\$command_pid"/u);
+  assert.match(webStep, /kill -KILL -- "-\$command_pid"/u);
+  assert.match(webStep, /run_control_ssh/u);
+  assert.match(webStep, /web_lock_ready_confirmed/u);
+  assert.match(webStep, /if ! web_lock_is_alive/u);
+  assert.match(webStep, /web_lock_is_alive\n\s+web_committed=true/u);
+  assert.match(webStep, /Web lock was lost; refusing an unlocked rollback/u);
+  assert.match(webStep, /restore_web_entry \|\| rollback_status=\$\?/u);
+  assert.match(
+    webStep,
+    /Web rollback failed; retaining the production lock until its lease expires/u,
+  );
+  assert.match(webStep, /wait "\$web_lock_pid" 2>\/dev\/null \|\| true/u);
+  assert.doesNotMatch(webStep, /--region "\$RELEASE_RECORD_OSS_REGION" \|\| true/u);
   assert.match(workflow, /rollback_attempted=true/u);
   assert.match(workflow, /Persist ACS operation receipt/u);
   assert.match(workflow, /Persist ACS operation start receipt/u);
@@ -212,6 +280,16 @@ test('workflow preserves exact retry matrices, rollback evidence, migrations, an
   assert.match(phaseVerifier, /PHASES\.slice\(phaseIndex\)/u);
   assert.match(phaseVerifier, /candidates\.push\(structuredClone\(expected\)\)/u);
   assert.ok(deploy.indexOf('flock -n 9') < deploy.indexOf('node "$READ_LIVE_COMPONENTS_SCRIPT"'));
+  assert.ok(deploy.indexOf('flock -n 9') < deploy.indexOf('touch "$WEB_LOCK_READY"'));
+  assert.ok(
+    deploy.indexOf('touch "$WEB_LOCK_READY"') <
+      deploy.indexOf('while [ ! -f "$WEB_LOCK_RELEASE" ]'),
+  );
+  assert.ok(
+    workflow.indexOf('test "$lock_ready" = true') <
+      workflow.indexOf('aliyun --secure oss cp "$RUNNER_TEMP/web-assets/"'),
+  );
+  assert.ok(workflow.indexOf('web_committed=true') < workflow.indexOf('release_web_lock\n'));
   assert.ok(
     deploy.indexOf('node "$VERIFY_PROMOTION_PHASE_SCRIPT"') < deploy.indexOf('deploy_acs()'),
   );

@@ -43,6 +43,27 @@
       "probe": ["bird", "--version"]
     },
     {
+      "name": "kubectl",
+      "version": "1.37.0",
+      "architecture": "x64",
+      "components": ["acsOrchestrator"],
+      "probe": ["kubectl", "version", "--client=true"],
+      "executableEnvironment": "ACS_KUBECTL_PATH"
+    },
+    {
+      "name": "aliyun",
+      "version": "3.4.4",
+      "architecture": "x64",
+      "components": ["acsOrchestrator"],
+      "probe": ["aliyun", "version"],
+      "executableEnvironment": "ACS_ALIYUN_CLI_PATH",
+      "when": {
+        "environment": "ACS_SNAT_MODE",
+        "notEquals": "disabled",
+        "defaultValue": "disabled"
+      }
+    },
+    {
       "name": "git",
       "version": "2.39.5",
       "architecture": "x64",

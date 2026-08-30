@@ -69,11 +69,26 @@ async function fixture({ schemaVersion = 2 } = {}) {
   return { root, path };
 }
 
-test('verifies strict content-addressed artifact index/SBOM v2 and exact source SHA', async () => {
+test('verifies strict content-addressed artifact index/SBOM v2 with exact source SHA', async () => {
   const value = await fixture();
   const index = await verifyArtifactIndex(value.path, SHA);
   assert.equal(index.schemaVersion, 2);
   assert.equal(index.sourceSha, SHA);
+});
+
+test('accepts the independently versioned Staging runtime asset in the supported artifact set', async () => {
+  const value = await fixture();
+  const stagingPath = join(value.root, 'staging-runtime-assets.tgz');
+  await writeFile(stagingPath, 'staging-runtime');
+  const index = JSON.parse(await readFile(value.path, 'utf8'));
+  index.artifacts.stagingRuntimeAssets = {
+    path: 'staging-runtime-assets.tgz',
+    ...(await digestFile(stagingPath)),
+  };
+  const { aggregateDigest: _aggregateDigest, ...body } = index;
+  index.aggregateDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+  await writeFile(value.path, JSON.stringify(index));
+  await assert.doesNotReject(verifyArtifactIndex(value.path, SHA));
 });
 
 test('strictly accepts unchanged historical artifact index/SBOM v1 with complete ownership fields', async () => {

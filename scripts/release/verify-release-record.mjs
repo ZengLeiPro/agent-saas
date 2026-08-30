@@ -211,12 +211,14 @@ export async function verifyReleaseRecordFiles({
   if (!index.artifacts || typeof index.artifacts !== 'object' || Array.isArray(index.artifacts)) {
     throw new Error('Artifact index artifacts are missing');
   }
+  // 新 Staging bundle 与创建它之前的不可变 RC 共用同一 schema，故允许该受控可选项。
   const artifactNames = Object.keys(index.artifacts).sort();
   if (
     !artifactNames.includes('serverBundle') ||
     !artifactNames.includes('webAssets') ||
     artifactNames.some(
-      (name) => !['serverBundle', 'webAssets', 'acsOrchestrator'].includes(name),
+      (name) =>
+        !['serverBundle', 'webAssets', 'stagingRuntimeAssets', 'acsOrchestrator'].includes(name),
     ) ||
     artifactNames.includes('acsOrchestrator') !== Boolean(index.acsImage)
   ) {

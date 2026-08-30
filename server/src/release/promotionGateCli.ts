@@ -43,41 +43,42 @@ export function baselineFromState(state: { components: Record<string, ObservedCo
   };
 }
 
-function targetFromManifest(manifest: ReleaseManifest) {
-  return {
-    web: {
-      sourceSha: manifest.components.web.sourceSha,
-      artifactDigest: manifest.components.web.artifactDigest,
-    },
-    api: {
-      sourceSha: manifest.components.api.sourceSha,
-      artifactDigest: manifest.components.api.artifactDigest,
-    },
-    runtimeWorker: {
-      sourceSha: manifest.components.runtimeWorker.sourceSha,
-      artifactDigest: manifest.components.runtimeWorker.artifactDigest,
-    },
-    acs: {
+/** Recovery accepts only the immutable ACS → App → Web phase prefixes. */
+export function productionStateMatchesManifestPrefix(
+  manifest: Pick<ReleaseManifest, 'productionBaseline' | 'components'>,
+  state: { components: Record<string, ObservedComponent> },
+): boolean {
+  const expected = structuredClone(manifest.productionBaseline);
+  const candidates = [structuredClone(expected)];
+  if (manifest.components.acs.action === 'deploy') {
+    expected.acs = {
       sourceSha: manifest.components.acs.sourceSha,
       orchestratorArtifactDigest: manifest.components.acs.orchestratorArtifactDigest,
       sandboxImageDigest: manifest.components.acs.sandboxImageDigest,
-    },
-  };
-}
-
-export function isRecoverableProductionState(
-  state: { components: Record<string, ObservedComponent> },
-  manifest: ReleaseManifest,
-): boolean {
-  const observed = baselineFromState(state);
-  const target = targetFromManifest(manifest);
-  return (['web', 'api', 'runtimeWorker', 'acs'] as const).every((component) => {
-    const value = canonicalJson(observed[component]);
-    return (
-      value === canonicalJson(manifest.productionBaseline[component]) ||
-      value === canonicalJson(target[component])
-    );
-  });
+    };
+    candidates.push(structuredClone(expected));
+  }
+  if (manifest.components.api.action === 'deploy') {
+    if (manifest.components.runtimeWorker.action !== 'deploy') return false;
+    expected.api = {
+      sourceSha: manifest.components.api.sourceSha,
+      artifactDigest: manifest.components.api.artifactDigest,
+    };
+    expected.runtimeWorker = {
+      sourceSha: manifest.components.runtimeWorker.sourceSha,
+      artifactDigest: manifest.components.runtimeWorker.artifactDigest,
+    };
+    candidates.push(structuredClone(expected));
+  }
+  if (manifest.components.web.action === 'deploy') {
+    expected.web = {
+      sourceSha: manifest.components.web.sourceSha,
+      artifactDigest: manifest.components.web.artifactDigest,
+    };
+    candidates.push(structuredClone(expected));
+  }
+  const observed = canonicalJson(baselineFromState(state));
+  return candidates.some((candidate) => canonicalJson(candidate) === observed);
 }
 
 export function validateApprovalReason(
@@ -161,9 +162,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       manifest.promotionPolicy.minimumPromotableSha,
       manifest.releaseSha,
     ]),
-    productionBaselineMatches:
-      canonicalJson(baselineFromState(state)) === canonicalJson(manifest.productionBaseline) ||
-      (recoveryMode && isRecoverableProductionState(state, manifest)),
+    productionStateIsResumable:
+      (!recoveryMode &&
+        canonicalJson(baselineFromState(state)) === canonicalJson(manifest.productionBaseline)) ||
+      (recoveryMode && productionStateMatchesManifestPrefix(manifest, state)),
     expiresAt: manifest.promotionPolicy.expiresAt,
   });
   if (!eligibility.promotable) throw new Error(eligibility.blockingReasons.join(' '));

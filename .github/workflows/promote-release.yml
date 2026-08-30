@@ -91,6 +91,7 @@ jobs:
             "$RUNNER_TEMP/release"/attestation-*.jsonl \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           pnpm exec tsx server/src/release/validateReleaseManifestCli.ts "$RUNNER_TEMP/manifest.json" "$RELEASE_ID"
+          node scripts/release/verify-promotion-entry.mjs "$RUNNER_TEMP/manifest.json"
           release_sha="$(jq -r .releaseSha "$RUNNER_TEMP/manifest.json")"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/manifest.json")"
           git fetch --no-tags origin "refs/tags/$RELEASE_ID:refs/tags/$RELEASE_ID"
@@ -112,12 +113,13 @@ jobs:
             echo "MIGRATION_PHASE=$migration_phase"
           } >> "$GITHUB_ENV"
 
-      - name: Validate deterministic Staging evidence and record human approval
+      - name: Fail-closed revalidate deterministic Staging evidence and record human approval
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
+          # 仅允许 verified 首次晋级或已证明未发生生产写入的重试。
           retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
           retry_mode="$(printf '%s' "$retry_evidence" | jq -r .mode)"
           if [ "$(printf '%s' "$retry_evidence" | jq -r .mode)" = retry_before_change ] && \
@@ -133,7 +135,8 @@ jobs:
           deployment_id="$(printf '%s' "$staging_reason" | jq -r .stagingDeploymentId)"
           staging_run_id="$(printf '%s' "$staging_reason" | jq -r .stagingRunId)"
           verification_summary="$(printf '%s' "$staging_reason" | jq -c .verificationSummary)"
-          runtime_summary="$(printf '%s' "$staging_reason" | jq -c .runtimeSummary)"
+          staging_runtime_path="$(jq -r '.artifacts.stagingRuntimeAssets?.path // empty' \
+            "$RUNNER_TEMP/release/artifact-index.json")"
           test "$(printf '%s' "$verification_summary" | jq -r .schemaVersion)" = 1
           test "$(printf '%s' "$verification_summary" | jq -r .mode)" = deterministic-deployment-gates-v1
           test "$(printf '%s' "$verification_summary" | jq -r .status)" = passed
@@ -142,16 +145,21 @@ jobs:
           printf '%s' "$deployment_id" | grep -Eq '^[1-9][0-9]*$'
           printf '%s' "$staging_run_id" | grep -Eq '^[1-9][0-9]*$'
           test "$(printf '%s' "$staging_reason" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
-          expected_runtime_summary="$(jq -nc \
-            --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
-            --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
-            --arg stagingRuntimeAssetsDigest "$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")" \
-            '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}')"
-          test "$(printf '%s' "$runtime_summary" | jq -S .)" = \
-            "$(printf '%s' "$expected_runtime_summary" | jq -S .)"
+          # 仅 #349 之后的 RC 拥有独立 Staging runtime evidence；旧 RC 沿用既有 verified 证据。
+          if [ -n "$staging_runtime_path" ]; then
+            runtime_summary="$(printf '%s' "$staging_reason" | jq -ce \
+              '.runtimeSummary | select(type=="object")')"
+            expected_runtime_summary="$(jq -nc \
+              --arg releaseId "$RELEASE_ID" --arg manifestDigest "$MANIFEST_DIGEST" \
+              --arg serverDigest "$(jq -r .components.api.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+              --arg webDigest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+              --arg acsOrchestratorDigest "$(jq -r .components.acs.orchestratorArtifactDigest "$RUNNER_TEMP/manifest.json")" \
+              --arg acsImageDigest "$(jq -r .components.acs.sandboxImageDigest "$RUNNER_TEMP/manifest.json")" \
+              --arg stagingRuntimeAssetsDigest "$(jq -r .artifacts.stagingRuntimeAssets.digest "$RUNNER_TEMP/release/artifact-index.json")" \
+              '{schemaVersion:1,releaseId:$releaseId,manifestDigest:$manifestDigest,serverDigest:$serverDigest,webDigest:$webDigest,acsOrchestratorDigest:$acsOrchestratorDigest,acsImageDigest:$acsImageDigest,stagingRuntimeAssetsDigest:$stagingRuntimeAssetsDigest}')"
+            test "$(printf '%s' "$runtime_summary" | jq -S .)" = \
+              "$(printf '%s' "$expected_runtime_summary" | jq -S .)"
+          fi
           deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id")"
           test "$(printf '%s' "$deployment" | jq -r .environment)" = staging
           test "$(printf '%s' "$deployment" | jq -r .sha)" = "$RELEASE_SHA"
@@ -171,7 +179,7 @@ jobs:
             '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
+            --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
             --reason "$approval_reason"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
@@ -193,10 +201,10 @@ jobs:
             "$PRODUCTION_SSH_HOST_KEY_SHA256"
           cat "$RUNNER_TEMP/production-known-host" >> ~/.ssh/known_hosts
 
-      - name: Read authoritative production baseline before any write
+      - name: Read authoritative live production prefix before any write
         run: |
           set -euo pipefail
-          remote="/tmp/release-preflight-$GITHUB_RUN_ID"
+          remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
@@ -265,9 +273,12 @@ jobs:
           sbom_path="$(jq -r .sbom.path "$RUNNER_TEMP/built/artifact-index.json")"
           [[ "$sbom_path" =~ ^[A-Za-z0-9._-]+$ ]]
           fetch "$built_base/$sbom_path" "$RUNNER_TEMP/built/$sbom_path"
-          runtime_path="$(jq -r .runtimeDependencies.path "$RUNNER_TEMP/built/artifact-index.json")"
-          [[ "$runtime_path" =~ ^[A-Za-z0-9._-]+$ ]]
-          fetch "$built_base/$runtime_path" "$RUNNER_TEMP/built/$runtime_path"
+          # 历史 v1 index 早于 Runtime Dependency Identity，仍保留审计兼容。
+          if [ "$(jq -r .schemaVersion "$RUNNER_TEMP/built/artifact-index.json")" = 2 ]; then
+            runtime_path="$(jq -r .runtimeDependencies.path "$RUNNER_TEMP/built/artifact-index.json")"
+            [[ "$runtime_path" =~ ^[A-Za-z0-9._-]+$ ]]
+            fetch "$built_base/$runtime_path" "$RUNNER_TEMP/built/$runtime_path"
+          fi
           node scripts/release/verify-artifact.mjs \
             "$RUNNER_TEMP/built/artifact-index.json" "$RELEASE_SHA"
           for pair in 'serverBundle server-bundle.tgz' 'webAssets web-assets.tgz' 'acsOrchestrator acs-orchestrator.tgz'; do
@@ -305,18 +316,6 @@ jobs:
                 "$RUNNER_TEMP/selected-acs/acs-orchestrator/daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template" \
                 "$RUNNER_TEMP/selected-units/agent-saas-acs-orchestrator.service.template"
             fi
-          else
-            # 显式历史 v1 没有 unit provenance；仅 deploy 组件保留旧入口，keep 不读取 baseline archive 的 unit。
-            if [ "$app_action" = deploy ]; then
-              install -m 0444 daemon-packaging/systemd/agent-saas-server@.service.template \
-                "$RUNNER_TEMP/selected-units/agent-saas-server@.service.template"
-              install -m 0444 daemon-packaging/systemd/agent-saas-runtime-worker@.service.template \
-                "$RUNNER_TEMP/selected-units/agent-saas-runtime-worker@.service.template"
-            fi
-            if [ "$acs_action" = deploy ]; then
-              install -m 0444 daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template \
-                "$RUNNER_TEMP/selected-units/agent-saas-acs-orchestrator.service.template"
-            fi
           fi
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
           test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
@@ -336,7 +335,7 @@ jobs:
           set -euo pipefail
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state promoting --operation "promoting:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+            --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
@@ -361,7 +360,7 @@ jobs:
       - name: Upload immutable deploy payload and RC-bound managed units
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           echo "PROMOTION_REMOTE=$remote" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote/artifacts'"
           if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
@@ -537,10 +536,128 @@ jobs:
             echo 'Web already equals the immutable target; keep the current entry'
             exit 0
           fi
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
-          # 仅在主机侧 phase 前置校验通过后发布 OSS Web entry。
-          # OSS 写入仍由 workflow 负责，主机脚本只锁定 phase 前置状态。
+          web_lock_ready="$PROMOTION_REMOTE/web-lock-ready"
+          web_lock_release="$PROMOTION_REMOTE/web-lock-release"
+          web_lock_log="$RUNNER_TEMP/web-lock.log"
+          web_lock_pid=''
+          web_lock_ready_confirmed=false
+          web_backup_ready=false
+          web_committed=false
+          web_operation_deadline=0
+          web_lock_is_alive() {
+            [ -n "$web_lock_pid" ] && kill -0 "$web_lock_pid" 2>/dev/null
+          }
+          run_control_ssh() {
+            timeout --signal=TERM --kill-after=5 10 ssh \
+              -o ConnectTimeout=5 -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+              -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "$1"
+          }
+          run_with_web_lock() {
+            if ! web_lock_is_alive; then
+              cat "$web_lock_log" >&2
+              return 1
+            fi
+            local remaining=$((web_operation_deadline - SECONDS))
+            if [ "$remaining" -le 0 ]; then
+              echo 'Web publication operation deadline expired while the host lock was held' >&2
+              return 1
+            fi
+            setsid timeout --signal=TERM --kill-after=10 "$remaining" "$@" &
+            local command_pid=$!
+            while kill -0 "$command_pid" 2>/dev/null; do
+              if ! web_lock_is_alive; then
+                kill -TERM -- "-$command_pid" 2>/dev/null || true
+                sleep 1
+                kill -KILL -- "-$command_pid" 2>/dev/null || true
+                wait "$command_pid" 2>/dev/null || true
+                cat "$web_lock_log" >&2
+                return 1
+              fi
+              sleep 1
+            done
+            local command_status=0
+            wait "$command_pid" || command_status=$?
+            if ! web_lock_is_alive; then
+              cat "$web_lock_log" >&2
+              return 1
+            fi
+            return "$command_status"
+          }
+          terminate_web_lock() {
+            [ -n "$web_lock_pid" ] || return 0
+            kill -TERM -- "-$web_lock_pid" 2>/dev/null || true
+            sleep 1
+            kill -KILL -- "-$web_lock_pid" 2>/dev/null || true
+            wait "$web_lock_pid" 2>/dev/null || true
+            web_lock_pid=''
+          }
+          release_web_lock() {
+            [ -n "$web_lock_pid" ] || return 0
+            if [ "$web_lock_ready_confirmed" != true ]; then
+              terminate_web_lock
+              return 0
+            fi
+            if ! run_control_ssh "sudo touch '$web_lock_release'"; then
+              terminate_web_lock
+              return 1
+            fi
+            local lock_status=0
+            wait "$web_lock_pid" || lock_status=$?
+            web_lock_pid=''
+            if [ "$lock_status" -ne 0 ]; then
+              cat "$web_lock_log" >&2
+              return "$lock_status"
+            fi
+          }
+          cleanup_web_on_exit() {
+            local deploy_status=$?
+            trap - EXIT
+            set +e
+            local rollback_status=0
+            if [ "$web_committed" = false ] && [ "$web_backup_ready" = true ]; then
+              if web_lock_is_alive; then
+                web_operation_deadline=$((SECONDS + 300))
+                restore_web_entry || rollback_status=$?
+              else
+                echo 'Web lock was lost; refusing an unlocked rollback' >&2
+                rollback_status=1
+              fi
+            fi
+            if [ "$rollback_status" -eq 0 ]; then
+              release_web_lock || rollback_status=$?
+            elif web_lock_is_alive; then
+              echo 'Web rollback failed; retaining the production lock until its lease expires' >&2
+              wait "$web_lock_pid" 2>/dev/null || true
+              web_lock_pid=''
+            fi
+            [ "$rollback_status" -eq 0 ] || deploy_status=1
+            exit "$deploy_status"
+          }
+          trap cleanup_web_on_exit EXIT
+          setsid timeout --signal=TERM --kill-after=10 1810 ssh \
+            -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+            -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+            "timeout --signal=TERM --kill-after=10 1800 sudo PHASE=web RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' READ_LIVE_COMPONENTS_SCRIPT='$PROMOTION_REMOTE/read-live-production-components.mjs' VERIFY_PROMOTION_PHASE_SCRIPT='$PROMOTION_REMOTE/verify-promotion-phase-state.mjs' WEB_LOCK_READY='$web_lock_ready' WEB_LOCK_RELEASE='$web_lock_release' WEB_LOCK_TIMEOUT_SECONDS=1700 GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            >"$web_lock_log" 2>&1 &
+          web_lock_pid=$!
+          lock_ready=false
+          lock_ready_deadline=$((SECONDS + 60))
+          while [ "$SECONDS" -lt "$lock_ready_deadline" ]; do
+            if run_control_ssh "sudo test -f '$web_lock_ready'"; then
+              lock_ready=true
+              break
+            fi
+            if ! kill -0 "$web_lock_pid" 2>/dev/null; then
+              wait "$web_lock_pid" 2>/dev/null || true
+              web_lock_pid=''
+              cat "$web_lock_log" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          test "$lock_ready" = true
+          web_lock_ready_confirmed=true
+          web_operation_deadline=$((SECONDS + 1200))
           mkdir -p "$RUNNER_TEMP/web-assets" "$RUNNER_TEMP/web-before"
           tar -xzf "$RUNNER_TEMP/selected/web-assets.tgz" -C "$RUNNER_TEMP/web-assets"
           test -s "$RUNNER_TEMP/web-assets/index.html"
@@ -549,30 +666,45 @@ jobs:
             --arg configFingerprint "$MANIFEST_DIGEST" \
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
-          aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
-            "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
-          aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-            "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
+          had_index=false; had_identity=false
+          if run_with_web_lock aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/index.html" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
+              "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
+            had_index=true
+          fi
+          test "$had_index" = true
+          if run_with_web_lock aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
+            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+              "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
+            had_identity=true
+          fi
           restore_web_entry() {
-            aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
-              "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-              --region "$RELEASE_RECORD_OSS_REGION" || true
-            aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
-              "$PRODUCTION_WEB_OSS_URI/index.html" --force \
-              --region "$RELEASE_RECORD_OSS_REGION" || true
+            local rollback_status=0
+            if [ "$had_identity" = true ]; then
+              run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
+                "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || rollback_status=$?
+            else
+              run_with_web_lock aliyun --secure oss rm "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || rollback_status=$?
+            fi
+            if [ "$had_index" = true ]; then
+              run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
+                "$PRODUCTION_WEB_OSS_URI/index.html" --force \
+                --region "$RELEASE_RECORD_OSS_REGION" || rollback_status=$?
+            fi
+            return "$rollback_status"
           }
-          web_committed=false
-          cleanup_web_on_exit() {
-            [ "$web_committed" = true ] || restore_web_entry
-          }
-          trap cleanup_web_on_exit EXIT
-          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" "$PRODUCTION_WEB_OSS_URI/" \
-            --recursive --force --exclude index.html --exclude release-identity.json \
-            --region "$RELEASE_RECORD_OSS_REGION"
-          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/release-identity.json" \
+          web_backup_ready=true
+          run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" \
+            "$PRODUCTION_WEB_OSS_URI/" --recursive --force --exclude index.html \
+            --exclude release-identity.json --region "$RELEASE_RECORD_OSS_REGION"
+          run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/release-identity.json" \
             "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
             --region "$RELEASE_RECORD_OSS_REGION"
-          aliyun --secure oss cp "$RUNNER_TEMP/web-assets/index.html" \
+          run_with_web_lock aliyun --secure oss cp "$RUNNER_TEMP/web-assets/index.html" \
             "$PRODUCTION_WEB_OSS_URI/index.html" --force \
             --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
@@ -580,14 +712,18 @@ jobs:
           while IFS= read -r -d '' source; do
             relative="${source#"$RUNNER_TEMP/web-assets/"}"
             mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
-            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
+            run_with_web_lock aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/$relative" \
               "$RUNNER_TEMP/web-oss-readback/$relative" --region "$RELEASE_RECORD_OSS_REGION"
             cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
           done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
-          curl -fsS --retry 10 -H 'cache-control: no-cache' \
+          run_with_web_lock curl -fsS --retry 10 -H 'cache-control: no-cache' \
             "https://agent.kaiyan.net/release-identity.json?release=$RELEASE_ID" \
-            | jq -e --arg digest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" '.webDigest==$digest'
+            -o "$RUNNER_TEMP/web-release-identity-readback.json"
+          jq -e --arg digest "$(jq -r .components.web.artifactDigest "$RUNNER_TEMP/manifest.json")" \
+            '.webDigest==$digest' "$RUNNER_TEMP/web-release-identity-readback.json"
+          web_lock_is_alive
           web_committed=true
+          release_web_lock
           trap - EXIT
 
       - name: Persist Web operation receipt
@@ -618,7 +754,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          remote="/tmp/release-readback-$GITHUB_RUN_ID"
+          remote="/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \

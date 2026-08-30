@@ -19,6 +19,7 @@ const TOOL_PROBES = new Map([
   ['bird', ['bird', '--version']],
   ['python', ['python3', '--version']],
   ['gh', ['gh', '--version']],
+  ['kubectl', ['kubectl', 'version', '--client=true']],
   ['aliyun', ['aliyun', 'version']],
   ['gws', ['gws', '--version']],
   ['ntn', ['ntn', '--version']],
@@ -30,7 +31,7 @@ const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 const VERSION_TOKEN_PATTERN = /[vV]?[0-9][0-9A-Za-z._+-]*/gu;
-const VERSION_SHAPE_PATTERN = /^[vV]?\d+\.\d+\./u;
+const VERSION_CANDIDATE_PATTERN = /^[vV]?\d+\.\d+\./u;
 const ARCHITECTURES = new Set(['x64', 'arm64']);
 const FORBIDDEN_KEY = /(secret|token|password|credential|private.?key|access.?key)/iu;
 const FORBIDDEN_VALUE =
@@ -104,7 +105,19 @@ export function validateRuntimeDependencyContract(contract) {
   if (!Array.isArray(contract.tools)) throw new Error('tools must be an array');
   const toolIdentities = new Set();
   for (const tool of contract.tools) {
-    assertKeys(tool, ['name', 'version', 'architecture', 'components', 'probe'], 'tool');
+    assertKeys(
+      tool,
+      [
+        'name',
+        'version',
+        'architecture',
+        'components',
+        'probe',
+        ...(Object.hasOwn(tool, 'executableEnvironment') ? ['executableEnvironment'] : []),
+        ...(Object.hasOwn(tool, 'when') ? ['when'] : []),
+      ],
+      'tool',
+    );
     if (!NAME_PATTERN.test(tool.name) || !VERSION_PATTERN.test(tool.version))
       throw new Error('Tools must declare a normalized name and exact version');
     if (!ARCHITECTURES.has(tool.architecture))
@@ -114,6 +127,30 @@ export function validateRuntimeDependencyContract(contract) {
     const expectedProbe = TOOL_PROBES.get(tool.name);
     if (!expectedProbe || JSON.stringify(tool.probe) !== JSON.stringify(expectedProbe)) {
       throw new Error(`Tool ${tool.name} probe is not the supported fixed version probe`);
+    }
+    const expectedEnvironment =
+      tool.name === 'kubectl' && tool.components.includes('acsOrchestrator')
+        ? 'ACS_KUBECTL_PATH'
+        : tool.name === 'aliyun' && tool.components.includes('acsOrchestrator')
+          ? 'ACS_ALIYUN_CLI_PATH'
+          : undefined;
+    if (tool.executableEnvironment !== expectedEnvironment) {
+      throw new Error(`Tool ${tool.name} has an unsupported executable environment binding`);
+    }
+    const requiresCondition = tool.name === 'aliyun' && tool.components.includes('acsOrchestrator');
+    if (requiresCondition && tool.when === undefined) {
+      throw new Error(`Tool ${tool.name} must declare its optional Runtime condition`);
+    }
+    if (tool.when !== undefined) {
+      assertKeys(tool.when, ['environment', 'notEquals', 'defaultValue'], `tool.${tool.name}.when`);
+      if (
+        !requiresCondition ||
+        tool.when.environment !== 'ACS_SNAT_MODE' ||
+        tool.when.notEquals !== 'disabled' ||
+        tool.when.defaultValue !== 'disabled'
+      ) {
+        throw new Error(`Tool ${tool.name} has an unsupported runtime condition`);
+      }
     }
     const identity = `${tool.name}:${tool.architecture}:${tool.components.join(',')}`;
     if (toolIdentities.has(identity)) throw new Error(`Duplicate tool identity ${identity}`);
@@ -220,6 +257,7 @@ export function verifyRuntimeEnvironment({
   component,
   runtime = { version: process.versions.node, arch: process.arch, platform: process.platform },
   execFileSync = defaultExecFileSync,
+  environment = process.env,
   checkTools = true,
 }) {
   verifyRuntimeDependencyIdentity(identity);
@@ -239,13 +277,21 @@ export function verifyRuntimeEnvironment({
     );
   if (checkTools) {
     for (const tool of identity.tools.filter((entry) => entry.components.includes(component))) {
+      const conditionValue = tool.when
+        ? String(environment[tool.when.environment] ?? tool.when.defaultValue).trim() ||
+          tool.when.defaultValue
+        : undefined;
+      if (tool.when && conditionValue === tool.when.notEquals) continue;
       if (tool.architecture !== runtime.arch)
         throw new Error(
           `Tool ${tool.name} architecture mismatch: expected ${tool.architecture}, got ${runtime.arch}`,
         );
       let output;
       try {
-        output = execFileSync(tool.probe[0], tool.probe.slice(1), {
+        const executable = tool.executableEnvironment
+          ? String(environment[tool.executableEnvironment] ?? '').trim() || tool.probe[0]
+          : tool.probe[0];
+        output = execFileSync(executable, tool.probe.slice(1), {
           encoding: 'utf8',
           stdio: 'pipe',
           timeout: 5_000,
@@ -255,9 +301,11 @@ export function verifyRuntimeEnvironment({
         throw new Error(`Required runtime tool ${tool.name} is missing or not executable`);
       }
       const versionToken = (String(output).match(VERSION_TOKEN_PATTERN) ?? []).find((token) =>
-        VERSION_SHAPE_PATTERN.test(token),
+        VERSION_CANDIDATE_PATTERN.test(token),
       );
-      if (versionToken !== tool.version || !VERSION_PATTERN.test(versionToken))
+      const normalizedVersion =
+        tool.name === 'kubectl' ? versionToken?.replace(/^[vV]/u, '') : versionToken;
+      if (normalizedVersion !== tool.version || !VERSION_PATTERN.test(normalizedVersion ?? ''))
         throw new Error(`Runtime tool ${tool.name} version mismatch: expected ${tool.version}`);
     }
   }

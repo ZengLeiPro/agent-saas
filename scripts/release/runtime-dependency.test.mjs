@@ -169,13 +169,100 @@ test('ACS Sandbox verifies the git version installed by the base image build', a
   );
 });
 
-test('Docker and systemd production paths consume the pinned identity and startup guard', async () => {
+test('ACS Orchestrator fails closed on kubectl and conditionally probes the configured aliyun CLI', async () => {
+  const contract = await fixture();
+  const identity = createRuntimeDependencyIdentity(contract, SHA);
+  const runtime = { version: contract.node.version, arch: 'x64', platform: 'linux' };
+
+  assert.throws(
+    () =>
+      verifyRuntimeEnvironment({
+        identity,
+        component: 'acsOrchestrator',
+        runtime,
+        environment: { ACS_SNAT_MODE: 'disabled' },
+        execFileSync: () => {
+          throw new Error('missing');
+        },
+      }),
+    /tool kubectl is missing/u,
+  );
+  assert.throws(
+    () =>
+      verifyRuntimeEnvironment({
+        identity,
+        component: 'acsOrchestrator',
+        runtime,
+        environment: { ACS_SNAT_MODE: 'disabled' },
+        execFileSync: () => 'Client Version: v1.36.9',
+      }),
+    /tool kubectl version mismatch/u,
+  );
+
+  const disabledCalls = [];
+  assert.doesNotThrow(() =>
+    verifyRuntimeEnvironment({
+      identity,
+      component: 'acsOrchestrator',
+      runtime,
+      environment: {
+        ACS_SNAT_MODE: 'disabled',
+        ACS_KUBECTL_PATH: '/managed/kubectl',
+        ACS_ALIYUN_CLI_PATH: '/managed/aliyun',
+      },
+      execFileSync: (command, args) => {
+        disabledCalls.push([command, args]);
+        return 'Client Version: v1.37.0';
+      },
+    }),
+  );
+  assert.deepEqual(disabledCalls, [['/managed/kubectl', ['version', '--client=true']]]);
+
+  const enabledCalls = [];
+  assert.doesNotThrow(() =>
+    verifyRuntimeEnvironment({
+      identity,
+      component: 'acsOrchestrator',
+      runtime,
+      environment: {
+        ACS_SNAT_MODE: 'shared-cidr',
+        ACS_KUBECTL_PATH: '/managed/kubectl',
+        ACS_ALIYUN_CLI_PATH: '/managed/aliyun',
+      },
+      execFileSync: (command, args) => {
+        enabledCalls.push([command, args]);
+        return command.endsWith('kubectl') ? 'Client Version: v1.37.0' : '3.4.4';
+      },
+    }),
+  );
+  assert.deepEqual(enabledCalls, [
+    ['/managed/kubectl', ['version', '--client=true']],
+    ['/managed/aliyun', ['version']],
+  ]);
+  assert.throws(
+    () =>
+      verifyRuntimeEnvironment({
+        identity,
+        component: 'acsOrchestrator',
+        runtime,
+        environment: { ACS_SNAT_MODE: 'probe-only' },
+        execFileSync: (command) => {
+          if (command === 'kubectl') return 'Client Version: v1.37.0';
+          throw new Error('missing');
+        },
+      }),
+    /tool aliyun is missing/u,
+  );
+});
+
+test('Docker tool versions and systemd production paths consume the pinned identity and startup guard', async () => {
   const contract = await fixture();
   const dockerfile = await readFile('Dockerfile', 'utf8');
   for (const image of contract.baseImages) {
     assert.ok(dockerfile.includes(image.reference.split('@')[1]));
   }
   assert.doesNotMatch(dockerfile, /^FROM .*:(?:22|3\.12)[^@\n]*$/gmu);
+  assert.match(dockerfile, /test "\$\(git --version\)" = "git version 2\.49\.1"/u);
   const units = [
     ['daemon-packaging/systemd/agent-saas-server@.service.template', 'server'],
     ['daemon-packaging/systemd/agent-saas-runtime-worker@.service.template', 'runtimeWorker'],
@@ -217,7 +304,7 @@ test('every production flag form forbids disabling runtime dependency checks', (
   }
 });
 
-test('contract rejects secret-like fields, sensitive values, and unbounded probes', async () => {
+test('contract rejects missing Runtime bindings, sensitive values, unbounded probes, and forged conditions', async () => {
   const contract = await fixture();
   contract.secretToken = 'should-never-ship';
   assert.throws(() => runtimeDependencyContractDigest(contract), /is sensitive/u);
@@ -236,6 +323,34 @@ test('contract rejects secret-like fields, sensitive values, and unbounded probe
   assert.throws(
     () => validateRuntimeDependencyContract(withUnsupportedImageComponent),
     /baseImage\.node-alpine\.components contains unsupported value/u,
+  );
+
+  const missingExecutableBinding = await fixture();
+  delete missingExecutableBinding.tools.find(
+    (tool) => tool.name === 'kubectl' && tool.components.includes('acsOrchestrator'),
+  ).executableEnvironment;
+  assert.throws(
+    () => validateRuntimeDependencyContract(missingExecutableBinding),
+    /unsupported executable environment binding/u,
+  );
+
+  const missingCondition = await fixture();
+  delete missingCondition.tools.find(
+    (tool) => tool.name === 'aliyun' && tool.components.includes('acsOrchestrator'),
+  ).when;
+  assert.throws(
+    () => validateRuntimeDependencyContract(missingCondition),
+    /must declare its optional Runtime condition/u,
+  );
+
+  const forgedCondition = await fixture();
+  const conditionalTool = forgedCondition.tools.find(
+    (tool) => tool.name === 'aliyun' && tool.components.includes('acsOrchestrator'),
+  );
+  conditionalTool.when.environment = 'ARBITRARY_MODE';
+  assert.throws(
+    () => validateRuntimeDependencyContract(forgedCondition),
+    /unsupported runtime condition/u,
   );
 
   for (const probe of [

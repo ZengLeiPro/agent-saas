@@ -24,10 +24,10 @@ Staging 与 Production 在写入环境、切换 symlink 或替换进程前会：
 
 ## 版本与迁移边界
 
-- v1 是严格旧结构：`artifacts` 不包含 `runtimeDependencies`，digest 域保持 `agent-saas-release-manifest-v1\0`。历史不可变 v1 可继续读取和审计。
+- v1 是严格旧结构：`artifacts` 不包含 `runtimeDependencies`，digest 域保持 `agent-saas-release-manifest-v1\0`。历史不可变 v1 可继续读取和审计，但不再承担 Runtime 组件部署/回退。
 - v2 是严格新结构：必须包含 Server/ACS 两份 Runtime identity，digest 域为 `agent-saas-release-manifest-v2\0`。
 - 不接受“schemaVersion 仍为 1、但偷偷添加 v2 字段”的中间形态。
-- 晋级下载器显式保留 v1 分支，只执行历史制品摘要校验；v2 分支执行完整 Runtime identity 校验。生产 unit 完成 Runtime guard 切换后，不含 identity 的旧 bundle 会明确 fail-closed，不能伪装成 v2 晋级；需要回退时使用仍处于兼容窗口内的 v1 流程，或以相同源码重建 v2 制品。
+- 晋级下载器显式保留 v1 证据校验；v1 仅允许 Runtime 组件全部 `keep` 的 Web-only 晋级。App、Runtime Worker 或 ACS 为 `deploy` 时在任何生产写入前拒绝，因为旧 bundle 没有 Runtime identity/guard，且不能注入当前 main 的 unit。Runtime 回退必须选择已具备 identity 的 v2 RC，或以目标历史源码重建 v2 制品。
 - baseline resolver 校验每份 component index 的 aggregate digest，并只返回其中真实存在的 component-scoped Runtime identity；v2 Evidence 对 `keep` 的 Server/ACS 强制要求对应基线 identity，对明确 `deploy` 的组件允许缺失旧基线 identity，以便首次全量 v2 发布完成迁移。Manifest v2 最终仍始终包含两份实际选中 identity；旧 index 不会被静默套用当前 identity。
 
 可审计的非生产完整示例位于 `docs/examples/release-manifest-v2.example.json`。

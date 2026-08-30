@@ -19,7 +19,16 @@ case "$PHASE" in
       : "${WORKER_UNIT_TEMPLATE:?WORKER_UNIT_TEMPLATE is required}"
     fi
     ;;
-  web) ;;
+  web)
+    : "${WEB_LOCK_READY:?WEB_LOCK_READY is required for the Web phase}"
+    : "${WEB_LOCK_RELEASE:?WEB_LOCK_RELEASE is required for the Web phase}"
+    WEB_LOCK_TIMEOUT_SECONDS="${WEB_LOCK_TIMEOUT_SECONDS:-900}"
+    printf '%s' "$WEB_LOCK_TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$'
+    case "$WEB_LOCK_READY:$WEB_LOCK_RELEASE" in
+      /tmp/agent-saas-promotion-*:/tmp/agent-saas-promotion-*) ;;
+      *) echo 'Web lock handshake paths must stay under the promotion temp directory' >&2; exit 1 ;;
+    esac
+    ;;
   *) echo 'PHASE must be acs, app or web' >&2; exit 1 ;;
 esac
 
@@ -45,8 +54,26 @@ rm -f "$production_now"
 node "$READ_LIVE_COMPONENTS_SCRIPT" --output "$production_now" >/dev/null
 node "$VERIFY_PROMOTION_PHASE_SCRIPT" "$MANIFEST_PATH" "$production_now" "$PHASE" >/dev/null
 rm -f "$production_now"
-if [ "$VERIFY_ONLY" = true ] || [ "$PHASE" = web ]; then
+if [ "$VERIFY_ONLY" = true ]; then
   echo "$PHASE live precondition verified for $release_id"
+  exit 0
+fi
+if [ "$PHASE" = web ]; then
+  rm -f "$WEB_LOCK_READY" "$WEB_LOCK_RELEASE"
+  cleanup_web_lock_handshake() {
+    rm -f "$WEB_LOCK_READY" "$WEB_LOCK_RELEASE"
+  }
+  trap cleanup_web_lock_handshake EXIT
+  touch "$WEB_LOCK_READY"
+  deadline=$((SECONDS + WEB_LOCK_TIMEOUT_SECONDS))
+  while [ ! -f "$WEB_LOCK_RELEASE" ]; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo 'Timed out while holding the production lock for Web publication' >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  echo "web live precondition and publication lock completed for $release_id"
   exit 0
 fi
 

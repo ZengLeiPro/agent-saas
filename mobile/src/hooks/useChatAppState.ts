@@ -642,10 +642,10 @@ export function useChatAppStateCore(): ChatAppState {
     }, timeout);
   }, [dispatchConnection]);
 
-  // ---- Sync 序列号 ----
+  // ---- Sync 序列号（当前仅进程内，不持久化 generation/cursor） ----
   const lastUserSeqRef = useRef(0);
 
-  // WS connection (reference-counted for multi-screen safety)
+  // WS connection (reference-counted for multi-screen safety; recovery cursor stays process-local)
   useEffect(() => {
     let releaseRef: (() => void) | null = null;
     let unmounted = false;
@@ -661,8 +661,9 @@ export function useChatAppStateCore(): ChatAppState {
         dispatchConnection("connect");
         if (!modelListRef.current) fetchModelList();
 
-        // 发送 sync 请求恢复漏掉的元数据事件
-        wsClient.send({ action: "sync", lastSeq: lastUserSeqRef.current });
+        // 发送 sync 请求恢复漏掉的元数据事件；overflow 可内联当前会话权威快照。
+        wsClient.setSyncSessionId?.(sessionIdRef.current);
+        wsClient.send({ action: "sync", lastSeq: lastUserSeqRef.current, ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}) });
 
         if (loadingRef.current && sessionIdRef.current) {
           const targetSid = sessionIdRef.current;
@@ -978,8 +979,23 @@ export function useChatAppStateCore(): ChatAppState {
     });
   }, []);
 
-  // WS message handler
+  // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
+    const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
+      const ctx: WsProcessingContext = {
+        msg: msgRef.current,
+        session: sessionRef.current,
+        selectedModelRef,
+        voiceCallbackRef,
+        streamIdRef,
+        runIdRef,
+        handledTerminalKeysRef,
+        lastEventIdRef,
+        userMsgIndex: wsUserMsgIndexRef.current,
+        sessionOwnerRef,
+      };
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+    };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
@@ -1018,6 +1034,24 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
+          const recoveredQueueEvents = chatQueueReducerEventsFromWsEvent(e, sessionIdRef.current ?? undefined);
+          if (recoveredQueueEvents.length > 0) {
+            let nextQueueState = chatQueueStateRef.current;
+            for (const queueEvent of recoveredQueueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
+            chatQueueStateRef.current = nextQueueState;
+            if (nextQueueState.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(nextQueueState));
+          }
+          if (e.type === "session_status" && e.sessionId === sessionIdRef.current) {
+            runIdRef.current = e.runId ?? null;
+            streamIdRef.current = e.streamId ?? null;
+            const active = !["idle", "completed", "failed", "cancelled", "orphaned"].includes(e.status);
+            wsAttachedRef.current = active;
+            setLoading(active);
+          }
+          if (e.type === "pending_interactions" || e.type === "permission_request"
+            || e.type === "ask_user" || e.type === "interaction_resolved") {
+            projectRecoveredInteraction(e);
+          }
           if (e.type === "title_updated")
             sessionRef.current.updateSessionTitle(e.sessionId, e.title);
           else if (e.type === "session_updated") {
@@ -1045,9 +1079,28 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
       if (data.type === "sync_overflow") {
-        lastUserSeqRef.current = (data as any).seq;
-        wsClient.setLastSeq((data as any).seq);
-        void sessionRef.current.loadSessions(true, { fresh: true });
+        lastUserSeqRef.current = data.seq;
+        wsClient.setLastSeq(data.seq);
+        const inline = data.recovery?.session;
+        if (inline?.queueSnapshot) {
+          chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, {
+            type: "snapshot", snapshot: inline.queueSnapshot,
+          });
+          if (inline.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(chatQueueStateRef.current));
+        }
+        if (inline?.runtime && inline.sessionId === sessionIdRef.current) {
+          runIdRef.current = inline.runtime.runId ?? null;
+          streamIdRef.current = inline.runtime.streamId ?? null;
+          wsAttachedRef.current = inline.runtime.active;
+          setLoading(inline.runtime.active);
+        }
+        if (inline?.pendingInteractions) {
+          projectRecoveredInteraction({ type: "pending_interactions", interactions: inline.pendingInteractions });
+        }
+        if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
+          void sessionRef.current.loadSessions(true, { fresh: true });
+          sessionRef.current.refreshCurrentSession();
+        }
         return;
       }
 

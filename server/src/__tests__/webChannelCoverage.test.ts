@@ -551,8 +551,8 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     });
   });
 
-  describe('handleSync / handleDetach', () => {
-    it('sync：正常回放 lastSeq 之后事件；缓冲淘汰后回 sync_overflow；无用户静默', () => {
+  describe('handleSync authoritative recovery / handleDetach', () => {
+    it('sync：正常回放 lastSeq 之后事件；缓冲淘汰后回 sync_overflow；无用户静默', async () => {
       const rig = makeRig();
       const log = new UserEventLog();
       // destroy 供 channel.stop() 调用（真 WsServer 的最小替身）
@@ -567,34 +567,99 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         log.push('sync-u1', { type: 'title_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_deleted', sessionId: 'a' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u1'),
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
         expect(rig.ws.sent.at(-1)?.data.events.map((e: any) => e.seq)).toEqual([2, 3]);
 
         // 新实例可恰好追到相同 seq；正 seq 缺失/不匹配 epoch 仍必须强制全量恢复。
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 3, epoch: 'previous-instance',
         });
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 3, epoch: log.getEpoch('sync-u1') });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'sync_overflow', seq: 3, epoch: log.getEpoch('sync-u1'),
+          recovery: { version: 1, authoritative: true },
+        });
 
         // 首次客户端 lastSeq=0 不要求 epoch，兼容滚动部署。
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 0,
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
 
         for (let i = 0; i < 205; i += 1) log.push('sync-u2', { type: 'title_updated' });
-        (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
+        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u2'),
         });
-        expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'sync_overflow', seq: 205, epoch: log.getEpoch('sync-u2') });
+        expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+          type: 'sync_overflow', seq: 205, epoch: log.getEpoch('sync-u2'),
+          recovery: { version: 1, authoritative: true },
+        });
 
         const before = rig.ws.sent.length;
-        (rig.channel as any).handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
+        await (rig.channel as any).handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
         expect(rig.ws.sent.length).toBe(before);
       } finally {
+        log.stop();
+      }
+    });
+
+    it('overflow：按 sessionId 内联 durable queue/runtime/pending interactions 的权威快照', async () => {
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({
+        runId: 'sync-run-pending', sessionId: 'sync-session', userId: USER.sub,
+        model: 'm', channel: 'web', idempotencyKey: 'sync-msg-pending',
+      });
+      await runStore.upsertPending({
+        runId: 'sync-run-done', sessionId: 'sync-session', userId: USER.sub,
+        model: 'm', channel: 'web', idempotencyKey: 'sync-msg-done',
+      });
+      await runStore.markStatus('sync-run-done', 'completed');
+      (runStore as any).listUserMessagesBySession = async () => [
+        await runStore.get('sync-run-pending'),
+        await runStore.get('sync-run-done'),
+      ].filter(Boolean);
+      const rig = makeRig({
+        enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
+      });
+      const log = new UserEventLog('sync-server-epoch');
+      (rig.channel as any).wsServer = {
+        userEventLog: log,
+        hasUserEventEpochMismatch: (_client: unknown, userId: string, epoch: string | undefined, lastSeq: number) => (
+          log.hasEpochMismatch(userId, epoch, lastSeq)
+        ),
+        refreshAuthoritativeUser: () => true,
+        destroy: () => {},
+      };
+      const interactionId = 'sync-pending-interaction';
+      const pendingResponse = interactionStore.create(interactionId, 'ask_user', {
+        sessionId: 'sync-session', runId: 'sync-run-pending', userId: USER.sub,
+        questions: [{ question: 'continue?', header: 'Confirm', options: [], multiSelect: false }],
+      });
+      try {
+        log.push(USER.sub, { type: 'session_status', sessionId: 'sync-session', status: 'running' });
+        await (rig.channel as any).handleSync(wsClient(rig.ws, USER), {
+          action: 'sync', lastSeq: 1, epoch: 'stale-epoch', sessionId: 'sync-session',
+        });
+        const overflow = rig.ws.sent.at(-1)?.data;
+        expect(overflow).toMatchObject({
+          type: 'sync_overflow', seq: 1, epoch: 'sync-server-epoch',
+          recovery: {
+            authoritative: true,
+            session: {
+              sessionId: 'sync-session',
+              runtime: { active: true, runId: 'sync-run-pending' },
+              pendingInteractions: [{ interactionId, type: 'ask_user', runId: 'sync-run-pending' }],
+            },
+          },
+        });
+        expect(overflow.recovery.session.queueSnapshot.items.map((item: any) => item.status)).toEqual([
+          'queued', 'completed',
+        ]);
+      } finally {
+        interactionStore.resolve(interactionId, { answers: {} });
+        await pendingResponse;
         log.stop();
       }
     });

@@ -1429,7 +1429,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           // WS 连接成功时，如果 modelList 仍为空则重新获取
           if (!modelListRef.current) fetchModelList();
 
-          // 发送 sync 请求恢复漏掉的元数据事件
+          // 发送 sync 请求恢复漏掉的元数据事件；overflow 可内联当前会话权威快照。
+          wsClient.setSyncSessionId?.(immediateSessionIdRef.current ?? sessionIdRef.current);
           wsClient.send({
             action: 'sync',
             lastSeq: lastUserSeqRef.current,
@@ -1537,15 +1538,30 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     msgRef.current.addMessage({ type: 'system-error', severity: 'error', content: `回复未提交：${data.error || '服务端拒绝了该回复'}。请重试。`, timestamp: Date.now() });
   }, [markSessionRead]);
 
-  // ---- WS 消息处理 ----
+  // ---- WS 消息处理（wsClient 已完成 epoch/seq 接受边界） ----
   useEffect(() => {
+    const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
+      const ctx: WsProcessingContext = {
+        msg: msgRef.current,
+        session: sessionRef.current,
+        selectedModelRef,
+        voiceCallbackRef,
+        streamIdRef,
+        runIdRef,
+        handledTerminalKeysRef,
+        lastEventIdRef,
+        userMsgIndex: wsUserMsgIndexRef.current,
+        sessionOwnerRef,
+      };
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+    };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
       // M20-02 thin path consumes structured V1 frames. Legacy frames stay on the existing
       // N-1 projector below so they cannot reintroduce local dispatch authority.
       const isQueueLifecycleFrame = data.type === 'queue_snapshot' || data.type === 'queue_item_updated'
-        || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
+        || data.type === 'message_queued' || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
         || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result';
       const queueEvents = isQueueLifecycleFrame
         ? chatQueueReducerEventsFromWsEvent(data, immediateSessionIdRef.current ?? sessionIdRef.current ?? undefined)
@@ -1687,6 +1703,28 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         };
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
+          const recoveredQueueEvents = chatQueueReducerEventsFromWsEvent(
+            e,
+            immediateSessionIdRef.current ?? sessionIdRef.current ?? undefined,
+          );
+          if (recoveredQueueEvents.length > 0) {
+            let nextQueueState = chatQueueStateRef.current;
+            for (const queueEvent of recoveredQueueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
+            chatQueueStateRef.current = nextQueueState;
+            projectAuthoritativeQueue(nextQueueState);
+          }
+          if (e.type === 'session_status') {
+            patchSessionRuntime(e.sessionId, {
+              status: e.status, source: 'ws',
+              ...(e.streamId ? { streamId: e.streamId } : {}),
+              ...(e.runId ? { runId: e.runId } : {}),
+              attached: !['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(e.status),
+            });
+          }
+          if (e.type === 'pending_interactions' || e.type === 'permission_request'
+            || e.type === 'ask_user' || e.type === 'interaction_resolved') {
+            projectRecoveredInteraction(e);
+          }
           if (e.type === 'title_updated') sessionRef.current.updateSessionTitle(e.sessionId, e.title);
           else if (e.type === 'session_updated') {
             if ((e as any).isNew && sessionRef.current.upsertSession) {
@@ -1772,7 +1810,28 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           lastUserEpochRef.current = (data as any).epoch;
           wsClient.setEpoch((data as any).epoch);
         }
-        void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
+        const inline = data.recovery?.session;
+        if (inline?.queueSnapshot) {
+          chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, {
+            type: 'snapshot', snapshot: inline.queueSnapshot,
+          });
+          projectAuthoritativeQueue(chatQueueStateRef.current);
+        }
+        if (inline?.runtime) {
+          patchSessionRuntime(inline.sessionId, {
+            status: inline.runtime.active ? (inline.runtime.status as SessionRuntimeStatus || 'running') : 'idle',
+            source: 'ws',
+            ...(inline.runtime.streamId ? { streamId: inline.runtime.streamId } : {}),
+            ...(inline.runtime.runId ? { runId: inline.runtime.runId } : {}),
+            attached: inline.runtime.active,
+          });
+        }
+        if (inline?.pendingInteractions) {
+          projectRecoveredInteraction({ type: 'pending_interactions', interactions: inline.pendingInteractions });
+        }
+        if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
+          void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
+        }
         return;
       }
 

@@ -108,8 +108,7 @@ beforeEach(() => {
   initPlatform(makePlatform());
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   // 单例的 sync 游标会跨用例残留，复位避免串扰
-  wsClient.setLastSeq(0);
-  wsClient.setEpoch(null);
+  wsClient.resetRecovery({ sessionId: null });
 });
 
 afterEach(() => {
@@ -376,7 +375,7 @@ describe('wsClient - 重连', () => {
     expect(wsClient.isConnected).toBe(true);
   });
 
-  it('pong 后、overflow 前断线时重连 sync 仍携带旧 epoch/seq', async () => {
+  it('epoch restart 后重连 sync 使用新 epoch 与尚未推进的旧 seq', async () => {
     const p = wsClient.connect();
     await vi.advanceTimersByTimeAsync(0);
     const first = latestWs();
@@ -395,7 +394,7 @@ describe('wsClient - 重连', () => {
 
     expect(wsClient.send({ action: 'sync', lastSeq: 4 })).toBe(true);
     expect(JSON.parse(second.sent.at(-1)!)).toEqual({
-      action: 'sync', lastSeq: 4, epoch: 'epoch-1',
+      action: 'sync', lastSeq: 4, epoch: 'epoch-2',
     });
   });
 
@@ -466,6 +465,42 @@ describe('wsClient - 心跳', () => {
     // 75s tick(idle 75s > 50s，触发 close 4000)。推进到 80s 覆盖到第三个 tick。
     await vi.advanceTimersByTimeAsync(80_000);
     expect(ws.closeCalls.some((c) => c.code === 4000)).toBe(true);
+  });
+});
+
+describe('wsClient - authoritative recovery', () => {
+  it('gap 只发送一次带 epoch/sessionId 的 sync，并在连续批次后只投影一次', async () => {
+    wsClient.setSyncSessionId('session-1');
+    const p = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = latestWs();
+    ws.simulateOpen();
+    await p;
+    const handler = vi.fn();
+    wsClient.onMessage(handler);
+
+    ws.simulateMessage({ data: { type: 'sync_ok', seq: 4, epoch: 'epoch-1', events: [] } });
+    handler.mockClear();
+    ws.simulateMessage({ seq: 6, data: { type: 'title_updated', sessionId: 'session-1', title: 'gap' } });
+    ws.simulateMessage({ seq: 6, data: { type: 'title_updated', sessionId: 'session-1', title: 'duplicate gap' } });
+
+    const syncs = ws.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.action === 'sync');
+    expect(syncs).toEqual([{ action: 'sync', lastSeq: 4, epoch: 'epoch-1', sessionId: 'session-1' }]);
+    expect(handler).not.toHaveBeenCalled();
+
+    ws.simulateMessage({ data: { type: 'sync_ok', seq: 6, epoch: 'epoch-1', events: [
+      { seq: 5, event: { type: 'title_updated', sessionId: 'session-1', title: 'five' } },
+      { seq: 6, event: { type: 'title_updated', sessionId: 'session-1', title: 'six' } },
+    ] } });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].data.events).toHaveLength(2);
+  });
+
+  it('resetRecovery clears volatile cursor and overflow session context', () => {
+    wsClient.resetRecovery({ lastSeq: 9, serverEpoch: 'epoch-x', sessionId: 'session-x' });
+    expect(wsClient.getRecoveryCursor()).toEqual({ lastSeq: 9, serverEpoch: 'epoch-x' });
+    wsClient.resetRecovery();
+    expect(wsClient.getRecoveryCursor()).toEqual({ lastSeq: 0, serverEpoch: null });
   });
 });
 

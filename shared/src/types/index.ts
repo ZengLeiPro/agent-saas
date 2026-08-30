@@ -41,8 +41,19 @@ export type {
   SessionSearchResponse,
 } from "./search";
 
-export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
-export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
+export type {
+  WsBlockType,
+  WsAskUserQuestion,
+  WsEvent,
+  WsSyncOverflowRecovery,
+  WsSyncPendingInteractionSnapshot,
+  WsSyncRuntimeSnapshot,
+  WsSyncSessionSnapshot,
+} from "./ws";
+export type {
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
+} from "./runtimeFailure";
 
 export type {
   AuthUser,

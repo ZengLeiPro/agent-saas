@@ -10,6 +10,47 @@ import type { TenantFeatureFlags } from './auth';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 import type { ChatQueueItem, ChatQueueSnapshot } from '../lib/chatQueue';
 
+export interface WsSyncRuntimeSnapshot {
+    active: boolean;
+    streamId?: string;
+    runId?: string;
+    status?: string;
+}
+
+export interface WsSyncPendingInteractionSnapshot {
+    interactionId: string;
+    type: 'ask_user' | 'permission_request';
+    runId?: string;
+    toolCallId?: string;
+    invocationId?: string;
+    questions?: WsAskUserQuestion[];
+    toolId?: string;
+    toolName?: string;
+    displayName?: string;
+    toolInput?: Record<string, unknown>;
+    planContent?: string;
+}
+
+export interface WsSyncSessionSnapshot {
+    sessionId: string;
+    queueSnapshot?: ChatQueueSnapshot;
+    runtime?: WsSyncRuntimeSnapshot;
+    /** Authoritative replacement. An empty array means no pending interaction remains. */
+    pendingInteractions?: WsSyncPendingInteractionSnapshot[];
+}
+
+export interface WsSyncOverflowRecovery {
+    version: 1;
+    authoritative: true;
+    refresh: {
+        sessions: { method: 'GET'; path: '/api/sessions' };
+        sessionDetail: { method: 'GET'; pathTemplate: string; includes: readonly ['queueSnapshot', 'lastRunState'] };
+        runtime: { method: 'GET'; pathTemplate: string };
+        pendingInteractions: { transport: 'ws'; action: 'resume'; responseType: 'pending_interactions' };
+    };
+    session?: WsSyncSessionSnapshot;
+}
+
 export type WsBlockType = 'thinking' | 'text' | 'tool_use';
 export type ChatDeliveryMode = 'queue' | 'steer';
 
@@ -96,8 +137,9 @@ export type WsEvent =
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
-    | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number; epoch?: string }
+    // epoch/recovery are optional for N-1 servers; current servers always include them.
+    | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: WsEvent }> }
+    | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery }
     | { type: 'pong'; seq?: number; epoch?: string; probe?: boolean };
 
 export interface WsOutboundEnvelope {

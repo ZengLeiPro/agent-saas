@@ -15,6 +15,12 @@
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
 import type { SandboxProfile } from '../types/session';
+import type { WsEvent } from '../types/ws';
+import {
+    createSyncRecoveryState,
+    reduceSyncRecovery,
+    type SyncRecoveryState,
+} from './syncRecovery';
 import type {
     CanonicalChatSubmissionWireMessage,
     ChatClientCapability,
@@ -125,6 +131,8 @@ export interface WsSyncMessage {
     lastSeq: number;
     /** 上次见到的服务端用户日志代际；旧服务端会忽略。 */
     epoch?: string;
+    /** 当前会话；新服务端可在 overflow 中内联其权威快照。 */
+    sessionId?: string;
 }
 
 /** 撤回一条仍在排队（未被目标 run 消费）的插话（2026-08-04 终态设计）。 */
@@ -178,9 +186,13 @@ class WsClient {
     private lastPongAt = 0;
     private lastPingSentAt = 0;
 
-    // Heartbeat-piggyback sync: last known user event sequence number + server log epoch
-    private lastSeq = 0;
-    private serverEpoch: string | null = null;
+    // Per-connection authoritative recovery cursor. It is intentionally process-memory only.
+    private recovery: SyncRecoveryState = createSyncRecoveryState();
+    private sentSyncRequestId: number | null = null;
+    private syncSessionId: string | null = null;
+
+    private get lastSeq(): number { return this.recovery.lastSeq; }
+    private get serverEpoch(): string | null { return this.recovery.serverEpoch; }
 
     // Auth failure detection
     private consecutiveFailures = 0;
@@ -299,6 +311,85 @@ class WsClient {
         return connectPromise;
     }
 
+    private sendRecoveryRequestIfNeeded(): void {
+        const request = this.recovery.syncRequest;
+        if (!request || request.id === this.sentSyncRequestId) return;
+        this.sentSyncRequestId = request.id;
+        this.send({
+            action: 'sync',
+            lastSeq: request.lastSeq,
+            ...(request.epoch ? { epoch: request.epoch } : {}),
+            ...(this.syncSessionId ? { sessionId: this.syncSessionId } : {}),
+        });
+    }
+
+    /** Returns the one normalized envelope adapters may project, or null for rejected/control frames. */
+    private reduceInboundRecovery(envelope: WsEnvelope): WsEnvelope | null {
+        const data = envelope.data as WsEvent | undefined;
+        if (!data?.type) return envelope;
+
+        if (data.type === 'pong') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'pong', seq: data.seq, epoch: data.epoch,
+            });
+            this.sendRecoveryRequestIfNeeded();
+            return null;
+        }
+
+        if (data.type === 'sync_ok') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'sync_ok', seq: data.seq, epoch: data.epoch, events: data.events,
+            });
+            const accepted = this.recovery.appliedEvents;
+            const normalized: WsEvent = {
+                type: 'sync_ok',
+                seq: this.recovery.lastSeq,
+                ...(this.recovery.serverEpoch ? { epoch: this.recovery.serverEpoch } : {}),
+                events: accepted.map(({ seq, event }) => ({ seq, event })),
+            };
+            this.sendRecoveryRequestIfNeeded();
+            return { ...envelope, data: normalized };
+        }
+
+        if (data.type === 'sync_overflow') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'sync_overflow', seq: data.seq, epoch: data.epoch,
+            });
+            return {
+                ...envelope,
+                data: {
+                    ...data,
+                    seq: this.recovery.lastSeq,
+                    ...(this.recovery.serverEpoch ? { epoch: this.recovery.serverEpoch } : {}),
+                },
+            };
+        }
+
+        if (typeof envelope.seq === 'number') {
+            // N-1 servers do not expose an epoch. Their first observed live event is the only
+            // available baseline; epoch-aware servers establish it through pong/sync first.
+            if (this.recovery.lastSeq === 0 && this.recovery.serverEpoch === null && this.recovery.phase === 'idle') {
+                this.recovery = { ...this.recovery, lastSeq: Math.max(0, envelope.seq - 1) };
+            }
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'event',
+                envelope: {
+                    seq: envelope.seq,
+                    ...(typeof (data as { epoch?: unknown }).epoch === 'string'
+                        ? { epoch: (data as unknown as { epoch: string }).epoch }
+                        : {}),
+                    event: data,
+                },
+            });
+            this.sendRecoveryRequestIfNeeded();
+            const accepted = this.recovery.appliedEvents[0];
+            if (!accepted) return null;
+            return { ...envelope, seq: accepted.seq, data: accepted.event };
+        }
+
+        return envelope;
+    }
+
     private doConnect(url: string, token?: string): void {
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
@@ -344,7 +435,7 @@ class WsClient {
                 // a pong/sync frame specifically; streaming frames may arrive while
                 // heartbeat replies are queued behind other downstream messages.
                 this.lastPongAt = now;
-                const messageData = envelope.data as { type?: string; epoch?: unknown; seq?: unknown } | null | undefined;
+                const messageData = envelope.data as { type?: string } | null | undefined;
                 const msgType = messageData?.type;
                 if (msgType === 'auth_ok') {
                     this.retryAttempt = 0;
@@ -358,33 +449,15 @@ class WsClient {
                     return;
                 }
                 if (this.state !== 'connected') return;
-                // pong 只证明链路存活，不能推进恢复 cursor/epoch。若 pong 后、对应 overflow/sync_ok
-                // 前断线，提前采纳其 E2/seq 会让重连 sync 跳过本应执行的恢复窗口。
-                if (msgType === 'pong') {
-                    const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
-                    if (typeof rttMs === 'number' && rttMs >= 3000) {
-                        console.warn(`[WS] Heartbeat pong slow: ${rttMs}ms`);
-                    }
-                    return;
-                }
-                // 只有可恢复的 sync 结果或真实事件信封才推进 cursor/epoch。
-                // overflow 可能切换 epoch 并把 seq 回退到新代际起点，因此不能只取 max。
+                const normalized = this.reduceInboundRecovery(envelope);
+                if (!normalized) return;
                 if (msgType === 'sync_ok' || msgType === 'sync_overflow') {
-                    if (typeof messageData?.seq === 'number') this.lastSeq = messageData.seq;
-                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
                     if (typeof rttMs === 'number' && rttMs >= 3000) {
                         console.warn(`[WS] Heartbeat sync response slow: ${msgType} ${rttMs}ms`);
                     }
-                } else {
-                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
-                    if (typeof envelope.seq === 'number' && envelope.seq > this.lastSeq) {
-                        this.lastSeq = envelope.seq;
-                    }
                 }
-                for (const handler of this.messageHandlers) {
-                    handler(envelope);
-                }
+                for (const handler of this.messageHandlers) handler(normalized);
             } catch {
                 // ignore parse errors
             }
@@ -500,14 +573,34 @@ class WsClient {
 
     // ── Public API ──────────────────────────────────────
 
-    /** Update the last known user event sequence (called by store/hooks after sync responses). */
+    /** N-1 adapter compatibility; prefer resetRecovery at account/session boundaries. */
     setLastSeq(seq: number): void {
-        this.lastSeq = seq;
+        this.recovery = { ...this.recovery, lastSeq: Math.max(0, seq) };
     }
 
-    /** Update the server UserEventLog epoch; null is only used by tests/account resets. */
+    /** N-1 adapter compatibility. Epoch is not persisted across process restarts. */
     setEpoch(epoch: string | null): void {
-        this.serverEpoch = epoch;
+        if (epoch === null && this.recovery.lastSeq === 0) {
+            this.resetRecovery();
+            return;
+        }
+        this.recovery = { ...this.recovery, serverEpoch: epoch };
+    }
+
+    /** Supplies the optional session used by overflow inline recovery. */
+    setSyncSessionId(sessionId: string | null): void {
+        this.syncSessionId = sessionId;
+    }
+
+    /** Explicit M20-04 boundary: clear volatile cursor/generation state without reconnecting. */
+    resetRecovery(baseline: { lastSeq?: number; serverEpoch?: string | null; sessionId?: string | null } = {}): void {
+        this.recovery = createSyncRecoveryState(baseline);
+        this.sentSyncRequestId = null;
+        if ('sessionId' in baseline) this.syncSessionId = baseline.sessionId ?? null;
+    }
+
+    getRecoveryCursor(): Readonly<{ lastSeq: number; serverEpoch: string | null }> {
+        return { lastSeq: this.recovery.lastSeq, serverEpoch: this.recovery.serverEpoch };
     }
 
     /** Disconnect */
@@ -545,8 +638,12 @@ class WsClient {
                 return false;
             }
             // wsClient 持有从 sync/真实事件得到的最新 epoch，覆盖调用方可能滞后的副本。
-            const outbound = msg.action === 'sync' && this.serverEpoch
-                ? { ...msg, epoch: this.serverEpoch }
+            const outbound = msg.action === 'sync'
+                ? {
+                    ...msg,
+                    ...(this.serverEpoch ? { epoch: this.serverEpoch } : {}),
+                    ...((msg.sessionId ?? this.syncSessionId) ? { sessionId: msg.sessionId ?? this.syncSessionId! } : {}),
+                }
                 : msg;
             this.ws.send(JSON.stringify(outbound));
             return true;

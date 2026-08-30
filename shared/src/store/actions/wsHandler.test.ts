@@ -50,7 +50,7 @@ vi.mock('./sendChat', () => ({
   sendChatViaWs: (...a: unknown[]) => sendChatMock(...a),
 }));
 
-import { setupWsHandler } from './wsHandler';
+import { setupWsHandler, setSyncRecoveryCallbacks } from './wsHandler';
 import { getChatStore, resetChatStore } from '../index';
 import { initPlatform } from '../../platform/context';
 import type { PlatformDeps } from '../../platform/types';
@@ -91,6 +91,7 @@ beforeEach(() => {
   refreshCurrentMock.mockClear();
   fetchTokenUsageMock.mockClear();
   sendChatMock.mockClear();
+  setSyncRecoveryCallbacks({});
   setupWsHandler(); // 注册 handler
 });
 
@@ -116,15 +117,15 @@ describe('eventId / eventCursor 追踪', () => {
 });
 
 describe('seq gap 检测与主动 sync', () => {
-  it('已建基线且发现 gap → 主动发 sync(lastSeq=prev)', () => {
+  it('已建基线且发现 gap → 只发 sync(lastSeq=prev) 且不投影 gap 帧', () => {
     const store = getChatStore();
     store.setState({ lastUserSeq: 5, lastUserEpoch: 'server-epoch-1', isAttached: true });
     // seq 从 5 跳到 8（gap）
     emit({ seq: 8, data: { type: 'text' } });
     expect(wsSend).toHaveBeenCalledWith({ action: 'sync', lastSeq: 5, epoch: 'server-epoch-1' });
-    // lastUserSeq 前进到 8
-    expect(store.getState().lastUserSeq).toBe(8);
-    expect(wsSetLastSeq).toHaveBeenCalledWith(8);
+    // Gap frame is fenced until the contiguous sync response arrives.
+    expect(store.getState().lastUserSeq).toBe(5);
+    expect(wsSetLastSeq).not.toHaveBeenCalled();
   });
 
   it('未建基线（prevSeq=0）时即使跳号也不触发 sync，仅推进基线', () => {
@@ -178,13 +179,13 @@ describe('sync 协议响应', () => {
       { sessionId: 's1', updatedAtMs: 1, title: '旧', source: { type: 'web', label: 'WEB' } },
       { sessionId: 's2', updatedAtMs: 2, source: { type: 'web', label: 'WEB' } },
     ]);
-    emit({ data: { type: 'sync_ok', seq: 20, epoch: 'server-epoch-1', events: [
-      { event: { type: 'title_updated', sessionId: 's1', title: '新标题' } },
-      { event: { type: 'session_deleted', sessionId: 's2' } },
+    emit({ data: { type: 'sync_ok', seq: 2, epoch: 'server-epoch-1', events: [
+      { seq: 1, event: { type: 'title_updated', sessionId: 's1', title: '新标题' } },
+      { seq: 2, event: { type: 'session_deleted', sessionId: 's2' } },
     ] } });
 
-    expect(store.getState()).toMatchObject({ lastUserSeq: 20, lastUserEpoch: 'server-epoch-1' });
-    expect(wsSetLastSeq).toHaveBeenCalledWith(20);
+    expect(store.getState()).toMatchObject({ lastUserSeq: 2, lastUserEpoch: 'server-epoch-1' });
+    expect(wsSetLastSeq).toHaveBeenCalledWith(2);
     expect(wsSetEpoch).toHaveBeenCalledWith('server-epoch-1');
     const s = store.getState().sessions;
     expect(s.find(x => x.sessionId === 's1')!.title).toBe('新标题');
@@ -192,7 +193,7 @@ describe('sync 协议响应', () => {
   });
 
   it('sync_ok 中 stream_started 事件触发列表刷新', () => {
-    emit({ data: { type: 'sync_ok', seq: 3, events: [{ event: { type: 'stream_started' } }] } });
+    emit({ data: { type: 'sync_ok', seq: 1, events: [{ seq: 1, event: { type: 'stream_started', sessionId: 's1', streamId: 'st-1' } }] } });
     expect(loadSessionsMock).toHaveBeenCalledWith({ fresh: true });
   });
 
@@ -204,12 +205,32 @@ describe('sync 协议响应', () => {
     expect(wsSetEpoch).not.toHaveBeenCalled();
   });
 
-  it('sync_overflow：更新 seq 并降级全量刷新列表', () => {
+  it('sync_overflow：内联快照权威替换 queue/runtime/interaction，缺失时走既有刷新', () => {
     const store = getChatStore();
-    emit({ data: { type: 'sync_overflow', seq: 99, epoch: 'server-epoch-2' } });
+    const replaceQueue = vi.fn();
+    const replaceRuntime = vi.fn();
+    const replacePendingInteractions = vi.fn();
+    setSyncRecoveryCallbacks({ replaceQueue, replaceRuntime, replacePendingInteractions });
+    const queueSnapshot = { sessionId: 's1', items: [], version: 1 };
+    emit({ data: { type: 'sync_overflow', seq: 99, epoch: 'server-epoch-2', recovery: {
+      version: 1, authoritative: true,
+      refresh: {
+        sessions: { method: 'GET', path: '/api/sessions' },
+        sessionDetail: { method: 'GET', pathTemplate: '/api/sessions/{sessionId}', includes: ['queueSnapshot', 'lastRunState'] },
+        runtime: { method: 'GET', pathTemplate: '/api/sessions/{sessionId}/stream-status' },
+        pendingInteractions: { transport: 'ws', action: 'resume', responseType: 'pending_interactions' },
+      },
+      session: { sessionId: 's1', queueSnapshot, runtime: { active: false }, pendingInteractions: [] },
+    } } });
     expect(store.getState()).toMatchObject({ lastUserSeq: 99, lastUserEpoch: 'server-epoch-2' });
-    expect(wsSetEpoch).toHaveBeenCalledWith('server-epoch-2');
+    expect(replaceQueue).toHaveBeenCalledWith(queueSnapshot);
+    expect(replaceRuntime).toHaveBeenCalledWith('s1', { active: false });
+    expect(replacePendingInteractions).toHaveBeenCalledWith('s1', []);
     expect(loadSessionsMock).toHaveBeenCalledWith({ fresh: true });
+    expect(refreshCurrentMock).not.toHaveBeenCalled();
+
+    emit({ data: { type: 'sync_overflow', seq: 100, epoch: 'server-epoch-2' } });
+    expect(refreshCurrentMock).toHaveBeenCalled();
   });
 });
 

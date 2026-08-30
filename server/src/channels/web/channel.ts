@@ -65,6 +65,7 @@ import { WsServer, type WsClient } from './wsServer.js';
 import { sensitiveActionAccessError, type SensitiveActionTarget } from './wsAuthorization.js';
 import { EventBus, type SessionContext } from './eventBus.js';
 import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
+import { buildSyncOverflowFrame, type SyncPendingInteractionSnapshot, type SyncSessionSnapshot } from './syncProtocol.js';
 import { appendLoginLog, detectLoginChannel } from '../../data/login-logs/index.js';
 import { getUserExtraDirs, isPathWithinAnyDirectory, isPathWithinDirectory } from '../../security/extraDirs.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
@@ -537,7 +538,9 @@ export class WebChannel implements BaseChannel {
           this.handleDetach(client);
           break;
         case 'sync':
-          this.handleSync(client, msg);
+          void this.handleSync(client, msg).catch((err) => {
+            chatLogger.warn(`[sync] authoritative recovery failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
           break;
         default:
           this.wsSend(client.ws, { type: 'error', message: `Unknown action: ${(msg as any).action}` });
@@ -2297,8 +2300,8 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  /** 处理 sync 消息：断线重连时回放漏掉的元数据事件 */
-  private handleSync(client: WsClient, msg: WsSyncMessage): void {
+  /** 处理 sync 消息：断线重连时回放漏掉的元数据事件。 */
+  private async handleSync(client: WsClient, msg: WsSyncMessage): Promise<void> {
     const userId = client.user?.sub;
     if (!userId || !this.wsServer) return;
 
@@ -2306,13 +2309,21 @@ export class WebChannel implements BaseChannel {
     const epoch = eventLog.getEpoch(userId);
     const currentSeq = eventLog.getCurrentSeq(userId);
     if (this.wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
-      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
+      this.wsSend(client.ws, buildSyncOverflowFrame(
+        currentSeq,
+        epoch,
+        await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+      ));
       return;
     }
 
     const result = eventLog.getEventsAfter(userId, msg.lastSeq);
     if (result.gapDetected) {
-      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
+      this.wsSend(client.ws, buildSyncOverflowFrame(
+        currentSeq,
+        epoch,
+        await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+      ));
     } else {
       this.wsSend(client.ws, {
         type: 'sync_ok',
@@ -2323,19 +2334,54 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
+  private async buildAuthoritativeSyncSessionSnapshot(
+    client: WsClient,
+    requestedSessionId?: string,
+  ): Promise<SyncSessionSnapshot | undefined> {
+    const sessionId = requestedSessionId ?? this.wsSessionAffinity.get(client.ws);
+    if (!sessionId) return undefined;
+    const snapshot: SyncSessionSnapshot = { sessionId };
+    const runStore = this.config.enqueueRuntime?.runStore;
+    if (runStore?.listUserMessagesBySession) {
+      const runs = await runStore.listUserMessagesBySession(sessionId);
+      const first = runs[0];
+      if (first && this.sensitiveActionAccessError(client, {
+        tenantId: first.tenantId,
+        ownerUserId: first.userId,
+      })) return undefined;
+      snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
+    }
+    snapshot.runtime = await this.getStreamStatus(sessionId);
+    snapshot.pendingInteractions = await this.getAuthoritativePendingInteractions(
+      client,
+      sessionId,
+      client.user?.tenantId,
+    );
+    return snapshot;
+  }
+
+  private async getAuthoritativePendingInteractions(
+    client: WsClient,
+    sessionId: string,
+    tenantId?: string,
+  ): Promise<SyncPendingInteractionSnapshot[]> {
     const pending = interactionStore.getPendingInteractions(sessionId);
     const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
-    if (ownerIds.size > 1) return;
+    if (ownerIds.size > 1) return [];
     const ownerUserId = this.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
     const scopedTenantId = tenantId ?? this.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
-    if (this.config.runtimeEventStoreFor && !scopedTenantId) return;
+    if (this.config.runtimeEventStoreFor && !scopedTenantId) return [];
     const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
     const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
     const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
 
     const recovered = scanBufferForPendingInteractions(this.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
     if (recovered.length > 0) unresolved.push(...recovered);
+    return unresolved;
+  }
+
+  private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
+    const unresolved = await this.getAuthoritativePendingInteractions(client, sessionId, tenantId);
     if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: unresolved });
   }
 

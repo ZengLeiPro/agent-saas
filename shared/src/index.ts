@@ -83,6 +83,10 @@ export type {
   WsBlockType,
   WsAskUserQuestion,
   WsEvent,
+  WsSyncOverflowRecovery,
+  WsSyncPendingInteractionSnapshot,
+  WsSyncRuntimeSnapshot,
+  WsSyncSessionSnapshot,
   RuntimeFailureKind,
   RuntimeRecoveryAction,
   AuthUser,
@@ -464,6 +468,36 @@ export type {
 } from './lib/chatQueue';
 export { chatQueueReducerEventsFromWsEvent } from './lib/chatQueueWs';
 
+// Lib - authoritative WS sync recovery
+export {
+  createSyncRecoveryState,
+  reduceSyncRecovery,
+  resetSyncRecovery,
+  selectAppliedInteractionEvents,
+  selectAppliedQueueEvents,
+  selectAppliedRuntimeEvents,
+  selectAppliedSessionUserEvents,
+  selectFullRefreshRequired,
+  selectRecoveredInteractions,
+  selectRecoveredQueue,
+  selectRecoveredRuntime,
+  selectRecoveredSession,
+  selectSyncRequest,
+  syncRecoveryReducer,
+} from './lib/syncRecovery';
+export type {
+  AppliedSyncEvent,
+  FullRefreshRequired,
+  SyncEventEnvelope,
+  SyncInteractionProjection,
+  SyncRecoveryAction,
+  SyncRecoveryPhase,
+  SyncRecoveryState,
+  SyncRequest,
+  SyncRuntimeProjection,
+  SyncSessionProjection,
+} from './lib/syncRecovery';
+
 // Lib - WebSocket client
 export { wsClient } from './lib/wsClient';
 export type {
@@ -479,6 +513,7 @@ export type {
   WsResumeMessage,
   WsOutboundMessage,
   WsEnvelope,
+  WsSyncMessage,
 } from './lib/wsClient';
 
 // Lib - sessions API (mapping functions)
@@ -813,7 +848,9 @@ export {
   setVoiceCallback,
   setGroupsRefreshCallback,
   setOnNewSession,
+  setSyncRecoveryCallbacks,
 } from './store/actions/wsHandler';
+export type { SyncRecoveryCallbacks } from './store/actions/wsHandler';
 export {
   handleReconnected,
   handleDisconnecting,

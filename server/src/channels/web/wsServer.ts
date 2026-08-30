@@ -15,6 +15,7 @@ import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
 import { checkTenantAccess } from '../../data/tenants/access.js';
 import { UserEventLog } from './userEventLog.js';
+import { buildSyncOverflowFrame } from './syncProtocol.js';
 
 export interface WsUser {
     sub: string;
@@ -35,8 +36,6 @@ export interface WsClient {
     userAgent?: string;
     authenticated?: boolean;
     authenticationTimer?: ReturnType<typeof setTimeout>;
-    /** 旧客户端不发送 epoch；记录本 socket 已经 overflow 接受过的用户日志代际。 */
-    acceptedLegacyUserEventEpoch?: string;
 }
 
 export type WsMessageHandler = (client: WsClient, msg: WsInboundMessage) => void;
@@ -101,10 +100,7 @@ export class WsServer {
         this.closeHandler = handler;
     }
 
-    /**
-     * 校验用户日志代际。旧客户端没有 epoch：同一 socket 每个用户代际只 overflow 一次，
-     * 随后把该代际视为已接受；TTL 重建换代后再 overflow 一次。
-     */
+    /** 校验用户日志代际。N-1 客户端不发送 epoch，继续使用保留窗口的连续性判定。 */
     hasUserEventEpochMismatch(
         client: WsClient,
         userId: string,
@@ -113,10 +109,7 @@ export class WsServer {
     ): boolean {
         if (lastSeq <= 0) return false;
         const currentEpoch = this.userEventLog.getEpoch(userId);
-        if (clientEpoch !== undefined) return clientEpoch !== currentEpoch;
-        if (client.acceptedLegacyUserEventEpoch === currentEpoch) return false;
-        client.acceptedLegacyUserEventEpoch = currentEpoch;
-        return true;
+        return clientEpoch !== undefined && clientEpoch !== currentEpoch;
     }
 
     /** Attach to an HTTP server for upgrade handling */
@@ -231,11 +224,11 @@ export class WsServer {
                             this.sendTo(ws, { data: { type: 'pong', seq: currentSeq, epoch: serverEpoch } });
                             if (typeof lastSeq === 'number') {
                                 if (this.hasUserEventEpochMismatch(client, userId, clientEpoch, lastSeq)) {
-                                    this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                    this.sendTo(ws, { data: buildSyncOverflowFrame(currentSeq, serverEpoch) });
                                 } else {
                                     const result = this.userEventLog.getEventsAfter(userId, lastSeq);
                                     if (result.gapDetected) {
-                                        this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                        this.sendTo(ws, { data: buildSyncOverflowFrame(currentSeq, serverEpoch) });
                                     } else if (result.events.length > 0) {
                                         this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, epoch: serverEpoch, events: result.events } });
                                     }

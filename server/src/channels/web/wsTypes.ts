@@ -6,6 +6,7 @@
  */
 
 import type { ChatQueueItem, ChatQueueSnapshot, MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
+import type { SyncOverflowRecovery } from './syncProtocol.js';
 import type {
     CanonicalChatSubmissionWireMessage,
     ChatClientCapability,
@@ -154,6 +155,8 @@ export interface WsSyncMessage {
     lastSeq: number;
     /** 客户端上次见到的用户日志代际；旧客户端可省略。 */
     epoch?: string;
+    /** 可选的当前会话，用于 overflow 时内联返回 queue/runtime/interaction 权威快照。 */
+    sessionId?: string;
 }
 
 export type WsInboundMessage =
@@ -241,5 +244,5 @@ export type WsDownstreamEvent =
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
     | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number; epoch: string }
+    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery }
     | { type: 'pong'; seq?: number; epoch: string; probe?: boolean };

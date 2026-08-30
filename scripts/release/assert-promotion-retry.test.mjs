@@ -34,16 +34,32 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
   });
 });
 
-test('rejects retry after production mutation may have started', () => {
+test('allows reviewed recovery from needs_human but rejects ambiguous mutation histories', () => {
+  assert.deepEqual(
+    assertPromotionRetryable([
+      entry('verified', 'verified:1'),
+      entry('approved'),
+      entry('promoting', 'promoting:1'),
+      entry('needs_human'),
+    ]),
+    {
+      mode: 'retry_after_change',
+      latestState: 'needs_human',
+      verifiedOperationKey: 'verified:1',
+      promotingOperationKey: 'promoting:1',
+      previousApprovalCount: 1,
+    },
+  );
   assert.throws(
     () =>
       assertPromotionRetryable([
         entry('verified'),
         entry('approved'),
         entry('promoting'),
+        entry('partial_failed'),
         entry('needs_human'),
       ]),
-    /production mutation state: promoting/u,
+    /terminal post-mutation state: partial_failed/u,
   );
   assert.throws(
     () => assertPromotionRetryable([entry('verified'), entry('needs_human')]),

@@ -118,6 +118,7 @@ jobs:
           set -euo pipefail
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
+          retry_mode="$(printf '%s' "$retry_evidence" | jq -r .mode)"
           if [ "$(printf '%s' "$retry_evidence" | jq -r .mode)" = retry_before_change ] && \
              [ "$(tail -n1 "$log" | jq -r .state)" != failed_before_change ]; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
@@ -164,8 +165,9 @@ jobs:
             --arg stagingDeploymentId "$deployment_id" --arg stagingRunId "$staging_run_id" \
             --argjson verificationSummary "$verification_summary" \
             --arg triggeredAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --arg recoveryMode "$retry_mode" \
             --arg reason "$PROMOTION_REASON" \
-            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,reason:$reason}')"
+            '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
@@ -175,6 +177,7 @@ jobs:
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           echo 'APPROVAL_RECORDED=true' >> "$GITHUB_ENV"
+          echo "PROMOTION_RETRY_MODE=$retry_mode" >> "$GITHUB_ENV"
 
       - name: Configure production SSH
         run: |
@@ -194,16 +197,20 @@ jobs:
           set -euo pipefail
           remote="/tmp/release-preflight-$GITHUB_RUN_ID"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/production_key scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs scripts/release/artifact-lib.mjs \
+          scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
+            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
+            scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
             "$ECS_USER@$ECS_HOST:$remote/"
+          reader=read-production-state.mjs
+          [ "$PROMOTION_RETRY_MODE" = retry_after_change ] && reader=read-live-production-components.mjs
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-production-state.mjs' --output '$remote/production-before.json' >/dev/null"
+            "node '$remote/$reader' --output '$remote/production-before.json' >/dev/null"
           scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-before.json" \
             "$RUNNER_TEMP/production-before.json"
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
-            --production-state "$RUNNER_TEMP/production-before.json"
+            --production-state "$RUNNER_TEMP/production-before.json" \
+            --recovery-mode "$PROMOTION_RETRY_MODE"
 
       - name: Verify immutable Manifest and artifact index from OSS record
         run: |
@@ -457,34 +464,17 @@ jobs:
             --arg configFingerprint "$MANIFEST_DIGEST" \
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > "$RUNNER_TEMP/web-assets/release-identity.json"
-          had_index=false; had_identity=false
-          if aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/index.html" \
-            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
-            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
-              "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
-            had_index=true
-          fi
-          test "$had_index" = true
-          if aliyun --secure oss stat "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-            --region "$RELEASE_RECORD_OSS_REGION" >/dev/null 2>&1; then
-            aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
-              "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
-            had_identity=true
-          fi
+          aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
+            "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
+          aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+            "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
           restore_web_entry() {
-            if [ "$had_identity" = true ]; then
-              aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
-                "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-                --region "$RELEASE_RECORD_OSS_REGION" || true
-            else
-              aliyun --secure oss rm "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-                --region "$RELEASE_RECORD_OSS_REGION" || true
-            fi
-            if [ "$had_index" = true ]; then
-              aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
-                "$PRODUCTION_WEB_OSS_URI/index.html" --force \
-                --region "$RELEASE_RECORD_OSS_REGION" || true
-            fi
+            aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
+              "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+              --region "$RELEASE_RECORD_OSS_REGION" || true
+            aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
+              "$PRODUCTION_WEB_OSS_URI/index.html" --force \
+              --region "$RELEASE_RECORD_OSS_REGION" || true
           }
           web_committed=false
           cleanup_web_on_exit() {

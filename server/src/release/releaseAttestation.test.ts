@@ -54,6 +54,20 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
+  it('allows human-reviewed recovery after a durable promotion reached needs_human', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'promoting', 'promoting-1');
+    append(entries, 'needs_human', 'needs-human-1');
+    append(entries, 'approved', 'recovery-approval');
+    append(entries, 'promoting', 'promoting-2');
+    append(entries, 'completed');
+    expect(entries.currentState()).toBe('completed');
+  });
+
   it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
     const entries = log();
     const first = append(entries, 'built', 'build-1');
@@ -259,7 +273,7 @@ describe('ReleaseAttestationLog', () => {
     });
   });
 
-  it.each(['failed_before_change', 'partial_failed', 'rolled_back', 'needs_human'] as const)(
+  it.each(['failed_before_change', 'partial_failed', 'rolled_back'] as const)(
     'records truthful terminal promotion outcome %s without allowing later completion',
     (outcome) => {
       const entries = log();

@@ -182,6 +182,10 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [claimedId]: 'pending',
       [unknownId]: 'result_unknown',
     });
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET state='unverifiable' WHERE evaluation_id=$1`,
+      [claimedId],
+    );
   });
 
   it('explicit evaluator receipts are idempotent and only completed/not_found resolve result_unknown', async () => {

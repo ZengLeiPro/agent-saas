@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("ScenariosPanel V3", () => {
-  it("有引导演示时仍展示完整目录，回放步骤结果不再内嵌主区", async () => {
+  it("有引导演示时仍展示完整目录，按需加载回放步骤结果", async () => {
     const guided = makeWorkflowScenario("guided", {
       featured: true,
       featuredOrder: 1,
@@ -93,7 +93,7 @@ describe("ScenariosPanel V3", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
     expect(screen.getByText("1 / 6")).toBeTruthy();
-    expect(screen.getByText("任务步骤")).toBeTruthy();
+    expect(await screen.findByText("任务步骤", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getAllByText("业务步骤 1").length).toBeGreaterThan(0);
     expect(screen.queryByText("业务步骤 1已完成并形成可回读结果")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "返回" }));

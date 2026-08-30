@@ -5,7 +5,7 @@
  * 验收标准：演示与普通客户视图必须同构，不允许存在只有演示看得到的内容。
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
 import { knowledgeQaScript } from './knowledgeQaScript';
 import { deadlineWatchScript } from './deadlineWatchScript';
@@ -63,15 +63,18 @@ function clickNext(times: number) {
   }
 }
 
-function openBusinessStep(content: string) {
-  const plan = document.querySelector<HTMLElement>('[data-business-step-plan]');
-  expect(plan).toBeTruthy();
-  const label = within(plan!).getByText(content);
+async function openBusinessStep(content: string) {
+  const plan = await waitFor(() => {
+    const current = document.querySelector<HTMLElement>('[data-business-step-plan]');
+    expect(current).toBeTruthy();
+    return current!;
+  }, { timeout: 5_000 });
+  const label = within(plan).getByText(content);
   fireEvent.click(label.closest('button')!);
 }
 
 describe('ScenarioReplayView', () => {
-  it('打开时只显示用户消息，点击下一步后才显示第一条 Agent 输出', () => {
+  it('打开时只显示用户消息，点击下一步后才显示第一条 Agent 输出', async () => {
     renderReplay();
     expect(screen.getByText(`0 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
@@ -80,7 +83,7 @@ describe('ScenarioReplayView', () => {
 
     clickNext(1);
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
-    expect(screen.getByText('员工提问')).toBeTruthy();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
   });
 
@@ -89,8 +92,8 @@ describe('ScenarioReplayView', () => {
     expect(screen.queryByText('任务步骤')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('任务步骤')).toBeTruthy();
-    openBusinessStep('员工提问');
+    expect(await screen.findByText('任务步骤', {}, { timeout: 5_000 })).toBeTruthy();
+    await openBusinessStep('员工提问');
     expect(await screen.findByText('员工提问已完成并形成可回读结果')).toBeTruthy();
     expect(document.querySelector('[data-scenario-business-step-panel]')).toBeTruthy();
   });
@@ -100,7 +103,7 @@ describe('ScenarioReplayView', () => {
     try {
       renderReplay();
       clickNext(1);
-      openBusinessStep('员工提问');
+      await openBusinessStep('员工提问');
       await screen.findByRole('dialog');
       expect(document.querySelector('[data-business-step-detail-sheet]')).toBeTruthy();
       expect(document.querySelector('[data-scenario-business-step-panel]')).toBeNull();
@@ -157,13 +160,13 @@ describe('ScenarioReplayView', () => {
     expect(screen.getByText('订单 1').closest('tr')?.hasAttribute('data-panel-delta')).toBe(false);
   });
 
-  it('义务巡检首屏先显示员工的简单问题，推进后才扫描企业台账', () => {
+  it('义务巡检首屏先显示员工的简单问题，推进后才扫描企业台账', async () => {
     render(<ScenarioReplayView script={deadlineWatchScript} onExit={vi.fn()} typewriterIntervalMs={0} />);
     expect(screen.getByText('本月哪些义务还没到权威终态？先处理会错过窗口的。')).toBeTruthy();
     expect(screen.queryByText('扫描到期事项台账')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('一句话问清本月未结义务')).toBeTruthy();
+    expect(await screen.findByText('一句话问清本月未结义务', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('一句话问清本月未结义务已完成并形成可回读结果')).toBeNull();
     expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
@@ -247,15 +250,15 @@ describe('ScenarioReplayView', () => {
     vi.useRealTimers();
   });
 
-  it('逐步推进时保留用户消息，并在同一主卡中累加步骤行', () => {
+  it('逐步推进时保留用户消息，并在同一主卡中累加步骤行', async () => {
     renderReplay();
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     clickNext(1);
-    expect(screen.getByText('员工提问')).toBeTruthy();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
     clickNext(1);
     expect(screen.getByText(/住宿能报多少/)).toBeTruthy();
     expect(screen.getByText('员工提问')).toBeTruthy();
-    expect(screen.getByText('检索制度库')).toBeTruthy();
+    expect(await screen.findByText('检索制度库', {}, { timeout: 5_000 })).toBeTruthy();
     expect(document.querySelectorAll('[data-business-step-plan]')).toHaveLength(1);
     expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
     expect(screen.queryByText('检索制度库已完成并形成可回读结果')).toBeNull();
@@ -290,7 +293,7 @@ describe('ScenarioReplayView', () => {
     renderReplay();
     clickNext(1);
 
-    const stepButton = screen.getByText('员工提问').closest('button')!;
+    const stepButton = (await screen.findByText('员工提问', {}, { timeout: 5_000 })).closest('button')!;
     stepButton.focus();
     fireEvent.keyDown(stepButton, { key: 'ArrowRight' });
     expect(screen.getByText(`1 / ${knowledgeQaScript.steps.length}`)).toBeTruthy();
@@ -327,12 +330,12 @@ describe('ScenarioReplayView', () => {
 });
 
 describe('右侧企业系统面板', () => {
-  it('初始态不显示面板，第一次工具执行后再出现', () => {
+  it('初始态不显示面板，第一次工具执行后再出现', async () => {
     renderReplay();
     expect(screen.queryByText('企业系统实况')).toBeNull();
     clickNext(1);
     expect(screen.getByText('企业系统实况')).toBeTruthy();
-    expect(screen.getByText('员工提问')).toBeTruthy();
+    expect(await screen.findByText('员工提问', {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.queryByText('员工提问已完成并形成可回读结果')).toBeNull();
   });
 
@@ -455,7 +458,7 @@ describe('Workflow Trace V1 Hero', () => {
     expect(screen.queryByText('企业系统实况')).toBeNull();
 
     clickNext(1);
-    expect(screen.getByText('任务步骤')).toBeTruthy();
+    expect(await screen.findByText('任务步骤', {}, { timeout: 5_000 })).toBeTruthy();
     const plan = document.querySelector<HTMLElement>('[data-business-step-plan]');
     expect(within(plan!).getAllByText('先发现不能靠猜的规格冲突')).toHaveLength(1);
     expect(screen.queryByText('发现 1 项关键规格冲突，已停止继续报价')).toBeNull();
@@ -463,14 +466,14 @@ describe('Workflow Trace V1 Hero', () => {
     expect(screen.getByText('防护等级 IP65')).toBeTruthy();
     expect(screen.getByText(/演示来源：询价资料库（不进入真实审计）/)).toBeTruthy();
 
-    openBusinessStep('先发现不能靠猜的规格冲突');
+    await openBusinessStep('先发现不能靠猜的规格冲突');
     expect(await screen.findByText('发现 1 项关键规格冲突，已停止继续报价')).toBeTruthy();
     expect(screen.queryByText('企业系统实况')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '关闭步骤详情' }));
     expect(screen.getByText('企业系统实况')).toBeTruthy();
   });
 
-  it('Trace gate 退回不产生发送 effect，重新提交并批准后才继续', () => {
+  it('Trace gate 退回不产生发送 effect，重新提交并批准后才继续', async () => {
     const script = traceScript();
     render(<ScenarioReplayView script={script} onExit={vi.fn()} typewriterIntervalMs={0} />);
     clickNext(2);
@@ -484,7 +487,7 @@ describe('Workflow Trace V1 Hero', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新提交审核' }));
     fireEvent.click(screen.getByRole('button', { name: '确认发送澄清' }));
     expect(screen.getByText('3 / 8')).toBeTruthy();
-    expect(screen.getAllByText('客户答复后从原任务继续')).toHaveLength(1);
+    expect(await screen.findAllByText('客户答复后从原任务继续', {}, { timeout: 5_000 })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: '沟通' }));
     expect(screen.getByText('澄清消息已模拟送达测试联系人。')).toBeTruthy();
   });

@@ -15,6 +15,9 @@ function createFakePool() {
   const client = {
     async query(text: string, values: unknown[] = []) {
       queries.push({ text, values });
+      if (text.includes('pg_try_advisory_xact_lock')) {
+        return { rows: [{ locked: true }], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -49,7 +52,6 @@ function record(path: string, bytes: number): UpsertWorkspaceUsageInput {
 }
 
 describe('PgSystemMetricsStore', () => {
-
   // Retention 状态与容量都复用本 Store；测试确保不会靠进程内内存维持关键时间点。
   it('deletes rows missing from a full (non-partial) round', async () => {
     const pool = createFakePool();
@@ -114,6 +116,9 @@ describe('PgSystemMetricsStore', () => {
     (pool as any).connect = async () => ({
       async query(text: string, values: unknown[] = []) {
         pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
         if (text.includes('SELECT id, metric, label')
           && text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
           return {
@@ -162,7 +167,42 @@ describe('PgSystemMetricsStore', () => {
     });
     expect(update?.text).toContain('sampled_at = clock_timestamp()');
     expect(compact?.text).toContain("label = 'status' AND id <> $1");
-    expect(pool.queries.some((query) => query.text.includes('pg_advisory_xact_lock'))).toBe(true);
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
+    expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('fails closed without status writes when the retention authority lock is unavailable', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return { rows: [{ locked: false }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'scheduled',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: '2026-08-29T13:10:00.000Z',
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    })).rejects.toThrow('status lock unavailable');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries.some((query) => query.text === 'ROLLBACK')).toBe(true);
+    expect(pool.queries.some((query) => /INSERT INTO|UPDATE/.test(query.text))).toBe(false);
   });
 
   it('preserves the latest retention status while pruning ordinary expired series', async () => {

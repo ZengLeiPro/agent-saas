@@ -162,6 +162,49 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
     expect(await countAssistantStreamEvents()).toBe(0);
   });
 
+  it('状态锁被占用时启动有界降级，释放后可重试且不触发 retention 副作用', async () => {
+    await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
+    const lockHolder = await pool.connect();
+    await lockHolder.query('BEGIN');
+    await lockHolder.query(
+      'SELECT pg_advisory_xact_lock(hashtext($1))',
+      [`${metricsStore.systemMetricsTable}:retention-status`],
+    );
+    let projectionCalls = 0;
+    const retention = createRetention(pool, {
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      projectBillingRuntimeEvents: async () => {
+        projectionCalls += 1;
+        return { lastProjectedSequence: 0 };
+      },
+    });
+    try {
+      const start = retention.start();
+      const startedWithinBound = await Promise.race([
+        start.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 1_000)),
+      ]);
+      expect(startedWithinBound).toBe(true);
+      expect(retention.isStatusPersistenceAvailable()).toBe(false);
+      expect(metricsStore.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+      expect(projectionCalls).toBe(0);
+      expect(await metricsStore.getLatestMetric('runtime_event_retention', 'status')).toBeNull();
+    } finally {
+      await lockHolder.query('COMMIT');
+      lockHolder.release();
+    }
+
+    await retention.start();
+    expect(retention.isStatusPersistenceAvailable()).toBe(true);
+    expect(metricsStore.isRuntimeEventRetentionStatusAvailable()).toBe(true);
+    expect(await latestDetail()).toMatchObject({ state: 'scheduled' });
+    expect(projectionCalls).toBe(0);
+    retention.stop();
+  }, 10_000);
+
   it('按实际获锁顺序发布权威状态，并在裁剪和重启后保持 lastSuccessAt 单调', async () => {
     await pool.query(`DELETE FROM ${metricsStore.systemMetricsTable}`);
     const newerSuccess = statusSnapshot();
@@ -185,7 +228,7 @@ describePg('RuntimeEventRetention 状态 PostgreSQL 集成', () => {
         ) => Promise<unknown>;
         return {
           async query(text: string, values: unknown[] = []) {
-            if (text.includes('pg_advisory_xact_lock')) {
+            if (text.includes('pg_try_advisory_xact_lock')) {
               announceLockWait();
               await lockCanContinue;
             }

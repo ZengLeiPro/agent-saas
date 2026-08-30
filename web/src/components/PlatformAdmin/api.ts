@@ -61,10 +61,11 @@ const retentionCategoryNames = [
   "model-request-finished",
   "hand-events",
 ] as const;
+// 运行结果与 freshness 正交；过期只能由 stale 布尔值表达。
 const eventStoreRetentionSchema = z.object({
   enabled: z.boolean(),
   mode: z.enum(["dry-run", "execute"]),
-  status: z.enum(["never_run", "scheduled", "running", "dry_run_succeeded", "execute_succeeded", "blocked", "failed", "stale", "unavailable"]),
+  status: z.enum(["never_run", "scheduled", "running", "dry_run_succeeded", "execute_succeeded", "blocked", "failed", "unavailable"]),
   stale: z.boolean(),
   lastStartedAt: isoTimestampSchema.nullable(),
   lastCompletedAt: isoTimestampSchema.nullable(),

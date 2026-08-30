@@ -247,6 +247,7 @@ describe('RuntimeEventRetention', () => {
 
     await retention.start();
     expect(snapshots).toHaveLength(0);
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
     expect(info).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith('RuntimeEventRetention status persistence failed');
     expect(warn).toHaveBeenCalledWith('RuntimeEventRetention startup not scheduled: status persistence unavailable');
@@ -254,6 +255,7 @@ describe('RuntimeEventRetention', () => {
     persistenceAvailable = true;
     await retention.start();
     expect(snapshots).toEqual([expect.objectContaining({ state: 'scheduled', nextScheduledAt: expect.any(String) })]);
+    expect(retention.isStatusPersistenceAvailable()).toBe(true);
     expect(info).toHaveBeenCalledOnce();
     retention.stop();
   });

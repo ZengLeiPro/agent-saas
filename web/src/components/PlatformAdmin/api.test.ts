@@ -46,7 +46,6 @@ function eventStoreFixture(): EventStoreStatusResponse {
 }
 
 describe("platform admin api", () => {
-
   beforeEach(() => authFetchMock.mockReset());
 
   it("builds admin paths with encoded query params and skips empty values", () => {
@@ -84,6 +83,22 @@ describe("platform admin api", () => {
     });
   });
 
+  it.each([
+    ["execute_succeeded", null],
+    ["failed", "execution_failed"],
+    ["blocked", "authorization_missing"],
+  ] as const)("accepts stale freshness without replacing the latest %s result", async (status, errorCategory) => {
+    const fixture = eventStoreFixture();
+    fixture.retention.status = status;
+    fixture.retention.stale = true;
+    fixture.retention.errorCategory = errorCategory;
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify(fixture), { status: 200 }));
+
+    await expect(platformAdminApi.eventStoreStatus()).resolves.toMatchObject({
+      retention: { status, stale: true, errorCategory },
+    });
+  });
+
   it("accepts a complete scheduled startup status", async () => {
     const fixture = eventStoreFixture();
     fixture.retention = {
@@ -108,6 +123,7 @@ describe("platform admin api", () => {
     ["{bad-json", "坏 JSON"],
     [JSON.stringify({ schemaVersion: 1 }), "缺失字段"],
     [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "future_status" } }), "未知状态"],
+    [JSON.stringify({ ...eventStoreFixture(), retention: { ...eventStoreFixture().retention, status: "stale", stale: true } }), "用 status 覆盖 freshness"],
     [JSON.stringify({
       ...eventStoreFixture(),
       retention: {
@@ -165,7 +181,7 @@ describe("platform admin api", () => {
         totalBytes: 140,
       },
     }), "旧格式可用容量仍缺 table/index 字段"],
-  ])("rejects 2xx %s rather than replacing trusted EventStore data (%s)", async (body) => {
+  ])("rejects invalid 2xx %s rather than replacing trusted EventStore data (%s)", async (body) => {
     authFetchMock.mockResolvedValue(new Response(body, { status: 200 }));
 
     await expect(platformAdminApi.eventStoreStatus()).rejects.toThrow("EventStore 状态响应无效");

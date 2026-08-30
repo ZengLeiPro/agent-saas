@@ -14,7 +14,6 @@ const STATUS_TEXT: Record<EventStoreRetentionStatus, string> = {
   execute_succeeded: "执行成功",
   blocked: "已阻断",
   failed: "失败",
-  stale: "已过期",
   unavailable: "不可用",
 };
 
@@ -131,17 +130,21 @@ function hasTrustworthyRetention(data: EventStoreStatusResponse): boolean {
 }
 
 function statusTone(data: EventStoreStatusResponse, refreshFailed: boolean): MetricTone {
-
   const status = normalizedStatus(data);
-  if (status === "blocked" || status === "failed") return "bad";
   if (!data.available || status === "unavailable"
     || !hasCompleteCapacity(data) || !hasTrustworthyRetention(data)) return "default";
-  if (
-    refreshFailed || !data.retention.enabled || data.retention.stale || data.capacity.stale
-    || !hasSufficientCapacityTrend(data)
-    || status === "stale" || status === "scheduled" || status === "running" || status === "never_run"
-  ) return "warn";
+  if (refreshFailed || data.retention.stale || data.capacity.stale) return "warn";
+  if (status === "blocked" || status === "failed") return "bad";
+  if (!data.retention.enabled || !hasSufficientCapacityTrend(data)
+    || status === "scheduled" || status === "running" || status === "never_run") return "warn";
   return "good";
+}
+
+function resultTone(status: EventStoreRetentionStatus): MetricTone {
+  if (status === "blocked" || status === "failed") return "bad";
+  if (status === "dry_run_succeeded" || status === "execute_succeeded") return "good";
+  if (status === "scheduled" || status === "running" || status === "never_run") return "warn";
+  return "default";
 }
 
 function badgeVariant(tone: MetricTone): "success" | "warning" | "danger" | "muted" {
@@ -153,12 +156,12 @@ function badgeVariant(tone: MetricTone): "success" | "warning" | "danger" | "mut
 
 function healthText(data: EventStoreStatusResponse, refreshFailed: boolean): string {
   const status = normalizedStatus(data);
-  if (status === "blocked") return "已阻断";
-  if (status === "failed") return "失败";
   if (!data.available || status === "unavailable"
     || !hasCompleteCapacity(data) || !hasTrustworthyRetention(data)) return "不可用";
+  if (refreshFailed || data.retention.stale || data.capacity.stale) return "已过期";
+  if (status === "blocked") return "已阻断";
+  if (status === "failed") return "失败";
   if (!data.retention.enabled) return "未启用";
-  if (refreshFailed || data.retention.stale || data.capacity.stale || status === "stale") return "已过期";
   if (!hasSufficientCapacityTrend(data)
     || status === "scheduled" || status === "running" || status === "never_run") return "需关注";
   return "健康";
@@ -184,7 +187,7 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
 
   const tone = statusTone(data, refreshFailed);
   const status = normalizedStatus(data);
-  const retentionStale = data.retention.stale || data.retention.status === "stale";
+  const retentionStale = data.retention.stale;
   const capacityAvailable = hasCompleteCapacity(data);
   const capacityStale = data.capacity.stale;
   const trendInsufficient = capacityAvailable && !hasSufficientCapacityTrend(data);
@@ -225,8 +228,8 @@ export function EventStoreSection({ data, refreshFailed = false }: { data: Event
         <MetricCard
           title="最近结果"
           value={data.available ? STATUS_TEXT[status] : "不可用"}
-          tone={tone}
-          description={`完成 ${formatTime(data.retention.lastCompletedAt)} · 成功 ${formatTime(data.retention.lastSuccessAt)}`}
+          tone={resultTone(status)}
+          description={`${data.retention.errorCategory ? `错误类别 ${data.retention.errorCategory} · ` : ""}完成 ${formatTime(data.retention.lastCompletedAt)} · 成功 ${formatTime(data.retention.lastSuccessAt)}`}
         />
         <MetricCard title="最近耗时" value={formatDuration(data.retention.durationMs)} description={`开始 ${formatTime(data.retention.lastStartedAt)}`} />
       </div>

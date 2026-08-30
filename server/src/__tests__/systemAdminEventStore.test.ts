@@ -105,6 +105,23 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
+  it('marks retention unavailable when startup status persistence is unavailable while preserving capacity', async () => {
+    const capacity = metric({});
+    const store = {
+      getLatestMetric: vi.fn(async (name: string) => name === 'pg_table_size' ? capacity : null),
+      listMetricSeries: vi.fn(async () => [capacity]),
+      isRuntimeEventRetentionStatusAvailable: () => false,
+    };
+    const server = await startServer({ store });
+    servers.push(server);
+
+    expect(await (await server.get()).json()).toMatchObject({
+      available: true,
+      retention: { status: 'unavailable', stale: false },
+      capacity: { available: true, totalBytes: 140 },
+    });
+  });
+
   it('serializes persisted retention and capacity series without querying runtime_events', async () => {
     const retention = metric({
       metric: 'runtime_event_retention',
@@ -318,18 +335,23 @@ describe('GET /api/admin/system/event-store', () => {
     });
   });
 
-  it('marks old snapshots stale and rejects invalid hours', async () => {
+  it.each([
+    ['failed', 'execution_failed'],
+    ['blocked', 'authorization_missing'],
+    ['execute_succeeded', null],
+  ])('preserves a stale %s result and error category independently from freshness', async (state, errorCategory) => {
+    const completedAt = '2019-12-31T23:59:59.000Z';
     const old = metric({
       metric: 'runtime_event_retention',
       label: 'status',
       sampledAt: '2020-01-01T00:00:00.000Z',
       detailJson: retentionDetail({
-        state: 'failed',
+        state,
         lastStartedAt: '2019-12-31T23:59:58.000Z',
-        lastCompletedAt: '2019-12-31T23:59:59.000Z',
-        lastSuccessAt: null,
+        lastCompletedAt: completedAt,
+        lastSuccessAt: state === 'execute_succeeded' ? completedAt : null,
         durationMs: 10,
-        errorCategory: 'execution_failed',
+        errorCategory,
         nextScheduledAt: '2020-01-01T00:10:00.000Z',
       }),
     });
@@ -339,7 +361,18 @@ describe('GET /api/admin/system/event-store', () => {
     };
     const server = await startServer({ store });
     servers.push(server);
-    expect(await (await server.get()).json()).toMatchObject({ retention: { status: 'stale', stale: true } });
+
+    expect(await (await server.get()).json()).toMatchObject({
+      retention: { status: state, stale: true, errorCategory },
+    });
+  });
+
+  it('rejects invalid hours', async () => {
+    const server = await startServer({ store: {
+      getLatestMetric: vi.fn(async () => null),
+      listMetricSeries: vi.fn(async () => []),
+    } });
+    servers.push(server);
     expect((await server.get('?hours=0')).status).toBe(400);
   });
 });

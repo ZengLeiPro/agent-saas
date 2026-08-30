@@ -124,12 +124,14 @@ export function createSystemAdminRouter(options: SystemAdminRouterOptions): Rout
         schemaVersion: 1,
         available: true,
         generatedAt: generatedAt.toISOString(),
-        retention: serializeRetentionStatus(
-          retentionBase,
-          retentionMetric,
-          generatedAt,
-          Math.max((retentionConfig?.sweepIntervalMinutes ?? 10) * 2 * 60_000, 30 * 60_000),
-        ),
+        retention: store.isRuntimeEventRetentionStatusAvailable?.() === false
+          ? unavailableRetention(retentionBase)
+          : serializeRetentionStatus(
+              retentionBase,
+              retentionMetric,
+              generatedAt,
+              Math.max((retentionConfig?.sweepIntervalMinutes ?? 10) * 2 * 60_000, 30 * 60_000),
+            ),
         capacity: serializeCapacity(
           options.eventsTable,
           capacityMetric,
@@ -448,7 +450,7 @@ function serializeRetentionStatus(
   return {
     enabled: base.enabled,
     mode: base.mode,
-    status: stale ? 'stale' : persistedState,
+    status: persistedState,
     stale,
     lastStartedAt: snapshot.lastStartedAt,
     lastCompletedAt: snapshot.lastCompletedAt,

@@ -117,6 +117,7 @@ export class RuntimeEventRetention {
   private lastSuccessAt: string | null = null;
   private nextScheduledAt: string | null = null;
   private startGeneration = 0;
+  private statusPersistenceAvailable = true;
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
@@ -173,6 +174,10 @@ export class RuntimeEventRetention {
       + `batchLimit=${this.batchLimit} maxBatchesPerCategory=${this.maxBatchesPerCategory} `
       + `legalWatermark=${this.legalDeleteThroughGlobalSequence.toString()}`,
     );
+  }
+
+  isStatusPersistenceAvailable(): boolean {
+    return this.statusPersistenceAvailable;
   }
 
   stop(): void {
@@ -338,11 +343,16 @@ export class RuntimeEventRetention {
   }
 
   private async recordStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<boolean> {
-    if (!this.options.statusRecorder) return this.executionMode !== 'execute';
+    if (!this.options.statusRecorder) {
+      this.statusPersistenceAvailable = this.executionMode !== 'execute';
+      return this.statusPersistenceAvailable;
+    }
     try {
       await this.options.statusRecorder(snapshot);
+      this.statusPersistenceAvailable = true;
       return true;
     } catch {
+      this.statusPersistenceAvailable = false;
       this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
       return false;
     }

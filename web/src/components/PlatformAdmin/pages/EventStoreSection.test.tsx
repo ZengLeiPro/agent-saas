@@ -47,7 +47,6 @@ function fixture(status: EventStoreRetentionStatus = "execute_succeeded"): Event
 }
 
 describe("EventStoreSection", () => {
-
   it("展示健康状态、六类摘要、水位和 runtime_events 容量趋势", () => {
     render(<EventStoreSection data={fixture()} />);
     expect(screen.getAllByText("健康").length).toBeGreaterThan(0);
@@ -99,13 +98,24 @@ describe("EventStoreSection", () => {
     expect(screen.getAllByText("不可用").length).toBeGreaterThan(0);
   });
 
-  it("stale 即使最近成功也显示已过期和最近可信数据提示", () => {
-    const data = fixture();
+  it.each([
+    ["execute_succeeded", null, "执行成功"],
+    ["failed", "execution_failed", "失败"],
+    ["blocked", "authorization_missing", "已阻断"],
+  ] as const)("过期 freshness 与最近 %s 结果正交展示", (status, errorCategory, resultText) => {
+    const data = fixture(status);
     data.retention.stale = true;
-    data.capacity.stale = true;
+    data.retention.errorCategory = errorCategory;
     render(<EventStoreSection data={data} />);
+
     expect(screen.getAllByText("已过期").length).toBeGreaterThan(0);
+    const result = screen.getByText(resultText);
+    expect(result).toBeTruthy();
     expect(screen.getByText(/当前显示最近一次可信数据/)).toBeTruthy();
+    if (errorCategory) {
+      expect(result.className).toContain("text-destructive");
+      expect(screen.getByText(new RegExp(`错误类别 ${errorCategory}`))).toBeTruthy();
+    }
   });
 
   it.each([0, 1])("容量只有 %i 个有效样本时降级为需关注，不伪造绿色趋势", (sampleCount) => {

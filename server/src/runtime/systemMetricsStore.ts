@@ -6,6 +6,8 @@ const { Pool } = pg;
 
 type PgPool = InstanceType<typeof Pool>;
 
+const RETENTION_STATUS_LOCK_SUFFIX = 'retention-status';
+
 export type SystemMetricName =
   | 'runtime_event_retention'
   | 'disk_root'
@@ -67,6 +69,7 @@ export class PgSystemMetricsStore {
   readonly systemMetricsTable: string;
   readonly workspaceUsageTable: string;
   private readonly ownsPool: boolean;
+  private runtimeEventRetentionStatusAvailable = true;
 
   constructor(options: PgSystemMetricsStoreOptions) {
     if (!options.pool && !options.connectionString) {
@@ -217,11 +220,21 @@ export class PgSystemMetricsStore {
     return result.rows[0] ? mapMetricRow(result.rows[0]) : null;
   }
 
+  isRuntimeEventRetentionStatusAvailable(): boolean {
+    return this.runtimeEventRetentionStatusAvailable;
+  }
+
   async recordRuntimeEventRetentionStatus(snapshot: RuntimeEventRetentionStatusSnapshot): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${this.systemMetricsTable}:retention-status`]);
+      const lock = await client.query<{ locked: boolean }>(
+        'SELECT pg_try_advisory_xact_lock(hashtext($1)) AS locked',
+        [`${this.systemMetricsTable}:${RETENTION_STATUS_LOCK_SUFFIX}`],
+      );
+      if (lock.rows[0]?.locked !== true) {
+        throw new Error('RuntimeEventRetention status lock unavailable');
+      }
       const previous = await client.query<MetricRow>(
         `SELECT id, metric, label, value_num::float8 AS value_num, detail_json, sampled_at
          FROM ${this.systemMetricsTable}
@@ -254,7 +267,9 @@ export class PgSystemMetricsStore {
         );
       }
       await client.query('COMMIT');
+      this.runtimeEventRetentionStatusAvailable = true;
     } catch (err) {
+      this.runtimeEventRetentionStatusAvailable = false;
       await client.query('ROLLBACK').catch(() => undefined);
       throw err;
     } finally {

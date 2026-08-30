@@ -714,7 +714,7 @@ function resolveContextTenantId(
   context: ChannelContext,
   existingSession?: RuntimeSessionRecord | null,
 ): string | undefined {
-  return (context.sessionOwner ?? context.user)?.tenantId ?? existingSession?.tenantId;
+  return existingSession?.tenantId ?? (context.sessionOwner ?? context.user)?.tenantId;
 }
 
 async function authorizeBillingRunStart(
@@ -1155,7 +1155,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       onLost: (reason) => abortController.abort(reason),
     };
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(sessionId, sessionLockAcquireOptions)
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, sessionId, sessionLockAcquireOptions)
       : null;
     if (config.sessionLock && !lockHandle) {
       yield { type: 'error', error: `Session ${sessionId} 已被另一个 brain 持有，本次 dispatch 退让` };
@@ -1481,7 +1481,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
     // 普通前台 Run 的保守墙钟上限。CAS 只终止当前 running 执行段；
@@ -1796,10 +1796,11 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
-    // Session-level lock：resume 路径上 sessionId 已知，必须早于 catalog upsert
-    // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 session。
+    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
+    // Session-level lock：resume 路径上 tenant/session 已知，必须早于 catalog upsert
+    // 和 loop.resumeApproval 占用，避免两个 brain 同时 wake 同一 tenant/session。
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(request.sessionId, {
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, request.sessionId, {
         onLost: (reason) => abortController.abort(reason),
       })
       : null;
@@ -1807,7 +1808,6 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 approval resume 退让` };
       return;
     }
-    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // 专职 Agent 覆盖（approval resume 同样应用，漏一处 = 审批恢复后越权）。
     // resume 路径 orgAgentId 只信 session meta（existingSession）。
     const orgAgentId = existingSession?.orgAgentId;
@@ -2106,7 +2106,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 
@@ -2268,8 +2268,9 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
     const resumeToolProfile = normalizeToolProfile(request.toolProfile);
     const abortController = request.abortController ?? new AbortController();
 
+    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     const lockHandle = config.sessionLock
-      ? await config.sessionLock.tryAcquire(request.sessionId, {
+      ? await config.sessionLock.tryAcquire(effectiveTenantId ?? DEFAULT_TENANT_ID, request.sessionId, {
         onLost: (reason) => abortController.abort(reason),
       })
       : null;
@@ -2277,7 +2278,6 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Session ${request.sessionId} 已被另一个 brain 持有，本次 interaction resume 退让` };
       return;
     }
-    const effectiveTenantId = resolveContextTenantId(request.context, existingSession);
     // interaction resume 也应用专职 Agent 覆盖；orgAgentId 只信 session meta。
     const orgAgentId = existingSession?.orgAgentId;
     const orgAgentResolution = resolveOrgAgentOverrides(config, orgAgentId, effectiveTenantId);
@@ -2589,7 +2589,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       contextPolicy: config.contextPolicy,
       toolInvocationStore: config.toolInvocationStore,
       handStore: config.handStore, runtimeIsolationRequirement,
-      runStore: config.runStore, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
+      runStore: config.runStore, automationGuard: config.sessionAutomationRuntimeGuard, compactionPrompt: config.getSystemPrompt?.('utility.compaction'),
       mcpLoadingMode: resolveEffectiveMcpLoadingMode(modelProviderOptions),
     });
 

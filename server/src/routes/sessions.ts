@@ -473,7 +473,7 @@ export interface SessionsRouterOptions {
     metadata: Record<string, unknown>;
   }>>;
   /** clientMessageId 权威状态核验（ACK 超时/断线重连）。 */
-  findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
+  findRunByClientMessageId?: (tenantId: string, userId: string | undefined, clientMessageId: string) => Promise<{
     runId: string;
     sessionId: string;
     tenantId?: string;
@@ -2259,7 +2259,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       return;
     }
     try {
-      const run = await options.findRunByClientMessageId(req.user?.sub, clientMessageId);
+      const run = await options.findRunByClientMessageId(req.user?.tenantId ?? DEFAULT_TENANT_ID, req.user?.sub, clientMessageId);
       if (!run) {
         res.status(404).json({ error: "Message not found" });
         return;

@@ -94,9 +94,9 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       // A composite FK may only target a matching unique key. Install the parent key before any
       // session-automation schema can add its (tenant, session, run) FK (rolling deploy order).
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_run_uidx ON ${store.runsTable} (tenant_id, session_id, run_id)`);
-      // Expand first, then backfill. Rows whose owner cannot be proved are preserved in a JSONB
-      // quarantine and removed from the live table before validation; they must never be guessed as
-      // LEGACY_TENANT_ID or block process startup. The fingerprint makes every phase restart-safe.
+      // Expand first, then backfill. Rows whose owner cannot be proved are atomically moved into a
+      // JSONB quarantine before validation; they must never be guessed as LEGACY_TENANT_ID or block
+      // startup. The fingerprint makes every phase restart-safe.
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
@@ -130,38 +130,46 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
         ) identity
         WHERE steering_session.session_id = identity.session_id AND steering_session.tenant_id IS NULL
       `);
+      // DELETE ... RETURNING + quarantine INSERT is one statement: a crash or concurrent legacy
+      // writer can never leave a deleted row without its durable quarantine copy.
       await client.query(`
+        WITH moved AS (
+          DELETE FROM ${store.messageSubmissionsTable} WHERE tenant_id IS NULL RETURNING *
+        )
         INSERT INTO ${store.messageSubmissionsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(submission)::text),
-               CASE WHEN EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=submission.run_id)
+        SELECT md5(row_to_json(moved)::text),
+               CASE WHEN EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.run_id)
                     THEN 'session_mismatch' ELSE 'orphan_run' END,
-               row_to_json(submission)::jsonb
-        FROM ${store.messageSubmissionsTable} submission WHERE tenant_id IS NULL
+               row_to_json(moved)::jsonb
+        FROM moved
         ON CONFLICT (fingerprint) DO NOTHING
       `);
       await client.query(`
+        WITH moved AS (
+          DELETE FROM ${store.steeringInputsTable} WHERE tenant_id IS NULL RETURNING *
+        )
         INSERT INTO ${store.steeringInputsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(input)::text),
-               CASE WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=input.source_run_id) THEN 'orphan_source_run'
-                    WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=input.target_run_id) THEN 'orphan_target_run'
+        SELECT md5(row_to_json(moved)::text),
+               CASE WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.source_run_id) THEN 'orphan_source_run'
+                    WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.target_run_id) THEN 'orphan_target_run'
                     ELSE 'tenant_session_mismatch' END,
-               row_to_json(input)::jsonb
-        FROM ${store.steeringInputsTable} input WHERE tenant_id IS NULL
+               row_to_json(moved)::jsonb
+        FROM moved
         ON CONFLICT (fingerprint) DO NOTHING
       `);
       await client.query(`
+        WITH moved AS (
+          DELETE FROM ${store.steeringSessionsTable} WHERE tenant_id IS NULL RETURNING *
+        )
         INSERT INTO ${store.steeringSessionsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(steering_session)::text),
+        SELECT md5(row_to_json(moved)::text),
                CASE WHEN EXISTS (
-                 SELECT 1 FROM ${store.runsTable} run WHERE run.session_id = steering_session.session_id
+                 SELECT 1 FROM ${store.runsTable} run WHERE run.session_id = moved.session_id
                ) THEN 'ambiguous_session' ELSE 'orphan_session' END,
-               row_to_json(steering_session)::jsonb
-        FROM ${store.steeringSessionsTable} steering_session WHERE tenant_id IS NULL
+               row_to_json(moved)::jsonb
+        FROM moved
         ON CONFLICT (fingerprint) DO NOTHING
       `);
-      await client.query(`DELETE FROM ${store.messageSubmissionsTable} WHERE tenant_id IS NULL`);
-      await client.query(`DELETE FROM ${store.steeringInputsTable} WHERE tenant_id IS NULL`);
-      await client.query(`DELETE FROM ${store.steeringSessionsTable} WHERE tenant_id IS NULL`);
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD CONSTRAINT ${store.steeringInputsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });

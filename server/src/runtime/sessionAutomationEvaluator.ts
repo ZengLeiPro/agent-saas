@@ -1,4 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
+export { reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type pg from 'pg';
 import type { BillingService } from '../data/billing/service.js';
 import type { ModelProviderOptions } from '../types/index.js';
@@ -37,19 +39,6 @@ export function passesGoalHardGates(evidence: GoalEvidence): boolean {
     && evidence.hardGates.noActiveResources
     && evidence.hardGates.budgetValid
     && evidence.evidenceRefs.length > 0;
-}
-
-export function progressFingerprint(input: { summary?: string; evidenceRefs?: string[]; terminalStatus?: string }): string {
-  return createHash('sha256').update(JSON.stringify({
-    summary: input.summary?.trim(),
-    evidenceRefs: [...(input.evidenceRefs ?? [])].sort(),
-    terminalStatus: input.terminalStatus,
-  })).digest('hex');
-}
-
-export function reduceNoProgress(previous: string | undefined, current: string, count: number, threshold = 3): { count: number; pause: boolean } {
-  const next = previous === current ? count + 1 : 0;
-  return { count: next, pause: next >= threshold };
 }
 
 /** Independent utility-model evaluator; it is not the primary automation agent. */
@@ -175,17 +164,43 @@ export class SessionAutomationEvaluator {
        ) AS pending`,
       [input.tenantId, input.sessionId],
     );
+    const durableInteractions = await client.query(
+      `SELECT EXISTS(
+         SELECT 1 FROM ${this.store.tables.interactions}
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND state IN ('prepared','active','result_unknown','reconcile')
+       ) AS pending`,
+      [input.tenantId, input.sessionId, input.automationId],
+    );
+    const durableResources = await client.query(
+      `SELECT EXISTS(
+         SELECT 1 FROM ${this.store.tables.backgroundResources}
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND state IN ('prepared','active','release_pending','result_unknown','reconcile')
+       ) AS active`,
+      [input.tenantId, input.sessionId, input.automationId],
+    );
     const automation = await client.query(
       `SELECT limit_hit_reason FROM ${this.store.tables.automations}
         WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
       [input.tenantId, input.sessionId, input.automationId],
     );
-    const budgetReason = await this.store.budgetReasonTx(client as pg.PoolClient, input.tenantId, input.sessionId, input.automationId);
+    const budgetReason = await resolveAutomationBudgetReason({
+      client,
+      tables: this.store.tables,
+      tablePrefix: this.store.tablePrefix,
+      runsTable: this.store.runsTable,
+      tenantId: input.tenantId,
+      sessionId: input.sessionId,
+      automationId: input.automationId,
+    });
     return {
       runTerminal: execution.rows[0]?.state === 'terminal',
-      noPendingInteraction: pendingInteraction.rows[0]?.pending !== true,
-      noActiveResources: Number(active.rows[0]?.count ?? 0) === 0,
-      budgetValid: !automation.rows[0]?.limit_hit_reason && budgetReason !== 'expires_at',
+      noPendingInteraction: pendingInteraction.rows[0]?.pending !== true
+        && durableInteractions.rows[0]?.pending !== true,
+      noActiveResources: Number(active.rows[0]?.count ?? 0) === 0
+        && durableResources.rows[0]?.active !== true,
+      budgetValid: !automation.rows[0]?.limit_hit_reason && budgetReason === undefined,
     };
   }
 

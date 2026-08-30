@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
@@ -64,7 +66,58 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
       .resolves.toMatchObject({ lastResponseId: 'resp-b' });
   }, 30_000);
 
-  it('旧辅助表并发 init：可证明行回填，orphan/ambiguous 进 quarantine 且不阻断 NOT NULL', async () => {
+  it('旧 session lease 表可兼容迁移，跨租户并行且同租户并发只有一个 owner', async () => {
+    const prefix = makePrefix('tenant_lock');
+    prefixes.push(prefix);
+    await pool.query(`
+      CREATE TABLE ${prefix}_session_leases (
+        session_id TEXT PRIMARY KEY,
+        owner_token TEXT NOT NULL,
+        lease_expires_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      INSERT INTO ${prefix}_session_leases VALUES ('legacy-session', 'old-owner', now() + interval '1 minute', now());
+    `);
+    const lock = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'lease' });
+    await lock.init();
+    const migrated = await pool.query(`SELECT tenant_id, session_id FROM ${prefix}_session_leases`);
+    expect(migrated.rows).toEqual([{ tenant_id: LEGACY_TENANT_ID, session_id: 'legacy-session' }]);
+
+    const [tenantA, tenantB] = await Promise.all([
+      lock.tryAcquire('tenant-a', 'shared-session'),
+      lock.tryAcquire('tenant-b', 'shared-session'),
+    ]);
+    expect(tenantA).not.toBeNull();
+    expect(tenantB).not.toBeNull();
+    const contenders = await Promise.all(Array.from({ length: 8 }, () =>
+      lock.tryAcquire('tenant-c', 'contended-session')));
+    expect(contenders.filter(Boolean)).toHaveLength(1);
+    await Promise.allSettled([tenantA?.release(), tenantB?.release(), ...contenders.map((entry) => entry?.release())]);
+    await lock.close();
+  }, 30_000);
+
+  it('dual→lease 滚动重叠期间，同租户同 session 不双活且跨租户可并行', async () => {
+    const prefix = makePrefix('session_lock_rollout');
+    prefixes.push(prefix);
+    const dual = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'dual' });
+    await dual.init();
+    const dualHandle = await dual.tryAcquire('tenant-a', 'shared-session');
+    expect(dualHandle).not.toBeNull();
+
+    const lease = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'lease' });
+    await lease.init();
+    await expect(lease.tryAcquire('tenant-a', 'shared-session')).resolves.toBeNull();
+    const otherTenant = await lease.tryAcquire('tenant-b', 'shared-session');
+    expect(otherTenant).not.toBeNull();
+
+    await dualHandle?.release();
+    const sameTenantAfterRelease = await lease.tryAcquire('tenant-a', 'shared-session');
+    expect(sameTenantAfterRelease).not.toBeNull();
+    await Promise.allSettled([otherTenant?.release(), sameTenantAfterRelease?.release()]);
+    await Promise.all([dual.close(), lease.close()]);
+  }, 30_000);
+
+  it('旧辅助表并发 init：可证明行回填，orphan/ambiguous 原子进 quarantine 且不阻断 NOT NULL', async () => {
     const prefix = makePrefix('legacy_identity');
     prefixes.push(prefix);
     await pool.query(`

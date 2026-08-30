@@ -252,6 +252,14 @@ export function createSessionAutomationsRouter(options: SessionAutomationsRouter
       if (!['pause', 'resume', 'run', 'clear', 'reconcile'].includes(body.action)) {
         throw new SessionAutomationConflictError('INVALID_COMMAND', 'invalid action');
       }
+      if (body.action === 'reconcile') {
+        const evidence = body.reconciliation as Record<string, unknown> | undefined;
+        if (!evidence || typeof evidence.providerAttemptId !== 'string' || typeof evidence.receiptKey !== 'string'
+          || !['completed', 'not_found', 'still_running', 'ambiguous'].includes(String(evidence.observedState))
+          || !evidence.receiptPayload || typeof evidence.receiptPayload !== 'object') {
+          throw new SessionAutomationConflictError('INVALID_COMMAND', 'reconciliation evidence required');
+        }
+      }
       res.json(await options.service.control(id, req.params.automationId!, body as never));
     } catch (error) {
       sendError(res, error);

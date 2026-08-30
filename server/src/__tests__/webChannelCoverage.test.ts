@@ -692,7 +692,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await runStore.upsertPending({
         runId: 'run-durable-replay',
         sessionId: 'session-durable-replay',
-        userId: USER.sub,
+        userId: USER.sub, tenantId: TENANT,
         idempotencyKey: 'cm-durable-replay',
         channel: 'web',
         metadata: { streamId: 'stream-durable-replay', deliveryMode: 'queue' },
@@ -710,7 +710,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       });
     });
 
-    it('durable 幂等重放在返回 run/session 标识前重新校验租户与 owner', async () => {
+    it('跨租户 durable 记录不能命中当前租户幂等域', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
         runId: 'run-cross-tenant-replay',
@@ -728,11 +728,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       expect(rig.ws.sent).toHaveLength(1);
       expect(rig.ws.sent[0].data).toMatchObject({
-        type: 'chat_rejected', reason_code: 'access_denied', reason: '无权访问该会话',
+        type: 'chat_rejected', reason_code: 'empty_message', reason: '消息内容不能为空',
       });
     });
 
-    it('平台 admin 可重放自己跨租户代提交的 durable 消息，组织 admin 不可跨租户', async () => {
+    it('平台 admin 可唯一回查自己代提交的跨租户消息，组织 admin 仍受租户域隔离', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
         runId: 'run-platform-admin-replay',
@@ -764,7 +764,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
 
       await rig.send(ORG_ADMIN, { client_msg_id: 'cm-org-admin-cross-tenant', message: '' });
       expect(rig.ws.sent).toHaveLength(1);
-      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'access_denied' });
+      expect(rig.ws.sent[0].data).toMatchObject({ type: 'chat_rejected', reason_code: 'empty_message' });
     });
 
     it('禁用租户 → access_denied（组织已被禁用）', async () => {
@@ -833,12 +833,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     it('durable run 幂等：ACK 反映当前权威状态，且不伪造 streamId', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
-        runId: 'run-idem-a', sessionId: 's-idem-a', userId: USER.sub, model: 'm', channel: 'web',
+        runId: 'run-idem-a', sessionId: 's-idem-a', userId: USER.sub, tenantId: TENANT, model: 'm', channel: 'web',
         idempotencyKey: 'cm-durable-active', metadata: { streamId: 'st-9' },
       });
       await runStore.markStatus('run-idem-a', 'running');
       await runStore.upsertPending({
-        runId: 'run-idem-b', sessionId: 's-idem-b', userId: USER.sub, model: 'm', channel: 'web',
+        runId: 'run-idem-b', sessionId: 's-idem-b', userId: USER.sub, tenantId: TENANT, model: 'm', channel: 'web',
         idempotencyKey: 'cm-durable-done',
       });
       await runStore.markStatus('run-idem-b', 'completed');

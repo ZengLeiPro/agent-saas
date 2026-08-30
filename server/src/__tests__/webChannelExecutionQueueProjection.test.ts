@@ -86,9 +86,9 @@ class MemoryRunStore implements RunStore {
     return this.records.get(runId) ?? null;
   }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.idempotencyKey === idempotencyKey && record.userId === userId,
+      record.idempotencyKey === idempotencyKey && (record.tenantId ?? DEFAULT_TENANT_ID) === tenantId && record.userId === userId,
     ) ?? null;
   }
 

@@ -2327,7 +2327,7 @@ export class WebChannel implements BaseChannel {
 
     // 永久幂等事实必须先于 drain/载荷校验：重放一个已受理请求只回原权威结果，
     // 不能因本次传输载荷缺失或实例正在排水而改写为 rejected。
-    const durableRun = await this.config.enqueueRuntime?.runStore.findByIdempotencyKey(user?.sub, clientMsgId);
+    const replayStore=this.config.enqueueRuntime?.runStore;let durableRun=await replayStore?.findByIdempotencyKey(user?.tenantId??DEFAULT_TENANT_ID,user?.sub,clientMsgId);if(!durableRun&&user&&isPlatformAdminUser(user))durableRun=await replayStore?.findUniqueByIdempotencyKeyAcrossTenants?.(user.sub,clientMsgId)??null;
     if (durableRun) {
       if (durableRun.userId
         ? this.sensitiveActionAccessError(client, { tenantId: durableRun.tenantId, ownerUserId: durableRun.userId })
@@ -3277,7 +3277,7 @@ export class WebChannel implements BaseChannel {
         if (!durableAccepted) {
           // PostgreSQL 的 COMMIT 可能已生效但连接在回执前中断；先按永久幂等键反查，
           // 绝不能把“提交结果未知”直接改成 failed 并清掉 wakeMessage。
-          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.sub, clientMsgId).catch(() => {
+          const committedRun = await enqueueRuntime.runStore.findByIdempotencyKey(user?.tenantId ?? DEFAULT_TENANT_ID, user?.sub, clientMsgId).catch(() => {
             durableLookupAvailable = false;
             return null;
           });

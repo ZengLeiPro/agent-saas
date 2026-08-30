@@ -97,8 +97,8 @@ class MemoryRunStore implements RunStore {
     return updated;
   }
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
-  async findByIdempotencyKey(userId: string | undefined, key: string): Promise<RunRecord | null> {
-    return [...this.records.values()].find((r) => r.idempotencyKey === key && r.userId === userId) ?? null;
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, key: string): Promise<RunRecord | null> {
+    return [...this.records.values()].find((r) => r.idempotencyKey === key && (r.tenantId ?? tenantId) === tenantId && r.userId === userId) ?? null;
   }
   async listRecoverable(): Promise<RunRecord[]> { return []; }
   async getActiveBySession(): Promise<RunRecord | null> { return null; }
@@ -123,6 +123,7 @@ function fakeGuardrailEventStore(): { store: GuardrailEventStore; events: Guardr
   };
 }
 
+/** Authenticated tenant fixture. */
 interface TestUser { sub: string; username: string; role: 'user' | 'admin'; tenantId: string }
 const WAIN_USER: TestUser = { sub: 'u-wu', username: 'wain_user', role: 'user', tenantId: 'wain' };
 const WAIN_ADMIN: TestUser = { sub: 'u-wa', username: 'wain_admin', role: 'admin', tenantId: 'wain' };

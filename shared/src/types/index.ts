@@ -44,7 +44,7 @@ export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure
 export type {
   SessionAutomationKind, SessionAutomationMode, SessionAutomationStatus, SessionAutomationPhase,
   SessionAutomationBudget, SessionAutomationSpec, SessionAutomationSnapshot,
-  SessionAutomationControlAction, SessionAutomationCommandRequest, SessionAutomationControlRequest,
+  SessionAutomationControlAction, SessionAutomationCommandRequest, SessionAutomationControlRequest, SessionAutomationReconciliationEvidence,
   SessionAutomationCommandResponse, SessionAutomationListResponse, SessionAutomationApiErrorBody,
   ScheduleWakeupInput, UpdateGoalInput,
 } from "./sessionAutomation";

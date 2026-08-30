@@ -12,7 +12,7 @@ import type { ChannelContext, UserIdentity } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
 import { buildConnectorRunEnv } from '../connectorRunEnv.js';
 import { runtimeRunController } from '../runController.js';
-import { customerSafeRuntimeError } from '../runtimeFailure.js';
+import { customerSafeRuntimeError, SessionAutomationBackgroundResource } from '../runtimeFailure.js';
 import { resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord, RunStatus, RunStore } from '../runStore.js';
 import {
@@ -191,7 +191,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         backgroundTaskVersion: 1,
         outputTransactionMode: 'terminal_buffered',
         parentRunId,
-        parentSessionId,
+        parentSessionId, ...(context.automationFence ? { automationFence: context.automationFence } : {}),
         topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
         parentToolCallId: toolCallId,
         shortTaskId,
@@ -411,6 +411,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       }).catch(() => undefined);
     }, CANCEL_POLL_MS);
     cancelTimer.unref?.();
+    const automationResource = new SessionAutomationBackgroundResource(this.config.sessionAutomationRuntimeGuard, record.metadata?.automationFence ? { tenantId: record.tenantId, sessionId: metadata.parentSessionId, automationFence: record.metadata.automationFence as ToolCallContext['automationFence'] } : undefined, record.runId);
 
     try {
       await sessionCatalog.markStatus(record.sessionId, 'running');
@@ -461,8 +462,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         },
         sessionId: record.sessionId,
         runId: record.runId,
-        toolCallId: metadata.parentToolCallId,
-        ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
+        toolCallId: metadata.parentToolCallId, ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
+        ...(record.metadata?.automationFence ? { automationFence: record.metadata.automationFence as ToolCallContext['automationFence'] } : {}),
         signal: abortController.signal,
       };
       const agentType = getSubagentType(metadata.agentType);
@@ -481,18 +482,18 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           model: metadata.modelRef,
           includeCompanyInfo: metadata.includeCompanyInfo,
         },
-        onChildRunCreated: async ({ childSessionId, childRunId }) => {
+        onChildRunCreated: async ({ childSessionId, childRunId }) => { await automationResource.created(childRunId);
           await this.config.runStore?.markStatus(record.runId, 'running', 'background_task_started', {
             executionChildSessionId: childSessionId,
             executionChildRunId: childRunId,
           });
         },
       });
-      await this.freezeOutcome(record, outcome);
+      await this.freezeOutcome(record, outcome); await automationResource.released(outcome.childRunId);
       const current = await this.config.runStore?.get(record.runId);
       const finalStatus = current?.status ?? outcomeToRunStatus(outcome.status);
       await lease?.release(finalStatus, current?.statusReason ?? `background_${outcome.status}`);
-    } catch (err) {
+    } catch (err) { await automationResource.released().catch(() => undefined);
       const current = await this.config.runStore?.get(record.runId);
       if (current?.status === 'cancelled') {
         await this.config.runStore?.markStatus(record.runId, 'cancelled', current.statusReason, {

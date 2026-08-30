@@ -63,6 +63,7 @@ class MemorySessionCatalog implements SessionCatalog {
   }
 }
 
+/** Tenant-aware in-memory RunStore fixture. */
 class BackgroundRunStore implements RunStore {
   records = new Map<string, RunRecord>();
 
@@ -96,8 +97,8 @@ class BackgroundRunStore implements RunStore {
     return updated;
   }
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
-    return [...this.records.values()].find((record) => record.userId === userId && record.idempotencyKey === idempotencyKey) ?? null;
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+    return [...this.records.values()].find((record) => (record.tenantId ?? tenantId) === tenantId && record.userId === userId && record.idempotencyKey === idempotencyKey) ?? null;
   }
   async listRecoverable(): Promise<RunRecord[]> { return []; }
   async getActiveBySession(sessionId: string): Promise<RunRecord | null> {

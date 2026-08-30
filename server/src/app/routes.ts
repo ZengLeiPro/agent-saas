@@ -352,8 +352,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         ? (sessionId, tenantId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId, tenantId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
-        ? (userId, clientMessageId) =>
-            runtime.runtimeRunStore!.findByIdempotencyKey(userId, clientMessageId)
+        ? (tenantId, userId, clientMessageId) =>
+            runtime.runtimeRunStore!.findByIdempotencyKey(tenantId, userId, clientMessageId)
         : undefined,
     }),
   );

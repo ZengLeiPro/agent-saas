@@ -49,11 +49,18 @@ export interface SessionAutomationCommandRequest {
   expectedControlVersion?: number;
   expectedIncarnationId?: string;
 }
+export interface SessionAutomationReconciliationEvidence {
+  providerAttemptId: string;
+  receiptKey: string;
+  observedState: 'completed' | 'not_found' | 'still_running' | 'ambiguous';
+  receiptPayload: Record<string, unknown>;
+}
 export interface SessionAutomationControlRequest {
   clientMessageId: string;
   action: SessionAutomationControlAction;
   expectedControlVersion: number;
   expectedIncarnationId: string;
+  reconciliation?: SessionAutomationReconciliationEvidence;
 }
 export interface SessionAutomationCommandResponse {
   result: 'created' | 'updated' | 'status' | 'accepted' | 'idempotent_replay';

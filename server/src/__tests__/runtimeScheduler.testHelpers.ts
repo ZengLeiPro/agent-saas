@@ -130,9 +130,9 @@ export class MemoryRunStore implements RunStore {
 
   async get(runId: string): Promise<RunRecord | null> { return this.records.get(runId) ?? null; }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     return [...this.records.values()].find((record) =>
-      record.idempotencyKey === idempotencyKey && record.userId === userId,
+      record.idempotencyKey === idempotencyKey && (record.tenantId ?? TEST_TENANT_ID) === tenantId && record.userId === userId,
     ) ?? null;
   }
 

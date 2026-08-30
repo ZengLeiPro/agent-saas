@@ -302,19 +302,37 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     return result.rows.map(row => row.run_id);
   }
 
-  async findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
+  async findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null> {
     // 只有 message_submissions 中已提交的记录才是“已受理”。仅有 runs.idempotency_key
     // 的预创建/失败记录不能短路新的请求；管理员代操作也必须按认证 submitter 域查询。
     const userScope = userId ?? '__anonymous__';
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.messageSubmissionsTable} submission
-      JOIN ${this.runsTable} run ON run.run_id = submission.run_id
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
+      WHERE submission.tenant_id = $1
+        AND submission.user_scope = $2
+        AND submission.client_message_id = $3
+      LIMIT 1
+    `, [tenantId, userScope, idempotencyKey]);
+    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+  }
+
+  async findUniqueByIdempotencyKeyAcrossTenants(userId: string, idempotencyKey: string): Promise<RunRecord | null> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.messageSubmissionsTable} submission
+      JOIN ${this.runsTable} run
+        ON run.tenant_id = submission.tenant_id
+       AND run.run_id = submission.run_id
       WHERE submission.user_scope = $1
         AND submission.client_message_id = $2
-      LIMIT 1
-    `, [userScope, idempotencyKey]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+      ORDER BY submission.tenant_id
+      LIMIT 2
+    `, [userId, idempotencyKey]);
+    return result.rows.length === 1 ? normalizeRunRecord(result.rows[0]!.row_json) : null;
   }
 
   async getActiveBySession(sessionId: string): Promise<RunRecord | null> {

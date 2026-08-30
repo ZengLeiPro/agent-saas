@@ -61,3 +61,6 @@ export function createSessionAutomationWorkers(options: {
 }
 
 export { RuntimeSchedulerAutomationDispatcher };
+
+export { SessionAutomationRuntimeGuard } from '../runtime/sessionAutomationRuntimeGuard.js';
+export { createSessionAutomationCancelRun } from '../runtime/sessionAutomationCancellation.js';

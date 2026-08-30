@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PgEventStore } from './pgEventStore.js';
 import type { SdkResultModelUsage } from '../agent/types.js';
 import type { PlatformEvent } from './types.js';
-import { progressFingerprint, reduceNoProgress } from './sessionAutomationEvaluator.js';
+import { extractRunProgressEvidence, reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
 
 export interface AutomationTerminalEvent {
@@ -13,6 +13,7 @@ export interface AutomationTerminalEvent {
   status: 'completed' | 'failed' | 'cancelled' | 'interrupted';
   summary?: string;
   evidenceRefs?: string[];
+  progressFingerprint?: string;
   numTurns?: number;
   modelUsage?: Record<string, SdkResultModelUsage>;
 }
@@ -71,11 +72,8 @@ export class SessionAutomationTerminalProjector {
       );
       const row = execution.rows[0];
       if (row) {
-        const fingerprint = progressFingerprint({
-          summary: event.summary,
-          evidenceRefs: event.evidenceRefs,
-          terminalStatus: event.status,
-        });
+        const fingerprint = event.progressFingerprint
+          ?? extractRunProgressEvidence([], event.status).fingerprint;
         const noProgress = reduceNoProgress(
           row.last_progress_fingerprint,
           fingerprint,
@@ -222,6 +220,23 @@ export class SessionAutomationTerminalProjector {
     });
   }
 
+  private async progressEvidence(eventStore: PgEventStore, event: AutomationTerminalEvent): Promise<AutomationTerminalEvent> {
+    const events: PlatformEvent[] = [];
+    let afterCursor: string | undefined;
+    do {
+      const page = await eventStore.listPage(event.tenantId, event.sessionId, {
+        ...(afterCursor ? { afterCursor } : {}),
+        limit: 500,
+        runId: event.runId,
+      });
+      events.push(...page.events);
+      afterCursor = page.nextCursor;
+      if (!page.hasMore) break;
+    } while (afterCursor);
+    const evidence = extractRunProgressEvidence(events, event.status);
+    return { ...event, ...evidence, progressFingerprint: evidence.fingerprint };
+  }
+
   async recover(eventStore: PgEventStore, limit = 500): Promise<number> {
     let processed = 0;
     let after = await this.cursor();
@@ -265,7 +280,11 @@ export class SessionAutomationTerminalProjector {
           );
           continue;
         }
-        try { await this.project(terminal); await this.publishRunState(terminal); } catch (error) { await this.quarantine(after, event, error); }
+        try {
+          const frozenTerminal = await this.progressEvidence(eventStore, terminal);
+          await this.project(frozenTerminal);
+          await this.publishRunState(frozenTerminal);
+        } catch (error) { await this.quarantine(after, event, error); }
         processed++;
       }
       if (!page.hasMore) break;

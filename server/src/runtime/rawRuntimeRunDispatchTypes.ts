@@ -25,6 +25,7 @@ import type { McpProxy } from '../mcp/proxy.js';
 import type { ExecutionTransportRegistry } from './executionTransport.js';
 import type { ModelAdapter, ApprovalRecord, ApprovalStore, EventStore, PlatformEvent } from './types.js';
 import type { CodexResponsesWebSocketPool } from './responses/codexResponsesWebSocketPool.js';
+import type { SessionAutomationRuntimeGuard } from './sessionAutomationRuntimeGuard.js';
 import type { CodexCredentialManager } from './responses/codexCredentialManager.js';
 import type { ExecutionConfig } from './executionConfig.js';
 import type { ImageUnderstandingModelConfig } from './imageUnderstanding.js';
@@ -52,7 +53,7 @@ export interface ServerRemoteDispatchConfig {
 /**
  * Session-level mutual exclusion handle 接口。
  * `PgSessionLock` 是 PG advisory lock 的默认实现，但 dispatch 层不直接依赖该
- * 实现 — 任何提供 `tryAcquire(sessionId) → handle | null`、`handle.release()`
+ * 实现 — 任何提供 `tryAcquire(tenantId, sessionId) → handle | null`、`handle.release()`
  * 的对象都可以注入。null 表示锁已被其他持有者占用（dispatch 退让）。
  */
 export interface SessionLockHandle {
@@ -65,6 +66,7 @@ export interface SessionLockAcquireOptions {
 
 export interface SessionLockAcquirer {
   tryAcquire(
+    tenantId: string,
     sessionId: string,
     options?: SessionLockAcquireOptions,
   ): Promise<SessionLockHandle | null>;
@@ -141,6 +143,8 @@ export interface RawRuntimeRunDispatchConfig {
   memoryControlProviders?: import('../agent/toolRuntime.js').ToolProvider[];
   /** Host-fenced tools visible only to matching session automation Runs. */
   sessionAutomationProvider?: import('../agent/toolRuntime.js').ToolProvider;
+  /** Durable budget/provider/interaction guard for automation Runs. */
+  sessionAutomationRuntimeGuard?: SessionAutomationRuntimeGuard;
   /** Optional personal agent registry. */
   agentStore?: AgentStore;
   /** 公司级专职 Agent store。orgAgentId 会话解析限定提示语 + skill 白名单用；未配置时 orgAgentId 会话 fail-closed。 */

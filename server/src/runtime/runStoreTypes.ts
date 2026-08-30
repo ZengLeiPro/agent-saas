@@ -288,7 +288,9 @@ export interface RunStore {
   ): Promise<RunRecord | null>;
   patchMetadata?(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null>;
   get(runId: string): Promise<RunRecord | null>;
-  findByIdempotencyKey(userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
+  /** Permanent message acceptance lookup, isolated by authoritative tenant and submitter. */
+  findByIdempotencyKey(tenantId: string, userId: string | undefined, idempotencyKey: string): Promise<RunRecord | null>;
+  findUniqueByIdempotencyKeyAcrossTenants?(userId: string, idempotencyKey: string): Promise<RunRecord | null>;
   getActiveBySession?(sessionId: string): Promise<RunRecord | null>;
   cancelActiveByUser?(userId: string, reason: string): Promise<number>;
   cancelActiveByTenant?(tenantId: string, reason: string): Promise<number>;
@@ -310,7 +312,7 @@ export interface RunStore {
    */
   enqueueBackgroundTask?(input: UpsertRunInput, limits: EnqueueBackgroundTaskLimits): Promise<RunRecord>;
   listBackgroundTasks?(parentSessionId: string, options?: ListBackgroundTasksOptions): Promise<RunRecord[]>;
-  /** Taskboard 关联 Session 中仍在运行或尚未完成唤醒投递的工作。 */
+  /** Taskboard 关联 Session 中仍在运行或尚未完成唤醒投递的工作（tenant-aware）。 */
   hasTaskboardSessionActivity?(sessionIds: string[], tenantId?: string): Promise<boolean>;
   findBackgroundTasksByIdentifier?(
     parentSessionId: string,

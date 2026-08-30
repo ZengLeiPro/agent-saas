@@ -28,7 +28,7 @@ import type { SessionAutomationCommandService } from '../runtime/sessionAutomati
 import type { SessionAutomationCoordinator } from '../runtime/sessionAutomationCoordinator.js';
 import type { SessionAutomationTerminalProjector } from '../runtime/sessionAutomationTerminalProjector.js';
 import type { SessionAutomationEvaluator } from '../runtime/sessionAutomationEvaluator.js';
-import { createSessionAutomationPersistence, createSessionAutomationWorkers, RuntimeSchedulerAutomationDispatcher } from './sessionAutomationRuntime.js';
+import { createSessionAutomationCancelRun, createSessionAutomationPersistence, createSessionAutomationWorkers, RuntimeSchedulerAutomationDispatcher, SessionAutomationRuntimeGuard } from './sessionAutomationRuntime.js';
 import { appendTenantPlatformEvent, createRuntimeEventStoreFactory } from './runtimeEventStore.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
@@ -682,7 +682,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let sessionAutomationCommandService: SessionAutomationCommandService | undefined;
   let sessionAutomationCoordinator: SessionAutomationCoordinator | undefined;
   let sessionAutomationTerminalProjector: SessionAutomationTerminalProjector | undefined;
-  let sessionAutomationEvaluator: SessionAutomationEvaluator | undefined;
+  let sessionAutomationEvaluator: SessionAutomationEvaluator | undefined, cancelSessionAutomationRun: ((runId: string, reason: string) => Promise<void>) | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
@@ -868,7 +868,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime',
       runsTable: pgRunStore.runsTable,
       flags: config.sessionAutomation,
-      cancelRun: async (runId, reason) => { await pgRunStore!.markStatus(runId, 'cancelled', reason); },
+      cancelRun: cancelSessionAutomationRun = createSessionAutomationCancelRun({ runStore: pgRunStore, eventStore: pgEventStore!, logger: serverLogger.child('SessionAutomationCancel'), abort: (runId, reason) => runtimeRunController.abort(runId, reason) }),
     }));
     const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
     runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
@@ -1666,7 +1666,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
       maxLines: config.memory?.injectContext?.maxLines,
     },
-    memoryIndexService: memoryIndexServiceRef.current,
+    memoryIndexService: memoryIndexServiceRef.current, ...(sessionAutomationStore&&pgEventStore&&pgRunStore?{sessionAutomationRuntimeGuard:new SessionAutomationRuntimeGuard(pgEventStore.pool,sessionAutomationStore.tablePrefix,pgRunStore.runsTable)}:{}),
     // 记忆写入职责剥离（2026-07-29）：租户开关决定新会话是否 pin v2。
     // 平台级 memory.consolidation.enabled 未开时全量 v1（后台没人接管写入，
     // 绝不能先剥离主 Agent 的写入能力）。
@@ -1897,7 +1897,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
         ? async (record) => {
-          const lockHandle = await sessionLock.tryAcquire(record.sessionId);
+          const lockHandle = await sessionLock.tryAcquire(record.tenantId ?? DEFAULT_TENANT_ID, record.sessionId);
           if (!lockHandle) return false;
           await lockHandle.release();
           return true;
@@ -2029,7 +2029,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
       store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
     });
-    if (sessionAutomationStore && defaultModelResolver) {
+    if (sessionAutomationStore && defaultModelResolver && cancelSessionAutomationRun) {
       const workers = createSessionAutomationWorkers({
         store: sessionAutomationStore,
         evaluator: {
@@ -2039,7 +2039,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
         },
         dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
-        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: async (runId, reason) => { await pgRunStore!.markStatus(runId, 'cancelled', reason); },
+        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: cancelSessionAutomationRun,
         onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
       });
       ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers);

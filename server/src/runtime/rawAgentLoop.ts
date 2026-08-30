@@ -205,7 +205,7 @@ export interface RawAgentLoopOptions {
    * 默认 35 分钟，可通过 env `AGENT_SAAS_ZOMBIE_TOOL_CALL_TIMEOUT_MS` 覆盖。
    * 设 0 表示「任意 invocationStarted 都立刻视为 zombie」（仅测试用）。
    */
-  zombieToolCallTimeoutMs?: number;
+  zombieToolCallTimeoutMs?: number; automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard;
 }
 export interface CompactInput {
   message: InboundMessage;
@@ -244,7 +244,7 @@ export class RawAgentLoop implements AgentLoop {
   private readonly toolInvocationStore?: ToolInvocationStore;
   private readonly handStore?: HandStore;
   private readonly runtimeIsolationRequirement?: RuntimeIsolationRequirement;
-  private readonly runStore?: RunStore;
+  private readonly runStore?: RunStore; private readonly automationGuard?: import('./sessionAutomationRuntimeGuard.js').SessionAutomationRuntimeGuard;
   private readonly mcpLoadingMode: EffectiveMcpLoadingMode; private readonly compactionPrompt: string;
   private readonly streamEventBatch: Required<StreamEventBatchOptions>;
   private readonly zombieToolCallTimeoutMs: number;
@@ -272,7 +272,7 @@ export class RawAgentLoop implements AgentLoop {
     this.toolInvocationStore = options.toolInvocationStore;
     this.handStore = options.handStore;
     this.runtimeIsolationRequirement = options.runtimeIsolationRequirement;
-    this.runStore = options.runStore;
+    this.runStore = options.runStore; this.automationGuard = options.automationGuard;
     this.mcpLoadingMode = options.mcpLoadingMode ?? 'eager'; this.compactionPrompt = options.compactionPrompt?.trim() || DEFAULT_COMPACTION_REQUEST_PROMPT;
     this.streamEventBatch = {
       maxEvents: options.streamEventBatch?.maxEvents ?? 25,
@@ -1284,7 +1284,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName,
         });
-        let modelStreamError: unknown;
+        let modelStreamError: unknown; const automationContext=context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`turn:${turn}`);
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: context.model,
@@ -1356,7 +1356,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        await this.automationGuard?.finishModel(automationContext,automationAttempt,completed?.usage,modelStreamError); if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
         const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
         if (
           blockedFailure
@@ -2022,16 +2022,16 @@ export class RawAgentLoop implements AgentLoop {
         throw new Error(`compaction request exceeds context window: ${requestUpperTokens}/${contextWindow}`);
       }
       let completed: Extract<ModelEvent, { type: 'completed' }> | null = null;
-      await context.authorizeModelTurn?.();
+      await context.authorizeModelTurn?.(); const automationAttempt = await this.automationGuard?.beforeModel(context,'compaction'); let compactionStreamError:unknown;
       // 黑箱消费：thinking 丢弃、text 静默累积，不向外 yield 流式内容。
-      for await (const event of this.modelAdapter.stream({
+      for await (const event of captureModelStreamError(this.modelAdapter.stream({
         model: context.model,
         messages: requestMessages,
         tools,
         toolChoice: 'none',
         maxOutputTokens: plan.summaryBudgetTokens,
         signal: context.signal,
-      }, this.withModelRequestDiagnostics(context))) {
+      }, this.withModelRequestDiagnostics(context)),error=>{compactionStreamError=error;})) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
         } else if (event.type === 'draft_reset') {
@@ -2040,7 +2040,7 @@ export class RawAgentLoop implements AgentLoop {
           completed = event;
         }
       }
-      if (!completed) throw new Error('model stream completed without completion event');
+      if (compactionStreamError) { await this.automationGuard?.finishModel(context,automationAttempt,completed?.usage,compactionStreamError); throw compactionStreamError; } if (!completed) { const error=new Error('model stream completed without completion event'); await this.automationGuard?.finishModel(context,automationAttempt,undefined,error); throw error; } await this.automationGuard?.finishModel(context,automationAttempt,completed.usage);
       if (completed.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
       assertSuccessfulModelTerminal(completed);
       if (completed.usage) {
@@ -2584,7 +2584,7 @@ export class RawAgentLoop implements AgentLoop {
     const { tools, descriptorsByName } = await this.prepareSessionTools(descriptors, priorEvents, context);
     const callableDescriptorsByName = this.callableDescriptorsForEvents(descriptorsByName, priorEvents);
     const call = pendingState.call;
-    const resultContent = formatAskUserQuestionResult(input.response);
+    const resultContent = formatAskUserQuestionResult(input.response); await this.automationGuard?.recordInteraction(context,input.interactionId,request.interactionType,'completed',{response:input.response});
 
     if (request.invocationId) {
       await this.toolInvocationStore?.complete(request.invocationId, 'completed').catch(() => undefined);
@@ -2899,7 +2899,7 @@ export class RawAgentLoop implements AgentLoop {
       ? args.baseToolContext.hooks
       : {
           ...(args.baseToolContext.hooks ?? {}),
-          onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => {
+          onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => { await this.automationGuard?.recordInteraction(args.context,event.interactionId,event.type,'active',{toolCallId:event.toolCallId??args.call.id,questions:event.questions??[]});
             await this.eventSink.append({
               type: 'interaction_requested',
               runId: args.context.runId,
@@ -3031,7 +3031,7 @@ export class RawAgentLoop implements AgentLoop {
             : 'invocation is already terminal';
         throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
       }
-      const invokeTool = async () => {
+      const invokeTool = async () => { await this.automationGuard?.barrier(args.context);
         const parallelGate = this.parallelInvocationGates.get(args.context);
         if (parallelGate) {
           parallelGate.onClaimed();
@@ -3437,7 +3437,7 @@ export class RawAgentLoop implements AgentLoop {
           tools: requestTools,
           descriptorsByName: args.descriptorsByName,
         });
-        let modelStreamError: unknown;
+        let modelStreamError: unknown; const automationContext=args.context; const automationAttempt = await this.automationGuard?.beforeModel(automationContext,`resume-turn:${turn}`);
         const modelEvents = captureModelStreamError(
           this.modelAdapter.stream({
             model: args.context.model,
@@ -3509,7 +3509,7 @@ export class RawAgentLoop implements AgentLoop {
           yield { type: 'thinking_end' };
         }
 
-        if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
+        await this.automationGuard?.finishModel(automationContext,automationAttempt,completed?.usage,modelStreamError); if (completed?.usage) totalUsage = mergeUsage(totalUsage, completed.usage);
         const blockedFailure = getInvalidPromptRequestBlockedFailure(modelStreamError ?? completed);
         if (
           blockedFailure

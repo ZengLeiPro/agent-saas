@@ -4,7 +4,7 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
+import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
@@ -121,6 +121,7 @@ export interface SessionState {
 
 export interface SessionOptions {
   initialSessionId?: string | null;
+  identity?: BoundaryIdentity | null;
 }
 
 const RECENT_LOCAL_SESSION_TTL_MS = 60_000;
@@ -136,6 +137,7 @@ export function useSession(
   callbacks: SessionCallbacks,
   options?: SessionOptions,
 ): SessionState {
+  const identity = options?.identity ?? null;
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
   );
@@ -736,7 +738,7 @@ export function useSession(
     let cancelled = false;
 
     // Step 1: 先从本地缓存加载，实现即时展示
-    const cached = loadSessionListCache();
+    const cached = loadSessionListCache(identity);
     if (cached && cached.sessions.length > 0) {
       setSessions(cached.sessions);
       setHasMore(cached.hasMore);
@@ -809,7 +811,7 @@ export function useSession(
     if (sessions.length === 0) return;
     if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
     debounceSaveRef.current = setTimeout(() => {
-      saveSessionListCache(sessions, hasMore);
+      saveSessionListCache(sessions, hasMore, identity);
       debounceSaveRef.current = null;
     }, 5000);
     return () => {
@@ -818,7 +820,7 @@ export function useSession(
         debounceSaveRef.current = null;
       }
     };
-  }, [sessions, hasMore]);
+  }, [sessions, hasMore, identity]);
 
   // 展开分组时全量加载组内会话，将未在主列表中的会话合并进来
   const loadGroupSessions = useCallback(async (groupId: string) => {

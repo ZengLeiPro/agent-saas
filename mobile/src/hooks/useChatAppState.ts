@@ -30,6 +30,7 @@ import {
   createChatQueueState,
   reduceChatQueueEvent,
   selectChatQueueItems,
+  scopedSensitiveKey,
 } from "@agent/shared";
 import type {
   ConnectionState,
@@ -142,11 +143,11 @@ export interface ChatAppState {
 }
 
 export function useChatAppStateCore(): ChatAppState {
-  const { user } = useAuth();
+  const { user, identity } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  // ─── 输入草稿：AsyncStorage 持久化（2026-04-18）───
-  // 与 web 共用 INPUT_DRAFT_KEY='agentChat.inputDraft'，全局共享草稿（不按 sessionId 分）
+  // M20-04: drafts are account + tenant + generation scoped.
+  const draftStorageKey = scopedSensitiveKey(INPUT_DRAFT_KEY, identity);
   const [input, setInputRaw] = useState("");
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLatestRef = useRef<string>("");
@@ -156,17 +157,17 @@ export function useChatAppStateCore(): ChatAppState {
     try {
       if (value) {
         void Promise.resolve(
-          getPlatform().storage.setItem(INPUT_DRAFT_KEY, value),
+          draftStorageKey ? getPlatform().storage.setItem(draftStorageKey, value) : Promise.resolve(),
         ).catch(() => {});
       } else {
         void Promise.resolve(
-          getPlatform().storage.removeItem(INPUT_DRAFT_KEY),
+          draftStorageKey ? getPlatform().storage.removeItem(draftStorageKey) : Promise.resolve(),
         ).catch(() => {});
       }
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [draftStorageKey]);
 
   const setInput = useCallback(
     (value: string) => {
@@ -191,7 +192,8 @@ export function useChatAppStateCore(): ChatAppState {
     let cancelled = false;
     void (async () => {
       try {
-        const saved = await getPlatform().storage.getItem(INPUT_DRAFT_KEY);
+        await getPlatform().storage.removeItem(INPUT_DRAFT_KEY);
+        const saved = draftStorageKey ? await getPlatform().storage.getItem(draftStorageKey) : null;
         if (!cancelled && saved) {
           setInputRaw(saved);
           draftLatestRef.current = saved;
@@ -238,7 +240,7 @@ export function useChatAppStateCore(): ChatAppState {
       compactionNoticeTimerRef.current = null;
       setCompactionNotice(null);
     }, 4000);
-  }, []);
+  }, [draftStorageKey, flushDraft]);
   useEffect(() => {
     return () => {
       if (compactionNoticeTimerRef.current) {
@@ -549,6 +551,7 @@ export function useChatAppStateCore(): ChatAppState {
   const session = useSession(sessionCallbacks, {
     ownerFilter,
     isAdmin,
+    identity,
   });
   const sessionRef = useRef(session);
   sessionRef.current = session;

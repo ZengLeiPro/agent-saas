@@ -1,6 +1,8 @@
 import { openDB, type IDBPDatabase } from "idb";
 import type { UploadedFile } from "@/components/types";
 import { INPUT_DRAFT_KEY } from "@/lib/constants";
+import type { BoundaryIdentity } from "@agent/shared";
+import { identityScope } from "@agent/shared";
 
 const TEXT_DRAFT_KEY_PREFIX = "agentChat.inputDraft.v2.";
 const DB_NAME = "agentChatComposerDB";
@@ -37,10 +39,10 @@ function withoutPreviewUrls(files: UploadedFile[]): UploadedFile[] {
 }
 
 export function getComposerDraftScope(
-  userId: string | null | undefined,
+  identity: BoundaryIdentity | null,
   sessionId: string | null,
 ): string {
-  const account = encodeURIComponent(userId || "anonymous");
+  const account = identity ? identityScope(identity) : "unauthenticated";
   const session = sessionId ? encodeURIComponent(sessionId) : "new";
   return `${account}.${session}`;
 }
@@ -51,12 +53,8 @@ export function loadComposerText(scope: string, migrateLegacy = false): string {
     if (scopedValue !== null) return scopedValue;
 
     if (migrateLegacy) {
-      const legacyValue = localStorage.getItem(INPUT_DRAFT_KEY);
-      if (legacyValue) {
-        localStorage.setItem(textDraftKey(scope), legacyValue);
-        localStorage.removeItem(INPUT_DRAFT_KEY);
-        return legacyValue;
-      }
+      // Ownerless N-1 draft cannot prove account/tenant ownership.
+      localStorage.removeItem(INPUT_DRAFT_KEY);
     }
   } catch {
     // 浏览器禁用本地存储时退化为仅内存草稿

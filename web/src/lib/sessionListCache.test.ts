@@ -1,61 +1,45 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
-import {
-  clearSessionListCache,
-  loadSessionListCache,
-  saveSessionListCache,
-} from "./sessionListCache";
+import { clearSessionListCache, loadSessionListCache, saveSessionListCache } from "./sessionListCache";
 
-const CACHE_KEY = "sessionList:default";
+const A = { userId: "a", tenantId: "ta", generation: 1 };
+const B = { userId: "b", tenantId: "ta", generation: 2 };
+const TB = { userId: "a", tenantId: "tb", generation: 3 };
+const NEXT = { userId: "a", tenantId: "ta", generation: 4 };
+const makeSession = (id: string) => ({ sessionId: id, title: id, updatedAtMs: 1 }) as unknown as ApiSessionListItem;
 
-function makeSession(id: string): ApiSessionListItem {
-  return { id, title: `会话 ${id}` } as unknown as ApiSessionListItem;
-}
+describe("web session cache M20-04 boundary", () => {
+  beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
-describe("sessionListCache", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.restoreAllMocks();
+  it("isolates A -> logout -> B, tenant switch and next generation", () => {
+    saveSessionListCache([makeSession("secret-a")], false, A);
+    expect(loadSessionListCache(A)?.sessions[0]?.sessionId).toBe("secret-a");
+    expect(loadSessionListCache(B)).toBeNull();
+    expect(loadSessionListCache(TB)).toBeNull();
+    expect(loadSessionListCache(NEXT)).toBeNull();
   });
 
-  it("保存后可读回相同的 sessions 与 hasMore", () => {
-    const sessions = [makeSession("a"), makeSession("b")];
-    saveSessionListCache(sessions, true);
-
-    const loaded = loadSessionListCache();
-    expect(loaded).toEqual({ sessions, hasMore: true });
+  it("fails closed and deletes ownerless N-1 cache", () => {
+    localStorage.setItem("sessionList:default", JSON.stringify({ sessions: [makeSession("legacy")], hasMore: false }));
+    expect(loadSessionListCache(A)).toBeNull();
+    expect(localStorage.getItem("sessionList:default")).toBeNull();
   });
 
-  it("未写入缓存时读取返回 null", () => {
-    expect(loadSessionListCache()).toBeNull();
+  it("does not persist or load without authenticated identity", () => {
+    saveSessionListCache([makeSession("x")], false, null);
+    expect(loadSessionListCache(null)).toBeNull();
   });
 
-  it("空 sessions 列表视为无有效缓存，返回 null", () => {
-    saveSessionListCache([], false);
-    expect(loadSessionListCache()).toBeNull();
-  });
-
-  it("clear 后读取返回 null", () => {
-    saveSessionListCache([makeSession("a")], false);
-    expect(loadSessionListCache()).not.toBeNull();
+  it("clear removes all scoped generations", () => {
+    saveSessionListCache([makeSession("a")], false, A);
+    saveSessionListCache([makeSession("b")], false, B);
     clearSessionListCache();
-    expect(loadSessionListCache()).toBeNull();
+    expect(loadSessionListCache(A)).toBeNull();
+    expect(loadSessionListCache(B)).toBeNull();
   });
 
-  it("缓存内容损坏（非法 JSON）时读取吞异常返回 null", () => {
-    localStorage.setItem(CACHE_KEY, "{not-json");
-    expect(loadSessionListCache()).toBeNull();
-  });
-
-  it("写入抛错（如 quota exceeded）被静默吞掉，不抛给调用方", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("QuotaExceededError");
-    });
-    expect(() => saveSessionListCache([makeSession("a")], false)).not.toThrow();
-  });
-
-  it("hasMore 默认透传 false", () => {
-    saveSessionListCache([makeSession("x")], false);
-    expect(loadSessionListCache()?.hasMore).toBe(false);
+  it("storage quota failure is contained", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+    expect(() => saveSessionListCache([makeSession("a")], false, A)).not.toThrow();
   });
 });

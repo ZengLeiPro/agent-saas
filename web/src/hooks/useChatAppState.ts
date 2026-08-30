@@ -94,7 +94,7 @@ import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRun
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
 type PendingInteractionResponse = { type: "permission_request" | "ask_user"; response: Record<string, unknown>; generation: number; attemptId: string; ackTimer?: ReturnType<typeof setTimeout> };
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
-  const { user } = useAuth();
+  const { user, identity } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
   // TASK-256：统一走三档 tier（与服务端 ?? true 默认一致），低风险档向活跃 run 发送 lowRiskOnly。
   const approvalTier = resolveApprovalTier(user?.preferences);
@@ -146,7 +146,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const isTrashPreview = trashPreviewSessionId !== null;
 
   // ---- Input state（按用户 + 会话保存浏览器本地草稿）----
-  const initialComposerScope = getComposerDraftScope(user?.id, urlState.sessionId);
+  const initialComposerScope = getComposerDraftScope(identity, urlState.sessionId);
   const composerScopeRef = useRef(initialComposerScope);
   const [input, setInputRaw] = useState(() => loadComposerText(initialComposerScope, true));
   const draftTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -771,7 +771,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }, onSandboxProfile: hydrateSandboxProfile, onSessionInvalidated: (id: string) => { const current = immediateSessionIdRef.current === id || sessionIdRef.current === id; if (immediateSessionIdRef.current === id) immediateSessionIdRef.current = null; if (sessionIdRef.current === id) sessionIdRef.current = null; if (queuedSessionIdRef.current === id) queuedSessionIdRef.current = null; if (wsLatestSessionIdRef.current?.value === id) wsLatestSessionIdRef.current = { value: null }; if (current) { mutateQueuedInterjections((prev) => prev); startNewSandboxProfile(); } }, onNewSession: startNewSandboxProfile,
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, projectAuthoritativeQueue, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
 
-  const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId });
+  const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId, identity });
   const markingReadSessionIdsRef = useRef(new Set<string>());
   const markSessionRead = useCallback((targetSessionId: string | null | undefined) => {
     if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
@@ -815,7 +815,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
       composerScopeInitializedRef.current = true;
     }
 
-    const nextScope = getComposerDraftScope(user?.id, session.sessionId);
+    const nextScope = getComposerDraftScope(identity, session.sessionId);
     composerScopeRef.current = nextScope;
     attachmentsHydratedRef.current = false;
     attachmentScopeRef.current = null;

@@ -1,39 +1,39 @@
+import type { BoundaryIdentity } from "@agent/shared";
+import { scopedSensitiveKey } from "@agent/shared";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
 
 const CACHE_KEY = 'sessionList:default';
 
-interface CacheEntry {
-  sessions: ApiSessionListItem[];
-  hasMore: boolean;
+interface CacheEntry { sessions: ApiSessionListItem[]; hasMore: boolean; }
+
+function keyFor(identity: BoundaryIdentity | null): string | null {
+  return scopedSensitiveKey(CACHE_KEY, identity);
 }
 
-/** 保存会话列表到本地缓存 */
-export function saveSessionListCache(
-  sessions: ApiSessionListItem[],
-  hasMore: boolean,
-): void {
-  try {
-    const entry: CacheEntry = { sessions, hasMore };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
-  } catch { /* silent — quota exceeded etc. */ }
+export function saveSessionListCache(sessions: ApiSessionListItem[], hasMore: boolean, identity: BoundaryIdentity | null): void {
+  const key = keyFor(identity);
+  if (!key) return;
+  try { localStorage.setItem(key, JSON.stringify({ sessions, hasMore } satisfies CacheEntry)); } catch { /* quota */ }
 }
 
-/** 清除会话列表缓存（登出时调用） */
 export function clearSessionListCache(): void {
   try {
-    localStorage.removeItem(CACHE_KEY);
-  } catch { /* silent */ }
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key === CACHE_KEY || key?.startsWith(`${CACHE_KEY}::`)) localStorage.removeItem(key);
+    }
+  } catch { /* unavailable */ }
 }
 
-/** 读取本地缓存的会话列表 */
-export function loadSessionListCache(): { sessions: ApiSessionListItem[]; hasMore: boolean } | null {
+export function loadSessionListCache(identity: BoundaryIdentity | null): CacheEntry | null {
+  const key = keyFor(identity);
+  if (!key) return null;
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    // Ownerless N-1 cache cannot prove account/tenant ownership: delete and fail closed.
+    localStorage.removeItem(CACHE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const entry: CacheEntry = JSON.parse(raw);
-    if (!entry.sessions?.length) return null;
-    return { sessions: entry.sessions, hasMore: entry.hasMore };
-  } catch {
-    return null;
-  }
+    const entry = JSON.parse(raw) as CacheEntry;
+    return entry.sessions?.length ? entry : null;
+  } catch { return null; }
 }

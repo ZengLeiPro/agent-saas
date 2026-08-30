@@ -1,6 +1,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { MessageItem } from "@/components/types";
-import { MESSAGE_CACHE_TTL_MS } from '@agent/shared';
+import { MESSAGE_CACHE_TTL_MS, scopedSensitiveKey } from '@agent/shared';
+import type { BoundaryIdentity } from '@agent/shared';
 
 const DB_NAME = 'agentChatDB';
 const DB_VERSION = 1;
@@ -12,6 +13,9 @@ const MAX_CACHED_MESSAGES = 2_000;
 
 const LS_CACHE_KEY_PREFIX = "agentChat.msgCache.";
 const LS_MIGRATED_FLAG = "agentChat.idbMigrated";
+let activeIdentity: BoundaryIdentity | null = null;
+export function setMessageCacheIdentity(identity: BoundaryIdentity | null): void { activeIdentity = identity; cacheMetadata.clear(); }
+function cacheKey(sessionId: string): string | null { return scopedSensitiveKey(sessionId, activeIdentity); }
 
 interface CachedEntry {
   sessionId: string;
@@ -104,7 +108,7 @@ async function migrateFromLocalStorage(): Promise<void> {
   try {
     if (localStorage.getItem(LS_MIGRATED_FLAG)) return;
 
-    const db = await getDB();
+    await getDB();
     const keysToRemove: string[] = [];
 
     for (let i = 0; i < localStorage.length; i++) {
@@ -112,17 +116,8 @@ async function migrateFromLocalStorage(): Promise<void> {
       if (!key?.startsWith(LS_CACHE_KEY_PREFIX)) continue;
 
       try {
-        const raw = localStorage.getItem(key);
-        if (!raw) continue;
-        const data = JSON.parse(raw) as { messages: MessageItem[]; timestamp: number };
-        const sessionId = key.slice(LS_CACHE_KEY_PREFIX.length);
-
-        await db.put(STORE_NAME, {
-          sessionId,
-          messages: data.messages,
-          timestamp: data.timestamp,
-        } satisfies CachedEntry);
-
+        // Ownerless N-1 transcript cache cannot prove principal ownership.
+        localStorage.getItem(key); // exercise storage access before deletion
         keysToRemove.push(key);
       } catch {
         keysToRemove.push(key);
@@ -172,8 +167,10 @@ export function saveSessionMessages(
   messages: MessageItem[],
   options?: SaveSessionMessagesOptions,
 ): void {
-  if (options) cacheMetadata.set(sessionId, options);
-  const knownMetadata = options ?? cacheMetadata.get(sessionId);
+  const scopedSessionId = cacheKey(sessionId);
+  if (!scopedSessionId) return;
+  if (options) cacheMetadata.set(scopedSessionId, options);
+  const knownMetadata = options ?? cacheMetadata.get(scopedSessionId);
   // 入队前同步截取快照：messages 是可变数组，不能等 IndexedDB ready 后再读取。
   // system-error 由服务端 lastRunState 派生，也不能作为会话正文缓存。
   const cacheableMessages = prepareMessagesForCache(messages);
@@ -187,7 +184,7 @@ export function saveSessionMessages(
     try {
       const db = await getDB();
       await db.put(STORE_NAME, {
-        sessionId,
+        sessionId: scopedSessionId,
         messages: trimmed,
         timestamp: Date.now(),
         historyComplete,
@@ -208,12 +205,14 @@ export function saveSessionMessages(
 export async function loadSessionMessageSnapshot(
   sessionId: string,
 ): Promise<SessionMessageSnapshot | null> {
+  const scopedSessionId = cacheKey(sessionId);
+  if (!scopedSessionId) return null;
   try {
     const db = await getDB();
-    const entry: CachedEntry | undefined = await db.get(STORE_NAME, sessionId);
+    const entry: CachedEntry | undefined = await db.get(STORE_NAME, scopedSessionId);
     if (!entry) return null;
     if (Date.now() - entry.timestamp > MESSAGE_CACHE_TTL_MS) {
-      await db.delete(STORE_NAME, sessionId);
+      await db.delete(STORE_NAME, scopedSessionId);
       return null;
     }
     const messages = restoreCachedMessages(entry.messages);
@@ -226,7 +225,7 @@ export async function loadSessionMessageSnapshot(
       ...(tailCursor ? { tailCursor } : {}),
       ...(oldestCursor ? { oldestCursor } : {}),
     };
-    cacheMetadata.set(sessionId, {
+    cacheMetadata.set(scopedSessionId, {
       historyComplete: snapshot.historyComplete,
       ...(snapshot.tailCursor ? { tailCursor: snapshot.tailCursor } : {}),
       ...(snapshot.oldestCursor ? { oldestCursor: snapshot.oldestCursor } : {}),
@@ -246,10 +245,12 @@ export async function loadSessionMessages(
 
 /** 删除指定 session 的消息缓存 */
 export async function clearSessionMessages(sessionId: string): Promise<void> {
-  cacheMetadata.delete(sessionId);
+  const scopedSessionId = cacheKey(sessionId);
+  if (!scopedSessionId) return;
+  cacheMetadata.delete(scopedSessionId);
   try {
     const db = await getDB();
-    await db.delete(STORE_NAME, sessionId);
+    await db.delete(STORE_NAME, scopedSessionId);
   } catch {
     // silent
   }

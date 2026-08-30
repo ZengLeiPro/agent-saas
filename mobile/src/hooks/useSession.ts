@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type {
   ApiSessionListItem,
+  BoundaryIdentity,
   ApiSessionDetail,
   TokenUsage,
   ContextUsageData,
@@ -86,6 +87,7 @@ export interface SessionState {
 }
 
 export interface SessionOptions {
+  identity?: BoundaryIdentity | null;
   ownerFilter?: string | null;
   isAdmin?: boolean;
   initialSessionId?: string | null;
@@ -95,6 +97,7 @@ export function useSession(
   callbacks: SessionCallbacks,
   options?: SessionOptions,
 ): SessionState {
+  const identity = options?.identity ?? null;
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
   );
@@ -671,7 +674,7 @@ export function useSession(
 
     (async () => {
       // Step 1: 从本地缓存加载，实现冷启动即时展示
-      const cached = await loadSessionListCache(viewAsParamRef.current);
+      const cached = await loadSessionListCache(viewAsParamRef.current, identity);
       if (!cancelled && cached && cached.sessions.length > 0) {
         setSessions(cached.sessions);
         setHasMore(cached.hasMore);
@@ -701,7 +704,7 @@ export function useSession(
     if (sessions.length === 0) return;
     if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
     debounceSaveRef.current = setTimeout(() => {
-      saveSessionListCache(sessions, hasMore, viewAsParamRef.current);
+      saveSessionListCache(sessions, hasMore, viewAsParamRef.current, identity);
       debounceSaveRef.current = null;
     }, 5000);
     return () => {
@@ -710,7 +713,7 @@ export function useSession(
         debounceSaveRef.current = null;
       }
     };
-  }, [sessions, hasMore]);
+  }, [sessions, hasMore, identity]);
 
   return {
     sessionId,

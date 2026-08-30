@@ -1,14 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
-import type { PlatformCapability, TenantFeatureFlags, UserPreferences } from "@agent/shared";
-import { DEFAULT_TENANT_ID, clearGroupsCache, isDebugModeAvailable } from "@agent/shared";
+import type { BoundaryIdentity, IdentityEvent, IdentityState, PlatformCapability, TenantFeatureFlags, UserPreferences } from "@agent/shared";
+import { DEFAULT_TENANT_ID, INITIAL_IDENTITY_STATE, clearGroupsCache, identityReducer, isDebugModeAvailable, resetChatStore } from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
 import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
 import { clearSessionListCache } from "@/lib/sessionListCache";
-import { clearAllMessageCache } from "@/lib/messageCache";
+import { clearAllMessageCache, setMessageCacheIdentity } from "@/lib/messageCache";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
 import {
   loginWithPassword,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/savedAccounts";
 
 interface AuthContextValue {
+  identity: BoundaryIdentity | null;
   user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -65,8 +66,28 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const IDENTITY_META_KEY = "agentChat.identity.v1";
+
+function readIdentityState(): IdentityState {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(IDENTITY_META_KEY) || "null") as IdentityState | null;
+    const generation = typeof parsed?.generation === "number" ? parsed.generation : 0;
+    const identity = parsed?.identity && parsed.identity.generation === generation ? parsed.identity : null;
+    return { generation, identity };
+  } catch { return INITIAL_IDENTITY_STATE; }
+}
+
+function persistIdentityState(state: IdentityState): void {
+  localStorage.setItem(IDENTITY_META_KEY, JSON.stringify(state));
+}
 
 function clearAccountScopedState(): void {
+  // Identity boundary order: sending fence -> socket -> recovery/projections -> persistence.
+  wsClient.freezeSending();
+  wsClient.disconnect();
+  wsClient.resetRecovery({ sessionId: null });
+  resetChatStore();
+  setMessageCacheIdentity(null);
   localStorage.removeItem(SESSION_STORAGE_KEY);
   clearSessionListCache();
   void clearAllMessageCache();
@@ -104,46 +125,52 @@ function normalizeAuthUser(user: AuthUser): AuthUser {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const identityRef = useRef<IdentityState>(readIdentityState());
+  const [identityState, setIdentityState] = useState<IdentityState>(identityRef.current);
+  const transitionIdentity = useCallback((event: IdentityEvent): BoundaryIdentity | null => {
+    const next = identityReducer(identityRef.current, event);
+    identityRef.current = next;
+    persistIdentityState(next);
+    setIdentityState(next);
+    setMessageCacheIdentity(next.identity);
+    wsClient.unfreezeSending();
+    return next.identity;
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   const [accounts, setAccounts] = useState<SavedAccountSummary[]>(readSavedAccounts);
 
   const logoutAllAccounts = useCallback(() => {
-    void unsubscribeCurrentBrowserPush().finally(() => {
-      localStorage.removeItem(TOKEN_KEY);
-      clearSavedAccounts();
-      clearAccountScopedState();
-      setAccounts([]);
-      setUser(null);
-    });
-  }, []);
+    // Offline-first: credential and local boundary are completed before any push/server cleanup.
+    localStorage.removeItem(TOKEN_KEY);
+    clearSavedAccounts();
+    clearAccountScopedState();
+    transitionIdentity({ type: "logout" });
+    setAccounts([]);
+    setUser(null);
+    void unsubscribeCurrentBrowserPush();
+  }, [transitionIdentity]);
 
   const logoutCurrentAccount = useCallback((nextAccountKey?: string) => {
-    void unsubscribeCurrentBrowserPush().finally(() => {
-      const currentKey = user ? getAccountKey(user) : null;
-      const remainingAccounts = currentKey
-        ? forgetSavedAccount(currentKey)
-        : readSavedAccounts();
-      const targetAccount = nextAccountKey
-        ? remainingAccounts.find((account) => account.key === nextAccountKey)
-        : remainingAccounts[0];
+    const currentKey = user ? getAccountKey(user) : null;
+    const remainingAccounts = currentKey ? forgetSavedAccount(currentKey) : readSavedAccounts();
+    const targetAccount = nextAccountKey
+      ? remainingAccounts.find((account) => account.key === nextAccountKey)
+      : remainingAccounts[0];
 
-      setAccounts(remainingAccounts);
-      clearAccountScopedState();
+    localStorage.removeItem(TOKEN_KEY);
+    clearAccountScopedState();
+    transitionIdentity({ type: "logout" });
+    setAccounts(remainingAccounts);
+    setUser(null);
+    void unsubscribeCurrentBrowserPush();
 
-      if (targetAccount) {
-        const token = getSavedAccountToken(targetAccount.key);
-        if (token) {
-          localStorage.setItem(TOKEN_KEY, token);
-          window.location.replace("/");
-          return;
-        }
-      }
-
-      localStorage.removeItem(TOKEN_KEY);
-      setUser(null);
-    });
-  }, [user]);
+    const nextToken = targetAccount ? getSavedAccountToken(targetAccount.key) : null;
+    if (nextToken) {
+      localStorage.setItem(TOKEN_KEY, nextToken);
+      window.location.replace("/");
+    }
+  }, [transitionIdentity, user]);
 
   const logout = useCallback(() => {
     logoutCurrentAccount();
@@ -165,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (result.status === "authenticated") {
         const nextUser = normalizeAuthUser(result.user);
         setUser(nextUser);
+        transitionIdentity({ type: "authenticated", principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
         const token = localStorage.getItem(TOKEN_KEY);
         if (token) setAccounts(rememberSavedAccount(token, nextUser));
         setAuthEnabled(true);
@@ -173,25 +201,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (result.status === "unauthenticated") {
         const invalidToken = localStorage.getItem(TOKEN_KEY);
         localStorage.removeItem(TOKEN_KEY);
+        clearAccountScopedState();
+        transitionIdentity({ type: "token-invalidated" });
         if (invalidToken) setAccounts(forgetSavedAccountByToken(invalidToken));
       }
       // "error" 状态：保持默认即可
       setIsLoading(false);
     });
-  }, []);
+  }, [transitionIdentity]);
 
   const activateAccount = useCallback(async (data: AuthResponse) => {
     const nextUser = normalizeAuthUser(data.user);
     const isSwitching = user !== null && getAccountKey(user) !== getAccountKey(nextUser);
-    if (isSwitching) await unsubscribeCurrentBrowserPush();
+    if (isSwitching) { clearAccountScopedState(); void unsubscribeCurrentBrowserPush(); }
     localStorage.setItem(TOKEN_KEY, data.token);
     setAccounts(rememberSavedAccount(data.token, nextUser));
     setUser(nextUser);
+    transitionIdentity({ type: isSwitching ? "principal-switched" : "authenticated", principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
     if (isSwitching) {
-      clearAccountScopedState();
       window.location.replace("/");
     }
-  }, [user]);
+  }, [transitionIdentity, user]);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     await activateAccount(await loginWithPassword(credentials));
@@ -208,12 +238,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccounts(readSavedAccounts());
       return;
     }
-    void unsubscribeCurrentBrowserPush().finally(() => {
-      localStorage.setItem(TOKEN_KEY, token);
-      clearAccountScopedState();
-      window.location.replace("/");
-    });
-  }, [user]);
+    clearAccountScopedState();
+    transitionIdentity({ type: "logout" });
+    void unsubscribeCurrentBrowserPush();
+    localStorage.setItem(TOKEN_KEY, token);
+    window.location.replace("/");
+  }, [transitionIdentity, user]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);
@@ -255,6 +285,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      identity: identityState.identity,
       user,
       isLoading,
       isAuthenticated: user !== null,
@@ -278,7 +309,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateDebugMode,
       updateTenantFeatures,
     }),
-    [user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateDebugMode, updateTenantFeatures, canPlatform],
+    [identityState.identity, user, isLoading, authEnabled, accounts, login, loginWithSms, activateAccount, switchAccount, logoutCurrentAccount, logoutAllAccounts, logout, updateAvatar, updatePhone, updatePreferences, updateDebugMode, updateTenantFeatures, canPlatform],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -177,6 +177,9 @@ class WsClient {
     private connectPromiseResolve: (() => void) | null = null;
     private connectPromiseReject: ((err: Error) => void) | null = null;
     private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    // M20-04 boundary fence. Every disconnect/boundary invalidates old socket callbacks.
+    private boundaryGeneration = 0;
+    private sendingFrozen = false;
 
     // Reference counting (for mobile multi-screen)
     private refCount = 0;
@@ -265,6 +268,7 @@ class WsClient {
 
     /** Establish connection */
     async connect(): Promise<void> {
+        if (this.sendingFrozen) throw new Error('Identity boundary in progress');
         // Already connected
         if (this.ws?.readyState === WebSocket.OPEN && this.state === 'connected') {
             return;
@@ -391,6 +395,9 @@ class WsClient {
     }
 
     private doConnect(url: string, token?: string): void {
+        if (this.sendingFrozen) return;
+        const socketBoundaryGeneration = this.boundaryGeneration;
+        const isCurrentBoundary = () => socketBoundaryGeneration === this.boundaryGeneration && !this.sendingFrozen;
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
 
@@ -404,7 +411,7 @@ class WsClient {
         this.ws = ws;
 
         ws.onopen = () => {
-            if (this.ws !== ws) return; // stale — a newer connection has replaced us
+            if (this.ws !== ws || !isCurrentBoundary()) return; // stale identity/connection
             // Re-check at the exact credential boundary in case policy changed while
             // the socket upgrade was in flight.
             try {
@@ -428,6 +435,7 @@ class WsClient {
         };
 
         ws.onmessage = (event: MessageEvent) => {
+            if (this.ws !== ws || !isCurrentBoundary()) return;
             try {
                 const envelope = JSON.parse(event.data as string) as WsEnvelope;
                 const now = Date.now();
@@ -464,6 +472,7 @@ class WsClient {
         };
 
         ws.onclose = (event: CloseEvent) => {
+            if (!isCurrentBoundary()) return;
             // Only null this.ws if it still points to this instance —
             // a newer doConnect() may have already replaced it.
             if (this.ws === ws) {
@@ -497,7 +506,7 @@ class WsClient {
 
         this.retryTimer = setTimeout(async () => {
             this.retryTimer = null;
-            if (!this.intentionalClose) {
+            if (!this.intentionalClose && !this.sendingFrozen) {
                 try {
                     const { url, token } = await this.getConnectionParams();
                     this.doConnect(url, token);
@@ -603,8 +612,22 @@ class WsClient {
         return { lastSeq: this.recovery.lastSeq, serverEpoch: this.recovery.serverEpoch };
     }
 
+    /** Freeze all outbound work before an account/session boundary reset. */
+    freezeSending(): void {
+        this.sendingFrozen = true;
+        this.boundaryGeneration++;
+    }
+
+    /** Install the new identity after all sensitive projections have been cleared. */
+    unfreezeSending(): void {
+        this.sendingFrozen = false;
+    }
+
+    get isSendingFrozen(): boolean { return this.sendingFrozen; }
+
     /** Disconnect */
     disconnect(): void {
+        this.boundaryGeneration++;
         this.intentionalClose = true;
         this.stopHeartbeat();
         if (this.retryTimer) {
@@ -627,6 +650,7 @@ class WsClient {
 
     /** Send message, returns whether successful (and re-checks the connected socket origin). */
     send(msg: WsOutboundMessage): boolean {
+        if (this.sendingFrozen) return false;
         if (this.state === 'connected' && this.ws && this.ws.readyState === WebSocket.OPEN) {
             try {
                 const socketUrl = (this.ws as unknown as { url?: unknown }).url;

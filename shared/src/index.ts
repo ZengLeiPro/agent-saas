@@ -384,6 +384,28 @@ export type {
   ScenarioSanitizeReport,
 } from './security/sanitizeCustomerFacingText';
 
+// M20-04 account/session boundary identity kernel
+export {
+  INITIAL_IDENTITY_STATE,
+  identityReducer,
+  identityScope,
+  migrateOwnedLegacyValue,
+  samePrincipal,
+  scopedSensitiveKey,
+  selectGeneration,
+  selectIdentity,
+  selectPrincipal,
+} from './lib/identity';
+export type {
+  AuthPrincipal,
+  BoundaryIdentity,
+  IdentityEvent,
+  IdentityState,
+  OwnedLegacyValue,
+} from './lib/identity';
+export { runIdentityBoundary } from './lib/identityBoundary';
+export type { IdentityBoundaryHooks } from './lib/identityBoundary';
+
 // Lib - constants
 export {
   TOKEN_KEY,

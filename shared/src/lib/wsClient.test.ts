@@ -518,3 +518,38 @@ describe('wsClient - 引用计数 acquire/release', () => {
     expect(() => release()).not.toThrow();
   });
 });
+
+describe('M20-04 identity boundary fencing', () => {
+  it('rejects late frames and reconnects without old cursor, epoch or session id', async () => {
+    const firstConnect = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const old = latestWs();
+    old.simulateOpen();
+    await firstConnect;
+    const handler = vi.fn();
+    wsClient.onMessage(handler);
+    wsClient.setLastSeq(88);
+    wsClient.setEpoch('epoch-a');
+    wsClient.setSyncSessionId('session-a');
+
+    wsClient.freezeSending();
+    expect(wsClient.send({ action: 'detach' })).toBe(false);
+    wsClient.disconnect();
+    wsClient.resetRecovery({ sessionId: null });
+    wsClient.unfreezeSending();
+
+    old.simulateMessage({ seq: 89, data: { type: 'text', content: 'late-a' } });
+    expect(handler).not.toHaveBeenCalled();
+    expect(wsClient.getRecoveryCursor()).toEqual({ lastSeq: 0, serverEpoch: null });
+
+    const reconnect = wsClient.connect();
+    await vi.advanceTimersByTimeAsync(0);
+    const fresh = latestWs();
+    fresh.simulateOpen();
+    await reconnect;
+    fresh.simulateMessage({ data: { type: 'pong', seq: 2, epoch: 'epoch-b' } });
+    const sync = fresh.sent.map(frame => JSON.parse(frame)).find(frame => frame.action === 'sync');
+    expect(sync).toMatchObject({ action: 'sync', lastSeq: 0, epoch: 'epoch-b' });
+    expect(sync).not.toHaveProperty('sessionId');
+  });
+});

@@ -239,6 +239,14 @@ describe('DwsCliContextClient', () => {
       meta: { pagination: { endpoint_exhausted: true, pages: 100, next_token: 'unsafe-next' } } }],
     ['contradictory pagination hasMore', { data: { minutes: [], complete: true },
       meta: { pagination: { endpoint_exhausted: true, hasMore: true, pages: 100 } } }],
+    ['container false cannot hide pagination true', {
+      data: { minutes: [], complete: true, hasMore: false },
+      meta: { pagination: { endpoint_exhausted: true, hasMore: true, pages: 100 } },
+    }],
+    ['container complete cannot hide pagination incomplete', {
+      data: { minutes: [], complete: true, hasMore: false },
+      meta: { pagination: { complete: false, endpoint_exhausted: true, hasMore: false, pages: 100 } },
+    }],
   ])('fails closed for minutes inventory: %s', async (_name, payload) => {
     const { client } = setup([payload]);
 

@@ -100,6 +100,8 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
+  const dwsCompletionRouteVersion = dwsCompletionRoute?.version
+    ?? (value.dwsCompletionRouteVersion === 'invalid' ? 'invalid' as const : undefined);
   const executionMode = value.executionMode === 'dispatcher' ? 'dispatcher' as const
     : value.executionMode === 'direct' ? 'direct' as const
       : undefined;
@@ -117,7 +119,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(value.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
     ...(dwsCompletionRoute?.version === 'exact' ? { dwsCompletionRoute: dwsCompletionRoute.route } : {}),
     ...(dwsCompletionRoute?.version === 'legacy' ? { legacyDwsCompletionRoute: dwsCompletionRoute.route } : {}),
-    ...(dwsCompletionRoute ? { dwsCompletionRouteVersion: dwsCompletionRoute.version } : {}),
+    ...(dwsCompletionRouteVersion ? { dwsCompletionRouteVersion } : {}),
     modelRef,
     cwd,
     workspaceId,

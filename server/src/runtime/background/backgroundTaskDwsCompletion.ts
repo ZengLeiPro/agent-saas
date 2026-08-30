@@ -11,18 +11,25 @@ import type {
 
 const logger = createLogger('BackgroundTaskDwsCompletion');
 
+export type ResolvedDwsCompletionRoute =
+  | { version: 'none' }
+  | { version: 'invalid' }
+  | { version: 'exact'; route: BackgroundTaskDwsCompletionRoute };
+
 export function resolveDwsCompletionRoute(
   parentRun: RunRecord | null | undefined,
   parentChannel: ChannelContext['channel'],
-): BackgroundTaskDwsCompletionRoute | undefined {
-  if (parentChannel !== 'dingtalk') return undefined;
+): ResolvedDwsCompletionRoute {
+  if (parentChannel !== 'dingtalk') return { version: 'none' };
   const wakeMessage = parentRun?.metadata.wakeMessage;
-  if (!wakeMessage || typeof wakeMessage !== 'object' || Array.isArray(wakeMessage)) return undefined;
+  if (!wakeMessage || typeof wakeMessage !== 'object' || Array.isArray(wakeMessage)) return { version: 'none' };
   const wake = wakeMessage as Record<string, unknown>;
   const messageMetadata = wake.metadata;
-  if (!messageMetadata || typeof messageMetadata !== 'object' || Array.isArray(messageMetadata)) return undefined;
+  if (!messageMetadata || typeof messageMetadata !== 'object' || Array.isArray(messageMetadata)) {
+    return { version: 'none' };
+  }
   const metadata = messageMetadata as Record<string, unknown>;
-  if (metadata.source !== 'agent_dws_personal_stream') return undefined;
+  if (metadata.source !== 'agent_dws_personal_stream') return { version: 'none' };
   const accountId = typeof metadata.accountId === 'string' ? metadata.accountId : undefined;
   const profileId = typeof metadata.profileId === 'string' ? metadata.profileId : undefined;
   const corpId = typeof metadata.corpId === 'string' ? metadata.corpId : undefined;
@@ -31,11 +38,14 @@ export function resolveDwsCompletionRoute(
   const eventType = metadata.eventType === 'user_im_message_receive_at'
     || metadata.eventType === 'user_im_message_receive_o2o_all' ? metadata.eventType : undefined;
   if (!accountId || !profileId || !corpId || !dingtalkUserId || !conversationId || !eventType
-    || profileId !== `${corpId}:${dingtalkUserId}`) return undefined;
+    || profileId !== `${corpId}:${dingtalkUserId}`) return { version: 'invalid' };
   return {
-    accountId, profileId, corpId, dingtalkUserId, conversationId, eventType,
-    ...(typeof metadata.messageId === 'string' ? { messageId: metadata.messageId } : {}),
-    ...(typeof wake.senderId === 'string' ? { senderOpenDingtalkId: wake.senderId } : {}),
+    version: 'exact',
+    route: {
+      accountId, profileId, corpId, dingtalkUserId, conversationId, eventType,
+      ...(typeof metadata.messageId === 'string' ? { messageId: metadata.messageId } : {}),
+      ...(typeof wake.senderId === 'string' ? { senderOpenDingtalkId: wake.senderId } : {}),
+    },
   };
 }
 

@@ -400,18 +400,25 @@ function parsePage(payload: unknown, itemKeys: string[]): ParsedPage {
 function hasCompleteMinutesInventory(payload: unknown): boolean {
   const root = asRecord(payload);
   const records = objectCandidates(payload);
-  const container = records.find(record => (
-    ['minutes', 'itemList', 'items', 'tasks', 'list', 'records'].some(key => Array.isArray(record[key]))
-  )) ?? records[0] ?? {};
   const pagination = asRecord(asRecord(root.meta).pagination);
-  const complete = optionalBoolean(container, ['complete']);
-  const endpointExhausted = optionalBoolean(pagination, ['endpoint_exhausted', 'endpointExhausted']);
-  const hasMore = optionalBoolean(container, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more'])
-    ?? optionalBoolean(pagination, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more']);
-  const nextCursor = optionalString(container, [
+  const declarations = [...records, pagination];
+  const complete = booleanDeclarations(declarations, ['complete']);
+  const endpointExhausted = booleanDeclarations(declarations, ['endpoint_exhausted', 'endpointExhausted']);
+  const hasMore = booleanDeclarations(declarations, ['hasMore', 'has_more', 'hasNext', 'has_next', 'more']);
+  const hasCursor = declarations.some(record => optionalString(record, [
     'nextCursor', 'next_cursor', 'nextToken', 'next_token', 'nextPageToken', 'next_page_token', 'pageToken',
-  ]) ?? optionalString(pagination, ['next_token', 'nextToken', 'next_cursor', 'nextCursor']);
-  return complete === true && endpointExhausted === true && hasMore !== true && !nextCursor;
+  ]) !== undefined);
+  return complete.length > 0 && complete.every(value => value === true)
+    && endpointExhausted.length > 0 && endpointExhausted.every(value => value === true)
+    && hasMore.every(value => value === false)
+    && !hasCursor
+    && !records.some(truncatedField);
+}
+
+function booleanDeclarations(records: Record<string, unknown>[], keys: string[]): boolean[] {
+  return records.flatMap(record => keys.flatMap(key => (
+    typeof record[key] === 'boolean' ? [record[key] as boolean] : []
+  )));
 }
 
 function pageResult<T>(items: T[], page: ParsedPage): DwsPage<T> {

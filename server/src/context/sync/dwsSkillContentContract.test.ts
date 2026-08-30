@@ -47,15 +47,32 @@ describe('DWS v1.0.60 skill content contract', () => {
     expect(keepalive).not.toContain('--profile <corpId>');
   });
 
-  it('keeps direct auth login out of SaaS channel troubleshooting', async () => {
-    const channelLogin = await readSkillFile('references', 'channel-login.md');
-    const saas = channelLogin.split('## SaaS 排查流程')[1]?.split('## 仅平台外本地开发')[0];
-    const localDevelopment = channelLogin.split('## 仅平台外本地开发')[1];
+  it('keeps direct auth operations out of every authentication reference reached from SKILL', async () => {
+    const [skill, channelLogin, globalReference] = await Promise.all([
+      readSkillFile('SKILL.md'),
+      readSkillFile('references', 'channel-login.md'),
+      readSkillFile('references', 'global-reference.md'),
+    ]);
+    expect(skill).toContain('[global-reference.md](./references/global-reference.md) 中的认证章节');
 
-    expect(saas).toContain('不得执行 `dws auth login`');
-    expect(saas).toContain('连接器页');
-    expect(saas).not.toContain('执行 `dws auth login --profile');
-    expect(localDevelopment).toContain('dws auth login --profile <corpId:userId> --format json');
+    const channelSaas = channelLogin.split('## SaaS 排查流程')[1]?.split('## 仅平台外本地开发')[0];
+    const channelLocal = channelLogin.split('## 仅平台外本地开发')[1];
+    expect(channelSaas).toContain('不得执行 `dws auth login`');
+    expect(channelSaas).toContain('连接器页');
+    expect(channelSaas).not.toContain('执行 `dws auth login --profile');
+    expect(channelLocal).toContain('dws auth login --profile <corpId:userId> --format json');
+
+    const globalSaas = globalReference.split('### SaaS 平台边界（Agent 必须遵守）')[1]
+      ?.split('### 仅平台外本地开发')[0];
+    const globalLocal = globalReference.split('### 仅平台外本地开发')[1]
+      ?.split('## 全局标志')[0];
+    expect(globalSaas).toContain('能力中心 → 连接器 → 钉钉');
+    expect(globalSaas).toContain('不得执行');
+    expect(globalSaas).not.toMatch(/^dws auth (?:login|logout|reset|migrate-keychain)\b/m);
+    expect(globalLocal).toContain('dws auth login');
+    expect(globalLocal).toContain('dws auth migrate-keychain');
+    expect(globalLocal).toContain('dws auth logout');
+    expect(globalLocal).toContain('dws auth reset');
   });
 
   it('does not advertise conference booking in calendar docs', async () => {

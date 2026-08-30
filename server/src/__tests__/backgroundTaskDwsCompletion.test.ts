@@ -70,15 +70,18 @@ describe('background task DWS completion route', () => {
       },
     }), 'dingtalk');
     expect(route).toEqual({
-      accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
-      conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
-      messageId: 'msg-1', senderOpenDingtalkId: 'open-user-1',
+      version: 'exact',
+      route: {
+        accountId: 'adws-1', profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+        conversationId: 'cid-1', eventType: 'user_im_message_receive_o2o_all',
+        messageId: 'msg-1', senderOpenDingtalkId: 'open-user-1',
+      },
     });
   });
 
   it('fails closed for non-DWS, incomplete or inconsistent account identity metadata', () => {
-    expect(resolveDwsCompletionRoute(parentRun({}), 'dingtalk')).toBeUndefined();
-    expect(resolveDwsCompletionRoute(parentRun({ wakeMessage: {} }), 'web')).toBeUndefined();
+    expect(resolveDwsCompletionRoute(parentRun({}), 'dingtalk')).toEqual({ version: 'none' });
+    expect(resolveDwsCompletionRoute(parentRun({ wakeMessage: {} }), 'web')).toEqual({ version: 'none' });
     expect(resolveDwsCompletionRoute(parentRun({
       wakeMessage: {
         channel: 'dingtalk', chatId: 'cid-1',
@@ -88,7 +91,7 @@ describe('background task DWS completion route', () => {
           eventType: 'user_im_message_receive_o2o_all',
         },
       },
-    }), 'dingtalk')).toBeUndefined();
+    }), 'dingtalk')).toEqual({ version: 'invalid' });
   });
 
   it('enqueues background completion with the pinned exact account identity', async () => {

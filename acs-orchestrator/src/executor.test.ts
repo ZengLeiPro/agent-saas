@@ -125,7 +125,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     expect(executor.cancel('inv-aborted-startup')).toBe(false);
   });
 
-  it('adds the trusted sandbox identity to runner correlation', async () => {
+  it('adds the trusted sandbox identity to runner correlation while maintaining its lease', async () => {
     const ref: SandboxRef = {
       name: 'as-correlation',
       workspaceId: 'ws_kaiyan__u-1',
@@ -138,6 +138,8 @@ describe('AcsExecutor active sandbox tracking', () => {
     child.stdin.on('data', (chunk) => { runnerInput += String(chunk); });
     const sandboxManager = {
       ref: () => ref,
+      setActiveInvocationLease: vi.fn(async () => undefined),
+      touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
     let spawnInput: string | undefined;

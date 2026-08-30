@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ClientDaemonRunner } from '../runtime/clientDaemonRunner.js';
+import { getInvocationCorrelation } from '../runtime/invocationCorrelation.js';
 import { parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from '../runtime/handProtocol.js';
 
@@ -112,6 +113,120 @@ describe('ClientDaemonRunner', () => {
       await waitForMessage(sent, (msg) => msg.type === 'invoke_chunk' && msg.requestId === 'shell-1' && msg.chunk.type === 'output');
       const shellDone = await waitForMessage(sent, (msg) => msg.type === 'invoke_completed' && msg.requestId === 'shell-1');
       expect(shellDone).toMatchObject({ type: 'invoke_completed', response: { status: 'success' } });
+      await runner.stop();
+      await run;
+    });
+  });
+
+  it('stops consuming a provider stream after the terminal completed chunk', async () => {
+    await withFakePlatform(async ({ url, sent, ws }) => {
+      let pulledAfterCompleted = false;
+      let finalized = 0;
+      const provider = {
+        execute: vi.fn(async () => ({ status: 'error' as const, error: 'stream only' })),
+        executeStream: vi.fn(async function* () {
+          try {
+            yield { type: 'completed' as const, response: { status: 'success' as const, content: 'done' } };
+            pulledAfterCompleted = true;
+            yield { type: 'output' as const, channel: 'stdout' as const, content: 'late' };
+          } finally {
+            finalized += 1;
+            throw new Error('provider cleanup failed after terminal');
+          }
+        }),
+        listInternalTools: () => [],
+      };
+      const runner = new ClientDaemonRunner({
+        url,
+        daemonId: 'daemon-terminal-stream',
+        workspaceRoot: await mkdtemp(join(tmpdir(), 'client-daemon-terminal-stream-')),
+        reconnectDelayMs: 50,
+        provider,
+      });
+      const run = runner.runForever();
+      await waitForMessage(sent, (msg) => msg.type === 'daemon_hello');
+      const invoke = (requestId: string) => ws()?.send(serializeClientDaemonMessage({
+        type: 'invoke_request', protocolVersion: 1, requestId, invocationId: 'logical-terminal',
+        request: {
+          toolName: 'Write', input: {},
+          context: {
+            correlation: { version: 1, invocationId: 'logical-terminal' },
+            workspace: { id: 'remote-w', root: '/ignored', executionTarget: 'client' },
+          },
+        },
+      }));
+
+      invoke('terminal-first');
+      expect(await waitForMessage(sent, (msg) => msg.type === 'invoke_completed' && msg.requestId === 'terminal-first'))
+        .toMatchObject({ response: { status: 'success', content: 'done' } });
+      await waitForCondition(() => finalized === 1);
+      expect(pulledAfterCompleted).toBe(false);
+      expect(sent.some((msg) => msg.type === 'invoke_chunk' && msg.requestId === 'terminal-first')).toBe(false);
+      expect(sent.filter((msg) => msg.type === 'invoke_completed' && msg.requestId === 'terminal-first')).toHaveLength(1);
+
+      invoke('terminal-second');
+      expect(await waitForMessage(sent, (msg) => msg.type === 'invoke_completed' && msg.requestId === 'terminal-second'))
+        .toMatchObject({ response: { status: 'success', content: 'done' } });
+      await waitForCondition(() => finalized === 2);
+      expect(provider.executeStream).toHaveBeenCalledTimes(2);
+      expect(sent.filter((msg) => msg.type === 'invoke_completed' && msg.requestId === 'terminal-second')).toHaveLength(1);
+
+      await runner.stop();
+      await run;
+    });
+  });
+
+  it('normalizes legacy-only and envelope-only invocation identity for provider and ALS', async () => {
+    await withFakePlatform(async ({ url, sent, ws }) => {
+      const observed: Array<{ correlation: unknown; ambient: unknown }> = [];
+      const provider = {
+        execute: vi.fn(async (request: ToolInvocationRequest) => {
+          observed.push({
+            correlation: request.context.correlation,
+            ambient: getInvocationCorrelation(),
+          });
+          return { status: 'success' as const, content: 'ok' };
+        }),
+        listInternalTools: () => [],
+      };
+      const runner = new ClientDaemonRunner({
+        url,
+        daemonId: 'daemon-normalize-correlation',
+        workspaceRoot: await mkdtemp(join(tmpdir(), 'client-daemon-normalize-correlation-')),
+        reconnectDelayMs: 50,
+        provider,
+      });
+      const run = runner.runForever();
+      await waitForMessage(sent, (msg) => msg.type === 'daemon_hello');
+
+      const sendInvoke = (requestId: string, invocationId: string, includeLegacy: boolean) =>
+        ws()?.send(serializeClientDaemonMessage({
+          type: 'invoke_request', protocolVersion: 1, requestId, invocationId,
+          request: {
+            toolName: 'Write', input: {},
+            context: {
+              ...(includeLegacy ? { invocationId } : {}),
+              workspace: { id: 'remote-w', root: '/ignored', executionTarget: 'client' },
+            },
+          },
+        }));
+
+      sendInvoke('legacy-only', 'legacy-i1', true);
+      await waitForMessage(sent, (msg) => msg.type === 'invoke_completed' && msg.requestId === 'legacy-only');
+      sendInvoke('envelope-only', 'envelope-i2', false);
+      await waitForMessage(sent, (msg) => msg.type === 'invoke_completed' && msg.requestId === 'envelope-only');
+
+      expect(observed).toEqual([
+        {
+          correlation: { version: 1, invocationId: 'legacy-i1' },
+          ambient: { version: 1, invocationId: 'legacy-i1' },
+        },
+        {
+          correlation: { version: 1, invocationId: 'envelope-i2' },
+          ambient: { version: 1, invocationId: 'envelope-i2' },
+        },
+      ]);
+
       await runner.stop();
       await run;
     });

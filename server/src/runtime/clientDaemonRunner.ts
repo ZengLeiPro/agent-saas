@@ -204,7 +204,6 @@ export class ClientDaemonRunner {
           this.provider.executeStream(request),
         )) {
           if (chunk.type === 'completed') {
-            sawCompleted = true;
             this.send(ws, {
               type: 'invoke_completed',
               protocolVersion: 1,
@@ -212,15 +211,16 @@ export class ClientDaemonRunner {
               invocationId: message.invocationId,
               response: chunk.response,
             });
-          } else {
-            this.send(ws, {
-              type: 'invoke_chunk',
-              protocolVersion: 1,
-              requestId: message.requestId,
-              invocationId: message.invocationId,
-              chunk,
-            });
+            sawCompleted = true;
+            break;
           }
+          this.send(ws, {
+            type: 'invoke_chunk',
+            protocolVersion: 1,
+            requestId: message.requestId,
+            invocationId: message.invocationId,
+            chunk,
+          });
         }
       } else {
         const response = await runWithInvocationCorrelation(
@@ -246,13 +246,15 @@ export class ClientDaemonRunner {
         });
       }
     } catch (err) {
-      this.send(ws, {
-        type: 'invoke_completed',
-        protocolVersion: 1,
-        requestId: message.requestId,
-        invocationId: message.invocationId,
-        response: { status: 'error', error: err instanceof Error ? err.message : String(err) },
-      });
+      if (!sawCompleted) {
+        this.send(ws, {
+          type: 'invoke_completed',
+          protocolVersion: 1,
+          requestId: message.requestId,
+          invocationId: message.invocationId,
+          response: { status: 'error', error: err instanceof Error ? err.message : String(err) },
+        });
+      }
     } finally {
       active.markSettled();
       if (this.activeInvocations.get(message.invocationId) === active) {

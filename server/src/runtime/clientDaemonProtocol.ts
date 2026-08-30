@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { parseCorrelationContext } from '@agent/shared';
+import { CORRELATION_CONTEXT_VERSION, parseCorrelationContext } from '@agent/shared';
 
 import type { ToolInvocationRequest, ToolInvocationResponse, ToolInvocationStreamChunk } from './handProtocol.js';
 import type { HandCapability } from './handStore.js';
@@ -151,7 +151,7 @@ function assertClientDaemonMessageShape(message: Partial<ClientDaemonMessage>): 
       requireProtocolId(message, 'requestId');
       requireProtocolId(message, 'invocationId');
       requireObject(message, 'request');
-      assertToolInvocationCorrelation(message.request, message.invocationId);
+      normalizeToolInvocationCorrelation(message.request, message.invocationId);
       return;
     case 'invoke_chunk':
       requireProtocolId(message, 'requestId');
@@ -335,7 +335,7 @@ export function serializeClientDaemonMessage(message: ClientDaemonMessage): stri
 }
 
 
-function assertToolInvocationCorrelation(request: unknown, envelopeInvocationId: unknown): void {
+function normalizeToolInvocationCorrelation(request: unknown, envelopeInvocationId: unknown): void {
   const context = request && typeof request === 'object'
     ? (request as { context?: unknown }).context
     : undefined;
@@ -353,10 +353,14 @@ function assertToolInvocationCorrelation(request: unknown, envelopeInvocationId:
   }
   const parsed = parseCorrelationContext(value.correlation, { invocationId, handId });
   if (!parsed.ok) throw new Error(`invalid client daemon correlation: ${parsed.error}`);
-  const requestInvocationId = parsed.value?.invocationId ?? invocationId;
+  const requestInvocationId = parsed.value?.invocationId;
   if (typeof envelopeInvocationId === 'string'
     && requestInvocationId
     && envelopeInvocationId !== requestInvocationId) {
     throw new Error('invalid client daemon correlation: envelope invocationId 冲突');
   }
+  value.correlation = {
+    ...(parsed.value ?? { version: CORRELATION_CONTEXT_VERSION }),
+    ...(typeof envelopeInvocationId === 'string' ? { invocationId: envelopeInvocationId } : {}),
+  };
 }

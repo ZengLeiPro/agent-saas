@@ -4,7 +4,9 @@ import type pg from 'pg';
 import { PgGovernanceMigrationRunner, governanceTablePrefix } from '../governance-schema/index.js';
 import {
   AgentDwsMessageInvariantError,
+  DWS_INBOX_V1_IDENTITY_UNPROVABLE,
   type AgentDwsConversationBindingRecord,
+  type AgentDwsLegacyAccountIdentityCandidate,
   type AgentDwsInboxRecord,
   type AgentDwsIngestResult,
   type AgentDwsMessageStore,
@@ -21,6 +23,7 @@ type PgPool = pg.Pool;
 
 export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
   readonly inboxTable: string;
+  readonly accountsTable: string;
   readonly bindingsTable: string;
   readonly legacyBindingsTable: string;
   private readonly tablePrefix: string;
@@ -28,6 +31,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
   constructor(private readonly pool: PgPool, tablePrefix?: string) {
     this.tablePrefix = governanceTablePrefix(tablePrefix);
     this.inboxTable = `${this.tablePrefix}_agent_dws_event_inbox`;
+    this.accountsTable = `${this.tablePrefix}_agent_dws_accounts`;
     this.bindingsTable = `${this.tablePrefix}_agent_dws_requester_conversation_bindings`;
     this.legacyBindingsTable = `${this.tablePrefix}_agent_dws_conversation_bindings`;
   }
@@ -87,6 +91,7 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return result.rows.map((row: Record<string, unknown>) => mapInboxRow(row));
   }
 
+  /** Legacy v1 reply rows retain reply_pending so identity reconciliation cannot rerun dispatch. */
   async claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null> {
     assertOwnerFence(owner, 1, false);
     if (!Number.isInteger(ttlMs) || ttlMs < 1 || ttlMs > MAX_LEASE_TTL_MS) {
@@ -137,7 +142,14 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
           LIMIT 1
         )
         UPDATE ${this.inboxTable} inbox
-        SET state='processing',attempt=inbox.attempt+1,lease_owner=$1,
+        SET state=CASE
+              WHEN inbox.state='reply_pending'
+                AND inbox.payload_json->>'schemaVersion'='1'
+                AND NOT (inbox.payload_json ? 'accountIdentity')
+              THEN 'reply_pending'
+              ELSE 'processing'
+            END,
+            attempt=inbox.attempt+1,lease_owner=$1,
             lease_fence=inbox.lease_fence+1,
             lease_expires_at=NOW()+($2::bigint * INTERVAL '1 millisecond'),
             next_attempt_at=NULL,updated_at=NOW()
@@ -165,9 +177,10 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     assertTexts(inboxId);
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
-      SET state='pending',attempt=GREATEST(attempt-1,0),
-          lease_owner=NULL,lease_expires_at=NULL,next_attempt_at=NULL,updated_at=NOW()
-      WHERE inbox_id=$1 AND state='processing'
+      SET state=CASE WHEN state='reply_pending' THEN 'reply_pending' ELSE 'pending' END,
+          attempt=GREATEST(attempt-1,0),lease_owner=NULL,lease_expires_at=NULL,
+          next_attempt_at=NULL,updated_at=NOW()
+      WHERE inbox_id=$1 AND state IN ('processing','reply_pending')
         AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
       RETURNING *
     `, [inboxId, owner, fence]);
@@ -192,6 +205,67 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
       RETURNING inbox_id
     `, [inboxId, owner, fence, ttlMs]);
     return Boolean(result.rows[0]);
+  }
+
+  async pinLegacyIdentityOrTerminate(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    candidate?: AgentDwsLegacyAccountIdentityCandidate,
+  ): Promise<AgentDwsInboxRecord> {
+    assertOwnerFence(owner, fence);
+    assertTexts(inboxId);
+    if (candidate && (
+      !Number.isInteger(candidate.revision) || candidate.revision < 1
+      || !candidate.profileId || !candidate.corpId || !candidate.dingtalkUserId
+    )) {
+      throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_INVALID');
+    }
+    const result = await this.pool.query(`
+      WITH decision AS (
+        SELECT inbox.inbox_id,EXISTS (
+          SELECT 1
+          FROM ${this.accountsTable} account
+          WHERE account.tenant_id=inbox.tenant_id AND account.account_id=inbox.account_id
+            AND account.status='active' AND account.revision=$4
+            AND account.profile_id=$5 AND account.corp_id=$6 AND account.dingtalk_user_id=$7
+            AND account.profile_id=account.corp_id || ':' || account.dingtalk_user_id
+            AND account.updated_at <= inbox.created_at
+        ) AS provable
+        FROM ${this.inboxTable} inbox
+        WHERE inbox.inbox_id=$1 AND inbox.state IN ('processing','reply_pending')
+          AND inbox.lease_owner=$2 AND inbox.lease_fence=$3 AND inbox.lease_expires_at > NOW()
+          AND inbox.payload_json->>'schemaVersion'='1'
+          AND NOT (inbox.payload_json ? 'accountIdentity')
+      )
+      UPDATE ${this.inboxTable} inbox
+      SET payload_json=CASE WHEN decision.provable THEN jsonb_set(
+            inbox.payload_json,'{accountIdentity}',
+            jsonb_build_object('profileId',$5::text,'corpId',$6::text,'dingtalkUserId',$7::text),TRUE
+          ) ELSE inbox.payload_json END,
+          state=CASE WHEN decision.provable THEN inbox.state ELSE 'dead_letter' END,
+          lease_owner=CASE WHEN decision.provable THEN inbox.lease_owner ELSE NULL END,
+          lease_expires_at=CASE WHEN decision.provable THEN inbox.lease_expires_at ELSE NULL END,
+          next_attempt_at=CASE WHEN decision.provable THEN inbox.next_attempt_at ELSE NULL END,
+          last_error=CASE WHEN decision.provable THEN inbox.last_error ELSE $8 END,
+          completed_at=CASE WHEN decision.provable THEN inbox.completed_at ELSE NOW() END,
+          updated_at=NOW()
+      FROM decision
+      WHERE inbox.inbox_id=decision.inbox_id
+      RETURNING inbox.*
+    `, [
+      inboxId,
+      owner,
+      fence,
+      candidate?.revision ?? null,
+      candidate?.profileId ?? null,
+      candidate?.corpId ?? null,
+      candidate?.dingtalkUserId ?? null,
+      DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+    ]);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) throw new AgentDwsMessageInvariantError('AGENT_DWS_MESSAGE_LEASE_LOST');
+    return mapInboxRow(row);
   }
 
   async getOrCreateBinding(
@@ -267,8 +341,8 @@ export class PgAgentDwsMessageStore implements AgentDwsMessageStore {
     return await this.updateWithLease(`
       UPDATE ${this.inboxTable}
       SET session_id=$4,run_id=COALESCE($5,run_id),updated_at=NOW()
-      WHERE inbox_id=$1 AND state='processing' AND lease_owner=$2 AND lease_fence=$3
-        AND lease_expires_at > NOW()
+      WHERE inbox_id=$1 AND state IN ('processing','reply_pending')
+        AND lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()
       RETURNING *
     `, [inboxId, owner, fence, sessionId, runId ?? null]);
   }

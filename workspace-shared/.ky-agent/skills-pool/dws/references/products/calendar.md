@@ -752,5 +752,4 @@ dws calendar event list --start "2026-03-10T14:00:00+08:00" --end "2026-03-10T15
 
 ## 相关产品
 
-- conference（视频会议预约） — 仅视频会议预约（返回入会链接），不含参会人/会议室管理
 - [contact](contact.md) — 搜索同事 userId，用于 attendee add --attendees

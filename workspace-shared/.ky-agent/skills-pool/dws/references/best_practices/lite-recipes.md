@@ -120,7 +120,7 @@ dws minutes list shared --query "ROI" --format json
 
 - 批量基础信息：`minutes get batch --ids <uuid1,uuid2,...>`
 - 单篇摘要：`minutes get summary --id <taskUuid>`
-- 转写原文（自动翻页）：`minutes get transcription --id <taskUuid>`（返回 `nextToken` 时用 `--next-token <token>` 继续）
+- 转写原文（自动翻页）：`minutes get transcription --id <taskUuid>`（返回 `nextToken` 时用 `--cursor <token>` 继续）
 - 关键词：`minutes get keywords --id <taskUuid>`
 - 待办事项：`minutes get todos --id <taskUuid>`
 - 基础信息：`minutes get info --id <taskUuid>`

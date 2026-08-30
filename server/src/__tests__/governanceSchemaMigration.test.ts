@@ -94,7 +94,8 @@ describe('Governance schema migration SQL fixtures', () => {
   });
 
   it('V34 把历史组织 selector 升级为账号 selector，无法修复的活动账号 fail closed', () => {
-    const sql = governanceV34Statements('safe').join('\n');
+    const statements = governanceV34Statements('safe');
+    const sql = statements.join('\n');
     expect(sql).toContain("profile_id=BTRIM(account.corp_id) || ':' || BTRIM(account.dingtalk_user_id)");
     expect(sql).toContain("corp_id=BTRIM(SPLIT_PART(account.profile_id,':',1))");
     expect(sql).toContain('AND NOT EXISTS');
@@ -115,6 +116,22 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(sql).toContain('DROP CONSTRAINT IF EXISTS safe_adws_active_identity_ck');
     expect(sql).toContain('ADD CONSTRAINT safe_adws_active_identity_ck CHECK');
     expect(sql).toContain("status<>'active' OR");
+
+    const interrupted = statements.find(statement =>
+      statement.includes("last_error='authorization_interrupted_by_upgrade'"));
+    expect(interrupted).toContain("WHERE status='authorizing'");
+    expect(interrupted).toContain("runtime_lease_owner=NULL,runtime_lease_expires_at=NULL");
+    expect(interrupted).toContain('revision=revision+1,updated_at=NOW()');
+    expect(interrupted).toContain("updated_by='system:dws-authorizing-v34'");
+    expect(interrupted).not.toContain('profile_id=');
+    expect(interrupted).not.toContain('corp_id=');
+    expect(interrupted).not.toContain('dingtalk_user_id=');
+    expect(sql).toContain("to_regclass('safe_agent_dws_auth_sessions')");
+    expect(sql).toContain("error_code='authorization_interrupted_by_upgrade'");
+    expect(sql).toContain('authorization_url=NULL,user_code=NULL');
+    expect(sql).toContain("auth_session.status IN ('starting','awaiting_user')");
+    expect(sql).toContain("account.status = 'authorizing'");
+    expect(sql.match(/account\.status<>'authorizing'/g)).toHaveLength(3);
   });
 
   it('旧生产 V28 账本下，V31 在 ALTER 前先幂等创建 retention 表', async () => {

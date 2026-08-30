@@ -86,7 +86,7 @@ describe('PgAgentDwsMessageStore', () => {
     expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThan(262_144);
   });
 
-  it('claim 在事务 CTE 中使用 SKIP LOCKED、过期恢复及同账号会话门禁并递增 fence/attempt', async () => {
+  it('claim 在事务 CTE 中使用 SKIP LOCKED、过期恢复及同账号会话门禁，且只为旧 v1 保留 reply_pending', async () => {
     const claimed = inboxRow({
       state: 'processing', attempt: 2, lease_owner: 'worker-1', lease_fence: 3,
       lease_expires_at: '2026-08-14T00:00:30.000Z', next_attempt_at: null,
@@ -112,24 +112,92 @@ describe('PgAgentDwsMessageStore', () => {
     expect(sql).toContain("active.state='processing'");
     expect(sql).toContain("earlier.state IN ('pending','processing','retry_wait','reply_pending')");
     expect(sql).toContain('lease_fence=inbox.lease_fence+1');
+    expect(sql).toContain("WHEN inbox.state='reply_pending'");
+    expect(sql).toContain("inbox.payload_json->>'schemaVersion'='1'");
+    expect(sql).toContain("NOT (inbox.payload_json ? 'accountIdentity')");
     expect(sql).toContain('attempt=inbox.attempt+1');
     expect(clientQuery.mock.calls.at(-1)?.[0]).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
 
-  it('停机释放 processing claim 时回到 pending 并回退 attempt', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [inboxRow({ state: 'pending', attempt: 0 })] });
+  it('v1 身份可证明时按账号 revision 与入队时间原子补 pin，并保持 lease fence', async () => {
+    const pinned = inboxRow({
+      payload_json: {
+        schemaVersion: 1,
+        accountIdentity: { profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1' },
+      },
+      state: 'processing', lease_owner: 'worker-1', lease_fence: 3,
+      lease_expires_at: new Date('2026-08-14T00:01:00.000Z'), next_attempt_at: null,
+    });
+    const query = vi.fn().mockResolvedValue({ rows: [pinned] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.pinLegacyIdentityOrTerminate('adwsi-1', 'worker-1', 3, {
+      revision: 7,
+      profileId: 'corp-1:user-1',
+      corpId: 'corp-1',
+      dingtalkUserId: 'user-1',
+    })).resolves.toMatchObject({
+      state: 'processing',
+      payload: { accountIdentity: { profileId: 'corp-1:user-1' } },
+      leaseFence: 3,
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('FROM gov_agent_dws_accounts account');
+    expect(sql).toContain("account.status='active' AND account.revision=$4");
+    expect(sql).toContain('account.updated_at <= inbox.created_at');
+    expect(sql).toContain("inbox.payload_json->>'schemaVersion'='1'");
+    expect(sql).toContain("NOT (inbox.payload_json ? 'accountIdentity')");
+    expect(sql).toContain('inbox.lease_owner=$2 AND inbox.lease_fence=$3');
+    expect(query.mock.calls[0]?.[1]).toEqual([
+      'adwsi-1', 'worker-1', 3, 7, 'corp-1:user-1', 'corp-1', 'user-1',
+      'DWS_INBOX_V1_IDENTITY_UNPROVABLE',
+    ]);
+  });
+
+  it('v1 身份不可证明时原子执行一次终结，并清 lease/next attempt、保留稳定诊断码', async () => {
+    const terminal = inboxRow({
+      payload_json: { schemaVersion: 1 }, state: 'dead_letter', lease_owner: null,
+      lease_fence: 3, lease_expires_at: null, next_attempt_at: null,
+      last_error: 'DWS_INBOX_V1_IDENTITY_UNPROVABLE', completed_at: new Date(NOW),
+    });
+    const query = vi.fn().mockResolvedValue({ rows: [terminal] });
+    const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
+
+    await expect(store.pinLegacyIdentityOrTerminate('adwsi-1', 'worker-1', 3))
+      .resolves.toMatchObject({
+        state: 'dead_letter',
+        lastError: 'DWS_INBOX_V1_IDENTITY_UNPROVABLE',
+        completedAt: NOW,
+      });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("state=CASE WHEN decision.provable THEN inbox.state ELSE 'dead_letter' END");
+    expect(sql).toContain('lease_owner=CASE WHEN decision.provable THEN inbox.lease_owner ELSE NULL END');
+    expect(sql).toContain('next_attempt_at=CASE WHEN decision.provable THEN inbox.next_attempt_at ELSE NULL END');
+    expect(query.mock.calls[0]?.[1]?.slice(3, 7)).toEqual([null, null, null, null]);
+  });
+
+  it('停机释放 processing 或旧 v1 reply claim 时保持可恢复状态并回退 attempt', async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [inboxRow({ state: 'pending', attempt: 0 })] })
+      .mockResolvedValueOnce({ rows: [inboxRow({ state: 'reply_pending', attempt: 1 })] });
     const store = new PgAgentDwsMessageStore({ query } as never, 'gov');
 
     await expect(store.releaseClaim('inbox-1', 'worker-1', 3)).resolves.toMatchObject({
       state: 'pending', attempt: 0,
     });
+    await expect(store.releaseClaim('inbox-2', 'worker-1', 4)).resolves.toMatchObject({
+      state: 'reply_pending', attempt: 1,
+    });
 
     const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain("SET state='pending',attempt=GREATEST(attempt-1,0)");
-    expect(sql).toContain("WHERE inbox_id=$1 AND state='processing'");
+    expect(sql).toContain("state=CASE WHEN state='reply_pending' THEN 'reply_pending' ELSE 'pending' END");
+    expect(sql).toContain("WHERE inbox_id=$1 AND state IN ('processing','reply_pending')");
     expect(sql).toContain('lease_owner=$2 AND lease_fence=$3 AND lease_expires_at > NOW()');
     expect(query.mock.calls[0]?.[1]).toEqual(['inbox-1', 'worker-1', 3]);
+    expect(query.mock.calls[1]?.[1]).toEqual(['inbox-2', 'worker-1', 4]);
   });
 
   it('按租户和账号读取最新 inbox，并限制诊断页大小', async () => {

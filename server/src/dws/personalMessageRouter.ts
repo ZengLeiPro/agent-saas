@@ -7,9 +7,10 @@ import {
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
 } from '../data/agentDwsAccounts/index.js';
-import type {
-  AgentDwsInboxRecord,
-  AgentDwsMessageStore,
+import {
+  DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+  type AgentDwsInboxRecord,
+  type AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
 import type { RunStore } from '../runtime/runStore.js';
 import type { EventStore, PlatformEvent } from '../runtime/types.js';
@@ -301,6 +302,32 @@ export class AgentDwsMessageRouter {
 
   private async process(item: AgentDwsInboxRecord, abortController: AbortController): Promise<void> {
     const account = await this.options.accountStore.getForTenant(item.tenantId, item.accountId);
+    if (isV1InboxWithoutIdentity(item)) {
+      const upgraded = await this.options.messageStore.pinLegacyIdentityOrTerminate(
+        item.inboxId,
+        this.workerId,
+        item.leaseFence,
+        account && account.status === 'active' && hasExactAgentDwsProfile(account) ? {
+          revision: account.revision,
+          profileId: account.profileId!,
+          corpId: account.corpId!,
+          dingtalkUserId: account.dingtalkUserId!,
+        } : undefined,
+      );
+      if (upgraded.state === 'dead_letter'
+        && upgraded.lastError === DWS_INBOX_V1_IDENTITY_UNPROVABLE) {
+        this.options.logger?.warn(JSON.stringify({
+          level: 'warn',
+          code: DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+          inboxId: item.inboxId,
+          tenantId: item.tenantId,
+          accountId: item.accountId,
+          eventId: item.eventId,
+        }));
+        return;
+      }
+      item = upgraded;
+    }
     if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)) {
       throw new Error('Agent DWS account is unavailable or unauthorized');
     }
@@ -537,6 +564,11 @@ function inboxEvent(item: AgentDwsInboxRecord): DwsPersonalEvent {
     ...(item.eventTimestamp ? { timestamp: new Date(item.eventTimestamp).getTime() } : {}),
     raw: item.payload,
   };
+}
+
+function isV1InboxWithoutIdentity(item: AgentDwsInboxRecord): boolean {
+  return item.payload.schemaVersion === 1
+    && !Object.prototype.hasOwnProperty.call(item.payload, 'accountIdentity');
 }
 
 function matchesInboxAccountIdentity(

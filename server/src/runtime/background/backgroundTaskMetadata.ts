@@ -15,6 +15,19 @@ export interface BackgroundTaskDwsCompletionRoute {
   senderOpenDingtalkId?: string;
 }
 
+export interface LegacyBackgroundTaskDwsCompletionRoute {
+  accountId: string;
+  conversationId: string;
+  eventType: 'user_im_message_receive_at' | 'user_im_message_receive_o2o_all';
+  messageId?: string;
+  senderOpenDingtalkId?: string;
+}
+
+export type ParsedBackgroundTaskDwsCompletionRoute =
+  | { version: 'exact'; route: BackgroundTaskDwsCompletionRoute }
+  | { version: 'legacy'; route: LegacyBackgroundTaskDwsCompletionRoute }
+  | { version: 'invalid' };
+
 interface CommonBackgroundTaskMetadata {
   parentRunId: string;
   parentSessionId: string;
@@ -32,6 +45,8 @@ interface CommonBackgroundTaskMetadata {
   executionMode?: 'direct' | 'dispatcher';
   executionRole?: 'worker';
   dwsCompletionRoute?: BackgroundTaskDwsCompletionRoute;
+  legacyDwsCompletionRoute?: LegacyBackgroundTaskDwsCompletionRoute;
+  dwsCompletionRouteVersion?: ParsedBackgroundTaskDwsCompletionRoute['version'];
   modelRef: string;
   cwd: string;
   workspaceId: string;
@@ -100,7 +115,9 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'orgAgentId') ? { orgAgentId: metadataString(value, 'orgAgentId') } : {}),
     ...(executionMode ? { executionMode } : {}),
     ...(value.executionRole === 'worker' ? { executionRole: 'worker' as const } : {}),
-    ...(dwsCompletionRoute ? { dwsCompletionRoute } : {}),
+    ...(dwsCompletionRoute?.version === 'exact' ? { dwsCompletionRoute: dwsCompletionRoute.route } : {}),
+    ...(dwsCompletionRoute?.version === 'legacy' ? { legacyDwsCompletionRoute: dwsCompletionRoute.route } : {}),
+    ...(dwsCompletionRoute ? { dwsCompletionRouteVersion: dwsCompletionRoute.version } : {}),
     modelRef,
     cwd,
     workspaceId,
@@ -166,8 +183,9 @@ function parseRuntimeIsolationRequirement(value: unknown): RuntimeIsolationRequi
   return Object.fromEntries(fields.map((field) => [field, metadataString(record, field)!])) as unknown as RuntimeIsolationRequirement;
 }
 
-function parseDwsCompletionRoute(value: unknown): BackgroundTaskDwsCompletionRoute | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+export function parseDwsCompletionRoute(value: unknown): ParsedBackgroundTaskDwsCompletionRoute | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { version: 'invalid' };
   const route = value as Record<string, unknown>;
   const accountId = metadataString(route, 'accountId');
   const profileId = metadataString(route, 'profileId');
@@ -178,20 +196,23 @@ function parseDwsCompletionRoute(value: unknown): BackgroundTaskDwsCompletionRou
     || route.eventType === 'user_im_message_receive_o2o_all'
     ? route.eventType
     : undefined;
-  if (!accountId || !profileId || !corpId || !dingtalkUserId || !conversationId || !eventType
-    || profileId !== `${corpId}:${dingtalkUserId}`) return undefined;
-  return {
-    accountId,
-    profileId,
-    corpId,
-    dingtalkUserId,
-    conversationId,
-    eventType,
+  if (!accountId || !conversationId || !eventType) return { version: 'invalid' };
+  const optional = {
     ...(metadataString(route, 'messageId') ? { messageId: metadataString(route, 'messageId') } : {}),
     ...(metadataString(route, 'senderOpenDingtalkId')
       ? { senderOpenDingtalkId: metadataString(route, 'senderOpenDingtalkId') }
       : {}),
   };
+  if (profileId && corpId && dingtalkUserId && profileId === `${corpId}:${dingtalkUserId}`) {
+    return {
+      version: 'exact',
+      route: { accountId, profileId, corpId, dingtalkUserId, conversationId, eventType, ...optional },
+    };
+  }
+  if (!profileId && !corpId && !dingtalkUserId) {
+    return { version: 'legacy', route: { accountId, conversationId, eventType, ...optional } };
+  }
+  return { version: 'invalid' };
 }
 
 function isSandboxPolicy(value: unknown): value is { denyRead: string[] } {

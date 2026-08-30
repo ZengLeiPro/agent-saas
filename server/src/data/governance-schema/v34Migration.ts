@@ -1,5 +1,6 @@
 export function governanceV34Statements(prefix: string): string[] {
   const accounts = `${prefix}_agent_dws_accounts`;
+  const authSessions = `${prefix}_agent_dws_auth_sessions`;
   const sources = `${prefix}_context_sources`;
   const collections = `${prefix}_context_collections`;
   const partitions = `${prefix}_context_sync_partitions`;
@@ -9,6 +10,23 @@ export function governanceV34Statements(prefix: string): string[] {
     OR BTRIM(account.profile_id)<>BTRIM(account.corp_id)||':'||BTRIM(account.dingtalk_user_id)
   )`;
   return [
+    `DO $$ BEGIN
+      IF to_regclass('${authSessions}') IS NOT NULL THEN
+        EXECUTE $migration$
+          UPDATE ${authSessions} AS auth_session
+          SET status='failed',error_code='authorization_interrupted_by_upgrade',
+            error_message='钉钉授权因服务升级中断，请重新授权',
+            authorization_url=NULL,user_code=NULL,completed_at=NOW(),updated_at=NOW()
+          WHERE auth_session.status IN ('starting','awaiting_user')
+            AND EXISTS (
+              SELECT 1 FROM ${accounts} AS account
+              WHERE account.tenant_id=auth_session.tenant_id
+                AND account.account_id=auth_session.user_id
+                AND account.status = 'authorizing'
+            )
+        $migration$;
+      END IF;
+    END $$`,
     `UPDATE ${sources} AS source
       SET status='disabled',revision=revision+1,updated_at=NOW()
       WHERE source.kind='dws' AND source.status='active'
@@ -52,7 +70,8 @@ export function governanceV34Statements(prefix: string): string[] {
           dingtalk_user_id=BTRIM(SUBSTRING(account.profile_id FROM POSITION(':' IN account.profile_id)+1)),
           runtime_status='stopped',runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
           revision=account.revision+1,updated_at=NOW(),updated_by='system:dws-profile-v34'
-      WHERE account.profile_id IS NOT NULL AND POSITION(':' IN account.profile_id)>0
+      WHERE account.status<>'authorizing'
+        AND account.profile_id IS NOT NULL AND POSITION(':' IN account.profile_id)>0
         AND NULLIF(BTRIM(SPLIT_PART(account.profile_id,':',1)),'') IS NOT NULL
         AND NULLIF(BTRIM(SUBSTRING(account.profile_id FROM POSITION(':' IN account.profile_id)+1)),'') IS NOT NULL
         AND (NULLIF(BTRIM(account.corp_id),'') IS NULL
@@ -90,7 +109,8 @@ export function governanceV34Statements(prefix: string): string[] {
       SET corp_id=BTRIM(account.profile_id),
           runtime_status='stopped',runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
           revision=account.revision+1,updated_at=NOW(),updated_by='system:dws-profile-v34'
-      WHERE NULLIF(BTRIM(account.profile_id),'') IS NOT NULL
+      WHERE account.status<>'authorizing'
+        AND NULLIF(BTRIM(account.profile_id),'') IS NOT NULL
         AND POSITION(':' IN account.profile_id)=0
         AND NULLIF(BTRIM(account.corp_id),'') IS NULL
         AND (
@@ -117,7 +137,8 @@ export function governanceV34Statements(prefix: string): string[] {
           corp_id=BTRIM(account.corp_id),dingtalk_user_id=BTRIM(account.dingtalk_user_id),
           runtime_status='stopped',runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
           revision=account.revision+1,updated_at=NOW(),updated_by='system:dws-profile-v34'
-      WHERE account.profile_id IS NOT NULL AND POSITION(':' IN account.profile_id)=0
+      WHERE account.status<>'authorizing'
+        AND account.profile_id IS NOT NULL AND POSITION(':' IN account.profile_id)=0
         AND NULLIF(BTRIM(account.corp_id),'') IS NOT NULL
         AND NULLIF(BTRIM(account.dingtalk_user_id),'') IS NOT NULL
         AND BTRIM(account.profile_id)=BTRIM(account.corp_id)
@@ -139,6 +160,12 @@ export function governanceV34Statements(prefix: string): string[] {
         OR NULLIF(BTRIM(dingtalk_user_id),'') IS NULL
         OR profile_id IS DISTINCT FROM corp_id || ':' || dingtalk_user_id
       )`,
+    `UPDATE ${accounts}
+      SET status='error',runtime_status='error',
+          last_error='authorization_interrupted_by_upgrade',
+          runtime_lease_owner=NULL,runtime_lease_expires_at=NULL,
+          revision=revision+1,updated_at=NOW(),updated_by='system:dws-authorizing-v34'
+      WHERE status='authorizing'`,
     `ALTER TABLE ${accounts}
       DROP CONSTRAINT IF EXISTS ${prefix}_adws_active_identity_ck`,
     `ALTER TABLE ${accounts}

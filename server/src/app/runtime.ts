@@ -1719,7 +1719,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     executionConfig,
     modelResolver,
     defaultModelResolver,
-    ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
+    ...(agentDwsAccountStore ? {
+      resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => (
+        agentDwsAccountStore.getForTenant(tenantId, accountId)
+      ),
+    } : {}),
+    ...(agentDwsMessageStore ? {
+      enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore),
+    } : {}),
     getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
     toolControls: config.toolControls,

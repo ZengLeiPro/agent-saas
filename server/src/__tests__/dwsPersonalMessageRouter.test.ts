@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRunDispatch } from '../agent/index.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
-import type {
-  AgentDwsInboxRecord,
-  AgentDwsMessageStore,
+import {
+  DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+  type AgentDwsInboxRecord,
+  type AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
 import {
   AgentDwsMessageRouter,
@@ -79,6 +80,7 @@ function setup(input: {
   resolveRequester?: typeof requester | null;
   requesterAllowed?: boolean;
   claimNext?: AgentDwsMessageStore['claimNext'];
+  legacyIdentityUnprovable?: boolean;
   logger?: { info(message: string): void; warn(message: string): void };
 } = {}) {
   const claimedItems = Array.isArray(input.claimed) ? input.claimed : [input.claimed ?? item];
@@ -95,6 +97,28 @@ function setup(input: {
     claimNext,
     releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
     renewLease: vi.fn().mockResolvedValue(true),
+    pinLegacyIdentityOrTerminate: vi.fn().mockImplementation(async (inboxId: string) => {
+      const entry = claimedById.get(inboxId) ?? claimed;
+      return input.legacyIdentityUnprovable ? {
+        ...entry,
+        state: 'dead_letter' as const,
+        leaseOwner: undefined,
+        leaseExpiresAt: undefined,
+        nextAttemptAt: undefined,
+        lastError: DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+        completedAt: new Date().toISOString(),
+      } : {
+        ...entry,
+        payload: {
+          ...entry.payload,
+          accountIdentity: {
+            profileId: account.profileId,
+            corpId: account.corpId,
+            dingtalkUserId: account.dingtalkUserId,
+          },
+        },
+      };
+    }),
     getOrCreateBinding: vi.fn().mockImplementation(async (
       tenantId: string, accountId: string, conversationId: string,
     ) => ({
@@ -343,7 +367,7 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
 
-  it('缺少入站账号身份快照时 fail closed，不执行也不回复', async () => {
+  it('非 v1 行缺少入站账号身份快照时仍 fail closed，不执行也不回复', async () => {
     const { router, dispatch, sender, messageStore } = setup({
       claimed: { ...item, payload: {} },
     });
@@ -356,6 +380,81 @@ describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () =>
       'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
       expect.objectContaining({ message: expect.stringContaining('identity is missing') }),
     );
+  });
+
+  it.each([
+    ['pending', { state: 'processing' as const, attempt: 1 }],
+    ['retry_wait', { state: 'processing' as const, attempt: 3 }],
+    ['reply_pending', {
+      state: 'reply_pending' as const,
+      attempt: 3,
+      sessionId: 'session-a',
+      runId: 'run-a',
+      responseText: '旧版本已持久化回复',
+    }],
+  ])('旧 v1 %s 行可证明身份未变时补 pin 后由新版本处理', async (_legacyState, claimedPatch) => {
+    const legacy = {
+      ...item,
+      ...claimedPatch,
+      payload: { schemaVersion: 1, source: 'dws_personal_stream' },
+    };
+    const { router, messageStore, dispatch, sender } = setup({ claimed: legacy });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(messageStore.pinLegacyIdentityOrTerminate).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      {
+        revision: account.revision,
+        profileId: account.profileId,
+        corpId: account.corpId,
+        dingtalkUserId: account.dingtalkUserId,
+      },
+    );
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledOnce();
+    if (_legacyState === 'reply_pending') expect(dispatch).not.toHaveBeenCalled();
+    else expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['pending', { state: 'processing' as const, attempt: 1 }],
+    ['retry_wait', { state: 'processing' as const, attempt: 3 }],
+    ['reply_pending', {
+      state: 'reply_pending' as const,
+      attempt: 3,
+      responseText: '旧版本已持久化回复',
+    }],
+  ])('旧 v1 %s 行身份不可证明时一次终结，重复 run 幂等跳过', async (_legacyState, claimedPatch) => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const legacy = {
+      ...item,
+      ...claimedPatch,
+      payload: { schemaVersion: 1, source: 'dws_personal_stream' },
+    };
+    const { router, messageStore, dispatch, sender } = setup({
+      claimed: legacy,
+      legacyIdentityUnprovable: true,
+      logger,
+    });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(messageStore.pinLegacyIdentityOrTerminate).toHaveBeenCalledOnce();
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.complete).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(logger.warn.mock.calls[0]?.[0]))).toMatchObject({
+      level: 'warn',
+      code: DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+      inboxId: 'inbox-a',
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+    });
   });
 
   it('账号在 dispatch 期间重授权时拒绝用旧快照或新账号发送回复', async () => {

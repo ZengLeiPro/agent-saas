@@ -207,7 +207,12 @@ describe('DwsCliContextClient', () => {
       '--profile', 'corp:user', '--format', 'json',
     ]);
     expect(summary).toEqual({ content: '核心结论' });
-    expect(json.mock.calls[3]![0]).toContain('transcript-cursor-2');
+    expect(json.mock.calls[3]![0]).toEqual([
+      'dws', 'minutes', 'get', 'transcription', '--id', 'minutes-a', '--direction', '0',
+      '--cursor', 'transcript-cursor-2',
+      '--profile', 'corp:user', '--format', 'json',
+    ]);
+    expect(json.mock.calls[3]![0]).not.toContain('--next-token');
     expect(transcript).toEqual({ content: '甲: 第一段 补充\n乙: 第二段' });
   });
 

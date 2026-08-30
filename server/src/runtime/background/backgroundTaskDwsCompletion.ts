@@ -1,11 +1,15 @@
 import type { ChannelContext } from '../../types/index.js';
+import { createLogger } from '../../utils/logger.js';
 import type { RawRuntimeRunDispatchConfig } from '../rawRuntimeRunDispatch.js';
 import type { RunRecord, RunStore } from '../runStore.js';
 import { buildTaskNotification } from './backgroundTaskFormatting.js';
 import type {
   BackgroundTaskDwsCompletionRoute,
   BackgroundTaskMetadata,
+  LegacyBackgroundTaskDwsCompletionRoute,
 } from './backgroundTaskMetadata.js';
+
+const logger = createLogger('BackgroundTaskDwsCompletion');
 
 export function resolveDwsCompletionRoute(
   parentRun: RunRecord | null | undefined,
@@ -43,15 +47,44 @@ export async function deliverDwsBackgroundCompletion(input: {
   claimToken: string;
 }): Promise<boolean> {
   const { config, runStore, task, metadata, claimToken } = input;
-  if (!metadata.dwsCompletionRoute) return false;
+  let route = metadata.dwsCompletionRoute;
+  const legacyRoute = metadata.legacyDwsCompletionRoute;
+  const routeVersion = route ? 'exact' : metadata.dwsCompletionRouteVersion;
+
+  if (!route && !routeVersion) return false;
+  if (!route && routeVersion === 'invalid') {
+    return await discardUnreconciledLegacyRoute(input, 'dws_completion_route_invalid', 'invalid');
+  }
   if (!task.tenantId) {
+    if (legacyRoute) {
+      return await discardUnreconciledLegacyRoute(input, 'dws_completion_tenant_missing', 'legacy');
+    }
     await runStore.finishBackgroundTaskWake!(task.runId, claimToken, 'discarded', {
       wakeDiscardReason: 'dws_completion_tenant_missing',
     });
     return true;
   }
+
+  if (!route && legacyRoute) {
+    const reconciled = await reconcileLegacyDwsCompletionRoute(config, task, legacyRoute);
+    if ('reason' in reconciled) {
+      return await discardUnreconciledLegacyRoute(input, reconciled.reason, 'legacy');
+    }
+    route = reconciled.route;
+  }
+  if (!route) {
+    return await discardUnreconciledLegacyRoute(input, 'dws_completion_route_invalid', routeVersion ?? 'invalid');
+  }
+
+  const reconciliationPatch = legacyRoute ? {
+    dwsCompletionRoute: route,
+    dwsCompletionReconciliation: {
+      status: 'succeeded', routeVersion: 'legacy', reconciledAt: new Date().toISOString(),
+    },
+  } : {};
   if (!config.enqueueDwsBackgroundCompletion) {
     await runStore.finishBackgroundTaskWake!(task.runId, claimToken, 'pending', {
+      ...reconciliationPatch,
       wakeDeferredReason: 'dws_completion_outbox_unavailable',
     });
     return true;
@@ -59,13 +92,84 @@ export async function deliverDwsBackgroundCompletion(input: {
   await config.enqueueDwsBackgroundCompletion({
     tenantId: task.tenantId,
     taskId: task.runId,
-    ...metadata.dwsCompletionRoute,
+    ...route,
     content: buildTaskNotification(task, metadata),
   });
   await runStore.finishBackgroundTaskWake!(task.runId, claimToken, 'queued', {
+    ...reconciliationPatch,
     wakeRunId: `agent-dws-background-completion:${task.runId}`,
     wakeDeferredReason: null,
     lifecycleFinishedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+async function reconcileLegacyDwsCompletionRoute(
+  config: RawRuntimeRunDispatchConfig,
+  task: RunRecord,
+  legacyRoute: LegacyBackgroundTaskDwsCompletionRoute,
+): Promise<{ route: BackgroundTaskDwsCompletionRoute } | { reason: string }> {
+  if (!config.resolveLegacyDwsCompletionAccount) {
+    return { reason: 'dws_completion_legacy_account_store_unavailable' };
+  }
+  let account;
+  try {
+    account = await config.resolveLegacyDwsCompletionAccount(task.tenantId!, legacyRoute.accountId);
+  } catch {
+    return { reason: 'dws_completion_legacy_account_store_unavailable' };
+  }
+  if (!account) return { reason: 'dws_completion_legacy_account_missing' };
+  if (account.accountId !== legacyRoute.accountId) {
+    return { reason: 'dws_completion_legacy_account_identity_invalid' };
+  }
+  if (account.status !== 'active') return { reason: 'dws_completion_legacy_account_inactive' };
+  const { profileId, corpId, dingtalkUserId } = account;
+  if (!profileId || !corpId || !dingtalkUserId || profileId !== `${corpId}:${dingtalkUserId}`) {
+    return { reason: 'dws_completion_legacy_account_identity_invalid' };
+  }
+  const requestedAt = Date.parse(task.requestedAt);
+  const accountUpdatedAt = Date.parse(account.updatedAt);
+  if (!Number.isFinite(requestedAt) || !Number.isFinite(accountUpdatedAt)) {
+    return { reason: 'dws_completion_legacy_identity_change_unverifiable' };
+  }
+  if (accountUpdatedAt > requestedAt) {
+    return { reason: 'dws_completion_legacy_identity_changed_since_request' };
+  }
+  return {
+    route: {
+      ...legacyRoute,
+      accountId: legacyRoute.accountId,
+      profileId,
+      corpId,
+      dingtalkUserId,
+    },
+  };
+}
+
+async function discardUnreconciledLegacyRoute(
+  input: {
+    runStore: RunStore;
+    task: RunRecord;
+    claimToken: string;
+    metadata: BackgroundTaskMetadata;
+  },
+  reason: string,
+  routeVersion: string,
+): Promise<true> {
+  const accountId = input.metadata.legacyDwsCompletionRoute?.accountId
+    ?? input.metadata.dwsCompletionRoute?.accountId;
+  logger.warn('DWS background completion reconciliation failed', {
+    reason,
+    routeVersion,
+    taskId: input.task.runId,
+    tenantId: input.task.tenantId,
+    accountId,
+  });
+  await input.runStore.finishBackgroundTaskWake!(input.task.runId, input.claimToken, 'discarded', {
+    wakeDiscardReason: reason,
+    dwsCompletionReconciliation: {
+      status: 'failed', reason, routeVersion, reconciledAt: new Date().toISOString(),
+    },
   });
   return true;
 }

@@ -26,12 +26,13 @@ const thinking = (id: string, streaming = false): MessageItem => ({ id, type: 't
 const compaction = (id: string): MessageItem => ({
   id, type: 'compaction', status: 'done',
 } as unknown as MessageItem);
-const businessTodo = (id: string, items: Array<Record<string, unknown>>): MessageItem => ({
+const businessTodo = (id: string, items: Array<Record<string, unknown>>, runId?: string): MessageItem => ({
   id,
   type: 'tool_use',
   toolName: 'TodoWrite',
   toolId: id,
   toolInput: JSON.stringify({ todos: items }),
+  ...(runId ? { runId } : {}),
 });
 
 describe('groupMessages', () => {
@@ -307,6 +308,49 @@ describe('groupMessages sectioning（章节化）', () => {
       'user', 'business_step', 'business_step_section', 'user',
     ]);
     expect((result[2] as BusinessStepSection).isActive).toBe(false);
+  });
+
+  it('同一 Run 跨普通用户消息继续时重开步骤节并收编后半过程与交付物', () => {
+    const active = [{ id: 'verify', kind: 'business', content: '核验订单', status: 'in_progress' }];
+    const done = [{
+      id: 'verify', kind: 'business', content: '核验订单', status: 'completed',
+      outcome: { text: '核验完成' },
+    }];
+    const artifact: MessageItem = {
+      id: 'artifact-after', type: 'file_download', fileName: '核验结果.xlsx',
+      filePath: 'assets/核验结果.xlsx', fileType: 'xlsx', fileSize: 128, artifactId: 'artifact-1',
+    };
+    const result = groupMessages([
+      user('user-1'),
+      businessTodo('todo-start', active, 'run-1'),
+      tool('read-before', { toolName: 'Read', resultReady: true }),
+      user('user-2'),
+      businessTodo('todo-resume', active, 'run-1'),
+      tool('read-after', { toolName: 'Read', resultReady: true }),
+      tool('connector-after', {
+        toolName: 'DwsBusiness', resultReady: true,
+        presentation: {
+          title: '钉钉 · 写入回执',
+          connector: { system: '钉钉', write: true },
+        },
+      }),
+      artifact,
+      businessTodo('todo-done', done, 'run-1'),
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'user', 'business_step_section',
+    ]);
+    const before = result[2] as BusinessStepSection;
+    expect(before.terminal).toBeUndefined();
+    expect((before.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-before']);
+    const after = result[4] as BusinessStepSection;
+    expect(after.start).toMatchObject({ kind: 'start', anchorMessageId: 'todo-resume' });
+    expect(after.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
+    expect(after.items.map(item => item.type)).toEqual(['activity_group', 'tool_use', 'file_download']);
+    expect((after.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-after']);
+    expect(after.systemActionIds).toEqual(['connector-after']);
+    expect(after.items.at(-1)).toMatchObject({ id: 'artifact-after', artifactId: 'artifact-1' });
   });
 
   it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {

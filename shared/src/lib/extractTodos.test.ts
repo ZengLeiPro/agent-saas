@@ -372,6 +372,39 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
     expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["start"]);
   });
 
+  it("reopens the unchanged active step when the same run continues after a user message", () => {
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      user("user-2"),
+      todo("t2", todos([step("a", "in_progress")]), "run-1"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+    expect(result.events[0].todos).toEqual([expect.objectContaining({ id: "a", status: "in_progress" })]);
+    expect(result.eventsByAnchor.get("t2")).toEqual([
+      expect.objectContaining({
+        id: "bs-t2-id:a-start",
+        kind: "start",
+        runId: "run-1",
+        todo: expect.objectContaining({ id: "a", status: "in_progress" }),
+      }),
+    ]);
+  });
+
+  it("keeps a structural update when reopening an unchanged active step", () => {
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      user("user-2"),
+      todo("t2", todos([step("a", "in_progress"), step("b", "pending")]), "run-1"),
+    ], false);
+
+    expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind))
+      .toEqual(["start", "update"]);
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+  });
+
   it("re-plans when an explicit run id changes without a user message", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")]), "run-1"),
@@ -381,6 +414,24 @@ describe("projectBusinessStepEvents 纯函数投影", () => {
 
     expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(2);
     expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
+  });
+
+  it("does not treat a queued interjection as a user boundary", () => {
+    const queued: MessageItem = {
+      id: "queued-user",
+      type: "user",
+      content: "hi",
+      status: "queued",
+    };
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      queued,
+      todo("t2", todos([step("a", "in_progress")]), "run-1"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+    expect(result.eventsByAnchor.has("t2")).toBe(false);
   });
 
   it("ignores incomplete streaming payloads without hiding the message", () => {

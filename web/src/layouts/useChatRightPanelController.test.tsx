@@ -59,7 +59,55 @@ describe('useChatRightPanelController', () => {
 
     act(() => result.current.handleExpandFilePreview());
     expect(fns.expandFilePreview).toHaveBeenCalledTimes(1);
+    expect(fns.closeFileBrowser).not.toHaveBeenCalled();
     expect(result.current.rightPanelKind).toBe('browser');
+  });
+
+  it('文件浏览器被步骤详情隐藏时单击立即切回，不先关闭隐藏状态', () => {
+    const fns = callbacks();
+    const { result } = renderHook(
+      (props: ControllerStateProps) => useChatRightPanelController({ ...props, ...fns }),
+      { initialProps: { ...baseProps, fileBrowserOpen: true } },
+    );
+
+    expect(result.current.rightPanelKind).toBe('browser');
+    act(() => result.current.handleBusinessStepPanelOpenChange(true));
+    expect(result.current.rightPanelKind).toBe('business-step');
+    expect(fns.closeFileBrowser).not.toHaveBeenCalled();
+
+    act(() => result.current.handleToggleFileBrowser());
+    expect(result.current.rightPanelKind).toBe('browser');
+    expect(fns.closeFileBrowser).not.toHaveBeenCalled();
+    expect(fns.toggleFileBrowser).not.toHaveBeenCalled();
+  });
+
+  it('当前可见的文件浏览器单击即关闭', () => {
+    const fns = callbacks();
+    const { result, rerender } = renderHook(
+      (props: ControllerStateProps) => useChatRightPanelController({ ...props, ...fns }),
+      { initialProps: { ...baseProps, fileBrowserOpen: true } },
+    );
+
+    expect(result.current.rightPanelKind).toBe('browser');
+    act(() => result.current.handleToggleFileBrowser());
+    expect(fns.closeFileBrowser).toHaveBeenCalledTimes(1);
+    expect(fns.toggleFileBrowser).not.toHaveBeenCalled();
+    rerender(baseProps);
+    expect(result.current.rightPanelKind).toBeNull();
+  });
+
+  it('被自动 system 隐藏的文件浏览器也能单击接管', () => {
+    const fns = callbacks();
+    const { result } = renderHook(
+      (props: ControllerStateProps) => useChatRightPanelController({ ...props, ...fns }),
+      { initialProps: { ...baseProps, fileBrowserOpen: true, systemPanelOpen: true } },
+    );
+
+    expect(result.current.rightPanelKind).toBe('system');
+    act(() => result.current.handleToggleFileBrowser());
+    expect(result.current.rightPanelKind).toBe('browser');
+    expect(fns.closeFileBrowser).not.toHaveBeenCalled();
+    expect(fns.toggleFileBrowser).not.toHaveBeenCalled();
   });
 
   it('子 Agent 显式抢占自动 system，切会话时清理旧意图', () => {

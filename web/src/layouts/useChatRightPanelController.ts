@@ -37,6 +37,13 @@ export function useChatRightPanelController({
   const [businessStepPanelOpen, setBusinessStepPanelOpen] = useState(false);
   const [businessStepDetailHost, setBusinessStepDetailHost] = useState<HTMLDivElement | null>(null);
   const [intent, setIntent] = useState<ChatRightPanelIntent>(null);
+  const rightPanelKind = resolveChatRightPanelKind(intent, {
+    businessStep: businessStepPanelOpen,
+    subagent: !!subagentTranscript,
+    preview: sidePreviewOpen,
+    system: systemPanelOpen,
+    browser: fileBrowserOpen,
+  });
 
   const handleBusinessStepPanelOpenChange = useCallback((open: boolean) => {
     setBusinessStepPanelOpen(open);
@@ -76,15 +83,17 @@ export function useChatRightPanelController({
   }, [expandFilePreview, fileBrowserOpen]);
 
   const handleToggleFileBrowser = useCallback(() => {
-    if (fileBrowserOpen) {
+    if (rightPanelKind === 'browser') {
       closeFileBrowser();
       setIntent((current) => (current === 'browser' ? null : current));
       return;
     }
+    // browser 可能仍是 open，只是被最近一次显式选择隐藏；此时按钮应单击接管，
+    // 不能先关闭隐藏状态、再要求用户点第二次。
     setBusinessStepPanelOpen(false);
     setIntent('browser');
-    toggleFileBrowser();
-  }, [closeFileBrowser, fileBrowserOpen, toggleFileBrowser]);
+    if (!fileBrowserOpen) toggleFileBrowser();
+  }, [closeFileBrowser, fileBrowserOpen, rightPanelKind, toggleFileBrowser]);
 
   const handleCloseFileBrowser = useCallback(() => {
     closeFileBrowser();
@@ -120,13 +129,6 @@ export function useChatRightPanelController({
     setIntent((current) => (current === 'preview' ? null : current));
   }, [previewFilePath, sidePreviewOpen]);
 
-  const rightPanelKind = resolveChatRightPanelKind(intent, {
-    businessStep: businessStepPanelOpen,
-    subagent: !!subagentTranscript,
-    preview: sidePreviewOpen,
-    system: systemPanelOpen,
-    browser: fileBrowserOpen,
-  });
   const rightPanelKey =
     rightPanelKind === 'business-step'
       ? 'business-step'

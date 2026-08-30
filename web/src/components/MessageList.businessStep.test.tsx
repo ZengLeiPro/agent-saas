@@ -326,6 +326,58 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(document.activeElement).toBe(replacementTrigger);
   });
 
+  it("同一 Run 跨用户消息继续时，详情收齐前后过程、系统动作与 Artifact", async () => {
+    const active = [{ id: "verify", kind: "business", content: "跨消息核验", status: "in_progress" }];
+    const messages: MessageItem[] = [
+      { id: "continuation-user-1", type: "user", content: "开始核验" },
+      todoSnapshot("continuation-plan", active, "run-continuation"),
+      {
+        id: "continuation-before", type: "tool_use", toolName: "Read", toolId: "continuation-before",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "前半段读取" },
+      },
+      { id: "continuation-user-2", type: "user", content: "补充条件" },
+      todoSnapshot("continuation-resume", active, "run-continuation"),
+      {
+        id: "continuation-after", type: "tool_use", toolName: "Read", toolId: "continuation-after",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "后半段读取" },
+      },
+      {
+        id: "continuation-connector", type: "tool_use", toolName: "DwsBusiness", toolId: "continuation-connector",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "钉钉 · 写入核验回执", connector: { system: "钉钉", write: true } },
+      },
+      {
+        id: "continuation-artifact", type: "file_download", fileName: "跨消息核验结果.xlsx",
+        filePath: "assets/跨消息核验结果.xlsx", fileType: "xlsx", fileSize: 128,
+        artifactId: "artifact-continuation", artifactKind: "file",
+      },
+      todoSnapshot("continuation-done", [{
+        ...active[0], status: "completed", outcome: { text: "跨消息核验完成" },
+        evidenceRefs: ["receipt:continuation"],
+      }], "run-continuation"),
+    ];
+
+    render(<Harness messages={messages} debugMode />);
+    expect(screen.queryByText(/前半段读取/)).toBeNull();
+    expect(screen.queryByText(/后半段读取/)).toBeNull();
+    expect(screen.queryByText("跨消息核验结果.xlsx")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /跨消息核验/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：跨消息核验")).toBeTruthy());
+    expect(screen.getByText("跨消息核验完成")).toBeTruthy();
+    expect(screen.getByText("跨消息核验结果.xlsx")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("tab", { name: "过程" }));
+    expect(screen.getByText(/前半段读取/)).toBeTruthy();
+    expect(screen.getByText(/后半段读取/)).toBeTruthy();
+    expect(document.querySelector("[data-business-step-process]")?.childElementCount).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(/写入核验回执/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("tab", { name: "依据" }));
+    expect(screen.getByText("receipt:continuation")).toBeTruthy();
+  });
+
   it("步骤中的真实 permission_request 仍留在主对话区域", () => {
     const messages: MessageItem[] = [
       { id: "user-permission", type: "user", content: "执行命令" },
@@ -340,6 +392,7 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
       },
     ];
     render(<Harness messages={messages} />);
+    expect(document.querySelector("[data-business-step-plan]")).toBeTruthy();
     expect(screen.getByText(/Permission: Shell/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow" })).toBeTruthy();
   });

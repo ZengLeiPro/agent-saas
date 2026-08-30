@@ -360,13 +360,9 @@ const TERMINAL_KIND_BY_STATUS: Partial<Record<TodoStatus, BusinessStepEventKind>
   waiting: "wait",
 };
 
-const TERMINAL_EVENT_KINDS: ReadonlySet<BusinessStepEventKind> = new Set([
-  "complete", "fail", "block", "wait",
-]);
-
 /** 终态事件（complete/fail/block/wait）：章节化时封闭对应步骤节。 */
 export function isTerminalStepEvent(event: BusinessStepEventItem): boolean {
-  return TERMINAL_EVENT_KINDS.has(event.kind);
+  return TERMINAL_KIND_BY_STATUS[event.todo?.status as TodoStatus] === event.kind;
 }
 
 /**
@@ -382,7 +378,8 @@ export function isTerminalStepEvent(event: BusinessStepEventItem): boolean {
  * - 收尾事件排在开新事件之前（同一快照先结旧步、再开新步）；
  * - 仅结构增删且无任何状态转移时补一条轻量 `update`；
  * - user 消息默认开启新计划；若下一份 TodoWrite 与当前计划共享明确 runId，则视为同一次业务 Run 继续，
- *   只刷新原计划。这样审批回复/后续 prompt 不会复制计划，真实新任务仍会重新亮相。
+ *   只刷新原计划，并为仍在进行的当前步骤补发 start 以重开过程章节。这样审批回复/后续 prompt
+ *   不会复制计划或丢失后半段过程，真实新任务仍会重新亮相。
  */
 export function projectBusinessStepEvents(
   messages: MessageItem[],
@@ -397,6 +394,7 @@ export function projectBusinessStepEvents(
   /** 当前业务 Run 唯一的计划事件；后续快照原地刷新其步骤状态，不重复插入整份计划。 */
   let currentPlanEvent: BusinessStepEventItem | null = null;
   let currentPlanRunId: string | null = null;
+  /** 已进入时间线、会让 groupMessages 封闭当前步骤节的普通用户消息。 */
   let pendingUserBoundary = false;
   /** 最后一个承载「当前进行中」语义的事件（plan 或 start），用于 isCurrent 标注。 */
   let lastProgressEvent: BusinessStepEventItem | null = null;
@@ -411,7 +409,9 @@ export function projectBusinessStepEvents(
 
   for (const message of messages) {
     if (message.type === "user") {
-      pendingUserBoundary = true;
+      // queued 插话尚未被当前 Run 消费，不是叙事边界；真正进入时间线的用户消息
+      // 才要求同 Run 在下一份完整快照处重开当前步骤节。
+      pendingUserBoundary ||= message.status !== "queued";
       continue;
     }
     if (message.type !== "tool_use" || message.toolName !== TODO_WRITE_TOOL_NAME) continue;
@@ -421,8 +421,9 @@ export function projectBusinessStepEvents(
     if (todos === undefined) continue;
 
     const continuesCurrentRun = currentPlanRunId !== null && message.runId === currentPlanRunId;
-    const switchesRun = currentPlanRunId !== null && message.runId !== undefined && message.runId !== currentPlanRunId;
-    if ((pendingUserBoundary && !continuesCurrentRun) || switchesRun) {
+    const resumesCurrentRunAfterUserBoundary = pendingUserBoundary && continuesCurrentRun;
+    if (!continuesCurrentRun
+      && (pendingUserBoundary || (currentPlanRunId !== null && message.runId !== undefined))) {
       baseline = null;
       latestActiveKey = null;
       currentPlanEvent = null;
@@ -494,6 +495,7 @@ export function projectBusinessStepEvents(
     const closings: BusinessStepEventItem[] = [];
     const openings: BusinessStepEventItem[] = [];
     let structureChanged = false;
+    let hasStateEvent = false;
 
     for (const todo of businessTodos) {
       const key = todoItemKey(todo);
@@ -501,7 +503,14 @@ export function projectBusinessStepEvents(
       if (!prev) structureChanged = true;
       // 新增步骤按 pending 起点做虚拟转移：新增即 completed 的补记步骤也能发出终态事件。
       const prevStatus = prev?.status ?? "pending";
-      if (prevStatus === todo.status) continue;
+      // 普通用户消息会在 groupMessages 中封闭开放节。同一 Run 继续且当前步骤状态
+      // 仍为 in_progress 时也要补一条 start，重开后半段过程的稳定归属；真实状态
+      // 转为 in_progress 仍走常规差分，不重复发 start。
+      const resumesUnchangedActive = resumesCurrentRunAfterUserBoundary
+        && key === latestActiveKey
+        && prevStatus === "in_progress"
+        && todo.status === "in_progress";
+      if (prevStatus === todo.status && !resumesUnchangedActive) continue;
 
       const base: StepEventBase = {
         type: "business_step",
@@ -512,10 +521,14 @@ export function projectBusinessStepEvents(
         stepCount,
       };
       const terminalKind = TERMINAL_KIND_BY_STATUS[todo.status];
-      if (terminalKind) {
+      if (resumesUnchangedActive) {
+        openings.push({ ...base, id: `bs-${message.id}-${key}-start`, kind: "start" });
+      } else if (terminalKind) {
         closings.push({ ...base, id: `bs-${message.id}-${key}-${terminalKind}`, kind: terminalKind });
+        hasStateEvent = true;
       } else if (todo.status === "in_progress") {
         openings.push({ ...base, id: `bs-${message.id}-${key}-start`, kind: "start" });
+        hasStateEvent = true;
       }
       // →pending 的回退（重排）不产生事件。
     }
@@ -527,7 +540,7 @@ export function projectBusinessStepEvents(
     // 有状态转移时结构变化不再单独播报（start/终态事件已是足够的叙事）；
     // 仅纯增删/重排时补一条轻量提示，避免计划演变在流内完全无痕。
     const updates: BusinessStepEventItem[] =
-      structureChanged && !closings.length && !openings.length
+      structureChanged && !hasStateEvent
         ? [{
             type: "business_step",
             id: `bs-${message.id}-update`,

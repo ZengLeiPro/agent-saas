@@ -274,6 +274,13 @@ export interface RawRuntimeRunDispatchConfig {
     connection?: { apiKey?: string; baseUrl?: string };
     providerOptions?: ModelProviderOptions;
   } | null;
+  /** 客户端尚未选定模型时，解析当前组织的默认模型稳定引用。 */
+  defaultModelResolver?: (tenantId?: string) => {
+    ref: string;
+    model: string;
+    connection?: { apiKey?: string; baseUrl?: string };
+    providerOptions?: ModelProviderOptions;
+  } | null;
   executionTransportRegistry?: ExecutionTransportRegistry;
   sessionCatalog?: SessionCatalog;
   eventStoreFactory?: (session: RuntimeSessionRecord) => EventStore;

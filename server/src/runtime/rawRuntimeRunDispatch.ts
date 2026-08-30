@@ -149,6 +149,8 @@ import {
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement } from './runtimeHandRegistration.js';
 import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
+export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 import {
   STEERING_RECOVERY_FAILURE_MESSAGE, STEERING_RECOVERY_MAX_HANDOFFS,
   isTerminalRunStatus, startWakeLeaseRenewal, type RuntimeWakeLease,
@@ -186,7 +188,6 @@ const logger = createLogger('RawRuntime');
 export type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 import type { ModelAdapterFactory, ModelAdapterFactoryDependencies, RawApprovalResumeRequest, RawInteractionResumeRequest, RawRuntimeRunDispatchConfig, RawRuntimeWakeState, ServerRemoteDispatchConfig, SessionLockAcquireOptions, SessionLockAcquirer, SessionLockHandle, SkillsDispatchConfig, TenantRemoteHandDispatchConfig, TenantRemoteHandsSource, WakeRuntimeSessionOptions } from './rawRuntimeRunDispatchTypes.js';
 
-const DEFAULT_MODEL = 'gpt-5.4-mini';
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
  * RFC v1 P0.2：按 modelProviderOptions.protocol 路由 ModelAdapter。
@@ -237,40 +238,6 @@ export function createModelAdapterForProtocol(
 
 function modelRequiresApiKey(options: ModelProviderOptions | undefined): boolean {
   return options?.responsesTransport !== 'codex_subscription';
-}
-export function resolveRuntimeModelOptions(
-  config: Pick<RawRuntimeRunDispatchConfig, 'modelResolver'>,
-  requestedModel: string | undefined,
-  explicitConnection?: { apiKey?: string; baseUrl?: string },
-  explicitProviderOptions?: ModelProviderOptions, tenantId?: string,
-): { model: string; modelConnection?: { apiKey?: string; baseUrl?: string }; modelProviderOptions?: ModelProviderOptions } {
-  if (explicitConnection) {
-    return {
-      model: requestedModel || DEFAULT_MODEL,
-      modelConnection: explicitConnection,
-      ...(explicitProviderOptions ? { modelProviderOptions: explicitProviderOptions } : {}),
-    };
-  }
-  if (requestedModel && config.modelResolver) {
-    const resolved = config.modelResolver(requestedModel, tenantId);
-    if (!resolved) throw new Error(`模型不可用：${requestedModel}`);
-    return {
-      model: resolved.model,
-      ...(resolved.connection ? { modelConnection: resolved.connection } : {}),
-      ...(resolved.providerOptions ? { modelProviderOptions: resolved.providerOptions } : {}),
-    };
-  }
-  return { model: requestedModel || DEFAULT_MODEL };
-}
-
-export function resolveWakeModelRef(
-  run: Pick<RunRecord, 'model' | 'metadata'>,
-  session: Pick<RuntimeSessionRecord, 'modelRef'>,
-): string | undefined {
-  const persistedRef = typeof run.metadata?.modelRef === 'string'
-    ? run.metadata.modelRef.trim()
-    : '';
-  return persistedRef || session.modelRef || run.model;
 }
 /**
  * Skills wiring：dispatch 不知道 SkillConfigStore，只知道"给我 username/skill 名字，
@@ -1097,12 +1064,14 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     const cwd = options.cwd
       ? resolve(options.cwd)
       : existingSession?.cwd ?? replaySourceSession?.cwd ?? config.agentCwd;
-    let requestedModel = options.model ?? replaySourceSession?.modelRef;
+    const tenantId = context.sessionOwner?.tenantId ?? context.user?.tenantId;
+    let requestedModel = resolveRuntimeModelRef(config, options.model ?? replaySourceSession?.modelRef,
+      tenantId, Boolean(options.modelConnection ?? options.openaiAgentsConnection));
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       options.modelConnection ?? options.openaiAgentsConnection,
-      options.modelProviderOptions, context.sessionOwner?.tenantId ?? context.user?.tenantId,
+      options.modelProviderOptions, tenantId,
     );
     let connection = modelConnection;
     let apiKey = connection?.apiKey || process.env.OPENAI_API_KEY;
@@ -1820,12 +1789,14 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
 
-    let requestedModel = request.model || existingSession?.modelRef;
+    const tenantId = request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId;
+    let requestedModel = resolveRuntimeModelRef(config, request.model || existingSession?.modelRef,
+      tenantId, Boolean(request.modelConnection));
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       request.modelConnection,
-      request.modelProviderOptions, request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
+      request.modelProviderOptions, tenantId,
     );
     let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
@@ -2292,12 +2263,14 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       yield { type: 'error', error: `Raw interaction resume 找不到 session 元数据: ${request.sessionId}` };
       return;
     }
-    let requestedModel = request.model || existingSession?.modelRef;
+    const tenantId = request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId;
+    let requestedModel = resolveRuntimeModelRef(config, request.model || existingSession?.modelRef,
+      tenantId, Boolean(request.modelConnection));
     let { model, modelConnection, modelProviderOptions } = resolveRuntimeModelOptions(
       config,
       requestedModel,
       request.modelConnection,
-      request.modelProviderOptions, request.context.sessionOwner?.tenantId ?? request.context.user?.tenantId,
+      request.modelProviderOptions, tenantId,
     );
     let apiKey = modelConnection?.apiKey || process.env.OPENAI_API_KEY;
     let baseUrl = modelConnection?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;

@@ -807,10 +807,7 @@ describe('SandboxManager', () => {
             signal: null,
           };
         }
-        if (args[0] === 'get' && args[2] === '-o') {
-          return { stdout: '{}', stderr: '', exitCode: 0, signal: null };
-        }
-        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'patch' || args[0] === 'delete') {
+        if ((args[0] === 'get' && (args.includes('--ignore-not-found=true') || args[2] === '-o')) || args[0] === 'patch' || args[0] === 'delete') {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
@@ -1270,8 +1267,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'get' && args[2] === '-o') return { stdout: '{}', stderr: '', exitCode: 0, signal: null };
-        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && (args.includes('--ignore-not-found=true') || args[2] === '-o')) || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -1341,8 +1337,7 @@ describe('SandboxManager', () => {
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if (args[0] === 'get' && args[2] === '-o') return { stdout: '{}', stderr: '', exitCode: 0, signal: null };
-        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && (args.includes('--ignore-not-found=true') || args[2] === '-o')) || args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;

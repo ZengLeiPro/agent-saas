@@ -14,8 +14,15 @@ import type {
   RuntimeFailureKind,
   RuntimeRecoveryAction,
 } from '../types/index.js';
-import type { ExecutionTargetKind } from './toolRuntime.js';
 import type { SandboxWorkloadDescriptor } from '@agent/shared';
+import type { ExecutionTargetKind } from './toolRuntime.js';
+
+/** Stable ACS-side workload wire contract (`class`, never shared `kind`). */
+export interface SandboxWorkloadWireDescriptor {
+  class: 'interactive' | 'taskboard' | 'cron' | 'memory';
+  taskKind?: 'delivery' | 'advisory' | 'integration' | 'remediation';
+  purpose?: 'work' | 'review' | 'merge';
+}
 
 export type PermissionMode =
   | 'default'

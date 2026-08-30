@@ -148,7 +148,7 @@ import {
   createTenantRemoteHandAuthTokenResolver,
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
-import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement, toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
+import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement, resolveSandboxWorkloadDescriptor, toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
 import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
@@ -1199,14 +1199,8 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     // 新会话首次落库时定版记忆策略，resume 只读既有 pin；
     // 后台 profile、专职 org Agent 与非用户通道固定 v1，避免与 L2 双写。
     // memory_consolidate 的隐藏来源由 createRuntimeSessionRecord 根据 toolProfile 固化。
-    const sandboxWorkloadDescriptor = existingSession?.sandboxWorkloadDescriptor
-      ?? replaySourceSession?.sandboxWorkloadDescriptor
-      ?? options.sandboxWorkloadDescriptor
-      ?? (toolProfile ? { kind: 'memory' as const }
-        : context.channel === 'cron' ? { kind: 'cron' as const }
-          : { kind: 'interactive' as const });
-    const isTaskboardExecution = sandboxWorkloadDescriptor.kind === 'taskboard'
-      || existingSession?.sessionSource === 'taskboard_execution';
+    const sandboxWorkloadDescriptor = resolveSandboxWorkloadDescriptor(existingSession?.sandboxWorkloadDescriptor, replaySourceSession?.sandboxWorkloadDescriptor, options.sandboxWorkloadDescriptor, toolProfile, context.channel);
+    const isTaskboardExecution = sandboxWorkloadDescriptor.kind === 'taskboard' || existingSession?.sessionSource === 'taskboard_execution';
     const memoryPolicyVersion: MemoryWritePolicyVersion = resolveSessionMemoryPolicy({
       existing: existingSession ?? replaySourceSession,
       delegationEnabled: config.memoryWriteDelegationEnabled?.(effectiveTenantId) === true,
@@ -1246,8 +1240,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         modelRef: sessionModelRef,
         executionTarget,
-        status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
-        sandboxWorkloadDescriptor,
+        status: 'running', toolProfile, executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined, sandboxWorkloadDescriptor,
         ...(replaySourceSession ? {
           sessionSource: 'memory_consolidation' as const,
           memoryAutomationEligible: false,
@@ -1272,8 +1265,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       status: 'running', executionRole: orgAgent?.runtime?.executionMode === 'dispatcher' ? 'dispatcher' : undefined,
       ...(orgAgentId ? { orgAgentId } : {}),
       ...(orgAgentSnapshot ? { orgAgentSnapshot } : {}),
-      memoryPolicyVersion,
-      sandboxWorkloadDescriptor,
+      memoryPolicyVersion, sandboxWorkloadDescriptor,
       ...(isTaskboardExecution ? {
         sessionSource: 'taskboard_execution' as const,
         memoryAutomationEligible: false,
@@ -1320,12 +1312,10 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         transcriptPath,
         modelRef: sessionModelRef, username: sessionRecord.username, userRole: sessionRecord.userRole, ...(orgAgentId ? { orgAgentId } : {}), ...(sessionRecord.executionRole ? { executionRole: sessionRecord.executionRole } : {}), ...(orgAgent?.runtime?.executionMode ? { executionMode: orgAgent.runtime.executionMode } : {}), ...(options.dispatcherCompletion ? { dispatcherCompletion: true } : {}),
         outputTransactionMode: resolveModelOutputTransactionMode(context),
-        sandboxScopeId,
+        sandboxScopeId, sandboxWorkloadTopLevel: true, sandboxWorkloadDescriptor,
         ...(workspaceMountSubPath ? { mountSubPath: workspaceMountSubPath } : {}),
         ...(approvalPolicy ? { approvalPolicy } : {}),
         ...(toolProfile ? { toolProfile } : {}),
-        sandboxWorkloadTopLevel: true,
-        sandboxWorkloadDescriptor,
         ...(replaySourceSession ? {
           memoryConsolidationSourceSessionId: replaySourceSession.sessionId,
           forceFullContextReplay: true,
@@ -1387,8 +1377,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       topLevelSessionId: sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
-      sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -1519,8 +1508,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         cwd,
         workspaceId: sessionRecord.workspaceId ?? sessionId,
         topLevelSessionId: sessionId,
-        sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, sessionId, executionTarget),
-        workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
+        sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
         mountSubPath: workspaceMountSubPath,
         tenantId: sessionRecord.tenantId,
         executionTarget,
@@ -1994,8 +1982,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
-      sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2168,8 +2155,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
-          workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,
@@ -2479,8 +2465,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       topLevelSessionId: request.sessionId,
       endpoint: executionTarget === 'server-remote' ? config.serverRemote?.baseUrl : undefined,
       serverRemoteRecipe: config.serverRemote?.recipe,
-      sandboxProfile: sessionRecord.sandboxProfile,
-      sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
+      sandboxProfile: sessionRecord.sandboxProfile, sandboxWorkloadDescriptor: sessionRecord.sandboxWorkloadDescriptor,
       tenantRemoteHands: resolveTenantRemoteHandsSource(config.tenantRemoteHands),
       tenantRemoteHandResolver: tenantHandResolver,
       environmentStore: config.environmentStore,
@@ -2654,8 +2639,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           cwd,
           workspaceId: sessionRecord.workspaceId ?? request.sessionId,
           topLevelSessionId: request.sessionId,
-          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget),
-          workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
+          sandboxScopeId, sandboxResources: sandboxResourcesForSessionHand(availableHands, request.sessionId, executionTarget), workload: toAcsSandboxWorkloadDescriptor(sessionRecord.sandboxWorkloadDescriptor),
           mountSubPath: workspaceMountSubPath,
           tenantId: sessionRecord.tenantId,
           executionTarget,

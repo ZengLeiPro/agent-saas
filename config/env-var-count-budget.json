@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reason": "Staging API 通过 AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE 读取隔离 Worker 的单槽 readyfile，避免误读生产蓝绿 active-color 身份",
-  "updatedAt": "2026-08-29",
+  "reason": "TASK-341：为 Sandbox lifecycle shadow/enforce 灰度切换新增 ACS_SANDBOX_LIFECYCLE_POLICY_MODE",
+  "updatedAt": "2026-08-30",
   "domains": {
     "server": {
       "budget": 49,
@@ -58,7 +58,7 @@
       ]
     },
     "acs-orchestrator": {
-      "budget": 41,
+      "budget": 42,
       "names": [
         "ACS_ALERT_WEBHOOK_BEARER_TOKEN",
         "ACS_ALERT_WEBHOOK_URL",
@@ -82,6 +82,7 @@
         "ACS_SANDBOX_IMAGE",
         "ACS_SANDBOX_IMAGE_PULL_POLICY",
         "ACS_SANDBOX_KIND",
+        "ACS_SANDBOX_LIFECYCLE_POLICY_MODE",
         "ACS_SANDBOX_MEMORY_LIMIT",
         "ACS_SANDBOX_MEMORY_REQUEST",
         "ACS_SNAT_ENTRY_NAME_PREFIX",

@@ -54,11 +54,8 @@ export interface RunContext {
    * 子 Agent / 后台任务继承父值以保证「父 + 全部后代」同 pod（决策 7）。
    */
   topLevelSessionId?: string;
-  sandboxScopeId?: string;
-  mountSubPath?: string;
-  sandboxResources?: WorkspaceRef['sandboxResources'];
-  /** Stable ACS-side workload wire descriptor. */
-  workload?: WorkspaceRef['workload'];
+  sandboxScopeId?: string; workload?: WorkspaceRef['workload'];
+  mountSubPath?: string; sandboxResources?: WorkspaceRef['sandboxResources'];
   tenantId?: string;
   executionTarget?: ExecutionTargetKind;
   /** 当前任务从能力中心已启用连接器解析出的运行态凭据环境变量。 */

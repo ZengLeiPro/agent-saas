@@ -26,6 +26,7 @@ import {
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
+// Workload classification is fixed at the Server creation boundary; descendants inherit it.
 
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
@@ -57,6 +58,16 @@ export function deriveSandboxScopeId(input: {
     : input.workspaceId;
   if (!input.topLevelSessionId) return base;
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
+}
+
+export function resolveSandboxWorkloadDescriptor(
+  existing: SandboxWorkloadDescriptor | undefined,
+  replay: SandboxWorkloadDescriptor | undefined,
+  requested: SandboxWorkloadDescriptor | undefined,
+  toolProfile: unknown,
+  channel: string,
+): SandboxWorkloadDescriptor {
+  return existing ?? replay ?? requested ?? (toolProfile ? { kind: 'memory' } : channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
 }
 
 export function toAcsSandboxWorkloadDescriptor(

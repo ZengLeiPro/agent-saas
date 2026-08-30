@@ -672,10 +672,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       channel: 'memory_embedding',
     });
   };
-  let billingAuditTimer: NodeJS.Timeout | undefined;
-  let sandboxLifecycleService: SandboxLifecycleService | undefined;
-  let runtimeEventRetention: RuntimeEventRetention | undefined, runtimeScheduler: RuntimeScheduler | undefined;
-  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined, runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let billingAuditTimer: NodeJS.Timeout | undefined; let sandboxLifecycleService: SandboxLifecycleService | undefined;
+  let runtimeEventRetention: RuntimeEventRetention | undefined; let runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined; // singleton worker state
+  let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
@@ -1100,8 +1100,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       systemMetricsCollector?.stop();
       alertNotifier?.stop(); taskboardStatusNotificationWorker?.stop();
       await taskboardExecutionCoordinator?.stop();
-      terminalEventOutboxDispatcher.stop();
-      sandboxLifecycleService?.stop();
+      terminalEventOutboxDispatcher.stop(); sandboxLifecycleService?.stop();
       await runtimeScheduler?.stop();
       await runtimeOutboundStreamRelay?.flushAll();
       if (cancelDeliveryRetryTimer) clearInterval(cancelDeliveryRetryTimer);
@@ -1502,19 +1501,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantRemoteHandResolver,
     isExecutionEnabled: isRuntimeExecutionEnabled,
     logger: serverLogger.child('SandboxWarmup'),
-  });
-  if (pgRunStore) {
-    sandboxLifecycleService = new SandboxLifecycleService({
-      agentCwd,
-      store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable),
-      runStore: pgRunStore,
-      sessionCatalog,
-      handStore: pgHandStore,
-      tenantRemoteHands: () => config.tenantRemoteHands?.hands,
-      tenantRemoteHandResolver,
-      logger: serverLogger.child('SandboxLifecycle'),
-    });
-  }
+  }); if (pgRunStore) sandboxLifecycleService = new SandboxLifecycleService({ agentCwd, store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable), runStore: pgRunStore, sessionCatalog, handStore: pgHandStore, tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver, logger: serverLogger.child('SandboxLifecycle') });
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
   // 仍按 plaintext 接收。authTokenRef 走 vault.getSecret(actor:'system')；inline
   // authToken 直接透传。两者互斥由 schema 保证。
@@ -2711,8 +2698,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
           serverLogger.info(`Run cancel delivered via event bridge: run=${event.runId} reason=${event.reason ?? 'run_cancel_requested'}`);
         }
       }
-      if (enableSingletonWorkers) sandboxLifecycleService?.observeRuntimeEvent(event);
-      if (event.type === 'run_finished' || event.type === 'run_started') {
+      if (enableSingletonWorkers) sandboxLifecycleService?.observeRuntimeEvent(event); if (event.type === 'run_finished' || event.type === 'run_started') {
         // L2 记忆整合低延迟唤醒；正确性不依赖此调用（durable cursor 扫描兜底）
         memoryConsolidationEngine?.wake();
       }
@@ -2731,9 +2717,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }, 5_000);
       cancelDeliveryRetryTimer.unref?.();
     }
-    // Live events reduce latency; the periodic scanner remains the durable correctness fallback.
-    if (enableSingletonWorkers) sandboxLifecycleService?.start();
-    serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
+    if (enableSingletonWorkers) sandboxLifecycleService?.start(); serverLogger.info('Runtime EventStore live bridge initialized: backend=pg listen/notify; terminal outbox recovery started');
   }
   if (runtimeScheduler && enableSchedulerWorker) {
     await runtimeScheduler.start();
@@ -2936,8 +2920,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     processCwd,
     sessionBasePath,
     agentCwd,
-    sandboxWarmupService,
-    ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
+    sandboxWarmupService, ...(sandboxLifecycleService ? { sandboxLifecycleService } : {}),
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,

@@ -12,15 +12,20 @@ import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork } from './sandboxDeletion.js';
+import { cleanupManagedSandboxes } from './sandboxCleanup.js';
+import {
+  applyBackgroundShellProtection, applyInvocationLease, applyLifecycleUpdate, applyWorkloadDescriptor,
+} from './sandboxLifecycleMutations.js';
+import {
+  APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
+  NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL,
+  SANDBOX_SCOPE_ANNOTATION, SANDBOX_SCOPE_LABEL, SESSION_ANNOTATION, SESSION_LABEL,
+  WORKSPACE_ANNOTATION, WORKSPACE_LABEL, readManagedSandboxes,
+} from './sandboxInventoryReader.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
 import {
-  RETENTION_DEADLINE_ANNOTATION,
-  TERMINAL_AT_ANNOTATION,
-  TERMINAL_OUTCOME_ANNOTATION,
-  TERMINAL_STATE_ANNOTATION,
   WORKLOAD_CLASS_LABEL,
   WORKLOAD_DESCRIPTOR_ANNOTATION,
-  activeInvocationLeaseAnnotationKey,
   decideSandboxLifecycle,
   isActiveInvocationLeaseProtected,
   lifecycleStateFromMetadata,
@@ -44,7 +49,6 @@ import {
   labelValue,
   nodeHeapLimitMb,
   normalizeMountSubPath,
-  optionalString,
   parseDateMs,
   pausedConditionLastTransition,
   stringValue,
@@ -89,20 +93,6 @@ export class SandboxInvalidStateError extends Error {
   readonly statusCode = 400;
 }
 export { SandboxCapacityError } from './sandboxCapacity.js';
-const MANAGED_BY_LABEL = 'agent-saas-acs-orchestrator';
-const APP_LABEL = 'agent-saas-coding-hand';
-const WORKSPACE_LABEL = 'agent-saas.kaiyan.net/workspace-id';
-const SANDBOX_SCOPE_LABEL = 'agent-saas.kaiyan.net/sandbox-scope-id';
-const SESSION_LABEL = 'agent-saas.kaiyan.net/session-id';
-const NETWORK_POLICY_MODE_LABEL = 'agent-saas.kaiyan.net/network-policy-mode';
-const WORKSPACE_ANNOTATION = 'agent-saas.kaiyan.net/workspace-id';
-const SANDBOX_SCOPE_ANNOTATION = 'agent-saas.kaiyan.net/sandbox-scope-id';
-const SESSION_ANNOTATION = 'agent-saas.kaiyan.net/session-id';
-const MOUNT_SUBPATH_ANNOTATION = 'agent-saas.kaiyan.net/mount-subpath';
-const CREATED_AT_ANNOTATION = 'agent-saas.kaiyan.net/created-at';
-const LAST_ACTIVE_AT_ANNOTATION = 'agent-saas.kaiyan.net/last-active-at';
-const NETWORK_POLICY_MODE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-mode';
-const NETWORK_POLICY_DENY_PRIVATE_ANNOTATION = 'agent-saas.kaiyan.net/network-policy-deny-private';
 const ACS_NETWORK_POLICY_AGENT_ANNOTATION = 'network.alibabacloud.com/enable-network-policy-agent';
 const ACS_NETWORK_POLICY_MODE_ANNOTATION = 'network.alibabacloud.com/network-policy-mode';
 const EGRESS_FINGERPRINT_ANNOTATION = 'agent-saas.kaiyan.net/egress-fingerprint';
@@ -409,66 +399,7 @@ export class SandboxManager {
   }
 
   async listManagedSandboxes(): Promise<ManagedSandbox[]> {
-    const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY_LABEL}`;
-    // 2026-08-03 CPU 治理 P3b：优先 REST 直连（keepalive 连接池，零 fork）；
-    // API 层失败（null）回退 kubectl，行为最坏等于改造前。
-    let items = await this.kubeApi?.listSandboxItems(labelSelector) ?? null;
-    if (items === null) {
-      const result = await this.kubectl.run([
-        'get',
-        this.config.sandboxKind.toLowerCase(),
-        '-l',
-        labelSelector,
-        '-o',
-        'json',
-      ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-      if (result.exitCode !== 0) throw new Error(`list managed Sandbox 失败: ${result.stderr || result.stdout}`);
-      const body = JSON.parse(result.stdout || '{}') as { items?: Array<Record<string, unknown>> };
-      items = body.items ?? [];
-    }
-    return items.map((item) => {
-      const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata as Record<string, unknown> : {};
-      const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};
-      const labels = metadata.labels && typeof metadata.labels === 'object' ? metadata.labels as Record<string, unknown> : {};
-      const status = item.status && typeof item.status === 'object' ? item.status as Record<string, unknown> : {};
-      const phase = stringValue(status.phase);
-      // 从 spec.template.spec.containers[主容器].image 里抽出 image tag，
-      // 用于 Paused 旧镜像预热和 inventory 统计。找不到主容器时留 undefined。
-      const spec = item.spec && typeof item.spec === 'object' ? item.spec as Record<string, unknown> : {};
-      const template = spec.template && typeof spec.template === 'object' ? spec.template as Record<string, unknown> : {};
-      const podSpec = template.spec && typeof template.spec === 'object' ? template.spec as Record<string, unknown> : {};
-      const containers = Array.isArray(podSpec.containers) ? podSpec.containers : [];
-      const primaryContainer = containers.find((c): c is Record<string, unknown> => (
-        Boolean(c)
-        && typeof c === 'object'
-        && (!('name' in c) || c.name === this.config.sandboxContainerName)
-      ));
-      const resources = primaryContainer?.resources && typeof primaryContainer.resources === 'object'
-        ? primaryContainer.resources as Record<string, unknown> : {};
-      const requests = resources.requests && typeof resources.requests === 'object'
-        ? resources.requests as Record<string, unknown> : {};
-      const limits = resources.limits && typeof resources.limits === 'object'
-        ? resources.limits as Record<string, unknown> : {};
-      return {
-        name: typeof metadata.name === 'string' ? metadata.name : '',
-        workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
-        sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
-        sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
-        mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]),
-        phase,
-        ...optionalString('brokenReason', brokenSandboxStateReason({ phase, raw: item })),
-        ...optionalString('pausedConditionChangedAt', pausedConditionLastTransition(item)),
-        createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
-        lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
-        backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
-        ...lifecycleStateFromMetadata(labels, annotations),
-        image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
-        cpuRequest: stringValue(requests.cpu),
-        cpuLimit: stringValue(limits.cpu),
-        memoryRequest: stringValue(requests.memory),
-        memoryLimit: stringValue(limits.memory),
-      };
-    }).filter((sandbox) => sandbox.name);
+    return await readManagedSandboxes(this.config, this.kubectl, this.kubeApi);
   }
 
   async listSandboxInventory(input: {
@@ -663,119 +594,19 @@ export class SandboxManager {
   }
 
   async cleanupSandboxes(input: { busySandboxNames?: Set<string>; now?: Date } = {}): Promise<SandboxCleanupReport> {
-    const now = input.now ?? new Date();
-    const nowMs = now.getTime();
-    const busySandboxNames = input.busySandboxNames ?? new Set<string>();
-    const sandboxes = await this.listManagedSandboxes();
-    const paused: string[] = [];
-    const deleted: string[] = [];
-    const brokenRecycled: string[] = [];
-    const skippedBusy: string[] = [];
-    const snatDeleted: string[] = [];
-    const decisionCounts: Record<string, number> = {};
-    const policyMode = this.config.lifecyclePolicyMode ?? 'shadow';
-
-    for (const sandbox of sandboxes) {
-      // Protection order is intentional: process-local registry, persisted invocation lease,
-      // then background-task protection. No cleanup decision runs before all three pass.
-      if (this.isBusy(sandbox.name, busySandboxNames)) {
-        skippedBusy.push(sandbox.name);
-        decisionCounts['retain-active-registry'] = (decisionCounts['retain-active-registry'] ?? 0) + 1;
-        continue;
-      }
-      if (isActiveInvocationLeaseProtected(sandbox, nowMs)) {
-        skippedBusy.push(sandbox.name);
-        decisionCounts['retain-active-lease'] = (decisionCounts['retain-active-lease'] ?? 0) + 1;
-        continue;
-      }
-      if (isBackgroundShellProtected(sandbox, nowMs)) {
-        skippedBusy.push(sandbox.name);
-        decisionCounts['retain-background-protected'] = (decisionCounts['retain-background-protected'] ?? 0) + 1;
-        continue;
-      }
-      const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs });
-      decisionCounts[lifecycle.decision] = (decisionCounts[lifecycle.decision] ?? 0) + 1;
-      const phase = sandbox.phase ?? 'Unknown';
-      const createdAtMs = parseDateMs(sandbox.createdAt);
-      const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
-      const ageMs = createdAtMs === undefined ? 0 : nowMs - createdAtMs;
-      const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
-      // 2026-08-01 矛盾态自愈：phase=Paused 但 broken（SandboxPaused 卡 False/ImageChanged
-      // 或 spec.paused=false 半状态）时 ACS 未完成休眠、持续按运行态计费，且旧逻辑只看
-      // phase 会把它当「已暂停」永久跳过（07-22 事故 21 个 / 08-01 复发 6 个，最长滞留
-      // 10 天）。宽限期取 condition 翻转、最后活跃、创建三个时间戳的最近者，全部超过
-      // 宽限才回收，避免误伤正常 pause/resume 的瞬态（正常流程另有 busy 保护）。
-      if (sandbox.brokenReason && this.config.sandboxBrokenRecycleGraceMs > 0) {
-        const brokenSinceMs = Math.max(
-          parseDateMs(sandbox.pausedConditionChangedAt) ?? 0,
-          lastActiveAtMs ?? 0,
-          createdAtMs ?? 0,
-        );
-        if (brokenSinceMs > 0 && nowMs - brokenSinceMs >= this.config.sandboxBrokenRecycleGraceMs) {
-          this.logger.warn(
-            `sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason} `
-            + `brokenForMs=${nowMs - brokenSinceMs}`,
-          );
-          const reclaimed = await this.deleteWhenIdle(sandbox.name, busySandboxNames);
-          if (!reclaimed) {
-            skippedBusy.push(sandbox.name);
-            continue;
-          }
-          snatDeleted.push(...reclaimed);
-          brokenRecycled.push(sandbox.name);
-          continue;
-        }
-      }
-      // broken > orphan > workload deadline: keep the long-standing recovery priority.
-      // Probe CRs are the exception to generic orphan grace and are capped at five minutes.
-      const orphanPhase = !['Running', 'Paused'].includes(phase);
-      const orphanGraceMs = lifecycle.workloadClass === 'probe'
-        ? 5 * 60_000
-        : this.config.sandboxOrphanGraceMs;
-      const shouldDeleteOrphan = orphanGraceMs > 0 && orphanPhase && ageMs >= orphanGraceMs;
-      const shouldDeleteByLegacyTtl = this.config.sandboxTtlMs > 0 && idleMs >= this.config.sandboxTtlMs;
-      const shouldDeleteByPolicy = policyMode === 'enforce' && lifecycle.delete;
-      if (shouldDeleteOrphan || (policyMode === 'shadow' ? shouldDeleteByLegacyTtl : shouldDeleteByPolicy)) {
-        const reclaimed = await this.deleteWhenIdle(sandbox.name, busySandboxNames);
-        if (!reclaimed) {
-          skippedBusy.push(sandbox.name);
-          continue;
-        }
-        snatDeleted.push(...reclaimed);
-        deleted.push(sandbox.name);
-        continue;
-      }
-      if (phase === 'Running' && this.config.sandboxIdlePauseMs > 0 && idleMs >= this.config.sandboxIdlePauseMs) {
-        if (this.isBusy(sandbox.name, busySandboxNames)) {
-          skippedBusy.push(sandbox.name);
-          continue;
-        }
-        await this.patchPaused(sandbox.name, true);
-        paused.push(sandbox.name);
-      }
-    }
-
-    const pausedSet = new Set(paused);
-    const removedSet = new Set([...deleted, ...brokenRecycled]);
-    const snatReport = await this.cleanupOrphanSnat();
-
-    return {
-      checked: sandboxes.length,
-      paused,
-      deleted,
-      brokenRecycled,
-      skippedBusy,
-      snatDeleted: [...snatDeleted, ...snatReport.deleted],
-      snatUnexpected: snatReport.unexpected.length,
-      runningCount: sandboxes.filter((sandbox) => (
-        !removedSet.has(sandbox.name)
-        && !pausedSet.has(sandbox.name)
-        && sandbox.phase === 'Running'
-      )).length,
-      totalCount: sandboxes.length,
-      policyMode,
-      decisionCounts,
-    };
+    return await cleanupManagedSandboxes({
+      lifecyclePolicyMode: this.config.lifecyclePolicyMode ?? 'shadow',
+      sandboxBrokenRecycleGraceMs: this.config.sandboxBrokenRecycleGraceMs,
+      sandboxOrphanGraceMs: this.config.sandboxOrphanGraceMs,
+      sandboxTtlMs: this.config.sandboxTtlMs,
+      sandboxIdlePauseMs: this.config.sandboxIdlePauseMs,
+      listManagedSandboxes: () => this.listManagedSandboxes(),
+      isBusy: (name, busy) => this.isBusy(name, busy),
+      deleteWhenIdle: (name, busy) => this.deleteWhenIdle(name, busy),
+      patchPaused: (name) => this.patchPaused(name, true),
+      cleanupOrphanSnat: () => this.cleanupOrphanSnat(),
+      warn: (message) => this.logger.warn(message),
+    }, input);
   }
 
   async archiveWorkspace(workspaceId: string, reason: string): Promise<{ workspaceId: string; archived: boolean; missing?: boolean; archiveId?: string; archivePath?: string }> {
@@ -826,20 +657,7 @@ export class SandboxManager {
       || actual.sandboxScopeId !== input.sandboxScopeId) {
       throw new SandboxNotFoundError('ACS Sandbox lifecycle identity not found');
     }
-    const result = await this.kubectl.run([
-      'patch', this.resourceName(ref.name), '--type=merge', '-p',
-      JSON.stringify({
-        metadata: {
-          annotations: {
-            [TERMINAL_STATE_ANNOTATION]: input.terminalState,
-            [TERMINAL_AT_ANNOTATION]: input.terminalAt,
-            [TERMINAL_OUTCOME_ANNOTATION]: input.outcome === undefined ? null : JSON.stringify(input.outcome),
-            [RETENTION_DEADLINE_ANNOTATION]: input.retentionDeadline ?? null,
-          },
-        },
-      }),
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`更新 Sandbox lifecycle 失败: ${result.stderr || result.stdout}`);
+    await applyLifecycleUpdate(this.config, this.kubectl, this.resourceName(ref.name), input);
     return { name: ref.name, ...(input.retentionDeadline ? { retentionDeadline: input.retentionDeadline } : {}) };
   }
 
@@ -883,34 +701,11 @@ export class SandboxManager {
 
   async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string): Promise<void> {
     if (leaseUntil && !Number.isFinite(Date.parse(leaseUntil))) throw new Error('invocation leaseUntil 必须是合法 ISO 时间');
-    const key = activeInvocationLeaseAnnotationKey(invocationKey);
-    const result = await this.kubectl.run([
-      'patch', this.resourceName(name), '--type=merge', '-p',
-      JSON.stringify({ metadata: { annotations: {
-        [key]: leaseUntil ? JSON.stringify({ invocationKey, until: leaseUntil }) : null,
-      } } }),
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`更新 invocation lease 失败: ${result.stderr || result.stdout}`);
+    await applyInvocationLease(this.config, this.kubectl, this.resourceName(name), invocationKey, leaseUntil);
   }
 
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
-    // This patch also transitions a reused scope back to non-terminal lifecycle state.
-    const result = await this.kubectl.run([
-      'patch', this.resourceName(name), '--type=merge', '-p',
-      JSON.stringify({ metadata: {
-        labels: { [WORKLOAD_CLASS_LABEL]: workload.class },
-        annotations: {
-          [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
-          // ensureRunning means this scope is active again. Clear a previous run's terminal
-          // receipt so enforce mode cannot delete the reused Sandbox on a stale deadline.
-          [TERMINAL_STATE_ANNOTATION]: null,
-          [TERMINAL_AT_ANNOTATION]: null,
-          [TERMINAL_OUTCOME_ANNOTATION]: null,
-          [RETENTION_DEADLINE_ANNOTATION]: null,
-        },
-      } }),
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`更新 workload descriptor 失败: ${result.stderr || result.stdout}`);
+    await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload);
   }
 
   async touch(name: string, now: Date = new Date()): Promise<void> {
@@ -952,22 +747,7 @@ export class SandboxManager {
     if (protectedUntil && !Number.isFinite(Date.parse(protectedUntil))) {
       throw new Error('background shell protectedUntil 必须是合法 ISO 时间。');
     }
-    const result = await this.kubectl.run([
-      'patch',
-      this.resourceName(name),
-      '--type=merge',
-      '-p',
-      JSON.stringify({
-        metadata: {
-          annotations: {
-            [BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]: protectedUntil ?? null,
-          },
-        },
-      }),
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) {
-      throw new Error(`更新后台 Shell 生命周期保护失败: ${result.stderr || result.stdout}`);
-    }
+    await applyBackgroundShellProtection(this.config, this.kubectl, this.resourceName(name), protectedUntil);
   }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {

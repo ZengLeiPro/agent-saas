@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveRuntimeModelOptions, resolveWakeModelRef } from '../runtime/rawRuntimeRunDispatch.js';
+import {
+  resolveRuntimeModelOptions,
+  resolveRuntimeModelRef,
+  resolveWakeModelRef,
+} from '../runtime/rawRuntimeRunDispatch.js';
 
 describe('resolveRuntimeModelOptions', () => {
   it('resolves a stored UI model ref into runtime model connection with tenant scope', () => {
@@ -60,6 +64,43 @@ describe('resolveRuntimeModelOptions', () => {
       modelProviderOptions: { thinking: { type: 'enabled' } },
     });
     expect(modelResolver).not.toHaveBeenCalled();
+  });
+
+  it('resolves the tenant default when the client sends before its model list is ready', () => {
+    const defaultModelResolver = vi.fn(() => ({
+      ref: 'ark-agents/glm-5.3',
+      model: 'glm-5.3',
+      connection: { apiKey: 'sk-staging' },
+    }));
+
+    const modelRef = resolveRuntimeModelRef(
+      { modelResolver: () => null, defaultModelResolver },
+      undefined,
+      'pantheon',
+    );
+
+    expect(modelRef).toBe('ark-agents/glm-5.3');
+    expect(defaultModelResolver).toHaveBeenCalledWith('pantheon');
+    expect(resolveRuntimeModelOptions({
+      modelResolver: (ref) => ref === modelRef
+        ? { model: 'glm-5.3', connection: { apiKey: 'sk-staging' } }
+        : null,
+    }, modelRef, undefined, undefined, 'pantheon')).toMatchObject({
+      model: 'glm-5.3',
+      modelConnection: { apiKey: 'sk-staging' },
+    });
+  });
+
+  it('does not replace an explicit connection with the configured default ref', () => {
+    const defaultModelResolver = vi.fn(() => ({ ref: 'ark-agents/glm-5.3', model: 'glm-5.3' }));
+
+    expect(resolveRuntimeModelRef(
+      { modelResolver: () => null, defaultModelResolver },
+      undefined,
+      'pantheon',
+      true,
+    )).toBeUndefined();
+    expect(defaultModelResolver).not.toHaveBeenCalled();
   });
 
   it('restores the stable model ref instead of the provider model value', () => {

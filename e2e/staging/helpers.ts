@@ -132,15 +132,25 @@ async function waitForAgentMarker(
         );
         if (response.ok()) {
           const body = (await response.json()) as {
-            runs?: Array<{ runId?: string; sessionId?: string; status?: string }>;
+            runs?: Array<{
+              runId?: string;
+              sessionId?: string;
+              status?: string;
+              statusReason?: string | null;
+            }>;
           };
           const run = body.runs?.find(
             (candidate) => candidate.sessionId === sessionId
               && candidate.runId
               && !priorRunIds.has(String(candidate.runId)),
           );
-          if (run?.status === 'failed' || run?.status === 'cancelled')
-            throw new Error(`Staging Agent run ${String(run.runId)} reached terminal status ${run.status}`);
+          if (run?.status === 'failed' || run?.status === 'cancelled') {
+            const reason = run.statusReason?.trim();
+            throw new Error(
+              `Staging Agent run ${String(run.runId)} reached terminal status ${run.status}`
+              + (reason ? `: ${reason.slice(0, 500)}` : ''),
+            );
+          }
           if (run?.status === 'completed') {
             completedWithoutMarkerAt ??= Date.now();
             if (Date.now() - completedWithoutMarkerAt > 3_000)

@@ -65,6 +65,9 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /runtime_summary=/u);
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.match(workflow, /expected_runtime_summary/u);
+  assert.match(workflow, /assert-promotion-retry\.mjs/u);
+  assert.match(workflow, /retry-before-change:\$GITHUB_RUN_ID/u);
+  assert.match(workflow, /APPROVAL_RECORDED=true/u);
 });
 
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
@@ -134,6 +137,9 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(workflow, /Persist Web operation start receipt/u);
   assert.match(workflow, /Persist API and Worker operation receipts/u);
   assert.match(workflow, /Persist Web operation receipt/u);
+  assert.match(workflow, /PROMOTION_STARTED=true/u);
+  assert.match(workflow, /Record fail-closed outcome before production mutation/u);
+  assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
   assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);

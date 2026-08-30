@@ -27,6 +27,33 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.isPromotable()).toBe(true);
   });
 
+  it('allows a newly reasoned approval only after a proven failure before change', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'failed_before_change');
+    append(entries, 'approved', 'approval-2');
+    expect(entries.currentState()).toBe('approved');
+    expect(entries.isPromotable()).toBe(true);
+
+    const unsafe = log();
+    append(unsafe, 'built');
+    append(unsafe, 'staging_deployed');
+    append(unsafe, 'verified');
+    append(unsafe, 'approved');
+    append(unsafe, 'promoting');
+    append(unsafe, 'failed_before_change');
+    expect(() => append(unsafe, 'approved', 'unsafe-reapproval')).toThrow(/Illegal or late/u);
+
+    const neverVerified = log();
+    append(neverVerified, 'failed_before_change');
+    expect(() => append(neverVerified, 'approved', 'unverified-reapproval')).toThrow(
+      /Illegal or late/u,
+    );
+  });
+
   it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
     const entries = log();
     const first = append(entries, 'built', 'build-1');

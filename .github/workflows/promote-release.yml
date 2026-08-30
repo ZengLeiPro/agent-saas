@@ -70,6 +70,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
+      - name: Install Alibaba Cloud CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
+          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
+
       - name: Download immutable RC evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -110,7 +117,14 @@ jobs:
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
-          test "$(tail -n1 "$log" | jq -r .state)" = verified
+          retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
+          if [ "$(printf '%s' "$retry_evidence" | jq -r .mode)" = retry_before_change ] && \
+             [ "$(tail -n1 "$log" | jq -r .state)" != failed_before_change ]; then
+            pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+              --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID" \
+              --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
+          fi
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
           test -n "$staging"
           staging_reason="$(printf '%s' "$staging" | jq -r .reason)"
@@ -160,6 +174,7 @@ jobs:
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
+          echo 'APPROVAL_RECORDED=true' >> "$GITHUB_ENV"
 
       - name: Configure production SSH
         run: |
@@ -189,13 +204,6 @@ jobs:
           pnpm exec tsx server/src/release/promotionGateCli.ts \
             --manifest "$RUNNER_TEMP/manifest.json" --attestation-root "$RUNNER_TEMP/attestations" \
             --production-state "$RUNNER_TEMP/production-before.json"
-
-      - name: Install Alibaba Cloud CLI
-        run: |
-          set -euo pipefail
-          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o "$RUNNER_TEMP/aliyun.tgz"
-          tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
-          sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
       - name: Verify immutable Manifest and artifact index from OSS record
         run: |
@@ -268,6 +276,7 @@ jobs:
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
+          echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
 
       - name: Create GitHub Production Deployment
         env:
@@ -336,7 +345,7 @@ jobs:
 
       - name: Persist ACS operation receipt
         id: receipt_acs
-        if: always() && env.MANIFEST_DIGEST != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_acs.outcome }}
@@ -391,7 +400,7 @@ jobs:
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
-        if: always() && env.MANIFEST_DIGEST != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_app.outcome }}
@@ -508,7 +517,7 @@ jobs:
 
       - name: Persist Web operation receipt
         id: receipt_web
-        if: always() && env.MANIFEST_DIGEST != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           STEP_OUTCOME: ${{ steps.deploy_web.outcome }}
@@ -560,7 +569,7 @@ jobs:
           echo 'target_match=true' >> "$GITHUB_OUTPUT"
 
       - name: Reconcile component outcome
-        if: always() && env.MANIFEST_DIGEST != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         run: |
           set -euo pipefail
           observation_complete=false
@@ -606,7 +615,7 @@ jobs:
             --output "$RUNNER_TEMP/production-observation.json"
 
       - name: Record truthful final outcome
-        if: always() && env.MANIFEST_DIGEST != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -667,6 +676,25 @@ jobs:
           fi
           echo "PROMOTION_OUTCOME=$outcome" >> "$GITHUB_ENV"
           test "$outcome" = completed
+
+      - name: Record fail-closed outcome before production mutation
+        if: failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          reason="$(jq -nc --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{summary:"promotion failed before the durable promoting marker and before production mutation",runId:$runId,runAttempt:$runAttempt}')"
+          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+            --state failed_before_change --operation "failed-before-change:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+            --actor "$GITHUB_ACTOR" --reason "$reason"
+          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
+          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
+          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
+          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
 
       - name: Upload production promotion evidence
         if: always()

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { fetch as undiciFetch } from 'undici';
 
 import {
   hasUnresolvedHandProvisionFailure,
@@ -37,6 +38,8 @@ export interface HandHealthScannerOptions {
   /** 单次 session-specific /provision 请求超时。默认 4min，与健康探针分离。 */
   provisionTimeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** 仅供可信 loopback Hand 控制面使用，绕过全局出站代理包装。 */
+  loopbackFetchImpl?: typeof fetch;
   /**
    * Resolve a hand record's bearer token (tenant hand) or fall back to the
    * configured serverRemote token. Returns undefined → scanner skips the hand
@@ -79,6 +82,7 @@ export class HandHealthScanner {
   private readonly healthTimeoutMs: number;
   private readonly provisionTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly loopbackFetchImpl: typeof fetch;
   private readonly unhealthyConfirmDelayMs: number;
   private readonly exhaustedRetryCooldownMs: number;
   private readonly maxReprovisionAttemptsPerScan: number;
@@ -92,6 +96,7 @@ export class HandHealthScanner {
     this.healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
     this.provisionTimeoutMs = options.provisionTimeoutMs ?? 4 * 60_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.loopbackFetchImpl = options.loopbackFetchImpl ?? (undiciFetch as unknown as typeof fetch);
     this.unhealthyConfirmDelayMs = options.unhealthyConfirmDelayMs ?? 5_000;
     this.exhaustedRetryCooldownMs = options.exhaustedRetryCooldownMs ?? 10 * 60_000;
     this.maxReprovisionAttemptsPerScan = options.maxReprovisionAttemptsPerScan ?? 10;
@@ -253,7 +258,7 @@ export class HandHealthScanner {
     const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/health`, {
+      const response = await this.fetchEndpoint(endpoint, '/health', {
         headers: authToken ? { authorization: `Bearer ${authToken}` } : {},
         signal: controller.signal,
       });
@@ -276,7 +281,7 @@ export class HandHealthScanner {
     const timer = setTimeout(() => controller.abort(), this.healthTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/sandboxes`, {
+      const response = await this.fetchEndpoint(endpoint, '/sandboxes', {
         headers: authToken ? { authorization: `Bearer ${authToken}` } : {},
         signal: controller.signal,
       });
@@ -347,7 +352,7 @@ export class HandHealthScanner {
     const timer = setTimeout(() => controller.abort(), this.provisionTimeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchImpl(`${endpoint.replace(/\/$/, '')}/provision`, {
+      const response = await this.fetchEndpoint(endpoint, '/provision', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -461,6 +466,19 @@ export class HandHealthScanner {
         classifiedAs: 'unhealthy',
       }, { tenantId: requireHandTenantId(hand) }).catch(() => undefined);
     }
+  }
+
+  private fetchEndpoint(endpoint: string, path: string, init: RequestInit): Promise<Response> {
+    let hostname = '';
+    try {
+      hostname = new URL(endpoint).hostname;
+    } catch {
+      // 非法 endpoint 继续走受控 fetch，并在原调用路径 fail-closed。
+    }
+    const fetchImpl = ['127.0.0.1', 'localhost', '[::1]'].includes(hostname)
+      ? this.loopbackFetchImpl
+      : this.fetchImpl;
+    return fetchImpl(`${endpoint.replace(/\/$/, '')}${path}`, init);
   }
 
   private async transitionHandStatus(

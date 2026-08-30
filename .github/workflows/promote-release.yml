@@ -43,8 +43,6 @@ jobs:
       ECS_HOST: ${{ secrets.ECS_HOST }}
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
-      PRODUCTION_OBSERVATION_TOKEN: ${{ secrets.PRODUCTION_OBSERVATION_TOKEN }}
-      PRODUCTION_OBSERVATION_URL: ${{ vars.PRODUCTION_OBSERVATION_URL }}
       PRODUCTION_SSH_HOST_KEY_SHA256: ${{ vars.PRODUCTION_SSH_HOST_KEY_SHA256 }}
       RELEASE_RECORD_OSS_URI: ${{ vars.RELEASE_RECORD_OSS_URI }}
       RELEASE_RECORD_OSS_REGION: cn-shenzhen
@@ -624,21 +622,6 @@ jobs:
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 
-      - name: Observe production for at least fifteen minutes
-        id: observe
-        if: steps.readback.outcome == 'success' && steps.readback.outputs.target_match == 'true'
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          : "${PRODUCTION_OBSERVATION_URL:?Missing production variable PRODUCTION_OBSERVATION_URL}"
-          : "${PRODUCTION_OBSERVATION_TOKEN:?Missing production observation token}"
-          printf '%s' "$PRODUCTION_OBSERVATION_TOKEN" > "$RUNNER_TEMP/observation-token"
-          chmod 600 "$RUNNER_TEMP/observation-token"
-          node scripts/release/observe-production.mjs --url "$PRODUCTION_OBSERVATION_URL" \
-            --token-file "$RUNNER_TEMP/observation-token" --release-id "$RELEASE_ID" \
-            --manifest-digest "$MANIFEST_DIGEST" --duration-ms 900000 --interval-ms 30000 \
-            --output "$RUNNER_TEMP/production-observation.json"
-
       - name: Record truthful final outcome
         if: always() && env.PROMOTION_STARTED == 'true'
         env:
@@ -651,10 +634,6 @@ jobs:
             outcome="$(jq -r .outcome "$RUNNER_TEMP/reconcile.json")"
             reason="$(jq -r .reason "$RUNNER_TEMP/reconcile.json")"
           fi
-          if [ "$outcome" = completed ] && [ "${{ steps.observe.outcome }}" != success ]; then
-            outcome=needs_human
-            reason='component deployment completed but the production observation window failed'
-          fi
           if [ "$outcome" = completed ] && { \
             [ "${{ steps.receipt_acs.outcome }}" != success ] || \
             [ "${{ steps.receipt_app.outcome }}" != success ] || \
@@ -664,25 +643,16 @@ jobs:
             reason='component convergence lacks one or more durable operation receipts'
           fi
           migration_confirmation=not_required
-          observation_report_digest=null
-          business_acceptance_digest=null
-          if [ "${{ steps.observe.outcome }}" = success ]; then
-            observation_report_digest="$(jq -r .reportDigest "$RUNNER_TEMP/production-observation.json")"
-            business_acceptance_digest="$(jq -r .businessAcceptanceEvidenceDigest "$RUNNER_TEMP/production-observation.json")"
-            printf '%s' "$observation_report_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
-            printf '%s' "$business_acceptance_digest" | grep -Eq '^sha256:[a-f0-9]{64}$'
-          fi
           if [ "$MIGRATION_PHASE" = expand ]; then
-            migration_confirmation=required_after_observation
-            if [ "$outcome" = completed ] && [ "${{ steps.observe.outcome }}" = success ]; then
-              migration_confirmation=confirmed_after_observation
+            migration_confirmation=separate_confirmation_required
+            if [ "$outcome" = completed ]; then
+              outcome=needs_human
+              reason='expand migration requires separate deterministic confirmation before completion'
             fi
           fi
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
             --arg migrationConfirmation "$migration_confirmation" \
-            --arg observationReportDigest "$observation_report_digest" \
-            --arg businessAcceptanceEvidenceDigest "$business_acceptance_digest" \
-            '{summary:$summary,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},productionObservation:{reportDigest:$observationReportDigest,businessAcceptanceEvidenceDigest:$businessAcceptanceEvidenceDigest}}')"
+            '{summary:$summary,migration:{phase:$migrationPhase,confirmation:$migrationConfirmation,contractExecuted:false},acceptance:{mode:"optional_staging_acceptance",blocking:false,workflow:"Staging Acceptance"}}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state "$outcome" --operation "outcome:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
@@ -733,4 +703,3 @@ jobs:
             ${{ runner.temp }}/production-after.json
             ${{ runner.temp }}/production-confirmed.json
             ${{ runner.temp }}/reconcile.json
-            ${{ runner.temp }}/production-observation.json

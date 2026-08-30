@@ -118,11 +118,15 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.match(workflow, /release-identity\.json/u);
   assert.match(workflow, /web-oss-readback/u);
   assert.match(workflow, /keep without restart/u);
+  assert.match(workflow, /optional_staging_acceptance/u);
+  assert.doesNotMatch(workflow, /observe-production\.mjs|duration-ms 900000/u);
+  assert.doesNotMatch(workflow, /PRODUCTION_OBSERVATION_(?:TOKEN|URL)/u);
+  assert.doesNotMatch(workflow, /production-observation\.json/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
-test('workflow preserves partial matrices, rollback evidence, migrations, and observation boundaries', async () => {
+test('workflow preserves partial matrices, rollback evidence, migrations, and acceptance boundaries', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const deploy = await readFile(deployPath, 'utf8');
   const acsUnit = await readFile(acsUnitPath, 'utf8');
@@ -132,12 +136,11 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ob
   assert.match(workflow, /target_match=false/u);
   assert.match(workflow, /write-production-identity\.mjs/u);
   assert.match(workflow, /verify-installed-release\.mjs/u);
-  assert.match(workflow, /duration-ms 900000/u);
   assert.match(workflow, /separate_release/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|appAcsCompatibility/u);
-  assert.match(workflow, /confirmed_after_observation/u);
-  assert.match(workflow, /businessAcceptanceEvidenceDigest/u);
-  assert.match(workflow, /observationReportDigest/u);
+  assert.match(workflow, /separate_confirmation_required/u);
+  assert.match(workflow, /optional_staging_acceptance/u);
+  assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
   assert.match(workflow, /rollback_attempted=true/u);

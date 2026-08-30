@@ -34,20 +34,18 @@ Taskboard Integration Candidate 仅作为可选审计信息，不是 RC 前置�
 Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`ECS_USER`、
 `ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
 
-`PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份；
+`PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
+`Prepare Release Evidence` 写后回读使用；
 `RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于自动任务调用不可覆盖 `POST /release-evidence` 的独立写
 身份。二者禁止复用。写 Token 只进入受 `main` 分支策略保护的 `Prepare Release Evidence`
 Workflow，不进入 Staging 部署或 Production Promotion Workflow。
 
 Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
-地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。观察 URL 指向
-`evidence-service.mjs` 的
-`/production-observation` 端点；端点必须返回
-绑定 release ID 和 Manifest digest 的连续探针样本，覆盖 HTTP/WS、Agent 首 Token/完整轮次/
-恢复、Worker lease、Integration gate、Sandbox 生命周期、Cron 去重以及登录/会话/任务看板
-只读路径和真实业务验收。缺项、错误率超限、重复执行、服务端时间偏离实际采集时间，或首末
-有效样本不足 15 分钟，均阻断 `completed`。
+地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。
+`PRODUCTION_OBSERVATION_URL` 目前仅作为同域 Evidence Service 的兼容基址，
+`Prepare Release Evidence` 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
+读取 `/production-observation`，也不把 Agent、浏览器或业务验收放进部署门禁。
 
 ## 权威证据服务
 
@@ -60,8 +58,8 @@ Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 - `/staging-isolation?releaseId=<rc-id>`：五项真实生产访问拒绝，以及两项共享 NAS 逻辑隔离
   读回证据；每次采集按时间和摘要追加，并显式记录主机特权身份可重新挂载文件系统根目录的
   已接受残余风险。
-- `/production-observation?releaseId=<rc-id>&manifestDigest=<digest>`：绑定 RC 和 Manifest 的
-  连续生产探针样本；每个样本追加保存。
+- `/production-observation?releaseId=<rc-id>&manifestDigest=<digest>`：保留给显式外部采样器的
+  可选样本存储；没有真实采样器和样本时返回 404，不参与 Production Promotion。
 
 Staging Workflow 会在每次 RC 部署后现场采集七项证据：六项由 Staging ECS 读取数据库权限、
 NAS mount、通知配置、生产 ACS 网络拒绝、ACK RBAC 与 PVC/PV；Production OSS 写拒绝由 GitHub
@@ -69,10 +67,10 @@ Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无
 Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
 Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
 比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。Production
-Promotion Workflow 同样只持有读身份。两端都必须带
+`Prepare Release Evidence` 只持有读身份完成写后回读。相关端点都必须带
 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
-evidence digest，校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度，
-并校验生产样本的全部业务/运行检查。它不会在缺少真实探针时合成通过证据。运行参数：
+evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度；它不会在缺少真实探针时
+合成生产观察样本。运行参数：
 `RELEASE_EVIDENCE_ROOT=/var/lib/agent-saas-release-evidence`、
 `RELEASE_EVIDENCE_READ_TOKEN_FILE=<0600 read token file>`、
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
@@ -126,8 +124,11 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   人工伪造、复用只读 Token 或跳过生产基线读回。
 - `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工部署入口，可按实际需要部署任意
   新旧版本；push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
-  Promotion receipt 或 15 分钟生产观察证据，因此通过它们部署不等于新版发布契约已通过。
+  Promotion receipt 或物理组件收敛证据，因此通过它们部署不等于新版发布契约已通过。
   需要完整发布证据链时使用 `promote-release.yml`，但不得因此关闭两个既有人工入口。
+- Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
+  runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
+  `Staging Acceptance` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。
 - GitHub main 与 RC tag ruleset 需一起应用 `config/github-main-ruleset.json`、
   `config/github-rc-tag-ruleset.json`；后者禁止更新或删除 `refs/tags/rc-*`。应用前导出旧规则作为回退。
 - main ruleset 按单人维护模式配置：不要求人工审批、CODEOWNER 审批或 Last Push Approval，但仍要求

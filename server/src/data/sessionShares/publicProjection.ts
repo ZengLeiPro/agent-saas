@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { isBusinessTodo, parseTodos } from '../../../../shared/src/lib/extractTodos.js';
 import { normalizeToolPresentation } from '../../../../shared/src/lib/toolPresentation.js';
 import { normalizeToolResultMetadata } from '../../../../shared/src/lib/toolResultMetadata.js';
 import { splitByMessageMarkers } from '../../../../shared/src/lib/markers.js';
@@ -127,8 +128,9 @@ function collectInlineMarkdownMediaPaths(content: string): string[] {
 function filterInlineMarkdownMedia(content: string, selectedPaths: ReadonlySet<string>): string {
   return content.replace(INLINE_MARKDOWN_MEDIA_RE, (markdown, src: string) => {
     const normalized = normalizeMarkdownMediaPath(src);
-    if (!normalized || selectedPaths.has(normalized)) return markdown;
-    return '[正文媒体未公开]';
+    if (normalized) return selectedPaths.has(normalized) ? markdown : '[正文媒体未公开]';
+    // 远程 https 媒体不属于工作区附件；其余 data/绝对/越界路径一律 fail closed。
+    return /^https:\/\//i.test(src) ? markdown : '[正文媒体未公开]';
   });
 }
 
@@ -160,7 +162,7 @@ function clampPublicText(value: unknown, maxLength: number): string | undefined 
   return text ? text.slice(0, maxLength) : undefined;
 }
 
-/** 只在已白名单化的摘要/metadata 上递归脱敏，绝不把原始工具 payload 带出分享快照。 */
+/** 只在已归一化的展示结构上递归脱敏，绝不把原始工具 payload 带出分享快照。 */
 function redactStructuredValue(value: unknown): unknown {
   if (typeof value === 'string') return redactPublicShareText(value);
   if (Array.isArray(value)) return value.map(redactStructuredValue);
@@ -169,6 +171,17 @@ function redactStructuredValue(value: unknown): unknown {
     Object.entries(value as Record<string, unknown>)
       .map(([key, item]) => [key, redactStructuredValue(item)]),
   );
+}
+
+/** TodoWrite 是用户可见的业务呈现数据；公开页只保留归一化后的 business 项并逐字段脱敏。 */
+function publicTodoWriteContent(block: TranscriptBlock): string | undefined {
+  if (block.toolName !== 'TodoWrite') return undefined;
+  const todos = parseTodos(block.content);
+  if (todos === undefined) return undefined;
+  const businessTodos = (todos ?? []).filter(isBusinessTodo);
+  // empty / task-only 是完整的全量替换快照：公开页必须保留匿名 reset，
+  // 否则旧业务 section 会继续吞掉后续工具与最终正文。
+  return JSON.stringify({ todos: redactStructuredValue(businessTodos) });
 }
 
 function publicExecutionStatus(value: unknown): TranscriptBlock['executionStatus'] | undefined {
@@ -185,7 +198,16 @@ function publicDurationMs(value: unknown): number | undefined {
 
 function publicToolPresentation(block: TranscriptBlock): unknown {
   const normalized = normalizeToolPresentation(block.presentation);
-  if (normalized) return redactStructuredValue(normalized);
+  if (normalized) {
+    // detail/panel/panelBase 可能承载文件正文或业务面板快照；匿名页只保留过程归属
+    // 所需的纯摘要、状态、连接器动作和受约束回执。
+    return {
+      title: clampPublicText(normalized.title, 160) ?? '工具调用',
+      ...(normalized.status ? { status: normalized.status } : {}),
+      ...(normalized.receipt ? { receipt: redactStructuredValue(normalized.receipt) } : {}),
+      ...(normalized.connector ? { connector: redactStructuredValue(normalized.connector) } : {}),
+    };
+  }
 
   // 没有业务摘要的旧工具记录仍需在分享页留下可见的安全活动行；只用工具标题，
   // 不把 tool input/raw 作为 fallback。
@@ -195,8 +217,31 @@ function publicToolPresentation(block: TranscriptBlock): unknown {
 }
 
 function publicToolMetadata(block: TranscriptBlock): unknown {
+  // 通用执行 metadata 可能含 Edit.diff 等审计载荷，不能绕过 selected file allowlist
+  // 进入匿名 DTO。公开页唯一需要的 metadata 是正式 Artifact 交付卡的有界标识。
+  if (block.toolName !== 'Artifact') return undefined;
   const normalized = normalizeToolResultMetadata(block.toolMetadata);
-  return normalized ? redactStructuredValue(normalized) : undefined;
+  if (normalized?.artifactAction !== 'deliver') return undefined;
+  const artifactId = clampPublicText(normalized.artifactId, 120);
+  const fileName = clampPublicText(normalized.fileName, 512);
+  const artifactKind = normalized.artifactKind;
+  if (!artifactId || !fileName
+    || !(artifactKind === 'file' || artifactKind === 'screenshot' || artifactKind === 'patch'
+      || artifactKind === 'log' || artifactKind === 'blob')) return undefined;
+  const sizeBytes = typeof normalized.sizeBytes === 'number'
+    && Number.isFinite(normalized.sizeBytes)
+    && normalized.sizeBytes >= 0
+    ? normalized.sizeBytes
+    : undefined;
+  const mimeType = clampPublicText(normalized.mimeType, 120);
+  return {
+    artifactAction: 'deliver',
+    artifactId,
+    artifactKind,
+    fileName,
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+    ...(mimeType ? { mimeType } : {}),
+  };
 }
 
 function publicToolResultContent(block: TranscriptBlock): string {
@@ -218,6 +263,7 @@ function publicToolResultContent(block: TranscriptBlock): string {
 function publicToolBlock(
   block: TranscriptBlock,
   publicToolId: string | undefined,
+  publicRunId: string | undefined,
   toolResult: TranscriptBlock | undefined,
 ): TranscriptBlock {
   const toolName = clampPublicText(block.toolName, 128) ?? 'unknown';
@@ -227,15 +273,18 @@ function publicToolBlock(
   const durationMs = publicDurationMs(block.durationMs);
   const presentation = publicToolPresentation(block);
   const toolMetadata = publicToolMetadata(block);
+  const todoWriteContent = publicTodoWriteContent(block);
   return {
     id: block.id,
     ...(block.tsMs !== undefined ? { tsMs: block.tsMs } : {}),
     kind: 'tool_use',
     title: clampPublicText(block.title, 160) ?? `工具调用: ${toolName}`,
     defaultOpen: false,
-    // 公开页只显示安全摘要；原始入参、raw、runId 和结果正文全部不出快照。
-    content: '',
+    // 普通工具仍只显示安全摘要；TodoWrite 例外保留已归一化、脱敏的业务呈现快照，
+    // 并使用不透明 runId 维持跨用户消息的同 Run 归属，不暴露原始 payload/标识。
+    content: todoWriteContent ?? '',
     publicActivityOnly: true,
+    ...(todoWriteContent && publicRunId ? { runId: publicRunId } : {}),
     ...(block.isError || toolResult?.isError ? { isError: true } : {}),
     ...(toolName ? { toolName } : {}),
     ...(publicToolId ? { toolId: publicToolId } : {}),
@@ -265,10 +314,10 @@ function publicToolResultBlock(block: TranscriptBlock, publicToolId: string): Tr
 function publicBlock(
   block: TranscriptBlock,
   selectedPaths: ReadonlySet<string>,
-  options: { publicToolId?: string; toolResult?: TranscriptBlock } = {},
+  options: { publicToolId?: string; publicRunId?: string; toolResult?: TranscriptBlock } = {},
 ): TranscriptBlock | null {
   if (block.kind === 'tool_use') {
-    return publicToolBlock(block, options.publicToolId, options.toolResult);
+    return publicToolBlock(block, options.publicToolId, options.publicRunId, options.toolResult);
   }
   if (block.kind === 'tool_result') {
     return options.publicToolId ? publicToolResultBlock(block, options.publicToolId) : null;
@@ -337,7 +386,8 @@ export function collectSessionShareCandidateFiles(blocks: TranscriptBlock[]): Se
 
 /**
  * 旧分享与新建分享统一走安全投影：保留用户/助手正文，以及不含原始 payload 的
- * 工具活动摘要；thinking、原始 tool input/result、raw、runId 与原始账号标识全部移除。
+ * 工具活动摘要；TodoWrite 额外保留归一化、脱敏后的 business 快照（含 reset）与不透明 runId。
+ * thinking、其他原始 tool input/result、raw、原始 runId 与原始账号标识全部移除；
  * 附件只留下快照显式 allowlist。
  */
 export function projectSessionShareSnapshot(
@@ -357,6 +407,15 @@ export function projectSessionShareSnapshot(
     toolSequence += 1;
     publicToolIds.set(block.toolId, `shared-tool-${toolSequence}`);
   }
+  const publicRunIds = new Map<string, string>();
+  let runSequence = 0;
+  for (const block of snapshot.blocks) {
+    if (block.kind !== 'tool_use' || block.toolName !== 'TodoWrite' || !block.runId
+      || publicRunIds.has(block.runId) || !publicTodoWriteContent(block)) continue;
+    runSequence += 1;
+    publicRunIds.set(block.runId, `shared-run-${runSequence}`);
+  }
+
   const toolResults = new Map<string, TranscriptBlock>();
   for (const block of snapshot.blocks) {
     if (block.kind === 'tool_result' && block.toolId && !toolResults.has(block.toolId)) {
@@ -368,6 +427,9 @@ export function projectSessionShareSnapshot(
     .map((block) => publicBlock(block, selectedPaths, {
       ...(block.toolId && publicToolIds.has(block.toolId)
         ? { publicToolId: publicToolIds.get(block.toolId) }
+        : {}),
+      ...(block.runId && publicRunIds.has(block.runId)
+        ? { publicRunId: publicRunIds.get(block.runId) }
         : {}),
       ...(block.kind === 'tool_use' && block.toolId && toolResults.has(block.toolId)
         ? { toolResult: toolResults.get(block.toolId) }

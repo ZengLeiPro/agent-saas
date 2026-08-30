@@ -62,6 +62,10 @@ interface ChatTabContentProps {
   readOnly?: boolean;
   readOnlyInputPlaceholder?: string;
   debugModeOverride?: boolean;
+  businessStepDetailMode?: 'desktop' | 'mobile';
+  businessStepDetailHost?: HTMLElement | null;
+  businessStepPanelOpen?: boolean;
+  onBusinessStepPanelOpenChange?: (open: boolean) => void;
   agentProfile?: AgentProfile | null;
   sessionParticipants?: SessionParticipants | null;
   /** 空会话推荐内容；初始 composer 模式下显示在输入框下方，否则透传给 MessageList。 */
@@ -205,6 +209,10 @@ export function ChatTabContent({
   readOnly,
   readOnlyInputPlaceholder,
   debugModeOverride,
+  businessStepDetailMode,
+  businessStepDetailHost,
+  businessStepPanelOpen,
+  onBusinessStepPanelOpenChange,
   agentProfile,
   sessionParticipants,
   emptySlot,
@@ -302,6 +310,10 @@ export function ChatTabContent({
           sessionParticipants={displaySessionParticipants}
           sessionId={readOnly ? undefined : sessionId}
           debugModeOverride={debugModeOverride}
+          businessStepDetailMode={businessStepDetailMode}
+          businessStepDetailHost={businessStepDetailHost}
+          businessStepPanelOpen={businessStepPanelOpen}
+          onBusinessStepPanelOpenChange={onBusinessStepPanelOpenChange}
           emptySlot={sessionLoadError ? (
             <div role="alert" className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
               <div className="space-y-1">

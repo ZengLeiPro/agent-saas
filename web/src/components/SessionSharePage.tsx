@@ -191,6 +191,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
           readOnly
           readOnlyInputPlaceholder="只读状态无法发送消息"
           debugModeOverride={data.share.debugMode}
+          businessStepDetailMode="mobile"
           agentProfile={null}
           sessionParticipants={data.detail.owner ? { owner: data.detail.owner, agent: null } : null}
         />
@@ -200,6 +201,7 @@ export function SessionSharePage({ token }: SessionSharePageProps) {
           owner={data.detail.owner?.username}
           shareToken={token}
           onClose={() => setPreviewFilePath(null)}
+          nestedLayer
         />
       </div>
     </FilePreviewProvider>

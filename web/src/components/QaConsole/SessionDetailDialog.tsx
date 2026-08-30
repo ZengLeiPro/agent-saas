@@ -105,7 +105,8 @@ export function SessionDetailDialog({
           ) : (
             <FilePreviewProvider
               value={{
-                // kb:// 引用卡可预览；workspace 文件路径 no-op（admin 无他人工作区读权限）
+                // kb:// 引用卡可预览；workspace 文件路径 no-op（admin 无他人工作区读权限）。
+                // 业务步骤详情使用只读 Sheet；文件预览再提高一层，避免被详情层遮挡。
                 openPreview: (filePath) => { if (isKbPath(filePath)) setPreviewFilePath(filePath); },
               }}
             >
@@ -127,6 +128,7 @@ export function SessionDetailDialog({
                 readOnly
                 readOnlyInputPlaceholder="质检台只读视图"
                 debugModeOverride={false}
+                businessStepDetailMode="mobile"
                 agentProfile={null}
                 sessionParticipants={detail?.owner ? { owner: detail.owner, agent: null } : null}
               />
@@ -137,6 +139,7 @@ export function SessionDetailDialog({
           open={!!previewFilePath}
           filePath={previewFilePath}
           onClose={() => setPreviewFilePath(null)}
+          nestedLayer
         />
       </DialogContent>
     </Dialog>

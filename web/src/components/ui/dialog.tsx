@@ -38,8 +38,8 @@ const KEYBOARD_GAP = 12; // 底边与键盘之间的呼吸空间 (px)
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, style, onEscapeKeyDown, onFocusOutside, onInteractOutside,
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { overlayClassName?: string }
+>(({ className, overlayClassName, children, style, onEscapeKeyDown, onFocusOutside, onInteractOutside,
   onPointerDownOutside, ...props }, ref) => {
   const { blocked } = usePortalContainer();
   const [kbStyle, setKbStyle] = React.useState<React.CSSProperties | null>(null);
@@ -73,7 +73,7 @@ const DialogContent = React.forwardRef<
   return (
     <DialogPortal>
       <DialogPrimitive.Close asChild>
-        <DialogOverlay />
+        <DialogOverlay className={overlayClassName} />
       </DialogPrimitive.Close>
       <DialogPrimitive.Content
         ref={ref}

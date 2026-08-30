@@ -237,7 +237,10 @@ function ComparisonRow({ item }: { item: RecordItem }) {
         )}
         data-comparison-track
       >
-        <span className="min-w-0 break-words text-sm font-medium text-foreground">{item.label}</span>
+        <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
+          <span className="text-xs font-normal text-muted-foreground sm:hidden">字段</span>
+          <span className="break-words font-medium text-foreground">{item.label}</span>
+        </span>
         <span className="grid min-w-0 grid-cols-[5rem_minmax(0,1fr)] gap-x-2 text-sm sm:block">
           <span className="text-xs text-muted-foreground sm:hidden">基准/之前</span>
           <span className="break-words text-foreground">{item.baseline ?? "—"}</span>
@@ -293,8 +296,10 @@ function RecordsView({ block, ctx }: { block: RecordsBlock; ctx: BlockContext })
   return (
     <div
       className={cn(
-        "max-w-full overflow-x-auto rounded-xl border border-primary/20 bg-card align-top",
-        comparison ? "block w-full" : "inline-block self-start",
+        "max-w-full rounded-xl border border-primary/20 bg-card align-top",
+        comparison
+          ? "block w-full overflow-x-hidden sm:overflow-x-auto"
+          : "inline-block self-start overflow-x-auto",
       )}
       data-records-block
       tabIndex={tabular ? 0 : undefined}

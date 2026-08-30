@@ -9,6 +9,16 @@ function user(id: string): MessageItem {
   return { id, type: "user", content: "next task" };
 }
 
+function sectionBoundary(type: "system_event" | "user-voice" | "system-error"): MessageItem {
+  if (type === "system_event") {
+    return { id: `boundary-${type}`, type, title: "系统事件", content: "继续处理" };
+  }
+  if (type === "user-voice") {
+    return { id: `boundary-${type}`, type, audioUrl: "voice.wav", duration: 1, status: "sent" };
+  }
+  return { id: `boundary-${type}`, type, content: "系统错误" };
+}
+
 function todo(id: string, toolInput: string, runId?: string): MessageItem {
   return {
     id,
@@ -28,7 +38,7 @@ function step(id: string, status: string, extra: Record<string, unknown> = {}): 
   return { id, kind: "business", content: `步骤 ${id}`, status, ...extra };
 }
 
-describe("projectBusinessStepEvents", () => {
+describe("projectBusinessStepEvents 纯函数投影", () => {
   it("emits plan followed by start for the first complete business snapshot", () => {
     const result = projectBusinessStepEvents([
       user("user-1"),
@@ -56,6 +66,20 @@ describe("projectBusinessStepEvents", () => {
     });
     expect(result.hiddenMessageIds.has("t1")).toBe(true);
     expect(result.eventsByAnchor.get("t1")).toHaveLength(2);
+  });
+
+  it("carries runId on plan and step events for stable UI ownership", () => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("verify", "in_progress"), step("write", "pending")]), "run-42"),
+      todo("t2", todos([step("verify", "completed"), step("write", "in_progress")]), "run-42"),
+    ], false);
+
+    expect(result.events.map((event) => event.runId)).toEqual([
+      "run-42",
+      "run-42",
+      "run-42",
+      "run-42",
+    ]);
   });
 
   it("emits only plan when the first snapshot has no in-progress step", () => {
@@ -358,6 +382,78 @@ describe("projectBusinessStepEvents", () => {
     expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["start"]);
   });
 
+  it("reopens the unchanged active step when the same run continues after a user message", () => {
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      user("user-2"),
+      todo("t2", todos([step("a", "in_progress")]), "run-1"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+    expect(result.events[0].todos).toEqual([expect.objectContaining({ id: "a", status: "in_progress" })]);
+    expect(result.eventsByAnchor.get("t2")).toEqual([
+      expect.objectContaining({
+        id: "bs-t2-id:a-start",
+        kind: "start",
+        runId: "run-1",
+        todo: expect.objectContaining({ id: "a", status: "in_progress" }),
+      }),
+    ]);
+  });
+
+  it.each(["system_event", "user-voice", "system-error"] as const)(
+    "reopens the unchanged active step after a %s section boundary",
+    (boundaryType) => {
+      const result = projectBusinessStepEvents([
+        user("user-1"),
+        todo("t1", todos([step("a", "in_progress")]), "run-1"),
+        sectionBoundary(boundaryType),
+        todo("t2", todos([step("a", "in_progress")]), "run-1"),
+      ], false);
+
+      expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+      expect(result.eventsByAnchor.get("t2")).toEqual([
+        expect.objectContaining({ kind: "start", runId: "run-1", todo: expect.objectContaining({ id: "a" }) }),
+      ]);
+    },
+  );
+
+  it.each([
+    ["user", user("boundary-user"), "completed"],
+    ["system_event", sectionBoundary("system_event"), "waiting"],
+  ])("anchors a synthetic start before post-%s process when the next snapshot is terminal", (_label, boundary, status) => {
+    const after: MessageItem = {
+      id: "read-after", type: "tool_use", toolName: "Read", toolId: "read-after", toolInput: "{}",
+    };
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      boundary,
+      after,
+      todo("t2", todos([step("a", status)]), "run-1"),
+    ], false);
+
+    expect(result.eventsByAnchor.get("read-after")).toEqual([
+      expect.objectContaining({ kind: "start", runId: "run-1", todo: expect.objectContaining({ status: "in_progress" }) }),
+    ]);
+    expect(result.eventsByAnchor.get("t2")).toEqual([
+      expect.objectContaining({ kind: status === "completed" ? "complete" : "wait" }),
+    ]);
+  });
+
+  it("keeps a structural update when reopening an unchanged active step", () => {
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      user("user-2"),
+      todo("t2", todos([step("a", "in_progress"), step("b", "pending")]), "run-1"),
+    ], false);
+
+    expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind))
+      .toEqual(["start", "update"]);
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+  });
+
   it("re-plans when an explicit run id changes without a user message", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")]), "run-1"),
@@ -367,6 +463,24 @@ describe("projectBusinessStepEvents", () => {
 
     expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(2);
     expect((result.eventsByAnchor.get("t3") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
+  });
+
+  it("does not treat a queued interjection as a user boundary", () => {
+    const queued: MessageItem = {
+      id: "queued-user",
+      type: "user",
+      content: "hi",
+      status: "queued",
+    };
+    const result = projectBusinessStepEvents([
+      user("user-1"),
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      queued,
+      todo("t2", todos([step("a", "in_progress")]), "run-1"),
+    ], false);
+
+    expect(result.events.filter((event) => event.kind === "plan")).toHaveLength(1);
+    expect(result.eventsByAnchor.has("t2")).toBe(false);
   });
 
   it("ignores incomplete streaming payloads without hiding the message", () => {
@@ -388,13 +502,111 @@ describe("projectBusinessStepEvents", () => {
     expect(result.hiddenMessageIds.has("t1")).toBe(true);
   });
 
-  it("clears the baseline on explicit reset and plans fresh afterwards", () => {
+  it.each([
+    ["同 Run task-only", "run-1", [{ id: "task", kind: "task", content: "普通任务", status: "in_progress" }]],
+    ["跨 Run empty", "run-2", []],
+  ])("emits a silent reset boundary for %s", (_label, resetRunId, resetTodos) => {
+    const result = projectBusinessStepEvents([
+      todo("t1", todos([step("a", "in_progress")]), "run-1"),
+      todo("reset", todos(resetTodos), resetRunId),
+    ], false);
+
+    expect(result.eventsByAnchor.get("reset")).toEqual([
+      expect.objectContaining({ kind: "reset", runId: "run-1", stepCount: 0 }),
+    ]);
+    expect(result.hiddenMessageIds.has("reset")).toBe(true);
+  });
+
+  it("keeps an interrupted old plan closed when a new Run TodoWrite arrives", () => {
+    const result = projectBusinessStepEvents([
+      todo("old-run", todos([step("a", "in_progress")]), "run-1"),
+      { id: "old-error", type: "system-error", content: "系统错误" },
+      user("new-user"),
+      todo("new-run", todos([step("a", "in_progress")]), "run-2"),
+    ], true);
+    const plans = result.events.filter((event) => event.kind === "plan");
+
+    expect(plans[0]).toMatchObject({ runId: "run-1", isClosed: true });
+    expect(plans[1]).toMatchObject({ runId: "run-2" });
+    expect(result.events.filter((event) => event.isCurrent)).toEqual([
+      expect.objectContaining({ runId: "run-2", kind: "start" }),
+    ]);
+  });
+
+  it.each([
+    ["无 user 边界", [] as MessageItem[]],
+    ["有 user 边界", [user("next-run")] as MessageItem[]],
+  ])("closes the old plan when a new Run starts: %s", (_label, boundary) => {
+    const result = projectBusinessStepEvents([
+      todo("run-1-start", todos([step("a", "in_progress")]), "run-1"),
+      ...boundary,
+      todo("run-2-start", todos([step("a", "in_progress")]), "run-2"),
+    ], true);
+    const plans = result.events.filter((event) => event.kind === "plan");
+    const starts = result.events.filter((event) => event.kind === "start");
+
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({ runId: "run-1", isClosed: true });
+    expect(plans[1]).toMatchObject({ runId: "run-2" });
+    expect(plans[1].isClosed).toBeUndefined();
+    expect(starts.filter((event) => event.isCurrent)).toEqual([
+      expect.objectContaining({ runId: "run-2" }),
+    ]);
+  });
+
+  it.each([
+    ["system-error", { id: "window-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "window-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "window-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("suspends an interrupted plan while the next run is loading before TodoWrite: %s", (_label, terminal) => {
+    const result = projectBusinessStepEvents([
+      todo("window-start", todos([step("a", "in_progress")]), "run-1"),
+      terminal,
+      user("window-user"),
+    ], true);
+
+    expect(result.events.find((event) => event.kind === "plan")).toMatchObject({ isClosed: true });
+    expect(result.events.every((event) => event.isCurrent !== true)).toBe(true);
+  });
+
+  it("reopens a suspended plan only when a later TodoWrite explicitly continues the same Run", () => {
+    const result = projectBusinessStepEvents([
+      todo("resume-start", todos([step("a", "in_progress")]), "run-1"),
+      { id: "resume-error", type: "system-error", content: "系统错误" },
+      user("resume-user"),
+      todo("resume-todo", todos([step("a", "in_progress")]), "run-1"),
+    ], true);
+    const plan = result.events.find((event) => event.kind === "plan");
+    const starts = result.events.filter((event) => event.kind === "start");
+
+    expect(plan?.isClosed).toBe(false);
+    expect(starts).toHaveLength(2);
+    expect(starts.at(-1)).toMatchObject({ runId: "run-1", isCurrent: true });
+  });
+
+  it.each([
+    ["system-error", { id: "interrupted-error", type: "system-error", content: "系统错误" } as MessageItem],
+    ["取消", { id: "interrupted-cancel", type: "system_event", title: "任务已取消", content: "已取消" } as MessageItem],
+    ["超时", { id: "interrupted-timeout", type: "system_event", title: "运行超时", content: "已超时" } as MessageItem],
+  ])("closes an active plan when an interrupted run ends without terminal TodoWrite: %s", (_label, terminal) => {
+    const result = projectBusinessStepEvents([
+      todo("interrupted-start", todos([step("a", "in_progress")]), "run-1"),
+      terminal,
+    ], false);
+
+    expect(result.events.find((event) => event.kind === "plan")).toMatchObject({ isClosed: true });
+    expect(result.events.every((event) => event.isCurrent !== true)).toBe(true);
+  });
+
+  it("closes the previous plan on explicit reset and plans fresh afterwards", () => {
     const result = projectBusinessStepEvents([
       todo("t1", todos([step("a", "in_progress")])),
       todo("clear", JSON.stringify({ todos: [] })),
       todo("t2", todos([step("a", "in_progress")])),
     ], false);
 
+    expect((result.eventsByAnchor.get("clear") ?? []).map((event) => event.kind)).toEqual(["reset"]);
+    expect(result.events.find((event) => event.kind === "plan")?.isClosed).toBe(true);
     expect((result.eventsByAnchor.get("t2") ?? []).map((event) => event.kind)).toEqual(["plan", "start"]);
     expect(result.hiddenMessageIds.has("clear")).toBe(true);
   });
@@ -413,6 +625,7 @@ describe("projectBusinessStepEvents", () => {
 
     const idle = projectBusinessStepEvents(messages, false);
     expect(idle.events.every((event) => event.isCurrent !== true)).toBe(true);
+    expect(idle.events.find((event) => event.kind === "plan")?.isClosed).toBe(true);
   });
 
   it("marks the first snapshot's start as current when it is still the latest", () => {

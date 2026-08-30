@@ -15,6 +15,7 @@ import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
 import { HTML_SANDBOX_CSP } from "@/components/HtmlPreviewPanel";
 import { SystemPanel } from "@/components/SystemPanel";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { useResizePanel } from "@/hooks/useResizePanel";
 import { useSystemPanel } from "@/hooks/useSystemPanel";
 import { ActionIcons, EntityIcons, StatusIcons } from "@/lib/icons";
@@ -122,10 +123,13 @@ export function ScenarioReplayView({
   /** 测试可缩短间隔；生产默认模拟真实模型流式输出速度。 */
   typewriterIntervalMs?: number;
 }) {
+  const isMobile = useIsMobile();
   // 首屏只显示入口：用户请求、业务事件或定时触发；推进后才展示第一步 Agent 输出。
   const [stepIndex, setStepIndex] = useState(0);
   const [decisions, setDecisions] = useState<Record<number, "approved" | "rejected">>({});
   const [artifact, setArtifact] = useState<{ path: string; fileName: string } | null>(null);
+  const [businessStepPanelOpen, setBusinessStepPanelOpen] = useState(false);
+  const [businessStepDetailHost, setBusinessStepDetailHost] = useState<HTMLDivElement | null>(null);
   const [streamedTextLengths, setStreamedTextLengths] = useState<Record<string, number>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -246,13 +250,21 @@ export function ScenarioReplayView({
     else selectLegacyView(key);
   }, [selectLegacyView, traceMode]);
   const artifactHtml = artifact ? script.artifacts?.[artifact.path] : undefined;
-  const rightOpen = !!snapshot || !!artifactHtml;
+  const desktopBusinessStepPanelOpen = businessStepPanelOpen && !isMobile;
+  const rightPanelKind = desktopBusinessStepPanelOpen
+    ? "business-step"
+    : artifactHtml
+      ? "artifact"
+      : snapshot
+        ? "system"
+        : null;
+  const rightOpen = rightPanelKind !== null;
   const {
     ratio: splitRatio,
     containerRef: splitContainerRef,
     onDividerMouseDown,
     onDividerDoubleClick,
-  } = useResizePanel(0.3, 0.25, 0.5);
+  } = useResizePanel(rightPanelKind === "business-step" ? 0.42 : 0.3, 0.25, 0.5, rightPanelKind);
 
   const next = useCallback(() => {
     if (gateBlocked) return;
@@ -266,6 +278,7 @@ export function ScenarioReplayView({
     setStepIndex(0);
     setDecisions({});
     setArtifact(null);
+    setBusinessStepPanelOpen(false);
     setStreamedTextLengths({});
     setTraceViewOverride(null);
   }, []);
@@ -289,11 +302,16 @@ export function ScenarioReplayView({
     });
   }, [currentStepIndex]);
 
-  // 与客户演示稿一致：空格 / → 推进，← 回退。禁止自动播放，全程由讲述者控速。
+  // 与客户演示稿一致：空格 / → 推进，← 回退；窗口级事件与交互控件分别保留正确语义。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const target = e.target;
+      const interactiveTarget = target instanceof Element
+        ? target.closest(
+            "input, textarea, select, button, a[href], [contenteditable='true'], [role='button'], [role='tab'], [role='dialog']",
+          )
+        : null;
+      if (e.defaultPrevented || interactiveTarget) return;
       if (e.key === " " || e.key === "ArrowRight") {
         e.preventDefault();
         next();
@@ -315,6 +333,7 @@ export function ScenarioReplayView({
   const openPreview = useCallback(
     (filePath: string) => {
       if (!script.artifacts?.[filePath]) return;
+      setBusinessStepPanelOpen(false);
       setArtifact({ path: filePath, fileName: filePath.split("/").pop() || filePath });
     },
     [script.artifacts],
@@ -340,7 +359,7 @@ export function ScenarioReplayView({
     // h-full 而非 flex-1：父级 TabsContent 是普通块、不是 flex 容器，
     // flex-1 在那里不生效，会导致消息区高度塌陷、回放条被顶到页面上方
     <div ref={rightOpen ? splitContainerRef : undefined} className="flex h-full min-h-0 overflow-hidden">
-      {/* 默认保持会话区更宽；右侧看板的拖拽交互与正式会话复用同一个 useResizePanel。 */}
+      {/* 默认保持会话区更宽；右侧面板的拖拽交互与正式会话复用同一个 useResizePanel。 */}
       <div
         data-scenario-replay-conversation
         className={cn(
@@ -371,8 +390,13 @@ export function ScenarioReplayView({
               isLoadingMessages={false}
               scrollContainerRef={scrollRef}
               debugModeOverride={false}
-              businessStepDisplayModeOverride="collapsed"
-              showBusinessStepOutcomeWhenCollapsed
+              businessStepDetailMode={isMobile ? "mobile" : "desktop"}
+              businessStepDetailHost={isMobile ? null : businessStepDetailHost}
+              businessStepPanelOpen={businessStepPanelOpen}
+              onBusinessStepPanelOpenChange={(open) => {
+                setBusinessStepPanelOpen(open);
+                if (open) setArtifact(null);
+              }}
             />
             {currentApproval && currentDecision !== "approved" ? (
               <div className="shrink-0 border-t border-border/60 bg-warning-subtle px-4 py-3">
@@ -471,9 +495,14 @@ export function ScenarioReplayView({
             )}
             style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexGrow: 0, flexShrink: 0 }}
           >
-              {/* 产物预览抢占面板：用户显式点击的意图压过自动跟随。
-                  面板不卸载，只是被盖住，fold 状态与滚动位置都保留。 */}
-              {artifactHtml ? (
+              {rightPanelKind === "business-step" ? (
+                <div
+                  ref={setBusinessStepDetailHost}
+                  className="min-h-0 flex-1"
+                  data-scenario-business-step-panel
+                />
+              ) : null}
+              {rightPanelKind === "artifact" && artifactHtml ? (
                 <ArtifactPanel
                   html={artifactHtml}
                   fileName={artifact!.fileName}
@@ -481,9 +510,9 @@ export function ScenarioReplayView({
                   onBackToPanel={snapshot ? () => setArtifact(null) : undefined}
                 />
               ) : null}
-              <div className={cn("flex min-h-0 flex-1 flex-col", artifactHtml && "hidden")}>
-                {snapshot ? <SystemPanel snapshot={snapshot} pulse={pulse} onSelectView={selectView} className="min-h-0 flex-1" /> : null}
-              </div>
+              {rightPanelKind === "system" && snapshot ? (
+                <SystemPanel snapshot={snapshot} pulse={pulse} onSelectView={selectView} className="min-h-0 flex-1" />
+              ) : null}
             </div>
           </>
         )}

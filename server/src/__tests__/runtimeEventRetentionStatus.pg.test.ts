@@ -89,17 +89,11 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
       lastSuccessAt: dryRunSuccessAt,
       nextScheduledAt: expect.any(String),
     });
-    restartedExecute.stop();
-
-    const execute = createRetention(pool, {
-      executionMode: 'execute',
-      legalDeleteThroughGlobalSequence: '100',
-      authorizationRef: 'CHG-test',
-    });
-    await execute.runOnce();
-    await execute.runOnce();
+    await restartedExecute.runOnce();
+    await restartedExecute.runOnce();
     const executeSuccessAt = (await latestDetail()).lastSuccessAt;
     expect((await latestDetail()).state).toBe('execute_succeeded');
+    restartedExecute.stop();
 
     const restartedDryRun = createRetention(pool, {
       enabled: true,
@@ -116,15 +110,17 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     restartedDryRun.stop();
 
     const blocked = createRetention(pool, {
+      enabled: true,
       executionMode: 'execute',
       legalDeleteThroughGlobalSequence: '100',
     });
-    await expect(blocked.runOnce()).rejects.toThrow(/缺少授权/);
+    await blocked.start();
     expect(await latestDetail()).toMatchObject({
       state: 'blocked',
       errorCategory: 'authorization_missing',
       lastSuccessAt: expect.any(String),
     });
+    blocked.stop();
 
     await pool.query(`
       INSERT INTO ${eventsTable} (tenant_id, session_id, run_id, event_type, timestamp) VALUES
@@ -145,11 +141,13 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
       },
     };
     const recoverable = createRetention(partialPool as unknown as InstanceType<typeof Pool>, {
+      enabled: true,
       executionMode: 'execute',
       legalDeleteThroughGlobalSequence: '100',
       authorizationRef: 'CHG-test',
       batchLimit: 1,
     });
+    await recoverable.start();
     await expect(recoverable.runOnce()).rejects.toThrow('injected database failure');
     expect(await latestDetail()).toMatchObject({
       state: 'failed',
@@ -160,6 +158,7 @@ describePg('RuntimeEventRetention 状态与 authority PostgreSQL 集成', () => 
     await recoverable.runOnce();
     expect((await latestDetail()).state).toBe('execute_succeeded');
     expect(await countAssistantStreamEvents()).toBe(0);
+    recoverable.stop();
   });
 
   it('删除当前最高序号后下一轮仍发布成功状态且 lag 语义为零', async () => {

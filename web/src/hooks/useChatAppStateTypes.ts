@@ -183,12 +183,3 @@ export interface OutboxEntry {
   state: 'sending' | 'acked';
   createdAt: number;
 }
-
-export interface ProvisionalSubmission {
-  rootClientMsgId: string;
-  clientMsgId: string;
-  deliveryMode: 'queue' | 'steer';
-  input: string;
-  attachments: UploadedFile[];
-  autoApproveRunShell: boolean;
-}

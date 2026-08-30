@@ -564,6 +564,19 @@ export type {
 } from './lib/chatQueue';
 export { chatQueueReducerEventsFromWsEvent } from './lib/chatQueueWs';
 
+// Lib - cross-platform authoritative chat projection (M40-01)
+export {
+  canSendChatIntent,
+  captureChatClientFence,
+  chatClientReducer,
+  createChatClientState,
+  isChatClientFenceCurrent,
+  reduceChatClientState,
+  selectChatClientQueue,
+  selectChatClientQueueItems,
+} from './lib/chatClientState';
+export type { ChatClientAction, ChatClientState, ChatSendGate } from './lib/chatClientState';
+
 // Lib - authoritative WS sync recovery
 export {
   createSyncRecoveryState,

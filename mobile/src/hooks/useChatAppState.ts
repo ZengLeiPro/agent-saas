@@ -14,7 +14,6 @@ import type {
   WsProcessingContext,
   WsBlockState,
   ChatQueueSnapshot,
-  ChatQueueState,
   ChatQueueItem,
 } from "@agent/shared";
 import {
@@ -26,11 +25,10 @@ import {
   useConnectionState,
   fetchAgentProfile,
   INPUT_DRAFT_KEY,
-  chatQueueReducerEventsFromWsEvent,
-  createChatQueueState,
+  createChatClientState,
   createInteractionRequestId,
-  reduceChatQueueEvent,
-  selectChatQueueItems,
+  reduceChatClientState,
+  selectChatClientQueueItems,
   scopedSensitiveKey,
 } from "@agent/shared";
 import type {
@@ -42,6 +40,7 @@ import { useMessages } from "./useMessages";
 import { useSession } from "./useSession";
 import { useFileUpload } from "./useFileUpload";
 import { useAuth } from "../contexts/AuthContext";
+import { useLocalAppLock } from "../contexts/LocalAppLockContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
 import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
@@ -145,6 +144,7 @@ export interface ChatAppState {
 
 export function useChatAppStateCore(): ChatAppState {
   const { user, identity } = useAuth();
+  const localAppLock = useLocalAppLock();
   const isAdmin = user?.role === "admin";
 
   // M20-04: drafts are account + tenant + generation scoped.
@@ -277,7 +277,7 @@ export function useChatAppStateCore(): ChatAppState {
     input: string;
     attachments: UploadedFile[];
     voiceFile?: { savedPath: string; relativePath: string; duration: number };
-    state: "queued" | "sending" | "acked";
+    state: "sending" | "acked";
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
@@ -353,13 +353,39 @@ export function useChatAppStateCore(): ChatAppState {
   }, [user?.username, fetchModelList]);
 
   const msg = useMessages();
-  const chatQueueStateRef = useRef<ChatQueueState>(createChatQueueState());
-  const [chatQueueItems, setChatQueueItems] = useState(() => selectChatQueueItems(chatQueueStateRef.current));
+  // M40-01: Mobile and Web share one queue/interaction lifecycle reducer. This hook only
+  // keeps composer/upload presentation and unacknowledged transport intents locally.
+  const chatClientStateRef = useRef(createChatClientState(identity));
+  const [chatQueueItems, setChatQueueItems] = useState<ChatQueueItem[]>([]);
+  const refreshSelectedQueue = useCallback(() => {
+    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, sessionIdRef.current));
+  }, []);
+  const applyAuthoritativeWsEvent = useCallback((event: WsEvent, fallbackSessionId?: string) => {
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
+      type: 'ws', event, fallbackSessionId, generation: chatClientStateRef.current.generation,
+    });
+    const authoritativeIds = new Set(Object.values(chatClientStateRef.current.queues)
+      .flatMap((queue) => Object.keys(queue.items)));
+    if (authoritativeIds.size > 0) {
+      outboxRef.current = outboxRef.current.filter((entry) => !authoritativeIds.has(entry.clientMsgId));
+      for (const clientMsgId of authoritativeIds) {
+        const timer = ackTimersRef.current.get(clientMsgId);
+        if (timer) { clearTimeout(timer); ackTimersRef.current.delete(clientMsgId); }
+      }
+    }
+    refreshSelectedQueue();
+  }, [refreshSelectedQueue]);
   const applyQueueSnapshot = useCallback((sessionId: string, snapshot: ChatQueueSnapshot) => {
     if (snapshot.sessionId !== sessionId) return;
-    chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, { type: 'snapshot', snapshot });
-    setChatQueueItems(selectChatQueueItems(chatQueueStateRef.current));
-  }, []);
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
+      type: 'queue', sessionId, event: { type: 'snapshot', snapshot }, generation: chatClientStateRef.current.generation,
+    });
+    refreshSelectedQueue();
+  }, [refreshSelectedQueue]);
+  useEffect(() => {
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, { type: 'identity_boundary', identity });
+    refreshSelectedQueue();
+  }, [identity, refreshSelectedQueue]);
   const fileUpload = useFileUpload();
   const { connectionState, dispatchConnection } = useConnectionState();
 
@@ -480,7 +506,6 @@ export function useChatAppStateCore(): ChatAppState {
     });
     setStopping(true);
     // 停止时：丢弃 queued 但保留已发送的条目（让 ACK/rejected/done 继续处理）
-    outboxRef.current = outboxRef.current.filter((e) => e.state !== "queued");
 
     const nonceAtAbort = streamNonceRef.current;
     setTimeout(() => {
@@ -518,7 +543,6 @@ export function useChatAppStateCore(): ChatAppState {
     // 切会话：清 outbox 中 queued（未发）条目；清所有 ACK 超时定时器
     for (const t of ackTimersRef.current.values()) clearTimeout(t);
     ackTimersRef.current.clear();
-    outboxRef.current = outboxRef.current.filter((e) => e.state !== "queued");
     // 立即通知服务端取消当前订阅，防止旧会话事件串流；服务端 run 不会被 abort
     wsClient.send({ action: "detach" });
   }, [saveRuntimeForSession]);
@@ -832,6 +856,10 @@ export function useChatAppStateCore(): ChatAppState {
       voiceFile?: { savedPath: string; relativePath: string; duration: number },
       existingClientMsgId?: string,
     ) => {
+      if (localAppLock.locked || localAppLock.offlineShell || connectionState === 'disconnected') {
+        Alert.alert('无法发送', localAppLock.locked ? '请先解锁应用' : '当前离线，消息未发送');
+        return;
+      }
       const activeSessionId = sessionIdRef.current;
       const clientMsgId = existingClientMsgId || genClientMsgId();
       const normalized = buildMobileChatSubmission({
@@ -934,7 +962,7 @@ export function useChatAppStateCore(): ChatAppState {
         armAckTimeout(clientMsgId);
       }
     },
-    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId],
+    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState],
   );
 
 
@@ -1003,12 +1031,10 @@ export function useChatAppStateCore(): ChatAppState {
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
-      const queueEvents = chatQueueReducerEventsFromWsEvent(data, sessionIdRef.current ?? undefined);
-      if (queueEvents.length > 0) {
-        let nextQueueState = chatQueueStateRef.current;
-        for (const queueEvent of queueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
-        chatQueueStateRef.current = nextQueueState;
-        if (nextQueueState.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(nextQueueState));
+      if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
+        || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
+        || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
+        applyAuthoritativeWsEvent(data, sessionIdRef.current ?? undefined);
       }
 
       if (envelope.eventId != null) {
@@ -1038,13 +1064,7 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
-          const recoveredQueueEvents = chatQueueReducerEventsFromWsEvent(e, sessionIdRef.current ?? undefined);
-          if (recoveredQueueEvents.length > 0) {
-            let nextQueueState = chatQueueStateRef.current;
-            for (const queueEvent of recoveredQueueEvents) nextQueueState = reduceChatQueueEvent(nextQueueState, queueEvent);
-            chatQueueStateRef.current = nextQueueState;
-            if (nextQueueState.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(nextQueueState));
-          }
+          applyAuthoritativeWsEvent(e, sessionIdRef.current ?? undefined);
           if (e.type === "session_status" && e.sessionId === sessionIdRef.current) {
             runIdRef.current = e.runId ?? null;
             streamIdRef.current = e.streamId ?? null;
@@ -1087,10 +1107,7 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq(data.seq);
         const inline = data.recovery?.session;
         if (inline?.queueSnapshot) {
-          chatQueueStateRef.current = reduceChatQueueEvent(chatQueueStateRef.current, {
-            type: "snapshot", snapshot: inline.queueSnapshot,
-          });
-          if (inline.sessionId === sessionIdRef.current) setChatQueueItems(selectChatQueueItems(chatQueueStateRef.current));
+          applyQueueSnapshot(inline.sessionId, inline.queueSnapshot);
         }
         if (inline?.runtime && inline.sessionId === sessionIdRef.current) {
           runIdRef.current = inline.runtime.runId ?? null;
@@ -1391,11 +1408,6 @@ export function useChatAppStateCore(): ChatAppState {
         setLoading(false);
         setStopping(false);
         setCompacting(false);
-
-        // 从 outbox 移除已处理完的 acked/sending 条目
-        outboxRef.current = outboxRef.current.filter(
-          (e) => e.state === "queued",
-        );
 
         // M20-02: done only settles presentation; it never dispatches business work.
       }

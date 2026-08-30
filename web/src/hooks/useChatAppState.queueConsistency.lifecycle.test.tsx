@@ -654,7 +654,7 @@ describe("useChatAppState queue consistency lifecycle", () => {
     ]));
   });
 
-  it("locks later provisional submissions and flushes them in order with the authoritative sessionId", async () => {
+  it("keeps later new-session text in the composer until server authority is known", async () => {
     const { result } = renderHook(() => useChatAppState());
 
     act(() => result.current.setInput("first"));
@@ -663,73 +663,43 @@ describe("useChatAppState queue consistency lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
 
     expect(chatPayloads()).toHaveLength(1);
-    expect(chatPayloads()[0].submission.target.sessionId).toBeUndefined();
-    expect(chatPayloads()[0].clientCapabilities).toContain("chat_submission_v1");
-    expect(result.current.queuedInterjections.map((entry) => entry.content)).toEqual(["second"]);
+    expect(result.current.input).toBe("second");
+    expect(result.current.queuedInterjections).toHaveLength(0);
 
     act(() => emit({
       type: "session",
       sessionId: "session-authoritative",
       client_msg_id: chatPayloads()[0].submission.clientMsgId,
     }));
-
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]);
+    expect(chatPayloads()).toHaveLength(1);
+    await act(async () => { await result.current.sendMessage(); });
+    expect(chatPayloads()).toHaveLength(2);
     expect(chatPayloads()[1].submission.target.sessionId).toBe("session-authoritative");
   });
 
-  it("stops the remaining provisional flush when the user switches sessions mid-batch", async () => {
-    let releaseInflight: (() => void) | undefined;
-    const inflight = new Promise<void>((resolve) => { releaseInflight = resolve; });
-    harness.sends.mockImplementation(async (payload: unknown) => {
-      if ((payload as Partial<CanonicalChatSubmissionWireMessage>).submission?.text === "second") await inflight;
-      return true;
-    });
+  it("never auto-dispatches composer text when session authority arrives", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
     act(() => result.current.setInput("second"));
     await act(async () => { await result.current.sendMessage(); });
-    act(() => result.current.setInput("third"));
-    await act(async () => { await result.current.sendMessage(); });
-
     const rootId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
-    await waitFor(() => expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]));
+    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first"]);
     act(() => result.current.selectSession("session-b"));
-    releaseInflight?.();
-    await act(async () => { await inflight; await Promise.resolve(); });
-
-    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "second"]);
     expect(harness.session.selectSession).toHaveBeenCalledWith("session-b");
   });
 
-  it("fails only the rejected provisional batch and never flushes it into the next new session", async () => {
+  it("does not manufacture a failed queue item for blocked composer text", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
     const rejectedRootId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => result.current.setInput("must not leak"));
     await act(async () => { await result.current.sendMessage(); });
-
-    act(() => emit({
-      type: "chat_rejected",
-      client_msg_id: rejectedRootId,
-      reason_code: "server_draining",
-      reason: "rejected",
-    }));
-    expect(result.current.queuedInterjections.find((entry) => entry.content === "must not leak")?.status).toBe("failed");
-
-    act(() => result.current.newSession());
-    act(() => result.current.setInput("next root"));
-    await act(async () => { await result.current.sendMessage(); });
-    const nextRootId = chatPayloads()[1].submission.clientMsgId as string;
-    act(() => emit({ type: "session", sessionId: "session-next", client_msg_id: nextRootId }));
-
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads().map((payload) => payload.submission.text)).toEqual(["first", "next root"]);
+    act(() => emit({ type: "chat_rejected", client_msg_id: rejectedRootId, reason_code: "server_draining", reason: "rejected" }));
+    expect(result.current.queuedInterjections).toHaveLength(0);
+    expect(chatPayloads()).toHaveLength(1);
   });
 
   it("drops a provisional batch on session switch and ignores the late session confirmation", async () => {

@@ -9,7 +9,11 @@ function queueStatusFromAck(
 }
 
 /**
- * Thin compatibility projector from current WS frames into the M20-02 queue reducer protocol.
+ * N-1 compatibility adapter: projects legacy steering/message frames into the M20-02 reducer.
+ * The main Web/Mobile hooks must not interpret those frames independently.
+ *
+ * Deletion condition: remove the legacy message_queued/steering_queued/steering_cancelled cases once
+ * the minimum supported server advertises queue_snapshot + queue_item_updated for a full release.
  * One WS frame may yield no queue event; snapshot/detail remains the cold-start authority.
  */
 export function chatQueueReducerEventsFromWsEvent(

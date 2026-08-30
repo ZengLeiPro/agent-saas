@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
-import type { CanonicalChatSubmissionWireMessage } from "@agent/shared";
+import type { CanonicalChatSubmissionWireMessage, ChatQueueSnapshot } from "@agent/shared";
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
   const stateHandlers = new Set<(state: string) => void>();
@@ -23,6 +23,7 @@ const harness = vi.hoisted(() => {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
+      onQueueSnapshot?: (sessionId: string, snapshot: ChatQueueSnapshot) => void;
       onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined, activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void;
       onNewSession?: () => void;
       cancelActiveStream?: () => void;
@@ -153,14 +154,6 @@ const fileB: UploadedFile = {
   size: 456,
   mimeType: "application/pdf",
   isImage: false,
-};
-const refreshedFileB: UploadedFile = {
-  attachmentId: fileB.attachmentId,
-  originalName: fileB.originalName,
-  relativePath: "",
-  size: fileB.size,
-  mimeType: fileB.mimeType,
-  isImage: fileB.isImage,
 };
 beforeEach(() => {
   window.history.replaceState(null, "", "/chat");
@@ -618,7 +611,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
     const rootId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()).toHaveLength(2);
     act(() => emit({ type: "chat_ack", client_msg_id: rootId, status: "running", sessionId: "session-a" }));
 
@@ -717,60 +710,27 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
   });
 
-  it("restores a path-free attachmentId reference from a refreshed snapshot for edit and resend", async () => {
+  it("uses a refreshed attachmentId-only snapshot as authority without local resend", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
     const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
-    act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", runId: "run-first", sessionId: "session-authoritative" }));
-
-    const snapshotMessage = {
-      sourceRunId: "queued-snapshot",
-      runId: "queued-snapshot",
-      clientMsgId: "client-snapshot",
-      deliveryMode: "queue" as const,
-      content: "snapshot attachment",
-      acceptedAt: "2026-08-15T01:00:00.000Z",
-      attachments: [{
-        attachmentId: fileB.attachmentId,
-        name: fileB.originalName,
-        size: fileB.size,
-        mimeType: fileB.mimeType,
-        isImage: fileB.isImage,
-      }],
-    };
-    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
-    expect(result.current.queuedInterjections[0]?.uploadedFiles).toEqual([refreshedFileB]);
-
-    let editPromise: Promise<void> | undefined;
-    act(() => { editPromise = result.current.editQueuedInterjection("client-snapshot"); });
-    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith({ action: "cancel_queued", sourceRunId: "queued-snapshot" }));
-    act(() => emit({ type: "cancel_queued_result", ok: true, sourceRunId: "queued-snapshot" }));
-    await act(async () => { await editPromise; });
-    expect(harness.replaceFiles).toHaveBeenLastCalledWith([refreshedFileB]);
-
-    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
-    act(() => emit({
-      type: "steering_cancelled",
+    act(() => harness.sessionCallbacks?.onQueueSnapshot?.("session-authoritative", {
+      version: 1,
       sessionId: "session-authoritative",
-      sourceRunId: "queued-snapshot",
-      clientMsgId: "client-snapshot",
-      reason: "user_withdrew",
+      generatedAt: "2026-08-15T01:00:00.000Z",
+      items: [{
+        sessionId: "session-authoritative", sourceRunId: "queued-snapshot", runId: "queued-snapshot",
+        clientMsgId: "client-snapshot", deliveryMode: "queue", status: "queued", content: "snapshot attachment",
+        attachments: [{ attachmentId: fileB.attachmentId, name: fileB.originalName }],
+      }],
     }));
-    act(() => result.current.resendQueuedInterjection("client-snapshot"));
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads()[1].submission.attachments).toEqual([{
-      attachmentId: fileB.attachmentId,
-      display: {
-        originalName: fileB.originalName,
-        size: fileB.size,
-        mimeType: fileB.mimeType,
-        isImage: fileB.isImage,
-      },
-    }]);
-    expect(JSON.stringify(chatPayloads()[1])).not.toMatch(/savedPath|relativePath|\/uploads\//);
+    expect(result.current.queuedInterjections[0]).toMatchObject({
+      clientMsgId: "client-snapshot",
+      attachments: [{ attachmentId: fileB.attachmentId, name: fileB.originalName }],
+    });
+    expect(chatPayloads()).toHaveLength(1);
   });
 
   it("preserves full UploadedFile data through queued edit and resend", async () => {

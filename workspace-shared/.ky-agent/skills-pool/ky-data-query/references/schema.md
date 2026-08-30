@@ -1,4 +1,4 @@
-# 实体 Schema 参考（CLI list 响应视角）
+# 实体与动态数据集 Schema 参考
 
 本文件描述每个实体 `azeroth <entity> list` 返回的 NDJSON 每行 JSON 结构。它是**静态速查缓存**，可能落后于最新 CLI；实时第一信源永远是 `azeroth describe <entity> --action response` / `--action query`。字段类型以 ky-azeroth/packages/shared/src/schemas/\*.ts 的 `xxxResponseSchema` 为准（优先级高于 prisma schema，因为 response 层可能过滤字段）。
 
@@ -15,6 +15,20 @@
     - `customerId` / `opportunityId` / `saleOrderId` / `contactId` 是 UUID string
     - `chargerId` 在 customers/opportunities/sale_orders/payments/keep_records/visit_records 里是 **`employees.id`（UUID）**，04-06 后已归一化（旧文档说"钉钉 userId"已过时）。同规则适用 `projects.ownerId`、`project_tickets.assigneeId/dispatcherId`、`effort_records.ownerId`。
 - **list vs get 差异**：list 通常不返回深度嵌套子数组；get `/<id>` 会多返回 `contacts` / `products` / `departments` 等子数组。
+
+---
+
+## 小红书聚光动态数据集
+
+小红书聚光不使用固定 entity response schema；官方字段会随数据集与接口版本变化，因此本文件不缓存字段清单。实时契约必须来自：
+
+```bash
+azeroth xiaohongshu datasets --advertiser-id <advertiserId>
+azeroth xiaohongshu describe-dataset <datasetId> --advertiser-id <advertiserId>
+azeroth xiaohongshu query-dataset <datasetId> --json <query.json>
+```
+
+全量导出时，`<output>.ndjson` 只保存行数据；`<output>.metadata.json` 保存字段并集、核心字段、页级汇总、官方 metadata、requestId 和完成状态。写 SQL 前先确认 sidecar `status=complete` 并读取 `fields`，详见 [xiaohongshu-spotlight.md](xiaohongshu-spotlight.md)。
 
 ---
 

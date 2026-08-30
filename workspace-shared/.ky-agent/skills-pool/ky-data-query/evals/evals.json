@@ -1,0 +1,58 @@
+{
+  "skill_name": "ky-data-query",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "先不要实际查询。请给出一个可执行方案：完整分析广告主 adv-1 在 2026-08-01 到 2026-08-29 的小红书聚光投放，覆盖所有当前可查询的数据维度，同时清楚说明哪些维度因权限或契约限制无法覆盖。",
+      "expected_output": "方案应从动态目录发现开始，按数据集描述构造严格查询，先 probe 再全量导出，建立覆盖矩阵并按层级分析；不能硬编码数据集数量或把不可查询项当作 0。",
+      "files": [],
+      "expectations": [
+        "先用 advertisers 与 datasets --advertiser-id 动态发现能力，而不是硬编码数据集清单",
+        "对所选数据集先执行 describe-dataset，并按 parameters 的 source/required 构造 JSON",
+        "明确先做单页 probe，再用 query-dataset --all 导出 NDJSON 与 metadata sidecar",
+        "建立包含 queryable、导出状态、行数、日期、dataCaliber 和限制原因的覆盖矩阵",
+        "明确区分不可查询、部分失败与 complete 后的 0 行结果",
+        "分析流程避免跨账户/计划/单元等层级重复求和，并统一日期与 dataCaliber"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我用小红书聚光全量导出关键词数据时第 2 页失败了，但 NDJSON 已经有第 1 页。能不能直接拿现有文件分析？请告诉我正确处理步骤。",
+      "expected_output": "应拒绝把半成品当全量，要求检查 metadata sidecar 状态，原样执行 stderr 的 Resume with 命令从失败页续传；续传前须校验完整查询契约、输出路径和预期失败页，并在 status=complete 后再分析。",
+      "files": [],
+      "expectations": [
+        "明确回答不能把当前 NDJSON 当作全量分析输入",
+        "要求检查 metadata sidecar 且只有 status=complete 才可进入全量分析",
+        "要求原样执行 stderr 的 Resume with 命令并从失败页 2 续传，而不是第 3 页",
+        "说明续传会校验 sidecar 完整查询契约、输出路径、连续页检查点与 NDJSON 的 SHA-256/字节数/行数，并截断未提交尾部后 append",
+        "续传完成后复核页记录、总行数和状态，再开始 DuckDB 分析"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "为了算 8 月聚光总消耗，我准备把账户报表、计划报表、单元报表的 fee 全部加起来。你按这个口径帮我设计 SQL 和分析流程。",
+      "expected_output": "应指出跨层级相加会重复计算，拒绝按错误口径设计 SQL；选择一个明确事实层算总量，其余层用于归因，并统一日期与 dataCaliber。",
+      "files": [],
+      "expectations": [
+        "明确拒绝把账户、计划、单元三层 fee 相加，因为会重复计算同一消耗",
+        "选择一个明确事实层计算总消耗，并说明选择与核对原则",
+        "把其它层级定位为贡献归因、集中度或异常诊断，而不是追加总量",
+        "要求三个报表使用相同广告主、日期范围和 dataCaliber，并核对口径差异",
+        "在字段与 sidecar 未确认前不猜 fee 单位或直接给出可执行错误 SQL"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "我已经分别全量导出了 8 月的本地账户日报 report.account.offline 和聚光官方账户离线报表，它们都有 fee 字段。为了尽可能完整，我想把两份 fee 相加作为 8 月总消耗。请给我计算口径。",
+      "expected_output": "应明确拒绝把本地日报与官方 API 同一事实层相加；选择一个来源作为唯一事实层，另一来源只用于口径核对，并在日期、广告主、dataCaliber 与字段单位一致后解释差异。",
+      "files": [],
+      "expectations": [
+        "明确指出 local_report 与 official_api 可能是同一账户事实层，两份 fee 相加会重复计算",
+        "拒绝以所谓更完整为由相加，并选择一个来源作为总消耗的唯一事实层",
+        "把另一来源限定为交叉核对、完整性检查或差异诊断，而不是追加总量",
+        "核对广告主、日期范围、dataCaliber、归因窗口和 fee 单位后再比较差异",
+        "若无法确认两份数据的事实口径，明确标记不能得出可靠总消耗，不猜测"
+      ]
+    }
+  ]
+}

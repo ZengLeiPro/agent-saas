@@ -572,8 +572,8 @@ export function createMiddlewareRunDispatch(
           // 配置文件位于 ~/code/agent/server/config/，已被 sandbox `~/code` deny 覆盖，
           // LLM 不可见。查不到则不注入（CLI 会因缺凭证报错，符合"未授权"语义）。
           //
-          // 同时把 ky-azeroth CLI 的 cache 目录 (<userCwd>/.ky-agent/runtime/cache/azeroth-cli) 前置到 PATH，
-          // 让 LLM 调用 `azeroth ...` 命中 skill ensure-cli.sh 拉下来的 bundle，无需关心路径。
+          // 同时把 ky-azeroth CLI 的唯一 cache 目录 (<userCwd>/.ky-agent/runtime/cache/azeroth-cli)
+          // 注入 AZEROTH_CLI_CACHE_DIR 并前置到 PATH，确保 dispatch 与 ensure-cli.sh 命中同一 bundle。
           // ensure 由 skill 自己负责（按需触发，不影响未使用 ky-data-query 的会话）。
           // PR 6 修 P0-6：按 (tenantId, username) 二级查 PAT，防客户组织拿到开沿 admin PAT
           const azerothInjection = resolveAzerothInjection(
@@ -588,6 +588,7 @@ export function createMiddlewareRunDispatch(
               env: {
                 ...effectiveOptions.env,
                 AZEROTH_TOKEN: azerothInjection.token,
+                AZEROTH_CLI_CACHE_DIR: azerothCliDir,
                 ...(azerothInjection.apiUrl
                   ? { AZEROTH_API_URL: azerothInjection.apiUrl }
                   : {}),

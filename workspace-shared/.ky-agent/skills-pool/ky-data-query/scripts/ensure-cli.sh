@@ -9,7 +9,7 @@
 #   2. 过期/不存在 → 调 GET /cli-bundle/hash 比对
 #   3. hash 一致 → touch stamp 跳过下载（轻量探活）
 #   4. hash 变了或 cache 空 → 下载完整 bundle，原子覆盖
-#   5. cache 路径在 PATH 里（dispatch.ts 注入），LLM 直接 azeroth ... 即可
+#   5. dispatch.ts 用同一个 AZEROTH_CLI_CACHE_DIR 注入 PATH，LLM 直接 azeroth ... 即可
 #
 # 调用：从 SKILL.md 引导 LLM 在使用 ky-data-query 之前先 source 一次。
 # 幂等可重跑。
@@ -18,6 +18,7 @@
 #   AZEROTH_TOKEN  — 当前用户的 PAT
 #   AZEROTH_API_URL — https://fc.kaiyan.net/ky-azeroth
 # 可选 env:
+#   AZEROTH_CLI_CACHE_DIR — 与 dispatch PATH 一致的 cache；未注入时回退当前工作区
 #   AZEROTH_CLI_TTL_SECS — cache TTL，默认 3600
 #   AZEROTH_CLI_FORCE    — 任何非空值 → 强制重新拉取（绕过 stamp）
 # ============================================================================

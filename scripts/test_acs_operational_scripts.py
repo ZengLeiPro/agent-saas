@@ -166,7 +166,9 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
     def test_accepts_only_identical_healthy_shared_config(self):
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['sharedCidrCount'], 2)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload['compatible'])
+        self.assertEqual(payload['sharedCidrCount'], 2)
 
     def test_rejects_candidate_drift_or_incomplete_running_coverage(self):
         cases = [
@@ -177,7 +179,8 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
         ]
         for result in cases:
             self.assertEqual(result.returncode, 1)
-            self.assertFalse(json.loads(result.stderr)['compatible'])
+            payload = json.loads(result.stderr.strip().splitlines()[-1])
+            self.assertFalse(payload['compatible'])
 
 
 class AcsDockerfileWorkspaceInjectionTest(unittest.TestCase):

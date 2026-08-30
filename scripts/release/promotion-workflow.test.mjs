@@ -50,10 +50,13 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);
-  assert.match(workflow, /group: agent-saas-production-deploy/u);
+  assert.match(workflow, /group: production-runtime/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
-  assert.doesNotMatch(workflow, /group: (?:production-promotion|acs-production-deploy)/u);
+  assert.doesNotMatch(
+    workflow,
+    /group: (?:production-promotion|acs-production-deploy|agent-saas-production-deploy)/u,
+  );
   assert.match(workflow, /PRODUCTION_SSH_HOST_KEY_SHA256/u);
   assert.match(workflow, /RELEASE_ID_INPUT: \$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
@@ -84,7 +87,11 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.match(workflow, /expected_runtime_summary/u);
   assert.match(workflow, /assert-promotion-retry\.mjs/u);
-  assert.match(workflow, /retry-before-change:\$GITHUB_RUN_ID/u);
+  assert.match(workflow, /retry-normalize:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(
+    workflow,
+    /\[ "\$retry_mode" = retry_after_change \] && \[ "\$latest_state" = approved \]/u,
+  );
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
 });
 
@@ -124,7 +131,10 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.match(workflow, /run_with_web_lock aliyun --secure oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
+  assert.match(workflow, /--arg recoveryMode "\$PROMOTION_RETRY_MODE"/u);
+  assert.match(workflow, /prior post-mutation recovery remains required/u);
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
+  assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);
   assert.match(workflow, /scripts\/release\/read-live-production-components\.mjs/u);
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);

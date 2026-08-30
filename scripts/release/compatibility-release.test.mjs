@@ -163,17 +163,16 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
   assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(promotionWorkflow, /group: production-runtime/u);
+  assert.doesNotMatch(
+    `${appWorkflow}\n${acsWorkflow}\n${promotionWorkflow}`,
+    /group: agent-saas-production-deploy/u,
+  );
   assert.match(acsWorkflow, /baselines\/acs-/u);
   assert.match(acsWorkflow, /acs-release-stage\/acs-orchestrator\/runtime-dependencies\.json/u);
   assert.match(acsWorkflow, /manage-acs-systemd-unit\.sh/u);
   assert.match(acsWorkflow, /agent-saas-acs-orchestrator\.service\.template/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /environment: production/u);
-  assert.match(acsWorkflow, /group: agent-saas-production-deploy/u);
-  assert.match(
-    appWorkflow,
-    /group: agent-saas-\$\{\{ github\.event_name == 'workflow_dispatch' && 'production-deploy'/u,
-  );
   assert.match(appWorkflow, /DEPLOY_LOCK_FILE="\/run\/lock\/agent-saas\/promotion\.lock"/u);
   assert.doesNotMatch(appWorkflow, /agent-saas-deploy\.lock/u);
   assert.ok(

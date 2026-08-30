@@ -119,14 +119,16 @@ jobs:
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
-          # 仅允许 verified 首次晋级或已证明未发生生产写入的重试。
+          # 允许 verified 首次晋级、已证明未写入的重试，或人工审核后的精确前缀恢复。
           retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
           retry_mode="$(printf '%s' "$retry_evidence" | jq -r .mode)"
-          if [ "$(printf '%s' "$retry_evidence" | jq -r .mode)" = retry_before_change ] && \
-             [ "$(tail -n1 "$log" | jq -r .state)" != failed_before_change ]; then
+          latest_state="$(tail -n1 "$log" | jq -r .state)"
+          if { [ "$retry_mode" = retry_before_change ] && [ "$latest_state" != failed_before_change ]; } || \
+             { [ "$retry_mode" = retry_after_change ] && [ "$latest_state" = approved ]; }; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID" \
+              --state failed_before_change \
+              --operation "retry-normalize:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
@@ -876,8 +878,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          reason="$(jq -nc --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
-            '{summary:"promotion failed before the durable promoting marker and before production mutation",runId:$runId,runAttempt:$runAttempt}')"
+          summary='promotion failed before the durable promoting marker and before production mutation'
+          if [ "$PROMOTION_RETRY_MODE" = retry_after_change ]; then
+            summary='recovery attempt failed before a new promoting marker; prior post-mutation recovery remains required'
+          fi
+          reason="$(jq -nc --arg summary "$summary" --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" --arg recoveryMode "$PROMOTION_RETRY_MODE" \
+            '{summary:$summary,runId:$runId,runAttempt:$runAttempt,recoveryMode:$recoveryMode}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state failed_before_change --operation "failed-before-change:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \

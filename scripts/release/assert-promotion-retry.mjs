@@ -4,6 +4,39 @@ import { readFile } from 'node:fs/promises';
 const RETRYABLE_TAIL_STATES = new Set(['approved', 'failed_before_change', 'needs_human']);
 const RECOVERABLE_MUTATION_TAIL_STATES = new Set([...RETRYABLE_TAIL_STATES, 'promoting']);
 
+function hasReviewedMutationRecoveryTail(tail) {
+  let mutationSeen = false;
+  let reviewedCurrentMutation = false;
+  for (let index = 0; index < tail.length; index += 1) {
+    const state = tail[index]?.state;
+    const previousState = tail[index - 1]?.state;
+    if (!mutationSeen) {
+      if (state === 'promoting') {
+        if (previousState !== 'approved') return false;
+        mutationSeen = true;
+        reviewedCurrentMutation = false;
+      } else if (!RETRYABLE_TAIL_STATES.has(state)) return false;
+      continue;
+    }
+    if (state === 'promoting') {
+      if (previousState !== 'approved' || !reviewedCurrentMutation) return false;
+      reviewedCurrentMutation = false;
+    } else if (state === 'needs_human') {
+      if (previousState !== 'promoting' && previousState !== 'needs_human') return false;
+      reviewedCurrentMutation = true;
+    } else if (state === 'approved') {
+      if (
+        !reviewedCurrentMutation ||
+        (previousState !== 'needs_human' && previousState !== 'failed_before_change')
+      )
+        return false;
+    } else if (state === 'failed_before_change') {
+      if (!reviewedCurrentMutation || previousState !== 'approved') return false;
+    } else return false;
+  }
+  return mutationSeen && reviewedCurrentMutation;
+}
+
 export function assertPromotionRetryable(entries) {
   if (!Array.isArray(entries) || entries.length === 0)
     throw new Error('Release attestation history is empty');
@@ -20,13 +53,11 @@ export function assertPromotionRetryable(entries) {
   if (verifiedIndex < 0) throw new Error('Release has no verified Staging attestation');
   const tail = entries.slice(verifiedIndex + 1);
   const promotingIndex = tail.findLastIndex((entry) => entry?.state === 'promoting');
-  if (latest.state === 'needs_human' && promotingIndex >= 0) {
+  if (promotingIndex >= 0) {
     const forbidden = tail.find((entry) => !RECOVERABLE_MUTATION_TAIL_STATES.has(entry?.state));
     if (forbidden)
       throw new Error(`Release has a terminal post-mutation state: ${forbidden.state}`);
-    if (tail[promotingIndex - 1]?.state !== 'approved')
-      throw new Error('Release promoting state is not preceded by an approval');
-    if (!tail.slice(promotingIndex + 1).every((entry) => entry?.state === 'needs_human'))
+    if (!hasReviewedMutationRecoveryTail(tail))
       throw new Error('Release has an ambiguous post-mutation attestation tail');
     return {
       mode: 'retry_after_change',

@@ -54,7 +54,7 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
-  it('allows explicitly human-reviewed recovery after a durable promotion reached needs_human', () => {
+  it('allows human-reviewed recovery after a durable promotion reached needs_human', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -64,6 +64,25 @@ describe('ReleaseAttestationLog', () => {
     append(entries, 'needs_human', 'needs-human-1');
     append(entries, 'approved', 'recovery-approval');
     append(entries, 'promoting', 'promoting-2');
+    append(entries, 'completed');
+    expect(entries.currentState()).toBe('completed');
+  });
+
+  it('preserves post-mutation recovery across a later pre-write failure', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'promoting', 'promoting-1');
+    append(entries, 'needs_human', 'needs-human-1');
+    append(entries, 'approved', 'recovery-approval-1');
+    append(entries, 'failed_before_change', 'recovery-pre-write-failure');
+    append(entries, 'approved', 'recovery-approval-2');
+    append(entries, 'promoting', 'promoting-2');
+    append(entries, 'needs_human', 'needs-human-2');
+    append(entries, 'approved', 'recovery-approval-3');
+    append(entries, 'promoting', 'promoting-3');
     append(entries, 'completed');
     expect(entries.currentState()).toBe('completed');
   });

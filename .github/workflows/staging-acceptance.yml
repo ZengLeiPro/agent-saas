@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '22.23.1'
 
 jobs:
   acceptance:
@@ -60,7 +60,8 @@ jobs:
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v5
+      - name: Setup exact Runtime contract Node
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm

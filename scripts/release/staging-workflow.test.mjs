@@ -159,10 +159,13 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
   const workflow = await readFile(acceptanceWorkflowPath, 'utf8');
   assert.match(workflow, /name: 预发验收/u);
+  assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
+  assert.match(workflow, /node-version: \$\{\{ env\.NODE_VERSION \}\}/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
   assert.match(workflow, /group: staging-acceptance\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
+  assert.match(workflow, /Setup exact Runtime contract Node/u);
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);

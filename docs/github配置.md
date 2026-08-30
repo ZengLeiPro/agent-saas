@@ -435,7 +435,8 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 要求：
 
 - 使用生产专用、最小权限的 RAM 与 SSH 身份。
-- `PRODUCTION_OBSERVATION_TOKEN` 必须是生产观察证据服务的只读 Token。
+- `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
+  `Prepare Release Evidence` 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
   `Prepare Release Evidence` 自动 Workflow 使用；禁止与只读 Token 相同。
 - Environment Secret 可以与现有 Repository Secret 使用同一真实生产凭据，但必须由可信凭据源重新写入；
@@ -468,8 +469,9 @@ gh secret set '<SECRET_NAME>' \
 | `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
 | `RELEASE_RECORD_OSS_REGION`      | `cn-shenzhen`                                                 |
 
-生产观察当前由隔离部署的 Evidence Service 统一提供读端点，因此 URL 使用 Staging API 域名，但其
-查询必须绑定生产 release ID 与 Manifest digest；这不表示生产应用部署在 Staging ECS。
+该 URL 目前是隔离 Evidence Service 的兼容基址，`Prepare Release Evidence` 会改写末尾路径并访问
+`/release-evidence`。Production Promotion 不再访问 `/production-observation`；完整浏览器、Agent
+与业务验收已移到独立的 `Staging Acceptance`，默认不运行、不阻断发布。
 
 写入形式：
 
@@ -625,5 +627,6 @@ Environment 配置值：
 ```
 
 Ruleset 和 Environment 配置完成，只代表 GitHub 发布控制面准备完成。只有 Staging 隔离资源、DNS、
-证据服务、真实 E2E、不可变 RC、生产基线和至少 15 分钟生产观察全部形成权威证据后，才能声明新版
-发布链路就绪。
+证据服务、不可变 RC、生产基线、确定性 Staging 门禁，以及生产物理组件与 runtime identity 收敛
+全部形成权威证据后，才能声明新版发布链路就绪。真实浏览器、Agent 与业务验收由独立
+`Staging Acceptance` 承担，是可选的发布后验收，不阻断部署链。

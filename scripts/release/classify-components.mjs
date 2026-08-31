@@ -3,6 +3,9 @@ import { execFileSync as defaultExecFileSync } from 'node:child_process';
 export const COMPONENTS = Object.freeze(['web', 'api', 'runtimeWorker', 'acs']);
 
 const PATH_COMPONENTS = Object.freeze([
+  // 根 Dockerfile 是多 target 构建入口：Server、Hand、ACS Sandbox，并通过
+  // web-build stage 产出嵌入式 Web dist。变更时保守要求全部组件重新绑定制品。
+  ['Dockerfile', COMPONENTS],
   ['package.json', COMPONENTS],
   ['pnpm-lock.yaml', COMPONENTS],
   ['pnpm-workspace.yaml', COMPONENTS],
@@ -46,6 +49,9 @@ const NON_RUNTIME_FILES = new Set([
   'eslint.config.mjs',
   'scripts/format-new-staged-files.mjs',
   'scripts/generate-dws-command-policy.mjs',
+  'scripts/pr-preflight-contract.test.mjs',
+  'scripts/pr-preflight-task.sh',
+  'scripts/pr-preflight.sh',
   'scripts/test_acs_operational_scripts.py',
   'scripts/typecheck-staged.mjs',
 ]);

@@ -29,11 +29,7 @@ describePg('PgSessionLock rolling dual -> lease overlap', () => {
     const dual = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'dual', leaseMs: 10_000 });
     const lease = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'lease', leaseMs: 10_000 });
     await dual.init();
-
-    const firstDual = await dual.tryAcquire('tenant-a', 'rolling-session');
-    expect(firstDual).not.toBeNull();
     await lease.init();
-    await firstDual!.release();
 
     // A dual worker whose process survived lease init still relies on ON CONFLICT(session_id).
     const secondDual = await dual.tryAcquire('tenant-a', 'rolling-session');

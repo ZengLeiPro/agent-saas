@@ -225,7 +225,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       perParentActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
       perTenantActive: SUBAGENT_PER_TENANT_MAX_ACTIVE,
     });
-
     await this.appendParentLifecycleEvent(parentSession, tenantId, {
       type: 'background_task_started',
       runId: parentRunId,

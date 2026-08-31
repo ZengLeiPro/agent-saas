@@ -39,7 +39,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   afterEach(async () => {
     if (!pool) return;
-    // evaluatePending scans the durable queue globally; do not leak retryable jobs into the next case.
+    // evaluatePending scans the durable queue globally; keep retryable jobs isolated between cases.
     await pool.query(`UPDATE ${store.tables.evaluations}
       SET state='cancelled',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
       WHERE state IN ('pending','claimed')`);
@@ -136,6 +136,26 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(cancellation).toBeDefined();
     await runs.markStatus(setup.dispatch.targetRunId, 'cancelled', 'authoritative cancel adapter');
     await store.completeCancellation(cancellation!);
+    const closure = await pool.query(
+      `SELECT
+        (SELECT state FROM ${store.tables.executions} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND run_id=$4) AS execution,
+        (SELECT state FROM ${store.tables.outbox} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND target_run_id=$4) AS outbox,
+        (SELECT state FROM ${store.tables.preparedDispatchAttempts} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND run_id=$4) AS prepared,
+        (SELECT state FROM ${store.tables.wakeups} WHERE wakeup_id=$5) AS wakeup`,
+      [tenantId, setup.sessionId, setup.automationId, setup.dispatch.targetRunId, setup.dispatch.wakeupId],
+    );
+    expect(closure.rows[0]).toMatchObject({ execution: 'terminal', outbox: 'cancelled', prepared: 'cancelled', wakeup: 'consumed' });
+    const lifecycle = await pool.query(
+      `SELECT object_type,state FROM ${store.tables.lifecycleWork}
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+          AND ((object_type='run' AND object_id=$4) OR object_id=$5::text)`,
+      [tenantId, setup.sessionId, setup.automationId, setup.dispatch.targetRunId, setup.dispatch.outboxId],
+    );
+    expect(lifecycle.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ object_type: 'run', state: 'completed' }),
+      expect.objectContaining({ object_type: 'execution', state: 'completed' }),
+      expect.objectContaining({ object_type: 'outbox', state: 'completed' }),
+    ]));
     const adapter = { execute: async (job: import('./sessionAutomationStore.js').SessionAutomationLifecycleJob) => {
       const { attemptCount: _attemptCount, details: _details, ...fence } = job;
       return { ...fence, receiptKey: `clear-test:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const, payload: {} };
@@ -144,10 +164,12 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'cancelled', phase: 'terminal' });
   });
 
-  it('the first reservation consumes the final turn atomically and budget expiry drains before terminal projection', async () => {
+  it('the first settled reservation consumes the final turn atomically and budget expiry drains before terminal projection', async () => {
     const setup = await activeExecution({ maxTurns: 1 });
     const first = await guard.beforeModel(setup.context, 'turn:first', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20});
     expect(first).toBeDefined();
+    await guard.finishModel(setup.context, first, { inputTokens: 10, outputTokens: 5 });
+    expect((await pool.query(`SELECT state FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`, [first!.providerAttemptId])).rows[0].state).toBe('completed');
     await expect(guard.beforeModel(setup.context, 'turn:second', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationBudgetExceededError);
     const draining = await pool.query(
       `SELECT status,phase,desired_terminal_status,limit_hit_reason FROM ${store.tables.automations} WHERE tenant_id=$1 AND automation_id=$2`,
@@ -157,7 +179,8 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     const adapter = { execute: async (job: import('./sessionAutomationStore.js').SessionAutomationLifecycleJob) => {
       if (job.objectType === 'run') await runs.markStatus(job.objectId, 'cancelled', 'authoritative cancel adapter');
       const { attemptCount: _attemptCount, details: _details, ...fence } = job;
-      return { ...fence, receiptKey: `max-turns:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const, payload: {} };
+      return { ...fence, receiptKey: `max-turns:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const,
+        payload: job.objectType === 'provider_attempt' && job.action === 'reconcile' ? { providerState: 'cancelled' } : {} };
     } };
     await store.processLifecycleWork({ run: adapter, execution: adapter, evaluation: adapter, provider_attempt: adapter, interaction: adapter, background_resource: adapter, budget_reservation: adapter }, 50);
     const cancellation = (await store.claimCancellations(50)).find(item => item.automationId === setup.automationId);

@@ -67,7 +67,7 @@ export class PgSessionAutomationStore {
   async compensateCommand(input:{tenantId:string;ownerUserId:string;clientMessageId:string;commandDigest:string;error:unknown}):Promise<{sessionMetaCreated:boolean}>{const code=input.error instanceof SessionAutomationConflictError?input.error.code:'INTERNAL_ERROR';const r=await this.pool.query(`UPDATE ${this.tables.commands} SET state='compensated',last_error=$5,failure_code=$6,updated_at=now() WHERE tenant_id=$1 AND owner_user_id=$2 AND client_message_id=$3 AND command_digest=$4 AND state IN ('prepared','file_ready') RETURNING session_meta_created`,[input.tenantId,input.ownerUserId,input.clientMessageId,input.commandDigest,input.error instanceof Error?input.error.message:String(input.error),code]);return{sessionMetaCreated:r.rows[0]?.session_meta_created===true};}
   private async assertMutationNotDraining(client:Client,tenantId:string,sessionId:string,automationId?:string):Promise<void>{
     const draining=await client.query(`SELECT a.automation_id FROM ${this.tables.automations} a
-      WHERE a.tenant_id=$1 AND a.session_id=$2 AND ($3::text IS NULL OR a.automation_id=$3)
+      WHERE a.tenant_id=$1 AND a.session_id=$2 AND ($3::uuid IS NULL OR a.automation_id=$3::uuid)
         AND (a.status IN ('completing','cancelling','reconcile_required') OR a.desired_terminal_status IS NOT NULL
           OR EXISTS (SELECT 1 FROM ${this.tables.lifecycleWork} l WHERE l.tenant_id=a.tenant_id AND l.session_id=a.session_id AND l.automation_id=a.automation_id AND l.state<>'completed'))
       LIMIT 1 FOR UPDATE OF a`,[tenantId,sessionId,automationId??null]);

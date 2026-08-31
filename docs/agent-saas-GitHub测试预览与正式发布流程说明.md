@@ -321,16 +321,15 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 
 ## 十二、旧 App/ACS Deploy 入口怎么理解
 
-`App CI / Deploy` 和 `ACS CI / Deploy` 的手动生产入口仍然有效，但它们属于 compatibility 通道。App dispatch 只接受 `main`；ACS dispatch 还会在部署前再次校验 run 的 SHA 仍是最新 `origin/main`，因此不能部署任意历史 main 版本：
+`App CI / Deploy` 和 `ACS CI / Deploy` 的手动生产入口属于 compatibility 通道，但能力并不对称：
 
-- 不创建不可变 RC。
-- 不部署 Staging。
-- 不产生完整 Promotion receipts 和收敛证据。
-- App compatibility 通道在 ECS 阶段只核对 API/Worker 的 SHA 与 artifact digest，不提交可信 identity；Web 成功后统一读回并校验 Web/API/Worker/ACS，再一次提交 Production identity。失败路径保留旧 identity，不把混合物理态描述成完整成功。
-- App、ACS、Promotion 与 expand confirmation 共享 `production-runtime` concurrency group，仓库代码保证这些生产写操作串行；仍需 GitHub Actions 权限与外部手工变更纪律配合。
-- ACS compatibility 通道独立维护 ACS identity；它仍不提供 RC Promotion 的完整跨组件原子性。
+- App dispatch 只接受 `main`，并且**只允许 Web-only compatibility publish**。运行界面必须显式确认 `web_only_compatibility=true`；部署计划会读取生产 active ECS SHA 到目标 SHA 的累计差异。只要出现 Server/API/Runtime Worker 相关路径，或无法证明差异只影响 Web，就会在任何生产 mutation 前 fail closed，要求改走 RC + Production Promotion。
+- App compatibility 不再允许跨 `deploy-ecs` / `deploy-web-oss` 两个 job 发布 Server 与 Web。原因是跨 job 失败无法提供同一事务式补偿；保留旧 trusted identity 并不能让混合物理态变得原子。Web-only 路径会在入口文件恢复与现场读回后更新完整 Production identity。
+- ACS dispatch 会在部署前再次校验 run 的 SHA 仍是最新 `origin/main`，不能部署任意历史 main；它独立维护 ACS identity，但仍不提供 RC Promotion 的完整跨组件原子性。
+- 两个 compatibility 入口都不创建不可变 RC、不部署 Staging、不产生完整 Promotion receipts 与跨组件收敛证据。
+- App、ACS、Promotion 与 expand confirmation 共享 `production-runtime` concurrency group，仓库代码保证生产写操作串行；仍需 GitHub Actions 权限与外部手工变更纪律配合。
 
-最重要的混用风险是：如果先创建了 RC，随后又用旧通道改变生产基线，旧 RC 的 rollback target 会漂移，Promotion 应当被阻断。此时正确动作是重新生成 Evidence 和 RC，不是强行绕过门禁。
+最重要的混用风险是：如果先创建了 RC，随后又用 compatibility 通道改变生产基线，旧 RC 的 rollback target 会漂移，Promotion 应当被阻断。此时正确动作是重新生成 Evidence 和 RC，不是强行绕过门禁。任何 Server/API/Worker 变更都直接走正式 RC 流程，不要把 Web-only 入口当成“少一步的 Promotion”。
 
 ## 十三、推荐的日常发版操作顺序
 
@@ -353,7 +352,7 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 6. **失败或取消后检查临时 SSH 白名单是否撤销**：Workflow 有 `always()` 清理，但外部 API 故障或任务被强制终止时仍应现场复核安全组 `/32` 规则。
 7. **不要反复新建同 SHA 的 RC**：rerun 原 run 会安全复用原 RC；重新 dispatch 会制造另一个永久 tag/Release/OSS record。
 8. **24 小时到期就重建，不延长旧 RC**：这能避免拿陈旧审批和旧生产基线继续晋级。
-9. **旧 compatibility Deploy 只用于明确场景**：一旦它改变了生产，尚未晋级的旧 RC 应视为需要重做。
+9. **旧 compatibility Deploy 只用于明确场景**：App 入口仅允许已证明的 Web-only 目标；Server/API/Worker 一律走 RC Promotion。任一 compatibility 发布改变生产后，尚未晋级的旧 RC 应视为需要重做。
 10. **为大制品建立显式保留策略**：GitHub 小型审计文件可以长期保留；OSS bundle、ACR image、失败 E2E 视频应按“最近版本 + 已晋级版本 + 回滚窗口”制定清理规则，任何批量删除仍需先列清单确认。
 
 ## 十五、历史已验证样本与本次验证边界
@@ -368,4 +367,4 @@ RC31 已实际跑通当时的主链：
 - 当前生产：`rc-20260830-31`，API/Worker/ACS/Web identity 与物理运行态一致。
 - Staging Acceptance：本轮未运行，符合“可选、不阻塞”的新规则。
 
-该样本证明 2026-08-30 版本曾用真实 RC、Staging 和 Production 跑通。P0–P2 修订后的共享 Staging 互斥、独立 expand confirmation 和 compatibility identity 原子提交，本次仅执行仓库静态测试、状态机测试、typecheck/build；仍需后续按审批窗口做一次 Staging/Production 现场复测，不能把旧样本升格为新实现的现场证明。
+该样本证明 2026-08-30 版本曾用真实 RC、Staging 和 Production 跑通。P0–P2 修订后的共享 Staging 互斥、独立 expand confirmation 和 Web-only compatibility 收窄，本次仅执行仓库静态测试、状态机测试、typecheck/build；仍需后续按审批窗口做一次 Staging/Production 现场复测，不能把旧样本升格为新实现的现场证明。

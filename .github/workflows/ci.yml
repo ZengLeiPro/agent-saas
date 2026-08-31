@@ -3,9 +3,9 @@
 # ============================================================================
 # 触发:
 #   - push to main: 只构建 + 测试 + 打包 artifact（不部署生产）
-#   - workflow_dispatch: 为尚未迁移到 RC Promotion 的旧版本保留人工兼容部署入口；
-#     构建通过后按生产 active ECS SHA→目标 SHA 的累计差异决定是否部署 ECS，再发布 Web OSS。
-#     force_ecs=true 可强制滚动 ECS。新版本仍应优先使用 promote-release.yml。
+#   - workflow_dispatch: 仅保留 Web-only 人工兼容发布。若生产 active ECS SHA→目标 SHA
+#     存在任何 ECS 相关差异（或无法证明无差异），部署计划在生产 mutation 前 fail closed；
+#     Server/API/Runtime Worker 必须走 RC + Production Promotion，禁止跨 job 非原子发布。
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
 #   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
@@ -26,8 +26,9 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      force_ecs:
-        description: 'Force ECS deploy even when no ECS-relevant path changed since production'
+      web_only_compatibility:
+        description: 'Confirm Web-only compatibility publish; Server/API/Worker changes require RC Promotion'
+        required: true
         type: boolean
         default: false
 
@@ -389,6 +390,19 @@ jobs:
           # 必须覆盖生产 active SHA 到目标 SHA 的累计差异，不能只看最后一个 commit。
           fetch-depth: 0
 
+      - name: Confirm Web-only compatibility scope
+        if: inputs.web_only_compatibility != true
+        run: |
+          {
+            echo "### Compatibility deployment blocked"
+            echo
+            echo "- This legacy entrypoint is Web-only."
+            echo "- Re-run with web_only_compatibility=true only for a Web-only target."
+            echo "- Server/API/Runtime Worker changes must use RC + Production Promotion."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Compatibility scope::Explicit Web-only confirmation is required"
+          exit 1
+
       - name: Configure SSH
         run: |
           : "${ECS_HOST:?Missing secret ECS_HOST}"
@@ -399,35 +413,25 @@ jobs:
           printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_deploy_key
           chmod 600 ~/.ssh/ecs_deploy_key
           ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts \
-            || echo "::warning title=ECS deploy plan::ssh-keyscan failed; necessity gate will fail-open"
+            || echo "::warning title=ECS deploy plan::ssh-keyscan failed; Web-only gate will block if the host cannot be verified"
 
       - name: Determine ECS deployment necessity
         id: plan
-        env:
-          FORCE_ECS_DEPLOY: ${{ inputs.force_ecs }}
         run: |
           set -euo pipefail
 
-          fail_open() {
-            echo "::warning title=ECS necessity gate inconclusive::$1 — proceeding with ECS deploy (fail-open)."
+          block_server_compatibility() {
             echo "ecs_required=true" >> "$GITHUB_OUTPUT"
             {
-              echo "### ECS deploy necessity gate"
+              echo "### Compatibility deployment blocked"
               echo
-              echo "- inconclusive: $1 — proceeded with ECS deploy (fail-open)"
+              echo "- $1"
+              echo "- This entrypoint cannot atomically compensate ECS + Web across jobs."
+              echo "- Publish Server/API/Runtime Worker changes through RC + Production Promotion."
             } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error title=Web-only compatibility::$1"
+            exit 1
           }
-
-          if [ "${FORCE_ECS_DEPLOY:-false}" = "true" ]; then
-            echo "ecs_required=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### ECS deploy necessity gate"
-              echo
-              echo "- \`force_ecs=true\` — deploying ECS unconditionally"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
 
           production_ecs_sha="$(ssh -i ~/.ssh/ecs_deploy_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
@@ -444,11 +448,11 @@ jobs:
             ' 2>/dev/null || true)"
 
           printf '%s' "$production_ecs_sha" | grep -Eq '^[0-9a-f]{40}$' \
-            || fail_open "cannot read a full active ECS release SHA"
+            || block_server_compatibility "cannot prove the active ECS release SHA"
           git cat-file -e "$production_ecs_sha^{commit}" 2>/dev/null \
-            || fail_open "production ECS commit $production_ecs_sha is outside checkout history"
+            || block_server_compatibility "production ECS commit $production_ecs_sha is outside checkout history"
           git merge-base --is-ancestor "$production_ecs_sha" "$GITHUB_SHA" \
-            || fail_open "production ECS commit $production_ecs_sha is not an ancestor of target"
+            || block_server_compatibility "production ECS commit $production_ecs_sha is not an ancestor of target"
 
           echo "production_ecs_sha=$production_ecs_sha" >> "$GITHUB_OUTPUT"
           if [ "$production_ecs_sha" = "$GITHUB_SHA" ]; then
@@ -458,7 +462,7 @@ jobs:
               echo
               echo "- **ECS skipped**: production already runs target \`${production_ecs_sha:0:8}\`"
               echo "- Web OSS may still publish or repair the same target independently"
-              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+              echo "- compatibility scope: Web-only; Server/API/Worker must use RC Promotion"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -467,30 +471,24 @@ jobs:
           git diff --name-only "$production_ecs_sha" "$GITHUB_SHA" > "$changed_files"
           out="$RUNNER_TEMP/ecs-release-classification.out"
           bash .github/scripts/ecs-release-classify.sh "$changed_files" > "$out" \
-            || fail_open "ecs-release-classify.sh failed"
+            || block_server_compatibility "ECS release classification failed"
           cat "$out"
 
           required="$(sed -n 's/^required=//p' "$out")"
           reason="$(sed -n 's/^reason=//p' "$out")"
           skipped="$(sed -n 's/^skipped=//p' "$out")"
-          case "$required" in true|false) ;; *) fail_open "classifier returned invalid required=$required" ;; esac
+          case "$required" in true|false) ;; *) block_server_compatibility "classifier returned invalid required=$required" ;; esac
           echo "ecs_required=$required" >> "$GITHUB_OUTPUT"
 
           if [ "$required" = "true" ]; then
-            {
-              echo "### ECS deploy necessity gate"
-              echo
-              echo "- ECS deploy required since production \`${production_ecs_sha:0:8}\`"
-              echo "- ECS-relevant paths: $reason"
-            } >> "$GITHUB_STEP_SUMMARY"
+            block_server_compatibility "ECS changes are required since production ${production_ecs_sha:0:8}: $reason"
           else
             {
-              echo "### ECS deploy necessity gate"
+              echo "### Web-only compatibility gate"
               echo
-              echo "- **ECS skipped**: only Web/Mobile/docs/test paths changed since production \`${production_ecs_sha:0:8}\`"
+              echo "- **ECS mutation prohibited**: only Web/Mobile/docs/test paths changed since production `${production_ecs_sha:0:8}`"
               echo "- non-ECS paths: $skipped"
-              echo "- Web OSS will publish without rolling Web/API or Runtime Worker"
-              echo "- override: \`gh workflow run ci.yml -f force_ecs=true\`"
+              echo "- Web OSS may publish without rolling Web/API or Runtime Worker"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -500,8 +498,8 @@ jobs:
     # 覆盖构建打包 + Web/Runtime Worker 双蓝绿部署最坏路径
     timeout-minutes: 55
     needs: [build, deploy_plan]
-    # 生产部署只走手动触发；确认生产以来仅有 Web/Mobile/docs/test 变更时跳过。
-    # 分类读取或解析失败由 deploy_plan fail-open 为 true，不得阻塞必要发布。
+    # 保留旧 job 定义只为历史可追溯；deploy_plan 对任何 ecs_required=true 或
+    # 无法证明 Web-only 的 dispatch 都先失败，因此该 job 不再可达。
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && needs.deploy_plan.outputs.ecs_required == 'true'
     outputs:
       server_artifact_digest: ${{ steps.pack.outputs.server_artifact_digest }}
@@ -2239,14 +2237,14 @@ jobs:
   # API/WS 走独立域名 api.agent.kaiyan.net（VITE_API_BASE 构建时注入）。
   # ECS 冷灾备使用同一份分域构建，但发布到独立 recovery-web 目录，
   # 不进入 Server release，也不由 Express 托管。
-  # 与 ECS 部署同为 dispatch-only；ECS 有必要时必须先成功，无必要时可独立发布。
+  # dispatch-only 且仅允许 Web-only；deploy_plan 发现任何 ECS 相关差异即在 mutation 前阻断。
   # 上传顺序：先 hash 资源（immutable，只增不删，兼容在途会话的旧 chunk 懒加载）,
   # 后入口文件（no-cache），保证 index.html 引用的资源先就位。
   deploy-web-oss:
     name: Deploy Web to OSS
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # ECS 必要时要求其成功；确认无需 ECS 时，允许在 deploy-ecs skipped 后直接发布 OSS。
+    # 只接受 deploy_plan 已证明无需 ECS，且不可达的 deploy-ecs 保持 skipped。
     needs: [build, deploy_plan, deploy-ecs]
     if: >-
       always() &&
@@ -2254,8 +2252,8 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       needs.build.result == 'success' &&
       needs.deploy_plan.result == 'success' &&
-      ((needs.deploy_plan.outputs.ecs_required == 'false' && needs.deploy-ecs.result == 'skipped') ||
-       (needs.deploy_plan.outputs.ecs_required == 'true' && needs.deploy-ecs.result == 'success'))
+      needs.deploy_plan.outputs.ecs_required == 'false' &&
+      needs.deploy-ecs.result == 'skipped'
 
     env:
       OSS_ACCESS_KEY_ID: ${{ secrets.OSS_WEB_DEPLOY_AK_ID }}

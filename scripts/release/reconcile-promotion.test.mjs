@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { componentIdentityMatrix, reconcilePromotion } from './reconcile-promotion.mjs';
+import {
+  componentIdentityMatrix,
+  reconcilePromotion,
+  summarizeRollbackReceipts,
+} from './reconcile-promotion.mjs';
 
 const component = (value) => ({ gitSha: value, artifactDigest: `sha256:${value.repeat(64)}` });
 const acs = (value) => ({
@@ -74,4 +78,35 @@ test('never completes after a forbidden contract migration even when components 
     reconcilePromotion({ ...base, observed: target, databaseChange: 'contract_started' }).outcome,
     'needs_human',
   );
+});
+
+test('requires succeeded evidence for every attempted ACS/App/Web rollback', () => {
+  for (const componentName of ['acs', 'app', 'web']) {
+    const rollbackReceipts = {
+      acs: { attempted: false, succeeded: false },
+      app: { attempted: false, succeeded: false },
+      web: { attempted: false, succeeded: false },
+      [componentName]: { attempted: true, succeeded: false },
+    };
+    assert.deepEqual(summarizeRollbackReceipts(rollbackReceipts), {
+      attempted: true,
+      succeeded: false,
+    });
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts }).outcome,
+      'needs_human',
+      `${componentName} restoration failed after its attempted receipt`,
+    );
+    assert.equal(
+      reconcilePromotion({ ...base, observed: target, rollbackReceipts }).outcome,
+      'needs_human',
+      `${componentName} incomplete rollback cannot be hidden by a target-shaped readback`,
+    );
+    rollbackReceipts[componentName].succeeded = true;
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts }).outcome,
+      'rolled_back',
+      `${componentName} restoration has matching succeeded evidence`,
+    );
+  }
 });

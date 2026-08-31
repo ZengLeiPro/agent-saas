@@ -191,12 +191,23 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
-  assert.match(workflow, /rollback_attempted=true/u);
   assert.match(workflow, /rollback-web\.attempted/u);
   assert.match(workflow, /rollback-web\.succeeded/u);
-  assert.match(workflow, /rollback_succeeded=false/u);
-  assert.match(workflow, /rollback-acs\.receipt/u);
-  assert.match(workflow, /rollback-app\.receipt/u);
+  assert.match(workflow, /rollback-acs\.attempted/u);
+  assert.match(workflow, /rollback-acs\.succeeded/u);
+  assert.match(workflow, /rollback-app\.attempted/u);
+  assert.match(workflow, /rollback-app\.succeeded/u);
+  assert.doesNotMatch(workflow, /rollback-(?:acs|app)\.receipt/u);
+  assert.match(workflow, /remote_receipt_exists\(\)/u);
+  assert.match(workflow, /case "\$rc" in/u);
+  assert.match(workflow, /remote rollback receipt query failed/u);
+  assert.match(workflow, /return "\$rc"/u);
+  assert.match(workflow, /rollback_receipts=/u);
+  assert.match(workflow, /webAttempted.*webSucceeded/su);
+  assert.match(workflow, /acsAttempted.*acsSucceeded/su);
+  assert.match(workflow, /appAttempted.*appSucceeded/su);
+  assert.match(workflow, /rollbackReceipts:\$rollbackReceipts/u);
+  assert.doesNotMatch(workflow, /--argjson rollbackSucceeded/u);
   assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.doesNotMatch(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
@@ -219,6 +230,9 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
   assert.match(deploy, /record_rollback_attempt/u);
+  assert.match(deploy, /record_rollback_success/u);
+  assert.match(deploy, /ROLLBACK_ATTEMPTED_RECEIPT_PATH/u);
+  assert.match(deploy, /ROLLBACK_SUCCEEDED_RECEIPT_PATH/u);
   assert.ok(
     deploy.indexOf('record_rollback_attempt', deploy.indexOf('cleanup_acs_failure()')) <
       deploy.indexOf('ln -sfn "$previous"', deploy.indexOf('cleanup_acs_failure()')),
@@ -226,6 +240,20 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.ok(
     deploy.indexOf('record_rollback_attempt', deploy.indexOf('cleanup_app_failure()')) <
       deploy.indexOf('systemctl disable --now', deploy.indexOf('cleanup_app_failure()')),
+  );
+  assert.ok(
+    deploy.indexOf('record_rollback_success', deploy.indexOf('cleanup_acs_failure()')) >
+      deploy.indexOf(
+        'curl -fsS http://127.0.0.1:3400/health',
+        deploy.indexOf('cleanup_acs_failure()'),
+      ),
+  );
+  assert.ok(
+    deploy.indexOf('record_rollback_success', deploy.indexOf('cleanup_app_failure()')) >
+      deploy.indexOf(
+        "curl -kfsS -H 'Host: api.agent.kaiyan.net'",
+        deploy.indexOf('cleanup_app_failure()'),
+      ),
   );
   assert.ok(
     workflow.indexOf('rollback-web.attempted', workflow.indexOf('restore_web_entry()')) <

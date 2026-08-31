@@ -9,11 +9,19 @@ set -euo pipefail
 : "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
 : "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
 case "$PHASE" in acs|app) ;; *) echo 'PHASE must be acs or app' >&2; exit 1 ;; esac
-ROLLBACK_RECEIPT_PATH="${ROLLBACK_RECEIPT_PATH:-}"
-[ -z "$ROLLBACK_RECEIPT_PATH" ] || rm -f "$ROLLBACK_RECEIPT_PATH"
+ROLLBACK_ATTEMPTED_RECEIPT_PATH="${ROLLBACK_ATTEMPTED_RECEIPT_PATH:-${ROLLBACK_RECEIPT_PATH:-}}"
+ROLLBACK_SUCCEEDED_RECEIPT_PATH="${ROLLBACK_SUCCEEDED_RECEIPT_PATH:-}"
+[ -z "$ROLLBACK_ATTEMPTED_RECEIPT_PATH" ] || rm -f "$ROLLBACK_ATTEMPTED_RECEIPT_PATH"
+[ -z "$ROLLBACK_SUCCEEDED_RECEIPT_PATH" ] || rm -f "$ROLLBACK_SUCCEEDED_RECEIPT_PATH"
 
 record_rollback_attempt() {
-  [ -z "$ROLLBACK_RECEIPT_PATH" ] || printf '%s\n' "$PHASE:$release_id" >"$ROLLBACK_RECEIPT_PATH"
+  [ -z "$ROLLBACK_ATTEMPTED_RECEIPT_PATH" ] ||
+    printf '%s\n' "$PHASE:$release_id" >"$ROLLBACK_ATTEMPTED_RECEIPT_PATH"
+}
+
+record_rollback_success() {
+  [ -z "$ROLLBACK_SUCCEEDED_RECEIPT_PATH" ] ||
+    printf '%s\n' "$PHASE:$release_id" >"$ROLLBACK_SUCCEEDED_RECEIPT_PATH"
 }
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
@@ -100,7 +108,37 @@ deploy_acs() {
       else
         rm -f /etc/agent-saas/acs-release-identity.json
       fi
-      systemctl restart agent-saas-acs-orchestrator.service || true
+      if [ -n "$previous" ]; then
+        test "$(readlink -f /opt/agent-saas/acs-current)" = "$previous"
+        node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$previous" --component acs >/dev/null
+        cmp "$env_backup" /etc/agent-saas/acs-orchestrator.env
+        if [ "$had_previous_identity" = true ]; then
+          cmp "$identity_backup" /etc/agent-saas/acs-release-identity.json
+        else
+          test ! -e /etc/agent-saas/acs-release-identity.json
+        fi
+        systemctl restart agent-saas-acs-orchestrator.service
+        rm -f /tmp/acs-rollback-health.json
+        for _ in $(seq 1 90); do
+          curl -fsS http://127.0.0.1:3400/health >/tmp/acs-rollback-health.json && break
+          sleep 2
+        done
+        test -s /tmp/acs-rollback-health.json
+        node - /etc/agent-saas/acs-release-identity.json /tmp/acs-rollback-health.json <<'NODE'
+const fs = require('node:fs');
+const [identityPath, healthPath] = process.argv.slice(2);
+const identity = JSON.parse(fs.readFileSync(identityPath, 'utf8'));
+const health = JSON.parse(fs.readFileSync(healthPath, 'utf8'));
+for (const key of ['environment', 'releaseId', 'sourceSha', 'orchestratorArtifactDigest', 'sandboxImageDigest', 'namespace']) {
+  if (identity[key] !== health[key]) process.exit(1);
+}
+NODE
+      else
+        systemctl disable --now agent-saas-acs-orchestrator.service
+        test ! -e /opt/agent-saas/acs-current && test ! -L /opt/agent-saas/acs-current
+        test ! -e /etc/agent-saas/acs-release-identity.json
+      fi
+      record_rollback_success
     fi
   }
   trap cleanup_acs_failure EXIT
@@ -215,8 +253,8 @@ deploy_app() {
   cleanup_app_failure() {
     if [ "$app_committed" = false ] && [ "$app_mutation_started" = true ]; then
       record_rollback_attempt
-      systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
-      systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || true
+      systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null
+      systemctl disable --now "agent-saas-server@$api_idle" >/dev/null
       if [ -n "$worker_idle_previous" ]; then
         ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle"
       else
@@ -241,10 +279,42 @@ deploy_app() {
       printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
       if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
         cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
+        cmp "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
+        nginx -t >/dev/null
+        systemctl reload nginx
       fi
-      systemctl enable --now "agent-saas-server@$api_active" >/dev/null 2>&1 || true
-      systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
+      systemctl enable --now "agent-saas-server@$api_active" >/dev/null
+      systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null
+      test "$(tr -d '[:space:]' </etc/agent-saas/active-color)" = "$api_active"
+      test "$(tr -d '[:space:]' </etc/agent-saas/runtime-worker-active-color)" = "$worker_active"
+      if [ -n "$api_idle_previous" ]; then
+        test "$(readlink -f "/opt/agent-saas-app/color/$api_idle")" = "$api_idle_previous"
+      else
+        test ! -e "/opt/agent-saas-app/color/$api_idle" && test ! -L "/opt/agent-saas-app/color/$api_idle"
+      fi
+      if [ -n "$worker_idle_previous" ]; then
+        test "$(readlink -f "/opt/agent-saas-app/worker/$worker_idle")" = "$worker_idle_previous"
+      else
+        test ! -e "/opt/agent-saas-app/worker/$worker_idle" && test ! -L "/opt/agent-saas-app/worker/$worker_idle"
+      fi
+      if [ "$had_api_env" = true ]; then
+        cmp "$rollback_root/api.release.env" "$api_env"
+      else
+        test ! -e "$api_env"
+      fi
+      if [ "$had_worker_env" = true ]; then
+        cmp "$rollback_root/worker.release.env" "$worker_env"
+      else
+        test ! -e "$worker_env"
+      fi
+      api_active_root="$(readlink -f "/opt/agent-saas-app/color/$api_active")"
+      worker_active_root="$(readlink -f "/opt/agent-saas-app/worker/$worker_active")"
+      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$api_active_root" --component server >/dev/null
+      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$worker_active_root" --component server >/dev/null
+      systemctl is-active --quiet "agent-saas-server@$api_active"
+      systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active"
+      curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
+      record_rollback_success
     fi
   }
   trap cleanup_app_failure EXIT

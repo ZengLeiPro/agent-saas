@@ -15,7 +15,7 @@ function triggerBlock(workflow) {
 
 test('legacy App and ACS workflows expose explicit manual compatibility deployment', async () => {
   for (const [name, forceInput] of [
-    ['ci.yml', 'force_ecs'],
+    ['ci.yml', 'web_only_compatibility'],
     ['acs-sandbox.yml', 'force'],
   ]) {
     const workflow = await readFile(new URL(name, root), 'utf8');

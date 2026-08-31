@@ -380,7 +380,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.receipt' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -443,7 +443,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.receipt' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.attempted' ROLLBACK_SUCCEEDED_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.succeeded' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -656,23 +656,40 @@ jobs:
              [ "${{ steps.deploy_acs.outcome }}" != skipped ]; then
             external_side_effects=unknown
           fi
-          rollback_attempted=false
-          rollback_succeeded=true
-          if [ -s "$RUNNER_TEMP/rollback-web.attempted" ]; then
-            rollback_attempted=true
-            [ -s "$RUNNER_TEMP/rollback-web.succeeded" ] || rollback_succeeded=false
-          fi
-          if ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-               "test -s '$PROMOTION_REMOTE/rollback-acs.receipt' || test -s '$PROMOTION_REMOTE/rollback-app.receipt'"; then
-            rollback_attempted=true
-          fi
+          web_attempted=false
+          web_succeeded=false
+          [ ! -s "$RUNNER_TEMP/rollback-web.attempted" ] || web_attempted=true
+          [ ! -s "$RUNNER_TEMP/rollback-web.succeeded" ] || web_succeeded=true
+          remote_receipt_exists() {
+            local path="$1" rc
+            set +e
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "test -s '$path'"
+            rc=$?
+            set -e
+            case "$rc" in
+              0) printf '%s' true ;;
+              1) printf '%s' false ;;
+              *)
+                echo "remote rollback receipt query failed for $path (ssh rc=$rc)" >&2
+                return "$rc"
+                ;;
+            esac
+          }
+          acs_attempted="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-acs.attempted")"
+          acs_succeeded="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-acs.succeeded")"
+          app_attempted="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-app.attempted")"
+          app_succeeded="$(remote_receipt_exists "$PROMOTION_REMOTE/rollback-app.succeeded")"
+          rollback_receipts="$(jq -nc \
+            --argjson webAttempted "$web_attempted" --argjson webSucceeded "$web_succeeded" \
+            --argjson acsAttempted "$acs_attempted" --argjson acsSucceeded "$acs_succeeded" \
+            --argjson appAttempted "$app_attempted" --argjson appSucceeded "$app_succeeded" \
+            '{web:{attempted:$webAttempted,succeeded:$webSucceeded},acs:{attempted:$acsAttempted,succeeded:$acsSucceeded},app:{attempted:$appAttempted,succeeded:$appSucceeded}}')"
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
             --arg externalSideEffects "$external_side_effects" \
-            --argjson rollbackAttempted "$rollback_attempted" \
-            --argjson rollbackSucceeded "$rollback_succeeded" \
+            --argjson rollbackReceipts "$rollback_receipts" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,rollbackSucceeded:$rollbackSucceeded,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackReceipts:$rollbackReceipts,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 

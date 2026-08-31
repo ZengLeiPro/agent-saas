@@ -33,6 +33,18 @@ export function componentIdentityMatrix(components) {
   };
 }
 
+export function summarizeRollbackReceipts(receipts) {
+  if (!receipts || typeof receipts !== 'object') return null;
+  const entries = Object.values(receipts);
+  if (entries.length === 0) return { attempted: false, succeeded: false };
+  const attempted = entries.some((entry) => entry?.attempted === true);
+  return {
+    attempted,
+    succeeded:
+      attempted && entries.every((entry) => entry?.attempted !== true || entry?.succeeded === true),
+  };
+}
+
 export function reconcilePromotion(input) {
   if (!input?.releaseId || !input.before || !input.target)
     throw new Error('Promotion reconciliation requires release, before and target identities');
@@ -53,6 +65,27 @@ export function reconcilePromotion(input) {
       reason: 'promotion started a forbidden destructive contract migration',
     };
   }
+  const rollback = summarizeRollbackReceipts(input.rollbackReceipts) ?? {
+    attempted: input.rollbackAttempted === true,
+    succeeded: input.rollbackSucceeded === true,
+  };
+  if (rollback.attempted) {
+    if (!rollback.succeeded)
+      return {
+        outcome: 'needs_human',
+        reason: 'rollback was attempted but one or more component restorations were not verified',
+      };
+    if (matrixEquals(observed, before))
+      return {
+        outcome: 'rolled_back',
+        reason: 'all components and restored entry bytes match the frozen pre-promotion state',
+      };
+    return {
+      outcome: 'needs_human',
+      reason:
+        'rollback receipts claim success but the authoritative component matrix is not restored',
+    };
+  }
   if (matrixEquals(observed, target)) {
     return { outcome: 'completed', reason: 'all components match the Manifest target' };
   }
@@ -63,17 +96,6 @@ export function reconcilePromotion(input) {
     };
   }
   if (matrixEquals(observed, before)) {
-    if (input.rollbackAttempted === true) {
-      if (input.rollbackSucceeded !== true)
-        return {
-          outcome: 'needs_human',
-          reason: 'rollback was attempted but its entry restoration was not verified',
-        };
-      return {
-        outcome: 'rolled_back',
-        reason: 'all components and restored entry bytes match the frozen pre-promotion state',
-      };
-    }
     return {
       outcome: 'failed_before_change',
       reason: 'no production component changed before the failure',

@@ -125,7 +125,7 @@ GitHub Release，再重新读取生产现场；未过期或错绑定刷新均拒
 不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
 仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。
 
-`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但其中 `promoting` 必须带完整 Manifest、plan 与生产 before/target digest；悬空 `promoting`、缺失绑定或任何 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后的 rollback 证据，加上完整权威读回确认为原生产矩阵后得出；Web receipt 区分 attempted/succeeded，只有 identity 与 `index.html` 都恢复并从 OSS 按字节回读一致才算 succeeded，失败时即使 identity 回到 before 也必须 `needs_human`。单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`；durable `promoting` 后若 Deployment API 失败，复用 promoting 前已上传的只读 reader 通过 SSH stdout 完成现场读回，确认零 runtime mutation 后可记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
+`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但其中 `promoting` 必须带完整 Manifest、plan 与生产 before/target digest；悬空 `promoting`、缺失绑定或任何 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后的 rollback 证据，加上完整权威读回确认为原生产矩阵后得出；Web、ACS、App receipt 均区分 attempted/succeeded；ACS/App 只有 symlink/env/identity、byte seal、服务与入口恢复并验证后才写 succeeded，Web 只有 identity 与 `index.html` 都恢复并从 OSS 按字节回读一致才算 succeeded，失败时即使 identity 回到 before 也必须 `needs_human`。单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`；durable `promoting` 后若 Deployment API 失败，复用 promoting 前已上传的只读 reader 通过 SSH stdout 完成现场读回，确认零 runtime mutation 后可记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
 
 Production Promotion 的成功状态还硬性依赖 trusted identity 写入后的确认读回：只有 readback step
 成功且输出 `target_match=true`，才允许从 reconcile 的 `completed` 推进到最终 `completed` 或
@@ -143,14 +143,14 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   使用 `production` Environment，实际部署 job 使用 `staging` Environment；若缺少
   `RELEASE_EVIDENCE_WRITE_TOKEN` 或证据不一致，必须在构建 RC 前 fail closed，不得回退为人工伪造、
   复用只读 Token 或跳过生产基线读回。
-- `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工兼容部署入口，但都只接受
-  `refs/heads/main`：App 通道部署 dispatch 时选中的 main SHA；ACS 通道会在部署前校验 latest main，
-  并在 exact-SHA ACR build record 尚未出现时继续拒绝已落后 main 的 dispatch。记录一旦进入
-  `PENDING`/`BUILDING`，Workflow 就锁定该 exact SHA 与镜像继续等待；此后 main 前进不会把本次
-  已锁定部署改成新 SHA，也不会单独取消它。两个入口都不能用于 dispatch 任意旧 commit/tag。
-  push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
-  Promotion receipt 或跨组件物理收敛证据，因此通过它们部署不等于新版发布契约已通过。
-  需要完整发布证据链时使用 `promote-release.yml`，但不得因此关闭两个既有人工入口。
+- `ci.yml` 与 `acs-sandbox.yml` 保留 `workflow_dispatch` 人工兼容入口且只接受
+  `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
+  到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
+  生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
+  因为 ECS + Web 跨 job 失败没有同一事务式补偿。ACS 通道仍会在部署前校验 latest main，并在
+  exact-SHA ACR build record 尚未出现时拒绝已落后 main 的 dispatch；记录进入 `PENDING`/`BUILDING`
+  后锁定 exact SHA 与镜像。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
+  Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。push/PR 仍只执行 CI，不自动部署生产。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的
   `预发验收` 手工 Workflow 承担，默认不运行、不阻断 Promotion，也不写入发布 attestation。

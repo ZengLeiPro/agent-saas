@@ -119,6 +119,13 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     readFile('docs/release-workflow-configuration.md', 'utf8'),
   ]);
   assert.match(appWorkflow, /baselines\/app-/u);
+  assert.match(appWorkflow, /web_only_compatibility:/u);
+  assert.match(appWorkflow, /Confirm Web-only compatibility scope/u);
+  assert.match(appWorkflow, /block_server_compatibility/u);
+  assert.match(appWorkflow, /cannot atomically compensate ECS \+ Web across jobs/u);
+  assert.match(appWorkflow, /needs\.deploy_plan\.outputs\.ecs_required == 'false'/u);
+  assert.doesNotMatch(appWorkflow, /force_ecs/u);
+  assert.match(releaseDocs, /App 入口已收窄为显式确认的 Web-only publish/u);
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
   assert.doesNotMatch(appWorkflow, /agent-saas-production-runtime/u);
@@ -156,8 +163,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /acs-release-identity\.json/u);
   assert.match(acsWorkflow, /后续 main 推进不影响本次代码与镜像/u);
-  assert.match(releaseDocs, /记录一旦进入\s+`PENDING`\/`BUILDING`/u);
-  assert.match(releaseDocs, /此后 main 前进不会把本次\s+已锁定部署改成新 SHA/u);
+  assert.match(releaseDocs, /记录进入 `PENDING`\/`BUILDING`\s+后锁定 exact SHA 与镜像/u);
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);

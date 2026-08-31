@@ -18,6 +18,10 @@ Staging 是独立的发布验证环境，不是生产配置的别名。资源权
    切换 release symlink 前，用候选制品的 `pg` 驱动真实连接并核对 database/role。
 4. 安装三个 `*-staging.service`，创建独立 `/etc`、`/opt`、`/var/lib`、`/run/lock`
    路径并限制属主；生产的 active-color、release symlink、unit、端口和锁均不得复用。
+   Artifact 固定使用 `backend=local`，API 与 Runtime Worker 共用
+   `/mnt/agent-saas-staging/runtime/artifacts`。`signedUrlSecret` 必须独立于 `auth.jwtSecret`；
+   不为 Artifact 新建 OSS Bucket。发布脚本会补齐固定参数、校验 NAS 目录属主与读写权限，
+   并通过服务重启前后的文件探针确认目录持久化。
 5. 安装 nginx 配置并增量配置 DNS。`fc.kaiyan.net` 是共享 FC 域名，本方案不使用
    `fc3-domain`，也不覆盖其路由。
 6. 在 GitHub 创建 `staging` Environment，按工作流文档配置独立 Secrets/Variables。
@@ -31,7 +35,9 @@ Staging 是独立的发布验证环境，不是生产配置的别名。资源权
 workspace 路径。具备主机特权的身份仍可能重新挂载共享文件系统根目录，此残余风险必须以
 `privileged-host-can-remount-shared-filesystem-root` 明文绑定到证据，不能宣称物理隔离。
 
-随后部署固定 RC，运行 Playwright Staging 套件。只有制品回读、真实 Agent → Worker → ACS →
+随后部署固定 RC，运行 Playwright Staging 套件。Artifact 用例必须生成真实 Excel、记录
+`artifactId`/`local://` URI/大小/SHA-256，获取签名下载地址并校验下载内容；重启 Staging API 后，
+同一签名地址仍须返回相同 SHA-256。只有制品回读、真实 Agent → Worker → ACS →
 Sandbox 链路、生产边界拒绝、共享 NAS 逻辑隔离和清理全部成功，才能记录
 `verified-with-accepted-residual-risk`。健康接口成功只证明进程存活。
 

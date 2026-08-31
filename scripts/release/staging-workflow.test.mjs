@@ -179,15 +179,17 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /install_staging_unit/u);
   assert.match(deploy, /systemctl daemon-reload/u);
   assert.match(deploy, /\/mnt\/agent-saas-staging\/runtime\/server/u);
+  assert.match(deploy, /\/mnt\/agent-saas-staging\/runtime\/artifacts/u);
   assert.match(
     deploy,
-    /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1"/u,
+    /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1" "\$2"/u,
   );
   assert.doesNotMatch(
     deploy,
     /install -d -o agent-saas-staging -g agent-saas-staging[\s\S]*\/mnt\/agent-saas-staging\/runtime\/server/u,
   );
-  assert.match(deploy, /Staging runtime directory is not \$\{access\}-accessible/u);
+  assert.match(deploy, /Artifact directory owner does not match the persistent runtime owner/u);
+  assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
   assert.match(deploy, /does not execute the immutable Staging server entrypoint/u);
   assert.match(deploy, /agent-saas-acs-orchestrator-staging\.service/u);
@@ -229,6 +231,16 @@ test('target deployment consumes bundles without source install/build and uses o
     /AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
   );
   assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
+  assert.match(deploy, /AGENT_SAAS_CONFIG_PATH=\/etc\/agent-saas-staging\/config\.json/u);
+  assert.match(deploy, /API and Runtime Worker must use the shared Staging config/u);
+  assert.match(deploy, /artifact\.backend must be local/u);
+  assert.match(deploy, /artifact\.rootDir must use the shared NAS Artifact directory/u);
+  assert.match(deploy, /artifact\.signedUrlSecret must be independent from auth\.jwtSecret/u);
+  assert.match(deploy, /artifact\.readUrlTtlSeconds must be 900/u);
+  assert.match(deploy, /artifact\.maxBlobBytes must be 104857600/u);
+  assert.match(deploy, /artifact\.retentionDays must be 90/u);
+  assert.match(deploy, /artifact\.gcIntervalMs must be 86400000/u);
+  assert.match(deploy, /Artifact persistence probe did not survive the service restart/u);
   assert.match(deploy, /Staging server bundle must contain server\/dist\/index\.js/u);
   assert.match(deploy, /Staging ACS bundle must contain acs-orchestrator\/dist\/index\.js/u);
   assert.match(deploy, /STAGING_RUNTIME_ASSETS_PATH:\?STAGING_RUNTIME_ASSETS_PATH is required/u);

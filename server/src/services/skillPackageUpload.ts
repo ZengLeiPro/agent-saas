@@ -17,10 +17,11 @@ import yauzl, { type Entry, type ZipFile } from 'yauzl';
 
 import { ensureWorkspaceDir, repairWorkspaceTreeAsync } from '../workspace/permissions.js';
 import { shouldIncludeMaterializedPath } from '../workspace/materialization/fingerprint.js';
-const MAX_SKILL_FILES = 300;
-const MAX_SKILL_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
+export const MAX_SKILL_FILES = 300;
+export const MAX_SKILL_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
 const MAX_SKILL_PATH_DEPTH = 16;
+const MAX_SKILL_ZIP_ENTRIES = MAX_SKILL_FILES * MAX_SKILL_PATH_DEPTH;
 
 export class SkillPackageUploadError extends Error {
   constructor(
@@ -88,6 +89,7 @@ async function extractZipArchive(zipPath: string, destination: string): Promise<
   const zipFile = await openZipArchive(zipPath);
   const paths = new Set<string>();
   let entryCount = 0;
+  let fileCount = 0;
   let declaredTotalBytes = 0;
   let actualTotalBytes = 0;
 
@@ -106,8 +108,22 @@ async function extractZipArchive(zipPath: string, destination: string): Promise<
     zipFile.on('entry', (entry) => {
       void (async () => {
         entryCount += 1;
-        if (entryCount > MAX_SKILL_FILES) {
-          throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 内文件数量超出限制', 413);
+        if (entryCount > MAX_SKILL_ZIP_ENTRIES) {
+          throw new SkillPackageUploadError(
+            'SKILL_PACKAGE_LIMIT_EXCEEDED',
+            `zip 内条目数量超出安全限制（最多 ${MAX_SKILL_ZIP_ENTRIES} 个文件和目录）`,
+            413,
+          );
+        }
+        if (!entry.fileName.endsWith('/')) {
+          fileCount += 1;
+          if (fileCount > MAX_SKILL_FILES) {
+            throw new SkillPackageUploadError(
+              'SKILL_PACKAGE_LIMIT_EXCEEDED',
+              `zip 内文件数量超出限制（最多 ${MAX_SKILL_FILES} 个文件，目录不计）`,
+              413,
+            );
+          }
         }
         const isMacOsMetadata = isMacOsMetadataPath(entry.fileName);
         const relativePath = isMacOsMetadata ? null : safeRelativePath(entry.fileName);
@@ -214,7 +230,11 @@ async function packageFingerprint(root: string): Promise<{
       if (entry.isDirectory()) await visit(fullPath, relativePath);
       else if (entry.isFile()) {
         if (files.length >= MAX_SKILL_FILES) {
-          throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包文件数量超出限制', 413);
+          throw new SkillPackageUploadError(
+            'SKILL_PACKAGE_LIMIT_EXCEEDED',
+            `技能包文件数量超出限制（最多 ${MAX_SKILL_FILES} 个文件）`,
+            413,
+          );
         }
         files.push({ path: relativePath, size: (await stat(fullPath)).size });
       } else throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', '技能包包含不安全文件', 400);
@@ -265,8 +285,12 @@ function inspectZipArchive(buffer: Buffer): void {
   if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
     throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 技能包超出支持的大小范围', 413);
   }
-  if (entryCount > MAX_SKILL_FILES) {
-    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 内文件数量超出限制', 413);
+  if (entryCount > MAX_SKILL_ZIP_ENTRIES) {
+    throw new SkillPackageUploadError(
+      'SKILL_PACKAGE_LIMIT_EXCEEDED',
+      `zip 内条目数量超出安全限制（最多 ${MAX_SKILL_ZIP_ENTRIES} 个文件和目录）`,
+      413,
+    );
   }
   const centralEnd = centralOffset + centralSize;
   if (centralOffset > eocdOffset || centralEnd > eocdOffset) {
@@ -274,6 +298,7 @@ function inspectZipArchive(buffer: Buffer): void {
   }
 
   let cursor = centralOffset;
+  let fileCount = 0;
   let totalBytes = 0;
   for (let index = 0; index < entryCount; index += 1) {
     if (cursor + 46 > centralEnd || buffer.readUInt32LE(cursor) !== centralSignature) {
@@ -297,6 +322,16 @@ function inspectZipArchive(buffer: Buffer): void {
       throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', 'zip 技能包超出支持的大小范围', 413);
     }
     const entryName = buffer.subarray(cursor + 46, cursor + 46 + fileNameLength).toString('utf-8');
+    if (!entryName.endsWith('/')) {
+      fileCount += 1;
+      if (fileCount > MAX_SKILL_FILES) {
+        throw new SkillPackageUploadError(
+          'SKILL_PACKAGE_LIMIT_EXCEEDED',
+          `zip 内文件数量超出限制（最多 ${MAX_SKILL_FILES} 个文件，目录不计）`,
+          413,
+        );
+      }
+    }
     if (!isMacOsMetadataPath(entryName) && !safeRelativePath(entryName)) {
       throw new SkillPackageUploadError('SKILL_PACKAGE_UNSAFE', 'zip 内包含不安全路径', 400);
     }
@@ -322,10 +357,18 @@ export async function stageSkillPackage(files: Express.Multer.File[]): Promise<S
   if (files.length === 0) {
     throw new SkillPackageUploadError('SKILL_PACKAGE_EMPTY', '请选择要上传的技能文件', 400);
   }
-  if (files.length > MAX_SKILL_FILES
-    || files.some(file => file.size > MAX_SKILL_FILE_BYTES)
-    || files.reduce((total, file) => total + file.size, 0) > MAX_SKILL_PACKAGE_BYTES) {
-    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包文件数量或大小超出限制', 413);
+  if (files.length > MAX_SKILL_FILES) {
+    throw new SkillPackageUploadError(
+      'SKILL_PACKAGE_LIMIT_EXCEEDED',
+      `技能包文件数量超出限制（最多 ${MAX_SKILL_FILES} 个文件）`,
+      413,
+    );
+  }
+  if (files.some(file => file.size > MAX_SKILL_FILE_BYTES)) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包内单个文件不能超过 25MB', 413);
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > MAX_SKILL_PACKAGE_BYTES) {
+    throw new SkillPackageUploadError('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包总大小不能超过 100MB', 413);
   }
   const tempRoot = await mkdtemp(join(tmpdir(), 'skill-import-'));
   try {

@@ -6,15 +6,16 @@ import type { PgSkillGovernanceStore } from '../data/skillGovernance/index.js';
 import type { UserStore } from '../data/users/store.js';
 import { agentSkillsDir } from '../workspace/namespace.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
-import { SkillPackageUploadError } from './skillPackageUpload.js';
+import {
+  MAX_SKILL_FILES,
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_PACKAGE_BYTES,
+  SkillPackageUploadError,
+} from './skillPackageUpload.js';
 import {
   personalSkillResourceId,
   type TenantSkillGovernanceUploadResult,
 } from './tenantSkillGovernanceUpload.js';
-
-const MAX_SKILL_FILES = 300;
-const MAX_SKILL_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_SKILL_PACKAGE_BYTES = 100 * 1024 * 1024;
 
 type PromoteTenantSkill = (input: {
   tenantId: string;
@@ -67,7 +68,12 @@ async function readSkillFiles(root: string): Promise<Express.Multer.File[]> {
         info.size > MAX_SKILL_FILE_BYTES ||
         totalBytes > MAX_SKILL_PACKAGE_BYTES
       ) {
-        throw invalidPromotion('SKILL_PACKAGE_LIMIT_EXCEEDED', '技能包文件数量或大小超出限制', 413);
+        const message = files.length >= MAX_SKILL_FILES
+          ? `技能包文件数量超出限制（最多 ${MAX_SKILL_FILES} 个文件）`
+          : info.size > MAX_SKILL_FILE_BYTES
+            ? '技能包内单个文件不能超过 25MB'
+            : '技能包总大小不能超过 100MB';
+        throw invalidPromotion('SKILL_PACKAGE_LIMIT_EXCEEDED', message, 413);
       }
       const buffer = await readFile(path);
       files.push({

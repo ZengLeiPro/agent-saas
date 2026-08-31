@@ -15,6 +15,9 @@ import type { GovernanceChangePlanner, PgGovernanceChangeJobStore } from '../dat
 import type { PgMembershipStore } from '../data/memberships/index.js';
 import { hasPlatformCapability } from '../auth/platformGovernance.js';
 import {
+  MAX_SKILL_FILES,
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_PACKAGE_BYTES,
   SkillPackageUploadError,
 } from '../services/skillPackageUpload.js';
 import type {
@@ -161,8 +164,8 @@ export function createGovernanceResourcesRouter(deps: {
   }
   const router = Router();
   const skillUpload = multer({
-    storage: boundedMemoryStorage(100 * 1024 * 1024),
-    limits: { fileSize: 25 * 1024 * 1024, files: 300 },
+    storage: boundedMemoryStorage(MAX_SKILL_PACKAGE_BYTES),
+    limits: { fileSize: MAX_SKILL_FILE_BYTES, files: MAX_SKILL_FILES },
   });
   const now = deps.now ?? (() => new Date());
   const personas = new WeakMap<Request, 'platform_admin' | 'org_admin' | 'member'>();
@@ -539,13 +542,13 @@ export function createGovernanceResourcesRouter(deps: {
       }
     }
 
-    skillUpload.array('files', 300)(req, res, (uploadError) => {
+    skillUpload.array('files', MAX_SKILL_FILES)(req, res, (uploadError) => {
       if (uploadError) {
         const limitExceeded = uploadError instanceof multer.MulterError
           && ['LIMIT_FILE_SIZE', 'LIMIT_FILE_COUNT', 'LIMIT_UNEXPECTED_FILE'].includes(uploadError.code);
         return res.status(limitExceeded ? 413 : 400).json({
           error: limitExceeded
-            ? '技能包超出限制：单个文件不能超过 25MB、总计不能超过 100MB，且最多上传 300 个文件'
+            ? `技能包超出限制：单个文件不能超过 25MB、总计不能超过 100MB，且最多上传 ${MAX_SKILL_FILES} 个文件`
             : '技能包上传请求无效',
           code: limitExceeded ? 'SKILL_PACKAGE_LIMIT_EXCEEDED' : 'SKILL_PACKAGE_REQUEST_INVALID',
         });

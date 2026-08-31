@@ -66,6 +66,7 @@ const governedSkill = {
 
 function uploadSkillFile(container: HTMLElement) {
   fireEvent.click(screen.getByRole('button', { name: '上传技能' }));
+  expect(screen.getByText(/最多 300 个文件（zip 目录不计）/)).toBeTruthy();
   const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
   const file = new File([
     '---\nname: managed-skill\ndescription: managed\n---\nbody',
@@ -94,7 +95,7 @@ beforeEach(() => {
 });
 
 describe('SkillManager 组织治理上传', () => {
-  it('平台管理员代管组织时只调用治理上传，并刷新显示权威版本与组织作用域', async () => {
+  it('平台管理员代管组织时展示上传限制、只调用治理上传，并刷新权威版本与组织作用域', async () => {
     const { container } = render(<SkillManager mode="tenant" tenantIdScope="kaiyan" tenantName="开沿科技" />);
     await waitFor(() => expect((screen.getByRole('button', { name: '上传技能' }) as HTMLButtonElement).disabled).toBe(false));
 

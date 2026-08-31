@@ -117,6 +117,35 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     return { automationId, incarnationId, sessionId: executionSessionId, dispatch, context };
   }
 
+  async function appendSuccessfulShellEvidence(
+    setup: Awaited<ReturnType<typeof activeExecution>>,
+    command = 'pnpm test',
+  ) {
+    const toolCallId = randomUUID();
+    await events.append({
+      type: 'assistant_tool_calls',
+      runId: setup.dispatch.targetRunId,
+      sessionId: setup.sessionId,
+      content: '',
+      toolCalls: [{ id: toolCallId, name: 'Shell', arguments: JSON.stringify({ command }) }],
+    }, { tenantId });
+    const event = await events.append({
+      type: 'tool_result',
+      runId: setup.dispatch.targetRunId,
+      sessionId: setup.sessionId,
+      toolCallId,
+      toolName: 'Shell',
+      content: 'command completed successfully',
+      metadata: { exitCode: 0 },
+    }, { tenantId });
+    const sequence = await pool.query(
+      `SELECT global_sequence FROM ${prefix}_events WHERE tenant_id=$1 AND event_id=$2`,
+      [tenantId, event.id],
+    );
+    expect(sequence.rows).toHaveLength(1);
+    return { event, globalSequence: Number(sequence.rows[0].global_sequence) };
+  }
+
   async function closeExecutionAsProjected(setup: Awaited<ReturnType<typeof activeExecution>>) {
     // Evaluator recovery cases seed a post-terminal boundary directly. Mirror the dispatch-artifact
     // closure performed by SessionAutomationTerminalProjector without exercising projector policy.
@@ -321,9 +350,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     const setup = await activeExecution();
     const evaluate = vi.fn(async () => ({ decision: 'met' as const, reason: 'verified', confidence: 0.99 }));
     const evaluator = new SessionAutomationEvaluator(store, { evaluate } as unknown as GoalEvaluatorPort);
-    const evidenceEvent = await events.append({
-      type: 'assistant_message', runId: setup.dispatch.targetRunId, sessionId: setup.sessionId, content: 'host observed completion',
-    }, { tenantId });
+    const evidence = await appendSuccessfulShellEvidence(setup);
     await expect(evaluator.nominate({
       tenantId,
       sessionId: setup.sessionId,
@@ -334,7 +361,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       generation: 1,
       specVersion: 1,
       summary: 'candidate complete',
-      evidenceRefs: [`event:${evidenceEvent.id}`],
+      evidenceRefs: [`event:${evidence.event.id}`],
     })).resolves.toEqual({ queued: true });
     expect((await pool.query(
       `SELECT count(*)::int AS count FROM ${store.tables.evaluations} WHERE execution_id=$1`,
@@ -343,7 +370,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
     const projector = new SessionAutomationTerminalProjector(store, `goal-candidate-${randomUUID()}`);
     await projector.project({
-      globalSequence: 1,
+      globalSequence: evidence.globalSequence + 1,
       tenantId,
       sessionId: setup.sessionId,
       runId: setup.dispatch.targetRunId,
@@ -360,7 +387,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(projected.rows).toHaveLength(1);
     expect(projected.rows[0].evidence).toMatchObject({
       summary: 'candidate complete',
-      evidenceManifest: { entries: [{ ref: `event:${evidenceEvent.id}`, kind: 'event' }] },
+      evidenceManifest: { entries: [{ ref: `event:${evidence.event.id}`, kind: 'test' }] },
       hardGates: { runTerminal: true },
     });
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'evaluating' });
@@ -406,19 +433,21 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('rejects direct database mutation of frozen candidate evidence', async () => {
     const setup = await activeExecution();
-    const evidence = await events.append({ type: 'assistant_message', runId: setup.dispatch.targetRunId,
-      sessionId: setup.sessionId, content: 'done' }, { tenantId });
+    const evidence = await appendSuccessfulShellEvidence(setup, 'pnpm build');
     const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
-    await evaluator.nominate({ tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
+    await expect(evaluator.nominate({ tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
       executionId: setup.dispatch.outboxId, runId: setup.dispatch.targetRunId, incarnationId: setup.incarnationId,
-      generation: 1, specVersion: 1, summary: 'done', evidenceRefs: [`event:${evidence.id}`] });
+      generation: 1, specVersion: 1, summary: 'done', evidenceRefs: [`event:${evidence.event.id}`] }))
+      .resolves.toEqual({ queued: true });
+    expect((await pool.query(`SELECT count(*)::int n FROM ${store.tables.goalCompletionCandidates}
+      WHERE execution_id=$1`, [setup.dispatch.outboxId])).rows[0].n).toBe(1);
     await expect(pool.query(`UPDATE ${store.tables.goalCompletionCandidates}
       SET evidence_manifest=jsonb_set(evidence_manifest,'{entries,0,source,eventId}','\"tampered\"'::jsonb),
           evidence_manifest_hash='attacker-recomputed-hash'
       WHERE execution_id=$1`, [setup.dispatch.outboxId])).rejects.toThrow('immutable goal candidate evidence');
     const frozen = await pool.query(`SELECT evidence_manifest,evidence_manifest_hash
       FROM ${store.tables.goalCompletionCandidates} WHERE execution_id=$1`, [setup.dispatch.outboxId]);
-    expect(frozen.rows[0].evidence_manifest.entries[0].source.eventId).toBe(evidence.id);
+    expect(frozen.rows[0].evidence_manifest.entries[0].source.eventId).toBe(evidence.event.id);
     expect(frozen.rows[0].evidence_manifest_hash).toBe(frozen.rows[0].evidence_manifest.canonicalHash);
   });
 
@@ -668,16 +697,32 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('blocked hard gate check-in resumes only after the durable resource is released', async () => {
     const setup = await activeExecution();
-    await closeExecutionAsProjected(setup);
-    const evaluationId = randomUUID();
-    await pool.query(
-      `INSERT INTO ${store.tables.evaluations}
-        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,decision)
-       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'blocked',$8)`,
-      [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
-        JSON.stringify({ summary: 'done', evidenceRefs: ['event:1'], hardGates: {} }),
-        JSON.stringify({ decision: 'blocked', reason: 'hard_gate', confidence: 1 })],
+    const evidence = await appendSuccessfulShellEvidence(setup);
+    const evaluate = vi.fn(async () => ({ decision: 'unverifiable' as const, reason: 'test', confidence: 1 }));
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate } as GoalEvaluatorPort);
+    await expect(evaluator.nominate({
+      tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
+      executionId: setup.dispatch.outboxId, runId: setup.dispatch.targetRunId,
+      incarnationId: setup.incarnationId, generation: 1, specVersion: 1,
+      summary: 'done', evidenceRefs: [`event:${evidence.event.id}`],
+    })).resolves.toEqual({ queued: true });
+    const projector = new SessionAutomationTerminalProjector(store, `blocked-hard-gate-${randomUUID()}`);
+    await projector.project({
+      globalSequence: evidence.globalSequence + 1,
+      tenantId,
+      sessionId: setup.sessionId,
+      runId: setup.dispatch.targetRunId,
+      status: 'completed',
+      summary: 'done',
+      progressFingerprint: 'blocked-hard-gate',
+    });
+    const projected = await pool.query(
+      `SELECT evaluation_id,state FROM ${store.tables.evaluations} WHERE execution_id=$1`,
+      [setup.dispatch.outboxId],
     );
+    expect(projected.rows).toHaveLength(1);
+    expect(projected.rows[0].state).toBe('pending');
+    const evaluationId = projected.rows[0].evaluation_id;
     const resourceId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.tables.backgroundResources}
@@ -686,14 +731,17 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [resourceId, tenantId, setup.sessionId, setup.automationId, setup.incarnationId,
         setup.dispatch.outboxId, setup.dispatch.targetRunId, `child:${resourceId}`],
     );
-    const evaluate = vi.fn(async () => ({ decision: 'unverifiable' as const, reason: 'test', confidence: 1 }));
-    const evaluator = new SessionAutomationEvaluator(store, { evaluate } as GoalEvaluatorPort);
-    await evaluator.evaluatePending();
+    expect(await evaluator.evaluatePending()).toBe(1);
     expect(evaluate).not.toHaveBeenCalled();
-    await pool.query(`UPDATE ${store.tables.backgroundResources} SET state='released' WHERE background_resource_id=$1`, [resourceId]);
-    await evaluator.evaluatePending();
+    expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0].state).toBe('blocked');
+    await pool.query(
+      `UPDATE ${store.tables.backgroundResources} SET state='released' WHERE background_resource_id=$1`,
+      [resourceId],
+    );
+    expect(await evaluator.evaluatePending()).toBe(1);
     expect(evaluate).toHaveBeenCalledTimes(1);
     expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0].state).toBe('unverifiable');
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'blocked', phase: 'idle' });
   });
   it('does not claim or call the provider for a stale evaluator fence', async () => {
     const setup = await activeExecution();

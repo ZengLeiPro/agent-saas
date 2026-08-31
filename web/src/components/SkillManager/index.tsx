@@ -811,7 +811,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
           <DialogHeader>
             <DialogTitle>上传技能到{isTenantMode ? "组织" : "平台"}技能池</DialogTitle>
             <DialogDescription>
-              支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。SKILL.md 需要包含 name 和 description frontmatter。
+              支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。最多 300 个文件（zip 目录不计），单个文件不超过 25MB，总计不超过 100MB。SKILL.md 需包含 name 和 description frontmatter。
               {isTenantMode ? "上传后组织成员可在自己的技能设置中启用。" : "上传后按平台/组织/成员三级范围控制开放。"}
             </DialogDescription>
           </DialogHeader>

@@ -78,7 +78,7 @@ describe('App 生产部署门禁', () => {
     });
   });
 
-  it('保留受控旧版本 dispatch，并维持固定 RC Promotion 发布入口', async () => {
+  it('仅保留 Web-only compatibility dispatch，并维持固定 RC Promotion 发布入口', async () => {
     const workflow = await readFile(workflowPath, 'utf-8');
     const promotion = await readFile(
       join(repoRoot, '.github/workflows/promote-release.yml'),
@@ -87,6 +87,7 @@ describe('App 生产部署门禁', () => {
     const planStart = workflow.indexOf('  deploy_plan:');
     const ecsStart = workflow.indexOf('  deploy-ecs:');
     const webStart = workflow.indexOf('  deploy-web-oss:');
+    const plan = workflow.slice(planStart, ecsStart);
     const ecs = workflow.slice(ecsStart, webStart);
     const web = workflow.slice(webStart);
     const triggerBlock = workflow.slice(
@@ -98,12 +99,19 @@ describe('App 生产部署门禁', () => {
     expect(ecsStart).toBeGreaterThan(planStart);
     expect(webStart).toBeGreaterThan(ecsStart);
     expect(triggerBlock).toContain('workflow_dispatch:');
-    expect(triggerBlock).toContain('force_ecs:');
+    expect(triggerBlock).toContain('web_only_compatibility:');
+    expect(triggerBlock).toContain('required: true');
     expect(triggerBlock).toContain('type: boolean');
+    expect(triggerBlock).not.toContain('force_ecs:');
+    expect(plan).toContain('Confirm Web-only compatibility scope');
+    expect(plan).toContain('block_server_compatibility');
+    expect(plan).toContain('cannot atomically compensate ECS + Web across jobs');
     expect(ecs).toContain('needs: [build, deploy_plan]');
     expect(ecs).toContain("github.event_name == 'workflow_dispatch'");
     expect(web).toContain('needs: [build, deploy_plan, deploy-ecs]');
     expect(web).toContain("github.event_name == 'workflow_dispatch'");
+    expect(web).toContain("needs.deploy_plan.outputs.ecs_required == 'false'");
+    expect(web).not.toContain("needs.deploy_plan.outputs.ecs_required == 'true'");
     expect(promotion).toContain('workflow_dispatch:');
     expect(promotion).toContain('release_id:');
     expect(promotion).toContain('environment: production');

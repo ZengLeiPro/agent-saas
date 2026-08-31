@@ -16,7 +16,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', () => {
+describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -60,7 +60,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V33 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V34 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -105,7 +105,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 33 }, (_, index) => index + 1),
+      Array.from({ length: 34 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -273,10 +273,10 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(33);
+    expect(Number(retried.rows[0]?.version)).toBe(34);
   }, 30_000);
 
-  it('V18 遗留 org_memory 空元数据可升级，V23 已标记且旧 ledger 存在时 V24 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V34 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -348,7 +348,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 33, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: 34, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -489,7 +489,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(33);
+    expect(Number(retried.rows[0]?.version)).toBe(34);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
@@ -534,6 +534,38 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     await pool.query(
       `INSERT INTO ${legacyPrefix}_governance_schema_versions (version) VALUES (27),(28)`,
     );
+    await pool.query(`INSERT INTO ${legacyPrefix}_managed_agents
+      (agent_id,tenant_id,kind,owner_user_id,status,revision,created_by,updated_by)
+      VALUES
+        ('legacy-exact','tenant-a','org_agent','admin','enabled',1,'admin','admin'),
+        ('legacy-duplicate','tenant-a','org_agent','admin','enabled',1,'admin','admin'),
+        ('legacy-ambiguous','tenant-a','org_agent','admin','enabled',1,'admin','admin'),
+        ('legacy-conflict','tenant-a','org_agent','admin','enabled',1,'admin','admin')`);
+    await pool.query(`INSERT INTO ${legacyPrefix}_agent_dws_accounts
+      (account_id,tenant_id,agent_id,display_name,login_id,corp_id,dingtalk_user_id,profile_id,
+       status,runtime_status,event_policy_json,created_by,updated_by)
+      VALUES
+        ('legacy-exact','tenant-a','legacy-exact','精确账号','legacy-exact','corp-a','user-a','corp-a',
+         'active','ready','{"kinds":["at_me"]}'::jsonb,'admin','admin'),
+        ('legacy-duplicate','tenant-a','legacy-duplicate','重复账号','legacy-duplicate','corp-a:user-a','user-a','corp-a:user-a',
+         'active','ready','{"kinds":["at_me"]}'::jsonb,'admin','admin'),
+        ('legacy-ambiguous','tenant-a','legacy-ambiguous','待重授权账号','legacy-ambiguous','corp-b',NULL,'corp-b',
+         'active','ready','{"kinds":["at_me"]}'::jsonb,'admin','admin'),
+        ('legacy-conflict','tenant-a','legacy-conflict','冲突账号','legacy-conflict','corp-other','user-c','corp-c:user-c',
+         'active','ready','{"kinds":["at_me"]}'::jsonb,'admin','admin')`);
+    await pool.query(`INSERT INTO ${legacyPrefix}_context_sources
+      (tenant_id,source_id,kind,display_name,status,config_json) VALUES
+      ('tenant-a','legacy-source-exact','dws','精确账号旧身份','active',
+       '{"accountId":"legacy-exact","profileId":"corp-a"}'::jsonb),
+      ('tenant-a','legacy-source-ambiguous','dws','歧义账号旧身份','active',
+       '{"accountId":"legacy-ambiguous","profileId":"corp-b"}'::jsonb)`);
+    await pool.query(`INSERT INTO ${legacyPrefix}_context_collections
+      (tenant_id,source_id,collection_id,external_key,display_name,status) VALUES
+      ('tenant-a','legacy-source-exact','legacy-collection-exact','chat','聊天','active'),
+      ('tenant-a','legacy-source-ambiguous','legacy-collection-ambiguous','chat','聊天','active')`);
+    await pool.query(`INSERT INTO ${legacyPrefix}_context_sync_partitions
+      (tenant_id,source_id,collection_id,partition_key,status,lease_owner,lease_expires_at) VALUES
+      ('tenant-a','legacy-source-exact','legacy-collection-exact','all','syncing','old-worker',NOW()+INTERVAL '5 minutes')`);
 
     const before = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',
@@ -548,7 +580,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
       `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 33 }, (_, index) => index + 1),
+      Array.from({ length: 34 }, (_, index) => index + 1),
     );
     const retentionTable = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',
@@ -567,9 +599,78 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
       'audit_revision',
       'max_audit_attempts',
     ]);
+    const migratedAccounts = await pool.query<{
+      account_id: string;
+      profile_id: string;
+      corp_id: string;
+      dingtalk_user_id: string | null;
+      status: string;
+      runtime_status: string;
+      last_error: string | null;
+    }>(`SELECT account_id,profile_id,corp_id,dingtalk_user_id,status,runtime_status,last_error
+      FROM ${legacyPrefix}_agent_dws_accounts
+      WHERE account_id IN ('legacy-exact','legacy-duplicate','legacy-ambiguous','legacy-conflict') ORDER BY account_id`);
+    expect(migratedAccounts.rows).toEqual([
+      expect.objectContaining({
+        account_id: 'legacy-ambiguous', profile_id: 'corp-b', corp_id: 'corp-b',
+        dingtalk_user_id: null, status: 'error', runtime_status: 'error',
+        last_error: 'dws_profile_identity_reauthorization_required',
+      }),
+      expect.objectContaining({
+        account_id: 'legacy-conflict', profile_id: 'corp-c:user-c', corp_id: 'corp-other',
+        dingtalk_user_id: 'user-c', status: 'error', runtime_status: 'error',
+        last_error: 'dws_profile_identity_reauthorization_required',
+      }),
+      expect.objectContaining({
+        account_id: 'legacy-duplicate', profile_id: 'corp-a:user-a', corp_id: 'corp-a:user-a',
+        dingtalk_user_id: 'user-a', status: 'error', runtime_status: 'error',
+        last_error: 'dws_profile_identity_reauthorization_required',
+      }),
+      expect.objectContaining({
+        account_id: 'legacy-exact', profile_id: 'corp-a:user-a', corp_id: 'corp-a',
+        dingtalk_user_id: 'user-a', status: 'active', runtime_status: 'stopped', last_error: null,
+      }),
+    ]);
+    const invalidatedContext = await pool.query<{
+      source_status: string;
+      collection_status: string;
+    }>(`SELECT source.status AS source_status,collection.status AS collection_status
+      FROM ${legacyPrefix}_context_sources AS source
+      JOIN ${legacyPrefix}_context_collections AS collection
+        ON collection.tenant_id=source.tenant_id AND collection.source_id=source.source_id
+      WHERE source.source_id IN ('legacy-source-exact','legacy-source-ambiguous')
+      ORDER BY source.source_id`);
+    expect(invalidatedContext.rows).toEqual([
+      { source_status: 'disabled', collection_status: 'disabled' },
+      { source_status: 'disabled', collection_status: 'disabled' },
+    ]);
+    const invalidatedPartition = await pool.query<{
+      status: string;
+      lease_owner: string | null;
+      lease_fence: string;
+      lease_expires_at: Date | null;
+    }>(`SELECT status,lease_owner,lease_fence,lease_expires_at
+      FROM ${legacyPrefix}_context_sync_partitions
+      WHERE source_id='legacy-source-exact'`);
+    expect(invalidatedPartition.rows[0]).toMatchObject({
+      status: 'idle', lease_owner: null, lease_fence: '1', lease_expires_at: null,
+    });
+
+    const identityConstraint = await pool.query<{ definition: string }>(`
+      SELECT pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint
+      WHERE conrelid=$1::regclass AND conname=$2
+    `, [
+      `${legacyPrefix}_agent_dws_accounts`,
+      `${legacyPrefix}_adws_active_identity_ck`,
+    ]);
+    expect(identityConstraint.rows[0]?.definition).toContain("status <> 'active'::text");
+    await expect(pool.query(`UPDATE ${legacyPrefix}_agent_dws_accounts
+      SET status='active' WHERE account_id='legacy-ambiguous'`))
+      .rejects.toMatchObject({ code: '23514' });
   }, 30_000);
 
-  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V33', async () => {
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V34', async () => {
     const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {
@@ -604,7 +705,7 @@ describePg('Governance Schema V33 PostgreSQL 升级、约束与事务回滚', ()
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v32Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(33);
+    expect(Number(retried.rows[0]?.version)).toBe(34);
     const tables = await pool.query<{ legacy: string | null; requester: string | null }>(
       'SELECT to_regclass($1) AS legacy,to_regclass($2) AS requester',
       [

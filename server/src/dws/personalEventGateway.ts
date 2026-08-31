@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountRecord,
+  type AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
 import type { DwsWorkspacePrincipal } from './authFlow.js';
 import { deriveDwsPrincipalWorkspaceId, resolveDwsPrincipalCwd } from './authFlow.js';
@@ -83,7 +87,7 @@ export class DwsPersonalEventGateway {
   }
 
   async startAccount(account: AgentDwsAccountRecord): Promise<void> {
-    if (this.stopped || account.status !== 'active' || !account.profileId) return;
+    if (this.stopped || account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;
     if (this.options.isExecutionEnabled && !await this.options.isExecutionEnabled()) return;
     if (this.active.has(account.accountId)) return;
     const retry = this.retryByAccount.get(account.accountId);
@@ -95,6 +99,7 @@ export class DwsPersonalEventGateway {
         account.accountId,
         leaseOwner,
         RUNTIME_LEASE_TTL_MS,
+        account.revision,
       );
       if (!claimed) return;
       if (controller.signal.aborted || this.stopped) {
@@ -165,6 +170,7 @@ export class DwsPersonalEventGateway {
         account.accountId,
         leaseOwner,
         RUNTIME_LEASE_TTL_MS,
+        account.revision,
       ).then(renewed => {
         if (!renewed) {
           this.options.logger?.warn(`Agent DWS runtime lease lost account=${account.accountId}`);
@@ -181,7 +187,13 @@ export class DwsPersonalEventGateway {
     }, RUNTIME_LEASE_RENEW_MS);
     heartbeat.unref?.();
     try {
-      await this.options.accountStore.updateRuntimeStatus(account.accountId, 'starting', undefined, leaseOwner);
+      await this.options.accountStore.updateRuntimeStatus(
+        account.accountId,
+        'starting',
+        undefined,
+        leaseOwner,
+        account.revision,
+      );
       const remote = await this.options.resolveServerRemote(principal);
       const transport = new HttpTransport({
         baseUrl: remote.baseUrl,
@@ -224,7 +236,13 @@ export class DwsPersonalEventGateway {
         if (chunk.type === 'output' && chunk.channel === 'stderr') {
           if (chunk.content.includes('[event] ready')) {
             this.retryByAccount.delete(account.accountId);
-            await this.options.accountStore.updateRuntimeStatus(account.accountId, 'ready', undefined, leaseOwner);
+            await this.options.accountStore.updateRuntimeStatus(
+              account.accountId,
+              'ready',
+              undefined,
+              leaseOwner,
+              account.revision,
+            );
             this.options.logger?.info(`Agent DWS event stream ready account=${account.accountId}`);
           }
           continue;
@@ -239,7 +257,12 @@ export class DwsPersonalEventGateway {
             if (!event || seen.has(event.eventId)) continue;
             seen.add(event.eventId);
             if (seen.size > MAX_SEEN_EVENTS) seen.delete(seen.values().next().value!);
-            const leaseValid = await this.options.accountStore.markEvent(account.accountId, leaseOwner);
+            const leaseValid = await this.options.accountStore.markEvent(
+              account.accountId,
+              leaseOwner,
+              new Date(),
+              account.revision,
+            );
             if (!leaseValid) {
               controller.abort();
               return;
@@ -262,9 +285,10 @@ export class DwsPersonalEventGateway {
         'error',
         message,
         leaseOwner,
+        account.revision,
       ).catch(statusError => {
         this.options.logger?.warn(
-          `Agent DWS runtime status update failed account=${account.accountId}: ${compactError(statusError)}`,
+          `Agent DWS revision-fenced runtime status update failed account=${account.accountId}: ${compactError(statusError)}`,
         );
       });
       this.options.logger?.warn(
@@ -325,7 +349,7 @@ export function parseEventLine(line: string): DwsPersonalEvent | null {
   }
   const eventId = text(raw.event_id);
   const type = text(raw.type) ?? text(raw.event_type);
-  const senderName = text(raw.sender_name) ?? text(raw.sender_nick);
+  const senderName = text(raw.sender) ?? text(raw.sender_name) ?? text(raw.sender_nick);
   if (!eventId || !type) return null;
   return {
     type,

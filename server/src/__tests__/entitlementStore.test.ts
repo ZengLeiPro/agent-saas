@@ -21,7 +21,7 @@ function scopeRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
-  it('migration 创建 EntitlementSet、Resource Scope/Item 与类型化 Policy 表', async () => {
+  it('migration 创建 EntitlementSet、Resource Scope/Item、Policy 并跑完当前 ledger', async () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
@@ -38,7 +38,7 @@ describe('Entitlement 与 Tenant Policy 独立事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_scopes');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_entitlement_resource_items');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_tenant_policies');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('pantheon 不进入客户 Entitlement/Policy API', async () => {

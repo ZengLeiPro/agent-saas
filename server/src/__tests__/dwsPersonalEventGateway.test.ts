@@ -29,6 +29,14 @@ describe('DWS Personal Stream event parser', () => {
     });
   });
 
+  it('优先解析 v1.0.60 flatten 顶层 sender 并兼容旧姓名字段', () => {
+    const canonical = { ...event, sender: '张三', sender_name: '旧名称', sender_nick: '旧昵称' };
+    expect(parseEventLine(JSON.stringify(canonical))).toMatchObject({
+      senderOpenDingtalkId: event.sender_open_dingtalk_id,
+      senderName: '张三',
+    });
+  });
+
   it('忽略日志、坏 JSON 和没有 event_id 的对象', () => {
     expect(parseEventLine('[event] ready')).toBeNull();
     expect(parseEventLine('{bad')).toBeNull();
@@ -38,12 +46,13 @@ describe('DWS Personal Stream event parser', () => {
 
 const account: AgentDwsAccountRecord = {
   accountId: 'account-1', tenantId: 'tenant-1', agentId: 'agent-1', displayName: '销售数字员工', loginId: 'login-1',
-  profileId: 'profile-1', status: 'active', runtimeStatus: 'stopped', eventKinds: ['at_me'], revision: 1,
+  profileId: 'corp-1:user-1', corpId: 'corp-1', dingtalkUserId: 'user-1',
+  status: 'active', runtimeStatus: 'stopped', eventKinds: ['at_me'], revision: 1,
   createdAt: '2026-08-24T00:00:00Z', createdBy: 'admin', updatedAt: '2026-08-24T00:00:00Z', updatedBy: 'admin',
 };
 
-describe('DWS Personal Stream retry circuit', () => {
-  it('backs off repeated failures and opens the circuit after five attempts', async () => {
+describe('DWS Personal Stream exact-profile retry circuit', () => {
+  it('claims the exact account revision, backs off failures and opens the circuit after five attempts', async () => {
     let now = Date.parse('2026-08-24T14:00:00Z');
     const claimRuntimeLease = vi.fn(async () => true);
     const store = {
@@ -59,6 +68,7 @@ describe('DWS Personal Stream retry circuit', () => {
 
     await gateway.startAccount(account);
     await vi.waitFor(() => expect(gateway.getRetrySnapshot()['account-1']?.failures).toBe(1));
+    expect(claimRuntimeLease).toHaveBeenCalledWith('account-1', expect.any(String), 60_000, account.revision);
     await gateway.startAccount(account);
     expect(claimRuntimeLease).toHaveBeenCalledTimes(1);
 

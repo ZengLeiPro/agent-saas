@@ -1635,7 +1635,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
     additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
-      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
+      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
@@ -1715,9 +1715,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     userOverrides: config.agent.userOverrides,
     dispatch: config.dispatch,
-    executionConfig,
-    modelResolver,
+    executionConfig, modelResolver,
     defaultModelResolver,
+    ...(agentDwsAccountStore ? { resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => agentDwsAccountStore.getForTenant(tenantId, accountId) } : {}),
     ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
     getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,

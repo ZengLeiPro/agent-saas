@@ -107,7 +107,7 @@ function buildStatePool() {
 }
 
 describe('Governance Migration Control', () => {
-  it('migration V16 创建完整批次门禁、窄化内容 Grant 与多阶段 Run Snapshot', async () => {
+  it('migration V16 创建批次门禁、内容 Grant、Run Snapshot 并跑完当前 ledger', async () => {
     const queries: string[] = [];
     const query = async (sql: string) => {
       queries.push(sql);
@@ -133,7 +133,7 @@ describe('Governance Migration Control', () => {
     expect(sql).toContain('CREATE TRIGGER test_assignment_delete_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_preference_projection_outbox');
     expect(sql).toContain('CREATE TRIGGER test_entitlement_projection_outbox');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('tenantless shadow difference 使用同一空 tenant scope 自动 resolve', async () => {

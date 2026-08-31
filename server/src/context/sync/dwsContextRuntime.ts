@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   failClosedAgentDwsContextPolicy,
+  hasExactAgentDwsProfile,
   type AgentDwsAccountRecord,
   type AgentDwsAccountStore,
   type AgentDwsContextPolicy,
@@ -132,7 +133,7 @@ export class DwsContextRuntime {
     // enforced before the next event without waiting for a stream restart.
     const current = await this.options.accountStore.getForTenant(account.tenantId, account.accountId);
     const policy = current ? contextPolicyFor(current) : failClosedAgentDwsContextPolicy();
-    if (!current || current.status !== 'active' || !current.profileId
+    if (!current || current.status !== 'active' || !hasExactAgentDwsProfile(current)
       || !selectionAllows(policy.realtime, event.conversationId)) return;
     const historicalIncludesConversation = policy.historical.mode === 'all'
       || (policy.historical.mode === 'selected'
@@ -172,6 +173,10 @@ export class DwsContextRuntime {
   /** Mirrors policy immediately; suitable for the account route callback. */
   async onContextPolicyUpdated(account: AgentDwsAccountRecord): Promise<void> {
     if (!account.profileId) return;
+    if (!hasExactAgentDwsProfile(account)) {
+      await this.pauseContextResources(account);
+      return;
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         for (const source of SOURCES) {
@@ -255,6 +260,12 @@ export class DwsContextRuntime {
     }
   }
 
+  /** Disable and fence resources derived from an identity before that identity is replaced. */
+  async invalidateAccountIdentity(account: AgentDwsAccountRecord): Promise<void> {
+    if (!account.profileId) return;
+    await this.pauseContextResources(account);
+  }
+
   async onAccountEnabledChanged(account: AgentDwsAccountRecord, enabled: boolean): Promise<void> {
     if (enabled) {
       await this.onContextPolicyUpdated(account);
@@ -263,9 +274,9 @@ export class DwsContextRuntime {
     await this.pauseContextResources(account);
   }
 
-  /** Explicit operator recovery after OAuth reconnect; refused partitions are never auto-cleared. */
+  /** Explicit recovery for the current identity; refused partitions are never auto-cleared. */
   async resumeAccount(account: AgentDwsAccountRecord): Promise<void> {
-    if (account.status !== 'active' || !account.profileId) return;
+    if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;
     for (const source of SOURCES) {
       await ensureContextResources(
         this.options.contextStore,
@@ -288,7 +299,7 @@ export class DwsContextRuntime {
     account: AgentDwsAccountRecord,
     sources: readonly ContextSyncSource[] = SOURCES,
   ): Promise<void> {
-    if (account.status !== 'active' || !account.profileId) return;
+    if (account.status !== 'active' || !hasExactAgentDwsProfile(account)) return;
     for (const target of periodicTargets(account, sources)) {
       try {
         await this.syncTarget(account, target);
@@ -308,7 +319,7 @@ export class DwsContextRuntime {
     target: RuntimeSyncTarget,
   ): Promise<void> {
     const current = await this.options.accountStore.getForTenant(account.tenantId, account.accountId);
-    if (!current || current.status !== 'active' || !current.profileId) return;
+    if (!current || current.status !== 'active' || !hasExactAgentDwsProfile(current)) return;
     const refreshedTarget = periodicTargets(current, [target.source])
       .find(candidate => this.dueKey(current, candidate) === this.dueKey(account, target));
     if (!refreshedTarget) return;
@@ -455,7 +466,7 @@ export class DwsRemoteJsonExecutor implements DwsCliJsonExecutor {
       execution.context.tenantId,
       execution.context.accountId,
     );
-    if (!account || account.status !== 'active' || !account.profileId
+    if (!account || account.status !== 'active' || !hasExactAgentDwsProfile(account)
       || account.profileId !== execution.context.profileId) {
       throw new Error('DWS context account is unavailable or unauthorized');
     }

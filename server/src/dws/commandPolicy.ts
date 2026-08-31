@@ -27,14 +27,19 @@ const ALLOWED_MODULES = new Set([
   'ding',
   'doc',
   'drive',
+  'event',
+  'hrbrain',
   'kb',
   'mail',
+  'markdown',
   'minutes',
   'oa',
+  'recruit',
   'report',
   'sheet',
   'table',
   'todo',
+  'whiteboard',
   'wiki',
 ]);
 
@@ -71,6 +76,9 @@ const FORBIDDEN_VERBS = new Set([
   'token',
   'upload',
   'watch',
+]);
+const FORBIDDEN_COMMAND_PATHS = new Set([
+  'event.listen-im',
 ]);
 const FORBIDDEN_FLAGS =
   /^(?:-p|--profile|--token|--access-token|--refresh-token|--config-dir|--keychain-dir|--client-id|--client-secret|--action|--operation|--method|--command|--output|--out|--output-dir|--download-dir|--file|--path|--dir|--directory)(?:=|$)/;
@@ -190,12 +198,36 @@ export function classifyDwsBusinessCommand(args: string[]): ClassifiedDwsCommand
     );
   }
   const firstFlagIndex = args.findIndex((token) => token.startsWith('-'));
-  const commandTokens = args
+  const pathAndPositionals = args
     .slice(0, firstFlagIndex < 0 ? args.length : firstFlagIndex)
     .map((token) => token.toLowerCase().replace(/^\+/, ''));
+  const hasEventSchemaPrefix = pathAndPositionals[0] === 'event'
+    && pathAndPositionals[1] === 'schema';
+  if (hasEventSchemaPrefix && pathAndPositionals.length > 3) {
+    throw new DwsCommandPolicyError(
+      'DWS event schema 仅接受一个事件码',
+      pathAndPositionals.join('.'),
+      'unregistered',
+    );
+  }
+  const hasEventSchemaPositional = hasEventSchemaPrefix && pathAndPositionals.length === 3;
+  const commandTokens = hasEventSchemaPositional
+    ? pathAndPositionals.slice(0, 2)
+    : pathAndPositionals;
+  const positionalArgs = hasEventSchemaPositional ? args.slice(2, firstFlagIndex < 0 ? args.length : firstFlagIndex) : [];
   const commandPath = commandTokens.join('.');
   const pathTokens = commandTokens.flatMap((token) => token.split('-').filter(Boolean));
-  const trailingArgs = firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex);
+  const trailingArgs = [
+    ...positionalArgs,
+    ...(firstFlagIndex < 0 ? [] : args.slice(firstFlagIndex)),
+  ];
+  if (FORBIDDEN_COMMAND_PATHS.has(commandPath)) {
+    throw new DwsCommandPolicyError(
+      'DWS 长连接命令不支持通过同步 Broker 执行',
+      commandPath,
+      'platform_boundary',
+    );
+  }
   if (hasForbiddenDwsCatalogFileFlag(commandPath, trailingArgs)) {
     throw new DwsCommandPolicyError('DWS 命令包含本地文件参数', commandPath, 'platform_boundary');
   }

@@ -154,7 +154,7 @@ const recipe = {
 };
 
 describe('Environment Provider/Template/Instance 领域', () => {
-  it('migration V8 创建 Provider、Template Version 与 Resource Reference 表', async () => {
+  it('migration V8 创建 Provider、Template Version、Resource Reference 并跑完当前 ledger', async () => {
     const { pool, queries } = buildPool();
     const store = new PgEnvironmentStore({ pool, tablePrefix: 'test' });
     await store.init();
@@ -164,7 +164,7 @@ describe('Environment Provider/Template/Instance 领域', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_environment_template_versions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_references');
     expect(sql).toContain('infrastructure_credential_id TEXT');
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('Provider 新建与更新必须 expectedRevision，保存 credentialId 而非 Secret', async () => {

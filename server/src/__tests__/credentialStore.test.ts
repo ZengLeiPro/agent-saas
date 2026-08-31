@@ -156,7 +156,7 @@ function buildPool(state: PoolState = { credentialRows: [], issueRows: [] }) {
 }
 
 describe('Credential 治理事实模型', () => {
-  it('migration V6 创建带 generation/status 的 credential 表与 secret_ref 唯一索引', async () => {
+  it('migration V6 创建 credential 表与唯一索引，并跑完当前 ledger', async () => {
     const { pool, queries } = buildPool();
     const store = new PgCredentialStore({ pool, tablePrefix: 'test' });
     await store.init();
@@ -170,7 +170,7 @@ describe('Credential 治理事实模型', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_credential_commits');
     expect(sql).toContain('PRIMARY KEY (tenant_id,operation,idempotency_key)');
     expect(sql).toContain('UNIQUE (tenant_id,operation,nonce_digest)');
-    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(34);
   });
 
   it('create 强制 secretRef/owner/kind，重复 secretRef fail closed', async () => {

@@ -12,7 +12,9 @@ const account: AgentDwsAccountRecord = {
   agentId: 'agent-a',
   displayName: '销售 Agent',
   loginId: 'login-a',
-  profileId: 'profile-a',
+  corpId: 'corp-a',
+  dingtalkUserId: 'user-a',
+  profileId: 'corp-a:user-a',
   status: 'active',
   runtimeStatus: 'ready',
   eventKinds: ['at_me'],
@@ -36,7 +38,7 @@ function accountStore(record: AgentDwsAccountRecord | null = account): AgentDwsA
 const context = {
   tenantId: 'tenant-a',
   accountId: 'account-a',
-  profileId: 'profile-a',
+  profileId: 'corp-a:user-a',
   operation: 'chat.list' as const,
 };
 
@@ -189,7 +191,7 @@ describe('DwsContextRuntime', () => {
     });
     expect(store.getForTenant).toHaveBeenCalledTimes(3);
     const identity = defaultPartitionIdentity({
-      tenantId: 'tenant-a', accountId: 'account-a', profileId: 'profile-a',
+      tenantId: 'tenant-a', accountId: 'account-a', profileId: 'corp-a:user-a',
       source: 'chat', conversationIds: ['cid-allowed'],
     });
     expect(contextStore.getPartition).toHaveBeenCalledWith(
@@ -197,8 +199,8 @@ describe('DwsContextRuntime', () => {
     );
   });
 
-  it('mirrors policy into source config and chat collection metadata on policy update', async () => {
-    const sourceRecord = { config: { accountId: 'account-a', profileId: 'profile-a' }, revision: 1 };
+  it('mirrors policy and disables all resources before account identity replacement', async () => {
+    const sourceRecord = { config: { accountId: 'account-a', profileId: 'corp-a:user-a' }, revision: 1 };
     const collectionRecord = { metadata: { keep: true }, revision: 1 };
     const updateSource = vi.fn(async (input: Record<string, unknown>) => ({
       ...sourceRecord, config: input.config, revision: 2,
@@ -253,6 +255,14 @@ describe('DwsContextRuntime', () => {
     await runtime.onAccountEnabledChanged({ ...selected, status: 'paused' }, false);
     expect(updateSource).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
     expect(updateCollection).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
+
+    updateSource.mockClear();
+    updateCollection.mockClear();
+    resetPartitionsForPolicyChange.mockClear();
+    await runtime.invalidateAccountIdentity(selected);
+    expect(updateSource).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
+    expect(updateCollection).toHaveBeenCalledWith(expect.objectContaining({ status: 'disabled' }));
+    expect(resetPartitionsForPolicyChange).toHaveBeenCalledTimes(3);
   });
 });
 

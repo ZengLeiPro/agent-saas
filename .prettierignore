@@ -3,3 +3,6 @@ dist/
 build/
 coverage/
 .expo/
+
+# DWS skill 为上游发布快照；避免提交钩子重排官方 Markdown，平台 overlay 另做专项校验。
+workspace-shared/.ky-agent/skills-pool/dws/**

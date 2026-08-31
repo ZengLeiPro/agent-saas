@@ -213,7 +213,7 @@ export async function createAgentDwsRuntime(options: {
     onEvent: async (account, event) => {
       if (!messageRouter) throw new Error('Agent DWS durable inbox is unavailable');
       await messageRouter.ingest(account, event);
-      // Context sync is a best-effort wake after the durable inbox commit. Event
+      // Context sync remains a best-effort wake after the durable inbox commit. Event
       // content is ignored; the worker re-reads canonical messages from DWS.
       void contextRuntime?.wake(account, event).catch(error => {
         options.logger.warn(
@@ -231,6 +231,9 @@ export async function createAgentDwsRuntime(options: {
       agentCwd: options.agentCwd,
       resolveServerRemote: options.resolveServerRemote,
     }),
+    onBeforeAccountIdentityChange: async account => {
+      await contextRuntime?.invalidateAccountIdentity(account);
+    },
     onConnected: async account => {
       if (!options.enableWorker) return;
       await eventGateway.startAccount(account);

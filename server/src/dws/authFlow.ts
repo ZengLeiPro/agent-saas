@@ -13,7 +13,7 @@ import type {
 } from './authStore.js';
 import { readDwsProfiles } from './keepalive.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
-import type { DwsConnectionStore } from './store.js';
+import { hasExactDwsConnectionProfile, type DwsConnectionStore } from './store.js';
 
 const DWS_DEVICE_FLOW_TIMEOUT_MS = 15 * 60 * 1_000;
 const DWS_AUTH_URL_BASE = 'https://login.dingtalk.com/oauth2/device/verify.htm';
@@ -129,7 +129,10 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
   }
 
   async logout(user: DwsWorkspacePrincipal, profileIds: string[]): Promise<void> {
-    const targets: Array<string | undefined> = profileIds.length > 0 ? profileIds : [undefined];
+    const targets = profileIds.map(profileId => profileId.trim());
+    if (targets.length === 0 || targets.some(profileId => !isExactDwsProfileSelector(profileId))) {
+      throw new Error('DWS logout 仅允许 corpId:dingtalkUserId 格式的精确账号 profile selector');
+    }
     const serverRemote = await resolveServerRemote(this.options, user);
     const transport = new HttpTransport({
       baseUrl: serverRemote.baseUrl,
@@ -143,11 +146,10 @@ export class DwsDeviceLoginRunner implements DwsDeviceLoginRunnerLike {
     const workspaceId = deriveDwsPrincipalWorkspaceId(user);
     const sandboxScopeId = `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
     for (const profileId of targets) {
-      const profileArg = profileId ? ` --profile ${shellQuote(profileId)}` : '';
       const response = await transport.invoke({
         toolName: 'Shell',
         input: {
-          command: `dws auth logout${profileArg} --format json`,
+          command: `dws auth logout --profile ${shellQuote(profileId)} --format json`,
           timeoutMs: 60_000,
         },
         context: {
@@ -258,16 +260,18 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
   async revokeProfile(user: UserInfo, profileId: string): Promise<void> {
     await this.cancelUser(user.tenantId, user.id);
     const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
-    if (!profiles.some(profile => profile.profileId === profileId)) return;
-    if (!this.options.runner.logout || !this.options.connectionStore.removeProfile) {
-      throw new Error('DWS 断开服务尚未配置');
-    }
-    try {
-      await this.options.runner.logout(user, [profileId]);
-    } catch (error) {
-      // keepalive 账本可能比本地 DWS profile 晚一步收敛。profile 已不存在时，
-      // logout 的目标已经达成，继续清理平台账本，保证断开操作幂等。
-      if (!isDwsProfileMissingError(error)) throw error;
+    const profile = profiles.find(candidate => candidate.profileId === profileId);
+    if (!profile) return;
+    if (!this.options.connectionStore.removeProfile) throw new Error('DWS 断开服务尚未配置');
+    if (hasExactDwsConnectionProfile(profile)) {
+      if (!this.options.runner.logout) throw new Error('DWS 断开服务尚未配置');
+      try {
+        await this.options.runner.logout(user, [profile.profileId]);
+      } catch (error) {
+        // keepalive 账本可能比本地 DWS profile 晚一步收敛。profile 已不存在时，
+        // logout 的目标已经达成，继续清理平台账本，保证断开操作幂等。
+        if (!isDwsProfileMissingError(error)) throw error;
+      }
     }
     await this.options.connectionStore.removeProfile(user.tenantId, user.id, profileId);
   }
@@ -276,10 +280,12 @@ export class DwsAuthFlowService implements DwsAuthFlowServiceLike {
     await this.cancelUser(user.tenantId, user.id);
     const profiles = await this.options.connectionStore.listForUser(user.tenantId, user.id);
     if (profiles.length === 0) return;
-    if (!this.options.runner.logout || !this.options.connectionStore.removeForUser) {
-      throw new Error('DWS 断开服务尚未配置');
+    if (!this.options.connectionStore.removeForUser) throw new Error('DWS 断开服务尚未配置');
+    const exactProfileIds = profiles.filter(hasExactDwsConnectionProfile).map(profile => profile.profileId);
+    if (exactProfileIds.length > 0) {
+      if (!this.options.runner.logout) throw new Error('DWS 断开服务尚未配置');
+      await this.options.runner.logout(user, exactProfileIds);
     }
-    await this.options.runner.logout(user, profiles.map(profile => profile.profileId));
     await this.options.connectionStore.removeForUser(user.tenantId, user.id);
   }
 
@@ -371,6 +377,12 @@ export function deriveDwsWorkspaceMountSubPath(agentCwd: string, userCwd: string
   const rel = relative(mountRoot, resolve(userCwd));
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return undefined;
   return rel.split(sep).join('/');
+}
+
+function isExactDwsProfileSelector(value: string): boolean {
+  const parts = value.split(':');
+  return parts.length === 2
+    && parts.every(part => part.length > 0 && part === part.trim() && !/\s/.test(part));
 }
 
 function shellQuote(value: string): string {

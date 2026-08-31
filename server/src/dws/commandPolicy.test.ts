@@ -102,6 +102,50 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
     expectPolicyRejection(['chat', 'message', 'send', 'all'], 'unregistered');
   });
 
+  it('exposes reviewed v1.0.60 product modules through manifest-level policy', () => {
+    for (const args of [
+      ['event', 'list'],
+      ['hrbrain', 'profile', 'query'],
+      ['markdown', 'fetch'],
+      ['recruit', 'job', 'list'],
+      ['whiteboard', 'query'],
+    ]) {
+      expect(classifyDwsBusinessCommand(args)).toMatchObject({
+        risk: 'read',
+        policySource: 'cli_schema',
+      });
+      expect(resolveDwsBusinessRisk({ args })).toBe('safe');
+    }
+  });
+
+  it('精确拒绝同步 Broker 无法承载的 event 长连接命令', () => {
+    for (const args of [
+      ['event', '+listen-im', '--kind', 'at-me'],
+      ['event', 'listen-im', '--kind', 'at-me'],
+      ['event', '+listen-im', '--kind', 'at-me', '--duration', '5m'],
+      ['event', '+listen-im', '--kind', 'all-direct', '--max-events', '10'],
+    ]) {
+      expectPolicyRejection(args, 'platform_boundary');
+      expect(resolveDwsBusinessRisk({ args, confirmed: true })).toBe('dangerous');
+      expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
+        risk: 'dangerous',
+        neverAutoApprove: true,
+      });
+    }
+    expectPolicyRejection(
+      ['event', 'schema', 'user_im_message_receive_at', 'unexpected'],
+      'unregistered',
+    );
+    for (const args of [
+      ['event', 'list'],
+      ['event', 'schema', 'user_im_message_receive_at', '--flatten'],
+      ['event', 'status', '--event', 'user_im_message_receive_at'],
+    ]) {
+      expect(classifyDwsBusinessCommand(args)).toMatchObject({ risk: 'read' });
+      expect(resolveDwsBusinessRisk({ args })).toBe('safe');
+    }
+  });
+
   it('manifest 命中前拒绝破坏性 flag、文件路径与 stdin 引用', () => {
     const rejectedCommands = [
       ['attendance', 'group', 'update-members', '--group-id', '123', '--remove-users', 'u1'],

@@ -100,6 +100,16 @@ export interface SkillsDispatchConfig {
   ensureReady?: (username: string | undefined, requiredSkillIds?: readonly string[]) => Promise<void>;
 }
 
+export interface LegacyDwsCompletionAccountSnapshot {
+  accountId: string;
+  status: string;
+  profileId?: string;
+  corpId?: string;
+  dingtalkUserId?: string;
+  identityUpdatedAt?: string;
+  updatedAt: string;
+}
+
 export interface RawRuntimeRunDispatchConfig {
   agentCwd: string;
   uploadManager?: Pick<UploadManager, 'resolveAttachments'>;
@@ -204,11 +214,19 @@ export interface RawRuntimeRunDispatchConfig {
   tokenUsageStore?: () => TokenUsageStore | undefined;
   /** PG durable 后台 Agent；file backend 缺省时 Agent(mode=background) fail-closed。 */
   backgroundTasks?: BackgroundTaskRuntime;
-  /** DWS dispatcher Worker 终态进入 durable current-user outbox 的注入点。 */
+  /** 仅用于跨部署旧完成路由的保守身份补齐；缺失或异常时完成通知 fail closed。 */
+  resolveLegacyDwsCompletionAccount?: (
+    tenantId: string,
+    accountId: string,
+  ) => Promise<LegacyDwsCompletionAccountSnapshot | null>;
+  /** DWS dispatcher Worker 终态按原精确账号身份进入 durable current-user outbox。 */
   enqueueDwsBackgroundCompletion?: (input: {
     tenantId: string;
     taskId: string;
     accountId: string;
+    profileId: string;
+    corpId: string;
+    dingtalkUserId: string;
     conversationId: string;
     eventType: 'user_im_message_receive_at' | 'user_im_message_receive_o2o_all';
     messageId?: string;

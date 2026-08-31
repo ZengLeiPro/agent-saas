@@ -201,7 +201,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(parentSession.orgAgentSnapshot?.runtime.executionMode
           ? { executionMode: parentSession.orgAgentSnapshot.runtime.executionMode }
           : {}),
-        ...(dwsCompletionRoute ? { dwsCompletionRoute } : {}),
+        ...(dwsCompletionRoute.version === 'exact' ? { dwsCompletionRoute: dwsCompletionRoute.route } : {}),
+        ...(dwsCompletionRoute.version === 'invalid' ? { dwsCompletionRouteVersion: 'invalid' } : {}),
         agentType: request.agentType,
         modelRef,
         includeCompanyInfo: request.includeCompanyInfo

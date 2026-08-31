@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRunDispatch } from '../agent/index.js';
 import type { AgentDwsAccountRecord, AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
-import type {
-  AgentDwsInboxRecord,
-  AgentDwsMessageStore,
+import {
+  DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+  type AgentDwsInboxRecord,
+  type AgentDwsMessageStore,
 } from '../data/agentDwsMessages/index.js';
 import {
   AgentDwsMessageRouter,
@@ -18,7 +19,8 @@ const account: AgentDwsAccountRecord = {
   agentId: 'agent-a',
   displayName: '开开',
   loginId: '17300000000',
-  profileId: 'corp-a',
+  profileId: 'corp-a:agent-self',
+  corpId: 'corp-a',
   dingtalkUserId: 'agent-self',
   status: 'active',
   runtimeStatus: 'ready',
@@ -49,7 +51,13 @@ const item: AgentDwsInboxRecord = {
   messageId: 'mid-a',
   senderOpenDingtalkId: 'sender-a',
   content: '请汇总今天的进展',
-  payload: {},
+  payload: {
+    accountIdentity: {
+      profileId: account.profileId,
+      corpId: account.corpId,
+      dingtalkUserId: account.dingtalkUserId,
+    },
+  },
   state: 'processing',
   attempt: 1,
   maxAttempts: 8,
@@ -72,6 +80,7 @@ function setup(input: {
   resolveRequester?: typeof requester | null;
   requesterAllowed?: boolean;
   claimNext?: AgentDwsMessageStore['claimNext'];
+  legacyIdentityUnprovable?: boolean;
   logger?: { info(message: string): void; warn(message: string): void };
 } = {}) {
   const claimedItems = Array.isArray(input.claimed) ? input.claimed : [input.claimed ?? item];
@@ -88,6 +97,28 @@ function setup(input: {
     claimNext,
     releaseClaim: vi.fn().mockResolvedValue({ ...claimed, state: 'pending', attempt: 0 }),
     renewLease: vi.fn().mockResolvedValue(true),
+    pinLegacyIdentityOrTerminate: vi.fn().mockImplementation(async (inboxId: string) => {
+      const entry = claimedById.get(inboxId) ?? claimed;
+      return input.legacyIdentityUnprovable ? {
+        ...entry,
+        state: 'dead_letter' as const,
+        leaseOwner: undefined,
+        leaseExpiresAt: undefined,
+        nextAttemptAt: undefined,
+        lastError: DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+        completedAt: new Date().toISOString(),
+      } : {
+        ...entry,
+        payload: {
+          ...entry.payload,
+          accountIdentity: {
+            profileId: account.profileId,
+            corpId: account.corpId,
+            dingtalkUserId: account.dingtalkUserId,
+          },
+        },
+      };
+    }),
     getOrCreateBinding: vi.fn().mockImplementation(async (
       tenantId: string, accountId: string, conversationId: string,
     ) => ({
@@ -167,7 +198,7 @@ function setup(input: {
   };
 }
 
-describe('AgentDwsMessageRouter', () => {
+describe('AgentDwsMessageRouter exact profile and inbox identity fencing', () => {
   it('processes different conversations concurrently up to the configured bound', async () => {
     const second = {
       ...item,
@@ -286,14 +317,19 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.ingest).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', accountId: 'account-a', conversationId: 'cid-a', content: item.content,
     }), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       source: 'dws_personal_stream',
       eventType: item.eventType,
+      accountIdentity: {
+        profileId: 'corp-a:agent-self',
+        corpId: 'corp-a',
+        dingtalkUserId: 'agent-self',
+      },
     });
     await router.stop();
   });
 
-  it('binds a stable Session, dispatches the org Agent, and sends one durable reply', async () => {
+  it('binds a stable Session, dispatches the org Agent, and sends one identity-fenced durable reply', async () => {
     const { router, messageStore, dispatch, sender, authorizeRequester } = setup();
 
     await expect(router.runOnce()).resolves.toBe(true);
@@ -331,12 +367,150 @@ describe('AgentDwsMessageRouter', () => {
     expect(messageStore.complete).toHaveBeenCalledOnce();
   });
 
-  it('background completion is dispatched into the same parent Session as a durable notification, not a new Worker request', async () => {
+  it('非 v1 行缺少入站账号身份快照时仍 fail closed，不执行也不回复', async () => {
+    const { router, dispatch, sender, messageStore } = setup({
+      claimed: { ...item, payload: {} },
+    });
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      expect.objectContaining({ message: expect.stringContaining('identity is missing') }),
+    );
+  });
+
+  it('v2 已持久化回复在崩溃重领后不重复 dispatch，并继续发送与完成', async () => {
+    const recovered = {
+      ...item,
+      state: 'reply_pending' as const,
+      attempt: 2,
+      sessionId: 'session-a',
+      runId: 'run-a',
+      responseText: '崩溃前已持久化回复',
+      payload: { ...item.payload, schemaVersion: 2 },
+    };
+    const { router, messageStore, dispatch, sender } = setup({ claimed: recovered });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(messageStore.saveDispatchResult).not.toHaveBeenCalled();
+    expect(messageStore.markReplyAttemptStarted).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledWith(
+      account, expect.objectContaining({ eventId: item.eventId }), '崩溃前已持久化回复', expect.any(String),
+    );
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['pending', { state: 'processing' as const, attempt: 1 }],
+    ['retry_wait', { state: 'processing' as const, attempt: 3 }],
+    ['reply_pending', {
+      state: 'reply_pending' as const,
+      attempt: 3,
+      sessionId: 'session-a',
+      runId: 'run-a',
+      responseText: '旧版本已持久化回复',
+    }],
+  ])('旧 v1 %s 行可证明身份未变时补 pin 后由新版本处理', async (_legacyState, claimedPatch) => {
+    const legacy = {
+      ...item,
+      ...claimedPatch,
+      payload: { schemaVersion: 1, source: 'dws_personal_stream' },
+    };
+    const { router, messageStore, dispatch, sender } = setup({ claimed: legacy });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+
+    expect(messageStore.pinLegacyIdentityOrTerminate).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      {
+        profileId: account.profileId,
+        corpId: account.corpId,
+        dingtalkUserId: account.dingtalkUserId,
+      },
+    );
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.complete).toHaveBeenCalledOnce();
+    expect(sender.send).toHaveBeenCalledOnce();
+    if (_legacyState === 'reply_pending') expect(dispatch).not.toHaveBeenCalled();
+    else expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['pending', { state: 'processing' as const, attempt: 1 }],
+    ['retry_wait', { state: 'processing' as const, attempt: 3 }],
+    ['reply_pending', {
+      state: 'reply_pending' as const,
+      attempt: 3,
+      responseText: '旧版本已持久化回复',
+    }],
+  ])('旧 v1 %s 行身份不可证明时一次终结，重复 run 幂等跳过', async (_legacyState, claimedPatch) => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const legacy = {
+      ...item,
+      ...claimedPatch,
+      payload: { schemaVersion: 1, source: 'dws_personal_stream' },
+    };
+    const { router, messageStore, dispatch, sender } = setup({
+      claimed: legacy,
+      legacyIdentityUnprovable: true,
+      logger,
+    });
+
+    await expect(router.runOnce()).resolves.toBe(true);
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(messageStore.pinLegacyIdentityOrTerminate).toHaveBeenCalledOnce();
+    expect(messageStore.fail).not.toHaveBeenCalled();
+    expect(messageStore.complete).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(logger.warn.mock.calls[0]?.[0]))).toMatchObject({
+      level: 'warn',
+      code: DWS_INBOX_V1_IDENTITY_UNPROVABLE,
+      inboxId: 'inbox-a',
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+    });
+  });
+
+  it('账号在 dispatch 期间重授权时拒绝用旧快照或新账号发送回复', async () => {
+    const changedAccount = {
+      ...account,
+      profileId: 'corp-a:agent-other',
+      dingtalkUserId: 'agent-other',
+      revision: account.revision + 1,
+    };
+    const { router, accountStore, sender, messageStore } = setup();
+    vi.mocked(accountStore.getForTenant)
+      .mockResolvedValueOnce(account)
+      .mockResolvedValueOnce(changedAccount);
+
+    await expect(router.runOnce()).resolves.toBe(false);
+
+    expect(sender.send).not.toHaveBeenCalled();
+    expect(messageStore.complete).not.toHaveBeenCalled();
+    expect(messageStore.fail).toHaveBeenCalledWith(
+      'inbox-a', expect.stringMatching(/^agent-dws-router:/), 1,
+      expect.objectContaining({ message: 'Agent DWS account identity changed before reply' }),
+    );
+  });
+
+  it('background completion keeps the pinned account identity and reuses the parent Session', async () => {
     const completion = {
       ...item,
       eventId: 'background-task-completion:bg-1',
       content: '<task-notification><task-id>T-1234ABCD</task-id><status>completed</status></task-notification>',
-      payload: { source: 'background_task_completion', backgroundTaskId: 'bg-1' },
+      payload: {
+        ...item.payload,
+        source: 'background_task_completion',
+        backgroundTaskId: 'bg-1',
+      },
     };
     const dispatch: AgentRunDispatch = vi.fn((_message, _context, _options, hooks) => (async function* () {
       await hooks?.onResult?.({ resultText: '任务 T-1234ABCD 已完成。' });

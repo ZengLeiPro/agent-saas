@@ -49,8 +49,13 @@ type DwsBackgroundCompletionInput = Parameters<
   NonNullable<RawRuntimeRunDispatchConfig['enqueueDwsBackgroundCompletion']>
 >[0];
 
-export function createDwsBackgroundCompletionEnqueuer(messageStore: AgentDwsMessageStore) {
+export function createDwsBackgroundCompletionEnqueuer(
+  messageStore: AgentDwsMessageStore,
+): NonNullable<RawRuntimeRunDispatchConfig['enqueueDwsBackgroundCompletion']> {
   return async (input: DwsBackgroundCompletionInput): Promise<void> => {
+    if (input.profileId !== `${input.corpId}:${input.dingtalkUserId}`) {
+      throw new Error('Agent DWS background completion account identity is invalid');
+    }
     await messageStore.ingest({
       tenantId: input.tenantId,
       accountId: input.accountId,
@@ -61,6 +66,15 @@ export function createDwsBackgroundCompletionEnqueuer(messageStore: AgentDwsMess
       ...(input.senderOpenDingtalkId ? { senderOpenDingtalkId: input.senderOpenDingtalkId } : {}),
       content: input.content,
       eventTimestamp: new Date(),
-    }, { source: 'background_task_completion', backgroundTaskId: input.taskId });
+    }, {
+      schemaVersion: 2,
+      source: 'background_task_completion',
+      backgroundTaskId: input.taskId,
+      accountIdentity: {
+        profileId: input.profileId,
+        corpId: input.corpId,
+        dingtalkUserId: input.dingtalkUserId,
+      },
+    });
   };
 }

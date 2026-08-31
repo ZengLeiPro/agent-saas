@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { PgGovernanceMigrationRunner } from '../data/governance-schema/migrations.js';
 import { governanceV22Statements } from '../data/governance-schema/v22Migration.js';
 import { governanceV23Statements } from '../data/governance-schema/v23Migration.js';
+import { governanceV34Statements } from '../data/governance-schema/v34Migration.js';
 
 describe('Governance schema migration SQL fixtures', () => {
   it('V22 在约束前确定性回填 V18 org_memory 的空名称与状态，且名称不引用正文', () => {
@@ -74,11 +75,12 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(applied.has(26)).toBe(true);
     expect(applied.has(32)).toBe(true);
     expect(applied.has(33)).toBe(true);
+    expect(applied.has(34)).toBe(true);
     const insertedVersions = queries
       .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
-    expect(insertedVersions).toEqual(Array.from({ length: 11 }, (_, index) => index + 23));
+    expect(insertedVersions).toEqual(Array.from({ length: 12 }, (_, index) => index + 23));
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
@@ -89,6 +91,71 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(queries.filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions')))
       .toEqual(insertedVersions.map(version => expect.objectContaining({ params: [version] })));
     expect(() => new PgGovernanceMigrationRunner(pool as never, 'unsafe-prefix')).toThrow('Invalid PostgreSQL identifier');
+  });
+
+  it('V34 把历史组织 selector 升级为账号 selector，无法修复的活动账号 fail closed', () => {
+    const statements = governanceV34Statements('safe');
+    const sql = statements.join('\n');
+    expect(sql).toContain("profile_id=BTRIM(account.corp_id) || ':' || BTRIM(account.dingtalk_user_id)");
+    expect(sql).toContain('ADD COLUMN IF NOT EXISTS identity_updated_at TIMESTAMPTZ');
+    expect(sql).toContain("to_regclass('safe_agent_dws_auth_sessions')");
+    expect(sql).toContain('SET identity_updated_at=connected.completed_at');
+    expect(sql).toContain("connected.status='connected'");
+    expect(sql).toContain('other_connected.session_id<>connected.session_id');
+    expect(sql).toContain('later_attempt.session_id<>connected.session_id');
+    expect(sql).toContain('later_attempt.created_at>=connected.created_at');
+    expect(sql.match(/account.status IN \('active','paused'\)/g)).toHaveLength(3);
+    expect(sql).toContain('SET identity_updated_at=updated_at WHERE identity_updated_at IS NULL');
+    expect(sql).not.toContain('revision<=3');
+    const inboxPin = statements.find(statement => statement.includes('UPDATE safe_agent_dws_event_inbox AS inbox'));
+    expect(inboxPin).toContain("inbox.state IN ('pending','processing','retry_wait','reply_pending')");
+    expect(inboxPin).toContain('account.identity_updated_at <= inbox.created_at');
+    expect(inboxPin).not.toContain('runtime_run.requested_at');
+    const completionPin = statements.find(statement => statement.includes('UPDATE safe_runs AS runtime_run'));
+    expect(completionPin).toContain("runtime_run.metadata,'{dwsCompletionRoute}'");
+    expect(completionPin).toContain("NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'profileId')");
+    expect(completionPin).toContain("NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'corpId')");
+    expect(completionPin).toContain("NOT (runtime_run.metadata->'dwsCompletionRoute' ? 'dingtalkUserId')");
+    expect(completionPin).toContain("parent_run.run_id=runtime_run.metadata->>'parentRunId'");
+    expect(completionPin).toContain("parent_run.channel='dingtalk'");
+    expect(completionPin).toContain('account.identity_updated_at <= parent_run.requested_at');
+    expect(completionPin).not.toContain('account.identity_updated_at <= runtime_run.requested_at');
+    expect(completionPin).not.toContain('inbox.created_at');
+    expect(sql).toContain("corp_id=BTRIM(SPLIT_PART(account.profile_id,':',1))");
+    expect(sql).toContain('AND NOT EXISTS');
+    expect(sql).toContain('UPDATE safe_context_sources AS source');
+    expect(sql).toContain("source.kind='dws' AND source.status='active'");
+    expect(sql).toContain('account.account_id=source.config_json->>\'accountId\'');
+    expect(sql).toContain('BTRIM(account.profile_id)<>BTRIM(account.corp_id)');
+    expect(sql).toContain('UPDATE safe_context_collections AS collection');
+    expect(sql).toContain('UPDATE safe_context_sync_partitions AS sync_partition');
+    expect(sql).toContain('lease_fence=lease_fence+1');
+    expect(sql).toContain("sync_partition.status='syncing'");
+    expect(sql).toContain('BTRIM(account.profile_id)=BTRIM(account.corp_id)');
+    expect(sql).toContain("runtime_status='stopped',runtime_lease_owner=NULL,runtime_lease_expires_at=NULL");
+    expect(sql).toContain("SET status='disabled',revision=revision+1,updated_at=NOW()");
+    expect(sql).toContain("OR BTRIM(account.corp_id)=BTRIM(SPLIT_PART(account.profile_id,':',1))");
+    expect(sql).toContain("status='error',runtime_status='error'");
+    expect(sql).toContain('dws_profile_identity_reauthorization_required');
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS safe_adws_active_identity_ck');
+    expect(sql).toContain('ADD CONSTRAINT safe_adws_active_identity_ck CHECK');
+    expect(sql).toContain("status<>'active' OR");
+
+    const interrupted = statements.find(statement =>
+      statement.includes("last_error='authorization_interrupted_by_upgrade'"));
+    expect(interrupted).toContain("WHERE status='authorizing'");
+    expect(interrupted).toContain("runtime_lease_owner=NULL,runtime_lease_expires_at=NULL");
+    expect(interrupted).toContain('revision=revision+1,updated_at=NOW()');
+    expect(interrupted).toContain("updated_by='system:dws-authorizing-v34'");
+    expect(interrupted).not.toContain('profile_id=');
+    expect(interrupted).not.toContain('corp_id=');
+    expect(interrupted).not.toContain('dingtalk_user_id=');
+    expect(sql).toContain("to_regclass('safe_agent_dws_auth_sessions')");
+    expect(sql).toContain("error_code='authorization_interrupted_by_upgrade'");
+    expect(sql).toContain('authorization_url=NULL,user_code=NULL');
+    expect(sql).toContain("auth_session.status IN ('starting','awaiting_user')");
+    expect(sql).toContain("account.status = 'authorizing'");
+    expect(sql.match(/account\.status<>'authorizing'/g)).toHaveLength(3);
   });
 
   it('旧生产 V28 账本下，V31 在 ALTER 前先幂等创建 retention 表', async () => {
@@ -115,7 +182,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(createIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThan(createIndex);
     expect([...applied].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 33 }, (_, index) => index + 1),
+      Array.from({ length: 34 }, (_, index) => index + 1),
     );
   });
 });

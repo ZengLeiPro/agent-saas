@@ -32,6 +32,7 @@
     "config:compare": "node scripts/config/compare-environments.mjs",
     "config:validate": "node scripts/config/validate-effective-config.mjs",
     "test:config-governance": "node --test scripts/config/effective-config.test.mjs",
+    "test:release-contracts": "node --test scripts/release/*.test.mjs scripts/staging/*.test.mjs",
     "scenarios:lint": "pnpm -F server scenarios:lint",
     "scenarios:lint:fix": "pnpm -F server scenarios:lint:fix",
     "scenarios:sanitize-check": "pnpm -F server scenarios:sanitize-check",

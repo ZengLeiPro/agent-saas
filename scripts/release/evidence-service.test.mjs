@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createEvidenceService } from './evidence-service.mjs';
+import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import {
   createValidReleaseEvidence,
   RELEASE_EVIDENCE_SHA,
@@ -114,7 +115,6 @@ test('produces fresh Staging isolation and Production observation responses', as
     probes: REQUIRED_ISOLATION_PROBES.map((id) => {
       const common = {
         id,
-        evidenceDigest: `sha256:${'e'.repeat(64)}`,
         observedAt: new Date(NOW).toISOString(),
       };
       if (id === 'nas-client-is-all-squashed-and-mounted-to-staging-subdirectory') {
@@ -156,8 +156,22 @@ test('produces fresh Staging isolation and Production observation responses', as
         status: 'denied',
         sourceEnvironment: 'staging',
         targetEnvironment: 'production',
+        observed:
+          id === 'oss-identity-cannot-write-production-bucket'
+            ? {
+                bucket: 'agent-saas-web',
+                sentinelKey: 'index.html',
+                sentinelExists: true,
+                forbidOverwrite: true,
+                responseStatus: 403,
+                responseCode: 'AccessDenied',
+              }
+            : {},
       };
-    }),
+    }).map((probe) => ({
+      ...probe,
+      evidenceDigest: digestBuffer(Buffer.from(canonicalJson(probe.observed))),
+    })),
   };
   assert.equal(
     (

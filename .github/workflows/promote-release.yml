@@ -517,20 +517,47 @@ jobs:
           aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
             "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
           restore_web_entry() {
-            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.receipt"
-            aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
-              "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
-              --region "$RELEASE_RECORD_OSS_REGION" || true
-            aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
-              "$PRODUCTION_WEB_OSS_URI/index.html" --force \
-              --region "$RELEASE_RECORD_OSS_REGION" || true
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.attempted"
+            local failed=0 readback="$RUNNER_TEMP/web-rollback-readback"
+            rm -rf "$readback"
+            mkdir -p "$readback"
+            if ! aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
+                "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
+                --region "$RELEASE_RECORD_OSS_REGION"; then
+              failed=1
+            fi
+            if ! aliyun --secure oss cp "$RUNNER_TEMP/web-before/index.html" \
+                "$PRODUCTION_WEB_OSS_URI/index.html" --force \
+                --region "$RELEASE_RECORD_OSS_REGION"; then
+              failed=1
+            fi
+            if ! aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
+                "$readback/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION" || \
+               ! cmp "$RUNNER_TEMP/web-before/release-identity.json" \
+                "$readback/release-identity.json"; then
+              failed=1
+            fi
+            if ! aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/index.html" \
+                "$readback/index.html" --region "$RELEASE_RECORD_OSS_REGION" || \
+               ! cmp "$RUNNER_TEMP/web-before/index.html" "$readback/index.html"; then
+              failed=1
+            fi
+            if [ "$failed" -ne 0 ]; then
+              echo 'Web rollback did not restore and verify both entry objects' >&2
+              return 1
+            fi
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.succeeded"
           }
           web_committed=false
           web_mutation_started=false
           cleanup_web_on_exit() {
-            if [ "$web_committed" = false ] && [ "$web_mutation_started" = true ]; then
-              restore_web_entry
+            local original_status=$?
+            trap - EXIT
+            if [ "$web_committed" = false ] && [ "$web_mutation_started" = true ] && \
+               ! restore_web_entry; then
+              original_status=1
             fi
+            exit "$original_status"
           }
           trap cleanup_web_on_exit EXIT
           web_mutation_started=true
@@ -583,19 +610,16 @@ jobs:
 
       - name: Read every live component and commit trusted identity only on complete convergence
         id: readback
-        if: always() && env.PRODUCTION_DEPLOYMENT_ID != ''
+        if: always() && env.PROMOTION_STARTED == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
-          remote="/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
-          scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
-            scripts/release/verify-installed-release.mjs scripts/release/artifact-lib.mjs \
-            "$ECS_USER@$ECS_HOST:$remote/"
+          # 复用 durable promoting 之前已上传的只读 preflight reader；此处只通过
+          # stdout 取回观察，不在 Deployment API 失败后向生产主机再写临时文件。
+          remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-live-production-components.mjs' --output '$remote/production-after.json' >/dev/null"
-          scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-after.json" "$RUNNER_TEMP/production-after.json"
+            "node '$remote/read-live-production-components.mjs'" \
+            > "$RUNNER_TEMP/production-after.json"
           jq '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' \
             "$RUNNER_TEMP/manifest.json" > "$RUNNER_TEMP/production-target.json"
           if ! diff -u <(jq -S .components "$RUNNER_TEMP/production-after.json") \
@@ -603,12 +627,13 @@ jobs:
             echo 'target_match=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ -n "${PRODUCTION_DEPLOYMENT_ID:-}" ]; then
+            ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+              "sudo node '$PROMOTION_REMOTE/write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'"
+          fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo node '$PROMOTION_REMOTE/write-production-identity.mjs' '$PROMOTION_REMOTE/manifest.json'"
-          ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "node '$remote/read-production-state.mjs' --output '$remote/production-confirmed.json' >/dev/null"
-          scp -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST:$remote/production-confirmed.json" \
-            "$RUNNER_TEMP/production-confirmed.json"
+            "node '$remote/read-production-state.mjs'" \
+            > "$RUNNER_TEMP/production-confirmed.json"
           identity_projection='{web:{gitSha:.components.web.gitSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.gitSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.gitSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.gitSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}'
           diff -u <(jq -S "$identity_projection" "$RUNNER_TEMP/production-confirmed.json") \
             <(jq -S "$identity_projection" "$RUNNER_TEMP/production-after.json")
@@ -627,12 +652,17 @@ jobs:
           target="$(jq -c '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
           before="$(jq -c .components "$RUNNER_TEMP/production-before.json")"
           external_side_effects=none_observed
-          if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = deploy ]; then
+          if [ "$(jq -r .components.acs.action "$RUNNER_TEMP/manifest.json")" = deploy ] && \
+             [ "${{ steps.deploy_acs.outcome }}" != skipped ]; then
             external_side_effects=unknown
           fi
           rollback_attempted=false
-          if [ -s "$RUNNER_TEMP/rollback-web.receipt" ] || \
-             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+          rollback_succeeded=true
+          if [ -s "$RUNNER_TEMP/rollback-web.attempted" ]; then
+            rollback_attempted=true
+            [ -s "$RUNNER_TEMP/rollback-web.succeeded" ] || rollback_succeeded=false
+          fi
+          if ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
                "test -s '$PROMOTION_REMOTE/rollback-acs.receipt' || test -s '$PROMOTION_REMOTE/rollback-app.receipt'"; then
             rollback_attempted=true
           fi
@@ -640,8 +670,9 @@ jobs:
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \
             --arg externalSideEffects "$external_side_effects" \
             --argjson rollbackAttempted "$rollback_attempted" \
+            --argjson rollbackSucceeded "$rollback_succeeded" \
             --arg databaseChange "$MIGRATION_PHASE" \
-            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,databaseChange:$databaseChange}' \
+            '{releaseId:$releaseId,before:$before,target:$target,observed:$observed,observationComplete:$observationComplete,externalSideEffects:$externalSideEffects,rollbackAttempted:$rollbackAttempted,rollbackSucceeded:$rollbackSucceeded,databaseChange:$databaseChange}' \
             > "$RUNNER_TEMP/reconcile-input.json"
           node scripts/release/reconcile-promotion.mjs "$RUNNER_TEMP/reconcile-input.json" "$RUNNER_TEMP/reconcile.json"
 

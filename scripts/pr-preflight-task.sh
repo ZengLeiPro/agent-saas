@@ -11,6 +11,7 @@ require_test_database() {
 case "$task" in
   checks)
     pnpm check:ratchets
+    pnpm test:release-contracts
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline
     pnpm -F server build

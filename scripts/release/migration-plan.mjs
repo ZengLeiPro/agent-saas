@@ -515,7 +515,7 @@ function analyzeScriptMigration(content, diff, path) {
   return analysis;
 }
 
-function relativeModuleDependencies(content, path, requestedBindings) {
+function relativeModuleDependencies(content, path, requestedBindings, requestedCallableBindings) {
   const sourceFile = ts.createSourceFile(
     path,
     content,
@@ -525,8 +525,83 @@ function relativeModuleDependencies(content, path, requestedBindings) {
   );
   if ((sourceFile.parseDiagnostics ?? []).length > 0)
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
+
+  const calledIdentifiers = new Set();
+  const collectCallTargetIdentifiers = (node) => {
+    if (ts.isIdentifier(node)) calledIdentifiers.add(node.text);
+    ts.forEachChild(node, collectCallTargetIdentifiers);
+  };
+  const visitCalls = (node) => {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node))
+      collectCallTargetIdentifiers(node.expression);
+    if (ts.isTaggedTemplateExpression(node)) collectCallTargetIdentifiers(node.tag);
+    ts.forEachChild(node, visitCalls);
+  };
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement))
+      visitCalls(statement);
+  }
+
+  let calledAliasesChanged = true;
+  while (calledAliasesChanged) {
+    calledAliasesChanged = false;
+    const collectAliasSources = (node) => {
+      if (ts.isIdentifier(node) && !calledIdentifiers.has(node.text)) {
+        calledIdentifiers.add(node.text);
+        calledAliasesChanged = true;
+      }
+      ts.forEachChild(node, collectAliasSources);
+    };
+    const visitAliases = (node) => {
+      if (ts.isVariableDeclaration(node) && node.initializer) {
+        let bindingIsCalled = false;
+        const visitBinding = (binding) => {
+          if (ts.isIdentifier(binding) && calledIdentifiers.has(binding.text))
+            bindingIsCalled = true;
+          ts.forEachChild(binding, visitBinding);
+        };
+        visitBinding(node.name);
+        if (bindingIsCalled) collectAliasSources(node.initializer);
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        calledIdentifiers.has(node.left.text)
+      )
+        collectAliasSources(node.right);
+      ts.forEachChild(node, visitAliases);
+    };
+    visitAliases(sourceFile);
+  }
+
+  const callableLocalBindings = new Set(requestedCallableBindings);
+  let callableAliasesChanged = true;
+  while (callableAliasesChanged) {
+    callableAliasesChanged = false;
+    for (const statement of sourceFile.statements) {
+      if (
+        !ts.isExportDeclaration(statement) ||
+        statement.moduleSpecifier ||
+        !statement.exportClause ||
+        !ts.isNamedExports(statement.exportClause)
+      )
+        continue;
+      for (const element of statement.exportClause.elements) {
+        if (
+          callableLocalBindings.has(element.name.text) &&
+          !callableLocalBindings.has((element.propertyName ?? element.name).text)
+        ) {
+          callableLocalBindings.add((element.propertyName ?? element.name).text);
+          callableAliasesChanged = true;
+        }
+      }
+    }
+  }
+
   const dependencies = [];
   const requestedAll = requestedBindings.has('*');
+  const requestedCallableAll = requestedCallableBindings.has('*');
   for (const statement of sourceFile.statements) {
     if (
       ts.isImportDeclaration(statement) &&
@@ -534,15 +609,37 @@ function relativeModuleDependencies(content, path, requestedBindings) {
       RELATIVE_MODULE_SPECIFIER.test(statement.moduleSpecifier.text)
     ) {
       const bindings = new Set();
+      const callableBindings = new Set();
       const clause = statement.importClause;
       if (!clause) bindings.add('*');
       else {
-        if (clause.name) bindings.add('default');
+        if (clause.name) {
+          bindings.add('default');
+          if (
+            calledIdentifiers.has(clause.name.text) ||
+            callableLocalBindings.has(clause.name.text)
+          )
+            callableBindings.add('default');
+        }
         if (clause.namedBindings) {
-          if (ts.isNamespaceImport(clause.namedBindings)) bindings.add('*');
-          else {
-            for (const element of clause.namedBindings.elements)
-              bindings.add((element.propertyName ?? element.name).text);
+          if (ts.isNamespaceImport(clause.namedBindings)) {
+            bindings.add('*');
+            if (
+              calledIdentifiers.has(clause.namedBindings.name.text) ||
+              callableLocalBindings.has(clause.namedBindings.name.text)
+            )
+              callableBindings.add('*');
+          } else {
+            for (const element of clause.namedBindings.elements) {
+              const importedName = (element.propertyName ?? element.name).text;
+              bindings.add(importedName);
+              if (
+                !element.isTypeOnly &&
+                (calledIdentifiers.has(element.name.text) ||
+                  callableLocalBindings.has(element.name.text))
+              )
+                callableBindings.add(importedName);
+            }
           }
         }
       }
@@ -557,6 +654,7 @@ function relativeModuleDependencies(content, path, requestedBindings) {
       dependencies.push({
         specifier: statement.moduleSpecifier.text,
         bindings,
+        callableBindings,
         sideEffect,
       });
       continue;
@@ -568,15 +666,21 @@ function relativeModuleDependencies(content, path, requestedBindings) {
       RELATIVE_MODULE_SPECIFIER.test(statement.moduleSpecifier.text)
     ) {
       const bindings = new Set();
+      const callableBindings = new Set();
       if (!statement.exportClause) {
         for (const binding of requestedBindings) bindings.add(binding);
+        for (const binding of requestedCallableBindings) callableBindings.add(binding);
       } else if (ts.isNamespaceExport(statement.exportClause)) {
         if (requestedAll || requestedBindings.has(statement.exportClause.name.text))
           bindings.add('*');
+        if (requestedCallableAll || requestedCallableBindings.has(statement.exportClause.name.text))
+          callableBindings.add('*');
       } else {
         for (const element of statement.exportClause.elements) {
           if (requestedAll || requestedBindings.has(element.name.text))
             bindings.add((element.propertyName ?? element.name).text);
+          if (requestedCallableAll || requestedCallableBindings.has(element.name.text))
+            callableBindings.add((element.propertyName ?? element.name).text);
         }
       }
       const sideEffect =
@@ -589,6 +693,7 @@ function relativeModuleDependencies(content, path, requestedBindings) {
         dependencies.push({
           specifier: statement.moduleSpecifier.text,
           bindings,
+          callableBindings,
           sideEffect,
         });
       continue;
@@ -603,10 +708,152 @@ function relativeModuleDependencies(content, path, requestedBindings) {
       dependencies.push({
         specifier: statement.moduleReference.expression.text,
         bindings: new Set(['*']),
+        callableBindings: calledIdentifiers.has(statement.name.text) ? new Set(['*']) : new Set(),
         sideEffect: true,
       });
   }
   return dependencies;
+}
+
+function hasUnprovenRuntimeModuleLoad(content, path) {
+  if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
+  const sourceFile = ts.createSourceFile(
+    path,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if ((sourceFile.parseDiagnostics ?? []).length > 0)
+    throw new Error(`Migration dependency ${path} is not valid TypeScript`);
+
+  const factoryNames = new Set(['createRequire']);
+  const factoryNamespaceNames = new Set();
+  const loaderNames = new Set(['require']);
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !['module', 'node:module'].includes(statement.moduleSpecifier.text) ||
+      !statement.importClause ||
+      statement.importClause.isTypeOnly
+    )
+      continue;
+    const runtimeCreateRequireImport =
+      statement.importClause.name !== undefined ||
+      (statement.importClause.namedBindings !== undefined &&
+        (ts.isNamespaceImport(statement.importClause.namedBindings) ||
+          statement.importClause.namedBindings.elements.some(
+            (element) =>
+              !element.isTypeOnly &&
+              (element.propertyName ?? element.name).text === 'createRequire',
+          )));
+    if (runtimeCreateRequireImport) return true;
+    if (statement.importClause.name) factoryNamespaceNames.add(statement.importClause.name.text);
+    const namedBindings = statement.importClause.namedBindings;
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      factoryNamespaceNames.add(namedBindings.name.text);
+      continue;
+    }
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        if ((element.propertyName ?? element.name).text === 'createRequire')
+          factoryNames.add(element.name.text);
+      }
+    }
+  }
+
+  let aliasesChanged = true;
+  while (aliasesChanged) {
+    aliasesChanged = false;
+    const add = (set, name) => {
+      if (!set.has(name)) {
+        set.add(name);
+        aliasesChanged = true;
+      }
+    };
+    const isFactoryExpression = (expression) =>
+      (ts.isIdentifier(expression) && factoryNames.has(expression.text)) ||
+      (ts.isPropertyAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        factoryNamespaceNames.has(expression.expression.text) &&
+        expression.name.text === 'createRequire') ||
+      (ts.isElementAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        factoryNamespaceNames.has(expression.expression.text) &&
+        expression.argumentExpression !== undefined &&
+        (ts.isStringLiteral(expression.argumentExpression) ||
+          ts.isNoSubstitutionTemplateLiteral(expression.argumentExpression)) &&
+        expression.argumentExpression.text === 'createRequire');
+    const classifyAlias = (name, initializer) => {
+      if (ts.isIdentifier(initializer)) {
+        if (factoryNames.has(initializer.text)) add(factoryNames, name);
+        if (factoryNamespaceNames.has(initializer.text)) add(factoryNamespaceNames, name);
+        if (loaderNames.has(initializer.text)) add(loaderNames, name);
+      }
+      if (isFactoryExpression(initializer)) add(factoryNames, name);
+      if (ts.isCallExpression(initializer) && isFactoryExpression(initializer.expression))
+        add(loaderNames, name);
+    };
+    const visitAliases = (node) => {
+      if (ts.isVariableDeclaration(node) && node.initializer) {
+        if (ts.isIdentifier(node.name)) classifyAlias(node.name.text, node.initializer);
+        if (
+          ts.isObjectBindingPattern(node.name) &&
+          ts.isIdentifier(node.initializer) &&
+          factoryNamespaceNames.has(node.initializer.text)
+        ) {
+          for (const element of node.name.elements) {
+            if (
+              ts.isIdentifier(element.name) &&
+              (element.propertyName ?? element.name).text === 'createRequire'
+            )
+              add(factoryNames, element.name.text);
+          }
+        }
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      )
+        classifyAlias(node.left.text, node.right);
+      ts.forEachChild(node, visitAliases);
+    };
+    visitAliases(sourceFile);
+  }
+
+  let found = false;
+  const visit = (node) => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && loaderNames.has(node.expression.text)) ||
+        (ts.isCallExpression(node.expression) &&
+          ((ts.isIdentifier(node.expression.expression) &&
+            factoryNames.has(node.expression.expression.text)) ||
+            (ts.isPropertyAccessExpression(node.expression.expression) &&
+              ts.isIdentifier(node.expression.expression.expression) &&
+              factoryNamespaceNames.has(node.expression.expression.expression.text) &&
+              node.expression.expression.name.text === 'createRequire') ||
+            (ts.isElementAccessExpression(node.expression.expression) &&
+              ts.isIdentifier(node.expression.expression.expression) &&
+              factoryNamespaceNames.has(node.expression.expression.expression.text) &&
+              node.expression.expression.argumentExpression !== undefined &&
+              (ts.isStringLiteral(node.expression.expression.argumentExpression) ||
+                ts.isNoSubstitutionTemplateLiteral(
+                  node.expression.expression.argumentExpression,
+                )) &&
+              node.expression.expression.argumentExpression.text === 'createRequire'))))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
 }
 
 function resolveRepositoryModule(fromPath, specifier, repositoryPaths) {
@@ -853,11 +1100,13 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
   const roots = [...repositoryPaths].filter(isMigrationPath).sort();
   const closure = new Set(roots);
   const requestedByPath = new Map(roots.map((path) => [path, new Set(['*'])]));
+  const callableByPath = new Map(roots.map((path) => [path, new Set()]));
   const sideEffectPaths = new Set();
   const processedSignatures = new Map();
   const queue = [...roots];
-  const enqueue = (path, bindings, sideEffect = false) => {
+  const enqueue = (path, bindings, callableBindings, sideEffect = false) => {
     const current = requestedByPath.get(path) ?? new Set();
+    const currentCallable = callableByPath.get(path) ?? new Set();
     let changed = false;
     if (sideEffect && !sideEffectPaths.has(path)) {
       sideEffectPaths.add(path);
@@ -877,7 +1126,22 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
         }
       }
     }
+    if (callableBindings.has('*')) {
+      if (!currentCallable.has('*')) {
+        currentCallable.clear();
+        currentCallable.add('*');
+        changed = true;
+      }
+    } else if (!currentCallable.has('*')) {
+      for (const binding of callableBindings) {
+        if (!currentCallable.has(binding)) {
+          currentCallable.add(binding);
+          changed = true;
+        }
+      }
+    }
     requestedByPath.set(path, current);
+    callableByPath.set(path, currentCallable);
     if (changed) queue.push(path);
   };
 
@@ -885,28 +1149,43 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
     const path = queue.shift();
     if (!path) continue;
     const requestedBindings = requestedByPath.get(path) ?? new Set();
+    const requestedCallableBindings = callableByPath.get(path) ?? new Set();
     const signature = `${sideEffectPaths.has(path) ? 'side-effect' : 'binding'}\0${[
       ...requestedBindings,
     ]
       .sort()
-      .join('\0')}`;
+      .join('\0')}\0callable:${[...requestedCallableBindings].sort().join('\0')}`;
     if (processedSignatures.get(path) === signature) continue;
     processedSignatures.set(path, signature);
     const content = gitRead(execFileSync, cwd, ['show', `${sha}:${path}`]);
+    if (hasUnprovenRuntimeModuleLoad(content, path))
+      throw new Error(`Migration dependency ${path} uses dynamic import or require`);
     if (
       isMigrationExecutionModule(path, content) ||
+      requestedCallableBindings.size > 0 ||
       (sideEffectPaths.has(path) && hasTopLevelExecutableCode(path, content)) ||
       isDeclarativeSqlProvider(path, content, requestedBindings)
     )
       closure.add(path);
     if (!SCRIPT_MIGRATION_PATTERN.test(path)) continue;
-    for (const dependencyRequest of relativeModuleDependencies(content, path, requestedBindings)) {
+    for (const dependencyRequest of relativeModuleDependencies(
+      content,
+      path,
+      requestedBindings,
+      requestedCallableBindings,
+    )) {
       const dependency = resolveRepositoryModule(
         path,
         dependencyRequest.specifier,
         repositoryPaths,
       );
-      if (dependency) enqueue(dependency, dependencyRequest.bindings, dependencyRequest.sideEffect);
+      if (dependency)
+        enqueue(
+          dependency,
+          dependencyRequest.bindings,
+          dependencyRequest.callableBindings,
+          dependencyRequest.sideEffect,
+        );
     }
   }
   return closure;

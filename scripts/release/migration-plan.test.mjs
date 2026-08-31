@@ -135,6 +135,60 @@ test('fails closed when a named import dependency gains top-level executable SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
+test('fails closed when an aliased called runtime provider gains destructive SQL', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const barrel = 'server/src/data/governance-schema/providers/index.ts';
+  const provider = 'server/src/data/governance-schema/providers/run.ts';
+  const rootSource =
+    "import * as providers from './providers/index.js';\nconst { runMigration } = providers;\nconst execute = runMigration;\nexport async function migrate(db) { await execute(db); }";
+  const barrelSource = "export { run as runMigration } from './run.js';";
+  const baselineProvider =
+    "export async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
+  const targetProvider = "export async function run(db) { await db.query('DROP TABLE users'); }";
+  const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
+    changedPaths: [provider],
+    baselines: {
+      [root]: rootSource,
+      [barrel]: barrelSource,
+      [provider]: baselineProvider,
+    },
+    targets: {
+      [root]: rootSource,
+      [barrel]: barrelSource,
+      [provider]: targetProvider,
+    },
+    diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /run\.ts/u);
+  assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
+});
+
+test('fails closed for dynamic import, require, and createRequire loaders', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  for (const source of [
+    "export async function migrate() { await import('./provider.js'); }",
+    "export async function migrate() { require('./provider.js'); }",
+    "export async function migrate() { createRequire(import.meta.url)('./provider.js'); }",
+    "export async function migrate() { const load = createRequire(import.meta.url); load('./provider.js'); }",
+    "import * as moduleApi from 'node:module';\nexport async function migrate() { const load = moduleApi.createRequire(import.meta.url); load('./provider.js'); }",
+    "import * as moduleApi from 'node:module';\nconst { createRequire: makeRequire } = moduleApi;\nexport async function migrate() { const load = makeRequire(import.meta.url); load('./provider.js'); }",
+    "import * as moduleApi from 'node:module';\nconst ns = moduleApi;\nconst { createRequire: makeRequire } = ns;\nexport async function migrate() { const load = makeRequire(import.meta.url); load('./provider.js'); }",
+    "import * as moduleApi from 'node:module';\nexport async function migrate() { const load = moduleApi['createRequire'](import.meta.url); load('./provider.js'); }",
+  ]) {
+    const result = plan(source, addedSourceDiff(source), {
+      changedPaths: [root],
+      baselines: { [root]: 'export async function migrate() {}' },
+      targets: { [root]: source },
+      diffs: { [root]: addedSourceDiff(source) },
+      nameStatus: `M\t${root}`,
+    });
+    assert.equal(result.ok, false, source);
+    assert.match(result.blockingReasons.join('\n'), /closure could not be proven/u, source);
+  }
+});
+
 test('fails closed for class evaluation side effects in a runtime dependency', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const danger = 'server/src/data/governance-schema/danger.ts';

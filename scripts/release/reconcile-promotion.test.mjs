@@ -26,8 +26,22 @@ test('classifies complete, before-change failure and proven rollback', () => {
   assert.equal(reconcilePromotion({ ...base, observed: target }).outcome, 'completed');
   assert.equal(reconcilePromotion({ ...base, observed: before }).outcome, 'failed_before_change');
   assert.equal(
-    reconcilePromotion({ ...base, observed: before, rollbackAttempted: true }).outcome,
+    reconcilePromotion({
+      ...base,
+      observed: before,
+      rollbackAttempted: true,
+      rollbackSucceeded: true,
+    }).outcome,
     'rolled_back',
+  );
+  assert.equal(
+    reconcilePromotion({
+      ...base,
+      observed: before,
+      rollbackAttempted: true,
+      rollbackSucceeded: false,
+    }).outcome,
+    'needs_human',
   );
 });
 

@@ -25,14 +25,25 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
+      - '.github/acs-runtime-inputs.txt'
       - '.github/workflows/acs-sandbox.yml'
       - '.github/workflows/ci.yml'
       - '.github/scripts/acs-classify.sh'
       - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'
-      - 'scripts/deploy-acs-orchestrator.sh'
-      - 'scripts/release/upload-oss-object-immutable.sh'
       - 'scripts/acs-browser-lease-e2e.mjs'
+      - 'scripts/acs-tool-content-json.mjs'
+      - 'scripts/check-acs-shared-rollback-compatibility.mjs'
+      - 'scripts/deploy-acs-orchestrator.sh'
+      - 'scripts/release/artifact-lib.mjs'
+      - 'scripts/release/read-live-production-components.mjs'
+      - 'scripts/release/read-production-state.mjs'
+      - 'scripts/release/read-runtime-identity.mjs'
+      - 'scripts/release/seal-compatibility-release.mjs'
+      - 'scripts/release/upload-oss-object-immutable.sh'
+      - 'scripts/release/verify-installed-release.mjs'
+      - 'scripts/release/write-compatibility-acs-identity.mjs'
+      - 'scripts/release/write-live-production-identity.mjs'
       - 'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py'
       - 'scripts/acs-verify-per-session.py'
       - 'scripts/test_acs_operational_scripts.py'
@@ -636,8 +647,7 @@ jobs:
           set -euo pipefail
           pnpm -F acs-orchestrator build
           stage="$RUNNER_TEMP/acs-release-stage"
-          mkdir -p "$stage/scripts/release" \
-            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts"
+          mkdir -p "$stage"
           pnpm --config.allowUnusedPatches=true --filter acs-orchestrator --prod deploy \
             "$stage/acs-orchestrator"
           rm -rf "$stage/acs-orchestrator/dist" "$stage/acs-orchestrator/descriptions"
@@ -646,21 +656,11 @@ jobs:
           mkdir -p "$stage/acs-orchestrator/config"
           install -m 0444 acs-orchestrator/config/production.env \
             "$stage/acs-orchestrator/config/production.env"
-          install -m 0555 scripts/apply-orchestrator-env.py \
-            scripts/acs-browser-lease-e2e.mjs \
-            scripts/acs-tool-content-json.mjs \
-            scripts/check-acs-shared-rollback-compatibility.mjs "$stage/scripts/"
-          install -m 0555 \
-            workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py \
-            "$stage/workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py"
-          install -m 0444 scripts/release/artifact-lib.mjs \
-            scripts/release/read-live-production-components.mjs \
-            scripts/release/read-production-state.mjs \
-            scripts/release/read-runtime-identity.mjs \
-            scripts/release/seal-compatibility-release.mjs \
-            scripts/release/verify-installed-release.mjs \
-            scripts/release/write-compatibility-acs-identity.mjs \
-            scripts/release/write-live-production-identity.mjs "$stage/scripts/release/"
+          while read -r mode source; do
+            [ -n "$mode" ] || continue
+            case "$mode" in \#*) continue ;; esac
+            install -D -m "$mode" "$source" "$stage/$source"
+          done < .github/acs-runtime-inputs.txt
           tar --no-xattrs -czf "$RUNNER_TEMP/acs-orchestrator.tgz" -C "$stage" .
           node scripts/release/create-component-artifact-index.mjs \
             --sha "$GITHUB_SHA" --name acsOrchestrator \

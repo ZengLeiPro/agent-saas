@@ -65,7 +65,15 @@ try {
 NODE
 }
 
+is_packaged_runtime_path() {
+  awk -v path="$1" '$1 !~ /^#/ && $2 == path { found = 1 } END { exit !found }' \
+    .github/acs-runtime-inputs.txt
+}
+
 is_publish_path() {
+  if is_packaged_runtime_path "$1"; then
+    return 0
+  fi
   case "$1" in
     acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts)
       # 纯测试与测试辅助文件不判定需要发布（归 contract_check）
@@ -73,7 +81,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)

@@ -14,6 +14,7 @@ VERIFY_SCRIPT = REPO_ROOT / 'scripts' / 'acs-verify-per-session.py'
 TOOL_CONTENT_JSON = REPO_ROOT / 'scripts' / 'acs-tool-content-json.mjs'
 ACS_WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'acs-sandbox.yml'
 ACS_CLASSIFIER = REPO_ROOT / '.github' / 'scripts' / 'acs-classify.sh'
+ACS_RUNTIME_INPUTS = REPO_ROOT / '.github' / 'acs-runtime-inputs.txt'
 ACS_DEPLOY_SCRIPT = REPO_ROOT / 'scripts' / 'deploy-acs-orchestrator.sh'
 ACS_BROWSER_E2E = REPO_ROOT / 'scripts' / 'acs-browser-lease-e2e.mjs'
 ACS_ROLLBACK_COMPATIBILITY = REPO_ROOT / 'scripts' / 'check-acs-shared-rollback-compatibility.mjs'
@@ -177,7 +178,10 @@ class AcsSharedRollbackCompatibilityTest(unittest.TestCase):
         ]
         for result in cases:
             self.assertEqual(result.returncode, 1)
-            self.assertFalse(json.loads(result.stderr)['compatible'])
+            payload = next(
+                line for line in reversed(result.stderr.splitlines()) if line.startswith('{')
+            )
+            self.assertFalse(json.loads(payload)['compatible'])
 
 
 class AcsDockerfileWorkspaceInjectionTest(unittest.TestCase):
@@ -299,27 +303,30 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
             self.workflow,
         )
 
-    def test_browser_smoke_helper_is_sealed_and_triggers_publish(self):
-        self.assertIn(
-            'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py',
-            self.workflow,
-        )
-        self.assertRegex(
-            self.workflow,
-            r'install -m 0555[\s\\]+workspace-shared/\.ky-agent/skills-pool/browser/scripts/acs_browser\.py',
-        )
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
-            changed.write('workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py\n')
-            changed.flush()
-            classified = subprocess.run(
-                ['bash', str(ACS_CLASSIFIER), changed.name],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        self.assertEqual(classified.returncode, 0, classified.stderr)
-        self.assertIn('publish=true', classified.stdout)
+    def test_every_packaged_runtime_input_triggers_workflow_and_publish(self):
+        runtime_inputs = []
+        for line in ACS_RUNTIME_INPUTS.read_text(encoding='utf-8').splitlines():
+            if line and not line.startswith('#'):
+                mode, path = line.split(maxsplit=1)
+                self.assertIn(mode, {'0444', '0555'})
+                runtime_inputs.append(path)
+
+        self.assertIn('done < .github/acs-runtime-inputs.txt', self.workflow)
+        self.assertIn('install -D -m "$mode" "$source" "$stage/$source"', self.workflow)
+        for path in runtime_inputs:
+            self.assertIn(f"- '{path}'", self.workflow)
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
+                changed.write(f'{path}\n')
+                changed.flush()
+                classified = subprocess.run(
+                    ['bash', str(ACS_CLASSIFIER), changed.name],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            self.assertEqual(classified.returncode, 0, classified.stderr)
+            self.assertIn('publish=true', classified.stdout, path)
 
     def test_immutable_baseline_uploader_requires_an_exact_sha_acs_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:

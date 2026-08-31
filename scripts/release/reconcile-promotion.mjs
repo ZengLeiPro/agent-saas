@@ -64,9 +64,14 @@ export function reconcilePromotion(input) {
   }
   if (matrixEquals(observed, before)) {
     if (input.rollbackAttempted === true) {
+      if (input.rollbackSucceeded !== true)
+        return {
+          outcome: 'needs_human',
+          reason: 'rollback was attempted but its entry restoration was not verified',
+        };
       return {
         outcome: 'rolled_back',
-        reason: 'all components match the frozen pre-promotion state',
+        reason: 'all components and restored entry bytes match the frozen pre-promotion state',
       };
     }
     return {
@@ -76,7 +81,7 @@ export function reconcilePromotion(input) {
   }
   return {
     outcome: 'partial_failed',
-    reason: 'production components contain a mixed identity matrix',
+    reason: 'production components contain a mixed or unverified identity matrix',
   };
 }
 

@@ -3,8 +3,9 @@
 > - 原始现场核对时间：2026-08-30 23:27（北京时间）
 > - 原始现场基线：`ZengLeiPro/agent-saas main@241c568dfa10c2e88cc3b480b4d7ae44e17d22a8`
 > - 本次代码修订时间：2026-08-31（北京时间）
-> - 本次返工起点：`PR #366 head@76b07f6c28a1e62c6fe6f29595f74aa8dc1b5e93`。
-> - 最终实现代码：`9a96773fb`；第六轮实现核对时间：2026-08-31 08:39（北京时间）。文档同步提交位于该实现提交之后，PR #366 是完整交付记录。
+> - 第八轮返工起点：`PR #366 head@33a478febd38ffd09e93ead7d0e55700741804c3`。
+> - 本次最终主线基线：`main@b04d87fe6c7db750fa0c791667d4abd53d63c93c`；最终实现以 PR #366 当前精确 head 与 Provider inspection 为准，避免在同一提交中写入不可能稳定的自引用 commit hash。
+> - 第八轮实现核对时间：2026-09-01 00:46（北京时间）。
 > - 范围：不含 iOS Release；说明 GitHub 从 PR 测试、Staging 预览到正式生产晋级的完整机制。
 > - 证据边界：本文把代码保证、GitHub/阿里云现场配置、历史已验证样本和仍需人工操作分开表述；未在本次修订中手动运行 Staging 或 Production。
 
@@ -22,13 +23,11 @@
                 │
  main push 跑 App CI；ACS 仅在相关路径命中时运行其拓扑
                 │
-    Prepare Release Evidence（自动）
-                │
-   生成该 SHA 的不可变发布前置证据
-                │
        Deploy Staging RC（手动）
                 │
-   构建一次 → 固化 RC/Manifest/制品
+ prepare-evidence：生成/复用不可变发布证据
+                │
+ build-deploy-verify：构建一次 → 固化 RC/Manifest/制品
    → 部署 Staging → 确定性门禁
                 │
         ┌───────┴────────┐
@@ -51,18 +50,17 @@ Promote Staging RC to Production（手动）
 这套流程把五件事分开了：
 
 1. **代码能不能合并**：PR CI 决定。
-2. **这个 main SHA 有没有可信发布依据**：Prepare Release Evidence 决定。
+2. **这个 main SHA 有没有可信发布依据**：`Deploy Staging RC` 的 `prepare-evidence` 前置 job 决定。
 3. **不可变制品能不能在预览环境正常部署**：Deploy Staging RC 决定。
 4. **完整浏览器、Agent 和业务行为是否符合预期**：可选 Staging Acceptance 决定。
 5. **是否把这组已经冻结的制品晋级生产**：Promotion 决定。
 
-## 二、GitHub 上七个 Workflow 分别做什么
+## 二、GitHub 上六个 Workflow 分别做什么
 
 | Workflow                           | 触发方式                     | 核心职责                                                | 是否改生产                 |
 | ---------------------------------- | ---------------------------- | ------------------------------------------------------- | -------------------------- |
 | `App CI / Deploy`                  | PR、push main、手动          | App 主门禁；手动时兼容旧生产部署                        | 只有手动 dispatch 会改生产 |
 | `ACS CI / Deploy`                  | PR、相关路径 push main、手动 | 判断 ACS 影响，测试 Orchestrator；手动时兼容旧 ACS 部署 | 只有手动 dispatch 会改生产 |
-| `Prepare Release Evidence`         | main 的 App CI 成功后自动    | 生成并不可覆盖地保存该 SHA 的发布证据                   | 只读生产运行态；写证据服务 |
 | `Deploy Staging RC`                | 手动                         | 创建不可变 RC、部署预览环境并跑确定性门禁               | 只改 Staging               |
 | `Staging Acceptance`               | 手动、可选                   | 浏览器、Agent、ACS、恢复行为的完整 E2E                  | 只操作 Staging             |
 | `Promote Staging RC to Production` | 手动                         | 将 RC 的原制品按 digest 晋级生产                        | 会改生产                   |
@@ -88,6 +86,7 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 `App CI / Deploy` 在 PR 上启动 PostgreSQL 16 测试服务，然后执行：
 
 - 工程 ratchets：大文件行数、环境变量数量、Web 首屏预算等。
+- Release/Staging Workflow、migration、reconcile、isolation 等发布契约 Node 测试；这些测试由 `preflight_checks` 直接执行并汇总进 required `Build & Check`，不是仅供本地参考。
 - Server typecheck、build、上下文关系基线评测。
 - Server、Web、Shared 的 coverage 测试。
 - 一组真实 PostgreSQL contract 测试。
@@ -107,11 +106,11 @@ GitHub 现场已有两套 active Ruleset，且都没有 bypass actor：
 
 PR 阶段的 `ACS Impact Gate` 总会作为必需检查出现：先分类，再按影响范围运行 contract check 或完整 Orchestrator 检查，不部署。main push 并不是“完整重跑同一套 ACS CI”：`acs-sandbox.yml` 有路径过滤，只有命中 ACS 相关路径才启动；命中后再执行 Classify → Contract/Tests → Gate 拓扑。若属于 ACS publish 变更，阿里云 ACR 会为精确 SHA 构建镜像；GitHub 侧后续按 build record 和 digest 解析，不再把 digest 误当普通 tag。
 
-## 四、第二阶段：自动生成 Release Evidence
+## 四、第二阶段：手动 RC 流程先生成或复用 Release Evidence
 
-PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。只有该 run 成功，`Prepare Release Evidence` 才会自动启动。
+PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。随后人工运行 `Deploy Staging RC`；Workflow 会先在隔离的 `prepare-evidence` job 中锁定 dispatch 的完整 main SHA，等待并验证同 SHA 的必需 CI，再生成或复用 Release Evidence。证据准备成功后，独立的 `build-deploy-verify` job 才能进入 Staging 构建与部署。
 
-它会锁定该次 main 的完整 SHA，并验证：
+`prepare-evidence` 会验证：
 
 - 这个 SHA 恰好对应一个已合入 main 的 GitHub PR。
 - App CI 确实成功。
@@ -121,7 +120,7 @@ PR 合入 main 后，`App CI / Deploy` 会再以 push 事件跑一次。只有�
 - 生产现有制品能在阿里云 OSS 的不可变 baseline/record 中按 digest 找到。
 - 组件分类和数据库迁移计划可以重新计算且结果一致。
 
-最终证据以完整 SHA 为键写入 `/release-evidence`：同一 SHA 不允许覆盖；写入后再用独立只读身份重新 GET，并比较 canonical JSON。这个步骤不构建 RC、不部署 Staging，也不改生产。
+最终证据以完整 SHA 为键写入 `/release-evidence`：同一 SHA 不允许覆盖；写入后再用独立只读身份重新 GET，并比较 canonical JSON。`prepare-evidence` job 本身不构建 RC、不部署 Staging，也不改生产；它成功后同一 Workflow 才进入实际部署 job。
 
 如果它失败，最常见的含义不是“单测失败”，而是当前 main SHA 没有完整发布依据，例如生产 identity 与物理态不一致、ACS 同 SHA 证据缺失、基线制品找不到或该提交不是合法 PR merge。
 
@@ -196,7 +195,7 @@ Staging 证据作为 GitHub Actions artifact 保留 90 天，同时把 verified 
 | 通知                                         | Staging 强制 disabled，不向真实钉钉、短信、Web Push 发消息                      |
 | 凭据/Vault                                   | 独立 namespace 与 Vault 文件                                                    |
 
-每次 Staging 部署都会真实验证它不能读写生产数据库、不能写入 Production OSS bucket、不能访问生产 ACS 入口和生产目录，同时验证 NAS/PVC 的逻辑隔离。当前代码**没有证明 Staging OSS 身份不能读取生产 OSS**；因此这里的 OSS 保证只表述为“禁止写入”，不把权限配置推断成未执行的读拒绝证据。
+每次 Staging 部署都会真实验证它不能读写生产数据库、不能写入 Production OSS bucket、不能访问生产 ACS 入口和生产目录，同时验证 NAS/PVC 的逻辑隔离。Production OSS probe 必须带完整 `observed`，明确证明 `403/AccessDenied`，服务端会从 canonical `observed` 重算每个 probe 的 digest；缺观察、返回 200、错误 code 或伪造 digest 都 fail closed。当前代码**没有证明 Staging OSS 身份不能读取生产 OSS**；因此这里的 OSS 保证只表述为“禁止写入”，不把权限配置推断成未执行的读拒绝证据。
 
 必须保留一个明确边界：具有宿主机特权的身份理论上仍能重新挂载共享 NAS 根目录，所以这里不能宣传“完全隔离”或“物理隔离”。
 
@@ -262,7 +261,7 @@ Promotion 的生产顺序固定为：
 
 每个组件在动作开始和结束时都写 durable operation receipt。Workflow 会记录 GitHub Production Deployment、最终 attestation，并上传生产前、生产后、生产确认和 reconcile 证据；Actions artifact 保留 90 天。
 
-如果生产本来已经等于目标 Manifest，Workflow 会验证后跳过重启或重复上传。重跑边界按 attestation 尾状态收紧：`failed_before_change` 可重新批准，包括完整闭合的 `approved → promoting → failed_before_change`，但该 `promoting` 必须绑定原 RC/Manifest、migration plan 和生产 before/target digest；悬空 `promoting` 或缺绑定失败证明均拒绝。尚未写生产的 `approved` 可重跑；`awaiting_expand_confirmation` 只能进入独立确认入口；确认窗口超过 2 小时后，该入口会在 `production-runtime` 锁内先追加并持久化一条绑定原 RC/Manifest/plan/before/target 的 `expand-reobservation` attestation，刷新窗口后重新读取生产现场，而不是复用旧 evidence；`needs_human`、`partial_failed`、`rolled_back` 和 `completed` 均不能直接重新 Promotion。`rolled_back` 只能由 ACS/App 部署脚本或 Web 恢复 trap 的真实 rollback receipt 与完整生产读回共同证明，不能从 deploy step failure 推断；例如 Web 在安装 trap 前读取旧 OSS entry 失败、且现场仍为 before 时，只能记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。仓库不声称自动恢复 `partial_failed`；这类状态必须先人工核对和另行处置。
+如果生产本来已经等于目标 Manifest，Workflow 会验证后跳过重启或重复上传。重跑边界按 attestation 尾状态收紧：`failed_before_change` 可重新批准，包括完整闭合的 `approved → promoting → failed_before_change`，但该 `promoting` 必须绑定原 RC/Manifest、migration plan 和生产 before/target digest；悬空 `promoting` 或缺绑定失败证明均拒绝。尚未写生产的 `approved` 可重跑；`awaiting_expand_confirmation` 只能进入独立确认入口；确认窗口超过 2 小时后，该入口会在 `production-runtime` 锁内先追加并持久化一条绑定原 RC/Manifest/plan/before/target 的 `expand-reobservation` attestation，刷新窗口后重新读取生产现场，而不是复用旧 evidence；`needs_human`、`partial_failed`、`rolled_back` 和 `completed` 均不能直接重新 Promotion。`rolled_back` 只能由 ACS/App 部署脚本或 Web 恢复 trap 的真实 rollback 证据与完整生产读回共同证明，不能从 deploy step failure 推断；Web 会先记录 attempted，只有 `release-identity.json` 与 `index.html` 都恢复成功并从 OSS 按字节回读一致后才记录 succeeded，任一恢复或入口核验失败均进入 `needs_human`，不能仅凭 identity 回到 before 就宣称回滚完成。例如 Web 在安装 trap 前读取旧 OSS entry 失败、且现场仍为 before 时，只能记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。仓库不声称自动恢复 `partial_failed`；这类状态必须先人工核对和另行处置。
 
 ### 8.4 数据库变更的特殊处理与静态白名单
 
@@ -270,7 +269,7 @@ Promotion 的生产顺序固定为：
 - `expand`：允许部署兼容性扩展；`promoting` attestation 会不可变绑定 `releaseSha`、`migrationPhase`、migration plan digest 与生产 before/target digest。`none` 只允许从 `promoting` 直接完成，`expand` 则禁止任何通用 `completed`，组件物理收敛后只能进入 `awaiting_expand_confirmation`，不能由普通 Promotion 重跑推进。随后手动运行 `确认扩展迁移`，它只接受原 release ID，重新校验 Manifest/release SHA、migration plan digest、原始 promoting attestation 中的生产 before/target digest，独立读取全部生产组件，并重新读取绑定该 RC 的 Production API ready（API ready 只会在启动迁移完成后成立）。最终 append 会再次校验完整 evidence schema、API ready 的 release ID/SHA、`liveObservedAt`、`confirmedAt`、2 小时确认窗口和 5 分钟现场/证据新鲜度；任何上传延迟导致的陈旧证据、重复确认、跨 RC/跨 plan 或现场基线漂移都 fail closed。窗口过期不会把 RC 永久卡死：同一手动入口会先写入不可变 `expand-reobservation` 自迁移（错绑定或未过期刷新均拒绝），再执行一次全新的生产读回与确认。
 - `contract`：Promotion 明确禁止执行，必须等兼容窗口结束后作为独立版本处理。
 
-Migration plan 会从仓库权威入口构建 baseline 与 target 两侧的相对 import/re-export 依赖图：遍历会穿透普通 barrel，并分类权威根、governance 命名 provider、带独立 `release-migration` metadata 的最终 provider，以及从权威入口真实 import 的 binding；所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider 时纳入闭包，纯 type-only edge、普通静态 logger/store 与延迟函数声明不误判。请求的 export 名会跨 `export ... from`、local alias、default export 与普通 barrel 逐层传播到实际声明，命中静态数据中的 DDL/DML 后即把 provider 纳入分类。最终 provider 不依赖文件名、变量后缀或自愿 metadata 才被发现；未自愿标 metadata 也会先进入闭包，再因缺 metadata 而 fail closed。根入口包括 `server/src/data/**/migration(s).ts`、`server/src/data/**/migrate.ts`、`server/src/context/**/migration.ts`、`server/scripts/migrate-*.mts` 和独立 migrations 目录，`v22Migration.ts`、`agentDwsMigrations.ts` 等 governance runner 间接执行的 provider 也在分类闭包内；baseline/target 新接入的 provider 按全量新增分类，断开的 provider 直接阻断，普通 logger/store 不会因被 import 而误判，同时仍读取 rename/delete 状态。`expand` metadata 只能是独立的 `//`、`--` 或 `/* */` 注释，普通字符串和 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文都不能伪造，未闭合 dollar quote 直接 fail closed；新增 SQL 会先用支持 PostgreSQL `E''`、dollar quote、双引号与嵌套块注释的 lexer 去注释、遮蔽 literal，再按顶层分号逐语句分类；只接受非 CTAS 的 CREATE TABLE/INDEX/SEQUENCE 和单一 ALTER TABLE ADD/VALIDATE，`DEFAULT`、`CHECK` 等 ALTER 表达式出现不可证明函数调用时拒绝，包括 Unicode 与双引号函数名。全部 INSERT（包括 `ON CONFLICT DO NOTHING`）、CREATE TABLE AS、未知/尾随第二语句和全部 psql 反斜杠元命令均拒绝；原因是 INSERT 的 VALUES/default 表达式可调用 VOLATILE 函数，无法仅凭冲突策略证明无副作用。对 TS/MTS migration 还会按新增目标行执行 TypeScript AST 校验：任何新增或被新增行触及的可执行调用、控制流与动态表达式都 fail closed；TS/MTS 的 `expand` 只接受静态字符串、数组或对象形式的声明式 SQL 数据，computed member、indirect/Reflect 调用、custom runner、动态参数和模板插值均不允许；静态字符串会先按 AST 解码转义后再分类。复合 ALTER、CALL/CTE 和无法确定的语句同样拒绝。
+Migration plan 会从仓库权威入口构建 baseline 与 target 两侧的相对 import/re-export 依赖图：遍历会穿透普通 barrel，并分类权威根、governance 命名 provider、带独立 `release-migration` metadata 的最终 provider，以及从权威入口真实 import 的 binding；所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider 时纳入闭包，纯 type-only edge、普通静态 logger/store 与延迟函数声明不误判。请求的 export 名会跨 `export ... from`、local alias、default export 与普通 barrel 逐层传播到实际声明；实际被调用的 binding 还会反向穿透赋值别名、对象/数组解构和 namespace import，把可调用 provider 纳入差异分析。无法静态证明的 `import()`、`require()` 与 `createRequire`（含 namespace、元素访问和多级 alias）直接 fail closed。命中静态数据中的 DDL/DML 后即把 provider 纳入分类。最终 provider 不依赖文件名、变量后缀或自愿 metadata 才被发现；未自愿标 metadata 也会先进入闭包，再因缺 metadata 而 fail closed。根入口包括 `server/src/data/**/migration(s).ts`、`server/src/data/**/migrate.ts`、`server/src/context/**/migration.ts`、`server/scripts/migrate-*.mts` 和独立 migrations 目录，`v22Migration.ts`、`agentDwsMigrations.ts` 等 governance runner 间接执行的 provider 也在分类闭包内；baseline/target 新接入的 provider 按全量新增分类，断开的 provider 直接阻断，普通 logger/store 不会因被 import 而误判，同时仍读取 rename/delete 状态。`expand` metadata 只能是独立的 `//`、`--` 或 `/* */` 注释，普通字符串和 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文都不能伪造，未闭合 dollar quote 直接 fail closed；新增 SQL 会先用支持 PostgreSQL `E''`、dollar quote、双引号与嵌套块注释的 lexer 去注释、遮蔽 literal，再按顶层分号逐语句分类；只接受非 CTAS 的 CREATE TABLE/INDEX/SEQUENCE 和单一 ALTER TABLE ADD/VALIDATE，`DEFAULT`、`CHECK` 等 ALTER 表达式出现不可证明函数调用时拒绝，包括 Unicode 与双引号函数名。全部 INSERT（包括 `ON CONFLICT DO NOTHING`）、CREATE TABLE AS、未知/尾随第二语句和全部 psql 反斜杠元命令均拒绝；原因是 INSERT 的 VALUES/default 表达式可调用 VOLATILE 函数，无法仅凭冲突策略证明无副作用。对 TS/MTS migration 还会按新增目标行执行 TypeScript AST 校验：任何新增或被新增行触及的可执行调用、控制流与动态表达式都 fail closed；TS/MTS 的 `expand` 只接受静态字符串、数组或对象形式的声明式 SQL 数据，computed member、indirect/Reflect 调用、custom runner、动态参数和模板插值均不允许；静态字符串会先按 AST 解码转义后再分类。复合 ALTER、CALL/CTE 和无法确定的语句同样拒绝。
 
 升级前已经落盘、没有新 migration binding 的旧 `promoting` attestation 仍可按原样 hydrate，供历史审计和读取完整旧链；兼容层不改写记录、不猜测 plan digest，也不允许新的 `promoting` 省略绑定。若旧历史停在无绑定 `promoting`，新代码不能直接把它推进成 `completed`，应重新生成符合当前 schema 的 RC。
 
@@ -337,8 +336,8 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 
 1. 所有代码通过 PR，不直推 main。
 2. 等 `Build & Check`、`ACS Impact Gate` 都绿再合并。
-3. 合并后等 main push CI 和自动 `Prepare Release Evidence` 都绿。
-4. 手动运行 `Deploy Staging RC`，写清发版说明。
+3. 合并后等 main push CI 通过。
+4. 手动运行 `Deploy Staging RC`，写清发版说明；先等待其 `prepare-evidence` job 成功，再进入构建部署。
 5. 打开 `https://staging-agent.kaiyan.net` 做必要的人工目检。
 6. 高风险版本、重要交互改动或专门测试窗口，再手动跑 `Staging Acceptance`；普通确定性版本不必每次死磕完整 E2E。
 7. 在 RC 创建后 24 小时内运行 Promotion，填写明确原因。
@@ -347,7 +346,7 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 ## 十四、我认为最需要注意的事项
 
 1. **不要把“CI 绿”写成“已上线”**：PR/push 只测试；Staging 和 Production 都要显式 dispatch。
-2. **Prepare Release Evidence 是正式链必需环节**：它不是重复测试，而是把 main、CI、生产基线和不可变制品绑定起来。
+2. **Release Evidence 是正式链必需环节**：它由 `Deploy Staging RC` 的前置 job 生成或复用，不是重复测试，而是把 main、CI、生产基线和不可变制品绑定起来。
 3. **完整 E2E 不再阻塞发版是正确选择**：它仍有价值，但当前单 worker 串行、包含重启和恢复测试，天然比确定性部署门禁更慢、更易波动。
 4. **只有一个在线 Staging**：跑 Acceptance 或部署新 RC 前，应先确认没有人正在演示或测试旧版本。
 5. **Staging 不是完全物理隔离**：共用 RDS 实例、NAS 和 ACS 集群；任何新增连接器、通知或数据访问能力，都必须继续扩展反向拒绝证据。

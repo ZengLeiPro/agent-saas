@@ -129,6 +129,20 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
   assert.match(workflow, /already equals the immutable target/u);
   assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(
+    workflow,
+    /Read every live component[\s\S]*if: always\(\) && env\.PROMOTION_STARTED == 'true'/u,
+  );
+  assert.match(workflow, /steps\.deploy_acs\.outcome[^\n]*!= skipped/u);
+  assert.match(workflow, /remote="\/tmp\/release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u);
+  const readbackBlock = workflow
+    .split('Read every live component', 2)[1]
+    .split('Reconcile component outcome', 1)[0];
+  assert.doesNotMatch(readbackBlock, /mkdir -p|scp -i/u);
+  assert.match(
+    readbackBlock,
+    /node '\$remote\/read-live-production-components\.mjs'[^\n]*\n[^\n]*production-after\.json/u,
+  );
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
@@ -178,12 +192,14 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
   assert.match(workflow, /rollback_attempted=true/u);
-  assert.match(workflow, /rollback-web\.receipt/u);
+  assert.match(workflow, /rollback-web\.attempted/u);
+  assert.match(workflow, /rollback-web\.succeeded/u);
+  assert.match(workflow, /rollback_succeeded=false/u);
   assert.match(workflow, /rollback-acs\.receipt/u);
   assert.match(workflow, /rollback-app\.receipt/u);
   assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
-  assert.match(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.doesNotMatch(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(deploy, /candidate-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(deploy, /rollback-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
   assert.match(deploy, /before-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
@@ -212,8 +228,14 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
       deploy.indexOf('systemctl disable --now', deploy.indexOf('cleanup_app_failure()')),
   );
   assert.ok(
-    workflow.indexOf('rollback-web.receipt', workflow.indexOf('restore_web_entry()')) <
+    workflow.indexOf('rollback-web.attempted', workflow.indexOf('restore_web_entry()')) <
       workflow.indexOf('aliyun --secure oss cp', workflow.indexOf('restore_web_entry()')),
+  );
+  assert.ok(
+    workflow.indexOf(
+      'cmp "$RUNNER_TEMP/web-before/index.html"',
+      workflow.indexOf('restore_web_entry()'),
+    ) < workflow.indexOf('rollback-web.succeeded', workflow.indexOf('restore_web_entry()')),
   );
   assert.match(deploy, /acs_mutation_started=true/u);
   assert.match(deploy, /app_mutation_started=true/u);
@@ -307,7 +329,7 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(attestationCli, /confirmation-evidence/u);
   assert.match(attestationCli, /currentState === 'awaiting_expand_confirmation'/u);
   assert.match(attestationCli, /confirmationEvidenceDigest !== evidenceDigest/u);
-  assert.match(releaseDocs, /GitHub 上七个 Workflow/u);
+  assert.match(releaseDocs, /GitHub 上六个 Workflow/u);
   assert.match(releaseDocs, /`Confirm Expand Migration`/u);
   assert.match(releaseDocs, /2 小时确认窗口和 5 分钟现场\/证据新鲜度/u);
   assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);

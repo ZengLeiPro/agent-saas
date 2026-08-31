@@ -37,6 +37,7 @@ vi.mock("./hooks", () => ({
     comments: mocks.comments,
     loading: false,
     error: null,
+    ready: true,
     refresh: mocks.refreshComments,
     addComment: mocks.addComment,
   }),
@@ -86,7 +87,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function expandTaskDetails() { fireEvent.click(screen.getByRole("button", { name: "展开任务详情" })); }
+function selectTaskDetailTab(name: string | RegExp) {
+  const tab = screen.getByRole("tab", { name });
+  fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
+  fireEvent.click(tab);
+}
+function expandTaskDetails() { selectTaskDetailTab("详细信息"); }
+function openDiscussion() { selectTaskDetailTab(/讨论（\d+）/); }
 
 function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
   return {
@@ -123,13 +130,34 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.addComment.mockResolvedValue(undefined);
   });
 
-  it("任务详情使用圆角侧栏，展开后详情占满评论输入框上方区域", async () => {
+  it("任务详情使用窄侧栏与品牌分段标签，并按评论数选择默认页", async () => {
     const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); expect(screen.getByRole("dialog").className).toContain("md:basis-1/2"); expect(screen.getByRole("dialog").className).toContain("md:min-w-[26rem]"); expect(screen.getByRole("dialog").className).toContain("rounded-xl"); expect(screen.getByTestId("task-detail-columns").className).toContain("flex-col");
-    const information = screen.getByTestId("task-detail-information"); const headerActions = screen.getByTestId("task-detail-actions"); expect(information.getAttribute("aria-hidden")).toBe("true"); expect(information.className).toContain("grid-rows-[0fr]"); expect(screen.queryByText("编辑任务并补充评论")).toBeNull(); expect(within(headerActions).queryByText("交付任务")).toBeNull(); expect(within(headerActions).queryByText("需求池")).toBeNull(); expect(within(headerActions).queryByText("无")).toBeNull();
-    const close = screen.getByRole("button", { name: "关闭任务详情" }); expect(close.parentElement?.nextElementSibling).toBe(headerActions); expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("flex-1"); const toggle = screen.getByRole("button", { name: "展开任务详情" }); expect(toggle.textContent).toContain("讨论（0）"); expect(toggle.getAttribute("aria-expanded")).toBe("false"); await user.click(toggle);
-    expect(information.className).toContain("flex-1"); expect(information.className).toContain("grid-rows-[1fr]"); expect(information.className).not.toContain("max-h-[52vh]"); expect(information.getAttribute("aria-hidden")).toBe("false"); expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("shrink-0"); expect(screen.getByTestId("task-comments-scroll").className).toContain("hidden"); expect(screen.getByRole("button", { name: "收起任务详情" }).getAttribute("aria-expanded")).toBe("true"); const actions = screen.getByRole("group", { name: "任务操作" }); const save = within(actions).getByRole("button", { name: "保存任务" }); const archive = within(actions).getByRole("button", { name: "归档任务" }); expect(save.textContent).toBe("保存"); expect(archive.textContent).toContain("归档"); expect(save.className).toContain("w-[4.5rem]"); expect(archive.className).toContain("w-[4.5rem]");
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("md:basis-[46%]"); expect(dialog.className).toContain("md:min-w-[24rem]"); expect(dialog.className).toContain("md:max-w-[36rem]"); expect(dialog.className).toContain("rounded-xl");
+    const tabs = screen.getByRole("tablist", { name: "任务详情分区" }); expect(tabs.className).toContain("bg-brand-50"); expect(tabs.className).toContain("h-10");
+    expect(screen.getByRole("tab", { name: "详细信息" }).getAttribute("data-state")).toBe("active");
+    const information = screen.getByTestId("task-detail-information"); expect(information.getAttribute("aria-hidden")).toBe("false");
+    await user.click(screen.getByRole("tab", { name: "讨论（0）" })); expect(information.getAttribute("aria-hidden")).toBe("true");
+    await user.click(screen.getByRole("tab", { name: "详细信息" }));
+    const actions = screen.getByRole("group", { name: "任务操作" }); expect(within(actions).getByRole("button", { name: "保存任务" }).className).toContain("w-[4.5rem]");
     await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("正文输入框按内容和剩余空间自适应，并在空间不足时内部滚动", async () => {
+    render(<TaskDetail {...props()} />); await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    const textarea = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
+    const viewport = screen.getByTestId("task-detail-information"); const content = screen.getByTestId("task-detail-content");
+    let naturalHeight = 240;
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => naturalHeight });
+    Object.defineProperty(textarea, "offsetHeight", { configurable: true, get: () => Number.parseFloat(textarea.style.height) || 0 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
+    Object.defineProperty(content, "scrollHeight", { configurable: true, value: 400 });
+    fireEvent.change(textarea, { target: { value: "长正文".repeat(100) } });
+    const constrainedHeight = Number.parseFloat(textarea.style.height);
+    expect(constrainedHeight).toBeGreaterThan(100); expect(constrainedHeight).toBeLessThan(naturalHeight); expect(textarea.style.overflowY).toBe("auto");
+    naturalHeight = 100; fireEvent.change(textarea, { target: { value: "较短正文" } });
+    expect(Number.parseFloat(textarea.style.height)).toBe(100); expect(textarea.style.overflowY).toBe("hidden");
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {
@@ -183,6 +211,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.executions = [execution];
     mocks.fetchTask.mockResolvedValue(runningTask);
     const { rerender } = render(<TaskDetail {...props({ task: runningTask })} />);
+    openDiscussion();
 
     expect((await screen.findByTestId("task-description-comment")).textContent).toContain("任务一正文");
     expect(screen.getByText("任务正文")).toBeTruthy();
@@ -197,31 +226,31 @@ describe("TaskDetail 草稿隔离", () => {
     expect(screen.queryByTestId("task-description-comment")).toBeNull();
   });
 
-  it("改变状态不会重置未保存正文，切换任务会清空评论草稿", async () => {
+  it("标签切换与状态变更不会重置草稿，切换任务会清空评论草稿", async () => {
     const user = userEvent.setup();
     const initialProps = props();
     const { rerender } = render(<TaskDetail {...initialProps} />);
     await waitFor(() => expect(initialProps.onTaskLoaded).toHaveBeenCalledWith(taskOne)); expandTaskDetails();
 
     const description = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
+    fireEvent.change(description, { target: { value: "未保存的新正文" } }); openDiscussion();
     const comment = screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement;
-    fireEvent.change(description, { target: { value: "未保存的新正文" } });
-    fireEvent.change(comment, { target: { value: "任务一评论草稿" } });
+    fireEvent.change(comment, { target: { value: "任务一评论草稿" } }); expandTaskDetails();
 
     await user.click(screen.getByRole("combobox", { name: "任务状态" }));
     await user.click(screen.getByRole("option", { name: "待推进" }));
     await waitFor(() => expect(initialProps.onMove).toHaveBeenCalled());
-    expect(description.value).toBe("未保存的新正文");
-    expect(comment.value).toBe("任务一评论草稿");
+    expect(description.value).toBe("未保存的新正文"); openDiscussion();
+    expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿"); expandTaskDetails();
 
     rerender(<TaskDetail {...initialProps} active={false} />);
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "正文" })).toBeNull());
     rerender(<TaskDetail {...initialProps} active />);
-    expect((await screen.findByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("未保存的新正文");
+    expect((await screen.findByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("未保存的新正文"); openDiscussion();
     expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).value).toBe("任务一评论草稿");
 
-    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
-    await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
+    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("tab", { name: "详细信息" }));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文")); openDiscussion();
     expect((screen.getByRole("textbox", { name: "发表讨论" }) as HTMLTextAreaElement).value).toBe("");
   }, 10_000);
 
@@ -239,7 +268,7 @@ describe("TaskDetail 草稿隔离", () => {
     await user.click(screen.getByRole("button", { name: "保存任务" }));
     await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
 
-    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    rerender(<TaskDetail {...initialProps} task={taskTwo} />); await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     await waitFor(() => expect((screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement).value).toBe("任务二正文"));
     await act(async () => {
       pending.resolve({ ...taskOne, description: "任务一已保存正文", version: 4 });
@@ -338,7 +367,7 @@ describe("TaskDetail 草稿隔离", () => {
       headers: { "content-type": "application/json" },
     }));
     render(<TaskDetail {...props()} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); openDiscussion();
 
     const picker = within(screen.getByRole("region", { name: "任务讨论" })).getByLabelText("选择附件");
     fireEvent.change(picker, {
@@ -384,7 +413,7 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.fetchTask.mockResolvedValue(todoTask);
     const onTaskLoaded = vi.fn();
     render(<TaskDetail {...props({ task: todoTask, onTaskLoaded })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); openDiscussion();
 
     await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
@@ -428,7 +457,7 @@ describe("TaskDetail 草稿隔离", () => {
     await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id)); expandTaskDetails();
 
     expect(screen.getByText(/一个持久 Integration Agent 自主完成组合/)).toBeTruthy();
-    expect(screen.queryByText(/Candidate|重新排队/)).toBeNull();
+    expect(screen.queryByText(/Candidate|重新排队/)).toBeNull(); openDiscussion();
     await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
@@ -468,7 +497,7 @@ describe("TaskDetail 草稿隔离", () => {
     const todoTask = { ...taskOne, status: "todo" as const };
     mocks.fetchTask.mockResolvedValue(todoTask);
     render(<TaskDetail {...props({ task: todoTask })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); openDiscussion();
 
     await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
@@ -489,7 +518,7 @@ describe("TaskDetail 草稿隔离", () => {
       const body = `状态 ${status} 的普通评论`;
       mocks.fetchTask.mockResolvedValue(current);
       render(<TaskDetail {...props({ task: current })} />);
-      await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id));
+      await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(current.id)); openDiscussion();
 
       expect(screen.queryByRole("checkbox", { name: /直接/ })).toBeNull();
       await user.type(screen.getByRole("textbox", { name: "发表讨论" }), body);

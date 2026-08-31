@@ -20,7 +20,7 @@ vi.mock("./api", async (importOriginal) => ({
   fetchIntegrationSources: vi.fn(async () => []),
 }));
 vi.mock("./hooks", () => ({
-  useTaskComments: () => ({ comments: [], loading: false, error: null, refresh: vi.fn(), addComment: vi.fn() }),
+  useTaskComments: () => ({ comments: [], loading: false, error: null, ready: true, refresh: vi.fn(), addComment: vi.fn() }),
   useTaskExecutions: () => ({
     executions: mocks.executions,
     loading: mocks.executionsLoading,
@@ -78,7 +78,7 @@ describe("TaskDetail 人工完成", () => {
     const onTaskLoaded = vi.fn();
     render(<TaskDetail {...props({ onCompleteTask, onTaskLoaded })} />);
 
-    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     await user.click(await screen.findByRole("button", { name: "完成任务" }));
     await waitFor(() => expect(onCompleteTask).toHaveBeenCalledWith(advisoryTask));
     expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("结束当前任务工作流"));

@@ -137,6 +137,25 @@ export {
   reduceInteraction,
   selectInteraction,
 } from './lib/interactionProtocol';
+export {
+  isCanonicalPendingInteractionTimelineItem,
+  redactInteractionCredentials,
+  selectCanonicalInteractionFinalStatus,
+  validateAskUserAnswers,
+  selectCanonicalInteractionZone,
+} from './lib/activeInteraction';
+export type {
+  ActiveInteractionQuestion,
+  ActiveInteractionSummary,
+  AskUserValidationResult,
+  CanonicalInteractionFinalStatus,
+  CanonicalInteractionKind,
+  CanonicalInteractionReceipt,
+  CanonicalInteractionZoneItem,
+  CanonicalInteractionZoneState,
+  SelectCanonicalInteractionZoneInput,
+} from './lib/activeInteraction';
+
 export type {
   InteractionAck,
   InteractionAckStatus,
@@ -145,6 +164,7 @@ export type {
   InteractionOutcome,
   InteractionPhase,
   InteractionReducerState,
+  InteractionResponse,
   InteractionResponseRequest,
   InteractionState,
 } from './lib/interactionProtocol';

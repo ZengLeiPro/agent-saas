@@ -92,7 +92,7 @@ import { useChatNotificationState, useChatStreamCorrelation } from "./useChatRun
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
-type PendingInteractionResponse = { type: "permission_request" | "ask_user"; response: Record<string, unknown>; generation: number; attemptId: string; ackTimer?: ReturnType<typeof setTimeout> };
+type PendingInteractionResponse = { type: "permission_request" | "ask_user"; response: Record<string, unknown>; version: number; generation: number; attemptId: string; ackTimer?: ReturnType<typeof setTimeout> };
 export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const { user, identity } = useAuth();
   // 授权模式对所有用户生效（2026-07-02 起），用户在账户设置中自行切换。
@@ -1500,8 +1500,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (!pending) return;
     // ACKs without a token are only valid for the initial submission; tokens fence stale retries.
     const ackAttemptId = (data as { clientAttemptId?: unknown }).clientAttemptId;
-    if ((typeof ackAttemptId === 'string' && ackAttemptId !== pending.attemptId) || (ackAttemptId === undefined && pending.generation > 1)) return;
+    if ((typeof ackAttemptId === 'string' && ackAttemptId !== pending.attemptId) || (ackAttemptId === undefined && pending.generation > 1)
+      || (data.version !== undefined && data.version !== pending.version)) return;
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
+    if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
     pendingInteractionResponsesRef.current.delete(data.interactionId);
     const idx = msgRef.current.messagesRef.current.findIndex((m) => m.type === pending.type && m.interactionId === data.interactionId);
     if (idx < 0) return;
@@ -2982,10 +2984,14 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ---- Interaction responses (via WS) ----
   const respondToInteraction = useCallback(async (interactionId: string, type: 'permission_request' | 'ask_user', response: Record<string, unknown>) => {
     if (pendingInteractionResponsesRef.current.has(interactionId)) return;
-    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1; const currentSessionId = sessionIdRef.current; if (!currentSessionId) return; const attemptId = createInteractionRequestId(currentSessionId, interactionId, response); interactionResponseGenerationRef.current.set(interactionId, generation);
-    const pending: PendingInteractionResponse = { type, response, generation, attemptId };
+    const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1; const currentSessionId = sessionIdRef.current; if (!currentSessionId) return;
+    const interactionMessage = msgRef.current.messagesRef.current.find((message) => (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
+    const version = interactionMessage?.interactionVersion;
+    if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
+    const attemptId = createInteractionRequestId(currentSessionId, interactionId, response); interactionResponseGenerationRef.current.set(interactionId, generation);
+    const pending: PendingInteractionResponse = { type, response, version: version!, generation, attemptId };
     pendingInteractionResponsesRef.current.set(interactionId, pending);
-    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: currentSessionId, requestId: attemptId, clientAttemptId: attemptId, response, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
+    if (!await wsClient.ensureConnectedSend({ action: 'respond', interactionId, sessionId: currentSessionId, version, requestId: attemptId, clientAttemptId: attemptId, response, ...response }).catch(() => false)) return releaseInteractionResponse(interactionId, generation, '网络连接失败');
     if (pendingInteractionResponsesRef.current.get(interactionId) !== pending) return;
     pending.ackTimer = setTimeout(() => releaseInteractionResponse(interactionId, generation, '等待服务端确认超时'), INTERACTION_RESPONSE_ACK_TIMEOUT_MS);
   }, [releaseInteractionResponse]);

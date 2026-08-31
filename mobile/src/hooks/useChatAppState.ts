@@ -70,6 +70,7 @@ function createVoiceId(): string {
 type PendingInteractionResponse = {
   type: "permission_request" | "ask_user";
   response: Record<string, unknown>;
+  version: number;
   generation: number;
   attemptId: string;
   ackTimer?: ReturnType<typeof setTimeout>;
@@ -1080,8 +1081,10 @@ export function useChatAppStateCore(): ChatAppState {
     const ackAttemptId = (data as unknown as { clientAttemptId?: unknown }).clientAttemptId;
     if (typeof ackAttemptId === "string" && ackAttemptId !== pending.attemptId) return;
     if (ackAttemptId === undefined && pending.generation > 1) return;
+    if (data.version !== undefined && data.version !== pending.version) return;
 
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
+    if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
     pendingInteractionResponsesRef.current.delete(data.interactionId);
 
     const idx = msgRef.current.messagesRef.current.findIndex((m) =>
@@ -1120,18 +1123,24 @@ export function useChatAppStateCore(): ChatAppState {
   useEffect(() => {
     const projectSessionListInteraction = (event: WsEvent) => {
       const fallbackSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-      if (event.type === 'pending_interactions' && fallbackSessionId) {
-        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: fallbackSessionId });
+      if (event.type === 'pending_interactions' && (event.sessionId ?? fallbackSessionId)) {
+        const authoritativeSessionId = event.sessionId ?? fallbackSessionId!;
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
         event.interactions.forEach((interaction, index) => {
           sessionRef.current.applySessionInteractionEvent?.({
-            type: 'requested', sessionId: fallbackSessionId,
-            interaction: { interactionId: interaction.interactionId, type: interaction.type as 'ask_user' | 'permission_request', version: Date.now() + index },
+            type: 'requested', sessionId: authoritativeSessionId,
+            interaction: {
+              interactionId: interaction.interactionId,
+              type: interaction.type,
+              version: interaction.version ?? 0,
+              order: interaction.order ?? interaction.version ?? index,
+            },
           });
         });
       } else if ((event.type === 'permission_request' || event.type === 'ask_user') && fallbackSessionId) {
         sessionRef.current.applySessionInteractionEvent?.({
           type: 'requested', sessionId: fallbackSessionId,
-          interaction: { interactionId: event.interactionId, type: event.type, version: Date.now() },
+          interaction: { interactionId: event.interactionId, type: event.type, version: event.version ?? 0, order: event.order ?? event.version ?? 0 },
         });
       } else if (event.type === 'interaction_resolved') {
         sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
@@ -1885,9 +1894,14 @@ export function useChatAppStateCore(): ChatAppState {
       const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1;
       const currentSessionId = sessionIdRef.current;
       if (!currentSessionId) return;
+      const interactionMessage = msgRef.current.messagesRef.current.find((message) =>
+        (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId,
+      ) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
+      const version = interactionMessage?.interactionVersion;
+      if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
       interactionResponseGenerationRef.current.set(interactionId, generation);
       const attemptId = createInteractionRequestId(currentSessionId, interactionId, response);
-      pendingInteractionResponsesRef.current.set(interactionId, { type, response, generation, attemptId });
+      pendingInteractionResponsesRef.current.set(interactionId, { type, response, version: version!, generation, attemptId });
 
       let ok = false;
       try {
@@ -1895,6 +1909,7 @@ export function useChatAppStateCore(): ChatAppState {
           action: "respond",
           interactionId,
           sessionId: currentSessionId,
+          version,
           requestId: attemptId,
           clientAttemptId: attemptId,
           response,

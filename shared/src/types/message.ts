@@ -109,6 +109,8 @@ export type MessageItem =
       id: string;
       type: "permission_request";
       interactionId: string;
+      interactionVersion?: number;
+      interactionOrder?: number;
       toolName: string;
       toolInput: string;
       status: "pending" | "allowed" | "denied";
@@ -117,6 +119,8 @@ export type MessageItem =
       id: string;
       type: "ask_user";
       interactionId: string;
+      interactionVersion?: number;
+      interactionOrder?: number;
       questions: Array<{
         question: string;
         header: string;

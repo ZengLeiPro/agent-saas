@@ -5,6 +5,7 @@ export type InteractionPhase =
   | 'resolved'
   | 'rejected'
   | 'failed'
+  | 'cancelled'
   | 'expired';
 
 export type InteractionAckStatus =
@@ -22,6 +23,10 @@ export interface InteractionIdentity {
   interactionId: string;
   /** Authentication/session generation. Frames from another generation are ignored. */
   generation: number;
+  /** Authentication epoch. Requests from a revoked epoch are rejected by the server. */
+  authEpoch?: number;
+  /** Monotonic server interaction revision. */
+  version?: number;
 }
 
 export interface InteractionState extends InteractionIdentity {
@@ -38,7 +43,7 @@ export type InteractionEvent =
   | ({ type: 'server_pending' } & InteractionIdentity)
   | ({ type: 'submit'; requestId: string; response: InteractionResponse } & InteractionIdentity)
   | ({ type: 'ack'; requestId: string; status: InteractionAckStatus; response?: InteractionResponse; reason?: string; retryable?: boolean } & InteractionIdentity)
-  | ({ type: 'outcome'; status: 'resolved' | 'rejected' | 'failed' | 'expired'; response?: InteractionResponse; reason?: string; retryable?: boolean } & InteractionIdentity)
+  | ({ type: 'outcome'; status: 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'; response?: InteractionResponse; reason?: string; retryable?: boolean } & InteractionIdentity)
   | ({ type: 'transport_failed'; requestId: string; reason: string } & InteractionIdentity)
   | { type: 'generation_reset'; generation: number };
 
@@ -55,6 +60,9 @@ export interface InteractionResponseRequest {
   requestId: string;
   /** N-1 alias. New servers use requestId. */
   clientAttemptId: string;
+  version: number;
+  authEpoch: number;
+  generation: number;
 }
 
 export interface InteractionAck {
@@ -83,7 +91,7 @@ export function createInteractionReducerState(generation = 0): InteractionReduce
 }
 
 function terminal(phase: InteractionPhase): boolean {
-  return phase === 'resolved' || phase === 'rejected' || phase === 'expired';
+  return phase === 'resolved' || phase === 'rejected' || phase === 'cancelled' || phase === 'expired';
 }
 
 export function reduceInteraction(state: InteractionReducerState, event: InteractionEvent): InteractionReducerState {
@@ -93,11 +101,15 @@ export function reduceInteraction(state: InteractionReducerState, event: Interac
   if (event.generation !== state.generation) return state;
   const key = interactionKey(event.sessionId, event.interactionId);
   const current = state.byKey[key];
+  // Interaction revisions are monotonic. This also fences delayed ACK/outcome frames from an old card.
+  if (current && event.version !== undefined && current.version !== undefined && event.version < current.version) return state;
+  if (current && event.authEpoch !== undefined && current.authEpoch !== undefined && event.authEpoch !== current.authEpoch) return state;
   if (event.type === 'server_pending') {
     // An authoritative pending snapshot may recover a lost ACK, but must never revive a terminal outcome.
     if (current && terminal(current.phase)) return state;
     return put(state, key, {
       key, sessionId: event.sessionId, interactionId: event.interactionId, generation: event.generation,
+      authEpoch: event.authEpoch, version: event.version,
       phase: 'pending', retryable: true, serverAuthoritative: true,
     });
   }
@@ -105,6 +117,7 @@ export function reduceInteraction(state: InteractionReducerState, event: Interac
     if (current && !canInteract(current)) return state;
     return put(state, key, {
       key, sessionId: event.sessionId, interactionId: event.interactionId, generation: event.generation,
+      authEpoch: event.authEpoch, version: event.version,
       phase: 'submitting', requestId: event.requestId, response: event.response,
       retryable: false, serverAuthoritative: false,
     });
@@ -112,7 +125,7 @@ export function reduceInteraction(state: InteractionReducerState, event: Interac
   if (!current) return state;
   if ('requestId' in event && current.requestId && event.requestId !== current.requestId) return state;
   if (event.type === 'transport_failed') {
-    return put(state, key, { ...current, phase: 'failed', reason: event.reason, retryable: true, serverAuthoritative: false });
+    return put(state, key, { ...current, phase: 'pending', reason: event.reason, retryable: true, serverAuthoritative: false });
   }
   if (event.type === 'ack') {
     if (event.status === 'accepted' || event.status === 'duplicate') {
@@ -166,5 +179,6 @@ export function buildInteractionResponseRequest(identity: InteractionIdentity, r
   return {
     action: 'respond', sessionId: identity.sessionId, interactionId: identity.interactionId,
     response, requestId, clientAttemptId: requestId,
+    version: identity.version ?? 0, authEpoch: identity.authEpoch ?? 0, generation: identity.generation,
   };
 }

@@ -12,7 +12,10 @@ export interface SyncRuntimeSnapshot {
 
 export interface SyncPendingInteractionSnapshot {
   interactionId: string;
-  type: 'ask_user' | 'permission_request';
+  type: 'ask_user' | 'permission_request' | 'approval';
+  version?: number;
+  order?: number;
+  receipt?: { status: 'approved' | 'rejected' | 'answered' | 'failed' | 'cancelled' | 'expired'; requestId?: string; reason?: string; respondedAt?: string };
   runId?: string;
   toolCallId?: string;
   invocationId?: string;
@@ -28,14 +31,11 @@ export interface SyncSessionSnapshot {
   sessionId: string;
   queueSnapshot?: ChatQueueSnapshot;
   runtime?: SyncRuntimeSnapshot;
-  /** 权威替换集合；空数组表示当前没有 pending interaction。 */
+  /** 权威替换集合；空数组表示当前没有 pending interaction；N-1 项可缺少 revision/order。 */
   pendingInteractions?: SyncPendingInteractionSnapshot[];
 }
 
-/**
- * Overflow 后的恢复契约。旧客户端会忽略新增字段并继续原有全量刷新；新客户端可先
- * 应用内联 snapshot，再按 refresh 描述获取完整 session/user 投影。
- */
+/** Overflow recovery always rehydrates interaction state from server authority, never a local outbox. */
 export interface SyncOverflowRecovery {
   version: typeof AUTHORITATIVE_SYNC_RECOVERY_VERSION;
   authoritative: true;
@@ -59,25 +59,15 @@ export interface SyncOverflowFrame {
   recovery: SyncOverflowRecovery;
 }
 
-export function buildSyncOverflowFrame(
-  seq: number,
-  epoch: string,
-  session?: SyncSessionSnapshot,
-): SyncOverflowFrame {
+export function buildSyncOverflowFrame(seq: number, epoch: string, session?: SyncSessionSnapshot): SyncOverflowFrame {
   return {
-    type: 'sync_overflow',
-    seq,
-    epoch,
+    type: 'sync_overflow', seq, epoch,
     recovery: {
       version: AUTHORITATIVE_SYNC_RECOVERY_VERSION,
       authoritative: true,
       refresh: {
         sessions: { method: 'GET', path: '/api/sessions' },
-        sessionDetail: {
-          method: 'GET',
-          pathTemplate: '/api/sessions/{sessionId}',
-          includes: ['queueSnapshot', 'lastRunState'],
-        },
+        sessionDetail: { method: 'GET', pathTemplate: '/api/sessions/{sessionId}', includes: ['queueSnapshot', 'lastRunState'] },
         runtime: { method: 'GET', pathTemplate: '/api/sessions/{sessionId}/stream-status' },
         pendingInteractions: { transport: 'ws', action: 'resume', responseType: 'pending_interactions' },
       },

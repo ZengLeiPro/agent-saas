@@ -86,6 +86,7 @@ import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
 import {
   AGENT_TARGET_BINDING_VERSION,
+  redactInteractionCredentials,
   type AgentTarget,
   type AgentTargetIdentitySnapshot,
   type AgentTargetUnavailableReason,
@@ -3218,19 +3219,19 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               "approval_resolved",
             ],
           });
-          const existingIds = new Set(
-            pending.map((entry) => entry.interactionId),
-          );
+          const existingIds = new Set(pending.map((entry) => entry.interactionId));
           for (const state of buildPendingInteractionsFromEvents(
             durableInteractionEvents,
             sessionId,
           )) {
             if (existingIds.has(state.interactionId)) continue;
-            if (state.type !== "ask_user" && state.type !== "permission_request")
+            if (state.type !== "ask_user" && state.type !== "permission_request" && state.type !== "approval")
               continue;
             pending.push({
               interactionId: state.interactionId,
               type: state.type,
+              version: state.version ?? 0,
+              order: state.order ?? state.version ?? 0,
               runId: state.runId,
               toolCallId: state.toolCallId,
               invocationId: state.invocationId,
@@ -3238,10 +3239,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               toolId: state.toolId,
               toolName: state.toolName,
               displayName: state.displayName,
-              toolInput: state.toolInput,
+              toolInput: state.type === 'approval'
+                ? redactInteractionCredentials(state.toolInput) as Record<string, unknown> | undefined
+                : state.toolInput,
             });
             existingIds.add(state.interactionId);
           }
+          // Durable approvals use the same fixed interaction zone as runtime permission/AskUser cards.
           for (const approval of buildApprovalRecordsFromEvents(
             durableInteractionEvents,
             sessionId,
@@ -3250,14 +3254,17 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             if (existingIds.has(approval.id)) continue;
             pending.push({
               interactionId: approval.id,
-              type: "permission_request",
+              type: "approval",
+              version: Number.isFinite(Date.parse(approval.createdAt)) ? Date.parse(approval.createdAt) : 0,
+              order: Number.isFinite(Date.parse(approval.createdAt)) ? Date.parse(approval.createdAt) : 0,
               toolId: approval.toolId,
               toolName: approval.toolName,
               displayName: approval.displayName,
-              toolInput:
+              toolInput: redactInteractionCredentials(
                 approval.input && typeof approval.input === "object"
-                  ? (approval.input as Record<string, unknown>)
+                  ? approval.input
                   : { value: approval.input },
+              ) as Record<string, unknown>,
             });
           }
         }
@@ -3271,11 +3278,38 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     },
   );
 
+  /** Canonical owner-scoped interaction detail/receipt endpoint used after list-summary hydration. */
+  router.get('/chat/interactions/:interactionId', async (req: Request, res: Response) => {
+    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+    const interactionId = req.params.interactionId;
+    if (!sessionId || !interactionId) { res.status(400).json({ error: 'sessionId and interactionId required' }); return; }
+    const pending = interactionStore.get(interactionId);
+    if (pending) {
+      if (pending.sessionId !== sessionId || (pending.userId && pending.userId !== req.user?.sub)) {
+        res.status(404).json({ error: 'Interaction not found' }); return;
+      }
+      res.json({
+        sessionId, interactionId, type: pending.type, version: pending.version, order: pending.order,
+        questions: pending.questions, toolId: pending.toolId, toolName: pending.toolName,
+        displayName: pending.displayName,
+        toolInput: pending.type === 'approval' ? redactInteractionCredentials(pending.toolInput) : pending.toolInput,
+      });
+      return;
+    }
+    const completed = interactionStore.getCompleted(sessionId, interactionId);
+    if (!completed || (completed.userId && completed.userId !== req.user?.sub)) { res.status(404).json({ error: 'Interaction not found' }); return; }
+    const status = completed.response.answers ? 'answered' : completed.response.allow === false ? 'rejected' : 'approved';
+    res.json({
+      sessionId, interactionId, version: completed.version, order: completed.order,
+      receipt: { status, requestId: completed.requestId, respondedAt: new Date(completed.completedAt).toISOString() },
+    });
+  });
+
   /**
    * POST /api/sessions/:sessionId/restore
    *
    * 从回收站恢复自己的会话（移除 deletedAt）。
-   * Owner-self only：只允许会话原 owner 恢复，任何 admin（含平台 admin / 组织 admin）
+   * Owner-self only：只允许会话原 owner 恢复；任何 admin（含平台 admin / 组织 admin）
    * 都不能代恢复他人会话。普通 user 也能恢复自己的。
    */
   router.post(

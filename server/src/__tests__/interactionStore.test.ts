@@ -42,9 +42,11 @@ describe('interactionStore disconnect behavior', () => {
     interactionStore.rejectOnDisconnect(new Set([askId, planId]), 'closed');
 
     expect(interactionStore.getPendingInteractions('session-2')).toEqual([
-      {
+      expect.objectContaining({
         interactionId: askId,
         type: 'ask_user',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: [
           {
             question: '选哪个？',
@@ -55,14 +57,16 @@ describe('interactionStore disconnect behavior', () => {
         ],
         toolName: undefined,
         planContent: undefined,
-      },
-      {
+      }),
+      expect.objectContaining({
         interactionId: planId,
         type: 'permission_request',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: undefined,
         toolName: 'ExitPlanMode',
         planContent: '计划正文',
-      },
+      }),
     ]);
 
     expect(interactionStore.resolve(askId, { answers: { choice: 'A' } })).toBe(true);
@@ -99,16 +103,18 @@ describe('interactionStore disconnect behavior', () => {
     interactionStore.rejectOnDisconnect(new Set([interactionId]), 'closed');
 
     expect(interactionStore.getPendingInteractions('session-3')).toEqual([
-      {
+      expect.objectContaining({
         interactionId,
         type: 'permission_request',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: undefined,
         toolId: 'Write',
         toolName: 'Write',
         displayName: 'Write File',
         toolInput: { path: 'assets/20260607/probe.txt', content: 'ok' },
         planContent: undefined,
-      },
+      }),
     ]);
 
     expect(interactionStore.resolve(interactionId, { allow: true })).toBe(true);
@@ -152,11 +158,23 @@ describe('M20-05 interaction response idempotency', () => {
   });
 });
 
+describe('M40-03 concurrent response winner', () => {
+  it('elects one winner and classifies same-request replay vs conflicting response', () => {
+    const id = 'concurrent-winner';
+    expect(interactionStore.claimResponse(id, 'request-1', { allow: true })).toBe('winner');
+    expect(interactionStore.claimResponse(id, 'request-1', { allow: true })).toBe('duplicate');
+    expect(interactionStore.claimResponse(id, 'request-2', { allow: false })).toBe('conflict');
+    interactionStore.releaseResponseClaim(id, 'request-1');
+    expect(interactionStore.claimResponse(id, 'request-2', { allow: false })).toBe('winner');
+    interactionStore.releaseResponseClaim(id, 'request-2');
+  });
+});
+
 describe('M20-07 active interaction session index', () => {
   it('updates O(1) summary immediately on request and terminal resolution', async () => {
     const promise = interactionStore.create('indexed-interaction', 'ask_user', { sessionId: 'indexed-session' });
     expect(interactionStore.getActiveInteraction('indexed-session')).toMatchObject({
-      interactionId: 'indexed-interaction', type: 'ask_user',
+      interactionId: 'indexed-interaction', type: 'ask_user', order: expect.any(Number), version: expect.any(Number),
     });
     expect(interactionStore.resolve('indexed-interaction', { answers: {} })).toBe(true);
     await expect(promise).resolves.toEqual({ answers: {} });

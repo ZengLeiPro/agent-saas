@@ -191,6 +191,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
     },
     permButton: {
       flex: 1,
+      minHeight: 44,
+      justifyContent: 'center',
       paddingVertical: spacing.sm,
       borderRadius: radius.md,
       alignItems: 'center',
@@ -240,6 +242,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
       marginBottom: spacing.sm,
     },
     optionButton: {
+      minHeight: 44,
+      justifyContent: 'center',
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.md,
@@ -260,6 +264,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
       marginTop: 2,
     },
     submitButton: {
+      minHeight: 44,
+      justifyContent: 'center',
       backgroundColor: colors.primary,
       borderRadius: radius.md,
       paddingVertical: spacing.sm,
@@ -1089,9 +1095,10 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
 }
 
 // --- Permission Block ---
-function PermissionBlock({ message, onResponse }: {
+export function PermissionBlock({ message, onResponse, disabled = false }: {
   message: MessageItem & { type: 'permission_request' };
   onResponse?: (interactionId: string, allow: boolean) => Promise<void>;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
@@ -1102,17 +1109,25 @@ function PermissionBlock({ message, onResponse }: {
     <View style={styles.permissionBlock}>
       <Text style={styles.permissionTitle}>{message.toolName}</Text>
       <Markdown style={mdStyles}>{message.toolInput}</Markdown>
-      {message.status === 'pending' && onResponse && (
+      {message.status === 'pending' && (
         <View style={styles.permissionButtons}>
           <TouchableOpacity
             style={[styles.permButton, styles.denyButton]}
-            onPress={() => onResponse(message.interactionId, false)}
+            accessibilityRole="button"
+            accessibilityLabel={`拒绝权限请求 ${message.toolName}`}
+            disabled={disabled || !onResponse}
+            accessibilityState={{ disabled: disabled || !onResponse }}
+            onPress={() => onResponse?.(message.interactionId, false)}
           >
             <Text style={styles.denyText}>拒绝</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.permButton, styles.allowButton]}
-            onPress={() => onResponse(message.interactionId, true)}
+            accessibilityRole="button"
+            accessibilityLabel={`允许权限请求 ${message.toolName}`}
+            disabled={disabled || !onResponse}
+            accessibilityState={{ disabled: disabled || !onResponse }}
+            onPress={() => onResponse?.(message.interactionId, true)}
           >
             <Text style={styles.allowText}>允许</Text>
           </TouchableOpacity>
@@ -1128,9 +1143,10 @@ function PermissionBlock({ message, onResponse }: {
 }
 
 // --- Ask User Block ---
-function AskUserBlock({ message, onResponse }: {
+export function AskUserBlock({ message, onResponse, disabled = false }: {
   message: MessageItem & { type: 'ask_user' };
   onResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
@@ -1184,7 +1200,7 @@ function AskUserBlock({ message, onResponse }: {
   );
 
   const isAnswered = message.status === 'answered';
-  const isPending = message.status === 'pending';
+  const isPending = message.status === 'pending' && !disabled;
 
   // Parse answered multi-select values back to Set for highlight
   const answeredSets = useMemo(() => {
@@ -1226,6 +1242,9 @@ function AskUserBlock({ message, onResponse }: {
                     { flexDirection: 'row', alignItems: 'center', gap: 8 },
                     isSelected && styles.optionSelected,
                   ]}
+                  accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
+                  accessibilityLabel={`${q.header || q.question}: ${opt.label}${opt.description ? `, ${opt.description}` : ''}`}
+                  accessibilityState={{ checked: isSelected, disabled: !isPending }}
                   onPress={() => isPending && handleOptionSelect(q, opt.label)}
                   disabled={!isPending}
                 >
@@ -1257,6 +1276,9 @@ function AskUserBlock({ message, onResponse }: {
                       { flexDirection: 'row', alignItems: 'center', gap: 8 },
                       isCustomSelected && styles.optionSelected,
                     ]}
+                    accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
+                    accessibilityLabel={`${q.header || q.question}: 自定义回答`}
+                    accessibilityState={{ checked: isCustomSelected, disabled: !isPending }}
                     onPress={() => isPending && handleOptionSelect(q, '__custom__')}
                     disabled={!isPending}
                   >
@@ -1277,7 +1299,8 @@ function AskUserBlock({ message, onResponse }: {
                         color: colors.foreground,
                         ...typo.body,
                       }}
-                      placeholder="Enter your answer..."
+                      accessibilityLabel={`${q.header || q.question} 自定义回答`}
+                      placeholder="请输入回答"
                       placeholderTextColor={colors.mutedForeground}
                       value={customInputs[q.question] ?? ''}
                       onChangeText={(text) => setCustomInputs(prev => ({ ...prev, [q.question]: text }))}
@@ -1292,6 +1315,8 @@ function AskUserBlock({ message, onResponse }: {
       {isPending && onResponse && (
         <TouchableOpacity
           style={[styles.submitButton, !hasAnySelection && { opacity: 0.5 }]}
+          accessibilityRole="button"
+          accessibilityLabel="提交回答"
           onPress={handleSubmit}
           disabled={!hasAnySelection}
         >

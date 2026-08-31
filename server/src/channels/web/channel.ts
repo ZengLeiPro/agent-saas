@@ -1189,6 +1189,8 @@ export class WebChannel implements BaseChannel {
       : 'resolved');
     const structured = typeof requestId === 'string' && this.structuredInteractionRequestIds.has(requestId);
     const retryable = Boolean(error && status !== 'expired' && !/Access denied|conflict|User denied/i.test(error));
+    const responseVersion = interactionStore.get(interactionId)?.version
+      ?? (sessionId ? interactionStore.getCompleted(sessionId, interactionId)?.version : undefined);
     this.wsSend(client.ws, {
       type: error ? 'respond_error' : 'respond_ok', interactionId,
       ...(structured ? { status } : {}),
@@ -1196,6 +1198,9 @@ export class WebChannel implements BaseChannel {
       ...(error ? { error, ...(structured ? { reason: error, retryable } : {}) } : {}),
       ...(typeof requestId === 'string' ? { ...(structured ? { requestId } : {}), clientAttemptId: requestId } : {}),
       ...(!error && canonicalResponse ? { response: normalizeInteractionResponse(canonicalResponse as Record<string, unknown>) as unknown as Record<string, unknown> } : {}),
+      ...(structured && responseVersion !== undefined ? { version: responseVersion } : {}),
+      ...(client.user?.authEpoch !== undefined ? { authEpoch: client.user.authEpoch } : {}),
+      ...(client.user?.generation !== undefined ? { generation: client.user.generation } : {}),
     });
   }
 
@@ -1218,7 +1223,7 @@ export class WebChannel implements BaseChannel {
     return Boolean(rollback && await rollback.call(this.config.enqueueRuntime!.runStore, runId, claim, waitingStatus, reason));
   }
   private handleRespond(client: WsClient, msg: WsRespondMessage): void {
-    const { interactionId, sessionId, requestId: explicitRequestId, clientAttemptId, response: nestedResponse, action: _, ...legacyResponse } = msg;
+    const { interactionId, sessionId, requestId: explicitRequestId, clientAttemptId, version, authEpoch: _authEpoch, generation: _generation, response: nestedResponse, action: _, ...legacyResponse } = msg;
     const requestId = typeof explicitRequestId === 'string' ? explicitRequestId : clientAttemptId;
     if (typeof explicitRequestId === 'string') {
       this.structuredInteractionRequestIds.add(explicitRequestId);
@@ -1237,6 +1242,10 @@ export class WebChannel implements BaseChannel {
     }
 
     const pendingInteraction = interactionStore.get(interactionId);
+    if (typeof explicitRequestId === 'string' && pendingInteraction && (!Number.isSafeInteger(version) || version !== pendingInteraction.version)) {
+      this.sendRespond(client, interactionId, requestId, 'Interaction version conflict', undefined, typeof sessionId === 'string' ? sessionId : pendingInteraction?.sessionId, 'rejected');
+      return;
+    }
     const actionAccessError = pendingInteraction && (pendingInteraction.userId
       ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
       : this.anonymousBindingAccessError(client, pendingInteraction.boundWebSocket));
@@ -1245,7 +1254,7 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
-    const pendingSessionId = pendingInteraction?.sessionId;
+    const pendingSessionId = pendingInteraction?.sessionId; // ownership/session fence
     if (typeof sessionId === 'string' && pendingSessionId && sessionId !== pendingSessionId) {
       this.sendRespond(client, interactionId, requestId, 'Interaction session conflict', undefined, sessionId, 'rejected');
       return;
@@ -1254,23 +1263,37 @@ export class WebChannel implements BaseChannel {
     if (stableSessionId) {
       const completed = interactionStore.getCompleted(stableSessionId, interactionId);
       if (completed) {
-        const canonical = normalizeInteractionResponse(response);
-        if (interactionStore.classifyCompleted(stableSessionId, interactionId, canonical) === 'conflict') {
-          this.sendRespond(client, interactionId, requestId, 'Interaction response conflict', undefined, stableSessionId, 'rejected');
-        } else {
-          this.sendRespond(client, interactionId, requestId, undefined, completed.response, stableSessionId, 'duplicate');
+        if (typeof explicitRequestId === 'string' && (!Number.isSafeInteger(version) || version !== completed.version)) {
+          this.sendRespond(client, interactionId, requestId, 'Interaction version conflict', undefined, stableSessionId, 'rejected');
+          return;
         }
+        const canonical = normalizeInteractionResponse(response);
+        // A late/double response never rewrites the winner; replay the sole canonical receipt.
+        void canonical;
+        this.sendRespond(client, interactionId, requestId, undefined, completed.response, stableSessionId, 'duplicate');
+        return;
+      }
+    }
+    if (pendingInteraction && requestId) {
+      const claim = interactionStore.claimResponse(interactionId, requestId, normalizeInteractionResponse(response));
+      if (claim === 'conflict') {
+        this.sendRespond(client, interactionId, requestId, 'Interaction already has a concurrent response winner', undefined, stableSessionId, 'rejected');
+        return;
+      }
+      if (claim === 'duplicate') {
+        this.sendRespond(client, interactionId, requestId, undefined, undefined, stableSessionId, 'accepted');
         return;
       }
     }
     void this.resolveInteraction(client, interactionId, response, stableSessionId, requestId).catch((error) => {
+      if (requestId) interactionStore.releaseResponseClaim(interactionId, requestId);
       chatLogger.error(`interaction response failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
       this.sendRespond(client, interactionId, requestId, 'Interaction response failed; please retry');
     });
   }
 
   private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
-    // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
+    // 在 resolve 前捕获 interaction revision/order（resolve 会删除 entry）。
     const pendingInteraction = interactionStore.get(interactionId);
     const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
@@ -1304,6 +1327,7 @@ export class WebChannel implements BaseChannel {
           runtimeEventStoreFor: this.config.runtimeEventStoreFor,
         }); durableResponse = normalizeInteractionResponse(canonical.response as Record<string, unknown>);
       } catch (error) {
+        if (clientAttemptId) interactionStore.releaseResponseClaim(interactionId, clientAttemptId);
         chatLogger.warn(`active interaction persistence failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`); this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry'); return;
       }
     }
@@ -1315,10 +1339,10 @@ export class WebChannel implements BaseChannel {
       }
       return;
     }
-    if (sessionId) interactionStore.recordCompleted(sessionId, interactionId, clientAttemptId ?? `legacy:${interactionId}`, durableResponse);
+    if (sessionId) interactionStore.recordCompleted(sessionId, interactionId, clientAttemptId ?? `legacy:${interactionId}`, durableResponse, pendingInteraction?.version, pendingInteraction?.order, pendingInteraction?.userId ?? client.user?.sub);
     this.sendRespond(client, interactionId, clientAttemptId, undefined, durableResponse, sessionId, 'resolved');
 
-    // 广播到同用户其他连接，让它们关闭弹窗
+    // 广播 canonical outcome 到同用户其他连接，让它们关闭固定区卡片。
     if (sessionId && this.eventBus) {
       for (const [, entry] of this.activeStreams) {
         if (entry.sessionId === sessionId && entry.userId) {
@@ -1373,11 +1397,9 @@ export class WebChannel implements BaseChannel {
         : '';
       const wasServerFailClosed = failClosedMessage.startsWith('源 run 不可恢复（')
         || failClosedMessage === '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run';
-      if (!wasServerFailClosed && this.interactionResponsesConflict(canonicalResponse as Record<string, unknown>, response)) {
-        this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response conflict', undefined, sessionId, 'rejected');
-      } else {
-        this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse, sessionId, 'duplicate');
-      }
+      // A recovered terminal receipt is the only final state; later payloads are ignored.
+      void wasServerFailClosed;
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse, sessionId, 'duplicate');
       return true;
     }
     const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
@@ -1423,10 +1445,9 @@ export class WebChannel implements BaseChannel {
       }
       const acceptedEvent = existingEvents.find((event): event is Extract<PlatformEvent, { type: 'interaction_resolved' }> => event.type === 'interaction_resolved' && event.interactionId === interactionId);
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
-      const acceptedResponseConflict = Boolean(acceptedEvent && this.interactionResponsesConflict(acceptedEvent.response as Record<string, unknown>, normalizedResponse as unknown as Record<string, unknown>));
       if (acceptedEvent && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
         const activated = (currentRun.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } });
-        this.sendRespond(client, interactionId, clientAttemptId, acceptedResponseConflict ? 'Interaction response conflict' : activated ? undefined : 'Interaction response is awaiting activation', acceptedResponseConflict || !activated ? undefined : normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>), sessionId, acceptedResponseConflict ? 'rejected' : undefined);
+        this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined, sessionId, activated ? 'duplicate' : undefined);
         return true;
       }
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
@@ -1493,7 +1514,6 @@ export class WebChannel implements BaseChannel {
         && event.interactionId === interactionId
       ));
       const alreadyAccepted = Boolean(acceptedEvent);
-      const acceptedResponseConflict = Boolean(acceptedEvent?.type === 'interaction_resolved' && this.interactionResponsesConflict(acceptedEvent.response as Record<string, unknown>, response));
       const alreadyApplied = existingEvents.some((event) => (
         event.type === 'approval_resolved'
         && event.sessionId === sessionId
@@ -1537,7 +1557,7 @@ export class WebChannel implements BaseChannel {
         return true;
       }
       // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
-      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, acceptedResponseConflict ? 'Interaction response conflict' : undefined, acceptedResponseConflict ? undefined : acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response), sessionId, acceptedResponseConflict ? 'rejected' : 'duplicate'); return true; }
+      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, undefined, acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response), sessionId, 'duplicate'); return true; }
       const acceptedResponse = acceptedEvent?.type === 'interaction_resolved' ? acceptedEvent.response : undefined;
       const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object' ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>) : normalizeInteractionResponse(response);
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
@@ -2462,7 +2482,8 @@ export class WebChannel implements BaseChannel {
 
   private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
     const unresolved = await this.getAuthoritativePendingInteractions(client, sessionId, tenantId);
-    if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: unresolved });
+    // Resume preserves N-1 frame ordering when empty; sync snapshots still carry authoritative [].
+    if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', sessionId, interactions: unresolved });
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
@@ -3972,22 +3993,8 @@ export class WebChannel implements BaseChannel {
           });
         }
 
-        // WS 仍连接时正常推送事件给前端
-        if (!connectionAbortController.signal.aborted) {
-          send({
-            type: event.type,
-            interactionId: event.interactionId,
-            toolId: event.toolId,
-            toolName: event.toolName,
-            displayName: event.displayName,
-            toolInput: event.toolInput,
-            questions: event.questions,
-            ...(planContent ? { planContent } : {}),
-          });
-        }
         activeInteractionIds.add(event.interactionId);
-        try {
-          return await interactionStore.create(event.interactionId, event.type, {
+        const interactionPromise = interactionStore.create(event.interactionId, event.type, {
             sessionId: resolvedSessionId,
             runId: event.runId,
             toolCallId: event.toolCallId,
@@ -4014,6 +4021,24 @@ export class WebChannel implements BaseChannel {
               send({ type: 'interaction_resolved', sessionId: resolvedSessionId, interactionId: event.interactionId, status: 'expired', response, reason, retryable: false });
             },
           });
+        const storedInteraction = interactionStore.get(event.interactionId)!;
+        // The fixed-zone request carries its canonical revision/order from first delivery.
+        if (!connectionAbortController.signal.aborted) {
+          send({
+            type: event.type,
+            interactionId: event.interactionId,
+            version: storedInteraction.version,
+            order: storedInteraction.order,
+            toolId: event.toolId,
+            toolName: event.toolName,
+            displayName: event.displayName,
+            toolInput: event.toolInput,
+            questions: event.questions,
+            ...(planContent ? { planContent } : {}),
+          });
+        }
+        try {
+          return await interactionPromise;
         } finally {
           activeInteractionIds.delete(event.interactionId);
         }

@@ -661,6 +661,8 @@ export function processWsEvent(
     );
     msg.addMessage({
       type: "permission_request", interactionId: data.interactionId,
+      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
+      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
       toolName: name, toolInput: description, status: "pending",
     });
     return;
@@ -670,6 +672,8 @@ export function processWsEvent(
     upsertRuntimeStatusMessage(msg, "waiting_user");
     msg.addMessage({
       type: "ask_user", interactionId: data.interactionId,
+      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
+      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
       questions: data.questions, status: "pending",
     });
     return;
@@ -1035,6 +1039,14 @@ export function processWsEvent(
   }
 
   if (data.type === "pending_interactions") {
+    const authoritativeIds = new Set<string>(data.interactions.map((interaction) => interaction.interactionId));
+    // Snapshot replacement removes stale pending cards; local submit/outbox state is never trusted on recovery.
+    const staleIndexes = msg.messagesRef.current.flatMap((message, index) => (
+      (message.type === 'permission_request' || message.type === 'ask_user')
+      && message.status === 'pending' && !authoritativeIds.has(message.interactionId) ? [index] : []
+    )).reverse();
+    for (const index of staleIndexes) msg.messagesRef.current.splice(index, 1);
+    if (staleIndexes.length) msg.setMessages?.([...msg.messagesRef.current]);
     const existingIds = new Set(
       msg.messagesRef.current
         .filter(m => 'interactionId' in m && m.interactionId)
@@ -1042,7 +1054,7 @@ export function processWsEvent(
         .map(m => (m as any).interactionId as string)
     );
     for (const interaction of data.interactions) {
-      if (interaction.type === 'permission_request') {
+      if (interaction.type === 'permission_request' || interaction.type === 'approval') {
         upsertRuntimeStatusMessage(msg, 'waiting_approval');
       } else if (interaction.type === 'ask_user') {
         upsertRuntimeStatusMessage(msg, 'waiting_user');
@@ -1054,11 +1066,13 @@ export function processWsEvent(
         );
         msg.addMessage({
           type: "permission_request", interactionId: interaction.interactionId,
+          interactionVersion: interaction.version, interactionOrder: interaction.order,
           toolName: name, toolInput: description, status: "pending",
         });
       } else if (interaction.type === 'ask_user' && interaction.questions) {
         msg.addMessage({
           type: "ask_user", interactionId: interaction.interactionId,
+          interactionVersion: interaction.version, interactionOrder: interaction.order,
           questions: interaction.questions, status: "pending",
         });
       }

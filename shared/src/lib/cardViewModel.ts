@@ -22,6 +22,7 @@ export type InteractionCardStatus =
   | 'resolved'
   | 'rejected'
   | 'failed'
+  | 'cancelled'
   | 'expired';
 export type CardStatus = ToolCardStatus | InteractionCardStatus;
 export type CardActionKind = 'expand' | 'allow' | 'deny' | 'submit' | 'approve' | 'reject' | 'retry';
@@ -36,7 +37,7 @@ export interface CardTextDetail {
 }
 
 export interface CardOutcomeViewModel {
-  status: Extract<InteractionCardStatus, 'resolved' | 'rejected' | 'failed' | 'expired'> | 'succeeded' | 'cancelled';
+  status: Extract<InteractionCardStatus, 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'> | 'succeeded';
   label: string;
   reason?: string;
   /** Reasons for resolved/rejected/expired are only exposed from an authoritative server outcome. */
@@ -332,9 +333,9 @@ function interactionActions(
 
 function interactionOutcome(state: InteractionState | undefined): CardOutcomeViewModel | undefined {
   if (!state) return undefined;
-  if (state.phase !== 'resolved' && state.phase !== 'rejected' && state.phase !== 'failed' && state.phase !== 'expired') return undefined;
+  if (state.phase !== 'resolved' && state.phase !== 'rejected' && state.phase !== 'failed' && state.phase !== 'cancelled' && state.phase !== 'expired') return undefined;
   const authoritative = state.serverAuthoritative;
-  const labels = { resolved: '已处理', rejected: '已拒绝', failed: '处理失败', expired: '已过期' } as const;
+  const labels = { resolved: '已处理', rejected: '已拒绝', failed: '处理失败', cancelled: '已取消', expired: '已过期' } as const;
   return {
     status: state.phase,
     label: labels[state.phase],

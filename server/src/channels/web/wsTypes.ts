@@ -21,7 +21,7 @@ import type {
     RuntimeRecoveryAction,
 } from '../../types/index.js';
 
-// ── 上行消息（客户端 → 服务端）──────────────────────────────
+// ── 上行消息（客户端 → 服务端）─────────────────────────────
 
 export interface WsAuthMessage {
     action: 'auth';
@@ -91,6 +91,10 @@ export interface WsRespondMessage {
     requestId?: string;
     /** N-1 alias for requestId. */
     clientAttemptId?: string;
+    /** M40-03 interaction and identity fences. Required when requestId is present. */
+    version?: number;
+    authEpoch?: number;
+    generation?: number;
     /** Current protocol payload; flattened fields below remain accepted from N-1 clients. */
     response?: Record<string, unknown>;
     [key: string]: unknown;
@@ -218,8 +222,8 @@ export type WsDownstreamEvent =
     | { type: 'block_end'; blockType: WsBlockType; toolName?: string }
     | { type: 'tool_execution'; phase: 'started' | 'progress' | 'completed'; toolName?: string; toolId?: string; invocationId?: string; status?: 'success' | 'error' | 'cancelled'; durationMs?: number; content?: string; error?: string }
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
-    | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
-    | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
+    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
+    | { type: 'ask_user'; interactionId: string; version?: number; order?: number; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
     | { type: 'subagent_end'; toolId: string; agentType?: string; status?: 'completed' | 'failed' | 'cancelled' | 'timeout'; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
@@ -234,7 +238,7 @@ export type WsDownstreamEvent =
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
-    | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
+    | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
     | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }

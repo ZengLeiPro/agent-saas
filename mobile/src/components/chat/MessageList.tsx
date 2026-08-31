@@ -387,9 +387,10 @@ export function MessageList({
     [timelineRows],
   );
 
-  // [FILE] marker files stay inline. Delivered artifacts remain standalone cards.
+  // [FILE] marker files stay inline. Pending interactions belong only to the fixed composer zone.
   const filteredMessages = useMemo(
-    () => timelineMessages.filter(m => m.type !== 'file_download' || !!m.artifactId),
+    () => timelineMessages.filter(m => (m.type !== 'file_download' || !!m.artifactId)
+      && !((m.type === 'permission_request' || m.type === 'ask_user') && m.status === 'pending')),
     [timelineMessages],
   );
   const renderItems = useMemo(() => groupMessages(filteredMessages, loading), [filteredMessages, loading]);

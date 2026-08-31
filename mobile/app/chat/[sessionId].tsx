@@ -20,6 +20,7 @@ import { useWsLifecycle } from '../../src/hooks/useWsLifecycle';
 import { useAppLifecycle } from '../../src/hooks/useAppLifecycle';
 import { useScrollToTop } from '../../src/hooks/useScrollToTop';
 import { MessageList } from '../../src/components/chat/MessageList';
+import { AskUserBlock, PermissionBlock } from '../../src/components/chat/MessageItem';
 import { ChatInput } from '../../src/components/chat/ChatInput';
 import { ConnectionBanner } from '../../src/components/ConnectionBanner';
 import { TokenDetailTrigger, TokenDetailOverlay } from '../../src/components/chat/TokenDetail';
@@ -448,6 +449,15 @@ export default function ChatDetailScreen() {
     if (files.length) chat.addUploadedFiles(files);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const pendingInteractions = useMemo(() => chat.messages
+    .filter((message): message is Extract<MessageItem, { type: 'ask_user' | 'permission_request' }> =>
+      (message.type === 'ask_user' || message.type === 'permission_request') && message.status === 'pending')
+    .sort((left, right) => (left.interactionOrder ?? Number.MAX_SAFE_INTEGER) - (right.interactionOrder ?? Number.MAX_SAFE_INTEGER)
+      || (left.interactionVersion ?? 0) - (right.interactionVersion ?? 0)
+      || left.interactionId.localeCompare(right.interactionId)), [chat.messages]);
+  const activeInteraction = pendingInteractions[0] ?? null;
+  const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
+
   return (
     <View style={styles.container}>
       <Stack.Screen
@@ -537,6 +547,20 @@ export default function ChatDetailScreen() {
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
+        {activeInteraction ? (
+          <View
+            style={styles.interactionZone}
+            accessibilityLabel={activeInteraction.type === 'ask_user' ? '待回答问题' : '待处理权限请求'}
+            testID="canonical-interaction-zone"
+          >
+            {activeInteraction.type === 'ask_user' ? (
+              <AskUserBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handleAskUserResponse} />
+            ) : (
+              <PermissionBlock message={activeInteraction} disabled={interactionDisabled} onResponse={chat.handlePermissionResponse} />
+            )}
+            {pendingInteractions.length > 1 ? <Text style={styles.interactionQueueText}>另有 {pendingInteractions.length - 1} 个交互按服务端顺序排队</Text> : null}
+          </View>
+        ) : null}
         <ChatInput
           input={chat.input}
           setInput={chat.setInput}
@@ -630,6 +654,21 @@ function useScreenStyles(colors: ThemeColors, screenWidth: number) {
     navModelText: {
       fontSize: 10,
       lineHeight: 13,
+    },
+    interactionZone: {
+      marginHorizontal: 12,
+      marginBottom: 8,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      backgroundColor: colors.card,
+      maxHeight: 360,
+    },
+    interactionQueueText: {
+      marginTop: 8,
+      fontSize: 12,
+      color: colors.mutedForeground,
     },
     inputOverlay: {
       position: 'absolute',

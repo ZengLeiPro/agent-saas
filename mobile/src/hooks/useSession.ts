@@ -313,6 +313,8 @@ export function useSession(
               const pendingList = (await pendingRes.json()) as Array<{
                 interactionId: string;
                 type: string;
+                version: number;
+                order: number;
                 questions?: Array<{
                   question: string;
                   header: string;
@@ -350,10 +352,12 @@ export function useSession(
                     id: `pending-${p.interactionId}`,
                     type: "ask_user",
                     interactionId: p.interactionId,
+                    interactionVersion: p.version,
+                    interactionOrder: p.order,
                     questions: p.questions,
                     status: "pending",
                   });
-                } else if (p.type === "permission_request" && p.toolName) {
+                } else if ((p.type === "permission_request" || p.type === "approval") && p.toolName) {
                   const label = PLAN_LABELS[p.toolName] ?? {
                     name: p.toolName,
                     fallback: "",
@@ -362,6 +366,8 @@ export function useSession(
                     id: `pending-${p.interactionId}`,
                     type: "permission_request",
                     interactionId: p.interactionId,
+                    interactionVersion: p.version,
+                    interactionOrder: p.order,
                     toolName: label.name,
                     toolInput: p.planContent || label.fallback,
                     status: "pending",

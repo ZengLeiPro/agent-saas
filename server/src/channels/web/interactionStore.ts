@@ -5,10 +5,12 @@ import type { AskUserQuestion } from '../../types/index.js';
 export interface PendingInteraction {
   resolve: (response: InteractionResponse) => void;
   reject: (reason: Error) => void;
-  type: 'permission_request' | 'ask_user';
+  type: 'permission_request' | 'ask_user' | 'approval';
   createdAt: number;
   /** Monotonic summary version for session-list projection. */
   version: number;
+  /** Stable FIFO order assigned by the server. */
+  order: number;
   timer: ReturnType<typeof setTimeout>;
   sessionId?: string;
   runId?: string;
@@ -36,7 +38,7 @@ const PLAN_MODE_TOOLS = new Set(['EnterPlanMode', 'ExitPlanMode']);
 const PERSISTED_PLATFORM_APPROVAL_TOOL_IDS = new Set(['Write', 'Edit', 'Shell']);
 
 function shouldSurviveDisconnect(entry: PendingInteraction): boolean {
-  if (entry.type === 'ask_user') return true;
+  if (entry.type === 'ask_user' || entry.type === 'approval') return true;
   if (entry.type === 'permission_request' && PLAN_MODE_TOOLS.has(entry.toolName || '')) return true;
   if (entry.type === 'permission_request' && PERSISTED_PLATFORM_APPROVAL_TOOL_IDS.has(entry.toolId || '')) return true;
   return false;
@@ -50,18 +52,22 @@ export interface CompletedInteractionResponse {
   requestId: string;
   response: InteractionResponse;
   completedAt: number;
+  version: number;
+  order: number;
+  userId?: string;
 }
 
-class InteractionStore {
+export class InteractionStore {
   private pending = new Map<string, PendingInteraction>();
   private pendingBySession = new Map<string, string[]>();
   private version = Date.now();
   private completed = new Map<string, CompletedInteractionResponse>();
+  private responseClaims = new Map<string, { requestId: string; response: InteractionResponse }>();
 
   private addToSessionIndex(sessionId: string | undefined, interactionId: string): void {
     if (!sessionId) return;
     const ids = this.pendingBySession.get(sessionId) ?? [];
-    this.pendingBySession.set(sessionId, [interactionId, ...ids.filter((id) => id !== interactionId)]);
+    this.pendingBySession.set(sessionId, [...ids.filter((id) => id !== interactionId), interactionId]);
   }
 
   private removeFromSessionIndex(sessionId: string | undefined, interactionId: string): void {
@@ -75,6 +81,7 @@ class InteractionStore {
     const entry = this.pending.get(interactionId);
     if (!entry) return undefined;
     this.pending.delete(interactionId);
+    this.responseClaims.delete(interactionId);
     this.removeFromSessionIndex(entry.sessionId, interactionId);
     return entry;
   }
@@ -88,8 +95,23 @@ class InteractionStore {
     return value;
   }
 
-  recordCompleted(sessionId: string, interactionId: string, requestId: string, response: InteractionResponse): void {
-    this.completed.set(this.completedKey(sessionId, interactionId), { sessionId, interactionId, requestId, response, completedAt: Date.now() });
+  recordCompleted(sessionId: string, interactionId: string, requestId: string, response: InteractionResponse, version = ++this.version, order = version, userId?: string): void {
+    this.responseClaims.delete(interactionId);
+    this.completed.set(this.completedKey(sessionId, interactionId), { sessionId, interactionId, requestId, response, completedAt: Date.now(), version, order, ...(userId ? { userId } : {}) });
+  }
+
+  /** Atomic in-process winner election; durable CAS remains authoritative across processes. */
+  claimResponse(interactionId: string, requestId: string, response: InteractionResponse): 'winner' | 'duplicate' | 'conflict' {
+    const existing = this.responseClaims.get(interactionId);
+    if (!existing) {
+      this.responseClaims.set(interactionId, { requestId, response });
+      return 'winner';
+    }
+    return existing.requestId === requestId && JSON.stringify(existing.response) === JSON.stringify(response) ? 'duplicate' : 'conflict';
+  }
+
+  releaseResponseClaim(interactionId: string, requestId: string): void {
+    if (this.responseClaims.get(interactionId)?.requestId === requestId) this.responseClaims.delete(interactionId);
   }
 
   classifyCompleted(sessionId: string, interactionId: string, response: InteractionResponse): 'missing' | 'duplicate' | 'conflict' {
@@ -128,10 +150,12 @@ class InteractionStore {
       }, INTERACTION_TIMEOUT_MS);
       timer.unref();
 
+      const version = ++this.version;
       this.pending.set(interactionId, {
         resolve, reject, type,
         createdAt: Date.now(),
-        version: ++this.version,
+        version,
+        order: version,
         timer,
         sessionId: options?.sessionId,
         runId: options?.runId,
@@ -169,7 +193,7 @@ class InteractionStore {
     return true;
   }
 
-  /** 终止并移除交互，避免遗留 Promise 永久占用旧执行协程。 */
+  /** 终止并移除交互及响应 claim，避免遗留 Promise 永久占用旧执行协程。 */
   discard(interactionId: string, reason: string): boolean {
     const entry = this.take(interactionId);
     if (!entry) return false;
@@ -207,12 +231,12 @@ class InteractionStore {
     }
   }
 
-  /** O(1) by-session lookup; newest pending interaction is the stable list summary. */
-  getActiveInteraction(sessionId: string): { interactionId: string; type: PendingInteraction['type']; version: number; createdAt: number } | undefined {
+  /** O(1) by-session lookup; the oldest server-ordered pending interaction is canonical. */
+  getActiveInteraction(sessionId: string): { interactionId: string; type: PendingInteraction['type']; version: number; order: number; createdAt: number } | undefined {
     const interactionId = this.pendingBySession.get(sessionId)?.[0];
     if (!interactionId) return undefined;
     const entry = this.pending.get(interactionId);
-    return entry ? { interactionId, type: entry.type, version: entry.version, createdAt: entry.createdAt } : undefined;
+    return entry ? { interactionId, type: entry.type, version: entry.version, order: entry.order, createdAt: entry.createdAt } : undefined;
   }
 
   /**
@@ -220,7 +244,9 @@ class InteractionStore {
    */
   getPendingInteractions(sessionId: string): Array<{
     interactionId: string;
-    type: 'ask_user' | 'permission_request';
+    type: 'ask_user' | 'permission_request' | 'approval';
+    version: number;
+    order: number;
     runId?: string;
     toolCallId?: string;
     invocationId?: string;
@@ -233,7 +259,9 @@ class InteractionStore {
   }> {
     const result: Array<{
       interactionId: string;
-      type: 'ask_user' | 'permission_request';
+      type: 'ask_user' | 'permission_request' | 'approval';
+      version: number;
+      order: number;
       runId?: string;
       toolCallId?: string;
       invocationId?: string;
@@ -250,6 +278,8 @@ class InteractionStore {
       result.push({
         interactionId: id,
         type: entry.type,
+        version: entry.version,
+        order: entry.order,
         runId: entry.runId,
         toolCallId: entry.toolCallId,
         invocationId: entry.invocationId,

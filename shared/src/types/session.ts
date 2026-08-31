@@ -5,6 +5,7 @@ import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure
 import type { ChatQueueSnapshot } from '../lib/chatQueue';
 import type { RunLiveness } from '../lib/runLiveness';
 import type { AgentTarget, AgentTargetIdentitySnapshot, AgentTargetUnavailableReason } from '../lib/agentTarget';
+import type { CanonicalInteractionReceipt } from '../lib/activeInteraction';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -28,10 +29,13 @@ export interface SessionParticipants {
 
 export interface SessionListActiveInteraction {
   interactionId: string;
-  type: 'ask_user' | 'permission_request';
-  /** Stable server summary version (createdAt epoch ms for the in-process store). */
+  type: 'ask_user' | 'permission_request' | 'approval';
+  /** Stable monotonic server revision. */
   version: number;
+  /** Stable FIFO server order; never derive from local timestamps. Optional only for N-1 servers. */
+  order?: number;
   createdAt?: number;
+  receipt?: CanonicalInteractionReceipt;
 }
 
 /** API session list item */

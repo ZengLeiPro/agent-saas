@@ -12,8 +12,11 @@ export function webInteractionRequest(identity: InteractionIdentity, response: R
   return buildInteractionResponseRequest(identity, response, requestId);
 }
 
-export function webInteractionAckEvent(event: Extract<WsEvent, { type: 'respond_ok' | 'respond_error' }>, identity: InteractionIdentity): InteractionEvent {
+export function webInteractionAckEvent(event: Extract<WsEvent, { type: 'respond_ok' | 'respond_error' }>, identity: InteractionIdentity): InteractionEvent | null {
   const requestId = event.requestId ?? event.clientAttemptId ?? '';
+  if ((event.version !== undefined && identity.version !== undefined && event.version !== identity.version)
+    || (event.authEpoch !== undefined && identity.authEpoch !== undefined && event.authEpoch !== identity.authEpoch)
+    || (event.generation !== undefined && event.generation !== identity.generation)) return null;
   if (event.type === 'respond_ok') {
     return { type: 'ack', ...identity, requestId, status: event.status ?? 'accepted', response: event.response };
   }

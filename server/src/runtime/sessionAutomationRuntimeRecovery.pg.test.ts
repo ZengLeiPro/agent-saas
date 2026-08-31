@@ -109,7 +109,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     return { automationId, incarnationId, sessionId: executionSessionId, dispatch, context };
   }
 
-  it('clear ACK wins the row lock before model admission and stale generation starts no provider attempt', async () => {
+  it('clear ACK supersedes its wakeup before model admission and stale generation starts no provider attempt', async () => {
     const setup = await activeExecution();
     let unlock!: () => void;
     let locked!: () => void;
@@ -144,7 +144,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
         (SELECT state FROM ${store.tables.wakeups} WHERE wakeup_id=$5) AS wakeup`,
       [tenantId, setup.sessionId, setup.automationId, setup.dispatch.targetRunId, setup.dispatch.wakeupId],
     );
-    expect(closure.rows[0]).toMatchObject({ execution: 'terminal', outbox: 'cancelled', prepared: 'cancelled', wakeup: 'consumed' });
+    expect(closure.rows[0]).toMatchObject({ execution: 'terminal', outbox: 'cancelled', prepared: 'cancelled', wakeup: 'superseded' });
     const lifecycle = await pool.query(
       `SELECT object_type,state FROM ${store.tables.lifecycleWork}
         WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3

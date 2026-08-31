@@ -98,6 +98,17 @@ export class SessionAutomationTerminalProjector {
         );
         await client.query(`UPDATE ${this.store.tables.outbox} SET state='completed' WHERE outbox_id=$1`, [row.outbox_id]);
         await client.query(
+          `UPDATE ${this.store.tables.preparedDispatchAttempts}
+              SET state='completed',version=version+1,lease_token=NULL,lease_expires_at=NULL,
+                  completed_at=COALESCE(completed_at, now()),updated_at=now()
+            WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+              AND incarnation_id=$4 AND generation=$5 AND execution_id=$6
+              AND run_id=$7 AND outbox_id=$8
+              AND state IN ('prepared','dispatched','result_unknown','reconcile')`,
+          [event.tenantId, event.sessionId, row.automation_id, row.incarnation_id,
+            row.generation, row.execution_id, event.runId, row.outbox_id],
+        );
+        await client.query(
           `UPDATE ${this.store.tables.wakeups} SET state='consumed'
             WHERE wakeup_id=(SELECT wakeup_id FROM ${this.store.tables.outbox} WHERE outbox_id=$1)`,
           [row.outbox_id],

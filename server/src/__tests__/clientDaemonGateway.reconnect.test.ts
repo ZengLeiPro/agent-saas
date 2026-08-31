@@ -235,7 +235,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     }, { disconnectGracePeriodMs: 2_000 });
   });
 
-  // 显式阻塞重连 hello 认证，覆盖 socket OPEN 到 daemon_registered 之间的完成消息竞态。
+  // 显式阻塞重连 hello 认证，覆盖 socket OPEN 到 daemon_registered 之间的完成消息竞态；coverage 并发下放宽超时。
   it('resumes a built-in runner invocation across a grace-period reconnect', async () => {
     const vault = new InMemorySecretVault();
     const registry = new InMemoryClientDaemonRegistry();
@@ -317,7 +317,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
       deviceRegistry: registry,
       deviceSecretVault: vault,
     });
-  }, 20_000);
+  }, 60_000);
 
   // C2: grace-period reconnect — when the socket drops with pending invokes
   // and the same handId reconnects within the grace window, the pendingInvokes

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { PgSessionLockHandle } from '../runtime/pgSessionLock.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
@@ -37,6 +37,84 @@ describePg('PgSessionLock rolling dual -> lease overlap', () => {
       await pool.end();
     }
   });
+
+  it('does not let a failed lease contender break a live dual renewal', async () => {
+    const warn = vi.fn();
+    const onLost = vi.fn();
+    const dual = new PgSessionLock({
+      pool,
+      tablePrefix: prefix,
+      mode: 'dual',
+      leaseMs: 10_000,
+      renewIntervalMs: 1_000,
+      logger: { warn },
+    });
+    const lease = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'lease', leaseMs: 10_000 });
+    const handles: PgSessionLockHandle[] = [];
+    const lockHolder = await pool.connect();
+    let holderInTransaction = false;
+    try {
+      await dual.init();
+      await lease.init();
+
+      const dualHandle = await dual.tryAcquire('tenant-a', 'contended-session', { onLost });
+      expect(dualHandle).not.toBeNull();
+      if (dualHandle) handles.push(dualHandle);
+
+      const initial = await pool.query<{ lease_expires_at: Date }>(`
+        SELECT lease_expires_at FROM ${prefix}_session_leases
+        WHERE tenant_id = $1 AND session_id = $2
+      `, ['tenant-a', 'contended-session']);
+      const initialExpiry = initial.rows[0]?.lease_expires_at.getTime() ?? 0;
+
+      // Precisely pause a lease contender after taking the same transaction-scoped guard
+      // used by tryAcquire. The dual timer renews while this lock is held.
+      await lockHolder.query('BEGIN');
+      holderInTransaction = true;
+      await lockHolder.query(`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(
+            length($1::text)::text || ':' || $1::text ||
+            length($2::text)::text || ':' || $2::text,
+            0
+          )
+        )
+      `, ['tenant-a', 'contended-session']);
+
+      // The same session in another tenant is guarded by a different key and stays parallel.
+      const otherTenant = await lease.tryAcquire('tenant-b', 'contended-session');
+      expect(otherTenant).not.toBeNull();
+      if (otherTenant) handles.push(otherTenant);
+
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled(), { timeout: 4_000, interval: 50 });
+      expect(onLost).not.toHaveBeenCalled();
+      expect(await lease.tryAcquire('tenant-a', 'contended-session')).toBeNull();
+
+      await lockHolder.query('COMMIT');
+      holderInTransaction = false;
+
+      // The contender did not take over. Once contention clears, the same dual owner renews.
+      expect(await lease.tryAcquire('tenant-a', 'contended-session')).toBeNull();
+      await vi.waitFor(async () => {
+        const current = await pool.query<{ lease_expires_at: Date }>(`
+          SELECT lease_expires_at FROM ${prefix}_session_leases
+          WHERE tenant_id = $1 AND session_id = $2
+        `, ['tenant-a', 'contended-session']);
+        expect(current.rows[0]?.lease_expires_at.getTime()).toBeGreaterThan(initialExpiry);
+      }, { timeout: 4_000, interval: 50 });
+      expect(onLost).not.toHaveBeenCalled();
+
+      await dualHandle?.release();
+      const acquiredAfterRelease = await lease.tryAcquire('tenant-a', 'contended-session');
+      expect(acquiredAfterRelease).not.toBeNull();
+      if (acquiredAfterRelease) handles.push(acquiredAfterRelease);
+    } finally {
+      if (holderInTransaction) await lockHolder.query('ROLLBACK').catch(() => undefined);
+      lockHolder.release();
+      await Promise.allSettled(handles.map((handle) => handle.release()));
+      await Promise.allSettled([dual.close(), lease.close()]);
+    }
+  }, 10_000);
 
   it('keeps live dual ON CONFLICT compatible while lease remains tenant-native', async () => {
     const dual = new PgSessionLock({ pool, tablePrefix: prefix, mode: 'dual', leaseMs: 10_000 });

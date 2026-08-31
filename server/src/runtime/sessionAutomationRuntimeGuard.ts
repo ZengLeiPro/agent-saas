@@ -356,7 +356,13 @@ export class SessionAutomationRuntimeGuard {
     }catch(e){await client.query('ROLLBACK').catch(()=>undefined);throw e}finally{client.release()}
   }
 
-  async finishModel(context: RunContext, handle: AutomationAttemptHandle | undefined, usage: ModelUsage | undefined, error?: unknown): Promise<void> {
+  async finishModel(
+    context: RunContext,
+    handle: AutomationAttemptHandle | undefined,
+    usage: ModelUsage | undefined,
+    error?: unknown,
+    resultPayload?: Record<string, unknown>,
+  ): Promise<void> {
     if (!handle) return;
     const lineage=this.lineage(context)!;
     const client=await this.pool.connect();
@@ -384,9 +390,11 @@ export class SessionAutomationRuntimeGuard {
       if(unknown){
         await client.query(`UPDATE ${this.tables.providerAttempts} SET state='result_unknown',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,error instanceof Error?error.message:error?String(error):'usage_unavailable']);
         await client.query(`UPDATE ${this.tables.budgetReservations} SET state='result_unknown',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
-        await client.query(`UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND active_run_id=$4`,[lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.executionRunId]);
+        // The terminal projector clears active_run_id before goal evaluation. Fence the
+        // authoritative automation incarnation instead of relying on the cleared run slot.
+        await client.query(`UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,[lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.specVersion]);
       }else{
-        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='completed',version=version+1,result_payload=$2,completed_at=now(),updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,JSON.stringify({usage})]);
+        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='completed',version=version+1,result_payload=$2,completed_at=now(),updated_at=now() WHERE provider_attempt_id=$1 AND tenant_id=$3 AND session_id=$4 AND automation_id=$5 AND incarnation_id=$6 AND generation=$7 AND execution_id=$8 AND run_id=$9 AND state='dispatched'`,[handle.providerAttemptId,JSON.stringify({usage,...resultPayload}),lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId]);
         await client.query(`UPDATE ${this.tables.budgetReservations} SET state='settled',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
         for(const [kind,amount] of Object.entries(amounts!)) await client.query(
           `INSERT INTO ${this.tables.budgetSettlements}(settlement_id,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,idempotency_key,amount,outcome,provider_receipt) SELECT $1,reservation_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,$2,$3,'charged',$4 FROM ${this.tables.budgetReservations} WHERE reservation_id=ANY($5::uuid[]) AND budget_kind=$6 ON CONFLICT(tenant_id,idempotency_key) DO NOTHING`,

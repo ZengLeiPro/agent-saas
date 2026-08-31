@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('PgSessionLock', () => {
-  it('初始化受 tablePrefix 约束的 durable lease 表且保留 rolling dual 索引', async () => {
+  it('初始化受 tablePrefix 约束的 durable lease 表、rolling dual 索引和续约冲突保护', async () => {
     const pool = new FakePool();
     const lock = new PgSessionLock({
       pool: pool as unknown as pg.Pool,
@@ -97,6 +97,7 @@ describe('PgSessionLock', () => {
     expect(pool.clientQueries.some((sql) => sql.includes("SET LOCAL statement_timeout = '15000ms'"))).toBe(true);
     expect(pool.clientQueries.some((sql) => sql.includes("SET LOCAL lock_timeout = '5000ms'"))).toBe(true);
     expect(pool.clientQueries.some((sql) => sql.includes('pg_advisory_xact_lock(hashtext'))).toBe(true);
+    expect(pool.clientQueries.some((sql) => sql.includes("OLD.owner_token = NEW.owner_token") && sql.includes("ERRCODE = 'lock_not_available'"))).toBe(true);
     expect(pool.advisoryUnlockCalls).toBe(0);
     expect(pool.clientReleaseCalls).toBe(1);
   });

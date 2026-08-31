@@ -18,9 +18,11 @@ const context = {
   },
 } as RunContext;
 
-class FakePool {
+class FakePool { // SQL-aware test double for RuntimeGuard transactions
   readonly statements: string[] = [];
-  automation = {
+  automation: {
+    status: string; incarnation_id: string; generation: number; spec_version: number; active_run_id: string | null;
+  } = {
     status: 'active', incarnation_id: context.automationFence!.incarnationId,
     generation: 2, spec_version: 3, active_run_id: 'run-a',
   };
@@ -123,8 +125,9 @@ describe('SessionAutomationRuntimeGuard', () => {
     expect(pool.statements.at(-1)).toBe('COMMIT');
   });
 
-  it('模型结果未知时封锁 automation，并保留 provider 与 reservation 待 reconcile', async () => {
+  it('模型结果未知时即使 active_run_id 已清空仍以完整 fence 封锁 automation', async () => {
     const pool = new FakePool();
+    pool.automation.active_run_id = null;
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
     await guard.finishModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
@@ -134,6 +137,8 @@ describe('SessionAutomationRuntimeGuard', () => {
     const joined = pool.statements.join('\n');
     expect(joined).toContain("SET state='result_unknown'");
     expect(joined).toContain("status='reconcile_required'");
+    expect(joined).toContain('incarnation_id=$4 AND generation=$5 AND spec_version=$6');
+    expect(joined).not.toContain('active_run_id=$4');
     expect(pool.statements.at(-1)).toBe('COMMIT');
   });
 

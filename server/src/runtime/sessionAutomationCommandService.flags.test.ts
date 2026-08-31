@@ -31,4 +31,39 @@ describe('SessionAutomationCommandService kill-switch controls', () => {
     expect(result.snapshot).toMatchObject({ status: 'cancelling', phase: 'draining' });
     expect(store.control).toHaveBeenCalledWith({}, snapshot, 'clear');
   });
+
+  it.each(['completing', 'cancelling', 'reconcile_required'] as const)('rejects replace while %s without creating a generation or wakeup', async status => {
+    const draining = { ...snapshot, status, phase: 'draining' };
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLiveForOwner: vi.fn(async () => draining), replace: vi.fn(), create: vi.fn(), recordCommand: vi.fn(), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, {
+      controlEnabled: true, executionEnabled: true, fixedLoopEnabled: true,
+      adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
+    }, { authorize: vi.fn(async () => undefined) });
+
+    await expect(service.command(identity, { clientMessageId: `replace-${status}`, command: '/loop replace -- work' }))
+      .rejects.toMatchObject({ code: 'AUTOMATION_DRAINING' });
+    expect(store.replace).not.toHaveBeenCalled();
+    expect(store.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects edit immediately after clear enters drain', async () => {
+    const draining = { ...snapshot, status: 'cancelling', phase: 'draining', controlVersion: 2 };
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLockedForOwner: vi.fn(async () => draining), replace: vi.fn(), recordCommand: vi.fn(), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, {
+      controlEnabled: true, executionEnabled: true, fixedLoopEnabled: true,
+      adaptiveLoopEnabled: true, goalEnabled: true, evaluatorEnforced: true,
+    }, { authorize: vi.fn(async () => undefined) });
+
+    await expect(service.edit(identity, snapshot.automationId, {
+      clientMessageId: 'edit-draining', payload: { prompt: 'new work' }, expectedControlVersion: 2,
+      expectedIncarnationId: snapshot.incarnationId,
+    })).rejects.toMatchObject({ code: 'AUTOMATION_DRAINING' });
+    expect(store.replace).not.toHaveBeenCalled();
+  });
 });

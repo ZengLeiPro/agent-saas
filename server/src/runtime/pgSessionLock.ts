@@ -118,7 +118,7 @@ export class PgSessionLock {
 
         // Lease mode has a separate tenant-native authority. Keeping the compatibility index
         // cannot then collapse (tenant_id, session_id) isolation. The trigger makes an old dual
-        // INSERT lose cleanly when a lease owner for the same tenant/session already exists.
+        // acquisition lose cleanly when a lease owner for the same tenant/session already exists.
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${this.tenantLeasesTable} (
             tenant_id TEXT NOT NULL,
@@ -134,6 +134,15 @@ export class PgSessionLock {
           RETURNS trigger LANGUAGE plpgsql AS $fn$
           BEGIN
             IF NOT pg_try_advisory_xact_lock(hashtextextended(length(NEW.tenant_id)::text || ':' || NEW.tenant_id || length(NEW.session_id)::text || ':' || NEW.session_id, 0)) THEN
+              -- A lease contender may temporarily own the tenant/session transaction lock.
+              -- Silently suppressing an existing owner's UPDATE makes its renew look like
+              -- confirmed ownership loss. Surface lock contention as a transient query error
+              -- instead; makeLeaseHandle keeps the prior expiry deadline and retries. Inserts
+              -- and owner-changing takeovers remain clean, non-blocking acquisition misses.
+              IF TG_OP = 'UPDATE' AND OLD.owner_token = NEW.owner_token THEN
+                RAISE EXCEPTION 'tenant/session lease guard is busy'
+                  USING ERRCODE = 'lock_not_available';
+              END IF;
               RETURN NULL;
             END IF;
             IF EXISTS (

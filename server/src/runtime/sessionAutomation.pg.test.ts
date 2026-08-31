@@ -300,4 +300,29 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE work_id=$1`,[workId])).rows[0].state).toBe('completed');
  });
 
+ it.each([{desired:'blocked',status:'completing'},{desired:'cancelled',status:'cancelling'}] as const)('rejects replace while $desired drain is still closing lifecycle work',async({desired,status})=>{
+  const testSession=`${session}-drain-${desired}`,automationId=randomUUID(),incarnationId=randomUUID(),workId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version,desired_terminal_status) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive',$5,'draining',7,1,1,1,$6)`,[automationId,tenant,testSession,incarnationId,status,desired]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'drain-mutation',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'old',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action,state) VALUES($1,$2,$3,$4,$5,7,$5,7,'run',$6,'cancel','pending')`,[workId,tenant,testSession,automationId,incarnationId,randomUUID()]);
+  const before=await pool.query(`SELECT incarnation_id,generation,spec_version,(SELECT count(*) FROM ${store.tables.wakeups} w WHERE w.automation_id=a.automation_id)::int wakeups FROM ${store.tables.automations} a WHERE automation_id=$1`,[automationId]);
+  const current=await store.get(tenant,testSession,automationId);
+  await expect(store.tx(c=>store.replace(c,current!,{kind:'loop',mode:'adaptive',prompt:'new',budget:{}}))).rejects.toMatchObject({code:'AUTOMATION_DRAINING'});
+  const after=await pool.query(`SELECT incarnation_id,generation,spec_version,(SELECT count(*) FROM ${store.tables.wakeups} w WHERE w.automation_id=a.automation_id)::int wakeups FROM ${store.tables.automations} a WHERE automation_id=$1`,[automationId]);
+  expect(after.rows[0]).toEqual(before.rows[0]);
+ });
+
+ it('does not let a late old-run terminal event finalize or clear a newer draining incarnation',async()=>{
+  const testSession=`${session}-late-terminal`,automationId=randomUUID(),oldIncarnation=randomUUID(),newIncarnation=randomUUID();
+  const wakeupId=randomUUID(),outboxId=randomUUID(),executionId=randomUUID(),oldRun=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version,active_run_id,desired_terminal_status) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','cancelling','draining',2,2,2,2,$5,'cancelled')`,[automationId,tenant,testSession,newIncarnation,oldRun]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,2,'late-terminal',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'new incarnation',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.wakeups}(wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,due_at,state) VALUES($1,$2,$3,$4,$5,1,1,1,$6,now(),'consumed')`,[wakeupId,tenant,testSession,automationId,oldIncarnation,`late:${wakeupId}`]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,$8,'{}','dispatched')`,[outboxId,wakeupId,tenant,testSession,automationId,oldIncarnation,`late:${wakeupId}`,oldRun]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'running')`,[executionId,tenant,testSession,automationId,oldIncarnation,outboxId,oldRun]);
+  await new SessionAutomationTerminalProjector(store,`late-old-run-${randomUUID()}`).project({globalSequence:1,tenantId:tenant,sessionId:testSession,runId:oldRun,status:'completed'});
+  expect(await store.get(tenant,testSession,automationId)).toMatchObject({incarnationId:newIncarnation,generation:2,status:'cancelling',phase:'draining',activeRunId:oldRun});
+  expect((await pool.query(`SELECT state FROM ${store.tables.executions} WHERE execution_id=$1`,[executionId])).rows[0].state).toBe('terminal');
+ });
+
 });

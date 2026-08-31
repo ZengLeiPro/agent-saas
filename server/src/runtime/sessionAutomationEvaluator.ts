@@ -47,6 +47,21 @@ export function passesGoalHardGates(evidence: GoalEvidence): boolean {
     && evidence.evidenceRefs.length > 0;
 }
 
+function parsePersistedGoalDecision(payload: unknown): { decision: GoalDecision; reason: string; confidence: number } | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const evaluation = (payload as Record<string, unknown>).evaluation;
+  if (!evaluation || typeof evaluation !== 'object') return undefined;
+  const result = evaluation as Record<string, unknown>;
+  if (!['met', 'continue', 'blocked', 'unverifiable'].includes(String(result.decision))
+    || typeof result.reason !== 'string' || typeof result.confidence !== 'number'
+    || !Number.isFinite(result.confidence)) return undefined;
+  return {
+    decision: result.decision as GoalDecision,
+    reason: result.reason,
+    confidence: Math.max(0, Math.min(1, result.confidence)),
+  };
+}
+
 export class GoalEvaluationResultUnknownError extends Error {
   constructor(message: string, readonly providerAttemptId: string) {
     super(message);
@@ -139,10 +154,17 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
       if (!completed) throw new Error('result_unknown:no_terminal_result');
       const parsed = JSON.parse(text) as Record<string, unknown>;
       if (!['met', 'continue', 'blocked', 'unverifiable'].includes(String(parsed.decision))
-        || typeof parsed.reason !== 'string' || typeof parsed.confidence !== 'number') {
+        || typeof parsed.reason !== 'string' || typeof parsed.confidence !== 'number'
+        || !Number.isFinite(parsed.confidence)) {
         throw new Error('result_unknown:invalid_evaluator_json');
       }
-      await this.options.runtimeGuard?.finishModel(context, attempt, usage);
+      await this.options.runtimeGuard?.finishModel(context, attempt, usage, undefined, {
+        evaluation: {
+          decision: parsed.decision as GoalDecision,
+          reason: parsed.reason,
+          confidence: Math.max(0, Math.min(1, parsed.confidence)),
+        },
+      });
       return {
         decision: parsed.decision as GoalDecision,
         reason: parsed.reason,
@@ -296,21 +318,163 @@ export class SessionAutomationEvaluator {
     });
   }
 
+  private async applyDecisionLocked(
+    client: pg.PoolClient,
+    job: {
+      evaluation_id: string; tenant_id: string; session_id: string; automation_id: string;
+      execution_id: string; incarnation_id: string; generation: string | number;
+      spec_version: string | number; decision_epoch: string | number; run_id: string;
+    },
+    evidence: GoalEvidence,
+    result: { decision: GoalDecision; reason: string; confidence: number },
+    authority: { leaseToken: string } | { providerAttemptId: string },
+  ): Promise<boolean> {
+    const current = await this.store.getLocked(client, job.tenant_id, job.session_id, job.automation_id);
+    const latestGates = await this.resolveHardGates(client, {
+      tenantId: job.tenant_id,
+      sessionId: job.session_id,
+      automationId: job.automation_id,
+      executionId: job.execution_id,
+      runId: job.run_id,
+    });
+    const fenced = current
+      && current.incarnationId === job.incarnation_id
+      && current.generation === Number(job.generation)
+      && current.specVersion === Number(job.spec_version)
+      && current.status === 'active';
+    const decision = result.decision === 'met'
+      && (!passesGoalHardGates({ ...evidence, hardGates: latestGates }) || result.confidence < 0.8)
+      ? { ...result, decision: 'unverifiable' as const, reason: 'final_gate_or_confidence_failed' }
+      : result;
+    const updated = 'leaseToken' in authority
+      ? await client.query(
+        `UPDATE ${this.store.tables.evaluations}
+            SET state=$2,decision=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE evaluation_id=$1 AND lease_token=$4 AND state='claimed'`,
+        [job.evaluation_id, decision.decision, JSON.stringify(decision), authority.leaseToken],
+      )
+      : await client.query(
+        `UPDATE ${this.store.tables.evaluations}
+            SET state=$2,decision=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+          WHERE evaluation_id=$1 AND provider_attempt_id=$4
+            AND state IN ('claimed','result_unknown')`,
+        [job.evaluation_id, decision.decision, JSON.stringify(decision), authority.providerAttemptId],
+      );
+    if (!updated.rowCount) return false;
+    if (!fenced) return true;
+    if (decision.decision === 'met') {
+      await this.store.beginTerminalDrainLocked(client,current!,'completed','goal_met');
+    } else if (decision.decision === 'continue') {
+      const epoch = Number(job.decision_epoch) + 1;
+      await this.store.scheduleTx(client, {
+        tenantId: job.tenant_id,
+        sessionId: job.session_id,
+        automationId: job.automation_id,
+        incarnationId: job.incarnation_id,
+        generation: Number(job.generation),
+        specVersion: Number(job.spec_version),
+        continuationEpoch: epoch,
+        triggerKey: `goal:${job.automation_id}:g${job.generation}:e${epoch}`,
+        dueAt: new Date(),
+        payload: { evaluationId: job.evaluation_id, reason: decision.reason },
+      });
+    } else {
+      await client.query(
+        `UPDATE ${this.store.tables.automations}
+            SET status='blocked',phase='idle',last_error=$7,control_version=control_version+1,
+                projection_version=projection_version+1,updated_at=now()
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,
+        [job.tenant_id, job.session_id, job.automation_id, job.incarnation_id,
+          job.generation, job.spec_version, decision.reason],
+      );
+    }
+    const next=await this.store.getLocked(client,job.tenant_id,job.session_id,job.automation_id);
+    if(next)await this.store.event(client,next,'automation_state_changed',{evaluationId:job.evaluation_id,decision:decision.decision,snapshot:next});
+    return true;
+  }
+
   async reconcileUnknown(): Promise<number> {
-    return this.store.tx(async client => {
+    let restored = 0;
+    const completed = await this.store.pool.query(
+      `SELECT e.evaluation_id,e.tenant_id,e.session_id,e.automation_id,e.execution_id,e.incarnation_id,
+              e.generation,e.spec_version,e.decision_epoch,e.evidence,x.run_id,p.provider_attempt_id,p.result_payload
+         FROM ${this.store.tables.evaluations} e
+         JOIN ${this.store.tables.executions} x
+           ON x.tenant_id=e.tenant_id AND x.session_id=e.session_id AND x.automation_id=e.automation_id
+          AND x.execution_id=e.execution_id AND x.incarnation_id=e.incarnation_id
+          AND x.generation=e.generation AND x.spec_version=e.spec_version
+         JOIN ${this.store.tables.providerAttempts} p
+           ON p.provider_attempt_id=e.provider_attempt_id AND p.tenant_id=e.tenant_id
+          AND p.session_id=e.session_id AND p.automation_id=e.automation_id
+          AND p.execution_id=e.execution_id AND p.incarnation_id=e.incarnation_id
+          AND p.generation=e.generation AND p.run_id=x.run_id
+        WHERE ((e.state='claimed' AND e.lease_expires_at<now()) OR e.state='result_unknown')
+          AND p.operation='goal-evaluation:'||e.execution_id::text
+          AND p.state IN ('response_received','completed')`,
+    );
+    for (const job of completed.rows) {
+      restored += await this.store.tx(async client => {
+        const locked = await client.query(
+          `SELECT p.state,p.result_payload
+             FROM ${this.store.tables.evaluations} e
+             JOIN ${this.store.tables.providerAttempts} p ON p.provider_attempt_id=e.provider_attempt_id
+            WHERE e.evaluation_id=$1 AND e.provider_attempt_id=$2
+              AND ((e.state='claimed' AND e.lease_expires_at<now()) OR e.state='result_unknown')
+              AND p.tenant_id=$3 AND p.session_id=$4 AND p.automation_id=$5
+              AND p.incarnation_id=$6 AND p.generation=$7 AND p.execution_id=$8 AND p.run_id=$9
+              AND p.state IN ('response_received','completed')
+            FOR UPDATE OF e,p`,
+          [job.evaluation_id, job.provider_attempt_id, job.tenant_id, job.session_id,
+            job.automation_id, job.incarnation_id, job.generation, job.execution_id, job.run_id],
+        );
+        if (!locked.rowCount) return 0;
+        const result = parsePersistedGoalDecision(locked.rows[0].result_payload);
+        if (!result) {
+          const evaluation = await client.query(
+            `UPDATE ${this.store.tables.evaluations}
+                SET state='unverifiable',decision=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+              WHERE evaluation_id=$1 AND provider_attempt_id=$2
+                AND state IN ('claimed','result_unknown')`,
+            [job.evaluation_id, job.provider_attempt_id, JSON.stringify({
+              decision: 'unverifiable', reason: 'completed_attempt_result_unavailable', confidence: 0,
+            })],
+          );
+          if (!evaluation.rowCount) return 0;
+          await client.query(
+            `UPDATE ${this.store.tables.automations}
+                SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,last_error=$7,
+                    projection_version=projection_version+1,updated_at=now()
+              WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+                AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,
+            [job.tenant_id, job.session_id, job.automation_id, job.incarnation_id,
+              job.generation, job.spec_version, 'completed_attempt_result_unavailable'],
+          );
+          return 1;
+        }
+        return await this.applyDecisionLocked(client, job, job.evidence as GoalEvidence, result, {
+          providerAttemptId: job.provider_attempt_id,
+        }) ? 1 : 0;
+      });
+    }
+
+    restored += await this.store.tx(async client => {
       const unknown = await client.query(
         `UPDATE ${this.store.tables.evaluations} e
             SET state='result_unknown',provider_attempt_id=p.provider_attempt_id,
                 lease_token=NULL,lease_expires_at=NULL,updated_at=now()
            FROM ${this.store.tables.providerAttempts} p
           WHERE e.state='claimed' AND e.lease_expires_at<now()
-            AND p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
+            AND p.tenant_id=e.tenant_id AND p.session_id=e.session_id AND p.automation_id=e.automation_id
+            AND p.execution_id=e.execution_id AND p.incarnation_id=e.incarnation_id AND p.generation=e.generation
             AND p.operation='goal-evaluation:'||e.execution_id::text
             AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
           RETURNING e.evaluation_id`,
       );
-      if (unknown.rowCount) {
-        await client.query(
+      // Also sweep already-handled result_unknown rows: evaluator error handling can
+      // persist the evaluation state before a worker dies, so reconciliation authority
+      // must not depend on this invocation having performed the claimed transition.
+      await client.query(
           `UPDATE ${this.store.tables.providerAttempts} p
               SET state='result_unknown',version=p.version+1,lease_token=NULL,lease_expires_at=NULL,
                   last_error=COALESCE(p.last_error,'evaluator_lease_expired_after_admission'),updated_at=now()
@@ -328,13 +492,21 @@ export class SessionAutomationEvaluator {
         await client.query(
           `UPDATE ${this.store.tables.automations} a
               SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now()
-             FROM ${this.store.tables.evaluations} e,${this.store.tables.executions} x
-            WHERE e.execution_id=x.execution_id AND e.state='result_unknown' AND e.provider_attempt_id IS NOT NULL
+             FROM ${this.store.tables.evaluations} e
+             JOIN ${this.store.tables.executions} x
+               ON x.tenant_id=e.tenant_id AND x.session_id=e.session_id AND x.automation_id=e.automation_id
+              AND x.execution_id=e.execution_id AND x.incarnation_id=e.incarnation_id
+              AND x.generation=e.generation AND x.spec_version=e.spec_version
+             JOIN ${this.store.tables.providerAttempts} p
+               ON p.provider_attempt_id=e.provider_attempt_id AND p.tenant_id=e.tenant_id
+              AND p.session_id=e.session_id AND p.automation_id=e.automation_id
+              AND p.execution_id=e.execution_id AND p.incarnation_id=e.incarnation_id
+              AND p.generation=e.generation AND p.run_id=x.run_id
+            WHERE e.state='result_unknown' AND p.state IN ('result_unknown','reconcile')
               AND a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
               AND a.incarnation_id=e.incarnation_id AND a.generation=e.generation AND a.spec_version=e.spec_version
               AND a.status='active'`,
         );
-      }
       const retryable = await client.query(
         `UPDATE ${this.store.tables.evaluations} e
             SET state='pending',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
@@ -349,6 +521,7 @@ export class SessionAutomationEvaluator {
       );
       return (unknown.rowCount ?? 0) + (retryable.rowCount ?? 0);
     });
+    return restored;
   }
 
   private async checkInBlocked(): Promise<number> {
@@ -496,58 +669,9 @@ export class SessionAutomationEvaluator {
         continue;
       }
 
-      await this.store.tx(async client => {
-        const current = await this.store.getLocked(client, job.tenant_id, job.session_id, job.automation_id);
-        const latestGates = await this.resolveHardGates(client, {
-          tenantId: job.tenant_id,
-          sessionId: job.session_id,
-          automationId: job.automation_id,
-          executionId: job.execution_id,
-          runId: job.run_id,
-        });
-        const fenced = current
-          && current.incarnationId === job.incarnation_id
-          && current.generation === Number(job.generation)
-          && current.specVersion === Number(job.spec_version)
-          && current.status === 'active';
-        const decision = result.decision === 'met' && (!passesGoalHardGates({ ...evidence, hardGates: latestGates }) || result.confidence < 0.8)
-          ? { ...result, decision: 'unverifiable' as const, reason: 'final_gate_or_confidence_failed' }
-          : result;
-        await client.query(
-          `UPDATE ${this.store.tables.evaluations}
-              SET state=$2,decision=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-            WHERE evaluation_id=$1 AND lease_token=$4`,
-          [job.evaluation_id, decision.decision, JSON.stringify(decision), job.lease_token],
-        );
-        if (!fenced) return;
-        if (decision.decision === 'met') {
-          await this.store.beginTerminalDrainLocked(client,current!,'completed','goal_met');
-        } else if (decision.decision === 'continue') {
-          const epoch = Number(job.decision_epoch) + 1;
-          await this.store.scheduleTx(client, {
-            tenantId: job.tenant_id,
-            sessionId: job.session_id,
-            automationId: job.automation_id,
-            incarnationId: job.incarnation_id,
-            generation: Number(job.generation),
-            specVersion: Number(job.spec_version),
-            continuationEpoch: epoch,
-            triggerKey: `goal:${job.automation_id}:g${job.generation}:e${epoch}`,
-            dueAt: new Date(),
-            payload: { evaluationId: job.evaluation_id, reason: decision.reason },
-          });
-        } else {
-          await client.query(
-            `UPDATE ${this.store.tables.automations}
-                SET status='blocked',phase='idle',last_error=$3,control_version=control_version+1,
-                    projection_version=projection_version+1,updated_at=now()
-              WHERE tenant_id=$1 AND automation_id=$2`,
-            [job.tenant_id, job.automation_id, decision.reason],
-          );
-        }
-        const next=await this.store.getLocked(client,job.tenant_id,job.session_id,job.automation_id);
-        if(next)await this.store.event(client,next,'automation_state_changed',{evaluationId:job.evaluation_id,decision:decision.decision,snapshot:next});
-      });
+      await this.store.tx(client => this.applyDecisionLocked(
+        client, job, evidence, result, { leaseToken: job.lease_token },
+      ));
       const published=await this.store.get(job.tenant_id,job.session_id,job.automation_id);if(published)this.store.publish(published);
     }
     return jobs.length;

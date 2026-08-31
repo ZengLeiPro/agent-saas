@@ -291,6 +291,95 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(evaluate).not.toHaveBeenCalled();
   });
 
+  it('finishModel crash recovery replays a persisted verdict without calling provider', async () => {
+    const setup = await activeExecution();
+    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    const evaluationId = randomUUID();
+    const leaseToken = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tables.evaluations}
+        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,lease_token,lease_expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'claimed',$8,now()+interval '2 minutes')`,
+      [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
+        JSON.stringify({ summary: 'done', evidenceRefs: ['event:completed-crash'], hardGates: {} }), leaseToken],
+    );
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='evaluating'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, setup.sessionId, setup.automationId],
+    );
+    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${setup.dispatch.outboxId}`, {
+      model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation',
+    });
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET provider_attempt_id=$2 WHERE evaluation_id=$1 AND lease_token=$3`,
+      [evaluationId, attempt!.providerAttemptId, leaseToken],
+    );
+    // Crash point: finishModel committed provider completion and its parsed verdict, but evaluator CAS did not run.
+    await guard.finishModel(setup.context, attempt, { inputTokens: 10, outputTokens: 5 }, undefined, {
+      evaluation: { decision: 'continue', reason: 'more work remains', confidence: 0.95 },
+    });
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET lease_expires_at=now()-interval '1 second' WHERE evaluation_id=$1`,
+      [evaluationId],
+    );
+
+    const provider = vi.fn();
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: provider } as unknown as GoalEvaluatorPort);
+    expect(await evaluator.evaluatePending()).toBe(0);
+    expect(provider).not.toHaveBeenCalled();
+    expect((await pool.query(
+      `SELECT state,decision FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId],
+    )).rows[0]).toMatchObject({
+      state: 'continue',
+      decision: { decision: 'continue', reason: 'more work remains', confidence: 0.95 },
+    });
+    expect((await pool.query(
+      `SELECT count(*)::int n FROM ${store.tables.providerAttempts} WHERE automation_id=$1`, [setup.automationId],
+    )).rows[0].n).toBe(1);
+  });
+
+  it('completed evaluator attempt without a durable verdict becomes explicitly unverifiable without replay', async () => {
+    const setup = await activeExecution();
+    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    const evaluationId = randomUUID();
+    const leaseToken = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tables.evaluations}
+        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,lease_token,lease_expires_at)
+       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'claimed',$8,now()-interval '1 second')`,
+      [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
+        JSON.stringify({ summary: 'done', evidenceRefs: ['event:missing-result'], hardGates: {} }), leaseToken],
+    );
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='evaluating'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, setup.sessionId, setup.automationId],
+    );
+    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${setup.dispatch.outboxId}`, {
+      model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation',
+    });
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET provider_attempt_id=$2 WHERE evaluation_id=$1`,
+      [evaluationId, attempt!.providerAttemptId],
+    );
+    await guard.finishModel(setup.context, attempt, { inputTokens: 10, outputTokens: 5 });
+
+    const provider = vi.fn();
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: provider } as unknown as GoalEvaluatorPort);
+    expect(await evaluator.evaluatePending()).toBe(0);
+    expect(provider).not.toHaveBeenCalled();
+    expect((await pool.query(
+      `SELECT state,decision FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId],
+    )).rows[0]).toMatchObject({
+      state: 'unverifiable',
+      decision: { decision: 'unverifiable', reason: 'completed_attempt_result_unavailable', confidence: 0 },
+    });
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({
+      status: 'reconcile_required', lastError: 'completed_attempt_result_unavailable',
+    });
+  });
+
   it('claimed lease expiry is retryable but result_unknown never blind-replays', async () => {
     const setup = await activeExecution();
     await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
@@ -322,7 +411,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     );
   });
 
-  it('explicit evaluator receipts remain idempotent and only completed/not_found resolve result_unknown', async () => {
+  it('send failure after terminal projection remains receipt-reconcilable after active_run_id is cleared', async () => {
     const setup = await activeExecution();
     const evaluationId = randomUUID();
     await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
@@ -345,11 +434,9 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [evaluationId, attempt!.providerAttemptId],
     );
     await guard.finishModel(setup.context, attempt, undefined, new Error('response lost'));
-    await pool.query(
-      `UPDATE ${store.tables.automations} SET status='reconcile_required'
-        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
-      [tenantId, setup.sessionId, setup.automationId],
-    );
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({
+      status: 'reconcile_required', activeRunId: undefined,
+    });
 
     for (const observedState of ['still_running', 'ambiguous'] as const) {
       const current = await store.get(tenantId, setup.sessionId, setup.automationId);
@@ -403,11 +490,9 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [completedEvaluationId, completedAttempt!.providerAttemptId],
     );
     await guard.finishModel(completedSetup.context, completedAttempt, undefined, new Error('response lost'));
-    await pool.query(
-      `UPDATE ${store.tables.automations} SET status='reconcile_required'
-        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
-      [tenantId, completedSetup.sessionId, completedSetup.automationId],
-    );
+    expect(await store.get(tenantId, completedSetup.sessionId, completedSetup.automationId)).toMatchObject({
+      status: 'reconcile_required', activeRunId: undefined,
+    });
     const completedCurrent = await store.get(tenantId, completedSetup.sessionId, completedSetup.automationId);
     await store.tx(client => store.control(client, completedCurrent!, 'reconcile', {
       providerAttemptId: completedAttempt!.providerAttemptId,

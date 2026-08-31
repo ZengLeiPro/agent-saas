@@ -127,13 +127,14 @@ export class SessionAutomationTerminalProjector {
         const ownsActiveRun = row.active_run_id === event.runId;
         const fenced = row.incarnation_id === row.current_incarnation
           && Number(row.generation) === Number(row.current_generation);
-        if (ownsActiveRun && row.desired_terminal_status) {
+        if (ownsActiveRun && fenced && row.desired_terminal_status) {
           await client.query(
             `UPDATE ${this.store.tables.automations}
                 SET phase='draining',active_run_id=NULL,next_wakeup_at=NULL,
                     projection_version=projection_version+1,updated_at=now()
-              WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$3`,
-            [event.tenantId, row.automation_id, event.runId],
+              WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$3
+                AND incarnation_id=$4 AND generation=$5`,
+            [event.tenantId, row.automation_id, event.runId, row.incarnation_id, row.generation],
           );
           await client.query(
             `UPDATE ${this.store.tables.cancellations}
@@ -241,7 +242,7 @@ export class SessionAutomationTerminalProjector {
             }
           }
         }
-        await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);
+        if(fenced)await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);
         const next=await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
         if(next)await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
       }

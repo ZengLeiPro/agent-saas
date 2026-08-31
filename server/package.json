@@ -7,7 +7,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist/index.js --sourcemap && node scripts/build-admin-runner.mjs && node scripts/copy-static-data.mjs",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --alias:@agent/shared=../shared/src/index.ts --packages=external --outfile=dist/index.js --sourcemap && node scripts/build-admin-runner.mjs && node scripts/copy-static-data.mjs",
     "start": "node --enable-source-maps dist/index.js",
     "dev": "tsx watch --watch-path=src/agent/descriptions src/index.ts",
     "typecheck": "tsc --noEmit",

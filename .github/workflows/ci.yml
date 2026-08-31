@@ -1033,6 +1033,9 @@ jobs:
               log "previous runtime worker restored before candidate stop: color=$WORKER_ACTIVE"
             fi
             if [ "$WORKER_CANDIDATE_STARTED" -eq 1 ] && [ -n "$WORKER_IDLE" ]; then
+              log "runtime worker candidate diagnostics: ${WORKER_SERVICE}@${WORKER_IDLE}"
+              systemctl status "${WORKER_SERVICE}@${WORKER_IDLE}" --no-pager -l || true
+              journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 120 --no-pager || true
               log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
               systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" || true
               if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
@@ -1041,6 +1044,7 @@ jobs:
                 rm -f "$WORKER_DIR/$WORKER_IDLE"
               fi
             fi
+            log "Web idle diagnostics: ${SERVICE_NAME}@${IDLE}"
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
             log "stop idle unit ${SERVICE_NAME}@${IDLE}"
             systemctl stop "${SERVICE_NAME}@${IDLE}" || true

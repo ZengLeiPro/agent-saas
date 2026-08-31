@@ -16,12 +16,22 @@ test('runtime worker rollback restores a drain-started active process before can
   const rollbackStart = position('rollback_idle_and_exit()');
   const restoreRestart = workflow.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"', rollbackStart);
   const restoreReady = workflow.indexOf('previous runtime worker restored before candidate stop', rollbackStart);
+  const candidateStatus = workflow.indexOf(
+    'systemctl status "${WORKER_SERVICE}@${WORKER_IDLE}" --no-pager -l',
+    rollbackStart,
+  );
+  const candidateJournal = workflow.indexOf(
+    'journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 120 --no-pager',
+    rollbackStart,
+  );
   const candidateStop = workflow.indexOf('stop runtime worker candidate:', rollbackStart);
 
   assert.ok(drainStarted < drainSignal);
   assert.ok(restoreRestart > rollbackStart);
   assert.ok(restoreRestart < restoreReady);
-  assert.ok(restoreReady < candidateStop);
+  assert.ok(restoreReady < candidateStatus);
+  assert.ok(candidateStatus < candidateJournal);
+  assert.ok(candidateJournal < candidateStop);
   assert.ok(workflow.includes('WORKER_DRAIN_TIMEOUT=960'));
   assert.ok(workflow.includes('recover interrupted runtime worker drain before rollout'));
   assert.ok(workflow.includes('runtime worker marker target is ready and enabled'));

@@ -86,11 +86,12 @@ describe("SkillSelector 能力目录", () => {
     expect(await screen.findByText("技能选择已在其他页面更新，已同步最新状态，请重试")).toBeTruthy();
   });
 
-  it("个人 Skill 导入使用治理入口并展示发布版本", async () => {
+  it("个人 Skill 导入展示上传限制、使用治理入口并展示发布版本", async () => {
     importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: true, auditCompletion: "pending", skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
     const { container } = render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
     fireEvent.click(screen.getByRole("button", { name: "导入技能" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText(/最多 300 个文件（zip 目录不计）/)).toBeTruthy();
     const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
     const file = new File(["---\nname: personal-tool\ndescription: personal\n---"], "SKILL.md", { type: "text/markdown" });
     fireEvent.change(input, { target: { files: [file] } });

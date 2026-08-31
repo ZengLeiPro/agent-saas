@@ -5,7 +5,7 @@ import test from 'node:test';
 import { encryptVault, STAGING_ACS_TOKEN_REF } from './bootstrap-vault.mjs';
 import { renderStagingConfig } from './render-config.mjs';
 
-test('renders a fail-closed Staging config while retaining model configuration', () => {
+test('renders a fail-closed Staging config with persistent local Artifact storage', () => {
   const source = {
     agent: { cwd: '/production/workspaces', userOverrides: { alice: { extraDirs: ['/prod'] } } },
     auth: {
@@ -45,6 +45,7 @@ test('renders a fail-closed Staging config while retaining model configuration',
   };
   const config = renderStagingConfig(source, {
     STAGING_JWT_SECRET: 'staging-jwt-secret-that-is-at-least-32-characters',
+    STAGING_ARTIFACT_SIGNED_URL_SECRET: 'staging-artifact-secret-that-is-at-least-32-characters',
     STAGING_DATABASE_URL: 'postgresql://staging:secret@db.internal/staging',
   });
 
@@ -55,6 +56,16 @@ test('renders a fail-closed Staging config while retaining model configuration',
   assert.equal(config.agent.cwd, '/mnt/agent-saas-staging/workspaces');
   assert.equal(config.agent.sharedDir, '/opt/agent-saas-staging/current/server/workspace-shared');
   assert.deepEqual(config.agent.userOverrides, {});
+  assert.deepEqual(config.artifact, {
+    backend: 'local',
+    rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
+    signedUrlSecret: 'staging-artifact-secret-that-is-at-least-32-characters',
+    readUrlTtlSeconds: 900,
+    maxBlobBytes: 100 * 1024 * 1024,
+    retentionDays: 90,
+    gcIntervalMs: 24 * 60 * 60 * 1000,
+  });
+  assert.notEqual(config.artifact.signedUrlSecret, config.auth.jwtSecret);
   assert.equal(config.runtimeScheduler.maxConcurrentRuns, 10);
   assert.equal(config.tenantRemoteHands.hands[0].authTokenRef, STAGING_ACS_TOKEN_REF);
   assert.equal(config.egress.server.failOpen, false);
@@ -72,6 +83,18 @@ test('renders a fail-closed Staging config while retaining model configuration',
   assert.deepEqual(config.systemMonitor, { enabled: false });
   assert.deepEqual(config.runtimeEventRetention, { enabled: false, executionMode: 'dry-run' });
   assert.equal(config.integrationV3ControlPlane, undefined);
+});
+
+test('rejects a Staging Artifact signing secret reused from auth', () => {
+  const sharedSecret = 'shared-secret-that-is-at-least-32-characters';
+  assert.throws(
+    () => renderStagingConfig({}, {
+      STAGING_JWT_SECRET: sharedSecret,
+      STAGING_ARTIFACT_SIGNED_URL_SECRET: sharedSecret,
+      STAGING_DATABASE_URL: 'postgresql://staging:secret@db.internal/staging',
+    }),
+    /must be independent/u,
+  );
 });
 
 test('bootstraps an EncryptedFileSecretVault-compatible namespaced ACS token', () => {

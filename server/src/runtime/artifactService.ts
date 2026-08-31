@@ -328,9 +328,16 @@ export class ArtifactService {
     // 修 P1 BUG #3 延伸（2026-06-21）：原 user.role === 'admin' 让组织 admin 跳过
     // session ACL 校验，意味着任意客户组织 admin 可读其他组织的 artifact 内容
     // （截图、patch、log 都是会话产生的临时文件，跨组织读同样泄漏）。收紧到
-    // platform admin。组织 admin 看自己 tenant 内的 artifact 走正常 session 校验。
+    // platform admin。平台管理员先走 owner 校验，跨会话才要求 session_export Grant；
+    // 组织 admin 看自己 tenant 内的 artifact 仍走正常 session 校验。
     if (!user) return;
     if (user.role === 'admin' && user.tenantId === DEFAULT_TENANT_ID) {
+      try {
+        await this.assertSessionOwner(sessionId, user);
+        return;
+      } catch (error) {
+        if (!(error instanceof ArtifactServiceError) || error.statusCode !== 404) throw error;
+      }
       const targetTenantId = await this.options.resolveSessionTenantId?.(sessionId);
       const allowed = targetTenantId && this.options.authorizeContentAccess
         ? await this.options.authorizeContentAccess({

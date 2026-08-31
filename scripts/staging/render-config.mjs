@@ -11,7 +11,11 @@ const required = (env, name) => {
 export function renderStagingConfig(source, env = process.env) {
   const config = structuredClone(source);
   const jwtSecret = required(env, 'STAGING_JWT_SECRET');
+  const artifactSignedUrlSecret = required(env, 'STAGING_ARTIFACT_SIGNED_URL_SECRET');
   const databaseUrl = required(env, 'STAGING_DATABASE_URL');
+  if (artifactSignedUrlSecret === jwtSecret) {
+    throw new Error('STAGING_ARTIFACT_SIGNED_URL_SECRET must be independent from STAGING_JWT_SECRET');
+  }
 
   config.agent = {
     ...(config.agent ?? {}),
@@ -28,6 +32,15 @@ export function renderStagingConfig(source, env = process.env) {
   config.cron = {
     enabled: false,
     store: '/mnt/agent-saas-staging/runtime/server/data/cron-jobs.json',
+  };
+  config.artifact = {
+    backend: 'local',
+    rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
+    signedUrlSecret: artifactSignedUrlSecret,
+    readUrlTtlSeconds: 900,
+    maxBlobBytes: 100 * 1024 * 1024,
+    retentionDays: 90,
+    gcIntervalMs: 24 * 60 * 60 * 1000,
   };
   config.auth = {
     ...(config.auth ?? {}),

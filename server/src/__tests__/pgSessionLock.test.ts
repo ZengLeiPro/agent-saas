@@ -94,8 +94,19 @@ describe('PgSessionLock', () => {
     expect(pool.clientQueries.some((sql) => sql.includes('PRIMARY KEY (tenant_id, session_id)'))).toBe(true);
     expect(pool.clientQueries.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS tenant_runtime_tenant_session_leases'))).toBe(true);
     expect(pool.clientQueries.some((sql) => sql.includes('DROP INDEX'))).toBe(false);
-    expect(pool.advisoryUnlockCalls).toBe(1);
+    expect(pool.clientQueries.some((sql) => sql.includes("SET LOCAL statement_timeout = '15000ms'"))).toBe(true);
+    expect(pool.clientQueries.some((sql) => sql.includes("SET LOCAL lock_timeout = '5000ms'"))).toBe(true);
+    expect(pool.clientQueries.some((sql) => sql.includes('pg_advisory_xact_lock(hashtext'))).toBe(true);
+    expect(pool.advisoryUnlockCalls).toBe(0);
     expect(pool.clientReleaseCalls).toBe(1);
+  });
+
+  it('拒绝会让派生表名超过 PostgreSQL 63 字节上限的 tablePrefix', () => {
+    const pool = new FakePool();
+    expect(() => new PgSessionLock({
+      pool: pool as unknown as pg.Pool,
+      tablePrefix: `prefix_${'x'.repeat(35)}`,
+    })).toThrow('PG tablePrefix 不能超过 41 字节');
   });
 
   it('lease 模式下并发会话只做短查询，不占用 pool client', async () => {

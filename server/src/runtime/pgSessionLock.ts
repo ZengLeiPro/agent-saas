@@ -23,6 +23,9 @@ const DEFAULT_LEASE_MS = 120_000;
 const DEFAULT_RENEW_INTERVAL_MS = 30_000;
 const MIN_LEASE_MS = 10_000;
 const MIN_RENEW_INTERVAL_MS = 1_000;
+const INIT_STATEMENT_TIMEOUT_MS = 15_000;
+const INIT_LOCK_TIMEOUT_MS = 5_000;
+const MAX_TABLE_PREFIX_BYTES = 41;
 
 export type PgSessionLockMode = 'dual' | 'lease';
 
@@ -70,6 +73,10 @@ export class PgSessionLock {
   constructor(private readonly options: PgSessionLockOptions) {
     this.pool = options.pool;
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
+    // Keep both derived table identifiers below PostgreSQL's 63-byte identifier limit.
+    if (Buffer.byteLength(prefix, 'utf8') > MAX_TABLE_PREFIX_BYTES) {
+      throw new Error(`PG tablePrefix 不能超过 ${MAX_TABLE_PREFIX_BYTES} 字节: ${prefix}`);
+    }
     this.leasesTable = `${prefix}_session_leases`;
     this.tenantLeasesTable = `${prefix}_tenant_session_leases`;
     this.mode = options.mode ?? 'dual';
@@ -84,9 +91,11 @@ export class PgSessionLock {
     const lockKey = `${this.leasesTable}:init`;
     const client = await this.pool.connect();
     try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
       await client.query('BEGIN');
       try {
+        await client.query(`SET LOCAL statement_timeout = '${INIT_STATEMENT_TIMEOUT_MS}ms'`);
+        await client.query(`SET LOCAL lock_timeout = '${INIT_LOCK_TIMEOUT_MS}ms'`);
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [lockKey]);
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${this.leasesTable} (
             tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}',
@@ -124,7 +133,9 @@ export class PgSessionLock {
           CREATE OR REPLACE FUNCTION ${this.leasesTable}_guard_tenant_lease()
           RETURNS trigger LANGUAGE plpgsql AS $fn$
           BEGIN
-            PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id || chr(0) || NEW.session_id, 0));
+            IF NOT pg_try_advisory_xact_lock(hashtextextended(NEW.tenant_id || chr(0) || NEW.session_id, 0)) THEN
+              RETURN NULL;
+            END IF;
             IF EXISTS (
               SELECT 1 FROM ${this.tenantLeasesTable}
               WHERE tenant_id = NEW.tenant_id
@@ -149,7 +160,6 @@ export class PgSessionLock {
         throw error;
       }
     } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
       client.release();
     }
   }

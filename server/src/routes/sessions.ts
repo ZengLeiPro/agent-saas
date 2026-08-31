@@ -88,6 +88,7 @@ import {
   AGENT_TARGET_BINDING_VERSION,
   type AgentTarget,
   type AgentTargetUnavailableReason,
+  type SessionListActiveInteraction,
 } from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 import type { ChatQueueSnapshot } from '@agent/shared';
@@ -102,6 +103,10 @@ import {
   listDurablyProjectedQueuedRunIds,
   projectQueuedMessageAttachments,
   stripMarkdown,
+  compareCanonicalSessionKeys,
+  decodeSessionListCursor,
+  encodeSessionListCursor,
+  isSessionAfterCursor,
   type CronSessionInfo,
 } from "./sessionListHelpers.js";
 
@@ -236,11 +241,13 @@ interface EnrichedSessionListItem extends SessionListItem {
   version?: number;
   serverUpdatedAt?: string;
   sourceSeq?: number;
+  activeInteraction?: SessionListActiveInteraction;
 }
 
 interface SessionsListResponse {
   sessions: EnrichedSessionListItem[];
   hasMore: boolean;
+  nextCursor?: string;
 }
 
 interface TokenContextAccounting {
@@ -1324,6 +1331,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const before = req.query.before
         ? parseInt(req.query.before as string)
         : undefined;
+      const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+      if (cursorParam && req.query.before !== undefined) {
+        res.status(400).json({ error: 'cursor and before cannot be mixed' });
+        return;
+      }
+      let canonicalCursor: ReturnType<typeof decodeSessionListCursor> | undefined;
+      if (cursorParam) {
+        try {
+          canonicalCursor = decodeSessionListCursor(cursorParam);
+        } catch {
+          res.status(400).json({ error: 'Invalid session list cursor' });
+          return;
+        }
+      }
 
       const isAdmin = req.user?.role === "admin";
       const userCwd = resolveUserCwd(
@@ -1341,7 +1362,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // 非 admin 用户不使用缓存（结果因人而异），admin 也只看自己；未认证用户共享缓存
       const fresh = req.query.fresh === "1" || req.query.fresh === "true";
       const cacheKey =
-        !fresh && !before && !req.user ? `${scope}:${limit}` : null;
+        !fresh && !before && !canonicalCursor && !req.user ? `${scope}:${limit}` : null;
 
       if (cacheKey) {
         const cached = sessionsListCache.get(cacheKey);
@@ -1374,8 +1395,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       if (options.sessionProjectionStore && req.user) {
         try {
           const visibleRecords: RuntimeSessionProjectionRecord[] = [];
-          let cursor: RuntimeSessionListQuery["cursor"];
-          const updatedTo = before && Number.isFinite(before)
+          let cursor: RuntimeSessionListQuery["cursor"] = canonicalCursor
+            ? { updatedAt: new Date(canonicalCursor.updatedAtMs).toISOString(), sessionId: canonicalCursor.sessionId }
+            : undefined;
+          const updatedTo = !canonicalCursor && before && Number.isFinite(before)
             ? new Date(before - 1).toISOString()
             : undefined;
 
@@ -1391,6 +1414,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(cursor ? { cursor } : {}),
             });
             for (const record of page.items) {
+              // Defense in depth: a custom/proxy projection reader cannot bypass tenant/user scope.
+              if (record.tenantId !== req.user.tenantId || record.userId !== req.user.sub) continue;
               if (hidesSystemSessionFrom(req.user, record.metaJson)) continue;
               visibleRecords.push(record);
               if (visibleRecords.length > limit) break;
@@ -1452,7 +1477,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           });
           metaOnlySessionIds.add(item.sessionId);
         }
-        sessions = [...bySessionId.values()].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        sessions = [...bySessionId.values()].sort(compareCanonicalSessionKeys);
         markStage(`listSessionsWithMeta[user,metaOnly=${metaOnlySessionIds.size}]`, listStageStartedAt);
       }
 
@@ -1529,8 +1554,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         });
       }
 
-      sessions.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-      if (before) sessions = sessions.filter((s) => s.updatedAtMs < before);
+      sessions.sort(compareCanonicalSessionKeys);
+      if (!projectionUsed && canonicalCursor) sessions = sessions.filter((session) => isSessionAfterCursor(session, canonicalCursor));
+      if (!projectionUsed && !canonicalCursor && before) sessions = sessions.filter((session) => session.updatedAtMs < before);
       const totalVisibleSessions = sessions.length;
       hasMore = totalVisibleSessions > limit;
       sessions = sessions.slice(0, limit);
@@ -1715,14 +1741,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         }));
       }
 
-      const payload = { sessions: visibleSessions, hasMore };
+      visibleSessions = visibleSessions.map((session) => {
+        const activeInteraction = interactionStore.getActiveInteraction(session.sessionId);
+        return activeInteraction ? { ...session, activeInteraction } : session;
+      });
+      const lastVisibleSession = visibleSessions[visibleSessions.length - 1];
+      const nextCursor = hasMore && lastVisibleSession
+        ? encodeSessionListCursor({ updatedAtMs: lastVisibleSession.updatedAtMs, sessionId: lastVisibleSession.sessionId })
+        : undefined;
+      const payload: SessionsListResponse = { sessions: visibleSessions, hasMore, ...(nextCursor ? { nextCursor } : {}) };
       if (cacheKey) {
         sessionsListCache.set(cacheKey, payload);
       }
       const totalDurationMs = Date.now() - requestStartedAt;
       if (totalDurationMs >= 800) {
         apiLogger.warn(
-          `[sessions] slow list ${totalDurationMs}ms scope=${scope} limit=${limit} before=${before ?? "none"} count=${visibleSessions.length} hasMore=${hasMore} stages=${stageTimings.join(", ")}`,
+          `[sessions] slow list ${totalDurationMs}ms scope=${scope} limit=${limit} cursor=${cursorParam ?? 'none'} before=${before ?? "none"} count=${visibleSessions.length} hasMore=${hasMore} stages=${stageTimings.join(", ")}`,
         );
       }
       res.json(payload);

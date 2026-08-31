@@ -26,6 +26,14 @@ export interface SessionParticipants {
   agent: AgentProfile | null;
 }
 
+export interface SessionListActiveInteraction {
+  interactionId: string;
+  type: 'ask_user' | 'permission_request';
+  /** Stable server summary version (createdAt epoch ms for the in-process store). */
+  version: number;
+  createdAt?: number;
+}
+
 /** API session list item */
 export interface ApiSessionListItem {
   sessionId: string;
@@ -59,10 +67,19 @@ export interface ApiSessionListItem {
   agentTargetBindingVersion?: number;
   /** 历史可读、发送阻断时的结构化原因。 */
   agentTargetUnavailableReason?: AgentTargetUnavailableReason;
+  /** M20-07 O(1) pending interaction summary; event history is never scanned by selectors. */
+  activeInteraction?: SessionListActiveInteraction;
   /** 软删除时间戳，仅回收站列表返回 */
   deletedAt?: string;
   /** 执行删除的用户名，仅回收站列表返回 */
   deletedBy?: string;
+}
+
+export interface SessionListPage {
+  sessions: ApiSessionListItem[];
+  hasMore: boolean;
+  /** Opaque base64url cursor encoding {v:1, updatedAtMs, sessionId}. */
+  nextCursor?: string;
 }
 
 /** 最近一次 run 的终态。后端从 EventStore 最末一条 run_state_changed 派生。 */

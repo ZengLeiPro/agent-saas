@@ -52,6 +52,7 @@ import {
 } from "../../../src/lib/haptics";
 import { showTextPrompt } from "../../../src/lib/prompt";
 import { useTabBar } from "../../../src/contexts/TabBarContext";
+import { captureSessionListAnchor, readSessionListAnchor } from "../../../src/lib/sessionListAnchor";
 
 /** Convert API sessions to sidebar format for useGroupedSessions */
 function toSidebarSessions(
@@ -118,24 +119,23 @@ export default function SessionListScreen() {
   const batchGroupTriggerRef = React.useRef<View>(null);
 
   const listRef = useRef<any>(null);
-  const didScrollTopOnHydrateRef = useRef(false);
-  const scrollToTopAfterHydrate = useCallback(() => {
-    if (!didScrollTopOnHydrateRef.current) return;
+  const didRestoreAnchorRef = useRef(false);
+  const restoreListAnchor = useCallback(() => {
+    if (!didRestoreAnchorRef.current) return;
     InteractionManager.runAfterInteractions(() => {
       requestAnimationFrame(() => {
-        listRef.current?.scrollToOffset({ offset: 0, animated: false });
+        listRef.current?.scrollToOffset({ offset: readSessionListAnchor(), animated: false });
       });
     });
   }, []);
 
-  // 冷启动时 cache-first 渲染会保留上次的 FlashList offset；
-  // 首次拿到 API 数据后，等布局与转场稳定后强制回顶，避免停在旧位置。
+  // Provider-owned pager survives detail navigation; restore the list viewport on return.
   useEffect(() => {
-    if (chat.sessionsHydrated && !didScrollTopOnHydrateRef.current) {
-      didScrollTopOnHydrateRef.current = true;
-      scrollToTopAfterHydrate();
+    if (chat.sessionsHydrated && !didRestoreAnchorRef.current) {
+      didRestoreAnchorRef.current = true;
+      restoreListAnchor();
     }
-  }, [chat.sessionsHydrated, scrollToTopAfterHydrate]);
+  }, [chat.sessionsHydrated, restoreListAnchor]);
 
   // Swipe-to-reveal state
   const openSwipeableRef = useRef<Swipeable | null>(null);
@@ -824,10 +824,12 @@ export default function SessionListScreen() {
         getItemType={getItemType}
         drawDistance={250}
         overrideProps={{ initialDrawBatchSize: 12 }}
-        onLoad={scrollToTopAfterHydrate}
+        onLoad={restoreListAnchor}
         contentContainerStyle={{
           paddingBottom: isSelectMode ? insets.bottom + 70 : insets.bottom,
         }}
+        onScroll={(event) => { captureSessionListAnchor(event.nativeEvent.contentOffset.y); }}
+        scrollEventThrottle={32}
         onScrollBeginDrag={() => openSwipeableRef.current?.close()}
         refreshControl={
           <RefreshControl

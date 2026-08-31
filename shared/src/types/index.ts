@@ -30,6 +30,8 @@ export type {
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,
+  SessionListActiveInteraction,
+  SessionListPage,
   ApiSessionDetail,
   TokenUsage,
   ContextUsageAccuracy,

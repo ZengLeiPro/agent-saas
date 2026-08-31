@@ -12,6 +12,7 @@ import { writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js'
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
 import { OrgAgentStore } from '../data/orgAgents/store.js';
+import { interactionStore } from '../channels/web/interactionStore.js';
 
 const TEST_USER = {
   id: 'user-1',
@@ -26,8 +27,10 @@ type SessionListResponse = {
     title?: string;
     preview?: string;
     updatedAtMs: number;
+    activeInteraction?: { interactionId: string; type: string; version: number };
   }>;
   hasMore: boolean;
+  nextCursor?: string;
 };
 
 function stopServer(server: Server): Promise<void> {
@@ -169,6 +172,77 @@ describe('meta-only session list merging and projection', () => {
       const secondPage = await listSessions(baseUrl, `?fresh=1&limit=1&before=${firstPage.sessions[0]!.updatedAtMs}`);
       expect(secondPage.sessions[0]?.sessionId).toBe(older.sessionId);
     } finally {
+      await stopServer(server);
+    }
+  });
+
+
+  it('cursor pagination is lossless for identical timestamps and rejects mixed legacy state', async () => {
+    const timestamp = Date.now() - 5_000;
+    const created = await Promise.all(Array.from({ length: 5 }, () => writeRuntimeSession({
+      content: 'same timestamp', metaMtimeMs: timestamp,
+    })));
+    const expected = created.map((entry) => entry.sessionId).sort((a, b) => b.localeCompare(a));
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await listSessions(baseUrl, `?fresh=1&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+        seen.push(...page.sessions.map((session) => session.sessionId));
+        cursor = page.nextCursor;
+      } while (cursor);
+      expect(seen).toEqual(expected);
+      expect(new Set(seen).size).toBe(5);
+
+      const mixed = await fetch(`${baseUrl}/api/sessions?limit=2&before=${timestamp}&cursor=x`);
+      expect(mixed.status).toBe(400);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('defensively filters forbidden tenant/user projection rows before pagination', async () => {
+    const updatedAt = '2026-08-31T00:00:00.000Z';
+    const forbidden = randomUUID();
+    const allowed = randomUUID();
+    const record = (sessionId: string, tenantId: string, userId: string) => ({
+      sessionId, tenantId, userId, username: TEST_USER.username, channel: 'web', kind: 'user' as const,
+      createdAt: updatedAt, updatedAt,
+      metaJson: { userId, username: TEST_USER.username, tenantId, channel: 'web', createdAt: updatedAt, updatedAt },
+    });
+    const list = vi.fn(async () => ({ items: [
+      record(forbidden, 'other-tenant', 'other-user'),
+      record(allowed, TEST_USER.tenantId, TEST_USER.id),
+    ] }));
+    const { server, baseUrl } = await startServer(agentCwd, { list });
+    try {
+      const page = await listSessions(baseUrl, '?fresh=1&limit=1');
+      expect(page.sessions.map((session) => session.sessionId)).toEqual([allowed]);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+
+  it('returns the O(1) activeInteraction summary and removes it immediately after resolution', async () => {
+    const session = await writeRuntimeSession({ content: 'pending approval' });
+    const interactionId = `list-active-${randomUUID()}`;
+    const pending = interactionStore.create(interactionId, 'permission_request', {
+      sessionId: session.sessionId, toolId: 'Shell', toolName: 'Shell',
+    });
+    const { server, baseUrl } = await startServer(agentCwd);
+    try {
+      const active = await listSessions(baseUrl, '?fresh=1&limit=50');
+      expect(active.sessions.find((item) => item.sessionId === session.sessionId)).toMatchObject({
+        activeInteraction: { interactionId, type: 'permission_request', version: expect.any(Number) },
+      });
+      interactionStore.resolve(interactionId, { allow: true });
+      await expect(pending).resolves.toEqual({ allow: true });
+      const resolved = await listSessions(baseUrl, '?fresh=1&limit=50');
+      expect(resolved.sessions.find((item) => item.sessionId === session.sessionId)).not.toHaveProperty('activeInteraction');
+    } finally {
+      interactionStore.discard(interactionId, 'test cleanup');
       await stopServer(server);
     }
   });

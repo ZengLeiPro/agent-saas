@@ -151,3 +151,15 @@ describe('M20-05 interaction response idempotency', () => {
     expect(interactionStore.classifyCompleted('session-idempotent', interactionId, { allow: false })).toBe('conflict');
   });
 });
+
+describe('M20-07 active interaction session index', () => {
+  it('updates O(1) summary immediately on request and terminal resolution', async () => {
+    const promise = interactionStore.create('indexed-interaction', 'ask_user', { sessionId: 'indexed-session' });
+    expect(interactionStore.getActiveInteraction('indexed-session')).toMatchObject({
+      interactionId: 'indexed-interaction', type: 'ask_user',
+    });
+    expect(interactionStore.resolve('indexed-interaction', { answers: {} })).toBe(true);
+    await expect(promise).resolves.toEqual({ answers: {} });
+    expect(interactionStore.getActiveInteraction('indexed-session')).toBeUndefined();
+  });
+});

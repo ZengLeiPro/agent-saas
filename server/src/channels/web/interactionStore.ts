@@ -7,6 +7,8 @@ export interface PendingInteraction {
   reject: (reason: Error) => void;
   type: 'permission_request' | 'ask_user';
   createdAt: number;
+  /** Monotonic summary version for session-list projection. */
+  version: number;
   timer: ReturnType<typeof setTimeout>;
   sessionId?: string;
   runId?: string;
@@ -52,7 +54,30 @@ export interface CompletedInteractionResponse {
 
 class InteractionStore {
   private pending = new Map<string, PendingInteraction>();
+  private pendingBySession = new Map<string, string[]>();
+  private version = Date.now();
   private completed = new Map<string, CompletedInteractionResponse>();
+
+  private addToSessionIndex(sessionId: string | undefined, interactionId: string): void {
+    if (!sessionId) return;
+    const ids = this.pendingBySession.get(sessionId) ?? [];
+    this.pendingBySession.set(sessionId, [interactionId, ...ids.filter((id) => id !== interactionId)]);
+  }
+
+  private removeFromSessionIndex(sessionId: string | undefined, interactionId: string): void {
+    if (!sessionId) return;
+    const ids = (this.pendingBySession.get(sessionId) ?? []).filter((id) => id !== interactionId);
+    if (ids.length) this.pendingBySession.set(sessionId, ids);
+    else this.pendingBySession.delete(sessionId);
+  }
+
+  private take(interactionId: string): PendingInteraction | undefined {
+    const entry = this.pending.get(interactionId);
+    if (!entry) return undefined;
+    this.pending.delete(interactionId);
+    this.removeFromSessionIndex(entry.sessionId, interactionId);
+    return entry;
+  }
 
   private completedKey(sessionId: string, interactionId: string): string { return `${sessionId}\u0000${interactionId}`; }
 
@@ -95,9 +120,8 @@ class InteractionStore {
   ): Promise<InteractionResponse> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        const expired = this.pending.get(interactionId);
+        const expired = this.take(interactionId);
         if (expired) {
-          this.pending.delete(interactionId);
           expired.onExpired?.(expired);
           reject(new Error('Interaction timed out'));
         }
@@ -107,6 +131,7 @@ class InteractionStore {
       this.pending.set(interactionId, {
         resolve, reject, type,
         createdAt: Date.now(),
+        version: ++this.version,
         timer,
         sessionId: options?.sessionId,
         runId: options?.runId,
@@ -123,6 +148,7 @@ class InteractionStore {
         planContent: options?.planContent,
         onExpired: options?.onExpired,
       });
+      this.addToSessionIndex(options?.sessionId, interactionId);
     });
   }
 
@@ -136,29 +162,26 @@ class InteractionStore {
   }
 
   resolve(interactionId: string, response: InteractionResponse): boolean {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return false;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.resolve(response);
     return true;
   }
 
   /** 终止并移除交互，避免遗留 Promise 永久占用旧执行协程。 */
   discard(interactionId: string, reason: string): boolean {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return false;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.reject(new Error(reason));
     return true;
   }
 
   reject(interactionId: string, reason: string): void {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.reject(new Error(reason));
   }
 
@@ -172,7 +195,7 @@ class InteractionStore {
       if (!entry) continue;
       if (shouldSurviveDisconnect(entry)) continue;
       clearTimeout(entry.timer);
-      this.pending.delete(id);
+      this.take(id);
       entry.reject(new Error(reason));
     }
   }
@@ -182,6 +205,14 @@ class InteractionStore {
     for (const id of ids) {
       this.reject(id, reason);
     }
+  }
+
+  /** O(1) by-session lookup; newest pending interaction is the stable list summary. */
+  getActiveInteraction(sessionId: string): { interactionId: string; type: PendingInteraction['type']; version: number; createdAt: number } | undefined {
+    const interactionId = this.pendingBySession.get(sessionId)?.[0];
+    if (!interactionId) return undefined;
+    const entry = this.pending.get(interactionId);
+    return entry ? { interactionId, type: entry.type, version: entry.version, createdAt: entry.createdAt } : undefined;
   }
 
   /**

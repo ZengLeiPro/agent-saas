@@ -155,3 +155,43 @@ export async function listDurablyProjectedQueuedRunIds(
   }
   return [...projected];
 }
+
+export interface CanonicalSessionListCursor {
+  v: 1;
+  updatedAtMs: number;
+  sessionId: string;
+}
+
+/** Canonical list order shared with clients: updatedAt DESC, sessionId DESC. */
+export function compareCanonicalSessionKeys(
+  left: { updatedAtMs: number; sessionId: string },
+  right: { updatedAtMs: number; sessionId: string },
+): number {
+  return right.updatedAtMs - left.updatedAtMs || right.sessionId.localeCompare(left.sessionId);
+}
+
+export function encodeSessionListCursor(value: Omit<CanonicalSessionListCursor, 'v'>): string {
+  return Buffer.from(JSON.stringify({ v: 1, ...value } satisfies CanonicalSessionListCursor), 'utf8').toString('base64url');
+}
+
+export function decodeSessionListCursor(value: string): CanonicalSessionListCursor {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Invalid session list cursor');
+  }
+  const cursor = parsed as Partial<CanonicalSessionListCursor>;
+  if (cursor.v !== 1 || !Number.isFinite(cursor.updatedAtMs) || typeof cursor.sessionId !== 'string' || cursor.sessionId.length === 0) {
+    throw new Error('Invalid session list cursor');
+  }
+  return cursor as CanonicalSessionListCursor;
+}
+
+export function isSessionAfterCursor(
+  session: { updatedAtMs: number; sessionId: string },
+  cursor: CanonicalSessionListCursor,
+): boolean {
+  return session.updatedAtMs < cursor.updatedAtMs
+    || (session.updatedAtMs === cursor.updatedAtMs && session.sessionId.localeCompare(cursor.sessionId) < 0);
+}

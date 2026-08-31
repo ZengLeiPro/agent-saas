@@ -1112,6 +1112,27 @@ export function useChatAppStateCore(): ChatAppState {
 
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
+    const projectSessionListInteraction = (event: WsEvent) => {
+      const fallbackSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      if (event.type === 'pending_interactions' && fallbackSessionId) {
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: fallbackSessionId });
+        event.interactions.forEach((interaction, index) => {
+          sessionRef.current.applySessionInteractionEvent?.({
+            type: 'requested', sessionId: fallbackSessionId,
+            interaction: { interactionId: interaction.interactionId, type: interaction.type as 'ask_user' | 'permission_request', version: Date.now() + index },
+          });
+        });
+      } else if ((event.type === 'permission_request' || event.type === 'ask_user') && fallbackSessionId) {
+        sessionRef.current.applySessionInteractionEvent?.({
+          type: 'requested', sessionId: fallbackSessionId,
+          interaction: { interactionId: event.interactionId, type: event.type, version: Date.now() },
+        });
+      } else if (event.type === 'interaction_resolved') {
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
+      } else if (event.type === 'session_status' && ['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(event.status)) {
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: event.sessionId });
+      }
+    };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
@@ -1130,6 +1151,7 @@ export function useChatAppStateCore(): ChatAppState {
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
       if (!data || !data.type) return;
+      projectSessionListInteraction(data);
       if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
         || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
         || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
@@ -1150,6 +1172,10 @@ export function useChatAppStateCore(): ChatAppState {
       }
 
       if (data.type === "respond_ok" || data.type === "respond_error") {
+        if (data.type === 'respond_ok') {
+          const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+          if (sid) sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: sid, interactionId: data.interactionId });
+        }
         resolveInteractionResponse(data);
         return;
       }
@@ -1163,6 +1189,7 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
+          projectSessionListInteraction(e);
           applyAuthoritativeWsEvent(e, sessionIdRef.current ?? undefined);
           if (e.type === "session_status" && e.sessionId === sessionIdRef.current) {
             runIdRef.current = e.runId ?? null;

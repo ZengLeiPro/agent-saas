@@ -80,7 +80,7 @@ function isNewerOrEqual(prior: CanonicalSessionMetadata | undefined, patch: Sess
 function sortedOrder(byId: Readonly<Record<string, CanonicalSessionMetadata>>): string[] {
   return Object.values(byId)
     .filter((session) => !session.deleted)
-    .sort((a, b) => b.updatedAtMs - a.updatedAtMs || a.sessionId.localeCompare(b.sessionId))
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs || b.sessionId.localeCompare(a.sessionId))
     .map((session) => session.sessionId);
 }
 

@@ -23,6 +23,23 @@ export type {
 } from './lib/agentTarget';
 
 export {
+  beginSessionListRefresh,
+  compareSessionListItems,
+  createSessionListPagerState,
+  mergeLegacyOffsetSessionPage,
+  mergeSessionListPage,
+  reduceSessionListInteraction,
+  selectActiveInteraction,
+  selectSessionListItems,
+  tombstoneSessionListItem,
+  upsertSessionListItem,
+} from './lib/sessionListPager';
+export type {
+  SessionListInteractionEvent,
+  SessionListPagerState,
+} from './lib/sessionListPager';
+
+export {
   createSessionMetadataState,
   reduceSessionMetadata,
   sessionMetadataEventFromWs,
@@ -178,6 +195,8 @@ export type {
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,
+  SessionListActiveInteraction,
+  SessionListPage,
   ApiSessionDetail,
   TokenUsage,
   ContextUsageAccuracy,

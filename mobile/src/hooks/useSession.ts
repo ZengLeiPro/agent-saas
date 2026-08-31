@@ -16,6 +16,16 @@ import {
   registerRefresh,
   unregisterRefresh,
   getPlatform,
+  beginSessionListRefresh,
+  createSessionListPagerState,
+  mergeLegacyOffsetSessionPage,
+  mergeSessionListPage,
+  reduceSessionListInteraction,
+  selectSessionListItems,
+  tombstoneSessionListItem,
+  upsertSessionListItem,
+  type SessionListInteractionEvent,
+  type SessionListPage,
 } from "@agent/shared";
 import {
   saveSessionListCache,
@@ -62,6 +72,7 @@ export interface SessionState {
   ) => Promise<void>;
   newSession: () => void;
   selectSession: (id: string) => void;
+  applySessionInteractionEvent: (event: SessionListInteractionEvent) => void;
   confirmDeleteSession: (id: string) => void;
   cancelDeleteSession: () => void;
   handleDeleteSession: (id?: string) => Promise<void>;
@@ -102,6 +113,12 @@ export function useSession(
     options?.initialSessionId ?? null,
   );
   const [sessions, setSessions] = useState<ApiSessionListItem[]>([]);
+  const pagerRef = useRef(createSessionListPagerState());
+  const commitPager = useCallback((next: ReturnType<typeof createSessionListPagerState>) => {
+    pagerRef.current = next;
+    setSessions(selectSessionListItems(next));
+    setHasMore(next.hasMore);
+  }, []);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
@@ -141,52 +158,25 @@ export function useSession(
 
   const loadSessions = useCallback(
     async (silent = false, opts?: { fresh?: boolean; skipMerge?: boolean }) => {
+      const refreshing = beginSessionListRefresh(pagerRef.current);
+      pagerRef.current = refreshing;
+      const generation = refreshing.generation;
       try {
         if (!silent) setIsLoadingSessions(true);
         const freshParam = opts?.fresh ? "&fresh=1" : "";
         const response = await authFetch(
-          `/api/sessions?limit=500${viewAsParamRef.current}${freshParam}`,
+          `/api/sessions?limit=50${viewAsParamRef.current}${freshParam}`,
         );
         if (response.ok) {
-          const data = (await response.json()) as {
-            sessions?: ApiSessionListItem[];
-            hasMore?: boolean;
-          };
-          const freshSessions = data.sessions || [];
-          const freshHasMore = data.hasMore ?? false;
-          const now = Date.now();
-          for (const [sid, ts] of recentLocalSessionIdsRef.current) {
-            if (now - ts > RECENT_LOCAL_SESSION_TTL_MS) {
-              recentLocalSessionIdsRef.current.delete(sid);
-            }
-          }
-          if (opts?.skipMerge) {
-            setSessions(freshSessions);
-          } else {
-            setSessions((prev) => {
-              const merged = new Map<string, ApiSessionListItem>();
-              for (const item of freshSessions)
-                merged.set(item.sessionId, item);
-              const keepTail =
-                freshHasMore && prev.length > freshSessions.length;
-              for (const item of prev) {
-                const isCurrent = item.sessionId === sessionIdRef.current;
-                const isRecentLocal = recentLocalSessionIdsRef.current.has(
-                  item.sessionId,
-                );
-                if (
-                  (isCurrent || isRecentLocal || keepTail) &&
-                  !merged.has(item.sessionId)
-                ) {
-                  merged.set(item.sessionId, item);
-                }
-              }
-              return Array.from(merged.values()).sort(
-                (a, b) => b.updatedAtMs - a.updatedAtMs,
+          const data = (await response.json()) as SessionListPage;
+          const page = { sessions: data.sessions || [], hasMore: data.hasMore ?? false, nextCursor: data.nextCursor };
+          const next = data.nextCursor !== undefined || !data.hasMore
+            ? mergeSessionListPage(pagerRef.current, { ...page, generation, requestCursor: null })
+            : mergeLegacyOffsetSessionPage(
+                { ...pagerRef.current, pagingMode: null },
+                { generation, sessions: page.sessions, hasMore: page.hasMore, replace: true },
               );
-            });
-          }
-          setHasMore(freshHasMore);
+          commitPager(next);
           setSessionsHydrated(true);
         }
       } catch (err) {
@@ -195,41 +185,43 @@ export function useSession(
         if (!silent) setIsLoadingSessions(false);
       }
     },
-    [],
+    [commitPager],
   );
 
   const loadMoreSessions = useCallback(async () => {
-    if (!hasMoreRef.current || isLoadingMoreRef.current) return;
+    const pager = pagerRef.current;
+    if (!pager.hasMore || isLoadingMoreRef.current) return;
+    const requestCursor = pager.nextCursor;
     const lastSession = sessionsRef.current[sessionsRef.current.length - 1];
-    if (!lastSession) return;
+    if (pager.pagingMode === 'cursor' && !requestCursor) return;
+    if (pager.pagingMode === 'offset' && !lastSession) return;
 
     setIsLoadingMore(true);
     try {
+      const pageParam = pager.pagingMode === 'cursor'
+        ? `&cursor=${encodeURIComponent(requestCursor!)}`
+        : `&before=${lastSession!.updatedAtMs}`;
       const response = await authFetch(
-        `/api/sessions?limit=50&before=${lastSession.updatedAtMs}${viewAsParamRef.current}`,
+        `/api/sessions?limit=50${pageParam}${viewAsParamRef.current}`,
       );
       if (response.ok) {
-        const data = (await response.json()) as {
-          sessions?: ApiSessionListItem[];
-          hasMore?: boolean;
-        };
-        const newSessions: ApiSessionListItem[] = data.sessions || [];
-        const existing = new Set(
-          sessionsRef.current.map((item) => item.sessionId),
-        );
-        const updated = [
-          ...sessionsRef.current,
-          ...newSessions.filter((item) => !existing.has(item.sessionId)),
-        ];
-        setSessions(updated);
-        setHasMore(data.hasMore ?? false);
+        const data = (await response.json()) as SessionListPage;
+        const next = pager.pagingMode === 'cursor'
+          ? mergeSessionListPage(pagerRef.current, {
+              sessions: data.sessions || [], hasMore: data.hasMore ?? false,
+              nextCursor: data.nextCursor, generation: pager.generation, requestCursor,
+            })
+          : mergeLegacyOffsetSessionPage(pagerRef.current, {
+              generation: pager.generation, sessions: data.sessions || [], hasMore: data.hasMore ?? false,
+            });
+        commitPager(next);
       }
     } catch (err) {
       console.error("加载更多会话失败:", err);
     } finally {
       setIsLoadingMore(false);
     }
-  }, []);
+  }, [commitPager]);
 
   const fetchTokenUsage = useCallback(async (id: string) => {
     try {
@@ -446,40 +438,26 @@ export function useSession(
   );
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.sessionId === targetId ? { ...s, title } : s)),
-    );
-  }, []);
+    const prior = pagerRef.current.byId[targetId];
+    if (prior) commitPager(upsertSessionListItem(pagerRef.current, { ...prior, title }));
+  }, [commitPager]);
 
   const updateSessionMeta = useCallback(
-    (
-      targetId: string,
-      patch: { preview?: string; updatedAtMs?: number; title?: string },
-    ) => {
-      setSessions((prev) => {
-        const updated = prev.map((s) =>
-          s.sessionId === targetId
-            ? {
-                ...s,
-                ...(patch.preview !== undefined
-                  ? { preview: patch.preview }
-                  : {}),
-                ...(patch.updatedAtMs !== undefined
-                  ? { updatedAtMs: patch.updatedAtMs }
-                  : {}),
-                ...(patch.title !== undefined ? { title: patch.title } : {}),
-              }
-            : s,
-        );
-        updated.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-        return updated;
-      });
+    (targetId: string, patch: { preview?: string; updatedAtMs?: number; title?: string }) => {
+      const prior = pagerRef.current.byId[targetId];
+      if (!prior) return;
+      commitPager(upsertSessionListItem(pagerRef.current, {
+        ...prior,
+        ...(patch.preview !== undefined ? { preview: patch.preview } : {}),
+        ...(patch.updatedAtMs !== undefined ? { updatedAtMs: patch.updatedAtMs } : {}),
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+      }));
     },
-    [],
+    [commitPager],
   );
 
   const removeSession = useCallback((targetId: string) => {
-    setSessions((prev) => prev.filter((s) => s.sessionId !== targetId));
+    commitPager(tombstoneSessionListItem(pagerRef.current, targetId));
     if (sessionIdRef.current === targetId) {
       cbRef.current.cancelActiveStream();
       cbRef.current.resetMessages();
@@ -487,64 +465,33 @@ export function useSession(
       setTokenUsage(null);
       void getPlatform().storage.removeItem(SESSION_STORAGE_KEY);
     }
-  }, []);
+  }, [commitPager]);
 
   /** 插入或更新会话（其他设备创建的新会话无需 HTTP 请求） */
   const upsertSession = useCallback(
     (newSession: {
-      sessionId: string;
-      title?: string;
-      preview?: string;
-      updatedAtMs: number;
-      model?: string;
-      username?: string;
+      sessionId: string; title?: string; preview?: string; updatedAtMs: number;
+      model?: string; username?: string;
     }) => {
       markRecentLocalSession(newSession.sessionId);
-      setSessions((prev) => {
-        const idx = prev.findIndex((s) => s.sessionId === newSession.sessionId);
-        let updated: ApiSessionListItem[];
-        if (idx >= 0) {
-          // 只用 defined 值覆盖，避免 sync 重放的 undefined title 冲掉已有标题
-          updated = prev.map((s) =>
-            s.sessionId === newSession.sessionId
-              ? {
-                  ...s,
-                  updatedAtMs: newSession.updatedAtMs,
-                  ...(newSession.title !== undefined
-                    ? { title: newSession.title }
-                    : {}),
-                  ...(newSession.preview !== undefined
-                    ? { preview: newSession.preview }
-                    : {}),
-                  ...(newSession.model !== undefined
-                    ? { model: newSession.model }
-                    : {}),
-                  ...(newSession.username !== undefined
-                    ? { owner: { userId: "", username: newSession.username } }
-                    : {}),
-                }
-              : s,
-          );
-        } else {
-          const entry: ApiSessionListItem = {
-            sessionId: newSession.sessionId,
-            updatedAtMs: newSession.updatedAtMs,
-            title: newSession.title,
-            preview: newSession.preview,
-            source: { type: "web" as const, label: "WEB" },
-            ...(newSession.model ? { model: newSession.model } : {}),
-            ...(newSession.username
-              ? { owner: { userId: "", username: newSession.username } }
-              : {}),
-          };
-          updated = [entry, ...prev];
-        }
-        updated.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-        return updated;
-      });
+      const prior = pagerRef.current.byId[newSession.sessionId];
+      const item: ApiSessionListItem = {
+        ...(prior ?? { source: { type: 'web' as const, label: 'WEB' } }),
+        sessionId: newSession.sessionId,
+        updatedAtMs: newSession.updatedAtMs,
+        ...(newSession.title !== undefined ? { title: newSession.title } : {}),
+        ...(newSession.preview !== undefined ? { preview: newSession.preview } : {}),
+        ...(newSession.model !== undefined ? { model: newSession.model } : {}),
+        ...(newSession.username !== undefined ? { owner: { userId: '', username: newSession.username } } : {}),
+      };
+      commitPager(upsertSessionListItem(pagerRef.current, item));
     },
-    [markRecentLocalSession],
+    [commitPager, markRecentLocalSession],
   );
+
+  const applySessionInteractionEvent = useCallback((event: SessionListInteractionEvent) => {
+    commitPager(reduceSessionListInteraction(pagerRef.current, event));
+  }, [commitPager]);
 
   const renameSession = useCallback(
     async (targetId: string, newTitle: string): Promise<boolean> => {
@@ -558,19 +505,13 @@ export function useSession(
           },
         );
         if (!response.ok) return false;
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.sessionId === targetId
-              ? { ...s, title: newTitle || undefined }
-              : s,
-          ),
-        );
+        updateSessionTitle(targetId, newTitle || '');
         return true;
       } catch {
         return false;
       }
     },
-    [],
+    [updateSessionTitle],
   );
 
   const autoTitleSession = useCallback(
@@ -585,18 +526,14 @@ export function useSession(
         if (!response.ok) return false;
         const data = (await response.json()) as { title?: string };
         if (data.title) {
-          setSessions((prev) =>
-            prev.map((s) =>
-              s.sessionId === targetId ? { ...s, title: data.title } : s,
-            ),
-          );
+          updateSessionTitle(targetId, data.title);
         }
         return true;
       } catch {
         return false;
       }
     },
-    [],
+    [updateSessionTitle],
   );
 
   const newSession = useCallback(() => {
@@ -625,7 +562,8 @@ export function useSession(
       setSessionOwner(null);
       setTokenUsage(null);
       isNewSessionRef.current = false;
-      setSessions((prev) => prev.map((item) => item.sessionId === id ? { ...item, hasUnreadAiReply: false } : item));
+      const selected = pagerRef.current.byId[id];
+      if (selected) commitPager(upsertSessionListItem(pagerRef.current, { ...selected, hasUnreadAiReply: false }));
       // Read is optimistic only until the structured server ACK. Failure rehydrates authority.
       void authFetch(`/api/sessions/${encodeURIComponent(id)}/read`, { method: 'PUT' })
         .then(async (response) => {
@@ -636,7 +574,7 @@ export function useSession(
         .catch(() => { void loadSessions(true, { fresh: true }); });
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [loadSessionDetail, loadSessions, sessionId],
+    [commitPager, loadSessionDetail, loadSessions, sessionId],
   );
 
   const refreshTokenUsage = useCallback(async () => {
@@ -685,8 +623,13 @@ export function useSession(
       // Step 1: 从本地缓存加载，实现冷启动即时展示
       const cached = await loadSessionListCache(viewAsParamRef.current, identity);
       if (!cancelled && cached && cached.sessions.length > 0) {
-        setSessions(cached.sessions);
-        setHasMore(cached.hasMore);
+        const hydrated = mergeLegacyOffsetSessionPage(pagerRef.current, {
+          generation: pagerRef.current.generation,
+          sessions: cached.sessions,
+          hasMore: cached.hasMore,
+          replace: true,
+        });
+        commitPager(hydrated);
       }
 
       // Step 2: 从 API 获取最新数据（有缓存时静默加载，无缓存时显示 loading）
@@ -745,6 +688,7 @@ export function useSession(
     loadSessionDetail,
     newSession,
     selectSession,
+    applySessionInteractionEvent,
     confirmDeleteSession,
     cancelDeleteSession,
     handleDeleteSession,

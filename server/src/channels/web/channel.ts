@@ -1378,7 +1378,12 @@ export class WebChannel implements BaseChannel {
     if (!hasPendingApproval && !pendingAskUser) {
       const canonicalResponse = findCanonicalPersistedApprovalResponse(existingEvents, sessionId, interactionId);
       if (!canonicalResponse) return false;
-      if (this.interactionResponsesConflict(canonicalResponse as Record<string, unknown>, response)) {
+      const failClosedMessage = canonicalResponse.allow === false && typeof canonicalResponse.message === 'string'
+        ? canonicalResponse.message
+        : '';
+      const wasServerFailClosed = failClosedMessage.startsWith('源 run 不可恢复（')
+        || failClosedMessage === '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run';
+      if (!wasServerFailClosed && this.interactionResponsesConflict(canonicalResponse as Record<string, unknown>, response)) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response conflict', undefined, sessionId, 'rejected');
       } else {
         this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse, sessionId, 'duplicate');

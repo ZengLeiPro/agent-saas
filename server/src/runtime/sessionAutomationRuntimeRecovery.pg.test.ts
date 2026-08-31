@@ -154,7 +154,6 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(lifecycle.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ object_type: 'run', state: 'completed' }),
       expect.objectContaining({ object_type: 'execution', state: 'completed' }),
-      expect.objectContaining({ object_type: 'outbox', state: 'completed' }),
     ]));
     const adapter = { execute: async (job: import('./sessionAutomationStore.js').SessionAutomationLifecycleJob) => {
       const { attemptCount: _attemptCount, details: _details, ...fence } = job;

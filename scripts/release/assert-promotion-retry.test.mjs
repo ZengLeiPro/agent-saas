@@ -6,6 +6,17 @@ function entry(state, operationKey = state) {
   return { state, operationKey };
 }
 
+const verified = entry('verified', 'verified:1');
+
+function mutationHistory(outcomeTail = []) {
+  return [
+    verified,
+    entry('approved', 'approval:1'),
+    entry('promoting', 'promoting:1'),
+    ...outcomeTail,
+  ];
+}
+
 test('accepts a fresh verified release and a fail-closed pre-mutation retry', () => {
   assert.deepEqual(assertPromotionRetryable([entry('built'), entry('verified')]), {
     mode: 'fresh',
@@ -14,7 +25,7 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
   assert.deepEqual(
     assertPromotionRetryable([
       entry('built'),
-      entry('verified', 'verified:1'),
+      verified,
       entry('approved'),
       entry('needs_human'),
       entry('failed_before_change'),
@@ -26,40 +37,92 @@ test('accepts a fresh verified release and a fail-closed pre-mutation retry', ()
       previousApprovalCount: 1,
     },
   );
-  assert.deepEqual(assertPromotionRetryable([entry('verified', 'verified:1'), entry('approved')]), {
-    mode: 'retry_before_change',
-    latestState: 'approved',
-    verifiedOperationKey: 'verified:1',
-    previousApprovalCount: 1,
-  });
 });
 
-test('allows reviewed recovery from needs_human but rejects ambiguous mutation histories', () => {
+test('requires authoritative rolled_back after partial_failed before retrying', () => {
+  assert.throws(
+    () => assertPromotionRetryable(mutationHistory([entry('partial_failed')])),
+    /cannot be approved from partial_failed/u,
+  );
   assert.deepEqual(
-    assertPromotionRetryable([
-      entry('verified', 'verified:1'),
-      entry('approved'),
-      entry('promoting', 'promoting:1'),
-      entry('needs_human'),
-    ]),
+    assertPromotionRetryable(
+      mutationHistory([entry('partial_failed'), entry('rolled_back', 'rollback:1')]),
+    ),
     {
       mode: 'retry_after_change',
-      latestState: 'needs_human',
+      latestState: 'rolled_back',
       verifiedOperationKey: 'verified:1',
       promotingOperationKey: 'promoting:1',
       previousApprovalCount: 1,
     },
   );
+});
+
+test('supports authoritative rolled_back after needs_human and preserves its controlled retry', () => {
+  assert.deepEqual(assertPromotionRetryable(mutationHistory([entry('needs_human')])), {
+    mode: 'retry_after_change',
+    latestState: 'needs_human',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:1',
+    previousApprovalCount: 1,
+  });
+  assert.equal(
+    assertPromotionRetryable(
+      mutationHistory([entry('needs_human'), entry('rolled_back', 'rollback:1')]),
+    ).mode,
+    'retry_after_change',
+  );
+});
+
+test('supports direct rollback and multiple reviewed rollback rounds', () => {
+  const firstRound = mutationHistory([entry('rolled_back', 'rollback:1')]);
+  assert.equal(assertPromotionRetryable(firstRound).mode, 'retry_after_change');
+
+  const secondRound = [
+    ...firstRound,
+    entry('approved', 'approval:2'),
+    entry('promoting', 'promoting:2'),
+    entry('partial_failed', 'partial:2'),
+    entry('rolled_back', 'rollback:2'),
+  ];
+  assert.deepEqual(assertPromotionRetryable(secondRound), {
+    mode: 'retry_after_change',
+    latestState: 'rolled_back',
+    verifiedOperationKey: 'verified:1',
+    promotingOperationKey: 'promoting:2',
+    previousApprovalCount: 2,
+  });
+
+  assert.equal(
+    assertPromotionRetryable([...secondRound, entry('approved', 'approval:3')]).mode,
+    'retry_after_change',
+  );
+});
+
+test('rejects terminal states and ambiguous recovery tails mixed into mutation history', () => {
+  for (const terminal of ['completed', 'rejected', 'revoked', 'superseded']) {
+    assert.throws(
+      () =>
+        assertPromotionRetryable(
+          mutationHistory([entry(terminal), entry('rolled_back', `rollback:${terminal}`)]),
+        ),
+      /terminal post-mutation state/u,
+    );
+  }
+  for (const tail of [
+    [entry('partial_failed'), entry('needs_human'), entry('rolled_back')],
+    [entry('rolled_back'), entry('needs_human')],
+    [entry('rolled_back'), entry('rolled_back', 'rollback:2')],
+  ]) {
+    assert.throws(() => assertPromotionRetryable(mutationHistory(tail)), /ambiguous|active/u);
+  }
   assert.throws(
-    () =>
-      assertPromotionRetryable([
-        entry('verified'),
-        entry('approved'),
-        entry('promoting'),
-        entry('partial_failed'),
-        entry('needs_human'),
-      ]),
-    /terminal post-mutation state: partial_failed/u,
+    () => assertPromotionRetryable([entry('approved'), entry('promoting'), entry('rolled_back')]),
+    /no verified Staging attestation/u,
+  );
+  assert.throws(
+    () => assertPromotionRetryable([entry('verified'), entry('promoting'), entry('rolled_back')]),
+    /not preceded by an approval/u,
   );
   assert.throws(
     () => assertPromotionRetryable([entry('verified'), entry('needs_human')]),

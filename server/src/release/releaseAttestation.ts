@@ -67,10 +67,51 @@ const FAILURE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
   'partial_failed',
-  'rolled_back',
   'needs_human',
   'superseded',
 ]);
+const RECOVERABLE_TAIL_STATES = new Set<ReleaseState>([
+  'approved',
+  'failed_before_change',
+  'needs_human',
+  'promoting',
+  'partial_failed',
+  'rolled_back',
+]);
+const RECOVERABLE_TAIL_TRANSITIONS = new Map<ReleaseState, ReadonlySet<ReleaseState>>([
+  ['approved', new Set(['promoting', 'failed_before_change', 'needs_human'])],
+  ['failed_before_change', new Set(['approved', 'failed_before_change', 'needs_human'])],
+  ['promoting', new Set(['partial_failed', 'needs_human', 'rolled_back'])],
+  ['partial_failed', new Set(['rolled_back'])],
+  ['needs_human', new Set(['approved', 'needs_human', 'rolled_back'])],
+  ['rolled_back', new Set(['approved'])],
+]);
+
+function isUnambiguousRecoverableTail(entries: readonly ReleaseAttestation[]): boolean {
+  if (entries.some((entry) => !RECOVERABLE_TAIL_STATES.has(entry.state))) return false;
+  const firstPromotingIndex = entries.findIndex((entry) => entry.state === 'promoting');
+  if (firstPromotingIndex < 1 || entries[firstPromotingIndex - 1]?.state !== 'approved')
+    return false;
+
+  let lastPromotingIndex = -1;
+  let lastRolledBackIndex = -1;
+  for (let index = firstPromotingIndex; index < entries.length; index += 1) {
+    const state = entries[index]?.state;
+    const previous = entries[index - 1]?.state;
+    if (!state || !previous) return false;
+    if (state === 'promoting') {
+      if (previous !== 'approved') return false;
+      lastPromotingIndex = index;
+    }
+    if (index > firstPromotingIndex && !RECOVERABLE_TAIL_TRANSITIONS.get(previous)?.has(state))
+      return false;
+    if (state === 'rolled_back') {
+      if (lastPromotingIndex <= lastRolledBackIndex) return false;
+      lastRolledBackIndex = index;
+    }
+  }
+  return true;
+}
 
 function assertDigest(digest: string): void {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest))
@@ -189,18 +230,32 @@ export class ReleaseAttestationLog {
         ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
       );
     let lastPromotingIndex = -1;
+    let lastRolledBackIndex = -1;
     for (let index = retryTail.length - 1; index >= 0; index -= 1) {
-      if (retryTail[index]?.state === 'promoting') {
+      if (lastPromotingIndex < 0 && retryTail[index]?.state === 'promoting') {
         lastPromotingIndex = index;
-        break;
       }
+      if (lastRolledBackIndex < 0 && retryTail[index]?.state === 'rolled_back') {
+        lastRolledBackIndex = index;
+      }
+      if (lastPromotingIndex >= 0 && lastRolledBackIndex >= 0) break;
     }
     const retryAfterHumanReview =
       current === 'needs_human' &&
       input.state === 'approved' &&
       lastPromotingIndex > 0 &&
       retryTail[lastPromotingIndex - 1]?.state === 'approved' &&
-      retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human');
+      retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human') &&
+      isUnambiguousRecoverableTail(retryTail);
+    const authoritativeRollback =
+      input.state === 'rolled_back' &&
+      (current === 'promoting' || current === 'partial_failed' || current === 'needs_human') &&
+      lastPromotingIndex > lastRolledBackIndex &&
+      isUnambiguousRecoverableTail(retryTail);
+    const retryAfterRolledBack =
+      current === 'rolled_back' &&
+      input.state === 'approved' &&
+      isUnambiguousRecoverableTail(retryTail);
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
     const failure =
       FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
@@ -208,6 +263,8 @@ export class ReleaseAttestationLog {
       !sequential &&
       !retryAfterFailureBeforeChange &&
       !retryAfterHumanReview &&
+      !authoritativeRollback &&
+      !retryAfterRolledBack &&
       !revocation &&
       !failure
     )

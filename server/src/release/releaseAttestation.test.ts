@@ -54,7 +54,7 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
-  it('allows human-reviewed recovery after a durable promotion reached needs_human', () => {
+  it('allows human-reviewed recovery after a durable promotion reaches needs_human', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -68,7 +68,74 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.currentState()).toBe('completed');
   });
 
-  it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
+  it('allows renewed approval after each explicit rolled-back promotion round', () => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved', 'approval-1');
+    append(entries, 'promoting', 'promoting-1');
+    append(entries, 'rolled_back', 'rollback-1');
+    append(entries, 'approved', 'approval-2');
+    append(entries, 'promoting', 'promoting-2');
+    append(entries, 'partial_failed', 'partial-2');
+    append(entries, 'rolled_back', 'rollback-2');
+    append(entries, 'approved', 'approval-3');
+    append(entries, 'promoting', 'promoting-3');
+    append(entries, 'completed');
+    expect(entries.currentState()).toBe('completed');
+  });
+
+  it('allows authoritative rollback and renewed approval after partial_failed or needs_human', () => {
+    for (const recoverable of ['partial_failed', 'needs_human'] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved', `approval-${recoverable}`);
+      append(entries, 'promoting', `promoting-${recoverable}`);
+      append(entries, recoverable, `outcome-${recoverable}`);
+      append(entries, 'rolled_back', `rollback-${recoverable}`);
+      append(entries, 'approved', `recovery-approval-${recoverable}`);
+      expect(entries.currentState()).toBe('approved');
+    }
+  });
+
+  it('rejects rollback without an active unambiguous promoting round', () => {
+    for (const illegal of ['rejected', 'superseded'] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, 'promoting');
+      append(entries, illegal);
+      expect(() => append(entries, 'rolled_back', `unsafe-${illegal}`)).toThrow(/Illegal or late/u);
+    }
+
+    const noMutation = log();
+    append(noMutation, 'built');
+    append(noMutation, 'staging_deployed');
+    append(noMutation, 'verified');
+    append(noMutation, 'approved');
+    append(noMutation, 'needs_human');
+    expect(() => append(noMutation, 'rolled_back')).toThrow(/Illegal or late/u);
+
+    const noNewMutation = log();
+    append(noNewMutation, 'built');
+    append(noNewMutation, 'staging_deployed');
+    append(noNewMutation, 'verified');
+    append(noNewMutation, 'approved', 'approval-1');
+    append(noNewMutation, 'promoting');
+    append(noNewMutation, 'rolled_back');
+    append(noNewMutation, 'approved', 'approval-2');
+    append(noNewMutation, 'needs_human');
+    expect(() => append(noNewMutation, 'rolled_back', 'rollback-without-new-promoting')).toThrow(
+      /Illegal or late/u,
+    );
+  });
+
+  it('makes an identical operation idempotent but rejects divergent replay and late transitions', () => {
     const entries = log();
     const first = append(entries, 'built', 'build-1');
     expect(append(entries, 'built', 'build-1')).toEqual(first);

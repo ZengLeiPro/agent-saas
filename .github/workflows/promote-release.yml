@@ -381,7 +381,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -442,7 +442,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -513,7 +513,12 @@ jobs:
             "$RUNNER_TEMP/web-before/index.html" --region "$RELEASE_RECORD_OSS_REGION"
           aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
             "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
+          web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
+          rm -f "$web_rollback_attempted_marker"
           restore_web_entry() {
+            if ! install -m 0600 /dev/null "$web_rollback_attempted_marker"; then
+              echo "WARN: failed to persist Web rollback-attempted marker" >&2
+            fi
             aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
               "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
               --region "$RELEASE_RECORD_OSS_REGION" || true
@@ -645,10 +650,20 @@ jobs:
             external_side_effects=unknown
           fi
           rollback_attempted=false
-          if [ "${{ steps.deploy_acs.outcome }}" = failure ] || \
-             [ "${{ steps.deploy_app.outcome }}" = failure ] || \
-             [ "${{ steps.deploy_web.outcome }}" = failure ]; then
+          web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
+          if [ -f "$web_rollback_attempted_marker" ]; then
             rollback_attempted=true
+          fi
+          # Remote rollback evidence is best-effort: missing SSH setup, an unset remote,
+          # or an unreachable host means no observed marker, never a reconciliation-step failure.
+          if [ -n "${PROMOTION_REMOTE:-}" ] && [ -n "${ECS_HOST:-}" ] && \
+             [ -n "${ECS_USER:-}" ] && [ -s "$HOME/.ssh/production_key" ]; then
+            if ssh -o BatchMode=yes -o ConnectTimeout=10 -i ~/.ssh/production_key \
+              "$ECS_USER@$ECS_HOST" \
+              "sudo test -f '$PROMOTION_REMOTE/rollback-attempted-acs' -o -f '$PROMOTION_REMOTE/rollback-attempted-app'" \
+              >/dev/null 2>&1; then
+              rollback_attempted=true
+            fi
           fi
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
             --argjson observed "$observed" --argjson observationComplete "$observation_complete" \

@@ -14,6 +14,12 @@ const DIGESTS = Object.fromEntries(
     `sha256:${String(index + 1).repeat(64)}`,
   ]),
 );
+const configIdentityCases = JSON.parse(
+  await readFile(
+    new URL('./fixtures/config-identity-producer-cases.json', import.meta.url),
+    'utf8',
+  ),
+);
 
 function productionState() {
   const body = {
@@ -111,8 +117,73 @@ test('produces digest-bound release evidence from independent authoritative inpu
   assert.deepEqual(evidence.sourcePullRequests, [300]);
   assert.deepEqual(evidence.integrationCandidates, []);
   assert.equal(evidence.checks.mergeReceipt.status, 'success');
+  assert.equal('configIdentity' in evidence, false);
   const { evidenceDigest, ...body } = evidence;
   assert.equal(evidenceDigest, digestBuffer(Buffer.from(canonicalJson(body))));
+});
+
+function withConfigIdentity(production, configIdentity) {
+  const { digest: _previousDigest, ...previousBody } = production;
+  const body = { ...previousBody, configIdentity };
+  return { ...body, digest: digestBuffer(Buffer.from(canonicalJson(body))) };
+}
+
+test('passes a valid config identity summary through and binds it into evidenceDigest', async () => {
+  const base = await fixture();
+  base.documents.production = withConfigIdentity(
+    base.documents.production,
+    configIdentityCases.valid,
+  );
+  await writeFile(base.options.production, `${JSON.stringify(base.documents.production)}\n`);
+
+  const evidence = await produceReleaseEvidence(base.options);
+  assert.deepEqual(evidence.configIdentity, configIdentityCases.valid);
+  const { evidenceDigest, ...body } = evidence;
+  assert.equal(evidenceDigest, digestBuffer(Buffer.from(canonicalJson(body))));
+  const { configIdentity: _configIdentity, ...bodyWithoutConfigIdentity } = body;
+  assert.notEqual(
+    evidenceDigest,
+    digestBuffer(Buffer.from(canonicalJson(bodyWithoutConfigIdentity))),
+  );
+});
+
+for (const [name, configIdentity] of Object.entries(configIdentityCases.invalid)) {
+  test(`rejects explicitly present invalid production configIdentity: ${name}`, async () => {
+    const base = await fixture();
+    base.documents.production = withConfigIdentity(base.documents.production, configIdentity);
+    await writeFile(base.options.production, `${JSON.stringify(base.documents.production)}\n`);
+
+    await assert.rejects(
+      produceReleaseEvidence(base.options),
+      /Production state is invalid at configIdentity/u,
+    );
+  });
+}
+
+test('reports malformed config identity before a stale production digest', async () => {
+  const base = await fixture();
+  base.documents.production.configIdentity = null;
+  await writeFile(base.options.production, `${JSON.stringify(base.documents.production)}\n`);
+
+  await assert.rejects(
+    produceReleaseEvidence(base.options),
+    /Production state is invalid at configIdentity/u,
+  );
+});
+
+test('keeps valid config identity inside canonical production digest verification', async () => {
+  const base = await fixture();
+  base.documents.production = withConfigIdentity(
+    base.documents.production,
+    configIdentityCases.valid,
+  );
+  base.documents.production.configIdentity.releaseId = 'tampered-after-digest';
+  await writeFile(base.options.production, `${JSON.stringify(base.documents.production)}\n`);
+
+  await assert.rejects(
+    produceReleaseEvidence(base.options),
+    /Production state digest does not match its canonical body/u,
+  );
 });
 
 test('rejects production components tampered without recomputing the canonical digest', async () => {

@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { assertPromotionRetryable } from './assert-promotion-retry.mjs';
+import { planPromotionConfigIdentityBaseline } from './promotion-config-identity-state.mjs';
+import { reconcilePromotion } from './reconcile-promotion.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
+const rollbackRetryFixturePath = new URL(
+  './fixtures/promotion-rollback-retry.json',
+  import.meta.url,
+);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
 const acsUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
@@ -71,6 +78,113 @@ test('promotion accepts only an approved release id and shares the production mu
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
 });
 
+test('rolled-back App/Web failures require staging revalidation and reviewed retry_after_change', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const fixture = JSON.parse(await readFile(rollbackRetryFixturePath, 'utf8'));
+  const approvalStart = workflow.indexOf(
+    '- name: Validate deterministic Staging evidence and record human approval',
+  );
+  const approvalEnd = workflow.indexOf('- name: Configure production SSH', approvalStart);
+  assert.ok(approvalStart >= 0 && approvalEnd > approvalStart, 'approval gate must be present');
+  const approvalGate = workflow.slice(approvalStart, approvalEnd);
+  ordered(approvalGate, [
+    'assert-promotion-retry.mjs',
+    'select(.state=="staging_deployed")',
+    'deployments/$deployment_id/statuses',
+    'actions/runs/$staging_run_id',
+    '--arg recoveryMode "$retry_mode"',
+    '--state approved',
+  ]);
+
+  for (const { failedStage, observedAtFailure } of fixture.temporaryFailures) {
+    assert.equal(
+      reconcilePromotion({
+        releaseId: `rc-${failedStage}`,
+        before: fixture.before,
+        target: fixture.target,
+        observed: observedAtFailure,
+        observationComplete: true,
+      }).outcome,
+      'partial_failed',
+    );
+    assert.equal(
+      reconcilePromotion({
+        releaseId: `rc-${failedStage}`,
+        before: fixture.before,
+        target: fixture.target,
+        observed: fixture.before,
+        observationComplete: true,
+        rollbackAttempted: true,
+      }).outcome,
+      'rolled_back',
+    );
+
+    const recoveryState =
+      fixture.recoveryStates[
+        fixture.temporaryFailures.findIndex((failure) => failure.failedStage === failedStage)
+      ];
+    const rolledBackHistory = [
+      ...fixture.attestationPrefix,
+      { state: recoveryState, operationKey: `${recoveryState}:${failedStage}` },
+      { state: 'rolled_back', operationKey: `rollback:${failedStage}` },
+    ];
+    const retry = assertPromotionRetryable(rolledBackHistory);
+    assert.equal(retry.mode, 'retry_after_change');
+    assert.deepEqual(
+      planPromotionConfigIdentityBaseline({
+        retryMode: retry.mode,
+        ...fixture.manifestActions,
+      }),
+      {
+        reader: 'read-live-production-components.mjs',
+        configIdentityStage: 'legacy-api-upgrade-retry-baseline',
+      },
+    );
+
+    const secondReviewedRound = [
+      ...rolledBackHistory,
+      { state: 'approved', operationKey: `approval:${failedStage}:2` },
+      { state: 'promoting', operationKey: `promoting:${failedStage}:2` },
+      { state: 'partial_failed', operationKey: `partial:${failedStage}:2` },
+      { state: 'rolled_back', operationKey: `rollback:${failedStage}:2` },
+    ];
+    assert.equal(assertPromotionRetryable(secondReviewedRound).mode, 'retry_after_change');
+  }
+
+  for (const history of fixture.illegalTails) {
+    assert.throws(() => assertPromotionRetryable(history), /terminal post-mutation state/u);
+  }
+});
+
+test('Web rollback marker is written only by the armed restore path', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const start = workflow.indexOf('- name: Publish Web entry last and retain prior hashed assets');
+  const end = workflow.indexOf('- name: Persist Web operation receipt', start);
+  const web = workflow.slice(start, end);
+  const markerWrite = 'install -m 0600 /dev/null "$web_rollback_attempted_marker"';
+  assert.equal(web.split(markerWrite).length - 1, 1);
+  ordered(web, [
+    'aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json"',
+    'restore_web_entry() {',
+    markerWrite,
+    'trap cleanup_web_on_exit EXIT',
+  ]);
+  assert.ok(web.indexOf(markerWrite) < web.indexOf('trap cleanup_web_on_exit EXIT'));
+});
+
+test('reconcile derives rollback attempts only from isolated markers and probes remote safely', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const start = workflow.indexOf('- name: Reconcile component outcome');
+  const end = workflow.indexOf('- name: Record truthful final outcome', start);
+  const reconcile = workflow.slice(start, end);
+  assert.match(reconcile, /\[ -f "\$web_rollback_attempted_marker" \]/u);
+  assert.match(reconcile, /\[ -n "\$\{PROMOTION_REMOTE:-\}" \]/u);
+  assert.match(reconcile, /if ssh -o BatchMode=yes -o ConnectTimeout=10/u);
+  assert.doesNotMatch(reconcile, /steps\.deploy_(?:acs|app|web)\.outcome/u);
+  assert.match(reconcile, /rollback-attempted-acs/u);
+  assert.match(reconcile, /rollback-attempted-app/u);
+});
+
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.ok(
@@ -99,6 +213,8 @@ test('remote promotion workspaces are isolated by run attempt without changing a
   ]);
   assert.match(workflow, /--operation "approval:\$GITHUB_RUN_ID"/u);
   assert.match(workflow, /--operation "promoting:\$GITHUB_RUN_ID"/u);
+  assert.match(workflow, /rollback-attempted-acs/u);
+  assert.match(workflow, /rollback-attempted-app/u);
   assert.doesNotMatch(
     workflow,
     /--operation "(?:approval|promoting):\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u,
@@ -144,7 +260,10 @@ test('trusted identity write is followed by a strict stable ConfigIdentity confi
 test('final outcome and attestation preserve a reconciliation needs_human result', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf('- name: Record truthful final outcome');
-  const end = workflow.indexOf('- name: Record fail-closed outcome before production mutation', start);
+  const end = workflow.indexOf(
+    '- name: Record fail-closed outcome before production mutation',
+    start,
+  );
   assert.ok(start >= 0 && end > start, 'final outcome step must be present');
   const finalOutcome = workflow.slice(start, end);
   ordered(finalOutcome, [
@@ -226,7 +345,14 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
+  assert.match(workflow, /rollback-attempted-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-web/u);
+  assert.match(workflow, /ROLLBACK_ATTEMPTED_MARKER='\$PROMOTION_REMOTE\/rollback-attempted-acs'/u);
+  assert.match(workflow, /ROLLBACK_ATTEMPTED_MARKER='\$PROMOTION_REMOTE\/rollback-attempted-app'/u);
   assert.match(workflow, /rollback_attempted=true/u);
+  assert.doesNotMatch(
+    workflow,
+    /steps\.deploy_(?:acs|app|web)\.outcome[\s\S]{0,180}rollback_attempted=true/u,
+  );
   assert.match(workflow, /Persist ACS operation receipt/u);
   assert.match(workflow, /Persist ACS operation start receipt/u);
   assert.match(workflow, /Persist API and Worker operation start receipts/u);
@@ -239,6 +365,8 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /systemctl reset-failed "agent-saas-server@\$api_active"/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.match(deploy, /mark_rollback_attempted/u);
+  assert.equal(deploy.match(/^[ ]{6}mark_rollback_attempted$/gmu)?.length, 2);
   assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.doesNotMatch(

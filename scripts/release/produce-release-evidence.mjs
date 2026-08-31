@@ -3,7 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
-import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
+import {
+  configIdentitySummarySchema,
+  validateReleaseEvidenceDocument,
+} from './release-evidence-schema.mjs';
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
@@ -78,6 +81,7 @@ const productionStateSchema = z
     schemaVersion: z.literal(1),
     environment: z.literal('production'),
     digest,
+    configIdentity: configIdentitySummarySchema.optional(),
     components: z
       .object({
         web: z.object({ gitSha: sha, artifactDigest: digest }).passthrough(),
@@ -259,7 +263,9 @@ export async function produceReleaseEvidence(options) {
     productionBaseline,
     // TASK-318：把 Production State 的结构化配置身份透传进 evidence
     //（旧 configFingerprints 字段仍在 state 里，不进 evidence，语义不变）。
-    ...(production.configIdentity ? { configIdentity: production.configIdentity } : {}),
+    ...(production.configIdentity !== undefined
+      ? { configIdentity: production.configIdentity }
+      : {}),
     baselineArtifacts,
     affectedComponents: classification.components,
     migrationPlan: migration.migrationPlan,

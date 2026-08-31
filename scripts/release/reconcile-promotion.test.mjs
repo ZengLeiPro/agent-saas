@@ -42,17 +42,32 @@ test('completes target convergence only with explicit ConfigIdentity confirmatio
   }
 });
 
-test('classifies before-change failure and proven rollback without ConfigIdentity confirmation', () => {
+test('classifies before-change failure only from a real rollback marker plus authoritative readback', () => {
+  // A failed deploy step contributes no rollback evidence by itself: no marker + before is unchanged.
   assert.equal(reconcilePromotion({ ...base, observed: before }).outcome, 'failed_before_change');
+  // A real attempted marker plus the same authoritative before readback proves rolled_back.
   assert.equal(
     reconcilePromotion({ ...base, observed: before, rollbackAttempted: true }).outcome,
     'rolled_back',
   );
+  assert.equal(
+    reconcilePromotion({
+      ...base,
+      observed: before,
+      rollbackAttempted: true,
+      externalSideEffects: 'unknown',
+    }).outcome,
+    'rolled_back',
+  );
 });
 
-test('keeps mixed or unknown production state explicit', () => {
+test('keeps mixed or unknown production state explicit even when rollback was attempted', () => {
   const mixed = { ...target, web: before.web };
   assert.equal(reconcilePromotion({ ...base, observed: mixed }).outcome, 'partial_failed');
+  assert.equal(
+    reconcilePromotion({ ...base, observed: mixed, rollbackAttempted: true }).outcome,
+    'partial_failed',
+  );
   assert.equal(
     reconcilePromotion({ ...base, observed: mixed, externalSideEffects: 'unknown' }).outcome,
     'needs_human',

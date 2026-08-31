@@ -6,7 +6,22 @@ set -euo pipefail
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
+: "${ROLLBACK_ATTEMPTED_MARKER:?ROLLBACK_ATTEMPTED_MARKER is required}"
 case "$PHASE" in acs|app) ;; *) echo 'PHASE must be acs or app' >&2; exit 1 ;; esac
+printf '%s:%s' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
+expected_marker="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/rollback-attempted-$PHASE"
+test "$ROLLBACK_ATTEMPTED_MARKER" = "$expected_marker" || {
+  echo 'ROLLBACK_ATTEMPTED_MARKER must use the isolated promotion run-attempt path' >&2
+  exit 1
+}
+rm -f "$ROLLBACK_ATTEMPTED_MARKER"
+mark_rollback_attempted() {
+  if ! install -m 0444 /dev/null "$ROLLBACK_ATTEMPTED_MARKER"; then
+    echo "WARN: failed to persist rollback-attempted marker: $ROLLBACK_ATTEMPTED_MARKER" >&2
+  fi
+}
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -20,7 +35,7 @@ mkdir -p "$(dirname "$lock")"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another production promotion is active' >&2; exit 1; }
 
-# Promotion preflight already uploads this contract module. Local/manual harnesses may keep it
+# Promotion preflight uploads this contract module. Local/manual harnesses may keep it
 # next to this script; the production workflow's immutable remote uses the preflight directory.
 config_identity_reader="${CONFIG_IDENTITY_READER:-$(dirname "$0")/read-production-state.mjs}"
 if [ ! -f "$config_identity_reader" ]; then
@@ -98,6 +113,7 @@ deploy_acs() {
   fi
   cleanup_acs_failure() {
     if [ "$acs_committed" = false ]; then
+      mark_rollback_attempted
       if [ -n "$previous" ]; then
         ln -sfn "$previous" /opt/agent-saas/acs-current
       else
@@ -223,6 +239,7 @@ deploy_app() {
     local api_restored=false worker_restored=false
     local rollback_pid rollback_ready
     if [ "$app_committed" = false ]; then
+      mark_rollback_attempted
       # 清除旧 API drain 状态并恢复 ready，再翻回 nginx；只有流量确认回旧色后才停候选与恢复其 env。
       rm -f "/run/agent-saas-server-$api_active.pid" \
         "/run/agent-saas-server-$api_active.ready" \

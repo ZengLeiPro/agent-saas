@@ -11,7 +11,8 @@ const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u, 'Expected 
  * TASK-318：只读脱敏配置身份摘要（来自活动色私有运行态快照；strict 校验
  * 防止旧 schema、缺字段或额外字段混入 evidence）。
  */
-// expected / observed 两侧沿用同一 digest 语义，但 observed 额外携带版本解析状态。
+// Producer 与最终 Evidence 共用此 schema；expected / observed 两侧沿用同一 digest
+// 语义。
 const configIdentitySideSchema = z
   .object({
     schemaVersion: z.number().int().positive(),
@@ -19,7 +20,7 @@ const configIdentitySideSchema = z
     credentialVersionDigest: sha256DigestSchema.optional(),
   })
   .strict();
-const configIdentitySummarySchema = z
+export const configIdentitySummarySchema = z
   .object({
     schemaVersion: z.literal(1),
     status: z.enum(['consistent', 'drifted', 'unverifiable', 'not_collected']),
@@ -118,7 +119,7 @@ const configIdentitySummarySchema = z
       const hasCredentialDigest = value.observed.credentialVersionDigest !== null;
       const invalidResolutionShape =
         (value.observed.versionResolution === 'resolved' &&
-          hasCredentialDigest !== (value.observed.secretRefCount > 0)) ||
+          hasCredentialDigest !== value.observed.secretRefCount > 0) ||
         (value.observed.versionResolution === 'partial' &&
           (!hasCredentialDigest || value.observed.secretRefCount === 0)) ||
         (value.observed.versionResolution === 'unavailable' &&

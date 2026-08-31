@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "manifestActions": {
+    "apiAction": "deploy",
+    "runtimeWorkerAction": "deploy"
+  },
+  "before": {
+    "web": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "api": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "runtimeWorker": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "acs": {
+      "gitSha": "1111111111111111111111111111111111111111",
+      "orchestratorArtifactDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "sandboxImageDigest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  },
+  "target": {
+    "web": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "api": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "runtimeWorker": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "acs": {
+      "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  },
+  "temporaryFailures": [
+    {
+      "failedStage": "app",
+      "observedAtFailure": {
+        "web": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "api": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "runtimeWorker": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "acs": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      }
+    },
+    {
+      "failedStage": "web",
+      "observedAtFailure": {
+        "web": {
+          "gitSha": "1111111111111111111111111111111111111111",
+          "artifactDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "api": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "runtimeWorker": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "artifactDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "acs": {
+          "gitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "orchestratorArtifactDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "sandboxImageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      }
+    }
+  ],
+  "attestationPrefix": [
+    { "state": "verified", "operationKey": "verified:fixture" },
+    { "state": "approved", "operationKey": "approval:fixture-1" },
+    { "state": "promoting", "operationKey": "promoting:fixture-1" }
+  ],
+  "recoveryStates": ["partial_failed", "needs_human"],
+  "illegalTails": [
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "completed", "operationKey": "completed:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ],
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "rejected", "operationKey": "rejected:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ],
+    [
+      { "state": "verified", "operationKey": "verified:fixture" },
+      { "state": "approved", "operationKey": "approval:fixture" },
+      { "state": "promoting", "operationKey": "promoting:fixture" },
+      { "state": "superseded", "operationKey": "superseded:fixture" },
+      { "state": "rolled_back", "operationKey": "rollback:fixture" }
+    ]
+  ]
+}

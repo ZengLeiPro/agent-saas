@@ -57,12 +57,26 @@ export function reconcilePromotion(input) {
     if (input.configIdentityConfirmed !== true) {
       return {
         outcome: 'needs_human',
-        reason: 'component convergence lacks complete ConfigIdentity and trusted identity confirmation',
+        reason:
+          'component convergence lacks complete ConfigIdentity and trusted identity confirmation',
       };
     }
     return {
       outcome: 'completed',
       reason: 'all components match the Manifest target with confirmed ConfigIdentity',
+    };
+  }
+  if (matrixEquals(observed, before)) {
+    if (input.rollbackAttempted === true) {
+      return {
+        outcome: 'rolled_back',
+        reason:
+          'a dedicated rollback started and all components match the frozen pre-promotion state',
+      };
+    }
+    return {
+      outcome: 'failed_before_change',
+      reason: 'no rollback started and no production component differs from the frozen baseline',
     };
   }
   if (input.externalSideEffects === 'unknown') {
@@ -71,21 +85,9 @@ export function reconcilePromotion(input) {
       reason: 'promotion has non-reversible or unknown side effects',
     };
   }
-  if (matrixEquals(observed, before)) {
-    if (input.rollbackAttempted === true) {
-      return {
-        outcome: 'rolled_back',
-        reason: 'all components match the frozen pre-promotion state',
-      };
-    }
-    return {
-      outcome: 'failed_before_change',
-      reason: 'no production component changed before the failure',
-    };
-  }
   return {
     outcome: 'partial_failed',
-    reason: 'production components contain a mixed identity matrix',
+    reason: 'production components contain a mixed identity matrix after reconciliation',
   };
 }
 

@@ -41,13 +41,26 @@ install_staging_unit() {
 }
 
 runtime_dir=/mnt/agent-saas-staging/runtime/server
+artifact_dir=/mnt/agent-saas-staging/runtime/artifacts
 runuser -u agent-saas-staging -- sh -c \
-  'umask 027; mkdir -p -- "$1"' sh "$runtime_dir"
-for access in r w x; do
-  runuser -u agent-saas-staging -- test "-$access" "$runtime_dir" || {
-    echo "Staging runtime directory is not ${access}-accessible to agent-saas-staging" >&2
+  'umask 027; mkdir -p -- "$1" "$2"' sh "$runtime_dir" "$artifact_dir"
+runtime_owner="$(stat -c '%u:%g' "$runtime_dir")"
+artifact_owner="$(stat -c '%u:%g' "$artifact_dir")"
+test "$artifact_owner" = "$runtime_owner" || {
+  echo 'Staging Artifact directory owner does not match the persistent runtime owner' >&2
+  exit 1
+}
+for directory in "$runtime_dir" "$artifact_dir"; do
+  test ! -L "$directory" || {
+    echo "Staging persistent directory must not be a symlink: $directory" >&2
     exit 1
   }
+  for access in r w x; do
+    runuser -u agent-saas-staging -- test "-$access" "$directory" || {
+      echo "Staging persistent directory is not ${access}-accessible to agent-saas-staging: $directory" >&2
+      exit 1
+    }
+  done
 done
 install_staging_unit \
   "$UNIT_DIR/agent-saas-server-staging.service.template" \
@@ -102,8 +115,16 @@ printf '%s\n' "$api_unit_environment" \
     echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
     exit 1
   }
+for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
+  printf '%s\n' "$unit_environment" \
+    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json' || {
+      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
+      exit 1
+    }
+done
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
+artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
 server_env=/etc/agent-saas-staging/server.env
 server_config=/etc/agent-saas-staging/config.json
@@ -149,11 +170,38 @@ finish() {
   status=$?
   trap - EXIT
   rm -rf "$candidate"
+  rm -f "$artifact_persistence_probe"
   if [ "$deployment_committed" = false ]; then rollback; fi
   exit "$status"
 }
 trap finish EXIT
 trap 'exit 130' HUP INT TERM
+
+node - "$server_config" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const configPath = process.argv[2];
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const currentSecret = config.artifact?.signedUrlSecret;
+const signedUrlSecret = typeof currentSecret === 'string'
+  && currentSecret.length >= 16
+  && currentSecret !== config.auth?.jwtSecret
+  ? currentSecret
+  : crypto.randomBytes(32).toString('hex');
+config.artifact = {
+  backend: 'local',
+  rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
+  signedUrlSecret,
+  readUrlTtlSeconds: 900,
+  maxBlobBytes: 100 * 1024 * 1024,
+  retentionDays: 90,
+  gcIntervalMs: 24 * 60 * 60 * 1000,
+};
+fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(`${configPath}.candidate`, configPath);
+NODE
+chown root:agent-saas-staging "$server_config"
+chmod 0640 "$server_config"
 
 node - "$acs_env" <<'NODE'
 const fs = require('node:fs');
@@ -296,6 +344,18 @@ if (Object.keys(config.dispatch?.env ?? {}).length > 0) failures.push('dispatch.
 if (config.systemMonitor?.enabled !== false) failures.push('systemMonitor.enabled must be false');
 if (config.runtimeEventRetention?.enabled !== false) failures.push('runtimeEventRetention.enabled must be false');
 if (config.integrationV3ControlPlane) failures.push('integrationV3ControlPlane must be absent');
+const artifact = config.artifact ?? {};
+if (artifact.backend !== 'local') failures.push('artifact.backend must be local');
+if (artifact.rootDir !== '/mnt/agent-saas-staging/runtime/artifacts') failures.push('artifact.rootDir must use the shared NAS Artifact directory');
+if (typeof artifact.signedUrlSecret !== 'string' || artifact.signedUrlSecret.length < 16) failures.push('artifact.signedUrlSecret must be persistent');
+if (artifact.signedUrlSecret === config.auth?.jwtSecret) failures.push('artifact.signedUrlSecret must be independent from auth.jwtSecret');
+if (artifact.readUrlTtlSeconds !== 900) failures.push('artifact.readUrlTtlSeconds must be 900');
+if (artifact.maxBlobBytes !== 104857600) failures.push('artifact.maxBlobBytes must be 104857600');
+if (artifact.retentionDays !== 90) failures.push('artifact.retentionDays must be 90');
+if (artifact.gcIntervalMs !== 86400000) failures.push('artifact.gcIntervalMs must be 86400000');
+for (const key of ['bucket', 'region', 'endpoint', 'accessKeyId', 'accessKeySecret']) {
+  if (artifact[key]) failures.push(`artifact.${key} must be absent for local storage`);
+}
 if (failures.length > 0) {
   throw new Error(`Staging runtime profile preflight failed:\n- ${failures.join('\n- ')}`);
 }
@@ -367,6 +427,8 @@ const identity = {
 fs.writeFileSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', `${JSON.stringify(identity)}\n`, { mode: 0o444 });
 fs.renameSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', '/etc/agent-saas-staging/acs-release-identity.json');
 NODE
+runuser -u agent-saas-staging -- sh -c \
+  'umask 077; printf "%s" "$2" > "$1"' sh "$artifact_persistence_probe" "$release_id"
 if systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service; then
   main_pid="$(systemctl show agent-saas-acs-orchestrator-staging.service --property MainPID --value)"
   test "$main_pid" -gt 0
@@ -393,6 +455,12 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 test -s "$state_root/api-ready.json"
+runuser -u agent-saas-staging -- test -r "$artifact_persistence_probe"
+test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
+  echo 'Staging Artifact persistence probe did not survive the service restart' >&2
+  exit 1
+}
+rm -f "$artifact_persistence_probe"
 
 node - "$MANIFEST_PATH" "$state_root/api-ready.json" "$state_root/acs-health.json" <<'NODE'
 const fs = require('node:fs');

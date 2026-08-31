@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const RESTARTABLE_STAGING_SERVICES = new Set([
+  'agent-saas-server-staging.service',
   'agent-saas-runtime-worker-staging.service',
   'agent-saas-acs-orchestrator-staging.service',
 ]);
@@ -49,7 +50,7 @@ export function marker(caseName: string): string {
 
 export async function restartStagingService(service: string): Promise<void> {
   if (!RESTARTABLE_STAGING_SERVICES.has(service))
-    throw new Error('Refusing to restart a service outside the Staging E2E allowlist');
+    throw new Error(`Refusing to restart a service outside the Staging E2E allowlist: ${service}`);
   const user = required('STAGING_ECS_USER');
   const host = required('STAGING_ECS_HOST');
   if (!/^[A-Za-z0-9._-]+$/u.test(user) || !/^[A-Za-z0-9.:-]+$/u.test(host))

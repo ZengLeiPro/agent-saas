@@ -27,6 +27,8 @@ vi.mock('../security/trustedFile.js', async (importOriginal) => {
 import { InMemoryArtifactStore, LocalArtifactBlobStore } from '../runtime/artifactStore.js';
 import { InMemoryArtifactShareStore } from '../runtime/artifactShareStore.js';
 import { ArtifactService } from '../runtime/artifactService.js';
+import { getTranscriptPath } from '../data/transcripts/store.js';
+import { writeSessionMeta } from '../data/transcripts/meta.js';
 import { PlatformToolRuntime } from '../agent/toolRuntime.js';
 
 afterEach(() => {
@@ -162,27 +164,64 @@ describe('LocalArtifactBlobStore', () => {
     }
   });
 
-  it('platform admin 读取跨组织 artifact 必须持有 session_export Grant', async () => {
+  it('platform admin 可按 owner 权限读取自己的会话 artifact', async () => {
     const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
     try {
-      let grantActive = false;
+      const authorizeContentAccess = vi.fn(async () => false);
+      const service = new ArtifactService({
+        artifactStore: new InMemoryArtifactStore(),
+        blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+        agentCwd: blobRoot,
+        resolveSessionTenantId: async () => 'pantheon',
+        authorizeContentAccess,
+        auditContentAccess: async () => undefined,
+      });
+      const sessionId = 'session-platform-admin';
+      const transcriptPath = getTranscriptPath(path.join(blobRoot, 'pantheon', 'platform-admin'), sessionId);
+      await writeSessionMeta(transcriptPath, {
+        userId: 'platform-admin',
+        username: 'root',
+        tenantId: 'pantheon',
+        channel: 'web',
+        createdAt: new Date().toISOString(),
+      });
+      const artifact = await service.createFromBytes({ sessionId, data: 'owned' });
+      const platformAdmin = { sub: 'platform-admin', username: 'root', role: 'admin' as const, tenantId: 'pantheon' };
+
+      await expect(service.getForUser(artifact.artifactId, platformAdmin)).resolves.toEqual(artifact);
+      expect(authorizeContentAccess).not.toHaveBeenCalled();
+    } finally {
+      await rm(blobRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('platform admin 跨组织读取无 Grant、有效 Grant、过期 Grant时分别拒绝、放行、拒绝', async () => {
+    const blobRoot = await mkdtemp(path.join(os.tmpdir(), 'artifact-blob-'));
+    try {
+      let grantExpiresAt: number | undefined;
+      const auditContentAccess = vi.fn(async () => undefined);
       const service = new ArtifactService({
         artifactStore: new InMemoryArtifactStore(),
         blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
         agentCwd: blobRoot,
         resolveSessionTenantId: async () => 'tenant-customer',
-        authorizeContentAccess: async input => grantActive
-          && input.tenantId === 'tenant-customer'
-          && input.scope === 'session_export',
-        auditContentAccess: async () => undefined,
+        authorizeContentAccess: async input => Boolean(
+          input.tenantId === 'tenant-customer'
+          && input.scope === 'session_export'
+          && grantExpiresAt
+          && grantExpiresAt > Date.now()
+        ),
+        auditContentAccess,
       });
       const artifact = await service.createFromBytes({ sessionId: 'session-customer', data: 'sensitive' });
       const platformAdmin = { sub: 'platform-admin', username: 'root', role: 'admin' as const, tenantId: 'pantheon' };
+
       await expect(service.getForUser(artifact.artifactId, platformAdmin)).rejects.toThrow('Artifact not found');
-      grantActive = true;
+      grantExpiresAt = Date.now() + 60_000;
       await expect(service.getForUser(artifact.artifactId, platformAdmin)).resolves.toEqual(artifact);
-      grantActive = false;
+      grantExpiresAt = Date.now() - 1;
       await expect(service.getForUser(artifact.artifactId, platformAdmin)).rejects.toThrow('Artifact not found');
+      expect(auditContentAccess).toHaveBeenCalledTimes(1);
     } finally {
       await rm(blobRoot, { recursive: true, force: true });
     }

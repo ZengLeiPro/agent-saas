@@ -17,8 +17,9 @@ permissions:
   actions: read
   deployments: write
 
+# 与 compatibility App/ACS 共用生产写锁。
 concurrency:
-  group: production-promotion
+  group: production-runtime
   cancel-in-progress: false
 
 env:

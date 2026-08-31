@@ -437,7 +437,7 @@ describe("TaskDetail 交互与草稿隔离", () => {
     expect(mocks.continueTaskExecution).toHaveBeenCalledWith(current.id, published.id);
   });
 
-  it("评论已发表但续跑失败时使用原 commentId 幂等重试", async () => {
+  it("评论续跑失败时错误在讨论页可见并使用原 commentId 幂等重试", async () => {
     const user = userEvent.setup();
     const published = {
       id: "comment-retry",
@@ -473,7 +473,7 @@ describe("TaskDetail 交互与草稿隔离", () => {
     await user.type(screen.getByRole("textbox", { name: "发表讨论" }), published.body);
     await user.click(screen.getByRole("checkbox", { name: "直接实施" }));
     await user.click(screen.getByRole("button", { name: "发表" }));
-    await screen.findByText(/讨论已发表，但继续执行失败，可重试/);
+    const alert = await screen.findByRole("alert"); expect(alert.textContent).toMatch(/讨论已发表，但继续执行失败，可重试/); expect(alert.closest('[aria-hidden="true"]')).toBeNull(); expect(screen.getByTestId("task-detail-information").contains(alert)).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "重试继续执行" }));
     await waitFor(() => expect(mocks.continueTaskExecution).toHaveBeenCalledTimes(2));

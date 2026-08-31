@@ -183,10 +183,11 @@ describe("TaskDetailComments", () => {
     fireEvent.click(userButton);
     expect(userButton.getAttribute("aria-current")).toBe("true");
     expect(agentButton.getAttribute("aria-current")).toBeNull();
-    expect(userButton.className).toContain("ring-1");
-    expect(userButton.className).toContain("ring-primary");
+    expect(userButton.className).not.toContain("ring-1 ring-primary");
+    expect(userButton.firstElementChild?.className).toContain("ring-1 ring-primary");
     expect(userButton.className).not.toContain("scale-110");
     expect(userButton.className).not.toContain("bg-primary/10");
+    expect(userButton.className).toContain("size-5");
     expect(userButton.firstElementChild?.className).toContain("size-3");
     expect(userTarget?.getAttribute("data-navigation-selected")).toBe("true");
     expect(userTarget?.firstElementChild?.className).not.toContain("outline-primary/70");

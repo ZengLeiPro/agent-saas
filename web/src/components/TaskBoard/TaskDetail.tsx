@@ -600,8 +600,7 @@ export function TaskDetail({
         }
       }
       if (isCurrentOperation(requestId, operationTask.id)) {
-        setCommentBody("");
-        setContinueAfterComment(false);
+        setCommentBody(""); setContinueAfterComment(false);
         setPendingContinuationCommentId(null);
         commentAttachments.clearFiles();
       }
@@ -695,6 +694,7 @@ export function TaskDetail({
             </div>
             <TaskDetailTabs value={activeTab} commentCount={Math.max(comments.length, currentTask.commentCount)}
               onChange={(value) => { tabSelectionResolvedTaskIdRef.current = currentTask.id; setActiveTab(value); }} />
+            {activeTab === "discussion" && error ? <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive sm:px-6">{error}</p> : null}
             {activeTab === "discussion" && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (

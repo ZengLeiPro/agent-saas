@@ -243,7 +243,7 @@ export function TaskDetailComments({
                 <button
                   key={item.id}
                   type="button"
-                  className={`relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full bg-background transition-[background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "ring-1 ring-primary" : "hover:bg-muted/60"}`}
+                  className={`relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full bg-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "" : "hover:bg-muted/60"}`}
                   aria-label={`跳转到第 ${index + 1} 条：${item.label}`}
                   aria-current={selected ? "true" : undefined}
                   title={item.label}
@@ -251,7 +251,7 @@ export function TaskDetailComments({
                   data-purpose={item.purpose ?? "general"}
                   onClick={() => scrollToNavigationTarget(item.id)}
                 >
-                  <span className={`size-3 rounded-full ring-1 ring-background ${navigationDotClass(item.kind, item.purpose)}`} />
+                  <span className={`size-3 rounded-full ring-1 ${selected ? "ring-primary" : "ring-background"} ${navigationDotClass(item.kind, item.purpose)}`} />
                 </button>
               );
             })}

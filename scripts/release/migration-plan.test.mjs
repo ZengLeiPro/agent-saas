@@ -843,11 +843,19 @@ test('real repository closure ignores unrelated TypeScript changes behind type-o
   const event = process.env.GITHUB_EVENT_PATH
     ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
     : undefined;
-  const baseline =
-    event?.pull_request?.base?.sha ??
-    event?.before ??
-    execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
   const target = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const eventBaseline = event?.pull_request?.base?.sha ?? event?.before;
+  let baseline = eventBaseline;
+  if (baseline) {
+    try {
+      execFileSync('git', ['cat-file', '-e', `${baseline}^{commit}`], { stdio: 'ignore' });
+    } catch {
+      // GitHub PR checkout is shallow; the target tree still exercises the real runtime closure.
+      baseline = target;
+    }
+  } else {
+    baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+  }
   const result = createMigrationPlan({
     changedPaths: ['server/src/release/releaseAttestation.ts'],
     baseline,

@@ -7,7 +7,7 @@ import type {
   TaskBoardPatchInput,
   TaskBoardVisibility,
 } from "@agent/shared";
-import type { TaskBoardCiPolicyDiscovery, TaskBoardExecutionPurpose, TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode, TaskBoardStageModels, TaskBoardStagePrompts } from "@agent/shared/types/taskboard";
+import type { TaskBoardExecutionPurpose, TaskBoardIntegrationPolicy, TaskBoardIntegrationTriggerMode, TaskBoardStageModels, TaskBoardStagePrompts } from "@agent/shared/types/taskboard";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,7 +29,6 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { BoardMembers } from "./BoardMembers";
-import { fetchBoardCiPolicyDiscovery } from "./api";
 import { boardAllows } from "./constants";
 import { ModelSelect } from "./ModelSelect";
 
@@ -45,37 +44,6 @@ const STAGE_MODEL_FIELDS: Array<{ purpose: TaskBoardExecutionPurpose; title: str
 function numberInRange(value: string, fallback: number, min: number, max: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
-}
-
-function formatCiRequiredChecks(policy: TaskBoardIntegrationPolicy): string {
-  return (policy.ciPolicy?.requiredChecks ?? [])
-    .map((check) => check.appId === undefined ? check.name : `${check.name} | ${check.appId}`)
-    .join("\n");
-}
-
-function parseCiRequiredChecks(value: string): TaskBoardIntegrationPolicy["ciPolicy"] {
-  const checks = value.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
-    const [rawName, rawAppId, ...extra] = line.split("|").map((part) => part.trim());
-    if (!rawName || extra.length > 0) throw new Error("每行填写检查名称，或“检查名称 | GitHub App ID”");
-    if (!rawAppId) return { name: rawName };
-    const appId = Number(rawAppId);
-    if (!Number.isSafeInteger(appId) || appId <= 0) throw new Error("GitHub App ID 必须是正整数");
-    return { name: rawName, appId };
-  });
-  const identities = new Set<string>();
-  for (const check of checks) {
-    const identity = `${check.name}\u0000${check.appId ?? "*"}`;
-    if (identities.has(identity)) throw new Error(`重复的 CI 检查：${check.name}`);
-    identities.add(identity);
-  }
-  return checks.length ? { requiredChecks: checks } : undefined;
-}
-
-function ciCheckSelected(value: string, name: string, appId?: number): boolean {
-  try {
-    return (parseCiRequiredChecks(value)?.requiredChecks ?? [])
-      .some((check) => check.name === name && check.appId === appId);
-  } catch { return false; }
 }
 
 function defaultPolicy(): TaskBoardIntegrationPolicy {
@@ -140,12 +108,6 @@ export function BoardDialog({
   const [mergeMethod, setMergeMethod] = useState<"merge" | "squash" | "rebase">("squash");
   const [maxRemediationRounds, setMaxRemediationRounds] = useState("2");
   const [maxTransientRetries, setMaxTransientRetries] = useState("3");
-  const [ciRequiredChecks, setCiRequiredChecks] = useState("");
-  const [ciDiscovery, setCiDiscovery] = useState<TaskBoardCiPolicyDiscovery | null>(null);
-  const [ciDiscoveryLoading, setCiDiscoveryLoading] = useState(false);
-  const [ciDiscoveryError, setCiDiscoveryError] = useState<string | null>(null);
-  const [ciPolicySaved, setCiPolicySaved] = useState(false);
-  const [repositoryCiPolicyReset, setRepositoryCiPolicyReset] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirtyFieldsRef = useRef<Set<BoardDraftField>>(new Set());
@@ -185,9 +147,6 @@ export function BoardDialog({
       setMergeMethod(policy.execution.mergeMethod);
       setMaxRemediationRounds(String(policy.execution.maxAutomaticRemediationRounds));
       setMaxTransientRetries(String(policy.execution.maxTransientRetries));
-      setCiRequiredChecks(formatCiRequiredChecks(policy));
-      setCiPolicySaved(false);
-      setRepositoryCiPolicyReset(false);
       setError(null);
       return;
     }
@@ -220,64 +179,12 @@ export function BoardDialog({
       setMergeMethod(policy.execution.mergeMethod);
       setMaxRemediationRounds(String(policy.execution.maxAutomaticRemediationRounds));
       setMaxTransientRetries(String(policy.execution.maxTransientRetries));
-      setCiRequiredChecks(formatCiRequiredChecks(policy));
     }
   }, [board, open]);
-
-  useEffect(() => {
-    if (!open || !board?.repository) {
-      setCiDiscovery(null);
-      setCiDiscoveryError(null);
-      setCiDiscoveryLoading(false);
-      return;
-    }
-    let active = true;
-    setCiDiscovery(null);
-    setCiDiscoveryLoading(true);
-    setCiDiscoveryError(null);
-    void fetchBoardCiPolicyDiscovery(board.id).then((result) => {
-      if (active) setCiDiscovery(result);
-    }).catch((caught) => {
-      if (active) setCiDiscoveryError(caught instanceof Error ? caught.message : "读取 CI 门禁信息失败");
-    }).finally(() => {
-      if (active) setCiDiscoveryLoading(false);
-    });
-    return () => { active = false; };
-  }, [board?.id, board?.repository, open]);
 
   const canEditSettings = !board || boardAllows(board, "board.update");
   const canEditPolicy = !board || boardAllows(board, "board.policy.update");
   const canManageMembers = Boolean(board && boardAllows(board, "board.members.manage"));
-  const visibleCiDiscovery = repositoryCiPolicyReset ? null : ciDiscovery;
-
-  const changeRepositoryId = (next: string) => {
-    dirtyFieldsRef.current.add("repository");
-    const originalRepositoryId = board?.repository?.repositoryId;
-    if (originalRepositoryId && next.trim() !== originalRepositoryId) {
-      dirtyFieldsRef.current.add("integrationPolicy");
-      setCiRequiredChecks("");
-      setCiPolicySaved(false);
-      setRepositoryCiPolicyReset(true);
-    } else if (originalRepositoryId) {
-      setCiRequiredChecks(formatCiRequiredChecks(board.integrationPolicy ?? defaultPolicy()));
-      setRepositoryCiPolicyReset(false);
-    }
-    setRepositoryId(next);
-  };
-
-  const setObservedCheckSelected = (name: string, appId: number | undefined, selected: boolean) => {
-    dirtyFieldsRef.current.add("integrationPolicy");
-    setCiPolicySaved(false);
-    let current: NonNullable<TaskBoardIntegrationPolicy["ciPolicy"]>["requiredChecks"];
-    try { current = parseCiRequiredChecks(ciRequiredChecks)?.requiredChecks ?? []; }
-    catch (caught) { setError(caught instanceof Error ? caught.message : "CI fallback 配置无效"); return; }
-    const identity = (check: { name: string; appId?: number }) => `${check.name}\u0000${check.appId ?? "*"}`;
-    const target = identity({ name, ...(appId !== undefined ? { appId } : {}) });
-    const next = selected
-      ? [...current.filter((check) => identity(check) !== target), { name, ...(appId !== undefined ? { appId } : {}) }]
-      : current.filter((check) => identity(check) !== target);
-    setCiRequiredChecks(next.map((check) => check.appId === undefined ? check.name : `${check.name} | ${check.appId}`).join("\n"));
-  };
 
   const setStageModel = (purpose: TaskBoardExecutionPurpose, next: string | null) => {
     dirtyFieldsRef.current.add("stageModels");
@@ -335,19 +242,11 @@ export function BoardDialog({
         return [[purpose, trimmed] as const];
       }),
     ) as TaskBoardStagePrompts;
-    let ciPolicy: TaskBoardIntegrationPolicy["ciPolicy"];
-    try {
-      ciPolicy = parseCiRequiredChecks(ciRequiredChecks);
-    } catch (parseError) {
-      setError(parseError instanceof Error ? parseError.message : "CI fallback 配置无效");
-      return;
-    }
     const integrationPolicy: TaskBoardIntegrationPolicy = {
       schemaVersion: 1,
       enabled: repositoryEnabled && policyEnabled,
       revision: previousPolicy.revision || "server",
       workflowVersion: 3,
-      ...(ciPolicy ? { ciPolicy } : {}),
       trigger: triggerMode === "scheduled"
         ? { mode: "scheduled", cron: cron.trim(), timezone: timezone.trim() }
         : triggerMode === "on_ready"
@@ -368,9 +267,6 @@ export function BoardDialog({
         deploy: false,
       },
     };
-    const shouldEchoCiPolicy = Boolean(board && (
-      dirtyFieldsRef.current.has("integrationPolicy") || dirtyFieldsRef.current.has("repository")
-    ));
     setSubmitting(true);
     setError(null);
     try {
@@ -388,30 +284,6 @@ export function BoardDialog({
           input.integrationPolicy = repository ? integrationPolicy : null;
         }
         await onUpdate(board.id, input);
-        if (shouldEchoCiPolicy) {
-          dirtyFieldsRef.current.clear();
-          if (repository) {
-            try {
-              const finalPolicy = await fetchBoardCiPolicyDiscovery(board.id);
-              setCiDiscovery(finalPolicy);
-              setCiRequiredChecks(finalPolicy.boardRequiredChecks
-                .map((check) => check.appId === undefined ? check.name : `${check.name} | ${check.appId}`).join("\n"));
-              setCiDiscoveryError(null);
-              setRepositoryCiPolicyReset(false);
-              setCiPolicySaved(true);
-            } catch (caught) {
-              const reason = caught instanceof Error ? caught.message : "读取保存后的 CI 门禁策略失败";
-              setCiDiscoveryError(`保存成功，但未能回读最终 CI 策略：${reason}`);
-              setCiPolicySaved(false);
-            }
-          } else {
-            setCiDiscovery(null);
-            setCiDiscoveryError(null);
-            setRepositoryCiPolicyReset(false);
-            setCiPolicySaved(true);
-          }
-          return;
-        }
       } else {
         await onCreate({
           name: normalizedName,
@@ -519,7 +391,7 @@ export function BoardDialog({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="taskboard-repository-id">Repository ID</Label>
-                    <Input id="taskboard-repository-id" value={repositoryId} onChange={(event) => changeRepositoryId(event.target.value)} placeholder="GitHub App 仓库标识" disabled={submitting || !canEditPolicy} />
+                    <Input id="taskboard-repository-id" value={repositoryId} onChange={(event) => { dirtyFieldsRef.current.add("repository"); setRepositoryId(event.target.value); }} placeholder="GitHub App 仓库标识" disabled={submitting || !canEditPolicy} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="taskboard-base-branch">基础分支</Label>
@@ -580,71 +452,6 @@ export function BoardDialog({
                     <SelectContent><SelectItem value="merge">Merge</SelectItem><SelectItem value="squash">Squash</SelectItem><SelectItem value="rebase">Rebase</SelectItem></SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">仅作为 Integration Agent 的默认偏好，不构成额外的服务端流程门禁。</p>
-                </div>
-                <div className="space-y-3 rounded-md border p-3" aria-label="CI 门禁策略">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">CI 门禁</p>
-                    {repositoryCiPolicyReset ? <p className="text-xs text-amber-700 dark:text-amber-300">Repository ID 已变更；旧仓库的备用门禁已清空。保存后会重新读取新仓库。</p> : null}
-                    {ciPolicySaved && !dirtyFieldsRef.current.has("integrationPolicy") && !dirtyFieldsRef.current.has("repository")
-                      ? <p className="text-xs text-emerald-700 dark:text-emerald-400">已保存，并按服务端最终策略回显。</p> : null}
-                    {ciDiscoveryLoading && !repositoryCiPolicyReset ? <p className="text-xs text-muted-foreground">正在读取 GitHub 门禁…</p> : null}
-                    {ciDiscoveryError ? <p className="text-xs text-destructive">{ciDiscoveryError}</p> : null}
-                    {visibleCiDiscovery?.effectiveSource === "github" ? (
-                      <p className="text-xs text-muted-foreground">
-                        已由 GitHub 管理，自动使用 {visibleCiDiscovery.githubRequiredChecks.length} 项 required checks；看板无需重复配置。
-                      </p>
-                    ) : visibleCiDiscovery?.effectiveSource === "board" ? (
-                      <p className="text-xs text-amber-700 dark:text-amber-300">
-                        GitHub 未配置 required checks，当前使用 {visibleCiDiscovery.boardRequiredChecks.length} 项看板备用门禁。
-                      </p>
-                    ) : visibleCiDiscovery?.effectiveSource === "unconfigured" ? (
-                      <p className="text-xs text-destructive">尚无 CI 门禁。建议在 GitHub 配置 required checks；否则交付会按 fail-closed 拒绝放行。</p>
-                    ) : visibleCiDiscovery?.effectiveSource === "unavailable" ? (
-                      <p className="text-xs text-destructive">暂时无法确认 GitHub 门禁，系统会按 fail-closed 拒绝放行。</p>
-                    ) : !board && !ciDiscoveryLoading ? (
-                      <p className="text-xs text-muted-foreground">保存看板后会自动读取 GitHub required checks，无需预先填写。</p>
-                    ) : null}
-                  </div>
-                  <details
-                    className="rounded-md bg-muted/40 px-3 py-2"
-                    key={visibleCiDiscovery?.effectiveSource ?? "pending"}
-                    open={visibleCiDiscovery?.effectiveSource === "board" || visibleCiDiscovery?.effectiveSource === "unconfigured"}
-                  >
-                    <summary className="cursor-pointer text-xs font-medium">备用门禁（仅 GitHub 未配置时使用）</summary>
-                    <div className="mt-3 space-y-3">
-                      <p className="text-xs text-muted-foreground">
-                        优先使用 GitHub branch protection / ruleset 声明的 required checks。只有 GitHub 明确未声明时，下面的看板规则才会生效。
-                      </p>
-                      {visibleCiDiscovery?.observedChecks.length ? (
-                        <div className="space-y-2">
-                          <p className="text-xs font-medium">从最近一次 PR 检查中选择</p>
-                          {visibleCiDiscovery.observedChecks.map((check) => (
-                            <label className="flex items-start gap-2 text-xs" key={`${check.name}-${check.appId ?? "any"}`}>
-                              <Checkbox
-                                aria-label={`选择 observed check ${check.name}`}
-                                checked={ciCheckSelected(ciRequiredChecks, check.name, check.appId)}
-                                onCheckedChange={(checked) => setObservedCheckSelected(check.name, check.appId, checked === true)}
-                                disabled={submitting || !canEditPolicy}
-                              />
-                              <span>{check.name} · {check.status}{check.appName ? ` · ${check.appName}` : check.appId ? ` · App ${check.appId}` : ""}</span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : null}
-                      <div className="space-y-2">
-                        <Label htmlFor="taskboard-ci-fallback">备用 required checks</Label>
-                        <Textarea
-                          id="taskboard-ci-fallback"
-                          value={ciRequiredChecks}
-                          onChange={(event) => { dirtyFieldsRef.current.add("integrationPolicy"); setCiPolicySaved(false); setCiRequiredChecks(event.target.value); }}
-                          placeholder={"每行：检查名称，或 检查名称 | GitHub App ID"}
-                          rows={3}
-                          disabled={submitting || !canEditPolicy}
-                        />
-                        <p className="text-xs text-muted-foreground">不要把普通 observed check 当成门禁；只有明确要求成功的检查才应加入。</p>
-                      </div>
-                    </div>
-                  </details>
                 </div>
               </>
             ) : <p className="text-xs text-muted-foreground">未关联仓库时不会创建或执行集成批次。</p>}

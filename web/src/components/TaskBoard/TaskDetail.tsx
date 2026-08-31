@@ -13,7 +13,7 @@ import {
   type TaskBoardTask,
   type TaskBoardTaskPatchInput,
 } from "@agent/shared";
-import { Archive, ArchiveRestore, Bell, BellRing, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Settings2, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Bell, BellRing, Bot, CircleX, ExternalLink, GitCommitHorizontal, LoaderCircle, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -30,7 +30,6 @@ import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
 import { requestExecutionCancellation } from "./executionCancellation";
 import {
-  boardAllows,
   canUserMoveTask,
   EXECUTION_STATUS_LABELS,
   INTEGRATION_SOURCE_STATE_LABELS,
@@ -83,7 +82,6 @@ interface TaskDetailProps {
   onOpenChange: (open: boolean) => void;
   onTaskLoaded: (task: TaskBoardTask) => void;
   onNavigateTask?: (taskId: string) => void;
-  onConfigureCiPolicy?: () => void;
   onUpdate: (
     task: TaskBoardTask,
     input: Omit<TaskBoardTaskPatchInput, "expectedVersion">,
@@ -118,7 +116,6 @@ export function TaskDetail({
   portalTarget = null, onOpenChange,
   onTaskLoaded,
   onNavigateTask,
-  onConfigureCiPolicy,
   onUpdate,
   onMove,
   onCompleteTask,
@@ -742,17 +739,13 @@ export function TaskDetail({
                 {taskKind !== "integration" && currentTask.providerCiStatus === "unconfigured" ? (
                   <div aria-label="CI 门禁未配置" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
                     <p className="font-medium">CI 门禁未配置</p>
-                    <p className="text-xs">GitHub required checks 与看板 fallback 均为空；系统已 fail-closed，不会把 observed optional checks 自动视为门禁。</p>
-                    {boardAllows(board, "board.policy.update") && onConfigureCiPolicy ? (
-                      <Button type="button" size="sm" variant="outline" onClick={onConfigureCiPolicy} disabled={saving}>
-                        <Settings2 />前往配置
-                      </Button>
-                    ) : <p className="text-xs">你没有修改看板策略的权限，请联系看板所有者配置 CI fallback 或 GitHub required checks。</p>}
+                    <p className="text-xs">GitHub 未声明 required checks；系统已 fail-closed，不会把 observed optional checks 自动视为门禁。</p>
+                    <p className="text-xs">请在 GitHub branch protection / ruleset 中配置 required checks。</p>
                     {currentTask.status === "blocked" && canTransitionTask ? (
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => void resumeBlocked({ decision: "CI 门禁已配置，恢复实施并重新检查当前精确 PR head", startAfterResume: true })}
+                        onClick={() => void resumeBlocked({ decision: "GitHub required checks 已配置，恢复实施并重新检查当前精确 PR head", startAfterResume: true })}
                         disabled={saving || executionActive}
                       >
                         {saving ? <LoaderCircle className="animate-spin" /> : <Bot />}恢复任务并重新检查

@@ -255,6 +255,39 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
         deploy.indexOf('cleanup_app_failure()'),
       ),
   );
+  const appCleanupStart = deploy.indexOf('cleanup_app_failure()');
+  const appCleanupEnd = deploy.indexOf('trap cleanup_app_failure EXIT', appCleanupStart);
+  const appCleanup = deploy.slice(appCleanupStart, appCleanupEnd);
+  const workerDrainStart = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"',
+  );
+  const apiDrainStart = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"',
+  );
+  assert.ok(workerDrainStart > appCleanupEnd && apiDrainStart > workerDrainStart);
+  assert.match(
+    appCleanup,
+    /rm -f[\s\S]*agent-saas-server-\$api_active\.draining[\s\S]*agent-saas-runtime-worker-\$worker_active\.draining/u,
+  );
+  assert.match(appCleanup, /systemctl restart "agent-saas-server@\$api_active"/u);
+  assert.match(appCleanup, /systemctl restart "agent-saas-runtime-worker@\$worker_active"/u);
+  assert.match(appCleanup, /api-active-ready\.json/u);
+  assert.match(appCleanup, /worker_rollback_pid.*worker_rollback_ready/su);
+  assert.match(appCleanup, /test ! -e "\/run\/agent-saas-server-\$api_active\.draining"/u);
+  assert.match(
+    appCleanup,
+    /test ! -e "\/run\/agent-saas-runtime-worker-\$worker_active\.draining"/u,
+  );
+  const previousApiRestart = appCleanup.indexOf(
+    'systemctl restart "agent-saas-server@$api_active"',
+  );
+  const nginxRestore = appCleanup.indexOf('cp -a "$rollback_root/nginx-upstream.conf"');
+  const candidateApiStop = appCleanup.indexOf(
+    'systemctl disable --now "agent-saas-server@$api_idle"',
+  );
+  assert.ok(previousApiRestart >= 0 && nginxRestore > previousApiRestart);
+  assert.ok(candidateApiStop > nginxRestore);
+  assert.ok(appCleanup.indexOf('record_rollback_success') > candidateApiStop);
   assert.ok(
     workflow.indexOf('rollback-web.attempted', workflow.indexOf('restore_web_entry()')) <
       workflow.indexOf('aliyun --secure oss cp', workflow.indexOf('restore_web_entry()')),
@@ -373,4 +406,25 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(workflow, /Repair OSS attestation mirror/u);
   assert.doesNotMatch(workflow, /--clobber/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
+});
+
+test('App cleanup after Worker drain restarts the previous API and Worker before success receipt', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  const cleanupStart = deploy.indexOf('cleanup_app_failure()');
+  const cleanupEnd = deploy.indexOf('trap cleanup_app_failure EXIT', cleanupStart);
+  const cleanup = deploy.slice(cleanupStart, cleanupEnd);
+  const workerDrain = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-runtime-worker-$worker_active.draining"',
+    cleanupEnd,
+  );
+  const apiDrain = deploy.indexOf(
+    'install -m 0644 /dev/null "/run/agent-saas-server-$api_active.draining"',
+    workerDrain,
+  );
+  assert.ok(workerDrain > cleanupEnd && apiDrain > workerDrain);
+  assert.ok(cleanup.indexOf('agent-saas-runtime-worker-$worker_active.draining') >= 0);
+  assert.ok(cleanup.indexOf('systemctl restart "agent-saas-runtime-worker@$worker_active"') >= 0);
+  assert.ok(cleanup.indexOf('worker_rollback_pid') >= 0);
+  assert.ok(cleanup.indexOf('worker_rollback_ready') >= 0);
+  assert.ok(cleanup.indexOf('record_rollback_success') > cleanup.indexOf('sleep 2'));
 });

@@ -324,7 +324,7 @@ RC 多次 Promotion 重试会追加新的 attestation 和 operation receipt。Gi
 `App CI / Deploy` 和 `ACS CI / Deploy` 的手动生产入口属于 compatibility 通道，但能力并不对称：
 
 - App dispatch 只接受 `main`，并且**只允许 Web-only compatibility publish**。运行界面必须显式确认 `web_only_compatibility=true`；部署计划会读取生产 active ECS SHA 到目标 SHA 的累计差异。只要出现 Server/API/Runtime Worker 相关路径，或无法证明差异只影响 Web，就会在任何生产 mutation 前 fail closed，要求改走 RC + Production Promotion。
-- App compatibility 不再允许跨 `deploy-ecs` / `deploy-web-oss` 两个 job 发布 Server 与 Web。原因是跨 job 失败无法提供同一事务式补偿；保留旧 trusted identity 并不能让混合物理态变得原子。Web-only 路径会在入口文件恢复与现场读回后更新完整 Production identity。
+- App compatibility 不再允许跨 `deploy-ecs` / `deploy-web-oss` 两个 job 发布 Server 与 Web。原因是跨 job 失败无法提供同一事务式补偿；保留旧 trusted identity 并不能让混合物理态变得原子。Web-only 路径会先保存原 OSS 入口与 trusted identity，再发布 OSS/recovery Web；最终现场组件读回、identity 写入或确认读回任一步失败，都会在同一 job 恢复上一版 OSS/recovery Web 与原 trusted identity，并以完整 Production 读回证明三者重新一致后失败退出。补偿或证明失败必须人工处置。
 - ACS dispatch 会在部署前再次校验 run 的 SHA 仍是最新 `origin/main`，不能部署任意历史 main；它独立维护 ACS identity，但仍不提供 RC Promotion 的完整跨组件原子性。
 - 两个 compatibility 入口都不创建不可变 RC、不部署 Staging、不产生完整 Promotion receipts 与跨组件收敛证据。
 - App、ACS、Promotion 与 expand confirmation 共享 `production-runtime` concurrency group，仓库代码保证生产写操作串行；仍需 GitHub Actions 权限与外部手工变更纪律配合。

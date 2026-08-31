@@ -2270,6 +2270,7 @@ jobs:
       ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
       RECOVERY_WEB_ROOT: /opt/agent-saas-web-recovery
+      WEB_TRANSACTION_PREFIX: _transactions/${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout code
@@ -2337,13 +2338,46 @@ jobs:
             '{schemaVersion:1,environment:"production",releaseId:$releaseId,releaseSha:$releaseSha,webDigest:$webDigest,configFingerprint:$configFingerprint}' \
             > web/dist/release-identity.json
 
+      - name: Configure recovery SSH
+        run: |
+          : "${ECS_HOST:?Missing secret ECS_HOST}"
+          : "${ECS_USER:?Missing secret ECS_USER}"
+          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
+          chmod 600 ~/.ssh/ecs_recovery_key
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Snapshot trusted Production identity before Web transaction
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "sudo cat /etc/agent-saas/runtime-identity.json" \
+            > "$RUNNER_TEMP/runtime-identity.before.json"
+          jq -e '.schemaVersion == 1 and .environment == "production" and .components.web' \
+            "$RUNNER_TEMP/runtime-identity.before.json" >/dev/null
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "readlink -f '$RECOVERY_WEB_ROOT/current'" \
+            > "$RUNNER_TEMP/recovery-web-target.before"
+          recovery_web_before="$(cat "$RUNNER_TEMP/recovery-web-target.before")"
+          case "$recovery_web_before" in
+            "$RECOVERY_WEB_ROOT"/releases/*) ;;
+            *) echo "recovery Web current target is not an immutable release" >&2; exit 1 ;;
+          esac
+
       - name: Snapshot current Web entry files
         run: |
           for f in manifest.webmanifest release-identity.json index.html sw.js; do
             ossutil cp "oss://$OSS_BUCKET/$f" \
-              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" -f \
+              "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" -f \
               --region "$OSS_REGION" --copy-props default
           done
+          touch "$RUNNER_TEMP/web-entry-snapshot-complete"
 
       - name: Upload to OSS
         run: |
@@ -2429,17 +2463,6 @@ jobs:
         run: |
           tar -C web/dist -czf "$RUNNER_TEMP/agent-saas-recovery-web-${GITHUB_SHA}.tgz" .
 
-      - name: Configure recovery SSH
-        run: |
-          : "${ECS_HOST:?Missing secret ECS_HOST}"
-          : "${ECS_USER:?Missing secret ECS_USER}"
-          : "${ECS_SSH_KEY:?Missing secret ECS_SSH_KEY}"
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$ECS_SSH_KEY" > ~/.ssh/ecs_recovery_key
-          chmod 600 ~/.ssh/ecs_recovery_key
-          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
-
       - name: Upload recovery Web release
         run: |
           scp -i ~/.ssh/ecs_recovery_key \
@@ -2477,38 +2500,9 @@ jobs:
               --region "$OSS_REGION" --copy-props default
           done
 
-      - name: Restore previous recovery Web on failure
-        if: failure()
-        run: |
-          if [ ! -f "$RUNNER_TEMP/recovery-web-activated" ]; then
-            echo "recovery Web was not activated; nothing to restore"
-            exit 0
-          fi
-          ssh -i ~/.ssh/ecs_recovery_key \
-            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' bash -s" \
-            < scripts/rollback-recovery-web.sh
-
-      - name: Restore previous Web entry files on failure
-        if: failure()
-        run: |
-          if ! command -v ossutil >/dev/null 2>&1; then
-            echo "ossutil unavailable; no Web upload could have completed"
-            exit 0
-          fi
-          if ! ossutil stat "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/index.html" \
-            --region "$OSS_REGION" >/dev/null 2>&1; then
-            echo "previous Web snapshot unavailable; nothing to restore"
-            exit 0
-          fi
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/previous/$f" \
-              "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" --copy-props default
-          done
-          echo "previous Web entry files restored after failed deployment"
-
       - name: Commit trusted Production identity after all compatibility targets converge
+        id: commit_trusted_identity
+        continue-on-error: true
         run: |
           set -euo pipefail
           remote="/tmp/production-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-web"
@@ -2536,5 +2530,113 @@ jobs:
                   .components.runtimeWorker.gitSha==\$sha and .components.runtimeWorker.artifactDigest==\$digest' \
                  '$remote/live.json' >/dev/null; } && \
              sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
-             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null"
+             sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null && \
+             jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
+               '.components.web.gitSha==\$sha and .components.web.artifactDigest==\$digest' \
+               '$remote/confirmed.json' >/dev/null"
           echo "Production identity committed once after Web/API/Worker/ACS live readback"
+      - name: Restore previous recovery Web on failure
+        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          if [ ! -f "$RUNNER_TEMP/recovery-web-activated" ]; then
+            echo "recovery Web was not activated; nothing to restore"
+            exit 0
+          fi
+          printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q bash -s" \
+            < scripts/rollback-recovery-web.sh
+
+      - name: Restore previous Web entry files on failure
+        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          if ! command -v ossutil >/dev/null 2>&1; then
+            echo "ossutil unavailable; no Web upload could have completed"
+            exit 0
+          fi
+          if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
+            echo "Web entry snapshot did not complete; production Web mutation never started"
+            exit 0
+          fi
+          for f in manifest.webmanifest release-identity.json index.html sw.js; do
+            ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" \
+              "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" --copy-props default
+          done
+          echo "previous Web entry files restored after failed deployment"
+
+      - name: Restore trusted Production identity on failure
+        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/runtime-identity.before.json" ]; then
+            echo "trusted identity was not snapshotted and was never mutated"
+            exit 0
+          fi
+          remote_candidate="/tmp/runtime-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.before.json"
+          scp -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$RUNNER_TEMP/runtime-identity.before.json" \
+            "$ECS_USER@$ECS_HOST:$remote_candidate"
+          ssh -i ~/.ssh/ecs_recovery_key \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "sudo install -m 0444 '$remote_candidate' /etc/agent-saas/runtime-identity.json.candidate && \
+             sudo mv /etc/agent-saas/runtime-identity.json.candidate /etc/agent-saas/runtime-identity.json && \
+             sudo cmp '$remote_candidate' /etc/agent-saas/runtime-identity.json && \
+             rm -f '$remote_candidate'"
+
+      - name: Prove previous Web and trusted identity after compensation
+        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
+            echo "Web transaction failed before mutation; no compensation proof required"
+            exit 0
+          fi
+          remote="/tmp/production-rollback-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
+          }
+          trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
+          scp -i ~/.ssh/ecs_recovery_key \
+            scripts/release/artifact-lib.mjs \
+            scripts/release/read-production-state.mjs \
+            scripts/release/read-runtime-identity.mjs \
+            "$ECS_USER@$ECS_HOST:$remote/"
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "sudo node '$remote/read-production-state.mjs' --output '$remote/restored.json' >/dev/null && \
+             sudo cat '$remote/restored.json'" \
+            > "$RUNNER_TEMP/production-state.restored.json"
+          jq -e --slurpfile before "$RUNNER_TEMP/runtime-identity.before.json" \
+            '.components == $before[0].components' \
+            "$RUNNER_TEMP/production-state.restored.json" >/dev/null
+          mkdir -p "$RUNNER_TEMP/web-before" "$RUNNER_TEMP/web-oss-restored" "$RUNNER_TEMP/web-recovery-restored"
+          ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
+          : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
+          for f in manifest.webmanifest release-identity.json index.html sw.js; do
+            ossutil cp \
+              "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" \
+              "$RUNNER_TEMP/web-before/$f" -f --region "$OSS_REGION"
+            ossutil cp "oss://$OSS_BUCKET/$f" "$RUNNER_TEMP/web-oss-restored/$f" \
+              -f --region "$OSS_REGION"
+            cmp "$RUNNER_TEMP/web-before/$f" "$RUNNER_TEMP/web-oss-restored/$f"
+            curl -fsS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+              -H 'cache-control: no-cache' \
+              "https://agent.kaiyan.net/$f?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
+              > "$RUNNER_TEMP/web-recovery-restored/$f"
+            cmp "$RUNNER_TEMP/web-before/$f" "$RUNNER_TEMP/web-recovery-restored/$f"
+          done
+          jq -e --slurpfile before "$RUNNER_TEMP/web-before/release-identity.json" \
+            '.releaseSha == $before[0].releaseSha and .webDigest == $before[0].webDigest' \
+            "$RUNNER_TEMP/web-recovery-restored/release-identity.json" >/dev/null
+          echo "previous OSS/recovery Web and trusted Production identity authoritatively restored"
+
+      - name: Fail compatibility transaction after compensated identity error
+        if: steps.commit_trusted_identity.outcome == 'failure'
+        run: |
+          echo "trusted Production identity commit/readback failed; compensation completed" >&2
+          exit 1

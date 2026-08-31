@@ -108,13 +108,14 @@
 
 ## 3. 部署流程
 
-触发方式（ci.yml 头注释）：`push main` 只构建 + 测试 + 打包，**不部署生产**；
-发版走 `workflow_dispatch`（Actions 页面手动触发或 `gh workflow run ci.yml`）。
-`deploy_plan` 会从 `/etc/agent-saas/active-color` 和 active 色 release symlink 读取生产
-ECS SHA，以该 SHA 到目标 SHA 的累计 diff 判断 ECS 是否必要。确认只有 Web、Mobile、
-文档或测试路径时，`deploy-ecs` 为 skipped，`deploy-web-oss` 直接发布 OSS 和独立
-recovery-web；存在 ECS 相关路径时，后端成功后才放行 Web。生产基线或分类不可用时
-fail-open 继续部署 ECS；`force_ecs=true` 可无条件重发。Server release 始终不含前端文件。
+触发方式：`push main` 只构建、测试与打包，**不部署生产**。`ci.yml` 的旧
+`workflow_dispatch` 已收窄为必须显式确认 `web_only_compatibility=true` 的 Web-only
+兼容入口。`deploy_plan` 从 `/etc/agent-saas/active-color` 和 active 色 release symlink
+读取生产 ECS SHA，以该 SHA 到目标 SHA 的累计 diff 证明是否仅影响 Web。只有 Web、Mobile、
+文档或测试路径时才允许 `deploy-web-oss` 发布 OSS 与独立 recovery-web；只要存在 Server、
+Shared、技能源、依赖、部署配置或未知路径，或生产基线/分类不可用，都会在任何生产 mutation
+前 fail closed。该入口不再支持 `force_ecs`，`deploy-ecs` 不可达；API/Runtime Worker
+变更必须走 Staging RC 与 Production Promotion。Server release 始终不含前端文件。
 
 整条手动发布 workflow 使用固定 concurrency group，`cancel-in-progress=false`：同一时间
 只允许一个批次从 build 走到 Web OSS 发布结束；普通 push CI 使用独立 `run_id`，不受

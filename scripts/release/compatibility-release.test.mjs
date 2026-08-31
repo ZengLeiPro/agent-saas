@@ -111,12 +111,24 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
 });
 
 test('legacy deploy entrypoints persist immutable baselines and refresh trusted identity', async () => {
-  const [appWorkflow, acsWorkflow, promotionWorkflow, acsDeploy, releaseDocs] = await Promise.all([
+  const [
+    appWorkflow,
+    acsWorkflow,
+    promotionWorkflow,
+    acsDeploy,
+    recoveryRollback,
+    releaseDocs,
+    ecsDocs,
+    zeroDowntimeDocs,
+  ] = await Promise.all([
     readFile('.github/workflows/ci.yml', 'utf8'),
     readFile('.github/workflows/acs-sandbox.yml', 'utf8'),
     readFile('.github/workflows/promote-release.yml', 'utf8'),
     readFile('scripts/deploy-acs-orchestrator.sh', 'utf8'),
+    readFile('scripts/rollback-recovery-web.sh', 'utf8'),
     readFile('docs/release-workflow-configuration.md', 'utf8'),
+    readFile('docs/ecs-direct-deployment.md', 'utf8'),
+    readFile('docs/zero-downtime-deployment.md', 'utf8'),
   ]);
   assert.match(appWorkflow, /baselines\/app-/u);
   assert.match(appWorkflow, /web_only_compatibility:/u);
@@ -126,6 +138,15 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /needs\.deploy_plan\.outputs\.ecs_required == 'false'/u);
   assert.doesNotMatch(appWorkflow, /force_ecs/u);
   assert.match(releaseDocs, /App 入口已收窄为显式确认的 Web-only publish/u);
+  assert.match(ecsDocs, /Web-only/u);
+  assert.match(ecsDocs, /web_only_compatibility=true/u);
+  assert.match(ecsDocs, /fail closed/u);
+  assert.match(ecsDocs, /Server\/API\/Runtime Worker 变更必须走 Staging RC 与 Production/u);
+  assert.match(ecsDocs, /最终现场读回、identity 写入或确认读回任一步失败/u);
+  assert.doesNotMatch(ecsDocs, /force_ecs=true|fail-open/u);
+  assert.match(zeroDowntimeDocs, /web_only_compatibility=true/u);
+  assert.match(zeroDowntimeDocs, /fail closed/u);
+  assert.doesNotMatch(zeroDowntimeDocs, /force_ecs=true|fail-open/u);
   assert.match(appWorkflow, /baselines\/web-/u);
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
   assert.doesNotMatch(appWorkflow, /agent-saas-production-runtime/u);
@@ -149,6 +170,61 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
       'Commit trusted Production identity after all compatibility targets converge',
     ) > appWorkflow.indexOf('Verify deployed Web'),
   );
+  const identityCommitStart = appWorkflow.indexOf(
+    '      - name: Commit trusted Production identity after all compatibility targets converge',
+  );
+  const rollbackStart = appWorkflow.indexOf(
+    '      - name: Restore previous recovery Web on failure',
+  );
+  const finalFailureStart = appWorkflow.indexOf(
+    '      - name: Fail compatibility transaction after compensated identity error',
+  );
+  const identityCommit = appWorkflow.slice(identityCommitStart, rollbackStart);
+  const rollback = appWorkflow.slice(rollbackStart, finalFailureStart);
+  assert.match(identityCommit, /id: commit_trusted_identity/u);
+  assert.match(identityCommit, /continue-on-error: true/u);
+  for (const failurePoint of [
+    'read-live-production-components.mjs',
+    'write-live-production-identity.mjs',
+    'read-production-state.mjs',
+  ]) {
+    assert.ok(identityCommit.includes(failurePoint));
+    assert.ok(
+      rollbackStart > identityCommitStart,
+      `${failurePoint} failure must reach later rollback`,
+    );
+    assert.match(
+      rollback,
+      /if: failure\(\) \|\| steps\.commit_trusted_identity\.outcome == 'failure'/u,
+    );
+  }
+  assert.match(
+    appWorkflow,
+    /WEB_TRANSACTION_PREFIX: _transactions\/\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/u,
+  );
+  assert.match(appWorkflow, /web-entry-snapshot-complete/u);
+  assert.match(appWorkflow, /\$WEB_TRANSACTION_PREFIX\/before\/\$f/u);
+  assert.doesNotMatch(appWorkflow, /_releases\/\$GITHUB_SHA\/previous\/\$f/u);
+  assert.match(appWorkflow, /recovery-web-target\.before/u);
+  assert.match(appWorkflow, /RECOVERY_WEB_BEFORE_TARGET=\$recovery_web_before_q/u);
+  assert.match(recoveryRollback, /RECOVERY_WEB_BEFORE_TARGET/u);
+  assert.match(rollback, /runtime-identity\.before\.json/u);
+  assert.match(rollback, /production-state\.restored\.json/u);
+  assert.match(rollback, /web-oss-restored/u);
+  assert.match(rollback, /web-recovery-restored/u);
+  assert.match(
+    rollback,
+    /for f in manifest\.webmanifest release-identity\.json index\.html sw\.js/u,
+  );
+  assert.match(
+    rollback,
+    /cmp "\$RUNNER_TEMP\/web-before\/\$f" "\$RUNNER_TEMP\/web-oss-restored\/\$f"/u,
+  );
+  assert.match(
+    rollback,
+    /cmp "\$RUNNER_TEMP\/web-before\/\$f" "\$RUNNER_TEMP\/web-recovery-restored\/\$f"/u,
+  );
+  assert.match(appWorkflow.slice(finalFailureStart), /exit 1/u);
   assert.match(appWorkflow, /trusted identity remains unchanged until Web converges/u);
   assert.match(
     appWorkflow,
@@ -168,3 +244,35 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
+
+for (const [label, failurePoint] of [
+  ['final live component readback', 'read-live-production-components.mjs'],
+  ['trusted identity write', 'write-live-production-identity.mjs'],
+  ['confirmed Production readback', 'read-production-state.mjs'],
+]) {
+  test(`compensates Web-only compatibility when ${label} fails`, async () => {
+    const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+    const commitStart = workflow.indexOf(
+      '      - name: Commit trusted Production identity after all compatibility targets converge',
+    );
+    const rollbackStart = workflow.indexOf(
+      '      - name: Restore previous recovery Web on failure',
+    );
+    const proofStart = workflow.indexOf(
+      '      - name: Prove previous Web and trusted identity after compensation',
+    );
+    const failStart = workflow.indexOf(
+      '      - name: Fail compatibility transaction after compensated identity error',
+    );
+    assert.ok(workflow.slice(commitStart, rollbackStart).includes(failurePoint));
+    assert.match(
+      workflow.slice(rollbackStart, proofStart),
+      /steps\.commit_trusted_identity\.outcome == 'failure'/u,
+    );
+    assert.match(
+      workflow.slice(proofStart, failStart),
+      /production-state\.restored\.json[\s\S]*web-oss-restored[\s\S]*web-recovery-restored/u,
+    );
+    assert.match(workflow.slice(failStart), /exit 1/u);
+  });
+}

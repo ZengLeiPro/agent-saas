@@ -235,6 +235,7 @@ deploy_app() {
   api_idle="$(other_color "$api_active")"
   worker_idle="$(other_color "$worker_active")"
   api_idle_port="$(port_for_color "$api_idle")"
+  api_active_port="$(port_for_color "$api_active")"
   api_idle_previous="$(readlink -f "/opt/agent-saas-app/color/$api_idle" 2>/dev/null || true)"
   worker_idle_previous="$(readlink -f "/opt/agent-saas-app/worker/$worker_idle" 2>/dev/null || true)"
   api_env="/etc/agent-saas/server-$api_idle.release.env"
@@ -253,7 +254,92 @@ deploy_app() {
   cleanup_app_failure() {
     if [ "$app_committed" = false ] && [ "$app_mutation_started" = true ]; then
       record_rollback_attempt
+      # Keep the candidate API behind nginx until the previous Worker and API are both ready.
+      # Switch the Worker marker only after the previous Worker has a stable pid/ready pair, then
+      # stop the candidate Worker before starting the previous API readiness proof.
+      rm -f \
+        "/run/agent-saas-server-$api_active.draining" \
+        "/run/agent-saas-server-$api_active.pid" \
+        "/run/agent-saas-runtime-worker-$worker_active.draining" \
+        "/run/agent-saas-runtime-worker-$worker_active.pid" \
+        "/run/agent-saas-runtime-worker-$worker_active.ready"
+      systemctl enable "agent-saas-server@$api_active" >/dev/null
+      systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null
+
+      api_active_root="$(readlink -f "/opt/agent-saas-app/color/$api_active")"
+      worker_active_root="$(readlink -f "/opt/agent-saas-app/worker/$worker_active")"
+      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$api_active_root" --component server >/dev/null
+      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$worker_active_root" --component server >/dev/null
+
+      systemctl restart "agent-saas-runtime-worker@$worker_active"
+      for _ in $(seq 1 60); do
+        worker_rollback_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
+        worker_rollback_ready="$(cat "/run/agent-saas-runtime-worker-$worker_active.ready" 2>/dev/null || true)"
+        if [ -n "$worker_rollback_pid" ] && \
+          [ "$worker_rollback_pid" = "$worker_rollback_ready" ] && \
+          [ "$(systemctl show "agent-saas-runtime-worker@$worker_active" --property MainPID --value)" = "$worker_rollback_pid" ] && \
+          kill -0 "$worker_rollback_pid" 2>/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      test -n "${worker_rollback_pid:-}" && \
+        test "$worker_rollback_pid" = "${worker_rollback_ready:-}" && \
+        kill -0 "$worker_rollback_pid"
+      printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
       systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null
+
+      systemctl restart "agent-saas-server@$api_active"
+      for _ in $(seq 1 60); do
+        api_rollback_pid="$(cat "/run/agent-saas-server-$api_active.pid" 2>/dev/null || true)"
+        if [ -n "$api_rollback_pid" ] && \
+          [ "$(systemctl show "agent-saas-server@$api_active" --property MainPID --value)" = "$api_rollback_pid" ] && \
+          kill -0 "$api_rollback_pid" 2>/dev/null && \
+          curl -fsS "http://127.0.0.1:$api_active_port/api/healthz/ready" \
+            >"$rollback_root/api-active-ready.json"; then
+          break
+        fi
+        sleep 1
+      done
+      test -n "${api_rollback_pid:-}" && kill -0 "$api_rollback_pid"
+      node - "$api_active_root/manifest.json" "$rollback_root/api-active-ready.json" <<'NODE'
+const fs = require('node:fs');
+const [manifestPath, readyPath] = process.argv.slice(2);
+const manifest = JSON.parse(fs.readFileSync(manifestPath));
+const release = JSON.parse(fs.readFileSync(readyPath)).release;
+if (
+  release.environment !== 'production' ||
+  release.releaseId !== manifest.releaseId ||
+  release.releaseSha !== manifest.components.api.sourceSha ||
+  release.serverDigest !== manifest.components.api.artifactDigest
+) process.exit(1);
+NODE
+      sleep 2
+      test ! -e "/run/agent-saas-server-$api_active.draining"
+      test ! -e "/run/agent-saas-runtime-worker-$worker_active.draining"
+      systemctl is-active --quiet "agent-saas-server@$api_active"
+      systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active"
+      test "$(systemctl show "agent-saas-server@$api_active" --property MainPID --value)" = "$api_rollback_pid"
+      test "$(systemctl show "agent-saas-runtime-worker@$worker_active" --property MainPID --value)" = "$worker_rollback_pid"
+
+      if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
+        cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
+        cmp "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
+        nginx -t >/dev/null
+        systemctl reload nginx
+      fi
+      printf '%s\n' "$api_active" >/etc/agent-saas/active-color
+      printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
+      curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready \
+        >"$rollback_root/api-authoritative-ready.json"
+      node - "$rollback_root/api-active-ready.json" "$rollback_root/api-authoritative-ready.json" <<'NODE'
+const fs = require('node:fs');
+const [directPath, authoritativePath] = process.argv.slice(2);
+const direct = JSON.parse(fs.readFileSync(directPath));
+const authoritative = JSON.parse(fs.readFileSync(authoritativePath));
+if (JSON.stringify(direct.release) !== JSON.stringify(authoritative.release)) process.exit(1);
+NODE
+
       systemctl disable --now "agent-saas-server@$api_idle" >/dev/null
       if [ -n "$worker_idle_previous" ]; then
         ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle"
@@ -275,16 +361,6 @@ deploy_app() {
       else
         rm -f "$worker_env"
       fi
-      printf '%s\n' "$api_active" >/etc/agent-saas/active-color
-      printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
-      if [ "$nginx_changed" = true ] && [ -s "$rollback_root/nginx-upstream.conf" ]; then
-        cp -a "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
-        cmp "$rollback_root/nginx-upstream.conf" /etc/nginx/conf.d/agent-saas-upstream.conf
-        nginx -t >/dev/null
-        systemctl reload nginx
-      fi
-      systemctl enable --now "agent-saas-server@$api_active" >/dev/null
-      systemctl enable --now "agent-saas-runtime-worker@$worker_active" >/dev/null
       test "$(tr -d '[:space:]' </etc/agent-saas/active-color)" = "$api_active"
       test "$(tr -d '[:space:]' </etc/agent-saas/runtime-worker-active-color)" = "$worker_active"
       if [ -n "$api_idle_previous" ]; then
@@ -307,13 +383,6 @@ deploy_app() {
       else
         test ! -e "$worker_env"
       fi
-      api_active_root="$(readlink -f "/opt/agent-saas-app/color/$api_active")"
-      worker_active_root="$(readlink -f "/opt/agent-saas-app/worker/$worker_active")"
-      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$api_active_root" --component server >/dev/null
-      node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$worker_active_root" --component server >/dev/null
-      systemctl is-active --quiet "agent-saas-server@$api_active"
-      systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active"
-      curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
       record_rollback_success
     fi
   }

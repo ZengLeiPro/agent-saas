@@ -147,7 +147,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
   到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
   生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
-  因为 ECS + Web 跨 job 失败没有同一事务式补偿。ACS 通道仍会在部署前校验 latest main，并在
+  因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会预存原 OSS 入口与 trusted identity；
+  最终现场读回、identity 写入或确认读回失败时，必须恢复 OSS/recovery Web 与原 identity，并完成
+  权威 Production 读回后才以失败结束，补偿不完整则进入人工处置。ACS 通道仍会在部署前校验 latest main，并在
   exact-SHA ACR build record 尚未出现时拒绝已落后 main 的 dispatch；记录进入 `PENDING`/`BUILDING`
   后锁定 exact SHA 与镜像。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
   Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。push/PR 仍只执行 CI，不自动部署生产。

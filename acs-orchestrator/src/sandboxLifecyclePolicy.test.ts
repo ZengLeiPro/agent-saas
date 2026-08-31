@@ -45,7 +45,7 @@ describe('workload-aware sandbox lifecycle policy', () => {
   });
 
   it('caps every known non-terminal inactive workload and unknown at no more than 30 minutes', () => {
-    for (const workloadClass of ['interactive', 'taskboard', 'cron', 'deploy-smoke', 'unknown'] as const) {
+    for (const workloadClass of ['interactive', 'taskboard', 'deploy-smoke', 'unknown'] as const) {
       expect(decision({ workloadClass, nowMinutes: 29 }).delete).toBe(false);
       expect(decision({ workloadClass, nowMinutes: 30 }).delete).toBe(true);
     }
@@ -58,14 +58,18 @@ describe('workload-aware sandbox lifecycle policy', () => {
     });
   });
 
-  it('uses taskboard 5m and cron/memory outcome-specific terminal retention', () => {
+  it('uses 5m terminal retention for every cron/memory outcome', () => {
     // terminalAt is itself lifecycle activity, even when the last tool call was much older.
     expect(decision({ workloadClass: 'taskboard', terminalState: 'failed', terminalAtMinutes: 0, nowMinutes: 5 }).delete).toBe(true);
-    expect(decision({ workloadClass: 'cron', terminalState: 'completed', terminalAtMinutes: 0, nowMinutes: 5 }).delete).toBe(true);
-    expect(decision({ workloadClass: 'cron', terminalState: 'failed', terminalAtMinutes: 0, nowMinutes: 14 }).delete).toBe(false);
-    expect(decision({ workloadClass: 'cron', terminalState: 'timed-out', terminalAtMinutes: 0, nowMinutes: 15 }).delete).toBe(true);
-    expect(decision({ workloadClass: 'memory', terminalState: 'completed', terminalAtMinutes: 0, nowMinutes: 5 }).delete).toBe(true);
-    expect(decision({ workloadClass: 'memory', terminalState: 'cancelled', terminalAtMinutes: 0, nowMinutes: 15 }).delete).toBe(true);
+    for (const workloadClass of ['cron', 'memory'] as const) {
+      for (const terminalState of ['completed', 'failed', 'timed-out', 'cancelled'] as const) {
+        expect(decision({ workloadClass, terminalState, terminalAtMinutes: 0, nowMinutes: 4 }).delete).toBe(false);
+        expect(decision({ workloadClass, terminalState, terminalAtMinutes: 0, nowMinutes: 5 })).toMatchObject({
+          delete: true,
+          decision: 'delete-terminal-expired',
+        });
+      }
+    }
     expect(decideSandboxLifecycle({
       workloadClass: 'taskboard',
       terminalState: 'completed',
@@ -74,6 +78,16 @@ describe('workload-aware sandbox lifecycle policy', () => {
       lastActiveAt: iso(0),
       nowMs: BASE + 64 * 60_000,
     }).delete).toBe(false);
+  });
+
+  it('uses 15m inactive retention only when cron/memory terminal events are missing', () => {
+    for (const workloadClass of ['cron', 'memory'] as const) {
+      expect(decision({ workloadClass, nowMinutes: 14 }).delete).toBe(false);
+      expect(decision({ workloadClass, nowMinutes: 15 })).toMatchObject({
+        delete: true,
+        decision: 'delete-inactive-expired',
+      });
+    }
   });
 
   it('keeps deploy smoke explicit-delete semantics with a 30m abnormal residue cap', () => {
@@ -92,7 +106,7 @@ describe('workload-aware sandbox lifecycle policy', () => {
       nowMs: BASE + 5 * 60_000,
     });
     expect(result).toMatchObject({ delete: true, decision: 'delete-terminal-expired' });
-    expect(terminalDeadlineAt('taskboard', iso(0), 'completed')).toBe(iso(5 * 60_000));
+    expect(terminalDeadlineAt('taskboard', iso(0))).toBe(iso(5 * 60_000));
   });
 
   it('protects active registry, invocation lease and background work before deadlines', () => {

@@ -52,7 +52,7 @@ describe('AcsSandboxLifecycleClient exact-scope contract', () => {
   });
 });
 
-describe('SandboxLifecycleService', () => {
+describe('SandboxLifecycleService durable lifecycle protocol', () => {
   it('notifies a terminal top-level workload only after its whole scope is inactive', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 })) as unknown as typeof fetch;
     const store = {
@@ -124,18 +124,34 @@ describe('SandboxLifecycleService', () => {
     expect(markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
   });
 
-  it('cancels active descendants and keeps the durable cleanup claimed when ACS is busy', async () => {
+  it('cancels active descendants under the durable claim lock and keeps cleanup queued when ACS is busy', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: 'busy' }), { status: 409 })) as unknown as typeof fetch;
     const cancelRun = vi.fn(async () => ({ targetCancelled: true }));
     let enqueued = cleanup();
+    let state: 'none' | 'prepared' | 'cancelling' | 'pending' = 'none';
     const store = {
-      listActiveScopeRuns: vi.fn(async () => [{
-        runId: 'run-child', sessionId: 'sub-child', tenantId: 'tenant-1', userId: 'u-1',
-      }]),
+      listActiveScopeRuns: vi.fn()
+        .mockResolvedValueOnce([{
+          runId: 'run-child', sessionId: 'sub-child', tenantId: 'tenant-1', userId: 'u-1',
+        }])
+        .mockResolvedValueOnce([{
+          runId: 'run-late-child', sessionId: 'sub-late-child', tenantId: 'tenant-1', userId: 'u-1',
+        }])
+        .mockResolvedValue([]),
       enqueueCleanup: vi.fn(async (candidate: typeof enqueued) => {
-        enqueued = { ...candidate, runId: 'run-cleanup' };
-        return enqueued;
+        enqueued = { ...candidate, runId: 'run-cleanup' }; state = 'prepared'; return enqueued;
       }),
+      listPreparedCleanupCandidates: vi.fn(async () => state === 'prepared' ? [enqueued] : []),
+      claimPreparedCleanup: vi.fn(async (_runId: string, claimId: string) => {
+        state = 'cancelling'; return { ...enqueued, claimId, claimGeneration: 1 };
+      }),
+      isPreparedCleanupClaimCurrent: vi.fn(async () => state === 'cancelling'),
+      runWhilePreparedCleanupClaimCurrent: vi.fn(async (...args: unknown[]) => {
+        await (args[5] as () => Promise<void>)(); return true;
+      }),
+      completePreparedCleanup: vi.fn(async () => { state = 'pending'; return enqueued; }),
+      releasePreparedCleanupClaim: vi.fn(async () => undefined),
+      listCleanupCandidates: vi.fn(async () => state === 'pending' ? [enqueued] : []),
       claimCleanup: vi.fn(async (_runId: string, claimId: string) => ({ ...enqueued, claimId })),
       isCleanupClaimCurrent: vi.fn(async () => true),
       releaseCleanupClaim: vi.fn(async () => undefined),
@@ -144,7 +160,7 @@ describe('SandboxLifecycleService', () => {
     const service = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never,
       runStore: { cancelSteeringBeforeDispatchBySessionWithEvent: cancelRun } as never,
-      sessionCatalog: { get: async () => session() },
+      sessionCatalog: { get: async () => ({ ...session(), deletedAt: '2026-08-30T01:00:00.000Z' }) },
       handStore: {
         get: async () => ({ metadata: { recipe: { sandboxScopeId: 'scope-1' } } }) as never,
         listBySession: async () => [],
@@ -158,12 +174,19 @@ describe('SandboxLifecycleService', () => {
     expect(cancelRun).toHaveBeenCalledWith(
       'sub-child', 'session_deleted:session-1', 'run-child',
       expect.objectContaining({ type: 'run_cancel_requested', runId: 'run-child' }), 'tenant-1',
+      expect.objectContaining({ cleanupRunId: 'run-cleanup', sandboxScopeId: 'scope-1' }),
+    );
+    expect(cancelRun).toHaveBeenCalledWith(
+      'sub-late-child', 'session_deleted:session-1', 'run-late-child',
+      expect.objectContaining({ type: 'run_cancel_requested', runId: 'run-late-child' }), 'tenant-1',
+      expect.objectContaining({ cleanupRunId: 'run-cleanup', sandboxScopeId: 'scope-1' }),
     );
     expect(store.enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({
       ...identity, tenantId: 'tenant-1', userId: 'u-1', username: 'alice',
       targetHandId: 'agent-saas-acs', deletionGeneration: expect.any(String),
-    }));
+    }), { prepared: true });
     expect(store.releaseCleanupClaim).toHaveBeenCalledWith('run-cleanup', expect.any(String));
+    expect(store.completePreparedCleanup).toHaveBeenCalledBefore(store.claimCleanup);
   });
 
   it('retries persisted cleanup on its original hand after rollout switches to another ACS', async () => {
@@ -197,22 +220,34 @@ describe('SandboxLifecycleService', () => {
     expect(markCleanupDelivered).toHaveBeenCalledWith('run-cleanup', expect.any(String), expect.any(String));
   });
 
-  it('initial cleanup pins the actually registered ACS hand instead of server-remote providerId', async () => {
+  it('initial prepared cleanup pins the actually registered ACS hand instead of server-remote providerId', async () => {
     const hands = [remote('acs-new', 'http://acs-new.test'), remote('acs-old', 'http://acs-old.test', 'drain')];
     let pending = cleanup();
+    let state: 'none' | 'prepared' | 'cancelling' | 'pending' = 'none';
     const enqueueCleanup = vi.fn(async (candidate: typeof pending) => {
-      pending = { ...candidate, runId: 'run-cleanup' };
-      return pending;
+      pending = { ...candidate, runId: 'run-cleanup' }; state = 'prepared'; return pending;
     });
     const store = {
       listActiveScopeRuns: vi.fn(async () => []), enqueueCleanup,
+      listPreparedCleanupCandidates: vi.fn(async () => state === 'prepared' ? [pending] : []),
+      claimPreparedCleanup: vi.fn(async (_runId: string, claimId: string) => {
+        state = 'cancelling'; return { ...pending, claimId, claimGeneration: 1 };
+      }),
+      isPreparedCleanupClaimCurrent: vi.fn(async () => state === 'cancelling'),
+      runWhilePreparedCleanupClaimCurrent: vi.fn(async (...args: unknown[]) => {
+        await (args[5] as () => Promise<void>)(); return true;
+      }),
+      completePreparedCleanup: vi.fn(async () => { state = 'pending'; return pending; }),
+      releasePreparedCleanupClaim: vi.fn(async () => undefined),
+      listCleanupCandidates: vi.fn(async () => state === 'pending' ? [pending] : []),
       claimCleanup: vi.fn(async (_runId: string, claimId: string) => ({ ...pending, claimId })),
-      isCleanupClaimCurrent: vi.fn(async () => true), markCleanupDelivered: vi.fn(async () => undefined),
+      isCleanupClaimCurrent: vi.fn(async () => true), releaseCleanupClaim: vi.fn(async () => undefined),
+      markCleanupDelivered: vi.fn(async () => undefined),
     };
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
     const service = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
-      sessionCatalog: { get: async () => session() },
+      sessionCatalog: { get: async () => ({ ...session(), deletedAt: '2026-08-30T01:00:00.000Z' }) },
       handStore: {
         get: async () => ({ providerId: 'server-remote', metadata: { recipe: { sandboxScopeId: 'scope-1' } } }) as never,
         listBySession: async () => [{ providerId: 'acs-old', metadata: {} } as never],
@@ -223,7 +258,7 @@ describe('SandboxLifecycleService', () => {
     });
 
     await expect(service.prepareSessionDeletion('session-1')).resolves.toBe('deleted');
-    expect(enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({ targetHandId: 'acs-old' }));
+    expect(enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({ targetHandId: 'acs-old' }), { prepared: true });
     expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]))).toEqual([
       'http://acs-old.test/sandboxes/deletion-generation', 'http://acs-old.test/sandboxes/scope',
     ]);

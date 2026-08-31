@@ -23,7 +23,7 @@ describe('SandboxManager egress injection', () => {
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           applies.push(JSON.parse(options.input ?? '{}') as Record<string, unknown>);
           created = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
@@ -127,7 +127,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'patch') {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           applied = JSON.parse(options.input ?? '{}') as Record<string, unknown>;
           created = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
@@ -220,7 +220,7 @@ describe('SandboxManager', () => {
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           created = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
@@ -264,7 +264,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('refreshes a paused image-drift Sandbox in place when only the current active key is using it', async () => {
+  it('recreates a paused image-drift Sandbox when only the current active key is using it', async () => {
     const deleted: string[] = [];
     let sandboxApplied = false;
     const kubectl = {
@@ -301,7 +301,7 @@ describe('SandboxManager', () => {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
           if (manifest.kind === 'Sandbox') sandboxApplied = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
@@ -364,7 +364,7 @@ describe('SandboxManager', () => {
           state = 'missing';
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
           if (manifest.kind === 'Sandbox') {
             sandboxApplyCount += 1;
@@ -479,7 +479,7 @@ describe('SandboxManager', () => {
           if (args[1]?.startsWith('sandbox/') || args[1]?.startsWith('--raw=')) state = 'missing';
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
           if (manifest.kind === 'Sandbox') {
             appliedSandbox = true;
@@ -574,7 +574,7 @@ describe('SandboxManager', () => {
           if (args[1]?.startsWith('sandbox/') || args[1]?.startsWith('--raw=')) state = 'missing';
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as { kind?: string };
           if (manifest.kind === 'Sandbox') {
             appliedSandbox = true;
@@ -677,7 +677,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'delete') { if (isRawSandboxDelete(args, 'as-idle')) idleDeleted = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null }; }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           applied = JSON.parse(options.input ?? '{}') as Record<string, unknown>;
           created = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
@@ -738,7 +738,7 @@ describe('SandboxManager', () => {
           if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
         }
-        if (args[0] === 'patch' || args[0] === 'delete' || args[0] === 'apply') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if (args[0] === 'patch' || args[0] === 'delete' || (args[0] === 'apply' || args[0] === 'create')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -830,7 +830,7 @@ describe('SandboxManager', () => {
     expect(calls.some((args) => isRawSandboxDelete(args, 'as-expired'))).toBe(true);
   });
 
-  it('keeps a sandbox running while a durable background shell protection is active', async () => {
+  it('keeps a sandbox running while durable background shell protection is active', async () => {
     const calls: string[][] = [];
     const kubectl = {
       async run(args: string[]): Promise<KubectlResult> {
@@ -869,7 +869,7 @@ describe('SandboxManager', () => {
     expect(report.paused).toEqual([]);
     expect(report.deleted).toEqual([]);
     expect(report.skippedBusy).toEqual(['as-background-shell']);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 
   it('does not delete Sandboxes older than TTL when they were recently active', async () => {
@@ -1089,7 +1089,7 @@ describe('SandboxManager', () => {
             signal: null,
           };
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           JSON.parse(options.input ?? '{}');
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
@@ -1194,7 +1194,7 @@ describe('SandboxManager', () => {
     // stale Paused 只允许 delete：绝不能 applySandbox 原地换镜像（会留 ImageChanged
     // 半状态或让后续 pause 卡死），也绝不能 patch paused。
     expect(calls.some((args) => isRawSandboxDelete(args, oldPausedName))).toBe(true);
-    expect(calls.some((args) => args[0] === 'apply')).toBe(false);
+    expect(calls.some((args) => (args[0] === 'apply' || args[0] === 'create'))).toBe(false);
     expect(calls.some((args) => args[0] === 'patch' && String(args[4] ?? '').includes('"paused"'))).toBe(false);
     // 镜像已是当前版的 Paused 与 Running 中的旧镜像 sandbox 都不许删。
     expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${currentPausedName}`)).toBe(false);
@@ -1367,9 +1367,8 @@ describe('SandboxManager', () => {
 describe('SandboxManager ensure fast path & coalescing', () => {
   const ok = (stdout = ''): KubectlResult => ({ stdout, stderr: '', exitCode: 0, signal: null });
 
-  function runningSandboxJson(config: AcsOrchestratorConfig, input: { workspaceId: string; mountSubPath?: string }, phase = 'Running', paused = false) {
-    return JSON.stringify({
-      metadata: {
+  function runningSandboxJson(config: AcsOrchestratorConfig, input: { workspaceId: string; mountSubPath?: string }, phase = 'Running', paused = false) { return JSON.stringify({
+      metadata: { uid: `uid-${input.workspaceId}`, resourceVersion: '1',
         annotations: {
           'agent-saas.kaiyan.net/workspace-id': input.workspaceId,
           'agent-saas.kaiyan.net/mount-subpath': input.mountSubPath ?? input.workspaceId,
@@ -1384,7 +1383,7 @@ describe('SandboxManager ensure fast path & coalescing', () => {
   }
 
   function isApplyKind(args: string[], options: { input?: string } | undefined, kind: string): boolean {
-    if (args[0] !== 'apply') return false;
+    if (args[0] !== 'apply' && args[0] !== 'create') return false;
     try {
       return (JSON.parse(options?.input ?? '{}') as { kind?: string }).kind === kind;
     } catch {
@@ -1496,7 +1495,7 @@ describe('SandboxManager ensure fast path & coalescing', () => {
           created = true;
           return ok();
         }
-        if (args[0] === 'apply') return ok();
+        if ((args[0] === 'apply' || args[0] === 'create')) return ok();
         if (args[0] === 'patch') return ok();
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
@@ -1580,7 +1579,7 @@ describe('resume 快路径与 Failed fail-fast', () => {
         if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
         if (args[0] === 'get') return ok(sandboxJson());
         if (args[0] === 'delete') { deletes += 1; return ok(); }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const kind = (JSON.parse(options.input ?? '{}') as { kind?: string }).kind;
           if (kind === 'Sandbox') sandboxApplies += 1;
           return ok();
@@ -1616,7 +1615,7 @@ describe('resume 快路径与 Failed fail-fast', () => {
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(JSON.stringify({ status: { phase: 'Failed', message: 'image pull backoff' } }));
         }
-        if (args[0] === 'apply') { created = true; return ok(); }
+        if ((args[0] === 'apply' || args[0] === 'create')) { created = true; return ok(); }
         if (args[0] === 'patch') return ok();
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
@@ -1643,7 +1642,7 @@ describe('ImageCache 注解（2026-07-31 方案3-P0）', () => {
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(JSON.stringify({ status: { phase: 'Running' } }));
         }
-        if (args[0] === 'apply') {
+        if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as {
             kind?: string;
             spec?: { template?: { metadata?: { annotations?: Record<string, string> } } };

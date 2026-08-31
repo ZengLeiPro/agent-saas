@@ -7,7 +7,7 @@ import { WORKLOAD_DESCRIPTOR_ANNOTATION } from './sandboxLifecyclePolicy.js';
 
 const ok = (stdout = ''): KubectlResult => ({ stdout, stderr: '', exitCode: 0, signal: null });
 
-describe('SandboxManager workload concurrency', () => {
+describe('SandboxManager workload concurrency with create-only Sandbox writes', () => {
   it('leader 完成后重新检查不同 workload，并把 descriptor 补写为 follower 目标', async () => {
     const config = { ...baseConfig(), sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 };
     const identity = { workspaceId: 'ws-workload-race', sessionId: 's-1' };
@@ -32,7 +32,7 @@ describe('SandboxManager workload concurrency', () => {
             status: { phase: 'Running' },
           }));
         }
-        if (args[0] === 'apply') {
+        if (args[0] === 'apply' || args[0] === 'create') {
           const manifest = JSON.parse(options.input ?? '{}') as { kind?: string; metadata?: { annotations?: Record<string, string> } };
           if (manifest.kind === 'Sandbox') {
             workload = JSON.parse(manifest.metadata?.annotations?.[WORKLOAD_DESCRIPTOR_ANNOTATION] ?? '{}');

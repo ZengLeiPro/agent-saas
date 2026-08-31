@@ -432,7 +432,7 @@ describe('sessions routes lifecycle coverage', () => {
     const { sessionId: trashed, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
 
     const deleteArtifactsForSessions = vi.fn(async (_sessionIds: string[]) => ({ scanned: 1, deleted: 1 }));
-    const sandboxSessionDeletion = vi.fn(async () => 'queued' as const);
+    const sandboxSessionDeletion = vi.fn(async () => 'deleted' as const);
     const { server, baseUrl } = await startServer(agentCwd, OWNER, {
       artifactService: { deleteArtifactsForSessions }, sandboxSessionDeletion,
     });
@@ -450,6 +450,19 @@ describe('sessions routes lifecycle coverage', () => {
     expect(sandboxSessionDeletion).toHaveBeenCalledWith(trashed);
     // transcript 已被物理删除
     await expect(readSessionMeta(transcriptPath)).resolves.toBeNull();
+  });
+
+  it('永久删除在 Sandbox cleanup 仍 queued 时保留 meta tombstone', async () => {
+    const deletedAt = new Date().toISOString();
+    const { sessionId, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const sandboxSessionDeletion = vi.fn(async () => 'queued' as const);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, { sandboxSessionDeletion });
+    servers.push(server);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/permanent`, { method: 'DELETE' });
+    expect(response.status).toBe(500);
+    expect((await response.json() as { error: string }).error).toContain('Sandbox cleanup 仍在排队');
+    expect(await readSessionMeta(transcriptPath)).toMatchObject({ deletedAt });
   });
 
   it('永久删除在 Artifact 清理失败时保留 meta tombstone，并可由同一端点重试', async () => {

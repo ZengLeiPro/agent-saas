@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 
 import type { AcsOrchestratorConfig } from './config.js';
 import { Kubectl } from './kubectl.js';
@@ -14,9 +15,10 @@ import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sand
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { sandboxResourceOverride } from './provision.js';
 import { summarizeRunnerStderr } from './runnerLog.js';
-
-const ACTIVE_INVOCATION_LEASE_MS = 2 * 60_000;
-const ACTIVE_INVOCATION_LEASE_RENEW_MS = 60_000;
+import {
+  ACTIVE_INVOCATION_LEASE_MS,
+  InvocationLeaseMonitor,
+} from './invocationLeaseMonitor.js';
 
 interface InvocationEntry {
   controller: AbortController;
@@ -69,6 +71,9 @@ export class AcsExecutor {
     const ref = this.sandboxManager.ref(sandboxIdentity);
     const invocationId = request.context.invocationId;
     const invocationKey = invocationId ?? `internal-${Date.now()}-${++this.invocationSeq}`;
+    // 同一 invocationId 可因跨实例重试并发存在；每次执行必须使用独立 annotation key，
+    // 否则旧实例 finally 清理会删除新实例刚续租的 lease。
+    const leaseKey = `${invocationKey}:${randomUUID()}`;
     if (this.invocations.has(invocationKey)) {
       yield {
         type: 'completed',
@@ -83,31 +88,38 @@ export class AcsExecutor {
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     let leasePersisted = false;
-    let leaseClosed = false;
-    let leaseRenewal: Promise<void> | undefined;
-    let leaseRenewTimer: ReturnType<typeof setInterval> | undefined;
-    const renewLease = () => {
-      if (leaseClosed || leaseRenewal) return;
-      leaseRenewal = this.sandboxManager.setActiveInvocationLease(
-        ref.name,
-        invocationKey,
-        new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
-      ).catch((err) => {
-        this.logger.warn(`invocation_lease_renew_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
-      }).finally(() => { leaseRenewal = undefined; });
+    let leaseMonitor: InvocationLeaseMonitor | undefined;
+    let finalResponse: ToolInvocationResponse | undefined;
+    let runError: unknown;
+    const failForLease = (error: Error) => { // Runner termination is part of the lease fence.
+      this.logger.error(
+        `invocation_lease_lost sandbox=${ref.name} invocation=${invocationKey}: ${error.message}`,
+      );
+      controller.abort();
+      this.invocations.get(invocationKey)?.child?.kill('SIGTERM');
+      const persistent = this.persistentRunners.get(ref.name);
+      if (persistent) {
+        persistent.close('invocation_lease_lost');
+        this.persistentRunners.delete(ref.name);
+      }
     };
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
+      const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
       await this.sandboxManager.setActiveInvocationLease(
         ref.name,
-        invocationKey,
-        new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
+        leaseKey,
+        new Date(leaseUntilMs).toISOString(),
       );
       leasePersisted = true;
-      leaseRenewTimer = setInterval(renewLease, ACTIVE_INVOCATION_LEASE_RENEW_MS);
-      leaseRenewTimer.unref?.();
+      leaseMonitor = new InvocationLeaseMonitor(
+        (leaseUntil) => this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey, leaseUntil),
+        failForLease,
+      );
+      leaseMonitor.start(leaseUntilMs);
+      if (leaseMonitor.failure) throw leaseMonitor.failure;
       if (controller.signal.aborted) return;
-      // 07-05：把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
+      // 把 wire.context.env（parseWireRequest 已 allowlist 过滤过）透传给
       // pod 内 sandboxRunner，让其合并进 spawn 子进程的 env，pod 里 Shell 才能
       // 拿到 AZEROTH_TOKEN 等凭据。env 为空则不写字段（wire 更紧凑，与协议一致）。
       const wireEnv = request.context.env;
@@ -141,37 +153,41 @@ export class AcsExecutor {
           this.logger.warn(`runner_daemon_fallback sandbox=${ref.name}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) {
+        if (leaseMonitor.failure) throw leaseMonitor.failure;
+        return;
+      }
       if (runner) {
         yield { type: 'progress', message: 'acs sandbox invocation accepted' };
         for await (const output of runner.invoke(invocationKey, runnerInput, controller.signal)) {
           if (output.kind === 'chunk') {
             if (output.chunk.type === 'completed') {
-              const response = addRunnerMetadata(output.chunk.response, 'persistent');
-              await this.applyBackgroundShellProtection(ref.name, response);
-              yield { ...output.chunk, response };
-            } else {
+              finalResponse = addRunnerMetadata(output.chunk.response, 'persistent');
+              await this.applyBackgroundShellProtection(ref.name, finalResponse);
+            } else if (!leaseMonitor?.failure) {
               yield output.chunk;
             }
           } else {
-            const response = addRunnerMetadata(output.response, 'persistent');
-            await this.applyBackgroundShellProtection(ref.name, response);
-            yield { type: 'completed', response };
+            finalResponse = addRunnerMetadata(output.response, 'persistent');
+            await this.applyBackgroundShellProtection(ref.name, finalResponse);
           }
         }
       } else {
-        yield* this.executeOneShot(ref, runnerInput, controller, invocationKey);
+        for await (const output of this.executeOneShot(ref, runnerInput, controller, invocationKey)) {
+          if (output.type === 'completed') finalResponse = output.response;
+          else if (!leaseMonitor?.failure) yield output;
+        }
       }
+    } catch (err) {
+      runError = err;
     } finally {
+      const leaseFailure = await leaseMonitor?.finish();
       options.signal?.removeEventListener('abort', onExternalAbort);
       this.invocations.delete(invocationKey);
       releaseActive?.();
-      leaseClosed = true;
-      if (leaseRenewTimer) clearInterval(leaseRenewTimer);
-      if (leaseRenewal) await leaseRenewal;
-      if (leasePersisted) {
+      if (leasePersisted && !leaseFailure) {
         try {
-          await this.sandboxManager.setActiveInvocationLease(ref.name, invocationKey);
+          await this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey);
         } catch (err) {
           this.logger.warn(`invocation_lease_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -182,7 +198,16 @@ export class AcsExecutor {
           this.logger.warn(`invocation_touch_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+      if (leaseFailure) {
+        finalResponse = {
+          status: 'error',
+          error: `ACS invocation aborted because persisted lease was lost: ${leaseFailure.message}`,
+        };
+        runError = undefined;
+      }
     }
+    if (runError) throw runError;
+    if (finalResponse) yield { type: 'completed', response: finalResponse };
   }
 
   cancel(invocationId: string): boolean {

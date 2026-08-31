@@ -2,10 +2,10 @@
 # Thresholds: production=1000 (above production p95=821), test=800 (above test p95=667).
 # Generated/build/cache output is excluded because it is not maintained source.
 # Format: repo-relative-path max-lines scope
-# Existing over-threshold files are grandfathered; entries may only shrink or be pruned.
+# Existing over-threshold files are grandfathered; exact baselines may only shrink or be pruned.
 
-acs-orchestrator/src/sandboxManager.test.ts	1679	test
-acs-orchestrator/src/sandboxManager.ts	1156	production
+acs-orchestrator/src/sandboxManager.test.ts	1678	test
+acs-orchestrator/src/sandboxManager.ts	1153	production
 acs-orchestrator/src/snatManager.test.ts	854	test
 server/src/__tests__/appConfig.test.ts	894	test
 server/src/__tests__/billingRouterEndpoints.test.ts	822	test

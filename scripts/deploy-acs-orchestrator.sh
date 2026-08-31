@@ -470,7 +470,7 @@ echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_
 SMOKE_OK=true
 if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/provision \
   -H "$AUTH_HEADER" -H 'X-ACS-Maintenance-Bypass: deploy-smoke-v1' -H 'Content-Type: application/json' \
-  -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}" \
+  -d "{\"workspaceId\":\"${SMOKE_WS}\",\"recipe\":{\"workspaceId\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\",\"workload\":{\"class\":\"deploy-smoke\"}}}" \
   >/tmp/acs-provision.json; then
   SMOKE_OK=false
 elif ! grep -F '"status":"ok"' /tmp/acs-provision.json >/dev/null; then
@@ -478,7 +478,7 @@ elif ! grep -F '"status":"ok"' /tmp/acs-provision.json >/dev/null; then
 fi
 
 if [ "$SMOKE_OK" = "true" ]; then
-  printf '%s' "{\"toolName\":\"Shell\",\"input\":{\"command\":\"set -eu; test \\\"\$(id -u)\\\" = 501; test \\\"\$(pwd)\\\" = /workspace; command -v aliyun; aliyun version; command -v gh; gh --version; command -v ntn; ntn --version; command -v gws; gws --version; command -v dws; dws --version; command -v lark-cli; lark-cli --version; echo ACR_BUILD_DEPLOY_SMOKE_OK\",\"timeoutMs\":120000},\"context\":{\"workspace\":{\"id\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\"}}}" >/tmp/acs-execute-payload.json
+  printf '%s' "{\"toolName\":\"Shell\",\"input\":{\"command\":\"set -eu; test \\\"\$(id -u)\\\" = 501; test \\\"\$(pwd)\\\" = /workspace; command -v aliyun; aliyun version; command -v gh; gh --version; command -v ntn; ntn --version; command -v gws; gws --version; command -v dws; dws --version; command -v lark-cli; lark-cli --version; echo ACR_BUILD_DEPLOY_SMOKE_OK\",\"timeoutMs\":120000},\"context\":{\"workspace\":{\"id\":\"${SMOKE_WS}\",\"sessionId\":\"${SMOKE_SESSION}\",\"mountSubPath\":\"${SMOKE_MOUNT}\",\"workload\":{\"class\":\"deploy-smoke\"}}}}" >/tmp/acs-execute-payload.json
   if ! curl -fsS -m 420 -X POST http://127.0.0.1:3400/execute \
     -H "$AUTH_HEADER" -H 'X-ACS-Maintenance-Bypass: deploy-smoke-v1' -H 'Content-Type: application/json' \
     --data-binary @/tmp/acs-execute-payload.json >/tmp/acs-execute.json; then

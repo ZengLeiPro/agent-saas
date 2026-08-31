@@ -1826,7 +1826,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             sessionId: item.sessionId,
             ownerUserId: meta.userId,
             hasTranscript: item.hasTranscript,
-            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { await options.sandboxSessionDeletion?.(item.sessionId); },
+            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { if (await options.sandboxSessionDeletion?.(item.sessionId) === 'queued') throw new Error('Sandbox cleanup 仍在排队，拒绝物理删除 Session 元数据'); },
             deleteTranscriptPreservingMeta: async () => !item.hasTranscript || (await deleteSession(item.sessionId, { preserveMeta: true })).deleted,
             deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true })).deleted,
           });
@@ -3107,7 +3107,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             return;
           }
 
-          // 先取消 durable cleanup，再移除 tombstone；否则重试可能在恢复后删除新建 Sandbox。
+          // 先 CAS 取消 durable cleanup，再移除 tombstone；否则重试可能在恢复后删除新建 Sandbox。
           await options.sandboxSessionRestore?.(sessionId); const { deletedAt, deletedBy, ...rest } = meta;
           await writeSessionMeta(transcriptPath, rest as SessionMeta);
           auditLog(req, "session_restored", sessionId);
@@ -3170,7 +3170,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           sessionId,
           ownerUserId: req.user.sub,
           hasTranscript,
-          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { await options.sandboxSessionDeletion?.(sessionId); },
+          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { if (await options.sandboxSessionDeletion?.(sessionId) === 'queued') throw new Error('Sandbox cleanup 仍在排队，拒绝物理删除 Session 元数据'); },
           deleteTranscriptPreservingMeta: async () => !hasTranscript || (await deleteSession(sessionId, { preserveMeta: true })).deleted,
           deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(sessionId, { deleteSidecarDir: true })).deleted,
         });
@@ -3278,7 +3278,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const applySoftDelete = async (): Promise<boolean> => {
         const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
         if (newlyDeleted) {
-          // prepared 不可投递；meta 成功后才 activate，跨文件/PG 不伪装原子事务。
+          // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，跨文件/PG 不伪装原子事务。
           await options.sandboxSessionDeletionIntent?.(sessionId);
           await updateSessionMeta(transcriptPath, { deletedAt: new Date().toISOString(), deletedBy: req.user?.username || "anonymous" });
         }

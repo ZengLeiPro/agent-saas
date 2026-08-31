@@ -364,6 +364,8 @@ describe('AcsExecutor active sandbox tracking', () => {
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(setActiveInvocationLease).toHaveBeenCalledTimes(1);
+      const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]?.[1] as string;
+      expect(leaseKey).toMatch(/^inv-renew:/u);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
 
@@ -371,13 +373,13 @@ describe('AcsExecutor active sandbox tracking', () => {
       child.emit('close', 0, null);
       await vi.advanceTimersByTimeAsync(0);
       await expect(result).resolves.toMatchObject({ status: 'success' });
-      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(ref.name, 'inv-renew');
+      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(ref.name, leaseKey);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('clears the persisted invocation lease before touching last activity in finally', async () => {
+  it('clears only this execution lease before touching last activity in finally', async () => {
     const ref: SandboxRef = {
       name: 'as-finally-order',
       workspaceId: 'ws_kaiyan__u-1',
@@ -414,7 +416,9 @@ describe('AcsExecutor active sandbox tracking', () => {
     child.emit('close', 0, null);
     await expect(result).resolves.toMatchObject({ status: 'success' });
 
-    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(2, ref.name, 'inv-finally');
+    const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]?.[1] as string;
+    expect(leaseKey).toMatch(/^inv-finally:/u);
+    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(2, ref.name, leaseKey);
     expect(touch).toHaveBeenCalledWith(ref.name);
     expect(setActiveInvocationLease.mock.invocationCallOrder[1]).toBeLessThan(touch.mock.invocationCallOrder[0]!);
   });

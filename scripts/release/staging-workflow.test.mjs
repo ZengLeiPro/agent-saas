@@ -306,7 +306,8 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
-  assert.match(deploy, /trap finish EXIT/u);
+  assert.match(deploy, /ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce/u);
+  assert.match(deploy, /trap finish EXIT/u, 'deployment must retain its cleanup trap');
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 

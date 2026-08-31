@@ -11,12 +11,12 @@ import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
+import { acquireSandboxCleanupClaimGuard, sandboxRunAdmissionFenceSql } from './sandboxRunAdmissionFence.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
-const { Pool } = pg;
-type PgPoolClient = pg.PoolClient;
+const { Pool } = pg; type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
-import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
   readonly runsTable: string;
@@ -27,8 +27,7 @@ export class PgRunStore implements RunStore {
   readonly eventCursorsTable: string;
   readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
-  private readonly ownsPool: boolean;
-  private readonly queries: PgRunStoreQueries;
+  private readonly ownsPool: boolean; private readonly queries: PgRunStoreQueries;
 
   constructor(options: PgRunStoreOptions) {
     if (!options.pool && !options.connectionString) {
@@ -180,8 +179,9 @@ export class PgRunStore implements RunStore {
         await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN submitter_scope TEXT`);
       }
       await client.query(`UPDATE ${this.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
-      // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 进入终态后已无恢复用途，启动时清理历史遗留正文。
+      // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 终态后已无恢复用途，启动时清理历史遗留正文。
       await client.query(`UPDATE ${this.runsTable} SET metadata = metadata - 'wakeMessage' WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata ? 'wakeMessage'`);
+      await client.query(sandboxRunAdmissionFenceSql(this.runsTable).join(';\n'));
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
@@ -859,15 +859,13 @@ export class PgRunStore implements RunStore {
     sessionId: string,
     reason: string,
     targetRunId: string | undefined,
-    event: PlatformEventInput,
-    tenantId: string,
+    event: PlatformEventInput, tenantId: string, cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
       reason,
       targetRunId,
-      event,
-      tenantId,
+      event, tenantId, cleanupGuard,
     );
     return {
       cancelled: result.cancelled,
@@ -881,8 +879,7 @@ export class PgRunStore implements RunStore {
     sessionId: string,
     reason: string,
     targetRunId: string | undefined,
-    event: PlatformEventInput | undefined,
-    tenantId: string,
+    event: PlatformEventInput | undefined, tenantId: string, cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
@@ -894,6 +891,9 @@ export class PgRunStore implements RunStore {
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
         `${this.runsTable}:message:${sessionId}`,
       ]);
+      if (cleanupGuard && !await acquireSandboxCleanupClaimGuard(client, this.runsTable, cleanupGuard)) {
+        await client.query('COMMIT'); return { cancelled: [], targetCancelled: false, eventCreated: false };
+      }
       const now = new Date().toISOString();
       // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后

@@ -26,6 +26,8 @@ export interface ManagedSandbox extends SandboxLifecycleState {
   sandboxScopeId?: string;
   mountSubPath?: string;
   phase?: string;
+  deletionTimestamp?: string;
+  networkCleanupFinalizer?: boolean;
   brokenReason?: string;
   /**
    * status.conditions 里 SandboxPaused condition 的 lastTransitionTime。
@@ -38,7 +40,7 @@ export interface ManagedSandbox extends SandboxLifecycleState {
   /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate。 */
   backgroundShellProtectedUntil?: string;
   /**
-   * 当前 sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
+   * 当前 Sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */
   image?: string;
   cpuRequest?: string;

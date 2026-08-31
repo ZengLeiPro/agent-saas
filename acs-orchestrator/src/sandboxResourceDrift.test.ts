@@ -52,12 +52,21 @@ function harness(existing?: ReturnType<typeof sandboxBody>, firstSandboxApplyGat
       if (args[0] === 'get' && args.includes('--ignore-not-found=true')) {
         return { stdout: '', stderr: '', exitCode: 0, signal: null };
       }
-      if (args[0] === 'apply') {
+      if (args[0] === 'apply' || args[0] === 'create') {
         const manifest = JSON.parse(options.input ?? '{}') as Record<string, any>;
         if (manifest.kind === 'Sandbox') {
           sandboxManifests.push(manifest);
           if (sandboxManifests.length === 1 && firstSandboxApplyGate) await firstSandboxApplyGate;
-          current = { ...manifest, status: { phase: 'Running' } } as ReturnType<typeof sandboxBody>;
+          current = {
+            ...manifest,
+            metadata: {
+              ...manifest.metadata,
+              uid: 'sandbox-uid-created',
+              resourceVersion: `resource-version-${sandboxManifests.length}`,
+              finalizers: ['agent-saas.kaiyan.net/network-cleanup'],
+            },
+            status: { phase: 'Running' },
+          } as ReturnType<typeof sandboxBody>;
         }
         return { stdout: '', stderr: '', exitCode: 0, signal: null };
       }
@@ -83,7 +92,7 @@ function harness(existing?: ReturnType<typeof sandboxBody>, firstSandboxApplyGat
         }
         return { stdout: '', stderr: '', exitCode: 0, signal: null };
       }
-      throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
+      throw new Error(`unexpected kubectl invocation: ${args.join(' ')}`);
     },
   } as unknown as Kubectl;
   const logger = { info: (message: string) => logs.push(message), warn: (message: string) => logs.push(message), error: (message: string) => logs.push(message) };
@@ -124,7 +133,7 @@ describe('SandboxManager profile resources', () => {
     expect(h.logs.some((line) => line.includes('sandbox_resource_drift name='))).toBe(true);
   });
 
-  it('singleflights the same name but performs a follow-up ensure when concurrent targets differ', async () => {
+  it('singleflights the same name but performs a fenced follow-up ensure when concurrent targets differ', async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
     const h = harness(undefined, firstGate);

@@ -68,6 +68,22 @@ function jsonPatchPreconditions(args: string[]): { uid?: string; resourceVersion
   };
 }
 
+function applyLeasePatch(
+  args: string[], current: ReturnType<typeof sandboxStatus>, nextResourceVersion: string,
+): boolean {
+  if (args[0] !== 'patch' || args[2] !== '--type=json') return false;
+  const patch = JSON.parse(args[4] ?? '[]') as Array<{ op?: string; path?: string; value?: unknown }>;
+  const mutation = patch.find((entry) => entry.op === 'add'
+    && entry.path?.startsWith('/metadata/annotations/agent-saas.kaiyan.net~1active-invocation-'));
+  if (typeof mutation?.value !== 'string') return false;
+  const lease = JSON.parse(mutation.value) as { invocationKey: string };
+  (current.raw.metadata.annotations as Record<string, string>)[
+    activeInvocationLeaseAnnotationKey(lease.invocationKey)
+  ] = mutation.value;
+  current.raw.metadata.resourceVersion = nextResourceVersion;
+  return true;
+}
+
 describe('Sandbox Kubernetes mutation concurrency fences', () => {
   it('rejects an old generation patch after another ACS instance observes a recreated CR', async () => {
     let current = sandboxStatus({ uid: 'uid-old', resourceVersion: 'rv-old', generation: 'generation-1' });
@@ -110,6 +126,77 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     expect(current.raw.metadata.annotations[DELETION_GENERATION_ANNOTATION]).toBe('generation-3');
   });
 
+  it.each([
+    {
+      drift: 'broken',
+      configure(status: ReturnType<typeof sandboxStatus>) { status.phase = 'Failed'; status.raw.status.phase = 'Failed'; },
+      input: identity,
+    },
+    {
+      drift: 'mount',
+      configure(status: ReturnType<typeof sandboxStatus>) {
+        status.raw.metadata.annotations['agent-saas.kaiyan.net/mount-subpath'] = 'old-mount';
+      },
+      input: identity,
+    },
+    {
+      drift: 'resource',
+      configure(_status: ReturnType<typeof sandboxStatus>) { /* resource override alone creates drift */ },
+      input: { ...identity, resources: { cpuRequest: '500m' } },
+    },
+    {
+      drift: 'image',
+      configure(status: ReturnType<typeof sandboxStatus>) {
+        status.raw.spec = {
+          paused: false,
+          template: { spec: { containers: [{ name: 'sandbox', image: 'old-image' }] } },
+        } as typeof status.raw.spec;
+      },
+      input: identity,
+    },
+  ])('fails $drift recreate closed when a long cross-instance lease changes final resourceVersion', async ({ configure, input }) => {
+    let current = sandboxStatus({ uid: 'uid-drift', resourceVersion: 'rv-drift', phase: 'Running' });
+    configure(current);
+    let deleteStarted!: () => void;
+    let releaseDelete!: () => void;
+    const deletePending = new Promise<void>((resolve) => { deleteStarted = resolve; });
+    const deleteBlocked = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    let deleteApplied = false;
+    const run = vi.fn(async (args: string[], options: { input?: string } = {}): Promise<KubectlResult> => {
+      if (applyLeasePatch(args, current, 'rv-long-tool')) return ok();
+      if (args[0] === 'delete' && args[1]?.startsWith('--raw=')) {
+        const expected = (JSON.parse(options.input ?? '{}') as {
+          preconditions?: { uid?: string; resourceVersion?: string };
+        }).preconditions;
+        deleteStarted();
+        await deleteBlocked;
+        if (current.raw.metadata.uid !== expected?.uid
+          || current.raw.metadata.resourceVersion !== expected?.resourceVersion) return conflict();
+        deleteApplied = true;
+        return ok();
+      }
+      return ok();
+    });
+    const managerA = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
+    const managerB = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
+    vi.spyOn(managerA, 'getStatus').mockImplementation(async () => cloneStatus(current));
+    vi.spyOn(managerB, 'getStatus').mockImplementation(async () => cloneStatus(current));
+    const name = managerA.ref(identity).name;
+
+    const recreate = managerA.ensureRunning(input);
+    await deletePending;
+    await managerB.setActiveInvocationLease(
+      name, 'inv-long-tool', new Date(Date.now() + 60_000).toISOString(),
+    );
+    releaseDelete();
+
+    await expect(recreate).rejects.toThrow();
+    expect(deleteApplied).toBe(false);
+    expect((current.raw.metadata.annotations as Record<string, string>)[
+      activeInvocationLeaseAnnotationKey('inv-long-tool')
+    ]).toBeDefined();
+  });
+
   it('fails regular cleanup closed when a fast-path invocation lease changes resourceVersion before DELETE', async () => {
     const now = new Date('2026-08-30T01:00:00.000Z');
     let current = sandboxStatus({ uid: 'uid-delete', resourceVersion: 'rv-delete', phase: 'Paused' });
@@ -119,12 +206,7 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     const deleteBlocked = new Promise<void>((resolve) => { releaseDelete = resolve; });
     let deletePreconditions: { uid?: string; resourceVersion?: string } | undefined;
     const run = vi.fn(async (args: string[], options: { input?: string } = {}): Promise<KubectlResult> => {
-      if (args[0] === 'patch' && args[2] === '--type=merge') {
-        const payload = JSON.parse(args[4] ?? '{}') as { metadata?: { annotations?: Record<string, string> } };
-        Object.assign(current.raw.metadata.annotations, payload.metadata?.annotations ?? {});
-        current.raw.metadata.resourceVersion = 'rv-leased';
-        return ok();
-      }
+      if (applyLeasePatch(args, current, 'rv-leased')) return ok();
       if (args[0] === 'delete' && args[1]?.startsWith('--raw=')) {
         deletePreconditions = (JSON.parse(options.input ?? '{}') as { preconditions?: typeof deletePreconditions }).preconditions;
         deleteStarted();
@@ -138,6 +220,7 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     const managerA = new SandboxManager(config, { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
     const managerB = new SandboxManager(config, { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
     const name = managerA.ref(identity).name;
+    vi.spyOn(managerB, 'getStatus').mockImplementation(async () => cloneStatus(current));
     vi.spyOn(managerA, 'listManagedSandboxes').mockResolvedValue([{
       name, phase: 'Paused', createdAt: '2026-08-30T00:00:00.000Z', lastActiveAt: '2026-08-30T00:00:00.000Z',
       workloadClass: 'interactive', workloadDescriptor: { class: 'interactive' },
@@ -159,7 +242,7 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     ]).toBeDefined();
   });
 
-  it('re-evaluates idle pause after a cross-instance lease wins the resourceVersion race', async () => {
+  it('fails idle pause closed after a cross-instance lease wins the resourceVersion race', async () => {
     const now = new Date('2026-08-30T01:00:00.000Z');
     let current = sandboxStatus({ uid: 'uid-pause', resourceVersion: 'rv-pause', phase: 'Running' });
     let pauseStarted!: () => void;
@@ -168,12 +251,7 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     const pauseBlocked = new Promise<void>((resolve) => { releasePause = resolve; });
     let pauseApplied = false;
     const run = vi.fn(async (args: string[]): Promise<KubectlResult> => {
-      if (args[0] === 'patch' && args[2] === '--type=merge') {
-        const payload = JSON.parse(args[4] ?? '{}') as { metadata?: { annotations?: Record<string, string> } };
-        Object.assign(current.raw.metadata.annotations, payload.metadata?.annotations ?? {});
-        current.raw.metadata.resourceVersion = 'rv-pause-leased';
-        return ok();
-      }
+      if (applyLeasePatch(args, current, 'rv-pause-leased')) return ok();
       if (args[0] === 'patch' && args[2] === '--type=json') {
         const expected = jsonPatchPreconditions(args);
         pauseStarted();
@@ -192,6 +270,7 @@ describe('Sandbox Kubernetes mutation concurrency fences', () => {
     const managerA = new SandboxManager(config, { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
     const managerB = new SandboxManager(config, { run } as unknown as Kubectl, noopLogger, new ActiveSandboxRegistry());
     const name = managerA.ref(identity).name;
+    vi.spyOn(managerB, 'getStatus').mockImplementation(async () => cloneStatus(current));
     vi.spyOn(managerA, 'listManagedSandboxes').mockResolvedValue([{
       name, phase: 'Running', createdAt: '2026-08-30T00:00:00.000Z', lastActiveAt: '2026-08-30T00:00:00.000Z',
       workloadClass: 'interactive', workloadDescriptor: { class: 'interactive' },

@@ -63,10 +63,15 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
     })).resolves.toBe(false);
   });
 
-  it('prepared cleanup 在 tombstone commit 前不可投递，激活后可由重启 worker 接管', async () => {
+  it('prepared cleanup fences late admission and guarded cancellation avoids carrier Run self-lock', async () => {
     await runStore.upsertPending({
       runId: 'intent-run-1', sessionId: 'intent-session-1', tenantId: 'tenant-1',
       workspaceId: 'workspace-intent', sandboxScopeId: 'scope-intent', metadata: {},
+    });
+    await runStore.upsertPending({
+      runId: 'identity-move-run', sessionId: 'identity-child', tenantId: 'tenant-1',
+      workspaceId: 'workspace-other', sandboxScopeId: 'scope-other',
+      metadata: { topLevelSessionId: 'unrelated-session' },
     });
     const store = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
@@ -79,14 +84,75 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
       expect.objectContaining({ runId: 'intent-run-1', sessionId: 'intent-session-1' }),
     ]);
     await expect(store.listCleanupCandidates()).resolves.toEqual([]);
+    await expect(runStore.upsertPending({
+      runId: 'intent-late-child', sessionId: 'intent-child-session', tenantId: 'tenant-1',
+      workspaceId: 'workspace-intent', sandboxScopeId: 'scope-intent',
+      metadata: { topLevelSessionId: 'intent-session-1' },
+    })).rejects.toThrow(/Sandbox cleanup is active/u);
+    await expect(runStore.upsertPending({
+      runId: 'identity-move-run', sessionId: 'identity-child', tenantId: 'tenant-1',
+      workspaceId: 'workspace-other', sandboxScopeId: 'scope-other',
+      metadata: { topLevelSessionId: 'intent-session-1' },
+    })).rejects.toThrow(/Sandbox cleanup is active/u);
 
-    await expect(store.activatePreparedCleanupForSession('intent-session-1', 'tenant-1')).resolves.toBe(true);
+    const [first, second] = await Promise.all([
+      store.claimPreparedCleanup('intent-run-1', 'worker-a'),
+      store.claimPreparedCleanup('intent-run-1', 'worker-b'),
+    ]);
+    const owner = first ?? second;
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(owner).toEqual(expect.objectContaining({ claimGeneration: 1 }));
+    await expect(store.listCleanupCandidates()).resolves.toEqual([]);
+
     const rebuilt = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
+    await expect(rebuilt.completePreparedCleanup(
+      'intent-run-1', owner!.claimId!, owner!.claimGeneration!,
+    )).resolves.toBeUndefined();
+    const reason = 'session_deleted:intent-session-1';
+    await expect(runStore.cancelSteeringBeforeDispatchBySessionWithEvent(
+      'intent-session-1', reason, 'intent-run-1', {
+        type: 'run_cancel_requested', sessionId: 'intent-session-1', runId: 'intent-run-1', reason,
+      }, 'tenant-1', {
+        cleanupRunId: 'intent-run-1', sessionId: 'intent-session-1', sandboxScopeId: 'scope-intent',
+        claimId: owner!.claimId!, claimGeneration: owner!.claimGeneration!,
+      },
+    )).resolves.toEqual(expect.objectContaining({ targetCancelled: true }));
+    await expect(rebuilt.completePreparedCleanup(
+      'intent-run-1', owner!.claimId!, owner!.claimGeneration!,
+    )).resolves.toEqual(expect.objectContaining({ runId: 'intent-run-1' }));
     await expect(rebuilt.listCleanupCandidates()).resolves.toEqual([
       expect.objectContaining({ runId: 'intent-run-1', sessionId: 'intent-session-1' }),
     ]);
+  });
+
+  it('cancelling owner 崩溃后可按 lease/generation 接管，restore 可使旧 owner CAS 失效', async () => {
+    await runStore.upsertPending({
+      runId: 'takeover-run-1', sessionId: 'takeover-session-1', tenantId: 'tenant-1',
+      workspaceId: 'workspace-takeover', sandboxScopeId: 'scope-takeover', metadata: {},
+    });
+    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await store.enqueueCleanup({
+      workspaceId: 'workspace-takeover', sessionId: 'takeover-session-1', sandboxScopeId: 'scope-takeover',
+      tenantId: 'tenant-1', targetHandId: 'acs-old', deletionGeneration: 'delete-generation-1',
+    }, { prepared: true });
+    const crashed = await store.claimPreparedCleanup('takeover-run-1', 'crashed-worker');
+    expect(crashed?.claimGeneration).toBe(1);
+    await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
+      '{sandboxCleanupOutbox,claimedAt}', to_jsonb($2::text)) WHERE run_id=$1`, [
+      'takeover-run-1', '2000-01-01T00:00:00.000Z',
+    ]);
+    const rebuilt = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+    );
+    const takeover = await rebuilt.claimPreparedCleanup('takeover-run-1', 'restarted-worker');
+    expect(takeover?.claimGeneration).toBe(2);
+    await rebuilt.cancelCleanup('takeover-session-1', 'tenant-1', 'restore-generation-1');
+    await expect(rebuilt.completePreparedCleanup(
+      'takeover-run-1', takeover!.claimId!, takeover!.claimGeneration!,
+    )).resolves.toBeUndefined();
+    await expect(rebuilt.listCleanupCandidates()).resolves.toEqual([]);
   });
 
   it('terminal outbox 的 target hand 经真实 PostgreSQL 持久化，store 重建后不随 rollout 漂移', async () => {

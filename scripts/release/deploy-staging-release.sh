@@ -431,10 +431,12 @@ node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-const reference = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`;
+const reference = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`; // 不可变镜像引用
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter(Boolean);
-const output = lines.filter((line) => !line.startsWith('ACS_SANDBOX_IMAGE='));
+const output = lines.filter((line) => !line.startsWith('ACS_SANDBOX_IMAGE=')
+  && !line.startsWith('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='));
 output.push(`ACS_SANDBOX_IMAGE=${reference}`);
+output.push('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce'); // rollout 显式收敛到 enforce
 fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE

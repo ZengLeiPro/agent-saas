@@ -9,9 +9,9 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
-import { deleteSandboxAndReclaimNetwork, sandboxResourcePreconditions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
+import { deleteSandboxAndReclaimNetwork, reconcileTerminatingSandboxDeletions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
-import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyPausedWithPreconditions, applyWorkloadDescriptor } from './sandboxLifecycleMutations.js';
+import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyPausedWithPreconditions, applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
 import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
   NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL,
@@ -21,11 +21,12 @@ import {
 import { SingleflightCleanup } from './singleflightCleanup.js';
 import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
 import { pauseSandboxWhenIdle } from './sandboxSafePause.js';
+import { readSandboxMutationGate, SandboxDestructiveMutationBlockedError } from './sandboxMutationGate.js';
 import { SandboxDeletionGenerationCoordinator } from './sandboxDeletionGeneration.js';
 import {
   WORKLOAD_CLASS_LABEL, WORKLOAD_DESCRIPTOR_ANNOTATION,
   decideSandboxLifecycle, sandboxLifecycleMetrics,
-  isActiveInvocationLeaseProtected, lifecycleStateFromMetadata,
+  isActiveInvocationLeaseProtected,
   type SandboxDeletionGenerationUpdate,
   type SandboxLifecycleUpdate,
   type SandboxScopeDeletion,
@@ -108,7 +109,7 @@ export class SandboxManager {
   private readonly networkPolicyManager: AcsNetworkPolicyManager;
   readonly snatManager: SnatManager;
   private readonly prewarmInFlight = new Map<string, Promise<void>>();
-  private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
+  private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef>; mutationToken: symbol }>();
   /** Serializes deletion against ensureRunning; new invocations wait and recreate safely. */
   private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
   /** Scope delete generation/UID CAS fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator;
@@ -183,8 +184,9 @@ export class SandboxManager {
         this.logger.info(`sandbox_ensure_resource_followup name=${ref.name}`);
         continue;
       }
-      const promise = this.ensureRunningExclusive(ref, options);
-      const tracked = { ref, promise };
+      const mutationToken = Symbol(ref.name);
+      const promise = this.ensureRunningExclusive(ref, options, mutationToken);
+      const tracked = { ref, promise, mutationToken };
       this.ensureInFlight.set(ref.name, tracked);
       void promise.finally(() => this.ensureInFlight.get(ref.name) === tracked && this.ensureInFlight.delete(ref.name)).catch(() => {});
       return await promise;
@@ -192,7 +194,8 @@ export class SandboxManager {
   }
   private async ensureRunningExclusive(
     ref: SandboxRef,
-    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string } = {},
+    options: { busySandboxNames?: Set<string>; skipCapacityManagement?: boolean; activeKey?: string },
+    mutationToken: symbol,
   ): Promise<SandboxRef> {
     const timing = createEnsureTiming(ref.name, this.logger);
     let path = 'unknown'; let resourceDriftDeferred = false;
@@ -211,7 +214,7 @@ export class SandboxManager {
         this.logger.warn(
           `sandbox_broken_state name=${ref.name} reason=${brokenState} phase=${existing.phase ?? 'unknown'}`,
         );
-        await timing.step('deleteBrokenState', () => this.delete(ref, { activeKey: options.activeKey }));
+        await timing.step('deleteBrokenState', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
         existing = null;
       }
       if (existing && this.existingMountSubPath(existing, ref) !== ref.mountSubPath) {
@@ -220,7 +223,7 @@ export class SandboxManager {
         this.logger.warn(
           `sandbox_mount_subpath_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${this.existingMountSubPath(existing, ref)} new=${ref.mountSubPath}`,
         );
-        await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
+        await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
         existing = null;
       }
       if (existing && ref.resources && hasSandboxResourceDrift(existing, ref.resources, this.config)) {
@@ -229,7 +232,7 @@ export class SandboxManager {
           path = 'defer_resource_changed_busy'; resourceDriftDeferred = true; this.logger.warn(`sandbox_resource_drift_deferred name=${ref.name} workspaceId=${ref.workspaceId} reason=busy`);
         } else {
           path = 'recreate_resource_changed'; this.logger.warn(`sandbox_resource_drift name=${ref.name} workspaceId=${ref.workspaceId}`);
-          await timing.step('deleteResourceDrift', () => this.delete(ref, { activeKey: options.activeKey }));
+          await timing.step('deleteResourceDrift', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
           existing = null;
         }
       }
@@ -251,24 +254,16 @@ export class SandboxManager {
             `sandbox_image_upgrade_deferred name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage} reason=busy`,
           );
         } else {
-          path = existing.phase === 'Paused' ? 'refresh_paused_image' : 'recreate_image_changed';
+          path = existing.phase === 'Paused' ? 'recreate_paused_image_changed' : 'recreate_image_changed';
           if (existing.phase !== 'Running') {
             this.assertNotBusyForRecreate(ref, options.busySandboxNames, 'image changed', options.activeKey);
           }
           this.logger.warn(
             `sandbox_image_changed name=${ref.name} workspaceId=${ref.workspaceId} old=${oldImage} new=${this.config.sandboxImage}`,
           );
-          if (existing.phase === 'Paused') {
-            await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
-            await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
-            await timing.step('applySandbox', () => this.applySandbox(ref));
-            await this.waitForRunningAndEnsureSnat(ref, timing);
-            this.markEnsureFastPathVerified(ref.name);
-            await timing.step('touch', () => this.touchThrottled(ref.name));
-            status = 'ok';
-            return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
-          }
-          await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey }));
+          // In-place apply cannot couple the final lease read to the spec write. Delete with
+          // UID/resourceVersion fencing, then create, so a lease written after the gate conflicts.
+          await timing.step('delete', () => this.delete(ref, { activeKey: options.activeKey, mutationToken }));
           existing = null;
         }
       }
@@ -276,7 +271,8 @@ export class SandboxManager {
         path = path === 'unknown' ? 'create' : path;
         await timing.step('ensureCapacity', () => this.reserveCapacity(ref, options));
         await timing.step('networkPolicy', () => this.networkPolicyManager.reconcile(ref));
-        await timing.step('applySandbox', () => this.applySandbox(ref));
+        await timing.step('createSandbox', () => createSandboxResource(this.config, this.kubectl, this.buildSandboxManifest(ref)));
+        this.logger.info(`sandbox_created name=${ref.name} workspaceId=${ref.workspaceId} sessionId=${ref.sessionId}`);
         await this.waitForRunningAndEnsureSnat(ref, timing);
         this.markEnsureFastPathVerified(ref.name);
         await timing.step('touch', () => this.touchThrottled(ref.name));
@@ -317,10 +313,12 @@ export class SandboxManager {
     }
   }
 
-  async delete(ref: SandboxRef, options: { activeKey?: string } = {}): Promise<void> {
-    this.assertIdle(ref.name, 'delete', options.activeKey);
+  async delete(ref: SandboxRef, options: { activeKey?: string; mutationToken?: symbol } = {}): Promise<void> {
     this.invalidateEnsureFastPath(ref.name);
-    await this.deleteSandboxAndReclaimNetwork(ref.name);
+    // mutationToken 仅由当前 ensure leader 持有，普通调用无法绕过 ensureInFlight。
+    await this.deleteSandboxAndReclaimNetwork(ref.name, undefined, {
+      activeKey: options.activeKey, ensureMutationToken: options.mutationToken,
+    });
   }
 
   async deleteByWorkspaceId(workspaceId: string, input: { busySandboxNames?: Set<string> } = {}): Promise<{ names: string[]; skippedBusy: string[] }> {
@@ -330,20 +328,14 @@ export class SandboxManager {
     const names = sandboxes.map((sandbox) => sandbox.name);
     const skippedBusy: string[] = [];
     for (const sandbox of sandboxes) {
-      if (this.isBusy(sandbox.name, input.busySandboxNames)
-        || isActiveInvocationLeaseProtected(sandbox, Date.now())
-        || isBackgroundShellProtected(sandbox, Date.now())) {
-        skippedBusy.push(sandbox.name);
-        continue;
-      }
-      await this.deleteSandboxAndReclaimNetwork(sandbox.name);
+      const deleted = await this.deleteWhenIdle(sandbox.name, input.busySandboxNames);
+      if (deleted === null) skippedBusy.push(sandbox.name);
     }
     return { names: names.filter((name) => !skippedBusy.includes(name)), skippedBusy };
   }
 
-  networkPolicyStatus(): NetworkPolicyStatus {
-    return this.networkPolicyManager.currentStatus();
-  } async probeNetworkPolicyForRef(ref: SandboxRef): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> { return await this.networkPolicyManager.probe(ref); }
+  networkPolicyStatus(): NetworkPolicyStatus { return this.networkPolicyManager.currentStatus(); }
+  async probeNetworkPolicyForRef(ref: SandboxRef): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> { return await this.networkPolicyManager.probe(ref); }
 
   async probeNetworkPolicy(): Promise<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }> {
     const probeId = `probe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -438,9 +430,7 @@ export class SandboxManager {
   }
 
   async pauseByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
-    this.assertIdleByName(name, 'pause', input.busySandboxNames);
-    await this.assertNotBackgroundShellProtected(name, 'pause');
-    await this.patchPaused(name, true);
+    await this.patchPaused(name, true, { busySandboxNames: input.busySandboxNames });
   }
 
   async resumeByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<SandboxRef> {
@@ -457,10 +447,9 @@ export class SandboxManager {
   }
 
   async deleteByName(name: string, input: { busySandboxNames?: Set<string> } = {}): Promise<void> {
-    this.assertIdleByName(name, 'delete', input.busySandboxNames);
-    await this.assertNotBackgroundShellProtected(name, 'delete');
     this.invalidateEnsureFastPath(name);
-    await this.deleteSandboxAndReclaimNetwork(name);
+    await this.deleteSandboxAndReclaimNetwork(
+      name, undefined, { busySandboxNames: input.busySandboxNames });
   }
 
   async prewarmStaleImagePausedSandboxes(input: {
@@ -596,6 +585,8 @@ export class SandboxManager {
   }
 
   async cleanupSandboxes(input: { busySandboxNames?: Set<string>; now?: Date } = {}): Promise<SandboxCleanupReport> {
+    await reconcileTerminatingSandboxDeletions({ sandboxes: await this.listManagedSandboxes(),
+      retry: (name) => this.deleteSandboxAndReclaimNetwork(name), warn: (message) => this.logger.warn(message) });
     return await cleanupManagedSandboxes({
       lifecyclePolicyMode: this.config.lifecyclePolicyMode ?? 'shadow',
       sandboxBrokenRecycleGraceMs: this.config.sandboxBrokenRecycleGraceMs,
@@ -610,7 +601,6 @@ export class SandboxManager {
       warn: (message) => this.logger.warn(message),
     }, input);
   }
-
   async archiveWorkspace(workspaceId: string, reason: string): Promise<{ workspaceId: string; archived: boolean; missing?: boolean; archiveId?: string; archivePath?: string }> {
     const id = validateWorkspaceId(workspaceId);
     if (!this.config.hostWorkspaceRoot) {
@@ -636,12 +626,23 @@ export class SandboxManager {
     return { workspaceId: id, archived: true, archiveId, archivePath };
   }
 
-  async patchPaused(name: string, paused: boolean, options: { activeKey?: string; preconditions?: SandboxDeletionPreconditions } = {}): Promise<void> {
-    if (paused) this.assertIdle(name, 'pause', options.activeKey);
+  async patchPaused(name: string, paused: boolean, options: {
+    activeKey?: string; busySandboxNames?: Set<string>; preconditions?: SandboxDeletionPreconditions;
+  } = {}): Promise<void> {
     this.invalidateEnsureFastPath(name);
-    if (options.preconditions) return await applyPausedWithPreconditions(this.config, this.kubectl, this.resourceName(name), paused, options.preconditions);
+    if (paused) {
+      const gate = await this.readDestructiveMutationGate(name, {
+        activeKey: options.activeKey,
+        busySandboxNames: options.busySandboxNames,
+        expectedPreconditions: options.preconditions,
+      });
+      if (!gate) throw new SandboxNotFoundError(`ACS Sandbox ${name} not found`);
+      return await applyPausedWithPreconditions(
+        this.config, this.kubectl, this.resourceName(name), true, gate,
+      );
+    }
     const result = await this.kubectl.run([
-      'patch', this.resourceName(name), '--type=merge', '-p', JSON.stringify({ spec: { paused } }),
+      'patch', this.resourceName(name), '--type=merge', '-p', JSON.stringify({ spec: { paused: false } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`patch sandbox paused=${paused} 失败: ${result.stderr || result.stdout}`);
   }
@@ -696,7 +697,7 @@ export class SandboxManager {
 
   async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string): Promise<void> {
     if (leaseUntil && !Number.isFinite(Date.parse(leaseUntil))) throw new Error('invocation leaseUntil 必须是合法 ISO 时间');
-    await applyInvocationLease(this.config, this.kubectl, this.resourceName(name), invocationKey, leaseUntil);
+    await applyInvocationLease(this.config, this.kubectl, this.resourceName(name), invocationKey, leaseUntil, () => this.getStatus(name));
   }
 
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
@@ -714,7 +715,7 @@ export class SandboxManager {
     if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
   }
 
-  /** 60s 内已 touch 过则跳过（idle 判定为小时级，精度足够；省一次 kubectl patch）。 */
+  /** 60s 内已 touch 过则跳过（idle 判定为分钟级，精度足够，省一次 kubectl patch）。 */
   private async touchThrottled(name: string, now: Date = new Date()): Promise<void> {
     const entry = this.ensureFastPath.get(name);
     if (entry && now.getTime() - entry.touchedAt < TOUCH_THROTTLE_MS) return;
@@ -742,7 +743,7 @@ export class SandboxManager {
     if (protectedUntil && !Number.isFinite(Date.parse(protectedUntil))) {
       throw new Error('background shell protectedUntil 必须是合法 ISO 时间。');
     }
-    await applyBackgroundShellProtection(this.config, this.kubectl, this.resourceName(name), protectedUntil);
+    await applyBackgroundShellProtection(this.config, this.kubectl, this.resourceName(name), protectedUntil, () => this.getStatus(name));
   }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {
@@ -754,16 +755,6 @@ export class SandboxManager {
     const raw = JSON.parse(result.stdout || '{}') as Record<string, unknown>;
     const status = raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {};
     return { phase: typeof status.phase === 'string' ? status.phase : undefined, raw };
-  }
-
-  private async applySandbox(ref: SandboxRef): Promise<void> {
-    const manifest = this.buildSandboxManifest(ref);
-    const result = await this.kubectl.run(['apply', '-f', '-'], {
-      input: JSON.stringify(manifest),
-      timeoutMs: this.config.sandboxWaitTimeoutMs,
-    });
-    if (result.exitCode !== 0) throw new Error(`apply Sandbox 失败: ${result.stderr || result.stdout}`);
-    this.logger.info(`sandbox_applied name=${ref.name} workspaceId=${ref.workspaceId} sessionId=${ref.sessionId}`);
   }
 
   private async waitForPhase(name: string, expected: string): Promise<void> {
@@ -824,7 +815,7 @@ export class SandboxManager {
   }
 
   /**
-   * 2026-08-01：stale-image Paused sandbox 直接删除退役，取代旧「原地 applySandbox
+   * 2026-08-01：stale-image Paused sandbox 直接删除退役，取代旧「原地 apply Sandbox
    * 换镜像 + 保持 Running 等 idle pause」的 prewarm。
    *
    * 事故依据（07-22 / 08-01 两轮，journal 实锤）：
@@ -849,7 +840,7 @@ export class SandboxManager {
 
       this.logger.warn(`sandbox_stale_image_paused_retire name=${ref.name} old=${oldImage} new=${this.config.sandboxImage}`);
       this.invalidateEnsureFastPath(ref.name);
-      await this.deleteSandboxAndReclaimNetwork(ref.name);
+      await this.deleteSandboxAndReclaimNetwork(ref.name, undefined, { activeKey });
       this.logger.info(`sandbox_stale_image_retired name=${ref.name}`);
       return 'retired';
     } finally {
@@ -921,33 +912,9 @@ export class SandboxManager {
     return this.isBusy(name, busySandboxNames, activeKey);
   }
 
-  private assertIdle(name: string, reason: string, activeKey?: string): void {
-    if (!this.activeRegistry?.isBusy(name, { exceptKey: activeKey })) return;
-    throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
-  }
-
   private assertIdleByName(name: string, reason: string, busySandboxNames?: Set<string>, activeKey?: string): void {
     if (!this.isBusy(name, busySandboxNames, activeKey)) return;
     throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
-  }
-
-  private async assertNotBackgroundShellProtected(name: string, reason: string): Promise<void> {
-    const status = await this.getStatus(name);
-    if (!status) return;
-    if (this.statusHasActiveInvocationLease(status)) {
-      throw new SandboxBusyError(`ACS Sandbox ${name} has an active invocation lease; refuse to ${reason}`);
-    }
-    if (backgroundShellProtectionFromStatus(status)) {
-      throw new SandboxBusyError(`ACS Sandbox ${name} has active background shell tasks; refuse to ${reason}`);
-    }
-  }
-
-  private statusHasActiveInvocationLease(status: SandboxStatus, nowMs = Date.now()): boolean {
-    const raw = status.raw ?? {};
-    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
-    const annotations = metadata.annotations && typeof metadata.annotations === 'object'
-      ? metadata.annotations as Record<string, unknown> : {};
-    return isActiveInvocationLeaseProtected(lifecycleStateFromMetadata({}, annotations), nowMs);
   }
 
   private refFromStatus(name: string, status: SandboxStatus): SandboxRef {
@@ -1117,15 +1084,45 @@ export class SandboxManager {
     };
   }
 
-  /** finalizer 在网络回收完成前固定旧 CR UID，禁止同名 Sandbox 穿插重建。 */
-  private async deleteSandboxAndReclaimNetwork(name: string, preconditions?: SandboxDeletionPreconditions): Promise<string[]> {
-    const resolvedPreconditions = preconditions ?? sandboxResourcePreconditions(await this.getStatus(name) ?? { raw: {} });
-    if (!resolvedPreconditions) return [];
+  /** 删除 finalizer 在网络回收完成前固定旧 CR UID/RV，禁止同名 Sandbox 穿插重建。 */
+  private async deleteSandboxAndReclaimNetwork(
+    name: string,
+    expectedPreconditions?: SandboxDeletionPreconditions,
+    options: { activeKey?: string; busySandboxNames?: Set<string>; ensureMutationToken?: symbol } = {},
+  ): Promise<string[]> {
+    const preconditions = await this.readDestructiveMutationGate(name, {
+      activeKey: options.activeKey, busySandboxNames: options.busySandboxNames,
+      expectedPreconditions, ensureMutationToken: options.ensureMutationToken,
+    });
+    if (!preconditions) return [];
     return await deleteSandboxAndReclaimNetwork({ name, resource: this.resourceName(name),
       apiVersion: this.config.sandboxApiVersion,
       kind: this.config.sandboxKind, namespace: this.config.namespace, timeoutMs: this.config.sandboxWaitTimeoutMs,
-      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager, preconditions: resolvedPreconditions,
+      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager, preconditions,
     });
+  }
+
+  private async readDestructiveMutationGate(name: string, options: {
+    activeKey?: string; busySandboxNames?: Set<string>; expectedPreconditions?: SandboxDeletionPreconditions;
+    ensureMutationToken?: symbol;
+  } = {}): Promise<SandboxDeletionPreconditions | undefined> {
+    try {
+      const gate = await readSandboxMutationGate({
+        name, config: this.config, getStatus: () => this.getStatus(name),
+        isBusy: () => this.isBusy(name, options.busySandboxNames, options.activeKey),
+        isEnsuring: () => {
+          const ensuring = this.ensureInFlight.get(name);
+          return Boolean(ensuring && ensuring.mutationToken !== options.ensureMutationToken);
+        },
+        expectedPreconditions: options.expectedPreconditions,
+      });
+      return gate?.preconditions;
+    } catch (err) {
+      if (err instanceof SandboxDestructiveMutationBlockedError) {
+        throw new SandboxBusyError(err.message);
+      }
+      throw err;
+    }
   }
 
   private resourceName(name: string): string {

@@ -1,9 +1,11 @@
 import type { AcsOrchestratorConfig } from './config.js';
-import { sandboxResourcePreconditions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
-import { managedSandboxFromResource } from './sandboxInventoryReader.js';
-import { isActiveInvocationLeaseProtected } from './sandboxLifecyclePolicy.js';
+import type { SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { SandboxMutationPreconditionError } from './sandboxLifecycleMutations.js';
-import { isBackgroundShellProtected, type ManagedSandbox, type SandboxStatus } from './sandboxState.js';
+import {
+  readSandboxMutationGate,
+  SandboxDestructiveMutationBlockedError,
+} from './sandboxMutationGate.js';
+import type { ManagedSandbox, SandboxStatus } from './sandboxState.js';
 
 export async function pauseSandboxWhenIdle(input: {
   name: string;
@@ -15,25 +17,20 @@ export async function pauseSandboxWhenIdle(input: {
   pause(preconditions: SandboxDeletionPreconditions): Promise<void>;
 }): Promise<boolean> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (input.isBusy() || input.isEnsuring()) return false;
-    const status = await input.getStatus();
-    if (!status) return false;
-    const raw = status.raw ?? {};
-    const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
-    const latest = managedSandboxFromResource(input.config, {
-      ...raw,
-      metadata: { ...metadata, name: input.name },
-      status: { ...(raw.status && typeof raw.status === 'object' ? raw.status as Record<string, unknown> : {}), phase: status.phase },
-    });
-    const nowMs = Date.now();
-    const preconditions = sandboxResourcePreconditions(status);
-    if (!preconditions || isActiveInvocationLeaseProtected(latest, nowMs)
-      || isBackgroundShellProtected(latest, nowMs) || input.isBusy() || input.isEnsuring()
-      || !input.canPause(latest)) return false;
     try {
-      await input.pause(preconditions);
+      const gate = await readSandboxMutationGate({
+        name: input.name,
+        config: input.config,
+        isBusy: input.isBusy,
+        isEnsuring: input.isEnsuring,
+        getStatus: input.getStatus,
+        canMutate: input.canPause,
+      });
+      if (!gate) return false;
+      await input.pause(gate.preconditions);
       return true;
     } catch (err) {
+      if (err instanceof SandboxDestructiveMutationBlockedError) return false;
       if (!(err instanceof SandboxMutationPreconditionError)) throw err;
     }
   }

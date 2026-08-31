@@ -35,17 +35,13 @@ export const MAX_INACTIVE_RETENTION_MS = 30 * 60_000;
 export const UNKNOWN_RETENTION_MS = MAX_INACTIVE_RETENTION_MS;
 export const PROBE_RESIDUE_GRACE_MS = FIVE_MINUTES_MS;
 
-function terminalRetentionMs(
-  workloadClass: SandboxWorkloadClass,
-  terminalState: SandboxTerminalState | undefined,
-): number {
+function terminalRetentionMs(workloadClass: SandboxWorkloadClass): number {
   switch (workloadClass) {
     case 'taskboard':
       return FIVE_MINUTES_MS;
     case 'cron':
-      return terminalState === 'completed' ? FIVE_MINUTES_MS : FIFTEEN_MINUTES_MS;
     case 'memory':
-      return terminalState === 'completed' ? FIVE_MINUTES_MS : FIFTEEN_MINUTES_MS;
+      return FIVE_MINUTES_MS;
     case 'probe':
       return PROBE_RESIDUE_GRACE_MS;
     case 'interactive':
@@ -57,7 +53,7 @@ function terminalRetentionMs(
 
 function nonTerminalRetentionMs(workloadClass: SandboxWorkloadClass): number {
   if (workloadClass === 'probe') return PROBE_RESIDUE_GRACE_MS;
-  if (workloadClass === 'memory') return FIFTEEN_MINUTES_MS;
+  if (workloadClass === 'cron' || workloadClass === 'memory') return FIFTEEN_MINUTES_MS;
   return MAX_INACTIVE_RETENTION_MS;
 }
 
@@ -222,12 +218,11 @@ export function isActiveInvocationLeaseProtected(
 export function terminalDeadlineAt(
   workloadClass: SandboxWorkloadClass,
   terminalAt: string | undefined,
-  terminalState?: SandboxTerminalState,
 ): string | undefined {
   if (!terminalAt) return undefined;
   const at = Date.parse(terminalAt);
   return Number.isFinite(at)
-    ? new Date(at + terminalRetentionMs(workloadClass, terminalState)).toISOString()
+    ? new Date(at + terminalRetentionMs(workloadClass)).toISOString()
     : undefined;
 }
 
@@ -250,19 +245,19 @@ export function decideSandboxLifecycle(input: SandboxLifecycleState & {
   const lastActiveAtMs = parseDate(input.lastActiveAt) ?? createdAtMs;
   const terminalAtMs = parseDate(input.terminalAt);
   // A terminal transition is lifecycle activity. Without this max(), a long-running task whose
-  // last tool call was old could be deleted immediately instead of receiving its 5m/15m window.
+  // last tool call was old could be deleted immediately instead of receiving its terminal grace window.
   const lifecycleActivityAtMs = [createdAtMs, lastActiveAtMs, terminalAtMs]
     .filter((value): value is number => value !== undefined)
     .reduce<number | undefined>((latest, value) => latest === undefined ? value : Math.max(latest, value), undefined);
   const inactiveDeadlineMs = lifecycleActivityAtMs === undefined
     ? undefined
     : lifecycleActivityAtMs + nonTerminalRetentionMs(workloadClass);
-  const terminalDeadline = terminalDeadlineAt(workloadClass, input.terminalAt, input.terminalState);
+  const terminalDeadline = terminalDeadlineAt(workloadClass, input.terminalAt);
   const terminalDeadlineMs = parseDate(terminalDeadline);
   const explicitDeadlineMs = parseDate(input.retentionDeadline);
 
   // The earliest policy/explicit deadline wins, so callers cannot extend an inactive Sandbox
-  // beyond its workload cap with a retentionDeadline override.
+  // beyond the workload-specific inactive cap with a retentionDeadline override.
   const deadlines = [
     ...(inactiveDeadlineMs === undefined ? [] : [{ source: 'inactive' as const, at: inactiveDeadlineMs }]),
     ...(terminalDeadlineMs === undefined ? [] : [{ source: 'terminal' as const, at: terminalDeadlineMs }]),

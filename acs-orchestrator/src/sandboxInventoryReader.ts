@@ -2,6 +2,7 @@ import type { AcsOrchestratorConfig } from './config.js';
 import type { KubeApi } from './kubeApi.js';
 import type { Kubectl } from './kubectl.js';
 import { lifecycleStateFromMetadata } from './sandboxLifecyclePolicy.js';
+import { SANDBOX_NETWORK_CLEANUP_FINALIZER } from './sandboxDeletion.js';
 import {
   BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
   brokenSandboxStateReason,
@@ -73,6 +74,9 @@ export function managedSandboxFromResource(
       sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
       sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
       mountSubPath: stringValue(annotations[MOUNT_SUBPATH_ANNOTATION]), phase,
+      ...optionalString('deletionTimestamp', stringValue(metadata.deletionTimestamp)),
+      ...(Array.isArray(metadata.finalizers) && metadata.finalizers.includes(SANDBOX_NETWORK_CLEANUP_FINALIZER)
+        ? { networkCleanupFinalizer: true } : {}),
       ...optionalString('brokenReason', brokenSandboxStateReason({ phase, raw: item })),
       ...optionalString('pausedConditionChangedAt', pausedConditionLastTransition(item)),
       createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),

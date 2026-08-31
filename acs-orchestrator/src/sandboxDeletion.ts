@@ -1,5 +1,6 @@
 import type { Kubectl } from './kubectl.js';
-import type { SandboxStatus } from './sandboxState.js';
+import { isActiveInvocationLeaseProtected, lifecycleStateFromMetadata } from './sandboxLifecyclePolicy.js';
+import { backgroundShellProtectionFromStatus, type ManagedSandbox, type SandboxStatus } from './sandboxState.js';
 
 interface SandboxNetworkReclaimer {
   deleteForSandboxName(name: string): Promise<unknown>;
@@ -10,6 +11,21 @@ interface SandboxSnatReclaimer {
 }
 
 export const SANDBOX_NETWORK_CLEANUP_FINALIZER = 'agent-saas.kaiyan.net/network-cleanup';
+
+export async function reconcileTerminatingSandboxDeletions(input: {
+  sandboxes: ManagedSandbox[];
+  retry(name: string): Promise<unknown>;
+  warn(message: string): void;
+}): Promise<void> {
+  for (const sandbox of input.sandboxes) {
+    if (!sandbox.deletionTimestamp || !sandbox.networkCleanupFinalizer) continue;
+    try {
+      await input.retry(sandbox.name);
+    } catch (error) {
+      input.warn(`sandbox_finalizer_reconcile_failed name=${sandbox.name} error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
 
 export interface SandboxDeletionPreconditions {
   uid: string;
@@ -56,7 +72,7 @@ export async function deleteSandboxAndReclaimNetwork(input: {
     : await (async () => {
         const current = await readSandbox(input);
         if (!current) return undefined;
-        assertExpectedUid(current, input.preconditions!.uid);
+        assertExpectedPreconditions(current, input.preconditions!);
         return await ensureNetworkCleanupFinalizer(input, current);
       })();
   if (!fenced) return [];
@@ -75,6 +91,12 @@ export async function deleteSandboxAndReclaimNetwork(input: {
     );
   }
 
+  // DELETE 与保护 annotation 写入都带 resourceVersion CAS；再复读一次可拦截旧实例
+  // 的迟到写入，确认无保护后才开始不可回滚的网络资源清理。
+  const deleting = await readSandbox(input);
+  if (!deleting) return [];
+  assertExpectedUid(deleting, fenced.uid);
+  assertNoLifecycleProtection(deleting);
   // finalizer 让旧 UID 在网络回收完成前保持 Terminating；Kubernetes 因而不会允许
   // 同名 Sandbox 重建，按名称管理的 TrafficPolicy/SNAT 不会误伤新 incarnation。
   await input.networkPolicyManager.deleteForSandboxName(input.name);
@@ -127,13 +149,17 @@ async function removeNetworkCleanupFinalizer(
   const current = await readSandbox(input);
   if (!current) return;
   assertExpectedUid(current, expectedUid);
+  assertNoLifecycleProtection(current);
   const metadata = objectValue(current.metadata);
+  const resourceVersion = stringValue(metadata.resourceVersion);
+  if (!resourceVersion) throw new SandboxDeletionPreconditionError('Sandbox 缺少 resourceVersion，拒绝移除网络回收 finalizer');
   const finalizers = stringArray(metadata.finalizers);
   const index = finalizers.indexOf(SANDBOX_NETWORK_CLEANUP_FINALIZER);
   if (index < 0) return;
   const removed = await input.kubectl.run([
     'patch', input.resource, '--type=json', '-p', JSON.stringify([
       { op: 'test', path: '/metadata/uid', value: expectedUid },
+      { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
       { op: 'test', path: `/metadata/finalizers/${index}`, value: SANDBOX_NETWORK_CLEANUP_FINALIZER },
       { op: 'remove', path: `/metadata/finalizers/${index}` },
     ]),
@@ -180,10 +206,33 @@ async function waitForSandboxAbsent(input: {
   }
 }
 
+function assertNoLifecycleProtection(current: Record<string, unknown>): void {
+  const annotations = objectValue(objectValue(current.metadata).annotations);
+  if (isActiveInvocationLeaseProtected(lifecycleStateFromMetadata({}, annotations), Date.now())) {
+    throw new SandboxDeletionPreconditionError('Sandbox 出现 active invocation lease，保留网络回收 finalizer');
+  }
+  if (backgroundShellProtectionFromStatus({ raw: current }, Date.now())) {
+    throw new SandboxDeletionPreconditionError('Sandbox 出现后台任务保护，保留网络回收 finalizer');
+  }
+}
+
 function assertExpectedUid(current: Record<string, unknown>, expectedUid: string): void {
   const actualUid = stringValue(objectValue(current.metadata).uid);
   if (actualUid !== expectedUid) {
     throw new SandboxDeletionPreconditionError(`Sandbox UID 已变化: expected=${expectedUid} actual=${actualUid ?? 'missing'}`);
+  }
+}
+
+function assertExpectedPreconditions(
+  current: Record<string, unknown>,
+  expected: SandboxDeletionPreconditions,
+): void {
+  assertExpectedUid(current, expected.uid);
+  const actualResourceVersion = stringValue(objectValue(current.metadata).resourceVersion);
+  if (actualResourceVersion !== expected.resourceVersion) {
+    throw new SandboxDeletionPreconditionError(
+      `Sandbox resourceVersion 已变化: expected=${expected.resourceVersion} actual=${actualResourceVersion ?? 'missing'}`,
+    );
   }
 }
 

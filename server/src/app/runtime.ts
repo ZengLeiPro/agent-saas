@@ -181,7 +181,7 @@ import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
+import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -863,12 +863,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgRunStore.init();
-    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 16;
+    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
     runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
       tablePrefix: config.runtimeEventStore.tablePrefix,
       maxConfigurableConcurrentRuns: Math.max(
         defaultMaxConcurrentRuns,
-        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 64,
+        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 500,
       ),
     });
     await runtimeSchedulerConfigStore.init(defaultMaxConcurrentRuns);
@@ -1849,7 +1849,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   };
   if (pgRunStore) rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
   const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig), resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
-
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
     const schedulerConfig = await runtimeSchedulerConfigStore!.get();
@@ -1872,7 +1871,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         schedulerConfig.maxConcurrentRuns,
         sessionLockMode,
       ),
-      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 10,
+      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 100,
       executionEnabled: schedulerConfig.executionEnabled,
       resolveMaxConcurrentRuns: async () => effectiveMaxConcurrentRuns(
         (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,
@@ -2002,6 +2001,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       logger: serverLogger.child('RuntimeScheduler'),
     });
+    rawRuntimeConfig.resolveRuntimeRunCapacity = createRuntimeRunCapacityResolver(() => runtimeScheduler, runtimeSchedulerConfigStore!, sessionLockMode, config.runtimeScheduler?.foregroundReservedRuns ?? 100);
     if (taskboardStoreService && defaultModelResolver) {
       taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({ store: taskboardStoreService, scheduler: runtimeScheduler, runStore: pgRunStore, sessionCatalog,
         eventStore: pgEventStore, agentCwd, executionConfig, resolveDefaultModel: defaultModelResolver,

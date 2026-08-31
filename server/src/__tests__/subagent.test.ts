@@ -36,7 +36,6 @@ import { createRuntimeSessionRecord, FileSessionCatalog } from '../runtime/sessi
 import { AgentToolProvider } from '../runtime/subagent/agentToolProvider.js';
 import { SUBAGENT_TYPES } from '../runtime/subagent/agentTypes.js';
 import {
-  SUBAGENT_GLOBAL_MAX_CONCURRENCY,
   SUBAGENT_HARD_TIMEOUT_MS,
   SUBAGENT_MAX_TURNS,
   SUBAGENT_PER_RUN_MAX_CONCURRENCY,
@@ -170,12 +169,12 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
 
 // ────────────────────────── 测试 ──────────────────────────
 
-describe('SubagentLimiter', () => {
+describe('SubagentLimiter per-parent capacity', () => {
   it('单 run 累计派生次数不限，完成后可继续派生', async () => {
     const limiter = new SubagentLimiter({ perRunMaxConcurrency: 2 });
     for (let i = 0; i < 20; i += 1) {
       const slot = await limiter.acquire('run-1');
-      slot.release();
+      await slot.release();
     }
   });
 
@@ -186,8 +185,8 @@ describe('SubagentLimiter', () => {
     const second = limiter.acquire('run-1').then((slot) => { secondAcquired = true; return slot; });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(secondAcquired).toBe(false);
-    first.release();
-    (await second).release();
+    await first.release();
+    await (await second).release();
     expect(secondAcquired).toBe(true);
 
     const third = await limiter.acquire('run-1');
@@ -195,25 +194,20 @@ describe('SubagentLimiter', () => {
     const waiting = limiter.acquire('run-1', abortController.signal);
     abortController.abort();
     await expect(waiting).rejects.toThrow(/取消/);
-    third.release();
+    await third.release();
   });
 
-  it('同一 run 的排队调用不占用进程槽，其他 run 可公平进入', async () => {
-    const limiter = new SubagentLimiter({ globalMaxConcurrency: 1, perRunMaxConcurrency: 1 });
+  it('只限制单父并发，不再持有跨 run 或父槽继承状态', async () => {
+    const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
     let sameRunAcquired = false;
-    let otherRunAcquired = false;
     const sameRun = limiter.acquire('run-1').then((slot) => { sameRunAcquired = true; return slot; });
-    const otherRun = limiter.acquire('run-2').then((slot) => { otherRunAcquired = true; return slot; });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    first.release();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(otherRunAcquired).toBe(true);
+    const otherRun = await limiter.acquire('run-2');
     expect(sameRunAcquired).toBe(false);
 
-    (await otherRun).release();
-    (await sameRun).release();
+    await first.release();
+    await (await sameRun).release();
+    await otherRun.release();
   });
 });
 
@@ -610,8 +604,7 @@ describe('AgentToolProvider', () => {
     expect(descriptor!.description).toContain('explore');
     expect(SUBAGENT_TYPES.general.maxTurns).toBe(SUBAGENT_MAX_TURNS);
     expect(SUBAGENT_TYPES.explore.maxTurns).toBe(SUBAGENT_MAX_TURNS);
-    expect(SUBAGENT_PER_RUN_MAX_CONCURRENCY).toBe(6);
-    expect(SUBAGENT_GLOBAL_MAX_CONCURRENCY).toBe(30);
+    expect(SUBAGENT_PER_RUN_MAX_CONCURRENCY).toBe(10);
     expect(SUBAGENT_MAX_TURNS).toBe(500);
     expect(SUBAGENT_HARD_TIMEOUT_MS).toBe(120 * 60 * 1000);
   });

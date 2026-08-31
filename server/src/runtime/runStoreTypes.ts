@@ -90,7 +90,7 @@ export class RunCreateConflictError extends Error {
 export interface EnqueueBackgroundTaskLimits {
   /** 单个父 run 同时处于 pending/running 的后台任务上限。 */
   perParentActive: number;
-  /** 单租户同时处于 pending/running 的后台任务上限。 */
+  /** 单租户同时处于 pending/running 的后台任务排队保险丝。 */
   perTenantActive: number;
 }
 
@@ -187,6 +187,8 @@ export interface SteeringApplyResult {
 export interface RunLeaseAdmission {
   foreground: boolean;
   foregroundReservedRuns: number;
+  /** 子 run 继承正在运行的父槽；同一父同时只允许一个，由 SubagentLimiter 保证。 */
+  inheritFromRunId?: string;
 }
 
 export interface RunStore {

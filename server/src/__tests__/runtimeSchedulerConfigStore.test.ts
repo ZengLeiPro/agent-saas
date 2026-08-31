@@ -60,7 +60,7 @@ class FakePool {
   }
 }
 
-describe('PgRuntimeSchedulerConfigStore', () => {
+describe('PgRuntimeSchedulerConfigStore shared capacity', () => {
   it('初始化共享配置表并保留期望并发值', async () => {
     const pool = new FakePool();
     const store = new PgRuntimeSchedulerConfigStore(pool as unknown as pg.Pool, {
@@ -104,6 +104,7 @@ describe('PgRuntimeSchedulerConfigStore', () => {
     const pool = new FakePool();
     const store = new PgRuntimeSchedulerConfigStore(pool as unknown as pg.Pool);
     await store.init(16);
+    expect(store.maxConfigurableConcurrentRuns).toBe(500);
 
     await expect(store.updateExecutionMaintenance(false, 'ACS emergency maintenance', 'admin')).resolves.toMatchObject({
       executionEnabled: false,

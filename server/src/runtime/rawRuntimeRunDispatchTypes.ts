@@ -303,8 +303,16 @@ export interface RawRuntimeRunDispatchConfig {
   sessionCatalog?: SessionCatalog;
   eventStoreFactory?: (session: RuntimeSessionRecord) => EventStore;
   approvalStoreFactory?: (session: RuntimeSessionRecord, eventStore: EventStore) => ApprovalStore;
-  /** Durable run state backend. PG runtime wires PgRunStore here for P0 wake/recovery state. */
+  /** Durable run state backend；PG runtime 注入后同时作为父子 Run 的统一容量底座。 */
   runStore?: RunStore;
+  /** 当前统一 Run 容量；前台子 Agent 通过同一 PgRunStore 容量锁准入。 */
+  resolveRuntimeRunCapacity?: () => Promise<{
+    maxConcurrentRuns: number;
+    foregroundReservedRuns: number;
+  }> | {
+    maxConcurrentRuns: number;
+    foregroundReservedRuns: number;
+  };
   /** Governance wake-time revalidation；Raw Runtime 在 Environment 解析后写最终 Snapshot。 */
   runPreflightService?: RunPreflightService;
   runResolutionSnapshotStore?: Pick<PgRunResolutionSnapshotStore, 'append' | 'get'>;

@@ -345,6 +345,11 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [evaluationId, attempt!.providerAttemptId],
     );
     await guard.finishModel(setup.context, attempt, undefined, new Error('response lost'));
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET status='reconcile_required'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, setup.sessionId, setup.automationId],
+    );
 
     for (const observedState of ['still_running', 'ambiguous'] as const) {
       const current = await store.get(tenantId, setup.sessionId, setup.automationId);

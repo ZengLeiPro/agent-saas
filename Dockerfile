@@ -189,7 +189,9 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY server/package.json ./server/
 COPY hand-server/package.json ./hand-server/
 COPY acs-orchestrator/package.json ./acs-orchestrator/
-COPY shared/package.json ./shared/
+# pnpm injectWorkspacePackages 会把 workspace 源码快照注入各依赖方的 node_modules；
+# 必须在 install 前复制完整 shared，否则注入副本只有 package.json，esbuild 无法解析 src/index.ts。
+COPY shared ./shared
 COPY web/package.json ./web/
 COPY mobile/package.json ./mobile/
 COPY patches ./patches/

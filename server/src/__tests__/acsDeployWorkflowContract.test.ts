@@ -98,9 +98,10 @@ describe('ACS deploy workflow contract', () => {
     expect(workflow).not.toContain('while this run was waiting for image');
   });
 
-  it('串行化生产部署且不取消正在进行的发布', () => {
-    expect(workflow).toContain('group: acs-production-deploy');
+  it('与其他生产写入口全局串行且不取消正在进行的发布', () => {
+    expect(workflow).toContain('group: production-runtime');
     expect(workflow).toContain('cancel-in-progress: false');
+    expect(workflow).not.toContain('group: acs-production-deploy');
   });
 
   it('只接受 exact SHA 镜像并对缺失构建记录快速失败', () => {

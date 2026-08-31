@@ -31,11 +31,10 @@ on:
         type: boolean
         default: false
 
-# 手动生产发布整条链（build → optional ECS → Web OSS）互斥；普通 push CI 使用 run_id
+# 手动生产发布与 ACS/Promotion 共用生产写锁；普通 push/PR CI 使用 run_id
 # 隔离，不互相排队。cancel-in-progress=false 保证正在发布的批次不会被新批次打断。
-# pull_request 也用 run_id 隔离，避免多 PR 同时跑时互相排队。
 concurrency:
-  group: agent-saas-${{ github.event_name == 'workflow_dispatch' && 'production-deploy' || github.run_id }}
+  group: ${{ github.event_name == 'workflow_dispatch' && 'production-runtime' || format('agent-saas-{0}', github.run_id) }}
   cancel-in-progress: false
 
 env:

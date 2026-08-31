@@ -311,9 +311,9 @@ jobs:
     timeout-minutes: 75
     needs: [changes, gate]
     concurrency:
-      group: acs-production-deploy
+      group: production-runtime
       cancel-in-progress: false
-    # 生产部署只走手动 dispatch（与主服务 ci.yml 同一纪律: push 归 push, 部署归部署）
+    # 生产部署只走手动 dispatch，并与 App/Promotion 共用生产写锁。
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs.gate.result == 'success'
 
     env:

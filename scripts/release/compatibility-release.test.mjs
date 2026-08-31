@@ -111,9 +111,10 @@ test('rebuilds the trusted identity from the observed live component matrix', ()
 });
 
 test('legacy deploy entrypoints persist immutable baselines and refresh trusted identity', async () => {
-  const [appWorkflow, acsWorkflow, acsDeploy] = await Promise.all([
+  const [appWorkflow, acsWorkflow, promotionWorkflow, acsDeploy] = await Promise.all([
     readFile('.github/workflows/ci.yml', 'utf8'),
     readFile('.github/workflows/acs-sandbox.yml', 'utf8'),
+    readFile('.github/workflows/promote-release.yml', 'utf8'),
     readFile('scripts/deploy-acs-orchestrator.sh', 'utf8'),
   ]);
   assert.match(appWorkflow, /baselines\/app-/u);
@@ -128,6 +129,9 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     appWorkflow.indexOf('Production identity atomically rebuilt') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
   );
+  assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
+  assert.match(acsWorkflow, /group: production-runtime/u);
+  assert.match(promotionWorkflow, /group: production-runtime/u);
   assert.match(acsWorkflow, /baselines\/acs-/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /acs-release-identity\.json/u);

@@ -4,6 +4,7 @@ import { agentDwsMigrations } from './agentDwsMigrations.js';
 import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
 import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
+import { governanceV34Statements } from './v34Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
@@ -931,13 +932,12 @@ function migrations(prefix: string): GovernanceMigration[] {
       ],
     },
     {
-      // Kept before v31: v30 owns change-job evidence and execution ordering;
-      // v31 only upgrades retention-receipt retry state.
+      // Kept before v31: v30 owns change-job evidence/execution ordering; v31 only upgrades retention retry state.
       version: 30,
       statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
     },
     {
-      // v28 曾在生产使用过其他语义；先幂等补齐 retention 基础表，再升级 retry/lease。
+      // 兼容生产旧 V28：先幂等补齐 retention 基础表，再升级 retry/lease。
       version: 31,
       statements: [
         ...buildContextRetentionMigrationSql(prefix),
@@ -946,6 +946,7 @@ function migrations(prefix: string): GovernanceMigration[] {
     },
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },
+    { version: 34, statements: governanceV34Statements(prefix) },
   ];
 }
 

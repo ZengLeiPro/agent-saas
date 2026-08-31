@@ -27,6 +27,7 @@ import { createRuntimeSessionRecord, type RuntimeSessionRecord } from '../sessio
 import { getSubagentType } from '../subagent/agentTypes.js';
 import {
   SUBAGENT_PER_RUN_MAX_CONCURRENCY,
+  SUBAGENT_PER_TENANT_MAX_ACTIVE,
   SUBAGENT_RESULT_MAX_CHARS,
 } from '../subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../subagent/subagentRunner.js';
@@ -201,7 +202,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(parentSession.orgAgentSnapshot?.runtime.executionMode
           ? { executionMode: parentSession.orgAgentSnapshot.runtime.executionMode }
           : {}),
-        ...(dwsCompletionRoute ? { dwsCompletionRoute } : {}),
+        ...(dwsCompletionRoute.version === 'exact' ? { dwsCompletionRoute: dwsCompletionRoute.route } : {}),
+        ...(dwsCompletionRoute.version === 'invalid' ? { dwsCompletionRouteVersion: 'invalid' } : {}),
         agentType: request.agentType,
         modelRef,
         includeCompanyInfo: request.includeCompanyInfo
@@ -221,9 +223,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       },
     }, {
       perParentActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
-      perTenantActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
+      perTenantActive: SUBAGENT_PER_TENANT_MAX_ACTIVE,
     });
-
     await this.appendParentLifecycleEvent(parentSession, tenantId, {
       type: 'background_task_started',
       runId: parentRunId,
@@ -314,7 +315,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         },
       }, {
         perParentActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
-        perTenantActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
+        perTenantActive: SUBAGENT_PER_TENANT_MAX_ACTIVE,
       });
     } catch (err) {
       await sessionCatalog.markStatus(taskSessionId, 'error').catch(() => undefined);

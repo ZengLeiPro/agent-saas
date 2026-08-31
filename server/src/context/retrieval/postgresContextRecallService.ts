@@ -151,7 +151,11 @@ export class PgContextRecallService implements ContextRecallService {
       WHERE r.tenant_id=$1 AND r.collection_id=ANY($2::text[])
         AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
-        AND (s.kind<>'dws' OR a.status='active')
+        AND (s.kind<>'dws' OR (
+          a.status='active'
+          AND a.profile_id=s.config_json->>'profileId'
+          AND a.profile_id=a.corp_id||':'||a.dingtalk_user_id
+        ))
         AND NOT EXISTS (
           SELECT 1 FROM ${this.tables.partitions} auth_partition
           WHERE auth_partition.tenant_id=r.tenant_id AND auth_partition.source_id=r.source_id
@@ -282,7 +286,11 @@ export class PgContextRecallService implements ContextRecallService {
       WHERE r.tenant_id=$1 AND r.source_id=$2 AND r.collection_id=$3 AND r.record_id=$4
         AND r.deleted=FALSE AND r.revoked=FALSE
         AND s.status='active' AND c.status='active'
-        AND (s.kind<>'dws' OR a.status='active')
+        AND (s.kind<>'dws' OR (
+          a.status='active'
+          AND a.profile_id=s.config_json->>'profileId'
+          AND a.profile_id=a.corp_id||':'||a.dingtalk_user_id
+        ))
         AND NOT EXISTS (
           SELECT 1 FROM ${this.tables.partitions} auth_partition
           WHERE auth_partition.tenant_id=r.tenant_id AND auth_partition.source_id=r.source_id

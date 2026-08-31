@@ -15,10 +15,18 @@ Example:
   dws doc read --node <DOC_ID>
   dws doc read --node "https://alidocs.dingtalk.com/i/nodes/<DOC_UUID>"
   dws doc read --node <DOC_ID> --content-format jsonml --output ./doc.json
+  dws doc read --node <DOC_ID> --content-format jsonml --scope outline
 Flags:
       --node string     文档 ID 或 URL (必填)
       --content-format string   输出格式: 默认为 markdown，可选 jsonml（返回完整 JSONML 结构）
       --output string   输出到本地文件路径（仅 --content-format jsonml 时生效）
+      --scope string    JSONML 节点范围: outline / range / section / tags
+      --tags string     自定义 JSONML tag 列表，逗号分隔；仅 --scope tags 使用且必填
+      --max-depth int   筛选遍历最大深度，0 表示不限
+      --start-block-id string   range / section 起始块 UUID
+      --end-block-id string     range 结束块 UUID；空或 "-1" 表示到文档末尾
+      --password string         互联网公开文档开启密码保护时的访问密码；普通文档无需传入
+      --version int             读取指定历史版本内容（版本号从 doc version list 获取，0 表示初始版本，需要文档编辑权限）；缺省读最新版
 ```
 
 ## 关键说明
@@ -26,6 +34,13 @@ Flags:
 - 默认返回 **Markdown** 格式的文档内容，仅限有"下载"权限的文档。
 - 返回的 Markdown 中，附件以 OSS 临时下载链接形式给出（如 `https://alidocs2.oss-cn-zhangjiakou.aliyuncs.com/res/.../att/<resourceId>.ext?Expires=...`），**链接会过期**。链接过期后从 URL 路径中提取 `<resourceId>`（即 `/att/` 后、扩展名前的 UUID 部分），用 `media download --node <DOC_ID> --resource-id <resourceId>` 重新获取下载链接。
 - `--content-format jsonml` 返回完整 JSONML 结构（含 `revision`），用于无损读改写；可直接配合 [`doc-update.md`](./doc-update.md) 的 `--content-format jsonml --content-file` 写回。`revision` 仅在并发敏感场景下需要透传给 update 触发并发检查（详见下方）。
+
+## 互联网公开文档与历史版本
+
+- **互联网公开文档**：公开链接直接传 `--node`；文档开启了密码保护时，通过 `--password <ACCESS_PASSWORD>` 提供访问密码，普通文档无需传入。密码只进入读取请求，不会回显在读取结果里（`--dry-run` 预览会包含所传参数，注意输出环境）。
+- **历史版本**：`--version <N>` 读取指定历史版本内容（Markdown / JSONML / scope 均可组合）；版本号从 `dws doc version list` 或 `dws doc +version-list` 获取，`0` 表示文档初始版本；需要文档编辑权限（EDITOR 及以上），缺省读最新版。
+- **跨组织文档**：非互联网公开的跨组织文档，`doc read` 整体被组织边界拦截（提示「不支持跨组织访问数据」），最新版与历史版本内容都读不到（`doc info` 仍可用）；互联网公开（含密码）文档的 `doc read` 不受影响，但 `doc version list` / `+version-list` 与写操作仍会被拦截，版本号无法从列表获取。
+- 只要看历史内容、不打算恢复时用 `--version`；要把文档整体恢复到历史版本才用 `doc version revert`（危险操作，需确认）。
 
 ## content-format=jsonml 输出
 
@@ -40,12 +55,40 @@ Flags:
 
 可直接用于 `doc update --content-format jsonml --content-file` 写回。`revision` 字段在普通改写场景下**不需要**透传——`doc update` 默认直接覆盖。仅在担心多 agent 并发覆盖时，才把 `revision` 通过 `--revision` 透传给 update 触发并发检查（详见下方 §并发安全模式）。
 
+## scope/tags 节点筛选（返回 JSONML fragment）
+
+只读取文档大纲、一个块或一段区间时，用 `--scope` 避免拉取整篇。筛选仅适用于 JSONML，必须同时传 `--content-format jsonml`。
+
+- `--scope outline`：返回全部 `h1` 到 `h6` 标题。
+- `--scope tags --tags h1,table`：返回指定 tag；`--tags` 只能与 `scope=tags` 一起使用。
+- `--scope range --start-block-id <UUID> [--end-block-id <UUID>]`：返回顶层闭区间；结束 ID 为空或 `-1` 时读到文末。
+- `--scope section --start-block-id <UUID>`：返回该块及其完整子树。
+- `--max-depth` 可限制筛选遍历深度，`0` 表示不限制。
+
+块 UUID 可从 [`doc-block.md`](./doc-block.md) 的块列表或完整 JSONML 节点的 `uuid` 属性取得。
+
+筛选结果是查询用的虚拟 fragment 容器，例如：
+
+```json
+["fragment", {"source": "outline"}, ["h1", {"uuid": "h1a"}, "一级标题"]]
+```
+
+消费时必须剥掉 `"fragment"` 和属性对象，只取后面的 children。**不得把 fragment 容器整体写回文档**；如需写回，只使用剥壳后的 children。
+
+```bash
+dws doc read --node <DOC_ID> --content-format jsonml --scope outline
+dws doc read --node <DOC_ID> --content-format jsonml --scope range --start-block-id <UUID_A> --end-block-id <UUID_B>
+dws doc read --node <DOC_ID> --content-format jsonml --scope section --start-block-id <UUID>
+dws doc read --node <DOC_ID> --content-format jsonml --scope tags --tags table,img
+```
+
 ## 上下文传递
 
 | 从返回中提取 | 用于 |
 |-------------|------|
 | Markdown 正文 | 用户可读输出 / 二次处理 |
-| JSONML `jsonml` 数组 | [`doc-update.md`](./doc-update.md) 的 `--content-file` + `--content-format jsonml` |
+| JSONML `jsonml`（完整 body，无 scope） | [`doc-update.md`](./doc-update.md) 的 `--content-file` + `--content-format jsonml` |
+| JSONML fragment（scope 筛选） | 剥掉 fragment 外层后消费 children；不得整体写回 |
 | JSONML `revision` | [`doc-update.md`](./doc-update.md) 的 `--revision`（可选；担心被并发覆盖时使用） |
 | 附件链接中的 `resourceId` | [`doc-media.md`](./doc-media.md) 的 `--resource-id`（链接过期后续期） |
 
@@ -57,6 +100,12 @@ dws doc read --node <DOC_ID> --format json
 
 # alidocs URL 直传
 dws doc read --node "https://alidocs.dingtalk.com/i/nodes/<DOC_UUID>" --format json
+
+# 互联网公开文档（含密码保护）
+dws doc read --node <PUBLIC_URL> --password <ACCESS_PASSWORD> --format json
+
+# 读取历史版本（版本号来自 dws doc version list）
+dws doc read --node <DOC_ID> --version 3 --format json
 
 # JSONML 完整结构 → 文件（无损改写前置）
 dws doc read --node <DOC_ID> --content-format jsonml --output /tmp/doc.json

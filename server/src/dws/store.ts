@@ -11,7 +11,11 @@ const DWS_ACCESS_REFRESH_RETRY_MS = 3 * 60 * 60 * 1_000;
 export type DwsConnectionStatus = 'pending' | 'connected' | 'error' | 'disconnected';
 
 export interface DwsProfileMetadata {
+  /** Exact CLI selector, normally `corpId:userId`. */
   profileId: string;
+  /** DingTalk organization identity, kept separate from the CLI selector. */
+  corpId: string;
+  isCurrent?: boolean;
   profileName?: string;
   corpName?: string;
   dingtalkUserId?: string;
@@ -31,7 +35,9 @@ export interface DwsConnectionIdentity {
 }
 
 export interface DwsConnectionRecord extends DwsConnectionIdentity {
+  /** Exact CLI selector, normally `corpId:userId`. */
   profileId: string;
+  corpId: string;
   profileName?: string;
   corpName?: string;
   dingtalkUserId?: string;
@@ -53,6 +59,15 @@ export interface DwsConnectionRecord extends DwsConnectionIdentity {
   leaseUntil?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export function hasExactDwsConnectionProfile(
+  value: Pick<DwsConnectionRecord, 'profileId' | 'corpId' | 'dingtalkUserId'>,
+): boolean {
+  const profileId = value.profileId?.trim();
+  const corpId = value.corpId?.trim();
+  const dingtalkUserId = value.dingtalkUserId?.trim();
+  return Boolean(profileId && corpId && dingtalkUserId && profileId === `${corpId}:${dingtalkUserId}`);
 }
 
 export interface DwsAuthCheckResult {
@@ -103,6 +118,7 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
           user_id TEXT NOT NULL,
           username TEXT NOT NULL,
           profile_id TEXT NOT NULL,
+          corp_id TEXT NOT NULL,
           profile_name TEXT,
           corp_name TEXT,
           dingtalk_user_id TEXT,
@@ -128,10 +144,50 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
           CHECK (connection_status IN ('pending', 'connected', 'error', 'disconnected'))
         )
       `);
+      await client.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS corp_id TEXT`);
+      await client.query(`
+        UPDATE ${this.table}
+        SET corp_id = CASE
+          WHEN POSITION(':' IN profile_id) > 0 THEN SPLIT_PART(profile_id, ':', 1)
+          ELSE profile_id
+        END
+        WHERE corp_id IS NULL OR BTRIM(corp_id) = ''
+      `);
+      await client.query(`
+        UPDATE ${this.table}
+        SET dingtalk_user_id = SUBSTRING(profile_id FROM POSITION(':' IN profile_id) + 1)
+        WHERE POSITION(':' IN profile_id) > 0
+          AND NULLIF(BTRIM(dingtalk_user_id), '') IS NULL
+      `);
+      await client.query(`
+        UPDATE ${this.table} AS legacy
+        SET profile_id = legacy.corp_id || ':' || BTRIM(legacy.dingtalk_user_id)
+        WHERE legacy.profile_id = legacy.corp_id
+          AND NULLIF(BTRIM(legacy.dingtalk_user_id), '') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ${this.table} AS exact
+            WHERE exact.tenant_id = legacy.tenant_id
+              AND exact.user_id = legacy.user_id
+              AND exact.profile_id = legacy.corp_id || ':' || BTRIM(legacy.dingtalk_user_id)
+          )
+      `);
+      await client.query(`
+        UPDATE ${this.table}
+        SET connection_status = 'disconnected', authenticated = FALSE,
+            token_valid = FALSE, refresh_token_valid = FALSE,
+            last_error = 'dws_profile_identity_reauthorization_required',
+            lease_owner = NULL, lease_until = NULL, updated_at = NOW()
+        WHERE connection_status = 'connected' AND (
+          NULLIF(BTRIM(dingtalk_user_id), '') IS NULL
+          OR profile_id IS DISTINCT FROM corp_id || ':' || dingtalk_user_id
+        )
+      `);
+      await client.query(`ALTER TABLE ${this.table} ALTER COLUMN corp_id SET NOT NULL`);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.table}_due_idx
         ON ${this.table} (next_check_at)
         WHERE connection_status IN ('pending', 'connected', 'error') AND profile_status = 'active'
+          AND dingtalk_user_id IS NOT NULL AND profile_id = corp_id || ':' || dingtalk_user_id
       `);
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.table}_user_idx
@@ -164,9 +220,17 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
       const seen = new Set<string>();
 
       for (const profile of profiles) {
-        if (!profile.profileId || seen.has(profile.profileId)) continue;
-        seen.add(profile.profileId);
-        const previous = existing.get(profile.profileId);
+        const profileId = profile.profileId.trim();
+        const corpId = profile.corpId.trim();
+        if (!profileId || !corpId) throw new Error('DWS profile identity is incomplete');
+        const dingtalkUserId = profile.dingtalkUserId?.trim();
+        if (dingtalkUserId && profileId !== `${corpId}:${dingtalkUserId}`) {
+          throw new Error('DWS profile selector does not match corpId and userId');
+        }
+        const exactIdentity = Boolean(dingtalkUserId);
+        if (seen.has(profileId)) throw new Error(`Duplicate DWS profile selector: ${profileId}`);
+        seen.add(profileId);
+        const previous = existing.get(profileId);
         const profileStatus = normalizeProfileStatus(profile.profileStatus);
         const profileLastUsedAt = newestIso(profile.lastUsedAt, profile.lastLoginAt);
         const profileUpdatedAt = newestIso(profile.updatedAt, profileLastUsedAt);
@@ -179,7 +243,10 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
         let connectionStatus: DwsConnectionStatus;
         let lastError = previous?.lastError;
         let consecutiveFailures = previous?.consecutiveFailures ?? 0;
-        if (profileStatus === 'expired' || profileStatus === 'revoked') {
+        if (!exactIdentity) {
+          connectionStatus = 'disconnected';
+          lastError = 'dws_profile_identity_reauthorization_required';
+        } else if (profileStatus === 'expired' || profileStatus === 'revoked') {
           connectionStatus = 'disconnected';
           lastError = `profile_${profileStatus}`;
         } else if (!previous) {
@@ -202,18 +269,19 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
 
         await client.query(`
           INSERT INTO ${this.table} (
-            tenant_id, user_id, username, profile_id, profile_name, corp_name,
+            tenant_id, user_id, username, profile_id, corp_id, profile_name, corp_name,
             dingtalk_user_id, dingtalk_user_name, profile_status, connection_status,
             authenticated, token_valid, refresh_token_valid, expires_at, refresh_expires_at,
             profile_last_used_at, profile_updated_at, last_checked_at, next_check_at,
             last_error, consecutive_failures, created_at, updated_at
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-            COALESCE($22::timestamptz, NOW()), $23
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+            COALESCE($23::timestamptz, NOW()), $24
           )
           ON CONFLICT (tenant_id, user_id, profile_id) DO UPDATE SET
             username = EXCLUDED.username,
+            corp_id = EXCLUDED.corp_id,
             profile_name = EXCLUDED.profile_name,
             corp_name = EXCLUDED.corp_name,
             dingtalk_user_id = EXCLUDED.dingtalk_user_id,
@@ -232,10 +300,11 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
           identity.tenantId,
           identity.userId,
           identity.username,
-          profile.profileId,
+          profileId,
+          corpId,
           nullable(profile.profileName),
           nullable(profile.corpName),
-          nullable(profile.dingtalkUserId),
+          nullable(dingtalkUserId),
           nullable(profile.dingtalkUserName),
           profileStatus,
           connectionStatus,
@@ -282,6 +351,8 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
         FROM ${this.table}
         WHERE connection_status IN ('pending', 'connected', 'error')
           AND profile_status = 'active'
+          AND dingtalk_user_id IS NOT NULL
+          AND profile_id = corp_id || ':' || dingtalk_user_id
           AND next_check_at <= $1
           AND (lease_until IS NULL OR lease_until <= $1)
         ORDER BY next_check_at ASC
@@ -300,7 +371,11 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
   }
 
   async completeCheck(record: DwsConnectionRecord, workerId: string, result: DwsAuthCheckResult, now = new Date()): Promise<void> {
-    const connected = result.authenticated && result.refreshTokenValid;
+    const exactIdentity = hasExactDwsConnectionProfile({
+      ...record,
+      dingtalkUserId: result.dingtalkUserId ?? record.dingtalkUserId,
+    });
+    const connected = result.authenticated && result.refreshTokenValid && exactIdentity;
     const nextCheckAt = computeNextCheckAfterStatus(result, now);
     await this.options.pool.query(`
       UPDATE ${this.table}
@@ -337,7 +412,11 @@ export class PgDwsConnectionStore implements DwsConnectionStore {
       nullable(result.dingtalkUserName),
       now.toISOString(),
       nextCheckAt,
-      connected ? null : (result.error ?? 'not_authenticated'),
+      connected
+        ? null
+        : result.authenticated && result.refreshTokenValid && !exactIdentity
+          ? 'dws_profile_identity_reauthorization_required'
+          : (result.error ?? 'not_authenticated'),
     ]);
   }
 
@@ -423,6 +502,7 @@ function mapRow(row: Record<string, unknown>): DwsConnectionRecord {
     userId: String(row.user_id),
     username: String(row.username),
     profileId: String(row.profile_id),
+    corpId: stringValue(row.corp_id) ?? corpIdFromProfileId(String(row.profile_id)),
     ...(stringValue(row.profile_name) ? { profileName: stringValue(row.profile_name) } : {}),
     ...(stringValue(row.corp_name) ? { corpName: stringValue(row.corp_name) } : {}),
     ...(stringValue(row.dingtalk_user_id) ? { dingtalkUserId: stringValue(row.dingtalk_user_id) } : {}),
@@ -445,6 +525,11 @@ function mapRow(row: Record<string, unknown>): DwsConnectionRecord {
     createdAt: isoValue(row.created_at) ?? new Date(0).toISOString(),
     updatedAt: isoValue(row.updated_at) ?? new Date(0).toISOString(),
   };
+}
+
+function corpIdFromProfileId(profileId: string): string {
+  const separator = profileId.indexOf(':');
+  return separator > 0 ? profileId.slice(0, separator) : profileId;
 }
 
 function normalizeProfileStatus(value: string | undefined): string {

@@ -51,7 +51,7 @@ describe('Runtime Worker 生产部署契约', () => {
     });
   });
 
-  it('Web 蓝绿固定 ws-only，独立 worker 固定 runtime-worker 并有 pid/ready 门禁', async () => {
+  it('Web 蓝绿固定 ws-only，独立 worker 固定 runtime-worker 并有 pid/ready 与 retention drain 门禁', async () => {
     const webUnit = await readFile(
       join(repoRoot, 'daemon-packaging/systemd/agent-saas-server@.service.template'),
       'utf-8',
@@ -70,6 +70,15 @@ describe('Runtime Worker 生产部署契约', () => {
     );
     const workflow = await readFile(join(repoRoot, '.github/workflows/ci.yml'), 'utf-8');
     const serverEntry = await readFile(join(repoRoot, 'server/src/index.ts'), 'utf-8');
+    const runtimeSource = await readFile(join(repoRoot, 'server/src/app/runtime.ts'), 'utf-8');
+    const readinessSource = await readFile(
+      join(repoRoot, 'server/src/runtime/runtimeWorkerReadiness.ts'),
+      'utf-8',
+    );
+    const retentionSource = await readFile(
+      join(repoRoot, 'server/src/runtime/runtimeEventRetention.ts'),
+      'utf-8',
+    );
 
     expect(webUnit).toContain('Environment=AGENT_SAAS_ENVIRONMENT=production');
     expect(webUnit).toContain('EnvironmentFile=-/etc/agent-saas/server-%i.release.env');
@@ -127,6 +136,9 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workflow).toContain('systemctl disable "${SERVICE_NAME}@${ACTIVE}"');
     expect(workflow).toContain('systemctl disable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
     expect(workflow).toContain('runtime worker drain restart guard armed');
+    expect(workflow).toContain('mv -f "$candidate" "$file" || { rm -f "$candidate"; return 1; }');
+    expect(workflow).toContain('write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE"');
+    expect(workflow).toContain('ready.authority');
     expect(workflow).toContain('"/run/agent-saas-runtime-worker-${WORKER_IDLE}.draining"');
     expect(workflow).toContain('nginx.service.d/agent-saas-nas.conf');
     const rollbackStart = workflow.indexOf('rollback_idle_and_exit()');
@@ -135,15 +147,33 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(rollbackStart).toBeGreaterThan(-1);
     expect(rollbackEnd).toBeGreaterThan(rollbackStart);
     expect(rollbackBlock).toContain('systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"');
-    expect(rollbackBlock).toContain('restore previous runtime worker after pre-Web failure');
-    expect(rollbackBlock).toContain('echo "$WORKER_ACTIVE" > "$WORKER_ACTIVE_COLOR_FILE"');
-    expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_STARTED');
+    expect(rollbackBlock).toContain('restart drained runtime worker after pre-Web failure');
+    expect(rollbackBlock).toContain('previous runtime worker reclaimed authority without restart');
+    expect(rollbackBlock).toContain('kill -HUP "$old_pid"');
+    expect(rollbackBlock).toContain('write_worker_active_color "$WORKER_ACTIVE"');
+    expect(rollbackBlock).toContain('previous runtime worker marker restored before candidate stop');
+    expect(rollbackBlock).toContain('WORKER_CANDIDATE_PROCESS_STARTED');
+    expect(rollbackBlock).toContain('WORKER_ACTIVE_DRAIN_COMPLETED');
+    expect(rollbackBlock).toContain('preserving candidate and refusing restart');
     expect(rollbackBlock).toContain('systemctl enable "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
     expect(rollbackBlock).toContain('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"');
+    expect(rollbackBlock.indexOf('systemctl restart "${WORKER_SERVICE}@${WORKER_ACTIVE}"'))
+      .toBeLessThan(rollbackBlock.indexOf('write_worker_active_color "$WORKER_ACTIVE"'));
     expect(
-      rollbackBlock.indexOf('previous runtime worker restored before candidate stop'),
+      rollbackBlock.indexOf('previous runtime worker marker restored before candidate stop'),
     ).toBeLessThan(rollbackBlock.indexOf('stop runtime worker candidate:'));
+    const authorityPromotion = workflow.indexOf('runtime worker authority promoted before old drain');
+    const oldWorkerDrain = workflow.indexOf('kill -USR2 "$OLD_WORKER_PID"', authorityPromotion);
+    const authorityRefresh = workflow.indexOf('runtime worker authority refreshed after old drain', oldWorkerDrain);
+    const handoffCompleted = workflow.indexOf('runtime worker handoff completed before Web readiness', oldWorkerDrain);
+    expect(authorityPromotion).toBeGreaterThan(-1);
+    expect(oldWorkerDrain).toBeGreaterThan(authorityPromotion);
+    expect(authorityRefresh).toBeGreaterThan(oldWorkerDrain);
+    expect(handoffCompleted).toBeGreaterThan(authorityRefresh);
+    expect(workflow).toContain('worker_main_pid=$(systemctl show "${WORKER_SERVICE}@${WORKER_IDLE}" -p MainPID --value');
+    expect(workflow).toContain('kill -USR1 "$worker_pid"');
     expect(workflow).toContain('WORKER_DRAIN_TIMEOUT=960');
+    expect(workflow).toContain('WORKER_ACTIVE_DRAIN_COMPLETED=1');
     expect(workflow).toContain('recover interrupted runtime worker drain before rollout');
     expect(workflow).toContain(
       'interrupted runtime worker candidate drained after active recovery',
@@ -176,5 +206,15 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(serverEntry).toContain(
       'runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000)',
     );
+    expect(runtimeSource).toContain('createRuntimeEventRetentionAdmissionGuard(');
+    expect(runtimeSource).toContain('admissionGuard: runtimeAdmissionGuard');
+    expect(runtimeSource).toContain('enableSingletonWorkers && config.runtimeEventRetention?.enabled === true');
+    expect(runtimeSource).toContain("startupFailureMode: processRole === 'runtime-worker' ? 'throw'");
+    expect(runtimeSource).toContain('statusAuthorityTable: systemMetricsStore?.systemMetricsTable');
+    expect(retentionSource).toContain('runtime-worker failed to establish RuntimeEventRetention status authority');
+    expect(retentionSource).toContain('withExecutionAuthority');
+    expect(retentionSource).toContain('this.startupRetryTimer = setTimeout(');
+    expect(runtimeSource).toContain('await runtimeEventRetention?.quiesce()');
+    expect(readinessSource).toContain('runtime_event_retention_status_unavailable');
   });
 });

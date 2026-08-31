@@ -54,7 +54,8 @@ describe('PgContextRecallService', () => {
     expect(query.mock.calls[0]![0]).toContain("LOWER(NORMALIZE(COALESCE(r.entity_type,''), NFKC))=ANY($5::text[])");
     expect(query.mock.calls[0]![0]).toContain('LEFT JOIN test_agent_dws_accounts a');
     expect(query.mock.calls[0]![0]).toContain("a.event_policy_json #> '{contextPolicy}'");
-    expect(query.mock.calls[0]![0]).toContain("s.kind<>'dws' OR a.status='active'");
+    expect(query.mock.calls[0]![0]).toContain("a.profile_id=a.corp_id||':'||a.dingtalk_user_id");
+    expect(query.mock.calls[0]![0]).toContain("a.profile_id=s.config_json->>'profileId'");
     expect(query.mock.calls[0]![0]).toContain("auth_partition.refused=TRUE OR auth_partition.status='refused'");
     expect(query.mock.calls[0]![0]).toContain("i.review_status='confirmed'");
     expect(query.mock.calls[0]![0]).toContain("i.valid_from<=NOW()");

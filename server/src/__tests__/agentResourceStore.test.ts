@@ -88,7 +88,7 @@ const definition = {
 };
 
 describe('Typed Agent Resource', () => {
-  it('migration V9 创建 stable Agent 与 immutable Version 表', async () => {
+  it('migration V9 创建 stable Agent 与 immutable Version 表并跑完当前 ledger', async () => {
     const { pool, queries } = buildPool();
     const store = new PgAgentResourceStore({ pool, tablePrefix: 'test' });
     await store.init();
@@ -97,7 +97,7 @@ describe('Typed Agent Resource', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_managed_agent_versions');
     expect(sql).toContain("kind IN ('org_agent', 'personal_agent', 'agent_template')");
     expect(sql).toContain("status IN ('draft', 'enabled', 'disabled', 'archived')");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it.each(['org_agent', 'personal_agent', 'agent_template'] as const)('%s 创建时保存 immutable owner', async kind => {

@@ -9,7 +9,16 @@ class CapacityPool {
   rollbackCalls = 0;
   releaseCalls = 0;
 
-  constructor(private readonly activeCount: number) {}
+  constructor(
+    private readonly activeCount: number,
+    private parentActive = true,
+    private inheritedActive = false,
+    private candidateEligible = true,
+  ) {}
+
+  setInheritedActive(active: boolean): void {
+    this.inheritedActive = active;
+  }
 
   async connect(): Promise<pg.PoolClient> {
     return {
@@ -18,6 +27,13 @@ class CapacityPool {
         if (sql === 'ROLLBACK') this.rollbackCalls += 1;
         if (sql.includes('COUNT(*) AS active_count')) {
           return { rows: [{ active_count: this.activeCount }] as T[] };
+        }
+        if (sql.includes('AS parent_active')) {
+          return { rows: [{
+            parent_active: this.parentActive,
+            candidate_eligible: this.candidateEligible,
+            inherited_active: this.inheritedActive,
+          }] as T[] };
         }
         if (sql.includes('SELECT session_id FROM runtime_runs')) {
           return { rows: [{ session_id: 'session-1' }] as T[] };
@@ -35,7 +51,7 @@ class CapacityPool {
                 updated_at: now,
                 worker_id: String(params[1]),
                 lease_expires_at: String(params[2]),
-                metadata: {},
+                metadata: params[4] ? { subagentCapacityInherited: true } : {},
               },
             }] as T[],
           };
@@ -49,7 +65,7 @@ class CapacityPool {
   }
 }
 
-describe('PgRunStore global scheduler capacity', () => {
+describe('PgRunStore unified parent/child scheduler capacity', () => {
   it('skips startup ALTER TABLE statements when every compatibility column exists', async () => {
     const queries: string[] = [];
     const existingColumns = [
@@ -102,6 +118,7 @@ describe('PgRunStore global scheduler capacity', () => {
     expect(pool.rollbackCalls).toBe(1);
     expect(pool.releaseCalls).toBe(1);
     expect(pool.queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+    expect(pool.queries.some((sql) => sql.includes("metadata->>'subagentCapacityInherited'"))).toBe(true);
   });
 
   it('atomically claims a run lease while capacity remains', async () => {
@@ -125,10 +142,68 @@ describe('PgRunStore global scheduler capacity', () => {
     expect(pool.queries.filter((sql) => sql.includes('pg_advisory_xact_lock'))).toHaveLength(2);
     const leaseSql = pool.queries.find((sql) => sql.includes('UPDATE runtime_runs'));
     expect(leaseSql).toContain("active.status IN ('running','waiting_hand')");
+    expect(pool.queries.some((sql) => sql.includes("active_run.metadata->>'subagentCapacityInherited' = 'true'"))).toBe(true);
     expect(leaseSql).not.toContain("active.status IN ('running','waiting_approval','waiting_user','waiting_hand')");
     expect(leaseSql).toContain("predecessor.status = 'pending'");
     expect(pool.queries).toContain('COMMIT');
     expect(pool.releaseCalls).toBe(1);
+  });
+
+  it('atomically grants one child the active parent slot even when the global cap is full', async () => {
+    const pool = new CapacityPool(2);
+    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+
+    await expect(store.acquireLease(
+      'run-child', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
+      { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' },
+    )).resolves.toMatchObject({
+      runId: 'run-child',
+      status: 'running',
+      metadata: { subagentCapacityInherited: true },
+    });
+    expect(pool.queries.some((sql) => sql.includes('AS parent_active'))).toBe(true);
+    expect(pool.queries.some((sql) => sql.includes('COUNT(*) AS active_count'))).toBe(false);
+    expect(pool.queries.find((sql) => sql.includes('UPDATE runtime_runs'))).toContain('subagentCapacityInherited');
+    expect(pool.queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('keeps a sibling on a normal slot while another inherited child is active', async () => {
+    const pool = new CapacityPool(1, true, true);
+    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    await expect(store.acquireLease(
+      'run-child-normal', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
+      { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' },
+    )).resolves.toMatchObject({ runId: 'run-child-normal', metadata: {} });
+    expect(pool.queries.some((sql) => sql.includes('COUNT(*) AS active_count'))).toBe(true);
+  });
+
+  it('hands the inherited parent slot to an already-waiting sibling after the current child finishes', async () => {
+    const pool = new CapacityPool(2, true, true);
+    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    const admission = { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' };
+
+    await expect(store.acquireLease(
+      'run-child-2', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2, admission,
+    )).resolves.toBeNull();
+    pool.setInheritedActive(false);
+    await expect(store.acquireLease(
+      'run-child-2', 'worker-child', 60_000, new Date('2026-08-30T16:00:01.000Z'), 2, admission,
+    )).resolves.toMatchObject({
+      runId: 'run-child-2',
+      status: 'running',
+      metadata: { subagentCapacityInherited: true },
+    });
+    expect(pool.updateCalls).toBe(1);
+  });
+
+  it('does not inherit or start after the parent lease is no longer active', async () => {
+    const pool = new CapacityPool(1, false);
+    const store = new PgRunStore({ pool: pool as unknown as pg.Pool });
+    await expect(store.acquireLease(
+      'run-orphan-child', 'worker-child', 60_000, new Date('2026-08-30T16:00:00.000Z'), 2,
+      { foreground: true, foregroundReservedRuns: 1, inheritFromRunId: 'run-parent' },
+    )).resolves.toBeNull();
+    expect(pool.updateCalls).toBe(0);
   });
 
   it('reserves global capacity for foreground runs', async () => {

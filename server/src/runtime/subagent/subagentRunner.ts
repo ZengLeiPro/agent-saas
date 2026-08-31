@@ -58,6 +58,7 @@ import { createRuntimeSessionRecord, type MemoryPolicyVersion, type RuntimeSessi
 import { applyMainSessionToolFilter } from '../toolProfiles.js';
 import { SessionContextService, SessionToolProvider } from '../sessionContext.js';
 import type { TenantRemoteHandAuthTokenResolver } from '../tenantRemoteHandResolver.js';
+import type { RunRecord } from '../runStore.js';
 import type { RunContext } from '../types.js';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from '../../types/index.js';
 import { createLogger } from '../../utils/logger.js';
@@ -80,6 +81,7 @@ import {
 const logger = createLogger('SubagentRunner');
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+const SUBAGENT_CAPACITY_POLL_MS = 100;
 
 /**
  * 无条件剥夺清单（D4，按 descriptor.name/id 匹配）：
@@ -146,7 +148,7 @@ export interface RunSubagentParams {
     model?: string;
     includeCompanyInfo: boolean;
   };
-  /** 测试注入口；生产用进程级共享单例。 */
+  /** 测试注入口；生产用进程级共享的单父限额器。 */
   limiter?: SubagentLimiter;
   /** 测试注入口；生产用 SUBAGENT_HARD_TIMEOUT_MS。 */
   hardTimeoutMs?: number;
@@ -240,9 +242,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       providerOptions = resolved.providerOptions;
     }
   }
+  const parentRun = await config.runStore?.get(parentRunId).catch(() => null);
   if (!model) {
     // 无 modelResolver（file backend / 测试）或父 session 无 modelRef：退回父 run 的实际模型
-    model = refToResolve ?? (await config.runStore?.get(parentRunId).catch(() => null))?.model ?? undefined;
+    model = refToResolve ?? parentRun?.model ?? undefined;
   }
   if (!model) {
     throw new Error('无法确定子 agent 模型：父会话无模型记录且未提供 model 参数。');
@@ -253,7 +256,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     throw new Error('子 agent 缺少模型 apiKey（模型组未配置连接且环境无 OPENAI_API_KEY）。');
   }
 
-  // ── 闸门 3：并发/总数限额（总数超限立即拒绝；并发满则排队，受父 signal 中断） ──
+  // ── 闸门 3：单父并发 + 统一 Run 容量 ──
+  // 每个子 run 都可动态竞选父槽；PG 容量锁保证同父同时最多一个继承者。
+  // 当前继承者结束后，已等待的并行兄弟会在下一次重试中接棒，不会父等子自锁。
   const slot = await limiter.acquire(parentRunId, parentContext.signal);
 
   const startedAt = Date.now();
@@ -346,13 +351,24 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         throw new Error(reason);
       }
     }
-    // 占住 lease 让 scheduler 的 listRecoverable 不会把执行中的子 run 当孤儿捡走
-    //（running + lease_expires_at 未过期 = 不可回收）。lease 时长覆盖硬超时 + 余量，
-    // 短命 run 无需续租；进程崩溃后 lease 过期，由 wakeRuntimeSession 的 subagent
-    // 守卫直接判 orphaned（见 rawRuntimeRunDispatch.ts）。
-    await config.runStore?.acquireLease?.(childRunId, `subagent:${parentRunId.slice(0, 16)}`, hardTimeoutMs + 60_000)
-      .catch(() => null);
-    await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running', undefined, undefined, { tenantId });
+    // 子 run 与顶层 run 通过同一个 PG advisory capacity lock 准入；容量满时留在父进程内
+    // 等待而不交给 scheduler 重放。lease 时长覆盖硬超时 + 余量，短命 run 无需续租。
+    try {
+      await acquireSubagentRunLease({
+        config,
+        parentRun,
+        parentRunId,
+        childRunId,
+        leaseMs: hardTimeoutMs + 60_000,
+        signal: combinedSignal,
+      });
+      await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running', undefined, undefined, { tenantId });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await markRunState(config.runStore, eventStore, childSessionId, childRunId, combinedSignal.aborted ? 'cancelled' : 'failed', reason, undefined, { tenantId }).catch(() => undefined);
+      await sessionCatalog.markStatus(childSessionId, 'error').catch(() => undefined);
+      throw err;
+    }
 
     // ── hand 注册（复用父的 workspaceId/mountSubPath → warm sandbox / tenant hand 路由对子生效） ──
     await ensureRuntimeHandRegistered({
@@ -626,8 +642,68 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     };
   } finally {
     clearTimeout(timeoutTimer);
-    slot.release();
+    await slot.release();
   }
+}
+
+export async function acquireSubagentRunLease(input: {
+  config: RawRuntimeRunDispatchConfig;
+  parentRun: RunRecord | null | undefined;
+  parentRunId: string;
+  childRunId: string;
+  leaseMs: number;
+  signal: AbortSignal;
+}): Promise<void> {
+  const acquireLease = input.config.runStore?.acquireLease?.bind(input.config.runStore);
+  const resolveCapacity = input.config.resolveRuntimeRunCapacity;
+  if (!acquireLease || !resolveCapacity) return;
+
+  const capacity = await resolveCapacity();
+  while (!input.signal.aborted) {
+    const acquired = await acquireLease(
+      input.childRunId,
+      `subagent:${input.parentRunId.slice(0, 16)}`,
+      input.leaseMs,
+      new Date(),
+      capacity.maxConcurrentRuns,
+      {
+        foreground: isForegroundParentRun(input.parentRun),
+        foregroundReservedRuns: capacity.foregroundReservedRuns,
+        inheritFromRunId: input.parentRunId,
+      },
+    );
+    if (acquired) return;
+    await abortableDelay(SUBAGENT_CAPACITY_POLL_MS, input.signal);
+  }
+  throw input.signal.reason instanceof Error
+    ? input.signal.reason
+    : new Error('等待子 Agent 统一容量槽时被取消');
+}
+
+function isForegroundParentRun(record: RunRecord | null | undefined): boolean {
+  if (!record) return true;
+  if (record.metadata?.backgroundTask === true) return false;
+  const toolProfile = record.metadata?.toolProfile;
+  if (toolProfile === 'memory_poll' || toolProfile === 'memory_consolidate') return false;
+  if (record.channel === 'cron') return false;
+  if (record.metadata?.taskboardExecution === true || record.metadata?.taskboardContinuation === true) return false;
+  return true;
+}
+
+async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('等待已取消');
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason instanceof Error ? signal.reason : new Error('等待已取消'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+    timer.unref?.();
+  });
 }
 
 function sumUsageTokens(modelUsage: Record<string, SdkResultModelUsage> | undefined): number {

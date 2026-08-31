@@ -55,7 +55,8 @@ describe('DWS connections route', () => {
       tenantId: 'tenant-a',
       userId: USER.sub,
       username: USER.username,
-      profileId: 'ding-corp-1',
+      profileId: 'ding-corp-1:staff-1',
+      corpId: 'ding-corp-1',
       corpName: '示例企业',
       profileStatus: 'active',
       connectionStatus: 'connected',
@@ -79,6 +80,7 @@ describe('DWS connections route', () => {
     expect(body.connections[0]).not.toHaveProperty('tenantId');
     expect(body.connections[0]).not.toHaveProperty('userId');
     expect(body.connections[0]).not.toHaveProperty('lastError');
+    expect(body.connections[0]).toMatchObject({ profileId: 'ding-corp-1:staff-1' });
   });
 
   it('PG 状态账本未装配时 fail closed 返回 503', async () => {
@@ -163,7 +165,7 @@ describe('DWS connections route', () => {
     expect(revokeUser).not.toHaveBeenCalled();
   });
 
-  it('按 profileId 断开单个钉钉组织，并返回剩余连接', async () => {
+  it('按精确 profileId 断开单个钉钉账号，并返回剩余连接', async () => {
     const store = storeWith([]);
     const revokeProfile = vi.fn(async () => undefined);
     const currentUser = { ...USER, id: USER.sub, disabled: false };
@@ -174,9 +176,9 @@ describe('DWS connections route', () => {
     });
     server = opened.server;
 
-    const response = await fetch(`${opened.baseUrl}/api/dws/connections?profileId=ding-corp-1`, { method: 'DELETE' });
+    const response = await fetch(`${opened.baseUrl}/api/dws/connections?profileId=ding-corp-1%3Astaff-1`, { method: 'DELETE' });
     expect(response.status).toBe(200);
-    expect(revokeProfile).toHaveBeenCalledWith(currentUser, 'ding-corp-1');
+    expect(revokeProfile).toHaveBeenCalledWith(currentUser, 'ding-corp-1:staff-1');
     expect(store.listForUser).toHaveBeenCalledWith('tenant-a', USER.sub);
   });
 });

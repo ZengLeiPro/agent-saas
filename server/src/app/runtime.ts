@@ -70,6 +70,7 @@ import { deliverPendingToolInvocationCancels, deliverToolInvocationCancel } from
 import { RuntimeScheduler } from '../runtime/scheduler.js';
 import { RuntimeOutboundStreamRelay } from '../runtime/runtimeOutboundStreamRelay.js';
 import { MemoryPressureGuard, type RuntimeAdmissionGuard } from '../runtime/memoryPressureGuard.js';
+import { createRuntimeEventRetentionAdmissionGuard } from '../runtime/runtimeWorkerReadiness.js';
 import type { RuntimePerformanceWorkloadSnapshot } from '../runtime/runtimePerformanceSampler.js';
 import {
   effectiveMaxConcurrentRuns,
@@ -180,7 +181,7 @@ import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
+import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
 import { PgDwsAuthSessionStore } from '../dws/authStore.js';
@@ -680,19 +681,16 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
   };
   let billingAuditTimer: NodeJS.Timeout | undefined;
-  let runtimeEventRetention: RuntimeEventRetention | undefined;
-  let runtimeScheduler: RuntimeScheduler | undefined;
-  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
-  let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
+  let runtimeEventRetention: RuntimeEventRetention | undefined, runtimeScheduler: RuntimeScheduler | undefined;
+  let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined, runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
-  let runtimeAdmissionGuard: RuntimeAdmissionGuard | undefined;
-  let runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
+  let runtimeAdmissionGuard: RuntimeAdmissionGuard | undefined, runtimeEventSubscriptionShutdown: (() => Promise<void>) | undefined;
   let tenantLifecycleWatcher: TenantLifecycleWatcher | undefined;
   let cancelDeliveryRetryTimer: NodeJS.Timeout | undefined;
   let runtimeSchedulerAutoWake = false;
-  // B4: HandHealthScanner 仅 PG runtime 装配，shutdown 时 stop()。
+  // B4：HandHealthScanner 仅 PG runtime 装配，shutdown 时 stop()。
   let handHealthScanner: HandHealthScanner | undefined;
   // 2026-08-03 P1: server-remote hand 租约巡检（同 scanner 门槛装配）。
   let handLeaseJanitor: HandLeaseJanitor | undefined;
@@ -865,12 +863,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tablePrefix: config.runtimeEventStore.tablePrefix,
     });
     await pgRunStore.init();
-    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 16;
+    const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
     runtimeSchedulerConfigStore = new PgRuntimeSchedulerConfigStore(pgEventStore.pool, {
       tablePrefix: config.runtimeEventStore.tablePrefix,
       maxConfigurableConcurrentRuns: Math.max(
         defaultMaxConcurrentRuns,
-        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 64,
+        config.runtimeScheduler?.maxConfigurableConcurrentRuns ?? 500,
       ),
     });
     await runtimeSchedulerConfigStore.init(defaultMaxConcurrentRuns);
@@ -1073,20 +1071,21 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } else {
       serverLogger.info(`Billing audit worker disabled for processRole=${processRole}`);
     }
-    const retentionConfig = config.runtimeEventRetention;
     runtimeEventRetention = new RuntimeEventRetention({
       pool: pgEventStore.pool,
       eventsTable: pgEventStore.eventsTable,
       toolInvocationsTable: pgToolInvocationStore.toolInvocationsTable,
       billingProjectionStateTable: pgBillingStore.projectionStateTable,
-      ...retentionWorkerOptions(retentionConfig),
+      ...retentionWorkerOptions(config.runtimeEventRetention),
+      startupFailureMode: processRole === 'runtime-worker' ? 'throw' : processRole === 'all' ? 'retry' : 'none',
       projectBillingRuntimeEvents: (limit) => billingService!.projectRuntimeEvents(limit),
+      statusRecorder: systemMetricsStore ? (snapshot) => systemMetricsStore!.recordRuntimeEventRetentionStatus(snapshot) : undefined, statusAuthorityTable: systemMetricsStore?.systemMetricsTable,
       logger: serverLogger.child('RuntimeEventRetention'),
     });
     if (enableSingletonWorkers) {
-      runtimeEventRetention.start();
+      await runtimeEventRetention.start();
     } else {
-      serverLogger.info(`RuntimeEventRetention disabled for processRole=${processRole}`);
+      serverLogger.info(`RuntimeEventRetention worker disabled for processRole=${processRole}`);
     }
     if (enableSchedulerWorker) {
       const recoveryResult = await recoverRunningToolInvocations({
@@ -1636,7 +1635,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     contextStore, assignments: assignmentStore, memberships: membershipStore, entitlements: entitlementStore, pool: pgEventStore?.pool, tablePrefix: config.runtimeEventStore?.backend === 'pg' ? config.runtimeEventStore.tablePrefix : undefined, recallIdSigningKey: config.auth?.jwtSecret, sessionCatalog, sourceAuthorizationRegistry: contextSourceAuthorizationRegistry,
     memoryStore: memoryConsolidationStore, memoryIndexService: memoryIndexServiceRef.current, logger: { info: msg => serverLogger.info(msg), warn: msg => serverLogger.warn(msg) },
     additionalProviders: createDwsBusinessToolProviders({ agentCwd, accountStore: agentDwsAccountStore, assignmentStore, connectionStore: dwsConnectionStore, userStore, auditStore: governanceAuditStore,
-      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
+      isRequesterRuntimeEnabled: username => connectorConnectionStore.isRuntimeEnabled(username, 'dws'), sessionCatalog, ...(pgRunStore ? { runStore: pgRunStore } : {}), resolveServerRemote: resolveConnectorServerRemote, remoteAvailable: Boolean(resolvedServerRemote || connectorAcsConfigured), logger: serverLogger.child('DwsBusiness') }),
   });
   const rawRuntimeConfig: RawRuntimeRunDispatchConfig = {
     agentCwd, uploadManager,
@@ -1716,9 +1715,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     },
     userOverrides: config.agent.userOverrides,
     dispatch: config.dispatch,
-    executionConfig,
-    modelResolver,
+    executionConfig, modelResolver,
     defaultModelResolver,
+    ...(agentDwsAccountStore ? { resolveLegacyDwsCompletionAccount: (tenantId: string, accountId: string) => agentDwsAccountStore.getForTenant(tenantId, accountId) } : {}),
     ...(agentDwsMessageStore ? { enqueueDwsBackgroundCompletion: createDwsBackgroundCompletionEnqueuer(agentDwsMessageStore) } : {}),
     getImageUnderstandingModelConfigs: () => resolveImageUnderstandingModelConfigs(config.models),
     getImageUnderstandingTimeoutMs: () => config.models?.imageUnderstanding?.timeoutMs,
@@ -1850,7 +1849,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   };
   if (pgRunStore) rawRuntimeConfig.backgroundTasks = new DurableBackgroundTaskService(rawRuntimeConfig);
   const baseRunDispatch = createRawRuntimeRunDispatch(rawRuntimeConfig), resumeApprovalDispatch = createRawApprovalResumeDispatch(rawRuntimeConfig);
-
   if (pgRunStore && pgEventStore) {
     runtimeSchedulerAutoWake = enableSchedulerWorker && (config.runtimeScheduler?.autoWake ?? true);
     const schedulerConfig = await runtimeSchedulerConfigStore!.get();
@@ -1860,7 +1858,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const sessionStatusReconciler = sessionLock
       ? createPgRuntimeSessionStatusReconciler(pgEventStore.pool, pgSessionProjectionStore!.sessionsTable, pgRunStore.runsTable, sessionLock, sessionCatalog, serverLogger.child('RuntimeSessionStatus'))
       : undefined;
-    runtimeAdmissionGuard = memoryPressureGuard;
+    runtimeAdmissionGuard = createRuntimeEventRetentionAdmissionGuard(memoryPressureGuard, () => enableSingletonWorkers && config.runtimeEventRetention?.enabled === true, () => runtimeEventRetention?.isStatusPersistenceAvailable() !== false);
     runtimeScheduler = new RuntimeScheduler({
       runStore: pgRunStore,
       eventStore: pgEventStore,
@@ -1873,14 +1871,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         schedulerConfig.maxConcurrentRuns,
         sessionLockMode,
       ),
-      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 10,
+      foregroundReservedRuns: config.runtimeScheduler?.foregroundReservedRuns ?? 100,
       executionEnabled: schedulerConfig.executionEnabled,
       resolveMaxConcurrentRuns: async () => effectiveMaxConcurrentRuns(
         (await runtimeSchedulerConfigStore!.get()).maxConcurrentRuns,
         sessionLockMode,
       ),
       resolveExecutionEnabled: isRuntimeExecutionEnabled,
-      admissionGuard: memoryPressureGuard,
+      admissionGuard: runtimeAdmissionGuard,
       approvalTimeoutMs: config.runtimeScheduler?.approvalTimeoutMs,
       canWake: sessionLock
         ? async (record) => {
@@ -2003,6 +2001,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       },
       logger: serverLogger.child('RuntimeScheduler'),
     });
+    rawRuntimeConfig.resolveRuntimeRunCapacity = createRuntimeRunCapacityResolver(() => runtimeScheduler, runtimeSchedulerConfigStore!, sessionLockMode, config.runtimeScheduler?.foregroundReservedRuns ?? 100);
     if (taskboardStoreService && defaultModelResolver) {
       taskboardExecutionCoordinator = new TaskboardExecutionCoordinator({ store: taskboardStoreService, scheduler: runtimeScheduler, runStore: pgRunStore, sessionCatalog,
         eventStore: pgEventStore, agentCwd, executionConfig, resolveDefaultModel: defaultModelResolver,
@@ -2490,15 +2489,15 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     }
   };
 
-  // SIGUSR2 drain 序列（见 AppRuntime.beginRuntimeDrain 注释；index.ts 调用）
+  // SIGUSR2 drain 序列
   let runtimeDrainStarted = false;
   const beginRuntimeDrain = async (): Promise<void> => {
     if (runtimeDrainStarted) return;
     runtimeDrainStarted = true; taskboardStatusNotificationWorker?.stop();
-    tenantLifecycleWatcher?.stop();
+    tenantLifecycleWatcher?.stop(); await runtimeEventRetention?.quiesce();
     memoryPollLeadershipGeneration += 1;
-    // 1. 停止定时采样并取消在途 du。否则旧 Worker 在等待 run 安全交棒时仍会
-    //    继续扫描 NAS；若随后 OOM 重启，还会从头派生新一轮 du。
+    // 1. 先停 retention 并等待在途 sweep 结清，旧 Worker 不得在 drain 期间继续按旧配置清理。
+    //    同时停止定时采样和在途 du，避免等待 run 安全交棒时继续扫描 NAS。
     systemMetricsCollector?.stop();
     // 2. 停 reconcile 定时器
     if (memoryPollReconcileTimer) {
@@ -3014,7 +3013,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     runtimeAuditQuery,
     runtimeRunStore: pgRunStore,
     runtimeSchedulerCapacity,
-    ...(runtimeAdmissionGuard ? { getRuntimeAdmissionSnapshot: () => runtimeAdmissionGuard.getSnapshot() } : {}),
+    ...(runtimeAdmissionGuard
+      ? { getRuntimeAdmissionSnapshot: () => runtimeAdmissionGuard!.getSnapshot() } : {}),
     runtimePerformanceSnapshot,
     runtimeSessionProjectionStore: pgSessionProjectionStore,
     sessionReadStateStore: sessionReadStateStore!,
@@ -3059,7 +3059,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     startCronCoordinator: () => {
       cronLeadership?.start();
     },
-    beginRuntimeDrain,
+    reassertRuntimeEventRetentionAuthority: async () => { await runtimeEventRetention?.reassertStatusAuthority(); }, claimRuntimeEventRetentionAuthority: async () => { await runtimeEventRetention?.reassertStatusAuthority(true); }, beginRuntimeDrain,
     triggerTokenUsageRebuild: businessDbHandle
       ? () =>
           rebuildTokenUsageFromJsonl(businessDbHandle!, {

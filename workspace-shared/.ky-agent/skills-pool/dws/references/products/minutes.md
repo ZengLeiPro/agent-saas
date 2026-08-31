@@ -57,9 +57,10 @@ dws minutes
 │   ├── create --file-name "..." --file-size <n>   # 创建上传会话，获取上传地址
 │   ├── complete --session-id <sid>                # 确认上传完成
 │   └── cancel --session-id <sid>                  # 取消上传会话
-└── permission <subcommand>          # 权限管理（添加/移除听记成员权限）
+└── permission <subcommand>          # 权限管理（添加/移除听记成员权限、为自己申请权限）
     ├── add --ids <uuid1,uuid2> --member-uids <uid1,uid2> --policy <0-4> [--cover] [--sub-resources "..."]   # 添加成员权限
-    └── remove --ids <uuid1,uuid2> --member-uids <uid1,uid2>   # 移除成员权限
+    ├── remove --ids <uuid1,uuid2> --member-uids <uid1,uid2>   # 移除成员权限
+    └── apply --id <uuid> --policy <2-4>   # 为当前用户申请听记权限
 ```
 
 **高频错误命令 vs 正确命令对照（真实 badcase 提炼）：**
@@ -83,10 +84,9 @@ dws minutes
 | `dws minutes get transcription --id <uuid> \| head -c 2000` | Windows 沙箱无 `head` 命令，**严禁使用 shell 管道截断** | `dws minutes get transcription --id <uuid> --format json`（由 AI 在内存中截断处理） |
 | `dws minutes get summary --id "https://shanji.dingtalk.com/app/transcribes/xxx"` | `--id` 只接受 taskUuid（hex 字符串），**不接受完整 URL**。AI 必须自动提取，不要让用户手动抠 | AI 自动从 URL 提取 taskUuid，再 `dws minutes get summary --id <taskUuid>`（详见「URL → taskUuid 自动提取规则」） |
 | `dws minutes get transcription --id "https://shanji.dingtalk.com/meeting/minutes?taskUuid=xxx"` | 同上，`--id` 不接受 URL，且这是 `?taskUuid=` 格式的 URL | AI 自动提取 `taskUuid=` 后的值，再 `dws minutes get transcription --id <taskUuid> --format json` |
-| `dws minutes get transcription --id <uuid>` 只调用一次就"总结整篇听记" | **单次调用最多返回 50 段**，不翻页就只能看到前 1/3~1/8 的内容 | **必须自动循环翻页**：检查返回中的 `nextToken`，非空则继续调用 `--next-token <token>`，直到拉完（详见「转写接口分页机制」） |
+| `dws minutes get transcription --id <uuid>` 只调用一次就"总结整篇听记" | **单次调用最多返回 50 段**，不翻页就只能看到前 1/3~1/8 的内容 | **必须自动循环翻页**：检查返回中的 `nextToken`，非空则继续调用 `--cursor <token>`，直到拉完（详见「转写接口分页机制」） |
 | `dws minutes get summary --id A & dws minutes get summary --id B & wait` | Windows cmd 下 `&` 是命令分隔符不是 background，`wait` 不存在 | 逐条串行调用，或让 AI 在内存中合并结果；**严禁使用 shell 并行/管道/重定向** |
-| `dws minutes get transcription --id <uuid> --next-token <token>` 报 unknown flag | **不会报错**——`--next-token` 是 `get transcription` 的合法参数（见命令总览） | 确保写法正确：`dws minutes get transcription --id <uuid> --next-token <token> --format json` |
-| `dws minutes get transcription --id <uuid> --page-token <token>` | `--page-token` 不存在，正确参数名是 `--next-token` | `dws minutes get transcription --id <uuid> --next-token <token>` |
+| `dws minutes get transcription --id <uuid> --page-token <token>` | `--page-token` 不存在，正确参数名是 `--cursor` | `dws minutes get transcription --id <uuid> --cursor <token>` |
 | `dws minutes transcribe --url <听记url>` | `transcribe` 不是合法子命令，`--url` 参数也不存在。LLM 凭印象编造 | 先从 URL 提取 taskUuid（见「URL → taskUuid 自动提取规则」），再 `dws minutes get transcription --id <taskUuid> --format json` |
 | `dws minutes get transcription --url <听记url>` | `--url` 参数不存在，`--id` 只接受纯 taskUuid | 同上：从 URL 提取 taskUuid 后用 `--id` |
 | `dws minutes summary --uuid <uuid>` | `summary` 不是顶层子命令（应在 `get` 下），且顶层不识别 `--uuid`。**0519 高频错误** | `dws minutes get summary --id <uuid>` |
@@ -103,14 +103,14 @@ dws minutes
 > | 语义 | 规约 Primary | minutes 当前 CLI 实际参数 | alias 注册状态 | 说明 |
 > |------|-------------|------------------------|--------------|------|
 > | 单页大小 (Group 13) | `--limit` | `--max`（`--limit` 为合法别名） | `--limit` 已注册 | minutes 推荐 `--max`，但 `--limit` 也可用，两者等价 |
-> | 续页标识 (Group 14) | `--cursor` | `--next-token` | `--next-token` 在 alias 池中 | minutes 用 `--next-token`，合法 alias |
+> | 续页标识 (Group 14) | `--cursor` | list 用 `--next-token`；get transcription 用 `--cursor` | 按子命令区分 | list 保留合法 `--next-token`，transcription 只用 `--cursor` |
 > | 搜索关键词 (Group 11) | `--query` | `--query` | 已对齐 | 无差异 |
 > | 起始时间 (Group 15) | `--start` | `--start` | 已对齐 | 无差异 |
 > | 结束时间 (Group 16) | `--end` | `--end` | 已对齐 | 无差异 |
 >
 > **跨模块参数名差异速查（防止混用）：**
 > - 分页大小：minutes 推荐 `--max`（`--limit` 也是合法别名，等价），aitable/calendar/chat/drive 用 `--limit`
-> - 续页标识：minutes 用 `--next-token`，aitable/drive/doc 用 `--cursor`
+> - 续页标识：minutes list 用 `--next-token`；minutes transcription、aitable/drive/doc 用 `--cursor`
 > - 起止时间：minutes/report 用 `--start`/`--end`，calendar 用 `--start-time`/`--end-time`（跨模块最高频错误）
 
 **铁律：禁止编造 taskUuid（0512 P0 Golden Case 提炼）**
@@ -308,7 +308,8 @@ dws minutes
 │   └── cancel --session-id <sid>
 ├── permission <subcommand>
 │   ├── add --ids <uuid1,uuid2> --member-uids <uid1,uid2> --policy <0-4> [--cover] [--sub-resources "..."]
-│   └── remove --ids <uuid1,uuid2> --member-uids <uid1,uid2>
+│   ├── remove --ids <uuid1,uuid2> --member-uids <uid1,uid2>
+│   └── apply --id <uuid> --policy <2-4>
 └── tag <subcommand>                 # 听记标签/分组管理（标签在听记页面手动创建）
     ├── list                         # 查询我的听记标签/分组列表（返回 tagId 和标签名称）
     └── query --tag-id <tagId> [--limit] [--cursor]   # 根据标签ID查询该标签下的听记列表
@@ -457,11 +458,11 @@ Usage:
 Example:
   dws minutes get transcription --id <taskUuid>
   dws minutes get transcription --id <taskUuid> --direction 1
-  dws minutes get transcription --id <taskUuid> --next-token <nextToken> --format json
+  dws minutes get transcription --id <taskUuid> --cursor <nextToken> --format json
 Flags:
       --direction string   排序方向: 0=正序, 1=倒序 (默认 0)
       --id string          听记 taskUuid (必填)，取值逻辑参考 ## 注意事项
-      --next-token string 下一页的token 首次查询可空 后续查询需填写前次请求返回的nextToken
+      --cursor string       分页游标；首页留空，后续填写前次请求返回的 nextToken
 ```
 
 每条记录包含: 发言人信息、转写文本、对应时间戳
@@ -471,9 +472,9 @@ Flags:
 > **这是最高频的 silent failure：** `get transcription` 单次调用**最多只返回 50 段**。一篇 30 分钟会议的转写通常有 150-400 段，如果不翻页就只能看到前 1/3 甚至 1/8 的内容。
 >
 > **分页机制（必须掌握）：**
-> - 首次调用：`dws minutes get transcription --id <uuid> --format json`（不传 `--next-token`）
+> - 首次调用：`dws minutes get transcription --id <uuid> --format json`（不传 `--cursor`）
 > - 检查返回 JSON 中是否包含 `nextToken` 字段（非空字符串）
-> - 如果有 `nextToken`：**必须立即发起下一次调用**，传入 `--next-token <上次返回的nextToken值>`
+> - 如果有 `nextToken`：**必须立即发起下一次调用**，传入 `--cursor <上次返回的nextToken值>`
 > - 循环直到返回中**不再包含 `nextToken`**（或 `nextToken` 为空），表示所有段落已拉取完毕
 > - **拼合所有页的段落**后，才算拿到了完整转写原文
 >
@@ -485,7 +486,7 @@ Flags:
 >     if next_token == "":
 >         result = dws minutes get transcription --id <uuid> --format json
 >     else:
->         result = dws minutes get transcription --id <uuid> --next-token <next_token> --format json
+>         result = dws minutes get transcription --id <uuid> --cursor <next_token> --format json
 >     all_paragraphs.append(result.paragraphs)
 >     next_token = result.nextToken   # 可能为空或不存在
 >     if next_token 为空或不存在:
@@ -495,8 +496,8 @@ Flags:
 >
 > **典型错误（导致"总结整篇听记"只看到前 50 段的 P0 bug）：**
 > - [错误] 只调用一次 `get transcription`，看到返回了内容就以为拿全了 → 实际只有前 50 段
-> - [错误] 看到返回 JSON 里有 `nextToken` 字段但不知道这是什么、不知道要传 `--next-token` → 默默丢弃了后续页
-> - [错误] 用 `--help` 查参数但在 Windows 下输出被截断，没看到 `--next-token` 参数 → 以为不支持分页
+> - [错误] 看到返回 JSON 里有 `nextToken` 字段但不知道这是什么、不知道要传 `--cursor` → 默默丢弃了后续页
+> - [错误] 用 `--help` 查参数但在 Windows 下输出被截断，没看到 `--cursor` 参数 → 以为不支持分页
 > - [正确] **正确做法：无条件按上述循环逻辑自动翻页，直到 nextToken 为空**
 
 **重要 — 转写原文拉取策略（AI 必须严格遵守）：**
@@ -505,7 +506,7 @@ Flags:
 
 1. **用户明确要求查看/分析转写原文时 → 默认拉取全部原文**（自动翻页，不需要用户手动说"第一页"）
    - 示例："帮我看看转写原文"、"分析一下这篇听记的原文"、"把逐字稿给我"、"转写内容是什么"
-   - 实现：首次调用不传 `--next-token`，如果返回中包含 `nextToken`，**自动继续调用**直到拉取完所有页，最终拼合后展示给用户
+   - 实现：首次调用不传 `--cursor`，如果返回中包含 `nextToken`，**自动继续调用**直到拉取完所有页，最终拼合后展示给用户
    - **字符上限保护**：在循环拉取过程中，如果已累积的转写文本总量**超过 12000 字符（1.2w）**，必须**暂停自动翻页**，向用户提示当前已处理的字符数已达到上限，并询问是否继续拉取后续分页内容。用户确认后才继续拉取，用户拒绝则停止并展示已拉取的内容
 
 **超长会议翻页优化策略（0519 P0 Golden Case 提炼 — 70min 会议翻页 15+ 次）：**
@@ -1211,6 +1212,38 @@ Flags:
 - 如果成员是听记的创建者（所有者），无法通过此命令移除其权限
 - 建议在移除前先确认成员的当前权限，避免误操作
 
+### 为当前用户申请听记权限
+```
+Usage:
+  dws minutes permission apply [flags]
+Example:
+  dws minutes permission apply --id <taskUuid> --policy 4
+  dws minutes permission apply --id <taskUuid> --policy 2
+Flags:
+      --id string    听记 taskUuid (必填)
+      --policy int   权限类型: 2=可编辑, 3=可查看/下载, 4=仅查看 (必填)
+```
+
+为当前登录用户申请指定听记的权限，无需传入用户 ID，系统自动识别当前用户身份。
+适用于用户无权限访问某听记（如打开分享链接提示无权限）时，主动向听记所有者发起权限申请。
+
+**权限类型说明：**
+
+| --policy 值 | 含义 | 说明 |
+|------------|------|------|
+| 2 | 可编辑 | 可编辑听记的纪要、待办等内容 |
+| 3 | 可查看/下载 | 可查看和下载听记内容，不可编辑 |
+| 4 | 仅查看 | 仅可查看听记内容，不可下载 |
+
+**与 permission add 的区别：**
+- `permission add` 是听记所有者/管理员**给别人授权**，需传 `--member-uids`
+- `permission apply` 是当前用户**为自己申请权限**，不需要任何用户 ID，不支持申请管理员/所有者权限（0/1）
+
+**典型使用场景：**
+- 打开同事分享的听记链接提示无权限，申请查看权限
+- 需要编辑某篇只读听记的纪要，申请可编辑权限
+- 需要下载听记音频但当前仅有查看权限，申请可查看/下载权限
+
 ### 查询我的听记标签/分组列表
 ```
 Usage:
@@ -1595,6 +1628,7 @@ tagId 可通过 `dws minutes tag list` 获取。
 用户说"把某人加到这个听记中/共享听记给某人/给某人添加听记权限/把听记分享给同事/让某人也能看这个听记" → `permission add`
 用户说"添加参会者/批量添加参会者/添加成员/批量添加成员/加参会人/加入成员" → `permission add`（**注意：听记模块没有独立的"添加参会者/成员"命令，统一走权限接口**）
 用户说"移除某人的权限/取消共享/不让某人看这个听记了" → `permission remove`
+用户说"我没权限看这个听记/帮我申请这个听记的权限/申请查看权限/申请编辑权限" → `permission apply`（**注意：为当前用户自己申请，不是给别人授权**）
 
 **自然语言示例：**
 - "把张三加到这个听记中"
@@ -1611,6 +1645,9 @@ tagId 可通过 `dws minutes tag list` 获取。
 - "批量添加成员到这个听记"
 - "把张三加为参会人"
 - "移除张三对这个听记的权限"
+- "我打不开这个听记，帮我申请一下权限"
+- "帮我申请这个听记的查看权限"
+- "申请这篇听记的编辑权限"
 - "取消小王对这个听记的访问"
 - "不让某人看这个听记了"
 
@@ -1618,8 +1655,9 @@ tagId 可通过 `dws minutes tag list` 获取。
 - 用户提到"加/添加/共享/分享/让...看/让...访问"等增加权限语义 → `permission add`
 - 用户提到"添加参会者/加参会者/批量添加参会者/添加成员/加成员/批量添加成员/加参会人/添加参会人"等成员语义 → `permission add`（听记没有独立的"添加成员"接口，**统一走权限接口**）
 - 用户提到"移除/取消/删除/不让...看"等移除权限语义 → `permission remove`
-- 如果用户未指定权限类型，默认使用 `--policy 4`（可查看/下载/编辑）
-- 如果用户未提供 member-uids，需要先引导用户提供目标成员的钉钉 UID（可通过 `dws contact user search --query "姓名"` 查询）
+- 用户提到"我没权限/打不开/帮我申请/申请查看权限/申请编辑权限"等**为自己申请**语义 → `permission apply`（只需 `--id` + `--policy`；**不需要也不接受 `--member-uids`**，当前用户身份由系统自动识别；未说明权限等级时先与用户确认要 2（可编辑）/ 3（可查看下载）/ 4（仅查看））
+- `permission add` 的 `--policy` 是必填参数，没有默认值。用户未指定权限类型时，先确认要 0（管理员）/ 1（所有者）/ 2（可编辑）/ 3（可查看下载）/ 4（仅查看）；即使确认选择 4，命令中仍必须显式传入 `--policy 4`
+- `permission add` / `permission remove` 需要目标成员的钉钉 UID：如果用户未提供 member-uids，需要先引导用户提供（可通过 `dws contact user search --query "姓名"` 查询）；`permission apply` 不适用这一条
 
 **典型执行链路：**
 1. 用户说"把张三加到这个听记中" → AI 需获取张三的 UID
@@ -1842,38 +1880,32 @@ dws minutes list mine --query "技术方案" --format json
 
 ### 翻页空响应防御规则（必须遵守）
 
-`get transcription` 使用 `--next-token` 进行分页查询。在自动翻页过程中，可能遇到以下异常情况：
+`get transcription` 使用 `--cursor` 进行分页查询。在自动翻页过程中，可能遇到以下异常情况：
 
 | 异常现象 | 含义 | 处理方式 |
 |----------|------|----------|
 | 返回 JSON 中不包含 `nextToken` 字段 | 已到达最后一页，无更多数据 | 正常终止翻页，拼合已拉取内容 |
 | `nextToken` 字段值为空字符串 `""` | 等同于无 nextToken，已到达最后一页 | 正常终止翻页 |
-| 使用同一个 `next-token` 值连续 2 次返回 stdout 为空 | 服务端临时异常或该 token 已失效 | 立即终止翻页，不再重试；基于已拉取的内容进行分析 |
-| 返回 JSON 但 `paragraphList` 为空数组 `[]` | 当前页无内容（可能是中间空页） | 如果有 nextToken 则继续翻页；如果无 nextToken 则终止 |
+| 使用 `cursor` 翻页时 stdout 为空 | 已到达末尾或服务端未返回该页内容 | 首次空响应即终止翻页，不重试；基于已拉取的内容进行分析 |
+| 返回 JSON 但 `paragraphList` 为空数组 `[]` | 服务端已返回空转写页 | 首次空页即终止翻页，即使同时携带 nextToken 也不继续 |
 
 ### 翻页流程伪代码
 
 ```
 已累积文本 = ""
 当前token = ""（首页不传）
-连续空响应计数 = 0
-上一次token = null
 
 loop:
-  调用 get transcription --id <uuid> [--next-token 当前token]
+  调用 get transcription --id <uuid> [--cursor 当前token]
   
   if stdout 为空 or 返回无效:
-    if 当前token == 上一次token:
-      连续空响应计数 += 1
-      if 连续空响应计数 >= 2:
-        终止翻页，输出已累积内容
-        break
-    else:
-      连续空响应计数 = 1
-    上一次token = 当前token
-    continue
+    终止翻页，输出已累积内容
+    break
+
+  if paragraphList 为空数组:
+    终止翻页，输出已累积内容（即使有 nextToken 也不继续）
+    break
   
-  连续空响应计数 = 0
   拼合本页转写文本到已累积文本
   
   if len(已累积文本) > 12000:
@@ -1884,14 +1916,13 @@ loop:
   if 返回中无 nextToken 或 nextToken 为空:
     break（最后一页）
   
-  上一次token = 当前token
   当前token = 返回的 nextToken
 ```
 
 ### 严禁的翻页行为
 
-- [禁止] 同一个 next-token 值连续重试超过 2 次
-- [禁止] 翻页失败后换用不同的 flag 名（如 --next-token 换成 --nextToken）重试
+- [禁止] cursor 翻页返回空响应后重试同一页
+- [禁止] 翻页失败后换用不同的 flag 名（如 --cursor 换成 --next-token）重试
 - [禁止] 累积超过 12000 字符后不暂停，继续拉取所有页
 - [禁止] 拉到空页就立即放弃全部已累积内容，应基于已有内容进行分析
 
@@ -1919,8 +1950,8 @@ loop:
 - 同一个 taskUuid + 同一个命令，最多重试 1 次（总计最多调用 2 次），dingOpenErrcode=300/403/404 为不可重试错误
 - 当用户提供关键词或时间范围时，必须使用 --query / --start / --end 在服务端筛选，严禁全量拉取后本地过滤。**严禁在 dws 命令后拼接 shell 管道做本地过滤**（如 `| grep "关键词"` / `| head -50` / `python -c "import json;..."` / `> /tmp/xxx.txt && grep ...`），这些写法在 Windows 沙箱里 100% 失败（`head`/`grep`/`wait` 不是 Windows 内置命令），即使在 macOS 上也会因 list 本身失败导致整个管道链路断掉。正确做法是始终使用 `--query` / `--start` / `--end` / `--max` 等 cli 内置参数在服务端完成筛选
 - `dws minutes list` 后面**必须跟 `mine` / `shared` / `all` 子命令**，不能直接 `dws minutes list --start ... --end ...`（会报 `unknown flag: --start`）。正确写法：`dws minutes list mine --start ... --end ...` 或 `dws minutes list all --query "关键词" --start ... --end ...`
-- get transcription 翻页时，同一个 next-token 连续返回空 2 次即终止翻页，不再重试
-- **跨平台兼容性**：悟空运行环境可能是 Windows cmd / PowerShell / macOS bash，**严禁在 dws 命令中使用任何依赖特定 shell 的工具或管道**，包括但不限于：`| head`、`| grep`、`| tail`、`| wc`、`& wait`、`> %TEMP%\xxx`、`timeout /t 5`、`Start-Sleep`、`python -c "..."` 等。所有数据筛选、截断、过滤都必须通过 dws cli 自身的参数完成（`--query`/`--start`/`--end`/`--max`/`--next-token`）
+- get transcription 翻页时，cursor 首次返回空响应即终止翻页，不再重试
+- **跨平台兼容性**：悟空运行环境可能是 Windows cmd / PowerShell / macOS bash，**严禁在 dws 命令中使用任何依赖特定 shell 的工具或管道**，包括但不限于：`| head`、`| grep`、`| tail`、`| wc`、`& wait`、`> %TEMP%\xxx`、`timeout /t 5`、`Start-Sleep`、`python -c "..."` 等。所有数据筛选、截断、过滤都必须通过 dws cli 自身的参数完成（list 使用 `--query`/`--start`/`--end`/`--max`/`--next-token`，transcription 分页使用 `--cursor`）
 
 ### 错误恢复策略（AI 遇到以下错误时必须自动执行对应恢复动作）
 
@@ -1930,7 +1961,7 @@ loop:
 | 参数名错误 | `unknown flag: --task-uuid` / `unknown flag: --uuid` / `unknown flag: --start-time` / `unknown flag: --end-time` | 立即调用 `dws minutes <子命令> --help` 查询正确参数名；minutes 模块统一用 `--id`，时间统一用 `--start` / `--end`（不是 `--start-time` / `--end-time`） | 严禁用同一个错误的参数名重试；严禁在不同子命令间尝试 --uuid / --task-uuid / --id 三种名称反复试错；严禁凭记忆猜测参数名，必须查 --help |
 | UUID 无效 | `taskUuid is invalid` / `dingOpenErrcode=300` | **第一时间切换策略**：调用 `dws minutes list mine --max 10 --format json` 获取真实可用的 uuid 列表，让用户选择或自动匹配最相关的一条。**真实案例中模型用同一个错 uuid 重试了 20 次全部失败——这是 minutes 模块失败率最高的错误模式，必须零容忍** | 严禁用同一个无效 uuid 重试哪怕 1 次（errcode=300 是不可重试错误）；严禁从历史对话/文档/链接中猜测 uuid；严禁从十六进制编码字符串里截取部分数字拼凑新 uuid；严禁不切 list 就放弃 |
 | 命令返回空 stdout | `get summary` / `get transcription` 返回空内容（stdout 为空，error_msg 也为空） | 1) 先调用 `dws minutes get info --id <uuid> --format json` 确认听记是否存在且状态正常；2) 如果 info 也为空或报错，说明 uuid 本身有问题，回退到 list 命令重新获取 | 严禁在 stdout 为空时重复调用同一命令超过 2 次；严禁把空返回当作"没有内容"直接告知用户而不做任何排查 |
-| 翻页 next-token 返回空 | `get transcription --next-token xxx` 返回空内容 | 同一个 next-token 返回空 **1 次**即视为到达末尾（has_more=false），立即终止翻页，基于已累积内容继续处理 | 严禁同一个 next-token 连续重试超过 2 次；严禁换不同的 next-token 值盲目尝试 |
+| 翻页 cursor 返回空 | `get transcription --cursor xxx` 返回空内容 | 首次空响应即视为到达末尾（has_more=false），立即终止翻页，基于已累积内容继续处理 | 严禁重试同一个 cursor；严禁换不同的 cursor 值盲目尝试 |
 | 时间格式解析失败 | `cannot parse time` / `parse fail` | 标准格式三选一：`2026-03-23T14:00:00+08:00`（ISO-8601 带时区）/ `2026-03-23 14:00:00`（无时区默认 +08:00）/ `2026-03-23`（纯日期） | 严禁使用 Unix 时间戳、`2026/03/23`、`Mar 23, 2026` 等非标准格式 |
 | 权限不足 | `AUTH_PERMISSION_DENIED` / `Permission denied` / `user is not minutes creator` | 1) 如果是 `get transcription` 报权限错误，**自动降级**尝试 `get summary`（摘要通常不需要下载权限）；2) 如果降级也失败，引导用户："这份听记是别人分享给你的，你可以让原作者将你加为协作者，或者用 `dws minutes list shared` 查看共享给你的听记"；3) 如果需要其他人的听记内容，可先用 `dws minutes list shared` 确认有无共享记录 | 严禁权限报错后用同一 uuid 反复重试；严禁只回复"Permission denied"而不给用户可操作的下一步 |
 | 资源不存在 | `P_DataNotFound` / `dingOpenErrcode=404` | 与 `taskUuid is invalid`（uuid 格式错误）**区分对待**：`P_DataNotFound` 表示 uuid 格式正确但对应的听记不存在（可能已被删除或过期）。告知用户"该听记可能已被删除或已过期"，然后建议用 `dws minutes list mine` 或 `list all` 查找替代 | 严禁把 `P_DataNotFound` 和 `taskUuid is invalid` 混为一谈；严禁 `P_DataNotFound` 后还换 uuid 格式重试 |
@@ -1974,7 +2005,8 @@ loop:
 | 脚本 | 场景 | 用法 |
 |------|------|------|
 | [minutes_recent_summary.py](../../scripts/minutes_recent_summary.py) | 获取最近听记的 AI 摘要并合并 | `python minutes_recent_summary.py --max 5` |
-| [minutes_extract_todos.py](../../scripts/minutes_extract_todos.py) | 从听记中提取待办事项汇总 | `python minutes_extract_todos.py --max 5` |
+
+行动项读取不再提供独立脚本：单条用 `dws minutes +action-items --id <taskUuid>`；多条用 `dws minutes +detail --ids <uuid1,uuid2> --artifacts todos`。
 
 ## 反例 / 回归案例
 
@@ -2063,13 +2095,13 @@ https://shanji.dingtalk.com/app/transcribes/76327569643236343831373737345f363438
 
 **[错误] 错误处理：**
 1. 调用 `get transcription --id <taskUuid>` 只拉了第一页就停了
-2. 展示部分原文，告诉用户"如果要看更多请传入 next-token"
+2. 展示部分原文，告诉用户"如果要看更多请传入 cursor"
 
 用户说的是"分析转写原文"，意图很明确是要看完整原文，不应该让用户手动翻页。
 
 **[正确] 正确处理：**
 1. 调用 `get transcription --id <taskUuid>`，拿到第一页和 `nextToken`
-2. **自动继续调用** `get transcription --id <taskUuid> --next-token <nextToken>`
+2. **自动继续调用** `get transcription --id <taskUuid> --cursor <nextToken>`
 3. 每次拼合后检查累积字符数：
    - **未超过 12000 字符** → 继续自动翻页
    - **超过 12000 字符** → 暂停，提示用户："当前已拉取约 X 字符的转写内容，已达到单次处理上限。是否继续拉取后续内容？"

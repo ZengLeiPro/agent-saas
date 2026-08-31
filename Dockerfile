@@ -234,9 +234,9 @@ RUN set -eu; \
     rm -rf "${download_dir}"; \
     gws --version
 
-# dws CLI（钉钉工作台 skill 依赖）
+# dws CLI（钉钉 DWS skill 与平台连接器依赖）
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper。
-RUN npm install -g dingtalk-workspace-cli@1.0.55 \
+RUN npm install -g dingtalk-workspace-cli@1.0.60 \
     && dws --version
 
 # 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。

@@ -265,6 +265,10 @@ describe('registerRoutes', () => {
     );
     const healthOptions = (mocked.createHealthRouter as any).mock.calls[0]?.[1];
     expect(healthOptions.getRuntimeAdmissionSnapshot).not.toBe(runtime.getRuntimeAdmissionSnapshot);
+    const systemAdminOptions = (mocked.createSystemAdminRouter as any).mock.calls[0]?.[0];
+    expect(systemAdminOptions.getRuntimeWorkerAdmissionSnapshot).toBe(
+      healthOptions.getRuntimeAdmissionSnapshot,
+    );
     expect(mocked.createUploadRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
       uploadManager: runtime.uploadManager,
@@ -305,7 +309,7 @@ describe('registerRoutes', () => {
       userStore: runtime.userStore,
     });
 
-    // Base routes: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
+    // Base routes（health 与 system admin 共享 active worker readiness）: health + app-update + upload-guard + file-guard + upload + file + azeroth-proxy
     //   + preview(token+serve) + voice + tts + search + scenarios + contentops + sessions + dingtalk
     //   + tenant-remote-hands admin + runtime-operations admin + observability admin
     //   + system admin + internal ACS alerts + tool-controls admin + groups = 23

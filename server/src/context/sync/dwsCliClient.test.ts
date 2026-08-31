@@ -14,17 +14,22 @@ function setup(outputs: unknown[]) {
 }
 
 describe('DwsCliContextClient', () => {
-  it('locks chat list-all argv, parses the real cursor envelope, and filters selected conversations in one scan', async () => {
+  it('locks chat list-all argv, parses the v1.0.60 nested cursor envelope, and filters selected conversations', async () => {
     const { client, json } = setup([{
-      data: {
-        messages: [
+      result: {
+        conversationMessagesList: [
           {
-            msgId: 'message-a', openConversationId: 'conversation-a', content: { text: 'hello' },
-            createTime: 1_777_075_000_000, senderUserId: 'user-a',
+            openConversationId: 'conversation-a',
+            messages: [{
+              openMessageId: 'message-a', content: { text: 'hello' },
+              createTime: 1_777_075_000_000, sender: { openDingTalkId: 'user-a' },
+            }],
           },
           {
-            msgId: 'message-b', openConversationId: 'conversation-b', content: 'other',
-            createTime: 1_777_075_100_000,
+            openConversationId: 'conversation-b',
+            messages: [{
+              openMessageId: 'message-b', content: 'other', createTime: 1_777_075_100_000,
+            }],
           },
         ],
         hasMore: true,
@@ -159,27 +164,27 @@ describe('DwsCliContextClient', () => {
       });
   });
 
-  it('maps minutes list/summary/transcription and follows transcript pagination', async () => {
+  it('maps v1.0.60 minutes list/summary/transcription and follows transcript pagination', async () => {
     const { client, json } = setup([
       {
         data: {
-          items: [
+          minutes: [
             { taskUuid: 'minutes-a', title: '周会', startTime: '2026-08-22T00:10:00Z', duration: 600 },
             { taskUuid: 'minutes-old', title: '旧会', startTime: '2026-08-21T00:10:00Z' },
           ],
-          hasMore: true,
-          nextCursor: 'minutes-cursor-2',
+          complete: true,
         },
+        meta: { pagination: { endpoint_exhausted: true, pages: 2, items: 2 } },
       },
-      { data: { summary: '核心结论' } },
+      { result: { fullSummary: '核心结论' } },
       {
-        data: {
-          items: [{ speakerName: '甲', text: '第一段' }],
-          hasMore: true,
-          nextCursor: 'transcript-cursor-2',
+        result: {
+          paragraphList: [{ speakerNick: '甲', paragraph: '第一段', sentences: [{ text: '补充' }] }],
+          hasNext: true,
+          nextToken: 'transcript-cursor-2',
         },
       },
-      { data: { items: [{ speakerName: '乙', text: '第二段' }], hasMore: false } },
+      { result: { paragraphList: [{ speakerNick: '乙', paragraph: '第二段' }], hasNext: false } },
     ]);
 
     const list = await client.listMinutes({ scope, window, pageSize: 20 });
@@ -188,6 +193,7 @@ describe('DwsCliContextClient', () => {
 
     expect(json.mock.calls[0]![0]).toEqual([
       'dws', 'minutes', '+list-all', '--limit', '20',
+      '--page-all', '--page-limit', '100',
       '--profile', 'corp:user', '--format', 'json',
     ]);
     expect(list).toEqual({
@@ -195,20 +201,88 @@ describe('DwsCliContextClient', () => {
         minutesId: 'minutes-a', title: '周会', startedAt: '2026-08-22T00:10:00.000Z',
         durationSeconds: 600,
       }],
-      nextCursor: 'minutes-cursor-2',
     });
     expect(json.mock.calls[1]![0]).toEqual([
       'dws', 'minutes', 'get', 'summary', '--id', 'minutes-a',
       '--profile', 'corp:user', '--format', 'json',
     ]);
     expect(summary).toEqual({ content: '核心结论' });
-    expect(json.mock.calls[3]![0]).toContain('transcript-cursor-2');
-    expect(transcript).toEqual({ content: '甲: 第一段\n乙: 第二段' });
+    expect(json.mock.calls[3]![0]).toEqual([
+      'dws', 'minutes', 'get', 'transcription', '--id', 'minutes-a', '--direction', '0',
+      '--cursor', 'transcript-cursor-2',
+      '--profile', 'corp:user', '--format', 'json',
+    ]);
+    expect(json.mock.calls[3]![0]).not.toContain('--next-token');
+    expect(transcript).toEqual({ content: '甲: 第一段 补充\n乙: 第二段' });
+  });
+
+  it('restarts a complete v1.0.60 minutes inventory when durable legacy cursor state exists', async () => {
+    const { client, json } = setup([{
+      data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } },
+    }]);
+
+    await expect(client.listMinutes({ scope, window, pageSize: 20, cursor: 'legacy-cursor' }))
+      .resolves.toEqual({ items: [] });
+    expect(json.mock.calls[0]![0]).not.toContain('legacy-cursor');
+    expect(json.mock.calls[0]![0]).toContain('--page-all');
+  });
+
+  it.each([
+    ['complete=false', { data: { minutes: [], complete: false },
+      meta: { pagination: { endpoint_exhausted: true, pages: 1, items: 0 } } }],
+    ['100 pages without completion proof', { data: { minutes: [] },
+      meta: { pagination: { pages: 100, items: 2_000 } } }],
+    ['complete=true but endpoint not exhausted', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: false, pages: 100, items: 2_000 } } }],
+    ['contradictory next token', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, pages: 100, next_token: 'unsafe-next' } } }],
+    ['contradictory pagination hasMore', { data: { minutes: [], complete: true },
+      meta: { pagination: { endpoint_exhausted: true, hasMore: true, pages: 100 } } }],
+    ['container false cannot hide pagination true', {
+      data: { minutes: [], complete: true, hasMore: false },
+      meta: { pagination: { endpoint_exhausted: true, hasMore: true, pages: 100 } },
+    }],
+    ['container complete cannot hide pagination incomplete', {
+      data: { minutes: [], complete: true, hasMore: false },
+      meta: { pagination: { complete: false, endpoint_exhausted: true, hasMore: false, pages: 100 } },
+    }],
+  ])('fails closed for minutes inventory: %s', async (_name, payload) => {
+    const { client } = setup([payload]);
+
+    await expect(client.listMinutes({ scope, window, pageSize: 20 }))
+      .resolves.toEqual({ items: [], truncated: true });
+  });
+
+  it.each([
+    {
+      name: '首个空页',
+      outputs: [
+        { result: { paragraphList: [], hasNext: true, nextToken: 'cursor-2' } },
+        { result: { paragraphList: [{ paragraph: '不应读取' }], hasNext: false } },
+      ],
+      content: '', calls: 1,
+    },
+    {
+      name: '已有内容后的空页',
+      outputs: [
+        { result: { paragraphList: [{ paragraph: '已累积' }], hasNext: true, nextToken: 'cursor-2' } },
+        { result: { paragraphList: [], hasNext: true, nextToken: 'cursor-3' } },
+        { result: { paragraphList: [{ paragraph: '不应读取' }], hasNext: false } },
+      ],
+      content: '已累积', calls: 2,
+    },
+  ])('$name带 nextToken 时立即终止且不标记截断', async ({ outputs, content, calls }) => {
+    const { client, json } = setup(outputs);
+
+    await expect(client.getMinutesTranscript({ scope, minutesId: 'minutes-a' }))
+      .resolves.toEqual({ content });
+    expect(json).toHaveBeenCalledTimes(calls);
   });
 
   it('marks transcript clipping explicit when the adapter character bound is reached', async () => {
     const json = vi.fn().mockResolvedValue({
-      data: { items: [{ text: 'abcdefghij' }], hasMore: true, nextCursor: 'next' },
+      result: { paragraphList: [{ paragraph: 'abcdefghij' }], hasNext: true, nextToken: 'next' },
     });
     const client = new DwsCliContextClient({ executor: { json }, maxTranscriptCharacters: 5 });
 
@@ -217,7 +291,7 @@ describe('DwsCliContextClient', () => {
     expect(json).toHaveBeenCalledTimes(1);
   });
 
-  it('never logs or rethrows credential values supplied to the executor environment', async () => {
+  it('redacts credential values from logs and rethrown executor errors', async () => {
     const secret = 'super-secret-client-value';
     const logger = { warn: vi.fn() };
     const executor: DwsCliJsonExecutor = {

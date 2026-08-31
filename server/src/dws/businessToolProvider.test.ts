@@ -12,7 +12,8 @@ import {
 
 const account = {
   accountId: 'account-a', tenantId: 'tenant-a', agentId: 'agent-a', displayName: '专家甲',
-  loginId: 'login-a', profileId: 'agent-profile-secret', status: 'active', runtimeStatus: 'ready',
+  loginId: 'login-a', profileId: 'agent-corp:agent-user', corpId: 'agent-corp',
+  dingtalkUserId: 'agent-user', status: 'active', runtimeStatus: 'ready',
   eventKinds: ['at_me', 'all_direct'], revision: 1, createdAt: '2026-08-25T00:00:00.000Z',
   createdBy: 'admin-a', updatedAt: '2026-08-25T00:00:00.000Z', updatedBy: 'admin-a',
 } as const;
@@ -28,6 +29,11 @@ function setup(input: {
   sessionOrgAgentId?: string | null;
   sessionChannel?: 'web' | 'dingtalk' | 'cron';
   requesterProfiles?: Array<Record<string, unknown>>;
+  agentAccount?: Record<string, unknown>;
+  runMessageMetadata?: Record<string, unknown> | null;
+  runDwsCompletionRoute?: Record<string, unknown>;
+  /** Metadata stored on the nearest DWS ancestor Run. */
+  runParentMessageMetadata?: Record<string, unknown>;
 } = {}) {
   const auditStore = new InMemoryGovernanceAuditStore();
   const invoke = vi.fn().mockResolvedValue({
@@ -35,9 +41,9 @@ function setup(input: {
     content: '{"ok":true}',
     audit: [{
       provider: 'server-remote', operation: 'shell', status: 'success',
-      error: 'command used --profile agent-profile-secret token=raw-token',
+      error: 'command used --profile agent-corp:agent-user token=raw-token',
     }],
-    metadata: { exitCode: 0, command: 'dws --profile agent-profile-secret' },
+    metadata: { exitCode: 0, command: 'dws --profile agent-corp:agent-user' },
   });
   const listEffectiveResourceIds = input.assignmentUnavailable
     ? vi.fn().mockRejectedValue(new Error('assignment unavailable'))
@@ -48,12 +54,14 @@ function setup(input: {
   const provider = new DwsBusinessToolProvider({
     agentCwd: '/workspace',
     accountStore: {
-      listForTenant: vi.fn().mockResolvedValue([account]),
+      listForTenant: vi.fn().mockResolvedValue([input.agentAccount ?? account]),
     } as never,
     assignmentStore: { listEffectiveResourceIds } as never,
     connectionStore: {
       listForUser: vi.fn().mockResolvedValue(input.requesterProfiles ?? [{
-        tenantId: 'tenant-a', userId: 'user-a', username: 'alice', profileId: 'requester-profile-secret',
+        tenantId: 'tenant-a', userId: 'user-a', username: 'alice',
+        profileId: 'requester-corp:requester-user', corpId: 'requester-corp',
+        dingtalkUserId: 'requester-user',
         connectionStatus: 'connected', authenticated: true, refreshTokenValid: true,
       }]),
     } as never,
@@ -66,6 +74,34 @@ function setup(input: {
         createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
       }),
     },
+    ...(input.runMessageMetadata !== undefined
+      || input.runDwsCompletionRoute !== undefined
+      || input.runParentMessageMetadata !== undefined ? {
+        runStore: {
+          get: vi.fn(async (runId: string) => {
+            if (input.runMessageMetadata === null) return null;
+            if (input.runParentMessageMetadata !== undefined) {
+              return runId === 'run-a'
+                ? { runId, metadata: { parentRunId: 'run-parent' } }
+                : {
+                    runId,
+                    metadata: { wakeMessage: { metadata: input.runParentMessageMetadata } },
+                  };
+            }
+            return {
+              runId,
+              metadata: {
+                ...(input.runMessageMetadata !== undefined
+                  ? { wakeMessage: { metadata: input.runMessageMetadata } }
+                  : {}),
+                ...(input.runDwsCompletionRoute !== undefined
+                  ? { dwsCompletionRoute: input.runDwsCompletionRoute }
+                  : {}),
+              },
+            };
+          }),
+        } as never,
+      } : {}),
     auditStore,
     resolveServerRemote: vi.fn().mockResolvedValue({ baseUrl: 'https://hand.test', authToken: 'remote-token' }),
     createTransport: () => ({ invoke }),
@@ -167,7 +203,26 @@ describe('DwsBusinessToolProvider', () => {
       expect(invoke).not.toHaveBeenCalled();
       expect(auditStore.events.at(-1)).toMatchObject({
         reason: 'DWS_BUSINESS_ACTION_REJECTED',
-        metadata: { commandPath: args.join('.'), policySource: 'unregistered', policyCliVersion: '1.0.55' },
+        metadata: { commandPath: args.join('.'), policySource: 'unregistered', policyCliVersion: '1.0.60' },
+      });
+    }
+  });
+
+  it('同步 Broker 不执行 event 长连接，即使用户已确认', async () => {
+    for (const args of [
+      ['event', '+listen-im', '--kind', 'at-me'],
+      ['event', '+listen-im', '--kind', 'at-me', '--duration', '5m'],
+    ]) {
+      const { provider, invoke, auditStore, context } = setup();
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args, credentialMode: 'agent', confirmed: true },
+        authorization: { approved: true, source: 'human_approval' },
+      }, context)).rejects.toThrow('DWS 长连接命令不支持通过同步 Broker 执行');
+      expect(invoke).not.toHaveBeenCalled();
+      expect(auditStore.events.at(-1)).toMatchObject({
+        reason: 'DWS_BUSINESS_ACTION_REJECTED',
+        metadata: { commandPath: 'event.listen-im', policySource: 'platform_boundary' },
       });
     }
   });
@@ -217,7 +272,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(resolveDwsBusinessRisk({ args: ['auth', 'login'] })).toBe('dangerous');
   });
 
-  it('使用专家 profile 在隔离 connector workspace 执行读命令并写入治理审计', async () => {
+  it('非 DWS 入站 Run 使用当前专家精确 profile 执行并写入治理审计', async () => {
     const { provider, invoke, auditStore, context, executionAudit } = setup();
 
     await expect(provider.invoke({
@@ -229,24 +284,111 @@ describe('DwsBusinessToolProvider', () => {
     const request = invoke.mock.calls[0]![0];
     expect(request.toolName).toBe('Shell');
     expect(request.input.command).toContain("'dws' 'calendar' 'event' 'list' '--today'");
-    expect(request.input.command).toContain("'--profile' 'agent-profile-secret' '--format' 'json'");
+    expect(request.input.command).toContain("'--profile' 'agent-corp:agent-user' '--format' 'json'");
     expect(request.context.workspace).toMatchObject({
       userId: 'account-a', tenantId: 'tenant-a', executionTarget: 'server-remote',
     });
     expect(executionAudit.record).toHaveBeenCalledWith(expect.objectContaining({
-      error: expect.not.stringContaining('agent-profile-secret'),
+      error: expect.not.stringContaining('agent-corp:agent-user'),
     }));
     expect(JSON.stringify(executionAudit.record.mock.calls)).not.toContain('raw-token');
     expect(auditStore.events.map(event => event.result)).toEqual(['intent', 'succeeded']);
     expect(auditStore.events[0]?.metadata).toMatchObject({
       commandPath: 'calendar.event.list',
       policySource: 'cli_schema',
-      policyCliVersion: '1.0.55',
+      policyCliVersion: '1.0.60',
       delegationBindingId: 'assignment-a',
       delegationAssignmentVersion: 3,
     });
-    expect(JSON.stringify(auditStore.events)).not.toContain('agent-profile-secret');
+    expect(JSON.stringify(auditStore.events)).not.toContain('agent-corp:agent-user');
     expect(JSON.stringify(auditStore.events)).not.toContain('remote-token');
+  });
+
+  it('DWS 入站、后台及子 Run 继承原精确账号，匹配时才允许 Broker 执行', async () => {
+    const { provider, invoke, auditStore, context } = setup({
+      runMessageMetadata: {
+        source: 'agent_dws_personal_stream',
+        accountId: 'account-a',
+        profileId: 'agent-corp:agent-user',
+        corpId: 'agent-corp',
+        dingtalkUserId: 'agent-user',
+      },
+    });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list', '--today'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
+
+    expect(invoke.mock.calls[0]![0].input.command)
+      .toContain("'--profile' 'agent-corp:agent-user'");
+    expect(auditStore.events[0]?.metadata).toMatchObject({ runAccountPinned: true });
+
+    const background = setup({
+      runDwsCompletionRoute: {
+        accountId: 'account-a',
+        profileId: 'agent-corp:agent-user',
+        corpId: 'agent-corp',
+        dingtalkUserId: 'agent-user',
+      },
+    });
+    await expect(background.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list', '--today'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, background.context)).resolves.toMatchObject({ content: '{"ok":true}' });
+    expect(background.invoke).toHaveBeenCalledOnce();
+
+    const child = setup({
+      runParentMessageMetadata: {
+        source: 'agent_dws_personal',
+        accountId: 'account-a',
+        profileId: 'agent-corp:agent-user',
+        corpId: 'agent-corp',
+        dingtalkUserId: 'agent-user',
+      },
+    });
+    await expect(child.provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list', '--today'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, child.context)).resolves.toMatchObject({ content: '{"ok":true}' });
+    expect(child.invoke).toHaveBeenCalledOnce();
+  });
+
+  it('DWS 入站 Run 的账号身份缺失或已重授权时 Broker fail closed', async () => {
+    for (const testCase of [
+      {
+        runMessageMetadata: { source: 'agent_dws_personal_stream', accountId: 'account-a' },
+        agentAccount: account,
+        error: '缺少可验证的原账号身份',
+      },
+      {
+        runMessageMetadata: {
+          source: 'agent_dws_personal_stream',
+          accountId: 'account-a',
+          profileId: 'agent-corp:agent-user',
+          corpId: 'agent-corp',
+          dingtalkUserId: 'agent-user',
+        },
+        agentAccount: {
+          ...account,
+          profileId: 'agent-corp:agent-user-new',
+          dingtalkUserId: 'agent-user-new',
+          revision: 2,
+        },
+        error: '钉钉账号已发生变化',
+      },
+    ]) {
+      const { provider, invoke, context } = setup(testCase);
+      await expect(provider.invoke({
+        toolId: 'DwsBusiness',
+        input: { args: ['calendar', 'event', 'list', '--today'], credentialMode: 'agent' },
+        authorization: { approved: true, source: 'policy_auto' },
+      }, context)).rejects.toThrow(testCase.error);
+      expect(invoke).not.toHaveBeenCalled();
+    }
   });
 
   it('输出脱敏覆盖 camelCase credential 字段', async () => {
@@ -315,7 +457,37 @@ describe('DwsBusinessToolProvider', () => {
     expect(exact.invoke).toHaveBeenCalledOnce();
   });
 
-  it('requester 模式只从可信连接记录选择唯一 profile，写命令自动追加 --yes', async () => {
+  it('Agent 账号只有组织级 selector 时 Broker fail closed 且不调用 DWS', async () => {
+    const { provider, invoke, context } = setup({
+      agentAccount: { ...account, profileId: 'agent-corp' },
+    });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['calendar', 'event', 'list', '--today'], credentialMode: 'agent' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('没有可用的钉钉账号授权');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('requester 唯一连接仍是组织级 selector 时 fail closed', async () => {
+    const { provider, invoke, context } = setup({
+      requesterProfiles: [{
+        tenantId: 'tenant-a', userId: 'user-a', username: 'alice',
+        profileId: 'requester-corp', corpId: 'requester-corp', dingtalkUserId: 'requester-user',
+        connectionStatus: 'connected', authenticated: true, refreshTokenValid: true,
+      }],
+    });
+
+    await expect(provider.invoke({
+      toolId: 'DwsBusiness',
+      input: { args: ['auth', 'status'], credentialMode: 'requester' },
+      authorization: { approved: true, source: 'policy_auto' },
+    }, context)).rejects.toThrow('没有已连接的钉钉账号');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('requester 模式只从可信连接记录选择唯一精确 profile，写命令自动追加 --yes', async () => {
     const { provider, invoke, context } = setup();
 
     await provider.invoke({
@@ -329,12 +501,12 @@ describe('DwsBusinessToolProvider', () => {
     }, context);
 
     const request = invoke.mock.calls[0]![0];
-    expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(request.input.command).toContain("'--profile' 'requester-corp:requester-user'");
     expect(request.input.command).toContain("'--yes'");
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
   });
 
-  it('requester 模式允许在请求者自己的普通 Session 检查能力中心连接', async () => {
+  it('精确 requester profile 允许在请求者自己的普通 Session 检查能力中心连接', async () => {
     const { provider, invoke, context, auditStore } = setup({
       sessionOrgAgentId: null,
       sessionChannel: 'web',
@@ -346,7 +518,7 @@ describe('DwsBusinessToolProvider', () => {
       authorization: { approved: true, source: 'policy_auto' },
     }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
 
-    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'auth' 'status' '--profile' 'requester-profile-secret'");
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'auth' 'status' '--profile' 'requester-corp:requester-user'");
     expect(auditStore.events[0]).toMatchObject({
       targetType: 'user',
       targetId: 'user-a',
@@ -382,7 +554,7 @@ describe('DwsBusinessToolProvider', () => {
     });
 
     const request = invoke.mock.calls[0]![0];
-    expect(request.input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(request.input.command).toContain("'--profile' 'requester-corp:requester-user'");
     expect(request.context.workspace).toMatchObject({ userId: 'user-a', username: 'alice' });
     expect(auditStore.events[0]).toMatchObject({
       actorUserId: admin.id,
@@ -413,7 +585,7 @@ describe('DwsBusinessToolProvider', () => {
       },
     });
 
-    expect(invoke.mock.calls[0]![0].input.command).toContain("'--profile' 'requester-profile-secret'");
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'--profile' 'requester-corp:requester-user'");
     expect(auditStore.events[0]).toMatchObject({
       actorUserId: platformAdmin.id,
       actorTenantId: DEFAULT_TENANT_ID,
@@ -497,7 +669,7 @@ describe('DwsBusinessToolProvider', () => {
       authorization: { approved: true, source: 'policy_auto' },
     }, context)).resolves.toMatchObject({ content: '{"ok":true}' });
 
-    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'drive' 'recent' '--help' '--profile' 'requester-profile-secret'");
+    expect(invoke.mock.calls[0]![0].input.command).toContain("'dws' 'drive' 'recent' '--help' '--profile' 'requester-corp:requester-user'");
     expect(auditStore.events[0]).toMatchObject({
       targetType: 'user',
       targetId: 'user-a',
@@ -530,7 +702,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('个人 Cron requester 连接缺失或存在多连接歧义时不回退企业专家', async () => {
+  it('个人 Cron requester 连接缺失或存在多连接歧义时也不回退企业专家', async () => {
     for (const profiles of [
       [],
       [

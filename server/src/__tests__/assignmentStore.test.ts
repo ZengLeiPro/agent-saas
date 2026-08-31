@@ -44,7 +44,7 @@ function orgAgent(): OrgAgentRecord {
   };
 }
 
-describe('Resource Assignment 与 Personal Preference', () => {
+describe('Resource Assignment、Personal Preference 与当前 migration ledger', () => {
   it('显式 deny 优先于 everyone allow；无匹配返回 needs_assignment', () => {
     expect(resolveAssignment([
       { assigneeType: 'everyone', effect: 'allow' },
@@ -73,7 +73,7 @@ describe('Resource Assignment 与 Personal Preference', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_resource_assignments');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS test_user_resource_preferences');
     expect(sql).toContain("assignee_type = 'everyone' AND assignee_id IS NULL");
-    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(33);
+    expect(queries.filter(item => item === 'BEGIN')).toHaveLength(34);
   });
 
   it('legacy username 仅在同租户唯一命中时转 immutable userId；未解析 deny 记 issue 且不误授权同名账号', async () => {

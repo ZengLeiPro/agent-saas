@@ -109,7 +109,7 @@ import { configureModelPricing } from '../data/usage/pricing.js';
 import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
-  // - 控制面/查询类路由由 app 统一注册
+  // - 控制面与查询类路由由 app 统一注册
 
   // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。
   app.use('/api', enforcePlatformWritePolicy);
@@ -136,8 +136,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     : undefined;
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
-
   const { channelManager } = runtime;
+  const getRuntimeAdmissionSnapshot = resolveRuntimeAdmissionSnapshotReader(
+    runtime.processRole, runtime.getRuntimeAdmissionSnapshot,
+  );
   app.use(
     '/api',
     createHealthRouter(config, {
@@ -146,7 +148,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getUploadMetrics: () => runtime.uploadManager.getMetricsSnapshot(),
       getActiveRunCounts: runtime.runtimeRunStore?.getActiveCounts ? () => runtime.runtimeRunStore!.getActiveCounts!() : undefined,
       getIsDraining: () => channelManager.draining,
-      getRuntimeAdmissionSnapshot: resolveRuntimeAdmissionSnapshotReader(runtime.processRole, runtime.getRuntimeAdmissionSnapshot),
+      getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
       ...(runtime.egressConfigStore
         ? {
@@ -651,19 +653,18 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
 
-  app.use(
-    '/api/admin/system',
-    requireAdmin,
-    createSystemAdminRouter({
+  app.use('/api/admin/system', requireAdmin, createSystemAdminRouter({
       agentCwd,
       systemMetricsStore: runtime.systemMetricsStore,
       systemMetricsCollector: runtime.systemMetricsCollector,
       alertNotifier: runtime.alertNotifier,
       userStore: runtime.userStore,
       governanceAuditStore: runtime.governanceAuditStore,
+      runtimeEventRetention: config.runtimeEventRetention,
+      getRuntimeWorkerAdmissionSnapshot: getRuntimeAdmissionSnapshot,
+      eventsTable: runtime.runtimePgEventStore?.eventsTable,
     }),
   );
-
   app.use(
     '/api/internal',
     createInternalAcsAlertsRouter({
@@ -671,7 +672,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       inboundToken: process.env.ACS_ALERT_INBOUND_TOKEN,
     }),
   );
-
   app.use(
     '/api',
     createGroupsRouter({

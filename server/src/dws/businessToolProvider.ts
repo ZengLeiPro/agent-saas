@@ -14,10 +14,14 @@ import type {
   ToolResult,
   ToolRisk,
 } from '../agent/toolRuntime.js';
-import type { AgentDwsAccountStore } from '../data/agentDwsAccounts/index.js';
+import {
+  hasExactAgentDwsProfile,
+  type AgentDwsAccountStore,
+} from '../data/agentDwsAccounts/index.js';
 import type { PgAssignmentStore } from '../data/assignments/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { UserStore } from '../data/users/store.js';
+import type { RunStore } from '../runtime/runStore.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
 import type { ExecutionTransport } from '../runtime/executionTransport.js';
 import { HttpTransport } from '../runtime/httpTransport.js';
@@ -36,7 +40,10 @@ import {
   type ClassifiedDwsCommand,
 } from './commandPolicy.js';
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
-import type { DwsConnectionStore } from './store.js';
+import {
+  hasExactDwsConnectionProfile,
+  type DwsConnectionStore,
+} from './store.js';
 
 const businessInputSchema = z.object({
   args: z.array(z.string().min(1).max(1_000)).min(2).max(80),
@@ -46,6 +53,24 @@ const businessInputSchema = z.object({
 
 type DwsBusinessInput = z.infer<typeof businessInputSchema>;
 
+
+// Child and background Runs inherit the nearest ancestor's immutable DWS identity pin.
+const DWS_PINNED_RUN_SOURCES = new Set([
+  'agent_dws_personal_stream',
+  'agent_dws_background_completion',
+]);
+
+type DwsRunAccountPin =
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+  | {
+      kind: 'exact';
+      accountId: string;
+      profileId: string;
+      corpId: string;
+      dingtalkUserId: string;
+    };
+
 export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
   id: 'DwsBusiness',
   name: 'DwsBusiness',
@@ -54,7 +79,7 @@ export const dwsBusinessToolDescriptor: ToolDescriptor<DwsBusinessInput> = {
   description: [
     '通过受控 DWS Broker 查询或写入钉钉业务数据。',
     'args 只填写 dws 后面的参数数组，例如 ["calendar","event","list","--today"]；不要填写 dws、--profile、--format 或任何 token。',
-    'credentialMode=agent 表示以当前企业专家自身钉钉账号执行，要求 Session 绑定企业专家；requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session 或个人定时任务。',
+    'credentialMode=agent 表示以当前企业专家自身钉钉账号执行；DWS 入站 Run 还会固定原精确账号身份。requester 表示以当前请求者在能力中心连接的唯一钉钉账号执行，可用于请求者自己的普通 Session 或个人定时任务。',
     'auth 模块只开放只读的 auth status；写操作必须在用户明确要求或确认后传 confirmed=true；delete/remove/recall/revoke/approve/reject 等破坏性或高影响动作本阶段拒绝。',
   ].join('\n'),
   schema: businessInputSchema,
@@ -79,6 +104,7 @@ export interface DwsBusinessToolProviderOptions {
   userStore: UserStore;
   isRequesterRuntimeEnabled?: (username: string) => boolean;
   sessionCatalog: Pick<SessionCatalog, 'get'>;
+  runStore?: Pick<RunStore, 'get'>;
   auditStore: GovernanceAuditStore;
   resolveServerRemote: (principal: DwsWorkspacePrincipal) => Promise<{
     baseUrl: string;
@@ -215,9 +241,25 @@ export class DwsBusinessToolProvider implements ToolProvider {
       ? (await this.options.accountStore.listForTenant(identity.tenantId))
           .find(candidate => candidate.agentId === orgAgentId) ?? null
       : null;
-    if (input.credentialMode === 'agent' && (!account || account.status !== 'active' || !account.profileId)) {
+    if (input.credentialMode === 'agent' && (!account || account.status !== 'active'
+      || !hasExactAgentDwsProfile(account))) {
       await auditRejection('DWS_BUSINESS_AGENT_ACCOUNT_UNAVAILABLE');
       throw new Error('当前企业专家没有可用的钉钉账号授权');
+    }
+    const runAccountPin = input.credentialMode === 'agent'
+      ? await this.resolveRunAccountPin(context.runId)
+      : { kind: 'none' as const };
+    if (runAccountPin.kind === 'invalid') {
+      await auditRejection('DWS_BUSINESS_RUN_ACCOUNT_IDENTITY_INVALID');
+      throw new Error('当前 DWS 入站 Run 缺少可验证的原账号身份');
+    }
+    if (runAccountPin.kind === 'exact' && account
+      && (runAccountPin.accountId !== account.accountId
+        || runAccountPin.profileId !== account.profileId
+        || runAccountPin.corpId !== account.corpId
+        || runAccountPin.dingtalkUserId !== account.dingtalkUserId)) {
+      await auditRejection('DWS_BUSINESS_RUN_ACCOUNT_IDENTITY_STALE');
+      throw new Error('当前 DWS 入站 Run 的钉钉账号已发生变化，已拒绝执行');
     }
     const delegation = input.credentialMode === 'agent' && account
       ? await this.resolveAgentCredentialDelegation(
@@ -249,6 +291,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         policyCliVersion: DWS_ACTIVE_CLI_VERSION,
         credentialMode: input.credentialMode,
         sessionBound: Boolean(orgAgentId),
+        runAccountPinned: runAccountPin.kind === 'exact',
         sessionOwnerUserId: identity.id,
         sessionOwnerTenantId: identity.tenantId,
         operatorUserId: operator.id,
@@ -269,7 +312,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       if (input.credentialMode === 'requester') {
         principalAndProfile = await this.resolveRequesterPrincipal(identity.tenantId, identity.id);
       } else {
-        if (!account?.profileId) throw new Error('当前企业专家没有可用的钉钉账号授权');
+        if (!account?.profileId) throw new Error('当前企业专家没有可用的精确钉钉账号授权');
         principalAndProfile = {
           principal: {
             id: account.accountId,
@@ -279,7 +322,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
             principalType: 'agent' as const,
             agentId: account.agentId,
           },
-          profileId: account.profileId,
+          profileId: runAccountPin.kind === 'exact' ? runAccountPin.profileId : account.profileId,
         };
       }
       profileId = principalAndProfile.profileId;
@@ -305,6 +348,35 @@ export class DwsBusinessToolProvider implements ToolProvider {
       }).catch(() => undefined);
       throw new Error(message);
     }
+  }
+
+  private async resolveRunAccountPin(runId?: string): Promise<DwsRunAccountPin> {
+    if (!this.options.runStore || !runId) return { kind: 'none' };
+    const seen = new Set<string>();
+    let currentRunId: string | undefined = runId;
+    for (let depth = 0; currentRunId && depth < 16; depth += 1) {
+      if (seen.has(currentRunId)) return { kind: 'invalid' };
+      seen.add(currentRunId);
+      const run = await this.options.runStore.get(currentRunId);
+      if (!run) return { kind: 'invalid' };
+      const wakeMessage = run.metadata.wakeMessage;
+      if (wakeMessage && typeof wakeMessage === 'object' && !Array.isArray(wakeMessage)) {
+        const messageMetadata = (wakeMessage as Record<string, unknown>).metadata;
+        if (messageMetadata && typeof messageMetadata === 'object' && !Array.isArray(messageMetadata)) {
+          const metadata = messageMetadata as Record<string, unknown>;
+          if (typeof metadata.source === 'string' && DWS_PINNED_RUN_SOURCES.has(metadata.source)) {
+            return parseDwsRunAccountPin(metadata);
+          }
+        }
+      }
+      const completionRoute = run.metadata.dwsCompletionRoute;
+      if (completionRoute !== undefined) return parseDwsRunAccountPin(completionRoute);
+      const parentRunId = run.metadata.parentRunId;
+      currentRunId = typeof parentRunId === 'string' && parentRunId.trim()
+        ? parentRunId.trim()
+        : undefined;
+    }
+    return currentRunId ? { kind: 'invalid' } : { kind: 'none' };
   }
 
   private async resolveAgentCredentialDelegation(
@@ -339,7 +411,8 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const profiles = (await this.options.connectionStore.listForUser(tenantId, userId))
       .filter(profile => profile.connectionStatus === 'connected'
         && profile.authenticated !== false
-        && profile.refreshTokenValid !== false);
+        && profile.refreshTokenValid !== false
+        && hasExactDwsConnectionProfile(profile));
     if (profiles.length !== 1) {
       throw new Error(profiles.length === 0
         ? '当前请求者没有已连接的钉钉账号'
@@ -437,6 +510,24 @@ export function createDwsBusinessToolProviders(
     userStore,
     auditStore,
   })];
+}
+
+function parseDwsRunAccountPin(value: unknown): DwsRunAccountPin {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'invalid' };
+  const metadata = value as Record<string, unknown>;
+  const text = (field: string) => {
+    const item = metadata[field];
+    return typeof item === 'string' && item.trim() ? item.trim() : undefined;
+  };
+  const accountId = text('accountId');
+  const profileId = text('profileId');
+  const corpId = text('corpId');
+  const dingtalkUserId = text('dingtalkUserId');
+  if (!accountId || !profileId || !corpId || !dingtalkUserId
+    || profileId !== `${corpId}:${dingtalkUserId}`) {
+    return { kind: 'invalid' };
+  }
+  return { kind: 'exact', accountId, profileId, corpId, dingtalkUserId };
 }
 
 export function deriveDwsAgentDelegationResourceId(accountId: string, args: string[]): string {

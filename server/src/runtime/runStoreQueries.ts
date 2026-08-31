@@ -533,22 +533,73 @@ export class PgRunStoreQueries {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // 固定锁顺序：全局容量 → 会话。所有 worker 都走同一顺序，避免交叉死锁。
+      let inheritsParentCapacity = false;
+      // 固定锁顺序：统一父子 Run 容量 → 会话。每次重试都在同一事务里竞选父槽；
+      // 当前继承者结束后，已等待兄弟可接棒，且跨进程仍保证单父最多一个继承者。
       if (maxConcurrentRuns !== undefined) {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
           `${this.runsTable}:scheduler-capacity`,
         ]);
-        const countResult = await client.query<{ active_count: string | number }>(`
-          SELECT COUNT(*) AS active_count
-          FROM ${this.runsTable}
-          WHERE status = 'running' AND lease_expires_at > $1::timestamptz
-        `, [nowIso]);
-        const reserved = admission?.foreground
-          ? 0
-          : Math.min(Math.max(0, admission?.foregroundReservedRuns ?? 0), Math.max(0, maxConcurrentRuns - 1));
-        if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns - reserved) {
-          await client.query('ROLLBACK');
-          return null;
+        const inheritedParentRunId = admission?.inheritFromRunId?.trim();
+        if (inheritedParentRunId) {
+          const eligibility = await client.query<{
+            parent_active: boolean;
+            candidate_eligible: boolean;
+            inherited_active: boolean;
+          }>(`
+            SELECT
+              EXISTS (
+                SELECT 1 FROM ${this.runsTable} parent_run
+                WHERE parent_run.run_id = $1
+                  AND parent_run.status = 'running'
+                  AND parent_run.lease_expires_at > $2::timestamptz
+              ) AS parent_active,
+              EXISTS (
+                SELECT 1 FROM ${this.runsTable} child_run
+                WHERE child_run.run_id = $3
+                  AND child_run.metadata->>'subagent' = 'true'
+                  AND child_run.metadata->>'parentRunId' = $1
+              ) AS candidate_eligible,
+              EXISTS (
+                SELECT 1 FROM ${this.runsTable} inherited_run
+                WHERE inherited_run.run_id <> $3
+                  AND inherited_run.status = 'running'
+                  AND inherited_run.lease_expires_at > $2::timestamptz
+                  AND inherited_run.metadata->>'subagentCapacityInherited' = 'true'
+                  AND inherited_run.metadata->>'parentRunId' = $1
+              ) AS inherited_active
+          `, [inheritedParentRunId, nowIso, runId]);
+          const row = eligibility.rows[0];
+          if (!row?.parent_active || !row.candidate_eligible) {
+            await client.query('ROLLBACK');
+            return null;
+          }
+          inheritsParentCapacity = !row.inherited_active;
+        }
+        if (!inheritsParentCapacity) {
+          const countResult = await client.query<{ active_count: string | number }>(`
+            SELECT COUNT(*) AS active_count
+            FROM ${this.runsTable} active_run
+            WHERE active_run.status = 'running'
+              AND active_run.lease_expires_at > $1::timestamptz
+              AND NOT (
+                active_run.metadata->>'subagentCapacityInherited' = 'true'
+                AND EXISTS (
+                  SELECT 1
+                  FROM ${this.runsTable} parent_run
+                  WHERE parent_run.run_id = active_run.metadata->>'parentRunId'
+                    AND parent_run.status = 'running'
+                    AND parent_run.lease_expires_at > $1::timestamptz
+                )
+              )
+          `, [nowIso]);
+          const reserved = admission?.foreground
+            ? 0
+            : Math.min(Math.max(0, admission?.foregroundReservedRuns ?? 0), Math.max(0, maxConcurrentRuns - 1));
+          if (parseCount(countResult.rows[0]?.active_count) >= maxConcurrentRuns - reserved) {
+            await client.query('ROLLBACK');
+            return null;
+          }
         }
       }
 
@@ -570,7 +621,11 @@ export class PgRunStoreQueries {
             worker_id = $2,
             lease_expires_at = $3,
             started_at = COALESCE(candidate.started_at, $4),
-            updated_at = $4
+            updated_at = $4,
+            metadata = CASE
+              WHEN $5::boolean THEN jsonb_set(candidate.metadata, '{subagentCapacityInherited}', 'true'::jsonb, true)
+              ELSE candidate.metadata - 'subagentCapacityInherited'
+            END
         WHERE candidate.run_id = $1
           AND (
             candidate.status = 'pending'
@@ -616,7 +671,7 @@ export class PgRunStoreQueries {
               )
           )
         RETURNING row_to_json(candidate.*) AS row_json
-      `, [runId, workerId, leaseExpiresAt, nowIso]);
+      `, [runId, workerId, leaseExpiresAt, nowIso, inheritsParentCapacity]);
       await client.query('COMMIT');
       return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
     } catch (err) {

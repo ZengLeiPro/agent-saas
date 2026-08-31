@@ -1,4 +1,37 @@
+import { randomUUID } from 'node:crypto';
+
 import type pg from 'pg';
+
+export type RuntimeEventRetentionState =
+  | 'never_run'
+  | 'scheduled'
+  | 'running'
+  | 'dry_run_succeeded'
+  | 'execute_succeeded'
+  | 'blocked'
+  | 'failed';
+
+export interface RuntimeEventRetentionStatusSnapshot {
+  schemaVersion: 1;
+  state: RuntimeEventRetentionState;
+  mode: 'dry-run' | 'execute';
+  sweepIntervalMinutes: number;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  lastSuccessAt: string | null;
+  durationMs: number | null;
+  errorCategory: string | null;
+  nextScheduledAt: string | null;
+  watermarks: {
+    legal: string;
+    billing: string | null;
+    effectiveDeleteThrough: string | null;
+  };
+  maxGlobalSequence: string | null;
+  categories: Record<string, { eligible: number; deleted: number }>;
+  /** Store 内部跨进程 fencing；System Admin 响应不会暴露。 */
+  authority?: { writerId: string; claim: boolean };
+}
 
 export interface RuntimeEventRetentionOptions {
   pool: pg.Pool;
@@ -25,6 +58,12 @@ export interface RuntimeEventRetentionOptions {
   billingCatchupBatchLimit?: number;
   billingCatchupMaxBatches?: number;
   projectBillingRuntimeEvents?: (limit: number) => Promise<{ lastProjectedSequence: number }>;
+  /** 持久化稳定、脱敏的运行快照；首次未运行状态由只读投影在无记录时派生。 */
+  statusRecorder?: (snapshot: RuntimeEventRetentionStatusSnapshot) => Promise<void> | void;
+  /** execute projection/DELETE 复用状态单例行做跨进程事务 fencing。 */
+  statusAuthorityTable?: string;
+  /** 专用 worker 启动失败时退出；兼容 all 角色仅重试状态写入。 */
+  startupFailureMode?: 'none' | 'throw' | 'retry';
   logger?: {
     info?: (message: string, ...args: unknown[]) => void;
     warn?: (message: string, ...args: unknown[]) => void;
@@ -62,11 +101,15 @@ const HAND_RETENTION_TYPES = ['hand_provisioning_log', 'hand_health_changed', 'h
  */
 export class RuntimeEventRetention {
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private startupRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private stopped = true;
   private inFlight = false;
+  private inFlightCompletion: Promise<void> = Promise.resolve();
+  private statusWriteTail: Promise<void> = Promise.resolve();
   private readonly eventsTable: string;
   private readonly toolInvocationsTable: string;
   private readonly billingProjectionStateTable: string;
+  private readonly statusAuthorityTable: string | undefined;
   private readonly executionMode: 'dry-run' | 'execute';
   private readonly legalDeleteThroughGlobalSequence: bigint;
   private readonly authorizationRef: string | undefined;
@@ -81,20 +124,26 @@ export class RuntimeEventRetention {
   private readonly handEventRetentionDays: number;
   private readonly billingCatchupBatchLimit: number;
   private readonly billingCatchupMaxBatches: number;
+  private lastStartedAt: string | null = null;
+  private lastCompletedAt: string | null = null;
+  private lastSuccessAt: string | null = null;
+  private nextScheduledAt: string | null = null;
+  private startGeneration = 0;
+  private statusPersistenceAvailable = true;
+  // 只随逻辑状态转换更新；authority refresh 不覆盖并发产生的更新末态。
+  private lastObservedStatus: RuntimeEventRetentionStatusSnapshot | undefined;
+  private readonly statusAuthority = { writerId: randomUUID() };
 
   constructor(private readonly options: RuntimeEventRetentionOptions) {
     this.eventsTable = sanitizeIdentifier(options.eventsTable);
     this.toolInvocationsTable = sanitizeIdentifier(options.toolInvocationsTable);
     this.billingProjectionStateTable = sanitizeIdentifier(options.billingProjectionStateTable);
+    this.statusAuthorityTable = options.statusAuthorityTable
+      ? sanitizeIdentifier(options.statusAuthorityTable)
+      : undefined;
     this.executionMode = options.executionMode ?? 'dry-run';
     this.legalDeleteThroughGlobalSequence = parseWatermark(options.legalDeleteThroughGlobalSequence);
     this.authorizationRef = options.authorizationRef?.trim() || undefined;
-    if (this.executionMode === 'execute' && !this.authorizationRef) {
-      throw new Error('RuntimeEventRetention execute 模式必须提供 authorizationRef');
-    }
-    if (this.executionMode === 'execute' && this.legalDeleteThroughGlobalSequence <= 0n) {
-      throw new Error('RuntimeEventRetention execute 模式必须提供正数 legalDeleteThroughGlobalSequence');
-    }
     this.sweepIntervalMinutes = clampInt(options.sweepIntervalMinutes ?? 10, 1, 24 * 60);
     this.batchLimit = clampInt(options.batchLimit ?? 10_000, 1, 100_000);
     this.maxBatchesPerCategory = clampInt(options.maxBatchesPerCategory ?? 10, 1, 1000);
@@ -112,9 +161,42 @@ export class RuntimeEventRetention {
     this.billingCatchupMaxBatches = clampInt(options.billingCatchupMaxBatches ?? 100, 1, 10_000);
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.options.enabled !== true || !this.stopped) return;
+    const requestedGeneration = this.startGeneration;
+    await this.inFlightCompletion;
+    await this.statusWriteTail;
+    if (!this.stopped || requestedGeneration !== this.startGeneration) return;
+    const generation = ++this.startGeneration;
     this.stopped = false;
+    this.lastStartedAt = null;
+    this.lastCompletedAt = null;
+    this.prepareNextScheduledAt();
+    const gateError = this.configurationGateError();
+    let statusRecorded: boolean;
+    if (gateError) {
+      const now = new Date().toISOString();
+      this.lastStartedAt = now;
+      this.lastCompletedAt = now;
+      statusRecorded = await this.recordStatus(
+        this.snapshot('blocked', { durationMs: 0, errorCategory: gateError.category, authorityClaim: true }), generation,
+      );
+      this.options.logger?.warn?.(`RuntimeEventRetention configuration blocked: category=${gateError.category}`);
+    } else {
+      statusRecorded = await this.recordStatus(this.snapshot('scheduled', { authorityClaim: true }), generation);
+    }
+    if (generation !== this.startGeneration || this.stopped) return;
+    if (!statusRecorded) {
+      this.stopped = true;
+      this.nextScheduledAt = null;
+      this.options.logger?.warn?.('RuntimeEventRetention startup not scheduled: status persistence unavailable');
+      if (this.options.startupFailureMode === 'throw') {
+        throw new Error('runtime-worker failed to establish RuntimeEventRetention status authority');
+      }
+      if (this.options.startupFailureMode === 'retry') this.scheduleStartupRetry();
+      return;
+    }
+    this.clearStartupRetry();
     this.scheduleNext();
     this.options.logger?.info?.(
       `RuntimeEventRetention started: mode=${this.executionMode} interval=${this.sweepIntervalMinutes}m `
@@ -123,39 +205,99 @@ export class RuntimeEventRetention {
     );
   }
 
+  isStatusPersistenceAvailable(): boolean {
+    return this.statusPersistenceAvailable;
+  }
+
+  async reassertStatusAuthority(claim = false): Promise<void> {
+    if (this.options.enabled !== true) return;
+    const write = async (): Promise<void> => {
+      if (!this.options.statusRecorder || !this.lastObservedStatus) {
+        throw new Error('RuntimeEventRetention has no observed status to reassert');
+      }
+      const snapshot = {
+        ...this.lastObservedStatus,
+        lastStartedAt: this.lastStartedAt,
+        lastCompletedAt: this.lastCompletedAt,
+        lastSuccessAt: this.lastSuccessAt,
+        nextScheduledAt: this.stopped ? null : this.nextScheduledAt,
+        authority: { ...this.statusAuthority, claim },
+      };
+      await this.options.statusRecorder(snapshot);
+      this.statusPersistenceAvailable = true;
+    };
+    const completion = this.statusWriteTail.then(write, write);
+    this.statusWriteTail = completion;
+    try {
+      await completion;
+    } catch {
+      this.statusPersistenceAvailable = false;
+      this.options.logger?.warn?.('RuntimeEventRetention status authority reassertion failed');
+      throw new Error('RuntimeEventRetention failed to reassert status authority');
+    }
+  }
+
   stop(): void {
     this.stopped = true;
+    this.startGeneration += 1;
+    if (this.options.enabled === true) this.statusPersistenceAvailable = false;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
+    this.clearStartupRetry();
+    this.nextScheduledAt = null;
+  }
+
+  async quiesce(): Promise<void> {
+    this.stop();
+    await this.inFlightCompletion;
+    await this.statusWriteTail;
   }
 
   async runOnce(): Promise<RuntimeEventRetentionResult> {
-    if (this.inFlight) {
-      throw new Error('RuntimeEventRetention is already running');
-    }
+    if (this.inFlight) throw new Error('RuntimeEventRetention is already running');
     this.inFlight = true;
+    let completeInFlight!: () => void;
+    this.inFlightCompletion = new Promise<void>((resolve) => { completeInFlight = resolve; });
+    const generation = this.startGeneration;
+    const startedMs = Date.now();
+    this.lastStartedAt = new Date(startedMs).toISOString();
+    this.lastCompletedAt = null;
+    const categories: Record<string, { eligible: number; deleted: number }> = {};
+    let billingWatermark: string | null = null;
+    let effectiveDeleteThrough: string | null = null;
+    let maxGlobalSequence: string | null = null;
     try {
+      const runningStatusRecorded = await this.recordStatus(this.snapshot('running', { categories }), generation);
+      if (this.executionMode === 'execute' && this.options.enabled === true && !runningStatusRecorded) {
+        throw new RetentionGateError('status_persistence_unavailable');
+      }
+      const gateError = this.configurationGateError();
+      if (gateError) throw gateError;
       // dry-run 必须严格只读，不能为了预览推进 billing projection。
       const projection = this.executionMode === 'execute'
-        ? await this.advanceBillingProjection()
+        ? await this.withExecutionAuthority(() => this.advanceBillingProjection())
         : await this.readBillingProjectionLag();
-      const effectiveDeleteThrough = minBigInt(
-        projection.billingWatermark,
-        this.legalDeleteThroughGlobalSequence,
-      );
+      billingWatermark = projection.billingWatermark.toString();
+      maxGlobalSequence = projection.maxGlobalSequence.toString();
+      const effective = minBigInt(projection.billingWatermark, this.legalDeleteThroughGlobalSequence);
+      effectiveDeleteThrough = effective.toString();
       const deletedByCategory: Record<string, number> = {};
       const eligibleByCategory: Record<string, number> = {};
       let deleted = 0;
 
-      for (const category of this.buildCategories(effectiveDeleteThrough)) {
+      for (const category of this.buildCategories(effective)) {
         if (this.executionMode === 'dry-run') {
-          eligibleByCategory[category.name] = await this.countCategory(category);
+          const eligible = await this.countCategory(category);
+          eligibleByCategory[category.name] = eligible;
           deletedByCategory[category.name] = 0;
+          categories[category.name] = { eligible, deleted: 0 };
           continue;
         }
-        const categoryDeleted = await this.deleteCategory(category);
+        const categoryDeleted = await this.deleteCategory(category, (progress) => {
+          categories[category.name] = { eligible: progress, deleted: progress };
+        });
         deletedByCategory[category.name] = categoryDeleted;
         eligibleByCategory[category.name] = categoryDeleted;
         deleted += categoryDeleted;
@@ -167,10 +309,17 @@ export class RuntimeEventRetention {
         deletedByCategory,
         eligibleByCategory,
         legalWatermark: this.legalDeleteThroughGlobalSequence.toString(),
-        billingWatermark: projection.billingWatermark.toString(),
-        effectiveDeleteThrough: effectiveDeleteThrough.toString(),
-        maxGlobalSequence: projection.maxGlobalSequence.toString(),
+        billingWatermark,
+        effectiveDeleteThrough,
+        maxGlobalSequence,
       };
+      this.lastCompletedAt = new Date().toISOString();
+      this.lastSuccessAt = this.lastCompletedAt;
+      this.prepareNextScheduledAt();
+      await this.recordStatus(this.snapshot(
+        this.executionMode === 'dry-run' ? 'dry_run_succeeded' : 'execute_succeeded',
+        { durationMs: Date.now() - startedMs, billingWatermark, effectiveDeleteThrough, maxGlobalSequence, categories },
+      ), generation);
       this.options.logger?.info?.(
         `RuntimeEventRetention finished: mode=${result.mode} deleted=${deleted} `
         + `eligible=${JSON.stringify(eligibleByCategory)} authorizationRef=${this.authorizationRef ?? 'none'} `
@@ -178,22 +327,138 @@ export class RuntimeEventRetention {
         + `effectiveDeleteThrough=${result.effectiveDeleteThrough} maxGlobalSequence=${result.maxGlobalSequence}`,
       );
       return result;
+    } catch (err) {
+      this.lastCompletedAt = new Date().toISOString();
+      this.prepareNextScheduledAt();
+      const blocked = err instanceof RetentionGateError;
+      await this.recordStatus(this.snapshot(blocked ? 'blocked' : 'failed', {
+        durationMs: Date.now() - startedMs,
+        errorCategory: blocked ? err.category : inferErrorCategory(categories),
+        billingWatermark,
+        effectiveDeleteThrough,
+        maxGlobalSequence,
+        categories,
+      }), generation);
+      throw err;
     } finally {
       this.inFlight = false;
+      completeInFlight();
     }
   }
 
-  private scheduleNext(): void {
-    if (this.stopped) return;
+  private configurationGateError(): RetentionGateError | null {
+    if (this.executionMode !== 'execute') return null;
+    if (!this.authorizationRef) return new RetentionGateError('authorization_missing');
+    if (this.legalDeleteThroughGlobalSequence <= 0n) return new RetentionGateError('legal_watermark_invalid');
+    return null;
+  }
+
+  private scheduleNext(generation = this.startGeneration): void {
+    if (this.stopped || generation !== this.startGeneration) return;
+    this.prepareNextScheduledAt();
+    const scheduledMs = Date.parse(this.nextScheduledAt!);
+    const delayMs = Number.isFinite(scheduledMs)
+      ? Math.max(0, scheduledMs - Date.now())
+      : this.sweepIntervalMinutes * 60_000;
     this.timer = setTimeout(() => {
+      if (this.stopped || generation !== this.startGeneration) return;
       this.timer = undefined;
+      this.nextScheduledAt = null;
       void this.runOnce()
         .catch((err) => {
           this.options.logger?.warn?.(`RuntimeEventRetention failed: ${err instanceof Error ? err.message : String(err)}`);
         })
-        .finally(() => this.scheduleNext());
-    }, this.sweepIntervalMinutes * 60_000);
+        .finally(() => this.scheduleNext(generation));
+    }, delayMs);
     this.timer.unref?.();
+  }
+
+  private scheduleStartupRetry(): void {
+    if (this.startupRetryTimer) return;
+    this.startupRetryTimer = setTimeout(() => {
+      this.startupRetryTimer = undefined;
+      void this.start().catch((err) => {
+        this.options.logger?.warn?.(`RuntimeEventRetention startup retry failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, 30_000);
+    this.startupRetryTimer.unref?.();
+  }
+
+  private clearStartupRetry(): void {
+    if (!this.startupRetryTimer) return;
+    clearTimeout(this.startupRetryTimer);
+    this.startupRetryTimer = undefined;
+  }
+
+  private prepareNextScheduledAt(): void {
+    if (!this.stopped && !this.nextScheduledAt) {
+      this.nextScheduledAt = new Date(Date.now() + this.sweepIntervalMinutes * 60_000).toISOString();
+    }
+  }
+
+  private snapshot(
+    state: RuntimeEventRetentionState,
+    patch: Partial<{
+      durationMs: number;
+      errorCategory: string;
+      billingWatermark: string | null;
+      effectiveDeleteThrough: string | null;
+      maxGlobalSequence: string | null;
+      categories: Record<string, { eligible: number; deleted: number }>;
+      authorityClaim: boolean;
+    }> = {},
+  ): RuntimeEventRetentionStatusSnapshot {
+    return {
+      schemaVersion: 1,
+      state,
+      mode: this.executionMode,
+      sweepIntervalMinutes: this.sweepIntervalMinutes,
+      lastStartedAt: this.lastStartedAt,
+      lastCompletedAt: this.lastCompletedAt,
+      lastSuccessAt: this.lastSuccessAt,
+      durationMs: patch.durationMs ?? null,
+      errorCategory: patch.errorCategory ?? null,
+      nextScheduledAt: this.stopped ? null : this.nextScheduledAt,
+      watermarks: {
+        legal: this.legalDeleteThroughGlobalSequence.toString(),
+        billing: patch.billingWatermark ?? null,
+        effectiveDeleteThrough: patch.effectiveDeleteThrough ?? null,
+      },
+      maxGlobalSequence: patch.maxGlobalSequence ?? null,
+      categories: patch.categories ?? {},
+      authority: { ...this.statusAuthority, claim: patch.authorityClaim === true },
+    };
+  }
+
+  private async recordStatus(
+    snapshot: RuntimeEventRetentionStatusSnapshot,
+    generation?: number,
+  ): Promise<boolean> {
+    const isCurrent = () => generation === undefined || generation === this.startGeneration;
+    if (!isCurrent()) return false;
+    this.lastObservedStatus = snapshot;
+    if (!this.options.statusRecorder) {
+      this.statusPersistenceAvailable = this.executionMode !== 'execute';
+      return this.statusPersistenceAvailable;
+    }
+    let recorded = false;
+    const write = async (): Promise<void> => {
+      if (!isCurrent()) return;
+      try {
+        await this.options.statusRecorder!(snapshot);
+        if (!isCurrent()) return;
+        this.statusPersistenceAvailable = true;
+        recorded = true;
+      } catch {
+        if (!isCurrent()) return;
+        this.statusPersistenceAvailable = false;
+        this.options.logger?.warn?.('RuntimeEventRetention status persistence failed');
+      }
+    };
+    const completion = this.statusWriteTail.then(write, write);
+    this.statusWriteTail = completion;
+    await completion;
+    return recorded;
   }
 
   private buildCategories(billingWatermark: bigint): RetentionCategory[] {
@@ -368,12 +633,15 @@ export class RuntimeEventRetention {
     return Number(result.rows[0]?.eligible ?? '0');
   }
 
-  private async deleteCategory(category: RetentionCategory): Promise<number> {
+  private async deleteCategory(category: RetentionCategory, onProgress: (deleted: number) => void): Promise<number> {
     let deleted = 0;
     for (let batchNo = 0; batchNo < this.maxBatchesPerCategory; batchNo++) {
-      const batch = await this.options.pool.query(category.deleteSql, category.params);
-      const batchDeleted = batch.rowCount ?? 0;
+      const batchDeleted = await this.withExecutionAuthority(async (query) => {
+        const batch = await query(category.deleteSql, category.params);
+        return batch.rowCount ?? 0;
+      });
       deleted += batchDeleted;
+      onProgress(deleted);
       if (batchDeleted < this.batchLimit) break;
     }
     return deleted;
@@ -402,6 +670,38 @@ export class RuntimeEventRetention {
     return lag;
   }
 
+  private async withExecutionAuthority<T>(
+    operation: (query: pg.Pool['query']) => Promise<T>,
+  ): Promise<T> {
+    if (!this.statusAuthorityTable) {
+      return operation(this.options.pool.query.bind(this.options.pool));
+    }
+    const client = await this.options.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query<{ writer_id: string | null }>(
+        `SELECT detail_json->'authority'->>'writerId' AS writer_id
+         FROM ${this.statusAuthorityTable}
+         WHERE metric = 'runtime_event_retention' AND label = 'status'
+         ORDER BY id DESC
+         LIMIT 1
+         FOR UPDATE`,
+      );
+      if (current.rows[0]?.writer_id !== this.statusAuthority.writerId) {
+        throw new RetentionAuthoritySupersededError();
+      }
+      const result = await operation(client.query.bind(client));
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      this.statusPersistenceAvailable = false;
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   private async readBillingProjectionLag(): Promise<{ billingWatermark: bigint; maxGlobalSequence: bigint }> {
     const [state, maxSeq] = await Promise.all([
       this.options.pool.query<{ last_global_sequence: string }>(
@@ -420,6 +720,30 @@ export class RuntimeEventRetention {
       maxGlobalSequence: BigInt(maxSeq.rows[0]?.max_global_sequence ?? '0'),
     };
   }
+}
+
+class RetentionAuthoritySupersededError extends Error {
+  constructor() {
+    super('RuntimeEventRetention execution authority superseded');
+    this.name = 'RetentionAuthoritySupersededError';
+  }
+}
+
+class RetentionGateError extends Error {
+  constructor(readonly category: 'authorization_missing' | 'legal_watermark_invalid' | 'status_persistence_unavailable') {
+    super(category === 'authorization_missing'
+      ? 'RuntimeEventRetention execute 模式缺少授权'
+      : category === 'legal_watermark_invalid'
+        ? 'RuntimeEventRetention execute 模式 legal watermark 无效'
+        : 'RuntimeEventRetention execute 模式状态持久化不可用');
+    this.name = 'RetentionGateError';
+  }
+}
+
+function inferErrorCategory(categories: Record<string, { eligible: number; deleted: number }>): string {
+  return Object.values(categories).some((category) => category.deleted > 0)
+    ? 'partial_failure'
+    : 'execution_failed';
 }
 
 function sanitizeIdentifier(value: string): string {

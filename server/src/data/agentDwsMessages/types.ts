@@ -8,6 +8,14 @@ export type AgentDwsInboxState =
 
 export type AgentDwsPayload = Record<string, unknown>;
 
+export const DWS_INBOX_V1_IDENTITY_UNPROVABLE = 'DWS_INBOX_V1_IDENTITY_UNPROVABLE';
+
+export interface AgentDwsLegacyAccountIdentityCandidate {
+  profileId: string;
+  corpId: string;
+  dingtalkUserId: string;
+}
+
 export interface AgentDwsNormalizedEvent {
   tenantId: string;
   accountId: string;
@@ -82,6 +90,12 @@ export interface AgentDwsMessageStore {
   claimNext(owner: string, ttlMs: number): Promise<AgentDwsInboxRecord | null>;
   releaseClaim(inboxId: string, owner: string, fence: number): Promise<AgentDwsInboxRecord>;
   renewLease(inboxId: string, owner: string, fence: number, ttlMs: number): Promise<boolean>;
+  pinLegacyIdentityOrTerminate(
+    inboxId: string,
+    owner: string,
+    fence: number,
+    candidate?: AgentDwsLegacyAccountIdentityCandidate,
+  ): Promise<AgentDwsInboxRecord>;
   getOrCreateBinding(
     tenantId: string,
     accountId: string,

@@ -194,8 +194,7 @@ export class SessionAutomationTerminalProjector {
           } else {
             await client.query(
               `UPDATE ${this.store.tables.automations}
-                  SET phase=CASE WHEN mode='goal' THEN 'evaluating' ELSE 'idle' END,
-                      active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
+                  SET phase='idle',active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
                       projection_version=projection_version+1,updated_at=now()
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
               [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
@@ -203,21 +202,43 @@ export class SessionAutomationTerminalProjector {
           }
 
           if (row.mode === 'goal') {
-            const evidence = {
-              summary: event.summary ?? '',
-              evidenceRefs: event.evidenceRefs ?? [],
-              hardGates: { runTerminal: true, noPendingInteraction: false, noActiveResources: false, budgetValid: false },
-            };
-            await client.query(
+            const evaluation = await client.query(
               `INSERT INTO ${this.store.tables.evaluations}
                 (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence)
-               SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
-               WHERE NOT EXISTS (SELECT 1 FROM ${this.store.tables.evaluations} WHERE execution_id=$5)
-               ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING`,
-              [randomUUID(), event.tenantId, event.sessionId, row.automation_id, row.execution_id,
-                row.current_incarnation, row.current_generation, row.spec_version,
-                event.globalSequence, JSON.stringify(evidence)],
+               SELECT $1,c.tenant_id,c.session_id,c.automation_id,c.execution_id,c.incarnation_id,c.generation,c.spec_version,$2,
+                      jsonb_build_object(
+                        'summary',c.summary,
+                        'evidenceRefs',c.evidence_refs,
+                        'hardGates',jsonb_build_object(
+                          'runTerminal',true,'noPendingInteraction',false,'noActiveResources',false,'budgetValid',false))
+                 FROM ${this.store.tables.goalCompletionCandidates} c
+                WHERE c.tenant_id=$3 AND c.session_id=$4 AND c.automation_id=$5 AND c.execution_id=$6
+                  AND c.run_id=$7 AND c.incarnation_id=$8 AND c.generation=$9 AND c.spec_version=$10
+                  AND c.projected_at IS NULL AND jsonb_array_length(c.evidence_refs)>0
+                  AND NOT EXISTS (SELECT 1 FROM ${this.store.tables.evaluations} e WHERE e.execution_id=c.execution_id)
+               ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING
+               RETURNING evaluation_id`,
+              [randomUUID(), event.globalSequence, event.tenantId, event.sessionId, row.automation_id,
+                row.execution_id, event.runId, row.current_incarnation, row.current_generation, row.spec_version],
             );
+            if (evaluation.rowCount) {
+              await client.query(
+                `UPDATE ${this.store.tables.goalCompletionCandidates}
+                    SET projected_at=now()
+                  WHERE execution_id=$1 AND tenant_id=$2 AND automation_id=$3
+                    AND incarnation_id=$4 AND generation=$5 AND spec_version=$6`,
+                [row.execution_id, event.tenantId, row.automation_id, row.current_incarnation,
+                  row.current_generation, row.spec_version],
+              );
+              await client.query(
+                `UPDATE ${this.store.tables.automations}
+                    SET phase='evaluating',projection_version=projection_version+1,updated_at=now()
+                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+                    AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,
+                [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
+                  row.current_generation, row.spec_version],
+              );
+            }
           }
         }
         await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
-import type { SessionAutomationSpec } from '@agent/shared/types/sessionAutomation.js';
+import type { SessionAutomationSpec } from '@agent/shared';
 import type { PlatformEvent } from './types.js';
 
 const MICROCREDITS_PER_CREDIT = 1_000_000n;

@@ -8,7 +8,7 @@ import { computeCostMicro, computeUsageTotalTokens, resolveModelPrice } from '..
 import { creditsToMicrocredits } from './sessionAutomationBudgetProgress.js';
 import { costUsdMicroToCreditsMicro } from '../data/billing/pgBillingStore.js';
 import { DEFAULT_CREDIT_VALUE_YUAN_MICRO, DEFAULT_FX_RATE_TO_CNY, DEFAULT_TARGET_MARGIN_BPS } from '../data/billing/types.js';
-import type { SessionAutomationSpec } from '@agent/shared/types/sessionAutomation.js';
+import type { SessionAutomationSpec } from '@agent/shared';
 
 /** PostgreSQL NUMERIC parser for budget ledger values: scale is allowed only when fractional digits are all zero. */
 export function parseWholeNumeric(value: string, field = 'amount'): bigint {
@@ -92,6 +92,7 @@ export class SessionAutomationRuntimeGuard {
   private async lockFenceAndResolveBudget(
     client: pg.PoolClient,
     lineage: AutomationLineage,
+    purpose: 'work' | 'goal_evaluation' = 'work',
   ): Promise<string | undefined> {
     const locked = await client.query<{
       status: string;
@@ -112,7 +113,25 @@ export class SessionAutomationRuntimeGuard {
     if (automation.incarnation_id !== lineage.incarnationId) throw new AutomationFenceRejectedError('incarnation_mismatch');
     if (Number(automation.generation) !== lineage.generation) throw new AutomationFenceRejectedError('generation_mismatch');
     if (Number(automation.spec_version) !== lineage.specVersion) throw new AutomationFenceRejectedError('spec_version_mismatch');
-    if (automation.active_run_id !== lineage.executionRunId) throw new AutomationFenceRejectedError('active_run_mismatch');
+    if (purpose === 'goal_evaluation') {
+      // The terminal projector clears active_run_id before the independent evaluator runs.
+      // Correlate admission to the exact terminal execution plus its claimed evaluation instead.
+      const evaluation = await client.query(
+        `SELECT 1 FROM ${this.tables.executions} x
+          JOIN ${this.tables.evaluations} e
+            ON e.tenant_id=x.tenant_id AND e.session_id=x.session_id AND e.automation_id=x.automation_id
+           AND e.execution_id=x.execution_id AND e.incarnation_id=x.incarnation_id
+           AND e.generation=x.generation AND e.spec_version=x.spec_version
+         WHERE x.tenant_id=$1 AND x.session_id=$2 AND x.automation_id=$3
+           AND x.incarnation_id=$4 AND x.generation=$5 AND x.spec_version=$6
+           AND x.execution_id=$7 AND x.run_id=$8 AND x.state='terminal' AND e.state='claimed'`,
+        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+          lineage.generation, lineage.specVersion, lineage.executionId, lineage.executionRunId],
+      );
+      if (!evaluation.rowCount) throw new AutomationFenceRejectedError('evaluation_execution_mismatch');
+    } else if (automation.active_run_id !== lineage.executionRunId) {
+      throw new AutomationFenceRejectedError('active_run_mismatch');
+    }
 
     return resolveAutomationBudgetReason({
       client,
@@ -217,7 +236,7 @@ export class SessionAutomationRuntimeGuard {
     let committed = false;
     try {
       await client.query('BEGIN');
-      let budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      let budgetReason = await this.lockFenceAndResolveBudget(client, lineage, purpose);
       if (budgetReason === 'max_runs') budgetReason = undefined;
 
       const budgetRow = await client.query<{spec: SessionAutomationSpec;run_count:string|number}>(

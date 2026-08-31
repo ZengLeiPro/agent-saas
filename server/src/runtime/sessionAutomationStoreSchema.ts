@@ -6,7 +6,7 @@ export interface SessionAutomationTables {
   executions: string; evaluations: string; events: string; consumers: string; poison: string;
   cancellations: string; usage: string; preparedDispatchAttempts: string; providerAttempts: string;
   budgetReservations: string; budgetSettlements: string; interactions: string; backgroundResources: string;
-  reconciliationReceipts: string; lifecycleWork: string; completionAllowances: string;
+  reconciliationReceipts: string; lifecycleWork: string; completionAllowances: string; goalCompletionCandidates: string;
 }
 export function sessionAutomationTables(tablePrefix = 'runtime'): SessionAutomationTables {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tablePrefix)) throw new Error(`非法 PG tablePrefix: ${tablePrefix}`);
@@ -27,6 +27,7 @@ export function sessionAutomationTables(tablePrefix = 'runtime'): SessionAutomat
     reconciliationReceipts: `${p}_session_automation_reconciliation_receipts`,
     lifecycleWork: `${p}_session_automation_lifecycle_work`,
     completionAllowances: `${p}_session_automation_completion_allowances`,
+    goalCompletionCandidates: `${p}_session_automation_goal_completion_candidates`,
   };
 }
 export function buildSessionAutomationSchema(tablePrefix = 'runtime', runsTable = `${tablePrefix}_runs`): string[] {
@@ -41,10 +42,12 @@ export function buildSessionAutomationSchema(tablePrefix = 'runtime', runsTable 
  generation BIGINT NOT NULL DEFAULT 1, spec_version BIGINT NOT NULL DEFAULT 1, control_version BIGINT NOT NULL DEFAULT 1,
  projection_version BIGINT NOT NULL DEFAULT 1, continuation_epoch BIGINT NOT NULL DEFAULT 0,
  run_count INTEGER NOT NULL DEFAULT 0, no_progress_count INTEGER NOT NULL DEFAULT 0, last_progress_fingerprint TEXT,
- active_run_id TEXT, next_wakeup_at TIMESTAMPTZ, desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired')), last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ active_run_id TEXT, next_wakeup_at TIMESTAMPTZ, desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked')), last_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(tenant_id,session_id,automation_id), UNIQUE(tenant_id,session_id,incarnation_id)
 )`,
-`ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired'))`,
+`ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS desired_terminal_status TEXT CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked'))`,
+`ALTER TABLE ${t.automations} DROP CONSTRAINT IF EXISTS ${t.automations}_desired_terminal_status_check`,
+`ALTER TABLE ${t.automations} ADD CONSTRAINT ${t.automations}_desired_terminal_status_check CHECK(desired_terminal_status IN ('completed','cancelled','failed','expired','blocked'))`,
 `ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS limit_hit_reason TEXT`,
 `ALTER TABLE ${t.automations} ADD COLUMN IF NOT EXISTS limit_hit_at TIMESTAMPTZ`,
 `DO $$ BEGIN
@@ -242,6 +245,14 @@ END $$`,
 `ALTER TABLE ${t.reconciliationReceipts} ADD CONSTRAINT ${t.reconciliationReceipts}_receipt_authority_check CHECK(receipt_authority IN ('provider_adapter','operator','legacy_untrusted')) NOT VALID`,
 `ALTER TABLE ${t.reconciliationReceipts} VALIDATE CONSTRAINT ${t.reconciliationReceipts}_receipt_authority_check`,
 `CREATE INDEX IF NOT EXISTS ${tablePrefix}_reconciliation_receipts_attempt ON ${t.reconciliationReceipts}(provider_attempt_id,observed_at DESC)`,
+`CREATE TABLE IF NOT EXISTS ${t.goalCompletionCandidates} (
+ candidate_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, execution_id UUID NOT NULL,
+ incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, run_id TEXT NOT NULL,
+ summary TEXT NOT NULL, evidence_refs JSONB NOT NULL, projected_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE(execution_id),
+ FOREIGN KEY(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id)
+   REFERENCES ${t.executions}(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id) DEFERRABLE INITIALLY DEFERRED
+)`,
 `CREATE TABLE IF NOT EXISTS ${t.evaluations} (
  evaluation_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, execution_id UUID NOT NULL,
  incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, decision_epoch BIGINT NOT NULL,
@@ -250,6 +261,7 @@ END $$`,
  UNIQUE(tenant_id,automation_id,generation,decision_epoch), FOREIGN KEY(execution_id) REFERENCES ${t.executions}(execution_id),
  FOREIGN KEY(provider_attempt_id) REFERENCES ${t.providerAttempts}(provider_attempt_id)
 )`,
+`CREATE INDEX IF NOT EXISTS ${tablePrefix}_goal_candidate_fence ON ${t.goalCompletionCandidates}(tenant_id,automation_id,incarnation_id,generation,execution_id)`,
 `ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS provider_attempt_id UUID`,
 `DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='${t.evaluations}'::regclass AND conname='${t.evaluations}_provider_attempt_id_fkey') THEN

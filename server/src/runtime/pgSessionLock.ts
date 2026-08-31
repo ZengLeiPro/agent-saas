@@ -61,6 +61,7 @@ interface LeaseRow {
 export class PgSessionLock {
   private readonly pool: pg.Pool;
   private readonly leasesTable: string;
+  private readonly tenantLeasesTable: string;
   private readonly mode: PgSessionLockMode;
   private readonly leaseMs: number;
   private readonly renewIntervalMs: number;
@@ -70,6 +71,7 @@ export class PgSessionLock {
     this.pool = options.pool;
     const prefix = sanitizeIdentifier(options.tablePrefix ?? 'runtime');
     this.leasesTable = `${prefix}_session_leases`;
+    this.tenantLeasesTable = `${prefix}_tenant_session_leases`;
     this.mode = options.mode ?? 'dual';
     this.leaseMs = Math.max(MIN_LEASE_MS, Math.floor(options.leaseMs ?? DEFAULT_LEASE_MS));
     this.renewIntervalMs = Math.min(
@@ -95,20 +97,52 @@ export class PgSessionLock {
             PRIMARY KEY (tenant_id, session_id)
           )
         `);
-        // dual preserves the old ON CONFLICT(session_id) contract while writing the real tenant id.
-        // This lets a later lease binary overlap safely with dual for the same tenant/session;
-        // dropping the compatibility index only removes cross-tenant serialization.
+        // This table is the rolling-upgrade compatibility surface. A live dual binary uses
+        // ON CONFLICT(session_id), therefore its unique index must not be removed by lease init.
         await client.query(`ALTER TABLE ${this.leasesTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT DEFAULT '${LEGACY_TENANT_ID}'`);
         await client.query(`UPDATE ${this.leasesTable} SET tenant_id = '${LEGACY_TENANT_ID}' WHERE tenant_id IS NULL`);
         await client.query(`ALTER TABLE ${this.leasesTable} ALTER COLUMN tenant_id SET DEFAULT '${LEGACY_TENANT_ID}'`);
         await client.query(`ALTER TABLE ${this.leasesTable} ALTER COLUMN tenant_id SET NOT NULL`);
         await client.query(`ALTER TABLE ${this.leasesTable} DROP CONSTRAINT IF EXISTS ${this.leasesTable}_pkey`);
         await client.query(`ALTER TABLE ${this.leasesTable} ADD CONSTRAINT ${this.leasesTable}_pkey PRIMARY KEY (tenant_id, session_id)`);
-        if (this.mode === 'dual') {
-          await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.leasesTable}_legacy_session_uidx ON ${this.leasesTable} (session_id)`);
-        } else {
-          await client.query(`DROP INDEX IF EXISTS ${this.leasesTable}_legacy_session_uidx`);
-        }
+        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.leasesTable}_legacy_session_uidx ON ${this.leasesTable} (session_id)`);
+
+        // Lease mode has a separate tenant-native authority. Keeping the compatibility index
+        // cannot then collapse (tenant_id, session_id) isolation. The trigger makes an old dual
+        // INSERT lose cleanly when a lease owner for the same tenant/session already exists.
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS ${this.tenantLeasesTable} (
+            tenant_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            owner_token TEXT NOT NULL,
+            lease_expires_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (tenant_id, session_id)
+          )
+        `);
+        await client.query(`
+          CREATE OR REPLACE FUNCTION ${this.leasesTable}_guard_tenant_lease()
+          RETURNS trigger LANGUAGE plpgsql AS $fn$
+          BEGIN
+            PERFORM pg_advisory_xact_lock(hashtextextended(NEW.tenant_id || chr(0) || NEW.session_id, 0));
+            IF EXISTS (
+              SELECT 1 FROM ${this.tenantLeasesTable}
+              WHERE tenant_id = NEW.tenant_id
+                AND session_id = NEW.session_id
+                AND lease_expires_at > clock_timestamp()
+            ) THEN
+              RETURN NULL;
+            END IF;
+            RETURN NEW;
+          END
+          $fn$
+        `);
+        await client.query(`DROP TRIGGER IF EXISTS ${this.leasesTable}_guard_tenant_lease ON ${this.leasesTable}`);
+        await client.query(`
+          CREATE TRIGGER ${this.leasesTable}_guard_tenant_lease
+          BEFORE INSERT OR UPDATE ON ${this.leasesTable}
+          FOR EACH ROW EXECUTE FUNCTION ${this.leasesTable}_guard_tenant_lease()
+        `);
         await client.query('COMMIT');
       } catch (error) {
         await client.query('ROLLBACK').catch(() => undefined);
@@ -154,28 +188,38 @@ export class PgSessionLock {
     }
 
     const leaseTenantId = tenantId;
+    const activeLeasesTable = this.mode === 'dual' ? this.leasesTable : this.tenantLeasesTable;
     const conflictTarget = this.mode === 'dual' ? '(session_id)' : '(tenant_id, session_id)';
     const ownerToken = randomUUID();
     let acquired: LeaseRow | undefined;
     try {
       const result = await this.pool.query<LeaseRow>(`
-        INSERT INTO ${this.leasesTable}
+        INSERT INTO ${activeLeasesTable}
           (tenant_id, session_id, owner_token, lease_expires_at, updated_at)
-        VALUES (
+        SELECT
           $1,
           $2,
           $3,
           clock_timestamp() + ($4::bigint * INTERVAL '1 millisecond'),
           clock_timestamp()
-        )
+        WHERE $5::boolean = false
+           OR (
+             pg_try_advisory_xact_lock(hashtextextended($1 || chr(0) || $2, 0))
+             AND NOT EXISTS (
+               SELECT 1 FROM ${this.leasesTable} legacy
+               WHERE legacy.tenant_id = $1
+                 AND legacy.session_id = $2
+                 AND legacy.lease_expires_at > clock_timestamp()
+             )
+           )
         ON CONFLICT ${conflictTarget} DO UPDATE
         SET tenant_id = EXCLUDED.tenant_id,
             owner_token = EXCLUDED.owner_token,
             lease_expires_at = EXCLUDED.lease_expires_at,
             updated_at = EXCLUDED.updated_at
-        WHERE ${this.leasesTable}.lease_expires_at <= clock_timestamp()
+        WHERE ${activeLeasesTable}.lease_expires_at <= clock_timestamp()
         RETURNING tenant_id, lease_expires_at
-      `, [leaseTenantId, sessionId, ownerToken, this.leaseMs]);
+      `, [leaseTenantId, sessionId, ownerToken, this.leaseMs, this.mode === 'lease']);
       acquired = result.rows[0];
     } catch (err) {
       await releaseLegacyLock(legacyClient, key);
@@ -190,7 +234,7 @@ export class PgSessionLock {
     let handle: PgSessionLockHandle;
     handle = makeLeaseHandle({
       pool: this.pool,
-      leasesTable: this.leasesTable,
+      leasesTable: activeLeasesTable,
       tenantId: acquired.tenant_id,
       sessionId,
       ownerToken,

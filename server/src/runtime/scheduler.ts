@@ -8,7 +8,7 @@ import {
 } from './background/backgroundTaskRuntime.js';
 import type { MessageDeliveryMode, RunRecord, RunStatus, RunStore } from './runStore.js';
 import type { RuntimeAdmissionGuard } from './memoryPressureGuard.js';
-import type { EventStore, PlatformEvent } from './types.js';
+import type { EventStore, PlatformEvent, PlatformEventInput } from './types.js';
 import { finalizeTerminalRun } from './runTerminalCoordinator.js';
 
 const DEFAULT_APPROVAL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
@@ -479,37 +479,48 @@ export class RuntimeScheduler {
       });
       const pendingApprovals = buildApprovalRecordsFromEvents(events, record.sessionId)
         .filter((approval) => approval.runId === record.runId && approval.status === 'pending');
-      const cancelled = await cancelStale(record.runId, cutoff, STALE_APPROVAL_REASON, {
-        staleApprovalTimeoutMs: this.approvalTimeoutMs,
-        staleApprovalCancelledAt: new Date().toISOString(),
-      });
-      if (!cancelled) continue;
-
-      for (const approval of pendingApprovals) {
-        await this.options.eventStore.append({
-          type: 'approval_resolved',
-          runId: record.runId,
-          sessionId: record.sessionId,
-          approvalId: approval.id,
-          decision: 'rejected',
-          message: STALE_APPROVAL_REASON,
-        }, { tenantId: requireTenantId(record.tenantId) });
-      }
-      await this.options.eventStore.append({
-        type: 'run_cancel_requested',
-        sessionId: record.sessionId,
+      // Persist the complete terminal batch in the same cutoff-guarded CAS as cancellation.
+      const terminal = await finalizeTerminalRun({
+        runStore: this.options.runStore,
+        eventStore: this.options.eventStore,
         runId: record.runId,
-        ...(record.userId ? { userId: record.userId } : {}),
-        reason: STALE_APPROVAL_REASON,
-      }, { tenantId: requireTenantId(record.tenantId) });
-      await this.options.eventStore.append({
-        type: 'run_state_changed',
-        runId: record.runId,
-        sessionId: record.sessionId,
         status: 'cancelled',
-        previousStatus: record.status,
         reason: STALE_APPROVAL_REASON,
-      }, { tenantId: requireTenantId(record.tenantId) });
+        expectedStatuses: ['waiting_approval'],
+        events: [
+          ...pendingApprovals.map((approval): PlatformEventInput => ({
+            type: 'approval_resolved',
+            runId: record.runId,
+            sessionId: record.sessionId,
+            approvalId: approval.id,
+            decision: 'rejected',
+            message: STALE_APPROVAL_REASON,
+          })),
+          {
+            type: 'run_cancel_requested',
+            sessionId: record.sessionId,
+            runId: record.runId,
+            ...(record.userId ? { userId: record.userId } : {}),
+            reason: STALE_APPROVAL_REASON,
+          },
+          {
+            type: 'run_state_changed',
+            runId: record.runId,
+            sessionId: record.sessionId,
+            status: 'cancelled',
+            previousStatus: record.status,
+            reason: STALE_APPROVAL_REASON,
+          },
+        ],
+        ctx: { tenantId: requireTenantId(record.tenantId) },
+        logger: this.options.logger,
+        claim: (outboxPatch) => cancelStale(record.runId, cutoff, STALE_APPROVAL_REASON, {
+          staleApprovalTimeoutMs: this.approvalTimeoutMs,
+          staleApprovalCancelledAt: new Date().toISOString(),
+          ...outboxPatch,
+        }),
+      });
+      if (!terminal.won) continue;
       this.options.logger?.warn(`Cancelled stale waiting_approval run ${record.runId}`);
     }
   }

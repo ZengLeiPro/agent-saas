@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { passesGoalHardGates } from './sessionAutomationEvaluator.js';
+import { describe, expect, it, vi } from 'vitest';
+import { passesGoalHardGates, SessionAutomationEvaluator } from './sessionAutomationEvaluator.js';
 import {
   creditsToMicrocredits,
   extractRunProgressEvidence,
@@ -78,5 +78,26 @@ describe('automation evaluator reducers', () => {
     expect(reduceNoProgress('x', 'x', 1, 3)).toEqual({ count: 2, pause: false });
     expect(reduceNoProgress('x', 'x', 2, 3)).toEqual({ count: 3, pause: true });
     expect(reduceNoProgress('x', 'y', 8, 3)).toEqual({ count: 0, pause: false });
+  });
+});
+
+
+describe('SessionAutomationEvaluator execution gating', () => {
+  it('does not claim work or invoke the model while execution is disabled', async () => {
+    const store = {
+      tablePrefix: 'runtime',
+      tx: vi.fn(),
+      pool: { query: vi.fn() },
+      tables: {},
+      runsTable: 'runs',
+    };
+    const model = { evaluate: vi.fn() };
+    const evaluator = new SessionAutomationEvaluator(store as never, model as never, () => false);
+    vi.spyOn(evaluator, 'reconcileUnknown').mockResolvedValue(0);
+    vi.spyOn(evaluator as any, 'checkInBlocked').mockResolvedValue(0);
+
+    await expect(evaluator.evaluatePending()).resolves.toBe(0);
+    expect(store.tx).not.toHaveBeenCalled();
+    expect(model.evaluate).not.toHaveBeenCalled();
   });
 });

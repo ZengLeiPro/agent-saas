@@ -8,6 +8,7 @@ import type { EventStore, PlatformEvent, PlatformEventInput } from '../runtime/t
 
 const TEST_TENANT_ID = 'test-tenant';
 
+
 export class MemoryRunStore implements RunStore {
   records = new Map<string, RunRecord>();
 
@@ -123,6 +124,18 @@ export class MemoryRunStore implements RunStore {
       ...(status === 'completed' ? { completedAt: now } : {}),
       ...(status === 'failed' || status === 'orphaned' ? { failedAt: now } : {}),
       ...(status === 'cancelled' ? { cancelledAt: now } : {}),
+    };
+    this.records.set(runId, updated);
+    return updated;
+  }
+
+  async patchMetadata(runId: string, metadataPatch: Record<string, unknown>): Promise<RunRecord | null> {
+    const record = this.records.get(runId);
+    if (!record) return null;
+    const updated = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      metadata: { ...record.metadata, ...metadataPatch },
     };
     this.records.set(runId, updated);
     return updated;

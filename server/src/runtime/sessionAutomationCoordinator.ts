@@ -60,15 +60,17 @@ export class SessionAutomationCoordinator {
   start(): void { if (this.timer) return; void this.tick(); this.timer = setInterval(() => void this.tick(), this.options.pollMs ?? 1_000); this.timer.unref(); }
   async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = undefined; while (this.running) await new Promise(r => setTimeout(r, 10)); }
   async tick(): Promise<void> {
-    if (this.running || !this.options.executionEnabled()) return;
+    if (this.running) return;
     this.running = true;
     try {
       await this.store.recoverLeases();
       await this.processCancellations();
       await this.store.processLifecycleWork?.(this.options.lifecycleAdapters, this.options.batchSize ?? 25);
       await this.recoverStagedActivations();
-      await this.store.claimDue(this.options.batchSize ?? 25);
-      for (const item of await this.store.claimDispatch(this.options.batchSize ?? 10)) await this.dispatchOne(item);
+      if (this.options.executionEnabled()) {
+        await this.store.claimDue(this.options.batchSize ?? 25);
+        for (const item of await this.store.claimDispatch(this.options.batchSize ?? 10)) await this.dispatchOne(item);
+      }
     } catch (error) { this.options.onError?.(error); }
     finally { this.running = false; }
   }
@@ -76,10 +78,31 @@ export class SessionAutomationCoordinator {
   private async recoverStagedActivations(): Promise<void> {
     for (const attempt of await this.store.listRecoverablePreparedDispatches()) {
       const run = await this.store.pool.query(
-        `SELECT status,metadata FROM ${this.store.runsTable} WHERE run_id=$1`,
-        [attempt.runId],
+        `SELECT r.status,r.metadata,
+                EXISTS(
+                  SELECT 1 FROM ${this.store.tables.executions} e
+                  JOIN ${this.store.tables.outbox} o
+                    ON o.tenant_id=e.tenant_id AND o.session_id=e.session_id AND o.outbox_id=e.outbox_id
+                  JOIN ${this.store.tables.automations} a
+                    ON a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
+                 WHERE e.tenant_id=$1 AND e.session_id=$2 AND e.execution_id=$4 AND e.run_id=$3
+                   AND o.state='dispatched'
+                   AND ((e.state='running' AND a.active_run_id=e.run_id) OR e.state='terminal')
+                ) AS admitted
+           FROM ${this.store.runsTable} r
+          WHERE r.tenant_id=$1 AND r.session_id=$2 AND r.run_id=$3`,
+        [attempt.tenantId, attempt.sessionId, attempt.runId, attempt.outboxId],
       );
       const fence = run.rows[0]?.metadata?.automationFence as { executionId?: string } | undefined;
+      if (attempt.state === 'dispatched') {
+        // A stage result may be known while the automation outbox is still waiting to reclaim.
+        // Never activate that Run until markDispatched durably owns the execution and active slot.
+        if (run.rows[0]?.admitted === true && fence?.executionId === attempt.outboxId) {
+          if (run.rows[0].status === 'pending') await this.dispatcher.activate(attempt.runId);
+          await this.store.transitionPreparedDispatch(attempt.outboxId, 'dispatched', 'completed');
+        }
+        continue;
+      }
       if (attempt.state === 'result_unknown' || attempt.state === 'reconcile') {
         if (run.rows[0] && fence?.executionId === attempt.outboxId) {
           if (attempt.state === 'result_unknown') {
@@ -106,10 +129,9 @@ export class SessionAutomationCoordinator {
       // Keep the attempt prepared until dispatchOne reclaims the outbox. Its deterministic
       // create-only stage will then resume the same fenced transition sequence.
     }
-    const rows = await this.store.pool.query(`SELECT o.outbox_id,o.target_run_id FROM ${this.store.tables.outbox} o JOIN ${this.store.runsTable} r ON r.tenant_id=o.tenant_id AND r.session_id=o.session_id AND r.run_id=o.target_run_id WHERE o.state='dispatched' AND r.status='pending' AND r.metadata->>'schedulerState'='staged' ORDER BY o.created_at LIMIT 50`);
-    for (const row of rows.rows) { await this.dispatcher.activate(String(row.target_run_id)); await this.store.transitionPreparedDispatch(String(row.outbox_id),'dispatched','completed'); }
   }
   private async dispatchOne(item: ClaimedDispatch): Promise<void> {
+    let dispatchCommitted = false;
     try {
       const snapshot = await this.store.get(item.tenantId, item.sessionId, item.automationId);
       if (!snapshot || snapshot.status !== 'active' || snapshot.activeRunId || snapshot.generation !== item.generation || snapshot.incarnationId !== item.incarnationId){await this.store.supersedeDispatch(item);return;}
@@ -124,11 +146,19 @@ export class SessionAutomationCoordinator {
         await this.store.transitionPreparedDispatch(item.outboxId,'prepared','result_unknown',error instanceof Error?error.message:String(error));
         throw error;
       }
-      try{await this.store.markDispatched(item);}catch(error){await this.store.supersedeDispatch(item,true);throw error;}
-      await this.dispatcher.activate(item.targetRunId);
+      try{await this.store.markDispatched(item);dispatchCommitted=true;}catch(error){await this.store.supersedeDispatch(item,true);throw error;}
+      try {
+        await this.dispatcher.activate(item.targetRunId);
+      } catch (error) {
+        // The durable dispatch and active slot are already committed. Leave both intact so
+        // staged recovery can retry activation without making the outbox claimable.
+        this.options.onError?.(error);
+        return;
+      }
       await this.store.transitionPreparedDispatch(item.outboxId,'dispatched','completed');
       const dispatched=await this.store.get(item.tenantId,item.sessionId,item.automationId);if(dispatched)this.store.publish(dispatched,'automation_execution_changed');
     } catch (error) {
+      if (dispatchCommitted) { this.options.onError?.(error); return; }
       if(error instanceof Error&&error.message==='dispatch fence lost')return;
       const unknown = await this.store.pool.query(
         `SELECT 1 FROM ${this.store.tables.preparedDispatchAttempts}

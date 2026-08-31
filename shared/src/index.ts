@@ -1,4 +1,5 @@
 export * from './types/correlation';
+export * from './types/sessionAutomation';
 export * from './lib/sessionAutomationCommands.js';
 
 // Platform abstraction

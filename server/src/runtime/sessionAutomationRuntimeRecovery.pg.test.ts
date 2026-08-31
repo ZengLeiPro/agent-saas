@@ -10,6 +10,7 @@ import {
   SessionAutomationRuntimeGuard,
 } from './sessionAutomationRuntimeGuard.js';
 import { SessionAutomationEvaluator, type GoalEvaluatorPort } from './sessionAutomationEvaluator.js';
+import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
 import type { RunContext } from './types.js';
 
 const { Pool } = pg;
@@ -62,7 +63,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     await pool.query(
       `INSERT INTO ${store.tables.automations}
         (automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version)
-       VALUES($1,$2,$3,'user-a',$4,'goal','adaptive','active','idle',1,1,1,1)`,
+       VALUES($1,$2,$3,'user-a',$4,'goal','goal','active','idle',1,1,1,1)`,
       [automationId, tenantId, executionSessionId, incarnationId],
     );
     await pool.query(
@@ -193,7 +194,74 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(rows.rows[0].count).toBe(4);
   });
 
-  it('a lease-expired evaluator admitted before a crash is frozen for explicit reconciliation', async () => {
+  it('does not create a goal evaluation when a normal run ends without a durable completion nomination', async () => {
+    const setup = await activeExecution();
+    const projector = new SessionAutomationTerminalProjector(store, `goal-no-candidate-${randomUUID()}`);
+
+    await projector.project({
+      globalSequence: 1,
+      tenantId,
+      sessionId: setup.sessionId,
+      runId: setup.dispatch.targetRunId,
+      status: 'completed',
+      summary: 'ordinary run finished',
+      evidenceRefs: ['event:ordinary'],
+      progressFingerprint: 'ordinary-run',
+    });
+
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.tables.evaluations} WHERE execution_id=$1`,
+      [setup.dispatch.outboxId],
+    )).rows[0].count).toBe(0);
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'idle' });
+  });
+
+  it('creates a goal evaluation only after the current execution durably nominates frozen evidence', async () => {
+    const setup = await activeExecution();
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    await expect(evaluator.nominate({
+      tenantId,
+      sessionId: setup.sessionId,
+      automationId: setup.automationId,
+      executionId: setup.dispatch.outboxId,
+      runId: setup.dispatch.targetRunId,
+      incarnationId: setup.incarnationId,
+      generation: 1,
+      specVersion: 1,
+      summary: 'candidate complete',
+      evidenceRefs: ['event:candidate'],
+    })).resolves.toEqual({ queued: true });
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.tables.evaluations} WHERE execution_id=$1`,
+      [setup.dispatch.outboxId],
+    )).rows[0].count).toBe(0);
+
+    const projector = new SessionAutomationTerminalProjector(store, `goal-candidate-${randomUUID()}`);
+    await projector.project({
+      globalSequence: 1,
+      tenantId,
+      sessionId: setup.sessionId,
+      runId: setup.dispatch.targetRunId,
+      status: 'completed',
+      summary: 'terminal summary must not replace nominated evidence',
+      evidenceRefs: ['event:terminal'],
+      progressFingerprint: 'candidate-run',
+    });
+
+    const projected = await pool.query(
+      `SELECT evidence FROM ${store.tables.evaluations} WHERE execution_id=$1`,
+      [setup.dispatch.outboxId],
+    );
+    expect(projected.rows).toHaveLength(1);
+    expect(projected.rows[0].evidence).toMatchObject({
+      summary: 'candidate complete',
+      evidenceRefs: ['event:candidate'],
+      hardGates: { runTerminal: true },
+    });
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'evaluating' });
+  });
+
+  it('a lease-expired evaluator admitted with the execution correlation key before a crash is frozen for explicit reconciliation', async () => {
     const setup = await activeExecution();
     const evaluationId = randomUUID();
     await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
@@ -204,14 +272,23 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
         JSON.stringify({ summary: 'done', evidenceRefs: ['event:1'], hardGates: {} }), randomUUID()],
     );
-    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${evaluationId}`, {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
-    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    // Production terminal projection clears the active slot before evaluator admission.
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='evaluating'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, setup.sessionId, setup.automationId],
+    );
+    const attempt = await guard.beforeModel(setup.context, `goal-evaluation:${setup.dispatch.outboxId}`, {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
+    const evaluate = vi.fn();
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate } as unknown as GoalEvaluatorPort);
     expect(await evaluator.reconcileUnknown()).toBe(1);
     expect((await pool.query(`SELECT state,provider_attempt_id FROM ${store.tables.evaluations} WHERE evaluation_id=$1`, [evaluationId])).rows[0]).toMatchObject({
       state: 'result_unknown', provider_attempt_id: attempt!.providerAttemptId,
     });
     expect((await pool.query(`SELECT state FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`, [attempt!.providerAttemptId])).rows[0].state).toBe('result_unknown');
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'reconcile_required' });
+    expect(await evaluator.evaluatePending()).toBe(0);
+    expect(evaluate).not.toHaveBeenCalled();
   });
 
   it('claimed lease expiry is retryable but result_unknown never blind-replays', async () => {
@@ -245,7 +322,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     );
   });
 
-  it('explicit evaluator receipts are idempotent and only completed/not_found resolve result_unknown', async () => {
+  it('explicit evaluator receipts remain idempotent and only completed/not_found resolve result_unknown', async () => {
     const setup = await activeExecution();
     const attempt = await guard.beforeModel(setup.context, 'goal-evaluation:receipt-test', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
     expect(attempt).toBeDefined();

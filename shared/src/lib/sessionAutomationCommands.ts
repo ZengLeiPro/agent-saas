@@ -82,9 +82,9 @@ export function parseSessionAutomationCommand(input: string): ParsedSessionAutom
   if (tokens.length === 0) return { family, action: 'status' };
   const forcedLiteral = tokens[0] === '--';
   const actionToken = tokens[0]!.toLowerCase();
-  if (!forcedLiteral && ['pause','resume','reconcile','clear','stop','off','reset','none','cancel'].includes(actionToken)) {
+  if (!forcedLiteral && ['status','pause','resume','reconcile','clear','stop','off','reset','none','cancel'].includes(actionToken)) {
     if (tokens.length !== 1) throw new SessionAutomationParseError(`${actionToken} 不接受额外参数`);
-    return { family, action: ['stop','off','reset','none','cancel'].includes(actionToken) ? 'clear' : actionToken as 'pause'|'resume'|'reconcile'|'clear' };
+    return { family, action: ['stop','off','reset','none','cancel'].includes(actionToken) ? 'clear' : actionToken as 'status'|'pause'|'resume'|'reconcile'|'clear' };
   }
   let action: 'create'|'edit'|'replace' = 'create';
   let args = tokens;

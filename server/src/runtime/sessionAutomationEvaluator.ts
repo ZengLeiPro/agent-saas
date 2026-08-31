@@ -176,7 +176,11 @@ export class SessionAutomationEvaluator {
   private running = false;
   private readonly eventsTable: string;
 
-  constructor(readonly store: PgSessionAutomationStore, readonly evaluator: GoalEvaluatorPort) {
+  constructor(
+    readonly store: PgSessionAutomationStore,
+    readonly evaluator: GoalEvaluatorPort,
+    readonly executionEnabled: () => boolean = () => true,
+  ) {
     this.eventsTable = `${store.tablePrefix}_events`;
   }
 
@@ -262,24 +266,34 @@ export class SessionAutomationEvaluator {
     summary: string;
     evidenceRefs: string[];
   }): Promise<{ queued: boolean; reason?: string }> {
-    const snapshot = await this.store.get(input.tenantId, input.sessionId, input.automationId);
-    if (!snapshot || snapshot.spec.kind !== 'goal' || snapshot.status !== 'active'
-      || snapshot.activeRunId !== input.runId || snapshot.incarnationId !== input.incarnationId
-      || snapshot.generation !== input.generation || snapshot.specVersion !== input.specVersion) {
-      return { queued: false, reason: 'stale_fence' };
-    }
     if (input.evidenceRefs.length === 0) return { queued: false, reason: 'hard_gate' };
-    const gates = await this.resolveHardGates(this.store.pool, input);
-    const evidence: GoalEvidence = { summary: input.summary, evidenceRefs: input.evidenceRefs, hardGates: gates };
-    await this.store.pool.query(
-      `INSERT INTO ${this.store.tables.evaluations}
-        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING`,
-      [randomUUID(), input.tenantId, input.sessionId, input.automationId, input.executionId,
-        input.incarnationId, input.generation, input.specVersion, Date.now(), JSON.stringify(evidence)],
-    );
-    return { queued: true };
+    return this.store.tx(async client => {
+      const snapshot = await this.store.getLocked(client, input.tenantId, input.sessionId, input.automationId);
+      if (!snapshot || snapshot.spec.kind !== 'goal' || snapshot.status !== 'active'
+        || snapshot.activeRunId !== input.runId || snapshot.incarnationId !== input.incarnationId
+        || snapshot.generation !== input.generation || snapshot.specVersion !== input.specVersion) {
+        return { queued: false, reason: 'stale_fence' };
+      }
+      const execution = await client.query(
+        `SELECT 1 FROM ${this.store.tables.executions}
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4
+            AND run_id=$5 AND incarnation_id=$6 AND generation=$7 AND spec_version=$8
+            AND state<>'terminal'`,
+        [input.tenantId, input.sessionId, input.automationId, input.executionId, input.runId,
+          input.incarnationId, input.generation, input.specVersion],
+      );
+      if (!execution.rowCount) return { queued: false, reason: 'stale_fence' };
+      await client.query(
+        `INSERT INTO ${this.store.tables.goalCompletionCandidates}
+          (candidate_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,run_id,summary,evidence_refs)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT(execution_id) DO NOTHING`,
+        [randomUUID(), input.tenantId, input.sessionId, input.automationId, input.executionId,
+          input.incarnationId, input.generation, input.specVersion, input.runId, input.summary,
+          JSON.stringify(input.evidenceRefs)],
+      );
+      return { queued: true };
+    });
   }
 
   async reconcileUnknown(): Promise<number> {
@@ -291,7 +305,7 @@ export class SessionAutomationEvaluator {
            FROM ${this.store.tables.providerAttempts} p
           WHERE e.state='claimed' AND e.lease_expires_at<now()
             AND p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
-            AND p.operation='goal-evaluation:'||e.evaluation_id::text
+            AND p.operation='goal-evaluation:'||e.execution_id::text
             AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
           RETURNING e.evaluation_id`,
       );
@@ -318,7 +332,7 @@ export class SessionAutomationEvaluator {
             WHERE e.execution_id=x.execution_id AND e.state='result_unknown' AND e.provider_attempt_id IS NOT NULL
               AND a.tenant_id=e.tenant_id AND a.session_id=e.session_id AND a.automation_id=e.automation_id
               AND a.incarnation_id=e.incarnation_id AND a.generation=e.generation AND a.spec_version=e.spec_version
-              AND a.active_run_id=x.run_id AND a.status='active'`,
+              AND a.status='active'`,
         );
       }
       const retryable = await client.query(
@@ -328,7 +342,7 @@ export class SessionAutomationEvaluator {
             AND NOT EXISTS(
               SELECT 1 FROM ${this.store.tables.providerAttempts} p
                WHERE p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
-                 AND p.operation='goal-evaluation:'||e.evaluation_id::text
+                 AND p.operation='goal-evaluation:'||e.execution_id::text
                  AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
             )
           RETURNING e.evaluation_id`,
@@ -372,6 +386,7 @@ export class SessionAutomationEvaluator {
   async evaluatePending(limit = 10): Promise<number> {
     await this.reconcileUnknown();
     await this.checkInBlocked();
+    if (!this.executionEnabled()) return 0;
     const jobs = await this.store.tx(async client => {
       const result = await client.query(
         `SELECT e.*,a.owner_user_id,x.run_id

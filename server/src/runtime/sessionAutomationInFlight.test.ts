@@ -8,10 +8,15 @@ const empty = (): AutomationInFlightSummary => ({
 });
 
 describe('reduceAutomationInFlight', () => {
-  it.each(['evaluations', 'providerAttempts', 'backgroundResources', 'budgetReservations'] as const)(
+  it.each(['activeRuns', 'executions', 'evaluations', 'providerAttempts', 'backgroundResources', 'budgetReservations'] as const)(
     'keeps clear draining while %s is authoritative in-flight',
     key => expect(reduceAutomationInFlight('cancelled', { ...empty(), [key]: 1 })).toEqual({ kind: 'waiting' }),
   );
+
+  it('keeps blocked draining until the active run and background authority close', () => {
+    expect(reduceAutomationInFlight('blocked', { ...empty(), activeRuns: 1, backgroundResources: 1 })).toEqual({ kind: 'waiting' });
+    expect(reduceAutomationInFlight('blocked', empty())).toEqual({ kind: 'terminal', status: 'blocked' });
+  });
 
   it('finalizes only after the last authority closes', () => {
     expect(reduceAutomationInFlight('completed', { ...empty(), typedWork: 1 })).toEqual({ kind: 'waiting' });

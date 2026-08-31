@@ -1,4 +1,4 @@
-export type AutomationDesiredTerminalStatus = 'completed' | 'cancelled' | 'failed' | 'expired';
+export type AutomationDesiredTerminalStatus = 'completed' | 'cancelled' | 'failed' | 'expired' | 'blocked';
 
 export interface AutomationInFlightSummary {
   activeRuns: number;
@@ -20,7 +20,7 @@ export type AutomationFinalizeDecision =
   | { kind: 'reconcile_required' }
   | { kind: 'terminal'; status: AutomationDesiredTerminalStatus };
 
-/** Pure authority reducer. A terminal projection is legal only when every durable authority is closed. */
+/** Pure authority reducer. A final projection is legal only when every durable authority is closed. */
 export function reduceAutomationInFlight(
   desired: AutomationDesiredTerminalStatus | null | undefined,
   summary: AutomationInFlightSummary,

@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('PgSessionLock', () => {
-  it('初始化受 tablePrefix 约束的 durable lease 表', async () => {
+  it('初始化受 tablePrefix 约束的 durable lease 表且保留 rolling dual 索引', async () => {
     const pool = new FakePool();
     const lock = new PgSessionLock({
       pool: pool as unknown as pg.Pool,
@@ -92,6 +92,8 @@ describe('PgSessionLock', () => {
 
     expect(pool.clientQueries.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS tenant_runtime_session_leases'))).toBe(true);
     expect(pool.clientQueries.some((sql) => sql.includes('PRIMARY KEY (tenant_id, session_id)'))).toBe(true);
+    expect(pool.clientQueries.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS tenant_runtime_tenant_session_leases'))).toBe(true);
+    expect(pool.clientQueries.some((sql) => sql.includes('DROP INDEX'))).toBe(false);
     expect(pool.advisoryUnlockCalls).toBe(1);
     expect(pool.clientReleaseCalls).toBe(1);
   });

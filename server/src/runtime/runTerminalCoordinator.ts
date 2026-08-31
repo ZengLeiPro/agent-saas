@@ -297,6 +297,8 @@ export async function finalizeTerminalRun(input: {
   ctx?: Parameters<EventStore['append']>[1];
   logger?: TerminalEventLogger;
   onClaim?: () => void;
+  /** Specialized atomic terminal claim (for example a cutoff-guarded cancellation). */
+  claim?: (metadataPatch: Record<string, unknown>) => Promise<RunRecord | null>;
 }): Promise<FinalizeTerminalRunResult> {
   const current = await input.runStore.get(input.runId);
   const tenantId = resolveTerminalTenantId({
@@ -310,15 +312,17 @@ export async function finalizeTerminalRun(input: {
 
   // Production PgRunStore implements this as one UPDATE ... WHERE status=ANY(...).
   // The guarded markStatus fallback exists only for lightweight/file test stores.
-  const updated = input.runStore.markStatusIfCurrent
-    ? await input.runStore.markStatusIfCurrent(
-        input.runId,
-        expectedStatuses,
-        input.status,
-        input.reason,
-        outboxPatch(outbox),
-      )
-    : await claimWithGuardedFallback(input.runStore, input.runId, expectedStatuses, input.status, input.reason, outbox);
+  const updated = input.claim
+    ? await input.claim(outboxPatch(outbox))
+    : input.runStore.markStatusIfCurrent
+      ? await input.runStore.markStatusIfCurrent(
+          input.runId,
+          expectedStatuses,
+          input.status,
+          input.reason,
+          outboxPatch(outbox),
+        )
+      : await claimWithGuardedFallback(input.runStore, input.runId, expectedStatuses, input.status, input.reason, outbox);
 
   if (!updated) {
     return {

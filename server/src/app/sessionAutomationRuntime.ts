@@ -67,7 +67,7 @@ export function createSessionAutomationWorkers(options: {
   const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator({
     ...options.evaluator,
     runtimeGuard,
-  }));
+  }), options.executionEnabled);
   return {
     evaluator,
     provider: new SessionAutomationToolProvider(new SessionAutomationTools(options.store, evaluator)),

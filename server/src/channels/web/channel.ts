@@ -7,7 +7,7 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { randomUUID } from 'crypto'; import { parseSessionAutomationCommand } from '@agent/shared';
+import { randomUUID } from 'crypto';
 import { homedir } from 'os';
 import { resolve as resolvePath } from 'path';
 import type { Express } from 'express';
@@ -98,6 +98,7 @@ import {
 } from './channelRuntimeHelpers.js';
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
+import { rejectSessionAutomationChat } from './sessionAutomationSlashGuard.js';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
@@ -105,12 +106,8 @@ export type { ModelResolver } from './channelConfig.js';
 
 /**
  * Public WebChannel construction contract.
- *
- * Web-facing paths and adapters stay beside the channel orchestrator, while
- * runtime/store integrations live in channelConfig.ts to keep this file under
- * its grandfathered line ceiling without changing the exported API.
- * Keeping this facade here also preserves existing type-only import paths.
- * Consumers do not need to know how the contract is partitioned internally.
+ * Web adapters stay beside the orchestrator; runtime/store integrations live in
+ * channelConfig.ts while this facade preserves the exported API and import paths.
  */
 export interface WebChannelConfig extends WebChannelRuntimeConfig {
   /** Server timezone used when formatting channel output. */
@@ -2557,7 +2554,10 @@ export class WebChannel implements BaseChannel {
       this.sendChatRejected(ws, clientMsgId, 'stt_not_configured', '服务端未配置语音识别');
       return;
     }
-    let automationCommandRejection: string | undefined; try { if (parseSessionAutomationCommand(resolvedMessage)) automationCommandRejection = 'Session automation 命令不能通过普通 WebSocket chat 提交；请使用 session automation 命令接口'; } catch (error) { if (!/^\s*\/(?:loop|goal)(?:\s|$)/i.test(resolvedMessage)) throw error; automationCommandRejection = `无效的 session automation 命令${error instanceof Error ? `：${error.message}` : ''}`; } if (automationCommandRejection) { const rejection = { reasonCode: 'access_denied' as const, reason: automationCommandRejection }; this.idempotencySet(user?.sub, clientMsgId, 'failed', '', { rejection }); this.sendChatRejected(ws, clientMsgId, rejection.reasonCode, rejection.reason); return; }
+    if (rejectSessionAutomationChat(resolvedMessage, (rejection) => {
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '', { rejection });
+      this.sendChatRejected(ws, clientMsgId, rejection.reasonCode, rejection.reason);
+    })) return;
     // Log attachment info
     if (attachments && attachments.length > 0) {
       const imageCount = attachments.filter((a: UploadedFileInfo) => a.isImage).length;

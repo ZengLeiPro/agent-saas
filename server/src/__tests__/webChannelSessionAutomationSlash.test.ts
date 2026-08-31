@@ -82,6 +82,7 @@ describe('WebChannel session automation slash isolation', () => {
     '/loop',
     '/loop 5m --max-runs 3 -- check CI',
     '/goal',
+    '/goal status',
     '/goal -- tests pass',
     '/goal pause',
   ])('rejects automation command %s before guardrail, enqueue, or model resolution', async (command) => {
@@ -99,6 +100,20 @@ describe('WebChannel session automation slash isolation', () => {
     expect(rig.modelResolver).not.toHaveBeenCalled();
     expect(rig.orgAgentLookup).not.toHaveBeenCalled();
     expect(rig.getGuardrailModelConfigs).not.toHaveBeenCalled();
+  });
+
+  it('routes explicit goal status through automation isolation instead of ordinary chat', async () => {
+    const rig = await createRig();
+
+    await rig.send('/goal status', 'goal-status');
+
+    expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+      type: 'chat_rejected',
+      reason_code: 'access_denied',
+      reason: expect.stringContaining('不能通过普通 WebSocket chat 提交'),
+    });
+    expect(rig.orgAgentLookup).not.toHaveBeenCalled();
+    expect(rig.enqueue).not.toHaveBeenCalled();
   });
 
   it('replays the same chat_rejected result for a duplicate automation command', async () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createMigrationPlan, isMigrationPath } from './migration-plan.mjs';
 
@@ -839,7 +840,13 @@ test('fails closed for removed migrations and unreadable baseline comparisons', 
 });
 
 test('real repository closure ignores unrelated TypeScript changes behind type-only edges', () => {
-  const baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+  const event = process.env.GITHUB_EVENT_PATH
+    ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
+    : undefined;
+  const baseline =
+    event?.pull_request?.base?.sha ??
+    event?.before ??
+    execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
   const target = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const result = createMigrationPlan({
     changedPaths: ['server/src/release/releaseAttestation.ts'],

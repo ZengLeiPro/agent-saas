@@ -144,10 +144,58 @@ describe("TaskDetailComments", () => {
     expect(buttons.map((button) => button.getAttribute("data-purpose"))).toEqual([
       "general", "work", "work", "review", "merge", "general",
     ]);
+    expect(buttons.map((button) => button.getAttribute("data-kind"))).toEqual([
+      "task", "agent", "agent", "agent", "agent", "user",
+    ]);
     expect(buttons[1]?.firstElementChild?.className).toContain("bg-blue-500");
     expect(buttons[3]?.firstElementChild?.className).toContain("bg-violet-500");
     expect(buttons[4]?.firstElementChild?.className).toContain("bg-emerald-500");
-    expect(buttons[5]?.firstElementChild?.className).toContain("bg-slate-400");
+    expect(buttons[5]?.firstElementChild?.className).toContain("bg-orange-500");
+  });
+
+  it("点击圆点后持续强调当前圆点和目标评论，并在再次点击时切换", () => {
+    const userComment: TaskBoardComment = {
+      ...agentComment,
+      id: "comment-user",
+      body: "用户补充意见",
+      authorType: "user",
+      authorName: "曾磊",
+      executionPurpose: undefined,
+    };
+    renderComments({ comments: [userComment, agentComment] });
+
+    const container = screen.getByTestId("task-comments-scroll");
+    Object.defineProperties(container, {
+      scrollTop: { configurable: true, writable: true, value: 0 },
+      scrollHeight: { configurable: true, value: 600 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({ top: 0 } as DOMRect);
+    container.scrollTo = vi.fn();
+    for (const commentId of [userComment.id, agentComment.id]) {
+      const target = document.querySelector<HTMLElement>(`[data-comment-id="${commentId}"]`);
+      vi.spyOn(target!, "getBoundingClientRect").mockReturnValue({ top: 100 } as DOMRect);
+    }
+
+    const userButton = screen.getByRole("button", { name: "跳转到第 1 条：用户评论" });
+    const agentButton = screen.getByRole("button", { name: "跳转到第 2 条：实施阶段评论" });
+    const userTarget = document.querySelector<HTMLElement>('[data-comment-id="comment-user"]');
+    const agentTarget = document.querySelector<HTMLElement>('[data-comment-id="comment-1"]');
+
+    fireEvent.click(userButton);
+    expect(userButton.getAttribute("aria-current")).toBe("true");
+    expect(agentButton.getAttribute("aria-current")).toBeNull();
+    expect(userButton.firstElementChild?.className).toContain("size-4");
+    expect(userTarget?.getAttribute("data-navigation-selected")).toBe("true");
+    expect(userTarget?.firstElementChild?.className).toContain("outline-primary/70");
+    expect(userTarget?.firstElementChild?.className).toContain("border-orange-200/80");
+    expect(screen.getByText("曾磊").className).toContain("text-orange-800");
+
+    fireEvent.click(agentButton);
+    expect(userButton.getAttribute("aria-current")).toBeNull();
+    expect(agentButton.getAttribute("aria-current")).toBe("true");
+    expect(userTarget?.getAttribute("data-navigation-selected")).toBeNull();
+    expect(agentTarget?.getAttribute("data-navigation-selected")).toBe("true");
   });
 
   it("点击圆点后将目标评论顶部对齐滚动区，并为末尾评论补足滚动边界", () => {

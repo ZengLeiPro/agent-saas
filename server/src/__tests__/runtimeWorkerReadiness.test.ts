@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  createRuntimeEventRetentionAdmissionGuard,
+  includeRuntimeEventRetentionReadiness,
   projectRuntimeWorkerReadyFile,
   readActiveRuntimeWorkerAdmissionSnapshot,
   resolveRuntimeAdmissionSnapshotReader,
@@ -36,6 +38,53 @@ describe('Runtime Worker split-role readiness', () => {
 
     projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 4321);
     expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
+  });
+
+  it('withdraws worker readiness until enabled retention establishes status authority', () => {
+    const paths = fixture();
+    const readyFile = paths.readyFileForColor('blue');
+    const healthy = { state: 'healthy' as const, admitting: true, sampledAt: '2026-08-30T06:00:00.000Z' };
+
+    const unavailable = includeRuntimeEventRetentionReadiness(healthy, true, false, () => 1_000);
+    expect(unavailable).toMatchObject({
+      state: 'paused',
+      admitting: false,
+      reason: 'runtime_event_retention_status_unavailable',
+      sampledAt: '1970-01-01T00:00:01.000Z',
+    });
+    projectRuntimeWorkerReadyFile(readyFile, unavailable, 4321);
+    expect(existsSync(readyFile)).toBe(false);
+
+    const recovered = includeRuntimeEventRetentionReadiness(healthy, true, true);
+    expect(recovered).toBe(healthy);
+    projectRuntimeWorkerReadyFile(readyFile, recovered, 4321);
+    expect(readFileSync(readyFile, 'utf8')).toBe('4321\n');
+  });
+
+  it('uses the same retention authority gate for scheduler acquisition and readiness', () => {
+    let statusAvailable = false;
+    const base = {
+      start: async () => undefined,
+      stop: () => undefined,
+      canAcquire: () => true,
+      getSnapshot: () => ({ state: 'healthy' as const, admitting: true }),
+    };
+    const guard = createRuntimeEventRetentionAdmissionGuard(
+      base,
+      () => true,
+      () => statusAvailable,
+    );
+
+    expect(guard.canAcquire()).toBe(false);
+    expect(guard.getSnapshot()).toMatchObject({
+      state: 'paused',
+      admitting: false,
+      reason: 'runtime_event_retention_status_unavailable',
+    });
+
+    statusAvailable = true;
+    expect(guard.canAcquire()).toBe(true);
+    expect(guard.getSnapshot()).toEqual({ state: 'healthy', admitting: true });
   });
 
   it('reports the active live worker as admitting', () => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PgSystemMetricsStore, type UpsertWorkspaceUsageInput } from '../runtime/systemMetricsStore.js';
+import {
+  PgSystemMetricsStore,
+  type UpsertWorkspaceUsageInput,
+} from '../runtime/systemMetricsStore.js';
 
 interface RecordedQuery {
   text: string;
@@ -12,6 +15,9 @@ function createFakePool() {
   const client = {
     async query(text: string, values: unknown[] = []) {
       queries.push({ text, values });
+      if (text.includes('pg_try_advisory_xact_lock')) {
+        return { rows: [{ locked: true }], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -45,7 +51,8 @@ function record(path: string, bytes: number): UpsertWorkspaceUsageInput {
   };
 }
 
-describe('PgSystemMetricsStore.upsertWorkspaceUsage', () => {
+describe('PgSystemMetricsStore', () => {
+  // Retention 状态与容量都复用本 Store；测试确保不会靠进程内内存维持关键时间点。
   it('deletes rows missing from a full (non-partial) round', async () => {
     const pool = createFakePool();
     const store = new PgSystemMetricsStore({ pool: pool as never });
@@ -91,5 +98,290 @@ describe('PgSystemMetricsStore.upsertWorkspaceUsage', () => {
     const store = new PgSystemMetricsStore({ pool: pool as never });
 
     await expect(store.countWorkspaceUsage()).resolves.toBe(7);
+  });
+
+  it('creates an index for bounded retention status authority reads', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.init();
+
+    const index = pool.queries.find((query) => query.text.includes('_retention_status_id_idx'));
+    expect(index?.text).toContain(`ON ${store.systemMetricsTable} (id DESC)`);
+    expect(index?.text).toContain("WHERE metric = 'runtime_event_retention' AND label = 'status'");
+  });
+
+  it('updates one indexed status row while keeping lastSuccessAt monotonic without JSON history sorting', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return {
+            rows: [{ locked: true, observed_at: '2026-08-29T13:00:00.000Z' }],
+            rowCount: 1,
+          };
+        }
+        if (text.includes('SELECT id, metric, label')
+          && text.includes("WHERE metric = 'runtime_event_retention' AND label = 'status'")) {
+          return {
+            rows: [{
+              id: 1,
+              metric: 'runtime_event_retention',
+              label: 'status',
+              value_num: 10,
+              detail_json: { lastSuccessAt: '2026-08-29T12:00:00.000Z' },
+              sampled_at: '2026-08-29T12:00:00.000Z',
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'failed',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: '2026-08-29T13:00:00.000Z',
+      lastCompletedAt: '2026-08-29T13:00:01.000Z',
+      lastSuccessAt: '2026-08-29T11:00:00.000Z',
+      durationMs: 1000,
+      errorCategory: 'execution_failed',
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    });
+
+    const authorityRead = pool.queries.find((query) => query.text.includes('FOR UPDATE'));
+    const update = pool.queries.find((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`));
+    const compact = pool.queries.find((query) => query.text.includes(`DELETE FROM ${store.systemMetricsTable}`));
+    expect(authorityRead?.text).toContain('ORDER BY id DESC');
+    expect(authorityRead?.text).not.toContain("detail_json->>'lastSuccessAt'");
+    expect(JSON.parse(String(update?.values[1]))).toMatchObject({
+      state: 'failed',
+      lastSuccessAt: '2026-08-29T12:00:00.000Z',
+      errorCategory: 'execution_failed',
+    });
+    expect(update?.text).toContain('sampled_at = clock_timestamp()');
+    expect(compact?.text).toContain("label = 'status' AND id <> $1");
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
+    expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('discards an invalid future persisted lastSuccessAt when the current writer succeeds', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return {
+            rows: [{ locked: true, observed_at: '2026-08-29T13:00:00.000Z' }],
+            rowCount: 1,
+          };
+        }
+        if (text.includes('FOR UPDATE')) {
+          return {
+            rows: [{
+              id: 1,
+              detail_json: {
+                lastSuccessAt: '2099-01-01T00:00:00.000Z',
+                authority: { writerId: 'worker-current', claim: true },
+              },
+              sampled_at: '2026-08-29T12:00:00.000Z',
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'execute_succeeded',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: '2026-08-29T12:30:00.000Z',
+      lastCompletedAt: '2026-08-29T12:30:01.000Z',
+      lastSuccessAt: '2026-08-29T12:30:01.000Z',
+      durationMs: 1000,
+      errorCategory: null,
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: '10', effectiveDeleteThrough: '10' },
+      maxGlobalSequence: '10',
+      categories: {},
+      authority: { writerId: 'worker-current', claim: false },
+    });
+
+    const update = pool.queries.find((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`));
+    expect(JSON.parse(String(update?.values[1]))).toMatchObject({
+      state: 'execute_succeeded',
+      lastSuccessAt: '2026-08-29T12:30:01.000Z',
+    });
+  });
+
+  it('rejects a retiring worker write after another worker claims status authority', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return { rows: [{ locked: true }], rowCount: 1 };
+        }
+        if (text.includes('FOR UPDATE')) {
+          return {
+            rows: [{ id: 1, detail_json: { authority: { writerId: 'worker-candidate', claim: true } } }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'failed',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: '2026-08-29T13:00:00.000Z',
+      lastCompletedAt: '2026-08-29T13:00:01.000Z',
+      lastSuccessAt: null,
+      durationMs: 1000,
+      errorCategory: 'execution_failed',
+      nextScheduledAt: null,
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+      authority: { writerId: 'worker-old', claim: false },
+    })).rejects.toThrow('authority superseded');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries.some((query) => query.text.includes(`UPDATE ${store.systemMetricsTable}`)
+      || query.text.includes(`INSERT INTO ${store.systemMetricsTable}`))).toBe(false);
+    expect(pool.queries.some((query) => query.text === 'ROLLBACK')).toBe(true);
+  });
+
+  it('marks status unavailable without writes when the retention authority lock is unavailable', async () => {
+    const pool = createFakePool();
+    (pool as any).connect = async () => ({
+      async query(text: string, values: unknown[] = []) {
+        pool.queries.push({ text, values });
+        if (text.includes('pg_try_advisory_xact_lock')) {
+          return { rows: [{ locked: false }], rowCount: 1 };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      release() {},
+    });
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.recordRuntimeEventRetentionStatus({
+      schemaVersion: 1,
+      state: 'scheduled',
+      mode: 'execute',
+      sweepIntervalMinutes: 10,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: '2026-08-29T13:10:00.000Z',
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    })).rejects.toThrow('status lock unavailable');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries.some((query) => query.text === 'ROLLBACK')).toBe(true);
+    expect(pool.queries.some((query) => /INSERT INTO|UPDATE/.test(query.text))).toBe(false);
+  });
+
+  it('marks status persistence unavailable when connection acquisition fails and recovers after a successful retry', async () => {
+    const pool = createFakePool();
+    const connect = pool.connect.bind(pool);
+    let databaseAvailable = false;
+    (pool as any).connect = async () => {
+      if (!databaseAvailable) throw new Error('db down');
+      return connect();
+    };
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+    const snapshot = {
+      schemaVersion: 1 as const,
+      state: 'scheduled' as const,
+      mode: 'execute' as const,
+      sweepIntervalMinutes: 10,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      durationMs: null,
+      errorCategory: null,
+      nextScheduledAt: '2026-08-29T13:10:00.000Z',
+      watermarks: { legal: '10', billing: null, effectiveDeleteThrough: null },
+      maxGlobalSequence: null,
+      categories: {},
+    };
+
+    await expect(store.recordRuntimeEventRetentionStatus(snapshot)).rejects.toThrow('db down');
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(false);
+    expect(pool.queries).toEqual([]);
+
+    databaseAvailable = true;
+    await expect(store.recordRuntimeEventRetentionStatus(snapshot)).resolves.toBeUndefined();
+    expect(store.isRuntimeEventRetentionStatusAvailable()).toBe(true);
+    expect(pool.queries.some((query) => query.text.includes('pg_try_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('preserves the latest retention status while pruning ordinary expired series', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.pruneSystemMetrics(90);
+
+    const query = pool.queries.find((item) => item.text.includes(`DELETE FROM ${store.systemMetricsTable}`));
+    expect(query?.text).toContain("expired.metric = 'runtime_event_retention'");
+    expect(query?.text).toContain('SELECT latest.id');
+    expect(query?.text).toContain('ORDER BY latest.id DESC');
+    expect(query?.values).toEqual([90]);
+  });
+
+  it('reads a metric series with index-leading metric and label predicates', async () => {
+    const pool = createFakePool();
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await store.listMetricSeries('pg_table_size', 'runtime_events', 720);
+
+    const query = pool.queries.at(-1)!;
+    expect(query.text).toContain('WHERE metric = $1 AND label = $2');
+    expect(query.text).toContain("sampled_at >= now() - ($3::int * interval '1 hour')");
+    expect(query.text).toContain('ORDER BY sampled_at DESC, id DESC');
+    expect(query.values).toEqual(['pg_table_size', 'runtime_events', 720]);
+  });
+
+  it('samples separate table/index/total bytes for each PG table', async () => {
+    const pool = createFakePool();
+    (pool as any).query = async (text: string, values: unknown[] = []) => {
+      pool.queries.push({ text, values });
+      return {
+        rows: [{ table_name: 'runtime_events', table_bytes: '10', index_bytes: '4', total_bytes: '14' }],
+        rowCount: 1,
+      };
+    };
+    const store = new PgSystemMetricsStore({ pool: pool as never });
+
+    await expect(store.queryPgRuntimeTableSizes('Runtime')).resolves.toEqual([{
+      table: 'runtime_events', tableBytes: 10, indexBytes: 4, totalBytes: 14,
+    }]);
+    expect(pool.queries.at(-1)?.text).toContain('pg_table_size');
+    expect(pool.queries.at(-1)?.text).toContain('pg_indexes_size');
+    expect(pool.queries.at(-1)?.text).toContain('pg_total_relation_size');
+    expect(pool.queries.at(-1)?.values).toEqual(['runtime_%']);
   });
 });

@@ -266,6 +266,71 @@ export interface WorkspaceUsageRecord {
   archivedAt: string | null;
 }
 
+export type EventStoreRetentionMode = "dry-run" | "execute";
+
+export type EventStoreRetentionStatus =
+  | "never_run"
+  | "scheduled"
+  | "running"
+  | "dry_run_succeeded"
+  | "execute_succeeded"
+  | "blocked"
+  | "failed"
+  | "unavailable";
+
+export type EventStoreRetentionErrorCategory =
+  | "authorization_missing"
+  | "legal_watermark_invalid"
+  | "status_persistence_unavailable"
+  | "partial_failure"
+  | "execution_failed";
+
+export interface EventStoreCategorySummary {
+  eligible: number | null;
+  deleted: number | null;
+}
+
+export interface EventStoreStatusResponse {
+  schemaVersion: 1;
+  available: boolean;
+  generatedAt: string;
+  retention: {
+    enabled: boolean;
+    mode: EventStoreRetentionMode;
+    status: EventStoreRetentionStatus;
+    stale: boolean;
+    lastStartedAt: string | null;
+    lastCompletedAt: string | null;
+    lastSuccessAt: string | null;
+    durationMs: number | null;
+    errorCategory: EventStoreRetentionErrorCategory | null;
+    nextScheduledAt: string | null;
+    watermarks: {
+      legal: string | null;
+      billing: string | null;
+      effective: string | null;
+      maxGlobalSequence: string | null;
+      lag: string | null;
+    };
+    categories: Record<string, EventStoreCategorySummary>;
+  };
+  capacity: {
+    available: boolean;
+    tableName: string | null;
+    totalBytes: number | null;
+    tableBytes: number | null;
+    indexBytes: number | null;
+    sampledAt: string | null;
+    stale: boolean;
+    series: Array<{
+      totalBytes: number | null;
+      tableBytes: number | null;
+      indexBytes: number | null;
+      sampledAt: string;
+    }>;
+  };
+}
+
 export interface SystemStorageResponse {
   available: boolean;
   summary: {

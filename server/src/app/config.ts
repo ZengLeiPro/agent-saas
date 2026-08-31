@@ -1003,7 +1003,7 @@ const runtimeEventStoreConfigSchema = z.discriminatedUnion('backend', [
   z.object({
     backend: z.literal('pg'),
     connectionString: z.string().min(1),
-    tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).optional(),
+    tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).transform((value) => value.toLowerCase()).optional(),
     /** 共享查询池上限；默认 6，为并发事件写入保留短连接余量。 */
     poolMax: z.number().int().min(1).max(50).optional(),
   }),

@@ -17,23 +17,6 @@ export const runtimeEventRetentionConfigSchema = z.object({
   billingCatchupBatchLimit: z.number().int().min(1).max(100_000).optional(),
   billingCatchupMaxBatches: z.number().int().min(1).max(10_000).optional(),
 }).superRefine((value, ctx) => {
-  if (value.executionMode === 'execute' && !value.authorizationRef) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['authorizationRef'],
-      message: 'runtime retention execute 模式必须提供 authorizationRef',
-    });
-  }
-  if (
-    value.executionMode === 'execute'
-    && (!value.legalDeleteThroughGlobalSequence || BigInt(value.legalDeleteThroughGlobalSequence) <= 0n)
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['legalDeleteThroughGlobalSequence'],
-      message: 'runtime retention execute 模式必须提供正数 legalDeleteThroughGlobalSequence',
-    });
-  }
   if (
     value.modelDiagnosticRetentionDays !== undefined
     && value.modelRequestFinishedRetentionDays !== undefined
@@ -47,6 +30,7 @@ export const runtimeEventRetentionConfigSchema = z.object({
   }
 });
 
+/** execute 的授权与正数水位由 RuntimeEventRetention 启动/执行门禁判定并写入 blocked 快照。 */
 export function retentionWorkerOptions(config: z.infer<typeof runtimeEventRetentionConfigSchema> | undefined) {
   return {
     enabled: config?.enabled,

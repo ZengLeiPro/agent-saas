@@ -8,7 +8,11 @@ import tls from 'node:tls';
 
 import type { TenantStore } from '../data/tenants/store.js';
 import type { UserStore } from '../data/users/store.js';
-import type { PgSystemMetricsStore, UpsertWorkspaceUsageInput, WorkspaceUsageStatus } from './systemMetricsStore.js';
+import type {
+  PgSystemMetricsStore,
+  UpsertWorkspaceUsageInput,
+  WorkspaceUsageStatus,
+} from './systemMetricsStore.js';
 
 export interface SystemMetricsCollectorOptions {
   store: PgSystemMetricsStore;
@@ -272,8 +276,13 @@ export class SystemMetricsCollector {
       await Promise.all(tables.map((table) => this.options.store.insertMetric({
         metric: 'pg_table_size',
         label: table.table,
-        valueNum: table.bytes,
-        detailJson: { table: table.table },
+        valueNum: table.totalBytes,
+        detailJson: {
+          table: table.table,
+          tableBytes: table.tableBytes,
+          indexBytes: table.indexBytes,
+          totalBytes: table.totalBytes,
+        },
         sampledAt,
       })));
     } catch (err) {

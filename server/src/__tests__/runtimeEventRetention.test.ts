@@ -17,6 +17,9 @@ class FakePool {
   dryRunCandidates: Partial<Record<RetentionCategory, number>> = {};
   categoryParams: Partial<Record<RetentionCategory, unknown[][]>> = {};
   queries: string[] = [];
+  failCategoryOnce?: RetentionCategory;
+  failCategoryOnCall: Partial<Record<RetentionCategory, number>> = {};
+  categoryCalls: Partial<Record<RetentionCategory, number>> = {};
 
   async query(text: string, params?: unknown[]) {
     this.queries.push(text);
@@ -28,6 +31,13 @@ class FakePool {
     }
     const category = retentionCategory(text);
     if (category) {
+      const callNo = (this.categoryCalls[category] ?? 0) + 1;
+      this.categoryCalls[category] = callNo;
+      if (this.failCategoryOnce === category || this.failCategoryOnCall[category] === callNo) {
+        this.failCategoryOnce = undefined;
+        delete this.failCategoryOnCall[category];
+        throw new Error('sensitive SQL failure');
+      }
       const calls = this.categoryParams[category] ?? [];
       calls.push(params ?? []);
       this.categoryParams[category] = calls;
@@ -41,7 +51,8 @@ class FakePool {
 }
 
 describe('RuntimeEventRetention', () => {
-  it('does not start scheduled retention unless explicitly enabled', () => {
+
+  it('does not start scheduled retention unless explicitly enabled', async () => {
     const pool = new FakePool();
     const info = vi.fn();
     const baseOptions = {
@@ -53,15 +64,92 @@ describe('RuntimeEventRetention', () => {
     };
     const disabledByDefault = new RuntimeEventRetention(baseOptions);
 
-    disabledByDefault.start();
+    await disabledByDefault.start();
     expect(info).not.toHaveBeenCalled();
 
     const enabled = new RuntimeEventRetention({ ...baseOptions, enabled: true });
-    enabled.start();
+    await enabled.start();
     expect(info).toHaveBeenCalledWith(
       'RuntimeEventRetention started: mode=dry-run interval=10m batchLimit=10000 maxBatchesPerCategory=10 legalWatermark=0',
     );
     enabled.stop();
+  });
+
+  it.each([
+    { fromMode: 'dry-run' as const, toMode: 'execute' as const, fromInterval: 10, toInterval: 30 },
+    { fromMode: 'execute' as const, toMode: 'dry-run' as const, fromInterval: 30, toInterval: 5 },
+  ])('records current startup truth before arming a $toMode timer after a $fromMode restart', async ({
+    fromMode,
+    toMode,
+    fromInterval,
+    toInterval,
+  }) => {
+    const pool = new FakePool();
+    const previousSnapshots: any[] = [];
+    const previous = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: fromMode,
+      sweepIntervalMinutes: fromInterval,
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      statusRecorder: async (snapshot) => { previousSnapshots.push(snapshot); },
+    });
+    await previous.start();
+    expect(previousSnapshots).toEqual([expect.objectContaining({
+      state: 'scheduled',
+      mode: fromMode,
+      sweepIntervalMinutes: fromInterval,
+      nextScheduledAt: expect.any(String),
+      authority: { writerId: expect.any(String), claim: true },
+    })]);
+    previous.stop();
+
+    const currentSnapshots: any[] = [];
+    const beforeStart = Date.now();
+    const current = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: toMode,
+      sweepIntervalMinutes: toInterval,
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      statusRecorder: async (snapshot) => { currentSnapshots.push(snapshot); },
+    });
+    await current.start();
+
+    expect(currentSnapshots).toEqual([expect.objectContaining({
+      state: 'scheduled',
+      mode: toMode,
+      sweepIntervalMinutes: toInterval,
+      lastStartedAt: null,
+      lastCompletedAt: null,
+      nextScheduledAt: expect.any(String),
+      authority: { writerId: expect.any(String), claim: true },
+    })]);
+    expect(currentSnapshots[0].authority.writerId).not.toBe(previousSnapshots[0].authority.writerId);
+    const scheduledMs = Date.parse(currentSnapshots[0].nextScheduledAt);
+    expect(scheduledMs).toBeGreaterThanOrEqual(beforeStart + toInterval * 60_000);
+    expect(scheduledMs).toBeLessThanOrEqual(Date.now() + toInterval * 60_000);
+
+    await current.runOnce();
+    expect(currentSnapshots.map((snapshot) => snapshot.state)).toEqual([
+      'scheduled',
+      'running',
+      toMode === 'execute' ? 'execute_succeeded' : 'dry_run_succeeded',
+    ]);
+    expect(currentSnapshots.at(-1)).toMatchObject({
+      mode: toMode,
+      sweepIntervalMinutes: toInterval,
+      nextScheduledAt: currentSnapshots[0].nextScheduledAt,
+    });
+    current.stop();
   });
 
   it('defaults runOnce to read-only dry-run and reports the next bounded batch', async () => {
@@ -93,21 +181,436 @@ describe('RuntimeEventRetention', () => {
     expect(pool.queries.some((query) => /DELETE FROM runtime_events/.test(query))).toBe(false);
   });
 
-  it('rejects execute mode without both a positive legal watermark and authorization reference', () => {
+  it('records stable blocked states when execute gates fail at run time', async () => {
     const pool = new FakePool();
+    const snapshots: any[] = [];
     const options = {
       pool: pool as any,
       eventsTable: 'runtime_events',
       toolInvocationsTable: 'runtime_tool_invocations',
       billingProjectionStateTable: 'runtime_billing_projection_state',
       executionMode: 'execute' as const,
+      statusRecorder: async (snapshot: unknown) => { snapshots.push(snapshot); },
     };
 
-    expect(() => new RuntimeEventRetention(options)).toThrow(/authorizationRef/);
-    expect(() => new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' })).toThrow(/legalDeleteThrough/);
+    const missingAuthorization = new RuntimeEventRetention(options);
+    await expect(missingAuthorization.runOnce()).rejects.toThrow(/缺少授权/);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'blocked', errorCategory: 'authorization_missing' });
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain('authorizationRef');
+
+    const invalidWatermark = new RuntimeEventRetention({ ...options, authorizationRef: 'CHG-1' });
+    await expect(invalidWatermark.runOnce()).rejects.toThrow(/watermark 无效/);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'blocked', errorCategory: 'legal_watermark_invalid' });
+  });
+
+  it('records a blocked snapshot from the enabled worker startup path without querying events', async () => {
+    const pool = new FakePool();
+    const snapshots: any[] = [];
+    const warn = vi.fn();
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+      logger: { warn },
+    });
+
+    await retention.start();
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ state: 'blocked', errorCategory: 'authorization_missing' });
+    expect(snapshots[0].nextScheduledAt).toEqual(expect.any(String));
+    expect(pool.queries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention configuration blocked: category=authorization_missing');
+    retention.stop();
+  });
+
+  it('supports explicit startup retry without arming the sweep timer', async () => {
+    const pool = new FakePool();
+    const snapshots: any[] = [];
+    const warn = vi.fn();
+    const info = vi.fn();
+    let persistenceAvailable = false;
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async (snapshot) => {
+        if (!persistenceAvailable) throw new Error('sensitive database failure');
+        snapshots.push(snapshot);
+      },
+      logger: { warn, info },
+    });
+
+    await retention.start();
+    expect(snapshots).toHaveLength(0);
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention status persistence failed');
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention startup not scheduled: status persistence unavailable');
+
+    persistenceAvailable = true;
+    await retention.start();
+    expect(snapshots).toEqual([expect.objectContaining({ state: 'scheduled', nextScheduledAt: expect.any(String) })]);
+    expect(retention.isStatusPersistenceAvailable()).toBe(true);
+    expect(info).toHaveBeenCalledOnce();
+    retention.stop();
+  });
+
+  it('fails dedicated worker startup when status authority cannot be established', async () => {
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      startupFailureMode: 'throw',
+      statusRecorder: async () => { throw new Error('db down'); },
+      logger: { warn: vi.fn() },
+    });
+
+    await expect(retention.start()).rejects.toThrow(
+      'runtime-worker failed to establish RuntimeEventRetention status authority',
+    );
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
+    retention.stop();
+  });
+
+  it('retries status-only startup for the all role and stops retrying after recovery', async () => {
+    vi.useFakeTimers();
+    const snapshots: any[] = [];
+    let persistenceAvailable = false;
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      startupFailureMode: 'retry',
+      statusRecorder: async (snapshot) => {
+        if (!persistenceAvailable) throw new Error('db down');
+        snapshots.push(snapshot);
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      await retention.start();
+      expect(retention.isStatusPersistenceAvailable()).toBe(false);
+      expect(vi.getTimerCount()).toBe(1);
+
+      persistenceAvailable = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(snapshots).toEqual([
+        expect.objectContaining({ state: 'scheduled', nextScheduledAt: expect.any(String) }),
+      ]);
+      expect(retention.isStatusPersistenceAvailable()).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      retention.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['旧 startup 成功不得覆盖新失败', true, false, false],
+    ['旧失败不得覆盖新成功', false, true, true],
+  ])('%s', async (_label, firstSucceeds, secondSucceeds, expectedAvailable) => {
+    vi.useFakeTimers();
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve; });
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let recorderCalls = 0;
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async () => {
+        recorderCalls += 1;
+        if (recorderCalls === 1) {
+          markFirstEntered();
+          await firstCanFinish;
+          if (!firstSucceeds) throw new Error('old generation failed');
+        } else if (!secondSucceeds) {
+          throw new Error('current generation failed');
+        }
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      const firstStart = retention.start();
+      await firstEntered;
+      retention.stop();
+      const secondStart = retention.start();
+      releaseFirst();
+      await firstStart;
+      await secondStart;
+
+      expect(retention.isStatusPersistenceAvailable()).toBe(expectedAvailable);
+      expect(vi.getTimerCount()).toBe(expectedAvailable ? 1 : 0);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('serializes restart after an in-flight sweep and preserves Store write order', async () => {
+    vi.useFakeTimers();
+    let releaseRunning!: () => void;
+    let markRunningEntered!: () => void;
+    const runningEntered = new Promise<void>((resolve) => { markRunningEntered = resolve; });
+    const runningCanFinish = new Promise<void>((resolve) => { releaseRunning = resolve; });
+    const states: string[] = [];
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async (snapshot) => {
+        states.push(snapshot.state);
+        if (snapshot.state === 'running') {
+          markRunningEntered();
+          await runningCanFinish;
+        }
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      await retention.start();
+      const sweep = retention.runOnce();
+      await runningEntered;
+      retention.stop();
+      expect(retention.isStatusPersistenceAvailable()).toBe(false);
+      let restarted = false;
+      const restart = retention.start().then(() => { restarted = true; });
+      await Promise.resolve();
+      expect(restarted).toBe(false);
+
+      releaseRunning();
+      await sweep;
+      await restart;
+      expect(retention.isStatusPersistenceAvailable()).toBe(true);
+      expect(states).toEqual(['scheduled', 'running', 'scheduled']);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('never arms execute scheduling without a status recorder', async () => {
+    vi.useFakeTimers();
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+    try {
+      await retention.start();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for in-flight startup persistence before quiesce completes', async () => {
+    let releaseStartup!: () => void;
+    let markStartupEntered!: () => void;
+    const startupEntered = new Promise<void>((resolve) => { markStartupEntered = resolve; });
+    const startupCanFinish = new Promise<void>((resolve) => { releaseStartup = resolve; });
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async () => {
+        markStartupEntered();
+        await startupCanFinish;
+      },
+    });
+    const startup = retention.start();
+    await startupEntered;
+    let quiesced = false;
+    const quiesce = retention.quiesce().then(() => { quiesced = true; });
+    await Promise.resolve();
+    expect(quiesced).toBe(false);
+
+    releaseStartup();
+    await startup;
+    await quiesce;
+    expect(retention.isStatusPersistenceAvailable()).toBe(false);
+  });
+
+  it('does not leave a hidden timer when successful stop and restart overlap startup persistence', async () => {
+    vi.useFakeTimers();
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => { markFirstEntered = resolve; });
+    const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let recorderCalls = 0;
+    const info = vi.fn();
+    const retention = new RuntimeEventRetention({
+      pool: new FakePool() as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      statusRecorder: async () => {
+        recorderCalls += 1;
+        if (recorderCalls === 1) {
+          markFirstEntered();
+          await firstCanFinish;
+        }
+      },
+      logger: { info },
+    });
+    try {
+      const firstStart = retention.start();
+      await firstEntered;
+      retention.stop();
+      const secondStart = retention.start();
+      releaseFirst();
+      await firstStart;
+      await secondStart;
+
+      expect(recorderCalls).toBe(2);
+      expect(info).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('blocks an enabled execute run before querying EventStore when running status persistence fails', async () => {
+    const pool = new FakePool();
+    let persistenceAvailable = true;
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      executionMode: 'execute',
+      legalDeleteThroughGlobalSequence: '100',
+      authorizationRef: 'CHG-test',
+      statusRecorder: async () => {
+        if (!persistenceAvailable) throw new Error('sensitive database failure');
+      },
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    await retention.start();
+    persistenceAvailable = false;
+    await expect(retention.runOnce()).rejects.toThrow(/状态持久化不可用/);
+    expect(pool.queries).toHaveLength(0);
+    retention.stop();
+  });
+
+  it('waits for an old in-flight sweep and arms only the restarted schedule', async () => {
+    vi.useFakeTimers();
+    const pool = new FakePool();
+    const query = pool.query.bind(pool);
+    let releaseBilling!: () => void;
+    let markBillingEntered!: () => void;
+    const billingEntered = new Promise<void>((resolve) => { markBillingEntered = resolve; });
+    const billingCanFinish = new Promise<void>((resolve) => { releaseBilling = resolve; });
+    let delayBilling = true;
+    pool.query = async (text: string, params?: unknown[]) => {
+      if (delayBilling && text.includes('FROM runtime_billing_projection_state')) {
+        delayBilling = false;
+        markBillingEntered();
+        await billingCanFinish;
+      }
+      return query(text, params);
+    };
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      enabled: true,
+      sweepIntervalMinutes: 1,
+      statusRecorder: async () => undefined,
+    });
+    try {
+      await retention.start();
+      vi.advanceTimersByTime(60_000);
+      await billingEntered;
+      retention.stop();
+      const restart = retention.start();
+      releaseBilling();
+      await restart;
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      retention.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('explicitly reclaims one fenced writer across enabled dry-run snapshots', async () => {
+    const pool = new FakePool();
+    const snapshots: any[] = [];
+    const retention = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state', enabled: true,
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+    });
+
+    await retention.runOnce();
+    expect(snapshots.map((snapshot) => snapshot.state)).toEqual(['running', 'dry_run_succeeded']);
+    expect(snapshots.map((snapshot) => snapshot.authority)).toEqual([
+      { writerId: expect.any(String), claim: false }, { writerId: expect.any(String), claim: false },
+    ]);
+    expect(snapshots[0].authority.writerId).toBe(snapshots[1].authority.writerId);
+    expect(snapshots.at(-1)).toMatchObject({
+      schemaVersion: 1,
+      mode: 'dry-run',
+      errorCategory: null,
+      watermarks: { legal: '0', billing: '0', effectiveDeleteThrough: '0' },
+    });
+    expect(snapshots.at(-1).lastSuccessAt).toBeTruthy();
+    await retention.reassertStatusAuthority(true);
+    expect(snapshots.at(-1)).toMatchObject({ state: 'dry_run_succeeded',
+      authority: { writerId: snapshots[0].authority.writerId, claim: true } });
+
+    const warn = vi.fn();
+    const recorderFailure = new RuntimeEventRetention({
+      pool: pool as any,
+      eventsTable: 'runtime_events',
+      toolInvocationsTable: 'runtime_tool_invocations',
+      billingProjectionStateTable: 'runtime_billing_projection_state',
+      statusRecorder: async () => { throw new Error('secret database message'); },
+      logger: { warn },
+    });
+    await expect(recorderFailure.runOnce()).resolves.toBeTruthy();
+    expect(warn).toHaveBeenCalledWith('RuntimeEventRetention status persistence failed');
   });
 
   it('bounds every delete by both legal and billing watermarks instead of requiring a moving target catch-up', async () => {
+
     const pool = new FakePool();
     pool.billingWatermark = '10';
     pool.maxGlobalSequence = '11';
@@ -217,6 +720,30 @@ describe('RuntimeEventRetention', () => {
       'hand-events': 6,
     });
     expect(pool.categoryParams['tool-delta']).toHaveLength(2);
+  });
+
+  it('retains committed batches when the same category fails later, then records recovery', async () => {
+    const pool = new FakePool();
+    pool.billingWatermark = '99';
+    pool.maxGlobalSequence = '99';
+    pool.deleteBatches['tool-delta'] = [2, 1];
+    pool.failCategoryOnCall['tool-delta'] = 2;
+    const snapshots: any[] = [];
+    const retention = createRetention(pool, {
+      batchLimit: 2,
+      statusRecorder: async (snapshot) => { snapshots.push(snapshot); },
+    });
+
+    await expect(retention.runOnce()).rejects.toThrow('sensitive SQL failure');
+    expect(snapshots.at(-1)).toMatchObject({
+      state: 'failed', errorCategory: 'partial_failure',
+      categories: { 'tool-delta': { eligible: 2, deleted: 2 } },
+    });
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain('sensitive SQL failure');
+
+    await expect(retention.runOnce()).resolves.toMatchObject({ mode: 'execute' });
+    expect(snapshots.at(-1)).toMatchObject({ state: 'execute_succeeded', errorCategory: null });
+    expect(snapshots.at(-1).lastSuccessAt).toBeTruthy();
   });
 
   it('caps each category per run even when every delete returns a full batch', async () => {

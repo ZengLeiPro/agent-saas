@@ -690,20 +690,15 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   });
   const authorizeOAuthSubject = async (userId: string, tenantId: string): Promise<boolean> => {
     const user = userStore?.findById(userId);
-    if (
-      !user ||
+    if (!user ||
       user.disabled ||
       user.tenantId !== tenantId ||
       tenantStore?.findById(tenantId)?.disabled
     )
       return false;
     if (!userStore || !membershipStore || !governanceChangeJobStore) return false;
-    try {
-      const subject = await new SubjectResolver(userStore, membershipStore).resolveHuman(userId);
-      if (subject.tenantId !== tenantId || subject.accountStatus !== 'active') return false;
-    } catch {
-      return false;
-    }
+    const subject = await new SubjectResolver(userStore, membershipStore).resolveHuman(userId).catch(() => null);
+    if (!subject || subject.tenantId !== tenantId || subject.accountStatus !== 'active') return false;
     return !(await governanceChangeJobStore.findActiveForTarget(
       tenantId,
       'user_offboarding',
@@ -729,9 +724,7 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
     tenantId: string,
     connectorId: string,
   ): Promise<boolean> => {
-    if (tenantId === DEFAULT_TENANT_ID) {
-      return await authorizeOAuthSubject(userId, tenantId);
-    }
+    if (tenantId === DEFAULT_TENANT_ID) return await authorizeOAuthSubject(userId, tenantId);
     if (!assignmentStore || !entitlementStore) return false;
     try {
       const [resources, entitlement, scopes] = await Promise.all([

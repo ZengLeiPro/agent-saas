@@ -569,7 +569,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         });
         continue;
       }
-
       const storedResult = parseStoredResult(task.metadata.backgroundResult);
       const fallbackStatus = task.status === 'cancelled'
         ? 'cancelled'

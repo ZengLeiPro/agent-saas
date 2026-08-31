@@ -151,6 +151,14 @@ export default function ChatDetailScreen() {
   }, [effectiveSessionId, chat.sessions]);
 
   const sessionOwner = currentSession?.owner?.username;
+  const headerAgentTarget = currentSession?.agentTarget ?? chat.activeAgentTarget;
+  const headerAgentTargetLabel = headerAgentTarget?.kind === 'personal'
+    ? '个人 Agent'
+    : headerAgentTarget?.kind === 'org-agent'
+      ? currentSession?.orgAgentName
+        ?? chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === headerAgentTarget.orgAgentId)?.presentation?.name
+        ?? '企业专家'
+      : '绑定不可验证';
 
   // Fetch the correct agent profile for the session owner (not the global ownerFilter-based one)
   const [sessionAgentProfile, setSessionAgentProfile] = useState<Awaited<ReturnType<typeof fetchAgentProfile>> | null>(null);
@@ -373,7 +381,7 @@ export default function ChatDetailScreen() {
                   <Text style={styles.navTitle} numberOfLines={1}>{title}</Text>
                   <View style={styles.navModelRow}>
                     <Text style={[styles.navModelText, { color: colors.mutedForeground }]} numberOfLines={1}>
-                      {modelLabel ?? '模型'}
+                      {headerAgentTargetLabel} · {modelLabel ?? '模型'}
                     </Text>
                     <ChevronDown size={10} color={colors.mutedForeground} strokeWidth={2} />
                   </View>
@@ -464,6 +472,7 @@ export default function ChatDetailScreen() {
           onCancelRecording={recorder.cancelRecording}
           sessionId={chat.sessionId}
           tooShortTip={tooShortTip}
+          disabledReason={chat.activeAgentTargetUnavailableReason?.message ?? (!chat.activeAgentTarget ? '没有可用的 Agent 目标，请联系组织管理员。' : null)}
         />
         {/* Safe area padding — smoothly animated with keyboard via Reanimated */}
         {insets.bottom > 0 && <ReAnimated.View style={safeAreaAnimStyle} />}

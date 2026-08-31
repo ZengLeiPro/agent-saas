@@ -46,7 +46,16 @@ import {
 } from './runtimeEventProjection.js';
 import { getTranscriptPath, sessionExists, findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
 import { appendTrustedTranscript } from '../../data/transcripts/trusted.js';
-import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, type SessionMeta } from '../../data/transcripts/meta.js';
+import {
+  readSessionMeta,
+  writeSessionMeta,
+  updateSessionMeta,
+  writeSessionMetaIfAbsent,
+  addSessionCost,
+  ensureSessionAgentTargetBinding,
+  resolveSessionAgentTarget,
+  type SessionMeta,
+} from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
@@ -114,7 +123,13 @@ import {
   canonicalChatAttachmentToDisplay,
   type CanonicalChatSubmission,
 } from '@agent/shared/lib/chatSubmission';
-import type { MessageAttachmentDisplay, SandboxProfile } from '@agent/shared';
+import {
+  AGENT_TARGET_BINDING_VERSION,
+  sameAgentTarget,
+  type AgentTarget,
+  type MessageAttachmentDisplay,
+  type SandboxProfile,
+} from '@agent/shared';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
 import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
@@ -2464,6 +2479,7 @@ export class WebChannel implements BaseChannel {
     const model = adaptedSubmission.model;
     const sandboxProfile = adaptedSubmission.sandboxProfile;
     const requestedOrgAgentId = adaptedSubmission.orgAgentId;
+    const incomingAgentTarget = adaptedSubmission.agentTarget;
     const canonicalVoice = adaptedSubmission.canonical?.voice;
     let attachments: UploadedFileInfo[] | undefined;
     let canonicalAttachments = adaptedSubmission.canonical?.attachments ?? [];
@@ -2907,33 +2923,69 @@ export class WebChannel implements BaseChannel {
       /** 门禁模型自报确信度 0-1（usage-stats P50/P90 数据源） */
       confidence?: number;
     } | undefined;
+    const gateIdentity = sessionOwner ?? userIdentity;
+    let agentTarget: AgentTarget;
     if (validSessionId) {
-      orgAgentId = gateSessionMeta?.orgAgentId;
-      if (requestedOrgAgentId && requestedOrgAgentId !== orgAgentId) {
-        chatLogger.warn(`[org-agent] client orgAgentId=${requestedOrgAgentId} ignored, session meta wins (${orgAgentId ?? 'none'}, session=${validSessionId})`);
+      const resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateIdentity?.tenantId);
+      if (resolvedTarget.status === 'unproven') {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '历史会话缺少可证明的 Agent 绑定，已阻止继续发送');
+        return;
+      }
+      agentTarget = resolvedTarget.target;
+      if (incomingAgentTarget && !sameAgentTarget(incomingAgentTarget, agentTarget)) {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '请求的 Agent 与会话已绑定 Agent 不一致');
+        return;
+      }
+      if (requestedOrgAgentId && (agentTarget.kind !== 'org-agent' || requestedOrgAgentId !== agentTarget.orgAgentId)) {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '请求的企业专家与会话已绑定 Agent 不一致');
+        return;
+      }
+      if (resolvedTarget.needsMigration && gateTranscriptPath) {
+        try {
+          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
+        } catch {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
+          return;
+        }
       }
     } else {
-      orgAgentId = requestedOrgAgentId;
+      if (adaptedSubmission.protocol === 'canonical_v1') {
+        if (!incomingAgentTarget) {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '新会话必须明确指定 agentTarget');
+          return;
+        }
+        agentTarget = incomingAgentTarget;
+      } else {
+        // N-1 新会话保留其显式 wire 语义；历史会话迁移绝不使用该缺省。
+        agentTarget = requestedOrgAgentId
+          ? { kind: 'org-agent', tenantId: gateIdentity?.tenantId ?? '', orgAgentId: requestedOrgAgentId }
+          : { kind: 'personal', tenantId: gateIdentity?.tenantId ?? '' };
+      }
     }
+    if (!gateIdentity?.tenantId || agentTarget.tenantId !== gateIdentity.tenantId) {
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+      this.sendChatRejected(ws, clientMsgId, 'access_denied', 'Agent target 不属于当前组织');
+      return;
+    }
+    orgAgentId = agentTarget.kind === 'org-agent' ? agentTarget.orgAgentId : undefined;
     const isPlatformCommand = isCompactCommand(resolvedMessage);
     if (isPlatformCommand) deliveryMode = 'queue';
     if (orgAgentId) {
-      const record = this.config.orgAgentStore?.get(orgAgentId);
-      const gateIdentity = sessionOwner ?? userIdentity;
-      // admin 豁免 audience 收紧（2026-07 审查 F1a）：仅平台 admin 或与该 org agent
-      // 同租户的组织 admin；跨租户组织 admin → assigned=false → org_agent_unavailable（同码防枚举）
-      const adminExempt = user?.role === 'admin'
-        && (isPlatformAdminUser(user) || record?.tenantId === user.tenantId);
-      const assigned = !!record && !!parseOrgAgentAudience(record.audience) && (adminExempt || isAssignedToOrgAgent(record, gateIdentity?.username));
-      if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
-        // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
+      const accessError = this.orgAgentActionAccessError(client, orgAgentId, agentTarget.tenantId, gateIdentity.username);
+      if (accessError) {
+        // 跨租户/缺失/停用/未指派一律同码防枚举；历史可读、发送阻断。
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', '该企业专家当前不可用，请联系组织管理员');
+        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', accessError);
         return;
       }
-      orgAgentRecord = record;
+      orgAgentRecord = this.config.orgAgentStore?.get(orgAgentId);
     }
-    if (!orgAgentId && !isPlatformCommand && user && user.role !== 'admin') {
+    if (agentTarget.kind === 'personal' && !isPlatformCommand && user && user.role !== 'admin') {
       const features = this.config.tenantStore?.getSettings(user.tenantId ?? DEFAULT_TENANT_ID)?.features;
       if (features?.personalAgentEnabled === false) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
@@ -3185,9 +3237,33 @@ export class WebChannel implements BaseChannel {
         });
         if (existingSessionRecord) {
           await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+          await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget);
         } else {
-          // ensure 通过跨进程原子首写保证并发首投只能有一个 policy 胜出。
+          // target 必须与 session policy 在同一次跨进程原子首写中发布；并发首投只能有一个绑定胜出。
+          const createdWithTarget = await writeSessionMetaIfAbsent(sessionRecord.transcriptPath, {
+            userId: sessionRecord.userId,
+            username: sessionRecord.username,
+            userRole: sessionRecord.userRole,
+            ...(sessionRecord.tenantId ? { tenantId: sessionRecord.tenantId } : {}),
+            channel: sessionRecord.channel,
+            createdAt: sessionRecord.createdAt,
+            updatedAt: sessionRecord.updatedAt,
+            cwd: sessionRecord.cwd,
+            transcriptPath: sessionRecord.transcriptPath,
+            workspaceId: sessionRecord.workspaceId,
+            runtimeStatus: sessionRecord.status,
+            ...(sessionRecord.modelRef ? { model: sessionRecord.modelRef } : {}),
+            sandboxProfile: sessionRecord.sandboxProfile,
+            ...(sessionRecord.executionTarget ? { executionTarget: sessionRecord.executionTarget } : {}),
+            ...(sessionRecord.orgAgentId ? { orgAgentId: sessionRecord.orgAgentId } : {}),
+            agentTarget,
+            agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+            ...(sessionRecord.memoryPolicyVersion ? { memoryPolicyVersion: sessionRecord.memoryPolicyVersion } : {}),
+          });
           await enqueueRuntime.sessionCatalog.ensure(sessionRecord);
+          if (!createdWithTarget) {
+            await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget);
+          }
         }
         sessionPersisted = true;
         // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
@@ -3238,6 +3314,7 @@ export class WebChannel implements BaseChannel {
           target: {
             sessionId: enqueueSessionId,
             ...(sessionRecord.sandboxProfile ? { sandboxProfile: sessionRecord.sandboxProfile } : {}),
+            agentTarget,
             ...(orgAgentId ? { orgAgentId } : {}),
           },
           deliveryMode,
@@ -3636,7 +3713,7 @@ export class WebChannel implements BaseChannel {
     // 将 streamId 作为首条事件发送给前端（透传 client_msg_id 以便客户端精确绑定 bubble）
     send({ type: 'stream_id', streamId, client_msg_id: clientMsgId });
 
-    // 追踪当前会话 ID
+    // 追踪当前会话 ID 与 target 绑定路径
     let resolvedSessionId: string | undefined = sessionId;
 
     // SDK warmup 过滤：CLI 在 session_init 之前会为内置 Agent（Explore/Plan/Bash）
@@ -3649,6 +3726,9 @@ export class WebChannel implements BaseChannel {
       onSessionStart: async (sid, transcriptPath) => {
         resolvedSessionId = sid;
         resolvedTranscriptPath = transcriptPath;
+        const bindingPath = transcriptPath ?? await findTranscriptOrMetaPathBySessionId(sid);
+        if (!bindingPath) throw new Error('SESSION_AGENT_TARGET_META_MISSING');
+        await ensureSessionAgentTargetBinding(bindingPath, agentTarget);
         sessionInitialized = true;
         const streamEntry = this.activeStreams.get(streamId);
         if (streamEntry) streamEntry.sessionId = sid;
@@ -4153,6 +4233,11 @@ export class WebChannel implements BaseChannel {
       transcriptPath = existing?.transcriptPath ?? record.transcriptPath;
       try {
         await enqueueRuntime.sessionCatalog.upsert({ ...record, transcriptPath });
+        await ensureSessionAgentTargetBinding(transcriptPath, {
+          kind: 'org-agent',
+          tenantId: owner?.tenantId ?? orgAgent.tenantId,
+          orgAgentId: orgAgent.id,
+        });
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         chatLogger.warn(`[guardrail] session upsert failed: ${errorMessage}`);
@@ -4181,6 +4266,8 @@ export class WebChannel implements BaseChannel {
           cwd: existingMeta?.cwd ?? cwd,
           sandboxProfile,
           orgAgentId: orgAgent.id,
+          agentTarget: { kind: 'org-agent', tenantId: owner?.tenantId ?? orgAgent.tenantId, orgAgentId: orgAgent.id },
+          agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
           createdAt: existingMeta?.createdAt ?? now,
           updatedAt: now,
         });

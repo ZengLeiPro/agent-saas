@@ -31,8 +31,10 @@ import {
   fetchAgentProfile,
   getPlatform,
   getSortedGroupItems,
+  resolveNewSessionAgentTarget,
+  resolveTargetSessionAction,
 } from "@agent/shared";
-import type { ApiSessionListItem } from "@agent/shared";
+import type { AgentTarget, ApiSessionListItem } from "@agent/shared";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useChatAppState } from "../../../src/contexts/ChatAppStateContext";
 import { useAuth } from "../../../src/contexts/AuthContext";
@@ -65,6 +67,11 @@ function toSidebarSessions(
     owner: s.owner,
     cronJobId: s.cronJobId,
     cronJobName: s.cronJobName,
+    orgAgentId: s.orgAgentId,
+    orgAgentName: s.orgAgentName,
+    orgAgentAvailable: s.orgAgentAvailable,
+    agentTarget: s.agentTarget,
+    agentTargetUnavailableReason: s.agentTargetUnavailableReason,
   }));
 }
 
@@ -436,9 +443,42 @@ export default function SessionListScreen() {
 
   const handleNewSession = useCallback(() => {
     hapticLight();
-    chat.newSession();
-    router.push("/chat/new");
-  }, [chat.newSession, router]);
+    if (isAdminUser && chat.ownerFilter === null) {
+      Alert.alert('无法新建会话', '管理员全部用户视图不混入个人 Agent 选择器，请先选择具体用户。');
+      return;
+    }
+    if (!chat.agentTargetCatalog) {
+      Alert.alert('无法新建会话', chat.agentTargetCatalogReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
+      return;
+    }
+    const selection = resolveNewSessionAgentTarget({
+      catalog: chat.agentTargetCatalog,
+      activeTarget: chat.activeAgentTarget,
+    });
+    const launch = (target: AgentTarget) => {
+      const action = resolveTargetSessionAction({ target, current: null });
+      if (action.kind !== 'new-session') return;
+      chat.startAgentTargetSession(action.target);
+      router.push('/chat/new');
+    };
+    if (selection.kind === 'selected') {
+      launch(selection.target);
+      return;
+    }
+    if (selection.kind === 'unavailable') {
+      Alert.alert('暂无可用 Agent', selection.reason.message);
+      return;
+    }
+    const buttons = selection.options.flatMap(target => {
+      if (target.kind !== 'org-agent') return [];
+      const option = chat.agentTargetCatalog?.orgAgents.find(candidate => candidate.target.kind === 'org-agent' && candidate.target.orgAgentId === target.orgAgentId);
+      return [{ text: option?.presentation?.name ?? '企业专家', onPress: () => launch(target) }];
+    });
+    Alert.alert('选择企业专家', '当前组织未开放个人通用 Agent，请选择要开始对话的企业专家。', [
+      ...buttons,
+      { text: '取消', style: 'cancel' },
+    ]);
+  }, [chat, isAdminUser, router]);
 
   const handleDeleteSession = useCallback(
     (sessionId: string) => {

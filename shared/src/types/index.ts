@@ -1,4 +1,16 @@
 export type {
+  AgentTarget,
+  AgentTargetAvailability,
+  AgentTargetCatalog,
+  AgentTargetCatalogAdapterResult,
+  AgentTargetOption,
+  AgentTargetSelection,
+  AgentTargetUnavailableReason,
+  AgentTargetUnavailableReasonCode,
+} from "../lib/agentTarget";
+
+// Shared public message contracts.
+export type {
   MessageItem,
   MessageItemInput,
   MessageAttachmentDisplay,
@@ -258,6 +270,7 @@ export type {
   OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
+  OrgAgentMineResponse,
 } from "./orgAgent";
 
 export type {

@@ -73,7 +73,7 @@ export function MobileLayout(props: LayoutProps) {
     previewFilePath, previewFileOwner, openFilePreview, closeFilePreview,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
   const { user: authUser, isLoading: authLoading, authEnabled } = useAuth();
   const { isLarge: chatFontLarge, setIsLarge: setChatFontLarge } = useChatFontSize();
@@ -162,14 +162,14 @@ export function MobileLayout(props: LayoutProps) {
     message: string,
     scenario: WorkflowOnboardingContext["scenario"],
   ) => {
-    if (loading) return;
+    if (!personalAgentEnabled || loading) return;
     setActiveWorkflow({
       scenario,
     });
     newPersonalSession();
     setInput(message);
     closeDrawer();
-  }, [closeDrawer, loading, newPersonalSession, setInput]);
+  }, [closeDrawer, loading, newPersonalSession, personalAgentEnabled, setInput]);
 
   const handlePrefillWorkflow = useCallback((
     message: string,
@@ -384,7 +384,7 @@ export function MobileLayout(props: LayoutProps) {
                 {previewFilePath.split("/").pop() || previewFilePath}
               </span>
             ) : (
-              <div className="truncate text-base font-semibold">{activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
+              <div className="truncate text-base font-semibold">{activeAgentTargetLabel || activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent"}</div>
             )}
           </div>
           {subagentTranscript ? null : previewFilePath ? (
@@ -547,7 +547,7 @@ export function MobileLayout(props: LayoutProps) {
                       closeDrawer();
                     }}
                     onTryScenario={(prompt: string, scenario: ScenarioItem) => {
-                      if (loading) return;
+                      if (!personalAgentEnabled || loading) return;
                       setActiveWorkflow(null);
                       setLastTriedScenario(scenario);
                       newPersonalSession();
@@ -624,7 +624,7 @@ export function MobileLayout(props: LayoutProps) {
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
               readOnly={isTrashPreview || activeOrgAgentReadOnly || orgAgentIdentityLoading}
-              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载企业专家..." : (!isTrashPreview && activeOrgAgentReadOnly ? "该企业专家当前不可用，请联系组织管理员" : undefined)}
+              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载 Agent 目录..." : (!isTrashPreview && activeOrgAgentReadOnly ? activeAgentTargetUnavailableReason?.message ?? "该 Agent 当前不可用，请联系组织管理员" : undefined)}
               agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent

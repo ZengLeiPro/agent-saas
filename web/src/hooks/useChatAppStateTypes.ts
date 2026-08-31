@@ -1,6 +1,7 @@
 import type { ChangeEvent, ClipboardEvent, DragEvent, RefObject } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem, TokenUsage } from "@/lib/sessionsApi";
+import type { AgentTarget } from "@agent/shared";
 import type { AskUserAnswers, ContextUsageData, MemoryRecallData, NotificationData, PluginInstallData, SessionRuntimeStatus } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
 import type { ModelList } from "@/types/models";
@@ -67,8 +68,11 @@ export interface ChatAppState {
   setAdminSettingsSection: (section: string) => void;
   newSession: (groupId?: string | null) => void;
   selectSession: (id: string) => void;
-  /** 企业专家新草稿：不创建服务端会话，首条消息 WS payload 才带上 orgAgentId */
+  /** 任意 canonical target 新草稿：首条消息才创建服务端会话。 */
+  startAgentTargetSession: (target: AgentTarget, groupId?: string | null) => void;
+  /** N-1 UI compatibility wrapper. */
   startOrgAgentSession: (agentId: string, groupId?: string | null) => void;
+  pendingAgentTarget: AgentTarget | null;
   /** 草稿中的企业专家 id；缺省 null */
   pendingOrgAgentId: string | null;
   confirmDeleteSession: (id: string) => void;

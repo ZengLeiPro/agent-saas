@@ -1,4 +1,5 @@
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,6 +24,7 @@ const USER = {
   tenantId: DEFAULT_TENANT_ID,
 };
 
+// V1 new sessions carry an explicit tenant-scoped Agent target.
 const noopDispatch: AgentRunDispatch = async function* () {
   yield { type: 'done' };
 };
@@ -30,11 +32,11 @@ const noopDispatch: AgentRunDispatch = async function* () {
 function canonicalMessage(overrides: Record<string, unknown> = {}) {
   const normalized = normalizeChatSubmission({
     text: '请读取附件',
-    clientMsgId: 'm20-client-1',
-    target: {},
+    target: { agentTarget: { kind: 'personal', tenantId: USER.tenantId } },
     deliveryMode: 'queue',
     attachments: [],
     ...overrides,
+    clientMsgId: `${String(overrides.clientMsgId ?? 'm20-client-1')}-${randomUUID()}`,
   });
   if (!normalized.ok) throw new Error(normalized.issue.message);
   return toCanonicalChatSubmissionWireMessage(normalized.value, ['replaceable_drafts']);

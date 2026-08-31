@@ -29,7 +29,13 @@ import {
   withTrustedTranscript,
   type SessionListItem,
 } from "../data/transcripts/index.js";
-import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from "../data/transcripts/meta.js";
+import {
+  readSessionMeta,
+  writeSessionMeta,
+  updateSessionMeta,
+  resolveSessionAgentTarget,
+  type SessionMeta,
+} from "../data/transcripts/meta.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import { TTLCache } from "../utils/cache.js";
 import {
@@ -78,6 +84,11 @@ import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
+import {
+  AGENT_TARGET_BINDING_VERSION,
+  type AgentTarget,
+  type AgentTargetUnavailableReason,
+} from '@agent/shared';
 import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
 import type { ChatQueueSnapshot } from '@agent/shared';
 import { buildChatQueueSnapshot } from '../channels/web/chatQueueSnapshot.js';
@@ -685,19 +696,52 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   function orgAgentFields(
     meta: SessionMeta | null,
     reqUser: Request["user"] | undefined,
-  ): { orgAgentId?: string; orgAgentName?: string; orgAgentAvailable?: boolean } {
-    if (!meta?.orgAgentId) return {};
-    const record = options.orgAgentStore?.get(meta.orgAgentId);
+  ): {
+    orgAgentId?: string;
+    orgAgentName?: string;
+    orgAgentAvailable?: boolean;
+    agentTarget?: AgentTarget;
+    agentTargetBindingVersion?: number;
+    agentTargetUnavailableReason?: AgentTargetUnavailableReason;
+  } {
+    if (!meta) return {};
+    const resolved = resolveSessionAgentTarget(meta, meta.tenantId);
+    if (resolved.status === 'unproven') {
+      return {
+        orgAgentAvailable: false,
+        agentTargetUnavailableReason: {
+          code: 'legacy_binding_unproven',
+          message: '历史会话缺少可证明的 Agent 绑定，仅支持查看',
+          contactAdmin: true,
+        },
+      };
+    }
+    const target = resolved.target;
+    const base = {
+      agentTarget: target,
+      agentTargetBindingVersion: meta.agentTargetBindingVersion ?? AGENT_TARGET_BINDING_VERSION,
+    };
+    if (target.kind === 'personal') return base;
+
+    const record = options.orgAgentStore?.get(target.orgAgentId);
     const adminExempt = reqUser?.role === "admin"
       && (reqUser.tenantId === DEFAULT_TENANT_ID || record?.tenantId === reqUser.tenantId);
-    const available = !!record?.audience
-      && record.enabled
-      && record.tenantId === meta.tenantId
-      && (adminExempt || isAssignedToOrgAgent(record, meta.username));
+    let reason: AgentTargetUnavailableReason | undefined;
+    if (!record) {
+      reason = { code: 'org_agent_deleted', message: '该企业专家已删除，历史会话仅支持查看', contactAdmin: true };
+    } else if (record.tenantId !== target.tenantId || (meta.tenantId && record.tenantId !== meta.tenantId)) {
+      reason = { code: 'tenant_mismatch', message: '会话与企业专家的组织不一致，仅支持查看', contactAdmin: true };
+    } else if (!record.enabled) {
+      reason = { code: 'org_agent_disabled', message: '该企业专家已停用，历史会话仅支持查看', contactAdmin: true };
+    } else if (!record.audience || !(adminExempt || isAssignedToOrgAgent(record, meta.username))) {
+      reason = { code: 'org_agent_unassigned', message: '你已无权使用该企业专家，历史会话仅支持查看', contactAdmin: true };
+    }
     return {
-      orgAgentId: meta.orgAgentId,
-      ...(record && record.tenantId === meta.tenantId && record.name ? { orgAgentName: record.name } : {}),
-      orgAgentAvailable: available,
+      ...base,
+      orgAgentId: target.orgAgentId,
+      ...(record && record.tenantId === target.tenantId && record.name ? { orgAgentName: record.name } : {}),
+      orgAgentAvailable: !reason,
+      ...(reason ? { agentTargetUnavailableReason: reason } : {}),
     };
   }
 
@@ -773,6 +817,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         runtimeStatus: "idle",
         sandboxProfile: 'daily',
         orgAgentId,
+        agentTarget: { kind: 'org-agent', tenantId: user.tenantId, orgAgentId },
+        agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
       });
       sessionsListCache.clear();
       auditLog(req, "session_opened", `created orgAgentId=${orgAgentId} sessionId=${sessionId}`);

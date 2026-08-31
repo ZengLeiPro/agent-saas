@@ -41,6 +41,8 @@ interface ChatInputProps {
   onCancelRecording: () => void;
   sessionId?: string | null;
   tooShortTip?: boolean;
+  /** Structured target-unavailable message; disables every send/composer action. */
+  disabledReason?: string | null;
 }
 
 const INPUT_MIN_HEIGHT = 40;
@@ -50,7 +52,7 @@ export function ChatInput({
   input, setInput, loading, onSend, onStop, stopping,
   uploadedFiles, uploading, uploadError, onDismissUploadError, onPickFile, onPickImage, onTakePhoto, onRemoveFile,
   isRecording, recordingDuration, onStartRecording, onStopRecording, onCancelRecording,
-  sessionId, tooShortTip,
+  sessionId, tooShortTip, disabledReason,
 }: ChatInputProps) {
   const colors = useColors();
   const { isDark } = useTheme();
@@ -63,6 +65,7 @@ export function ChatInput({
   const showStop = loading && (!hasContent || stopping);
 
   const handleSend = () => {
+    if (disabledReason) return;
     if (loading && !hasContent) {
       if (!stopping) onStop();
       return;
@@ -206,6 +209,12 @@ export function ChatInput({
       fontVariant: ['tabular-nums'],
       flex: 1,
     },
+    disabledReason: {
+      ...typography.caption,
+      color: colors.destructive,
+      paddingHorizontal: 14,
+      paddingTop: 8,
+    },
     cancelText: {
       ...typography.caption,
       color: colors.destructive,
@@ -288,6 +297,7 @@ export function ChatInput({
 
   return (
     <View style={styles.wrapper}>
+      {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}
       {/* Attachments — independent floating card above the row */}
       {hasAttachments && (
         <View style={styles.attachContainer}>
@@ -308,7 +318,7 @@ export function ChatInput({
           ref={attachBtnRef}
           style={styles.circleBtn}
           onPress={showAttachOptions}
-          disabled={isRecording}
+          disabled={isRecording || !!disabledReason}
           activeOpacity={0.7}
         >
           <Plus
@@ -333,10 +343,11 @@ export function ChatInput({
           <TextInput
             ref={inputRef}
             style={styles.inputPill}
-            placeholder="输入消息..."
+            placeholder={disabledReason || "输入消息..."}
             placeholderTextColor={colors.mutedForeground}
             value={input}
             onChangeText={setInput}
+            editable={!disabledReason}
             multiline
             submitBehavior="submit"
             returnKeyType="send"
@@ -346,7 +357,9 @@ export function ChatInput({
         )}
 
         {/* Right: mic / send / stop */}
-        {renderRightButton()}
+        <View pointerEvents={disabledReason ? 'none' : 'auto'} style={disabledReason ? { opacity: 0.4 } : undefined}>
+          {renderRightButton()}
+        </View>
       </View>
 
       {/* Too short tip */}

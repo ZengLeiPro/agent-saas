@@ -15,7 +15,12 @@ import { SubagentTranscriptProvider, type SubagentTranscriptTarget } from "@/con
 import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { DeleteSessionDialog } from "@/components/chat/DeleteSessionDialog";
 import { OrgAgentPickerDialog } from "@/components/OrgAgentPickerDialog";
-import { resolveNewSessionTarget } from "@/lib/orgAgentSessionRouting";
+import {
+  resolveNewSessionAgentTarget,
+  resolveTargetSessionAction,
+  type AgentTarget,
+  type AgentTargetUnavailableReason,
+} from "@agent/shared";
 
 import { DesktopLayout } from "@/layouts/DesktopLayout";
 import { MobileLayout } from "@/layouts/MobileLayout";
@@ -49,6 +54,8 @@ function toSidebarSessions(
     orgAgentId: s.orgAgentId,
     orgAgentName: s.orgAgentName,
     orgAgentAvailable: s.orgAgentAvailable,
+    agentTarget: s.agentTarget,
+    agentTargetUnavailableReason: s.agentTargetUnavailableReason,
   }));
 }
 
@@ -90,7 +97,7 @@ function App() {
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession, pendingOrgAgentId,
+    startOrgAgentSession, startAgentTargetSession, pendingAgentTarget,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
 
   const [subagentTranscript, setSubagentTranscript] = useState<SubagentTranscriptTarget | null>(null);
@@ -129,63 +136,82 @@ function App() {
     closeTranscript: closeSubagentTranscript,
   }), [closeSubagentTranscript, openSubagentTranscript, subagentTranscript]);
 
-  // 专职 Agent（2026-07 唯恩批次）：当前会话绑定态 = 列表项 orgAgentId 或挂起态
-  const { agents: myOrgAgents, loading: orgAgentsLoading } = useOrgAgents();
-  const personalAgentEnabled = isAdmin || authUser?.tenantFeatures?.personalAgentEnabled !== false;
+  // M20-06 selectors consume only the versioned tenant-scoped target catalog (never a legacy array).
+  const { agents: myOrgAgents, catalog: agentTargetCatalog, compatibilityReason, loading: orgAgentsLoading } = useOrgAgents();
+  const personalAgentEnabled = agentTargetCatalog?.personal.availability.status === 'available';
   const currentSessionItem = useMemo(
     () => sessionId ? sessions.find((s) => s.sessionId === sessionId) ?? null : null,
     [sessionId, sessions],
   );
+  const activeAgentTarget = currentSessionItem?.agentTarget ?? pendingAgentTarget;
   const activeOrgAgent = useMemo(() => {
-    const orgAgentId = currentSessionItem?.orgAgentId ?? pendingOrgAgentId ?? null;
-    if (!orgAgentId) return null;
-    const mine = myOrgAgents.find((agent) => agent.id === orgAgentId);
+    if (activeAgentTarget?.kind !== 'org-agent') return null;
+    const mine = myOrgAgents.find((agent) => agent.id === activeAgentTarget.orgAgentId);
     return {
-      id: orgAgentId,
+      id: activeAgentTarget.orgAgentId,
       name: mine?.name ?? currentSessionItem?.orgAgentName ?? "企业专家",
       ...(mine?.avatar ? { avatar: mine.avatar } : {}),
       description: mine?.description ?? "这位企业专家由组织统一配置。",
       starterPrompts: mine?.starterPrompts ?? [],
       skillCount: mine?.skillCount ?? 0,
     };
-  }, [currentSessionItem, pendingOrgAgentId, myOrgAgents]);
-  const activeOrgAgentReadOnly = currentSessionItem?.orgAgentId !== undefined
-    && currentSessionItem.orgAgentAvailable === false;
-  const orgAgentIdentityLoading = !personalAgentEnabled
-    && !activeOrgAgent
-    && (orgAgentsLoading || isLoadingSessions);
+  }, [activeAgentTarget, currentSessionItem?.orgAgentName, myOrgAgents]);
+  const unprovenSessionReason: AgentTargetUnavailableReason | undefined = currentSessionItem && !currentSessionItem.agentTarget && !pendingAgentTarget
+    ? { code: 'legacy_binding_unproven', message: '该历史会话缺少可证明的 Agent 目标，仅支持查看', contactAdmin: true }
+    : undefined;
+  const activeAgentTargetUnavailableReason = currentSessionItem?.agentTargetUnavailableReason ?? unprovenSessionReason;
+  const activeAgentTargetLabel = activeAgentTarget?.kind === 'personal'
+    ? '个人 Agent'
+    : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家'
+      : currentSessionItem ? '绑定不可验证' : undefined;
+  const activeOrgAgentReadOnly = Boolean(activeAgentTargetUnavailableReason);
+  const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
+  const adminOwnerView = Boolean(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
   const pendingPickerGroupIdRef = useRef<string | null>(null);
-  const newSession = useCallback((groupId: string | null = null) => {
-    const target = resolveNewSessionTarget({
-      activeOrgAgentId: activeOrgAgent?.id,
-      availableOrgAgentIds: myOrgAgents.map((agent) => agent.id),
-      personalAgentEnabled,
+  const launchTarget = useCallback((target: AgentTarget, groupId: string | null = null) => {
+    const action = resolveTargetSessionAction({
+      target,
+      current: adminOwnerView || !sessionId ? null : { sessionId, target: currentSessionItem?.agentTarget },
     });
-    if (target.kind === "personal") {
-      newPersonalSession(groupId);
-    } else if (target.kind === "org-agent") {
-      startOrgAgentSession(target.agentId, groupId);
-    } else {
+    if (action.kind === 'reuse') selectSession(action.sessionId);
+    else startAgentTargetSession(action.target, groupId);
+  }, [adminOwnerView, currentSessionItem?.agentTarget, selectSession, sessionId, startAgentTargetSession]);
+  const newSession = useCallback((groupId: string | null = null) => {
+    if (!agentTargetCatalog) {
+      window.alert(compatibilityReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
+      return;
+    }
+    const selection = resolveNewSessionAgentTarget({
+      catalog: agentTargetCatalog,
+      activeTarget: adminOwnerView ? null : activeAgentTarget,
+    });
+    if (selection.kind === 'selected') {
+      // A new-conversation action is intentionally forced to a fresh session.
+      startAgentTargetSession(selection.target, groupId);
+    } else if (selection.kind === 'picker') {
       pendingPickerGroupIdRef.current = groupId;
       setOrgAgentPickerOpen(true);
+    } else {
+      window.alert(selection.reason.message);
     }
-  }, [activeOrgAgent?.id, myOrgAgents, newPersonalSession, personalAgentEnabled, startOrgAgentSession]);
+  }, [activeAgentTarget, adminOwnerView, agentTargetCatalog, compatibilityReason, startAgentTargetSession]);
 
   const handleOrgAgentPickerSelect = useCallback((agentId: string) => {
     setOrgAgentPickerOpen(false);
     const groupId = pendingPickerGroupIdRef.current;
     pendingPickerGroupIdRef.current = null;
-    startOrgAgentSession(agentId, groupId);
-  }, [startOrgAgentSession]);
+    if (!agentTargetCatalog) return;
+    const target = agentTargetCatalog.selectableTargets.find(candidate => candidate.kind === 'org-agent' && candidate.orgAgentId === agentId);
+    if (target) launchTarget(target, groupId);
+  }, [agentTargetCatalog, launchTarget]);
 
-  // 关闭个人 Agent 且只有一位企业专家：空首页直接进入专家草稿，不创建服务端会话。
   useEffect(() => {
-    if (orgAgentsLoading || personalAgentEnabled || myOrgAgents.length !== 1) return;
+    if (orgAgentsLoading || !agentTargetCatalog || personalAgentEnabled || agentTargetCatalog.selectableTargets.length !== 1) return;
     if (activeTab !== "chat" || settingsOpen || adminSettings) return;
-    if (sessionId || pendingOrgAgentId || messages.length > 0) return;
-    startOrgAgentSession(myOrgAgents[0].id);
-  }, [activeTab, adminSettings, messages.length, myOrgAgents, orgAgentsLoading, pendingOrgAgentId, personalAgentEnabled, sessionId, settingsOpen, startOrgAgentSession]);
+    if (sessionId || pendingAgentTarget || messages.length > 0) return;
+    startAgentTargetSession(agentTargetCatalog.selectableTargets[0]!);
+  }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, personalAgentEnabled, sessionId, settingsOpen, startAgentTargetSession]);
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
@@ -255,7 +281,7 @@ function App() {
     previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   };
 
   // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；

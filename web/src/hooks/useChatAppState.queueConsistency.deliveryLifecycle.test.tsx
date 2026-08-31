@@ -12,7 +12,7 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     forceReconnect: vi.fn(async () => {}),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
-    pendingOrgAgentIdRef: { current: null as string | null },
+    pendingAgentTargetRef: { current: { kind: 'personal' as const, tenantId: 'tenant-a' } },
     pendingNewSessionGroupIdRef: { current: null as string | null },
     assignPendingGroup: vi.fn(),
     currentFiles: [] as UploadedFile[],
@@ -102,10 +102,11 @@ vi.mock("@/lib/authFetch", () => ({
 }));
 vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
   usePendingNewSessionTarget: () => ({
-    pendingOrgAgentIdRef: harness.pendingOrgAgentIdRef,
+    pendingAgentTargetRef: harness.pendingAgentTargetRef,
     pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingAgentTarget: harness.pendingAgentTargetRef.current,
     pendingOrgAgentId: null,
-    setPendingOrgAgentId: vi.fn(),
+    setPendingAgentTarget: vi.fn(),
     clearPendingOrgAgent: vi.fn(),
     assignPendingGroup: harness.assignPendingGroup,
   }),
@@ -162,7 +163,7 @@ beforeEach(() => {
   harness.sends.mockClear();
   harness.forceReconnect.mockReset().mockResolvedValue(undefined);
   harness.assignPendingGroup.mockClear();
-  harness.pendingOrgAgentIdRef.current = null;
+  harness.pendingAgentTargetRef.current = { kind: 'personal', tenantId: 'tenant-a' };
   harness.pendingNewSessionGroupIdRef.current = null;
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
@@ -196,7 +197,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
     await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()[0]).toMatchObject({
-      submission: { text: "compile this", target: { sandboxProfile: "coding" } },
+      submission: { text: "compile this", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
     });
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {

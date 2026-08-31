@@ -11,6 +11,7 @@ import { getTranscriptPath } from '../data/transcripts/store.js';
 import { writeSessionMeta, type SessionMeta } from '../data/transcripts/meta.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../runtime/fileEventStore.js';
 import { resolveUserCwd, type WorkspaceUser } from '../workspace/resolver.js';
+import { OrgAgentStore } from '../data/orgAgents/store.js';
 
 const TEST_USER = {
   id: 'user-1',
@@ -36,6 +37,7 @@ function stopServer(server: Server): Promise<void> {
 async function startServer(
   agentCwd: string,
   sessionProjectionStore?: SessionsRouterOptions['sessionProjectionStore'],
+  orgAgentStore?: OrgAgentStore,
 ): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
@@ -52,6 +54,7 @@ async function startServer(
     agentCwd,
     runtimeEventStoreFor: (transcriptPath) => new FileEventStore(getRuntimeEventLogPath(transcriptPath), TEST_USER.tenantId),
     sessionProjectionStore,
+    orgAgentStore,
   }));
 
   return new Promise((resolve) => {
@@ -187,6 +190,53 @@ describe('meta-only session list merging and projection', () => {
       expect(response.sessions.map((session) => session.sessionId)).toContain(normal.sessionId);
       expect(response.sessions.map((session) => session.sessionId)).not.toContain(hidden.sessionId);
       expect(response.sessions.map((session) => session.sessionId)).not.toContain(legacyHidden.sessionId);
+    } finally {
+      await stopServer(server);
+    }
+  });
+
+  it('撤权/删除的 org target 历史仍出现在列表，并输出结构化只读原因', async () => {
+    const orgAgentStore = new OrgAgentStore(join(agentCwd, 'org-agents.json'));
+    const revoked = await orgAgentStore.create({
+      tenantId: TEST_USER.tenantId,
+      name: '已撤权专家',
+      instructions: 'internal',
+      allowedSkills: [],
+      audience: { exposure: 'allow_users', usernames: ['someone-else'] },
+      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: 'x', strictness: 'strict' },
+      enabled: true,
+    }, 'admin');
+    const revokedSession = await writeRuntimeSession({
+      metaPatch: {
+        orgAgentId: revoked.id,
+        agentTarget: { kind: 'org-agent', tenantId: TEST_USER.tenantId, orgAgentId: revoked.id },
+        agentTargetBindingVersion: 1,
+      },
+    });
+    const deletedSession = await writeRuntimeSession({
+      metaPatch: {
+        orgAgentId: 'oa-deleted',
+        agentTarget: { kind: 'org-agent', tenantId: TEST_USER.tenantId, orgAgentId: 'oa-deleted' },
+        agentTargetBindingVersion: 1,
+      },
+    });
+
+    const { server, baseUrl } = await startServer(agentCwd, undefined, orgAgentStore);
+    try {
+      const response = await listSessions(baseUrl, '?fresh=1');
+      const revokedItem = response.sessions.find((item) => item.sessionId === revokedSession.sessionId) as any;
+      const deletedItem = response.sessions.find((item) => item.sessionId === deletedSession.sessionId) as any;
+      expect(revokedItem).toMatchObject({
+        orgAgentAvailable: false,
+        agentTarget: { kind: 'org-agent', tenantId: TEST_USER.tenantId, orgAgentId: revoked.id },
+        agentTargetBindingVersion: 1,
+        agentTargetUnavailableReason: { code: 'org_agent_unassigned', contactAdmin: true },
+      });
+      expect(deletedItem).toMatchObject({
+        orgAgentAvailable: false,
+        agentTarget: { kind: 'org-agent', tenantId: TEST_USER.tenantId, orgAgentId: 'oa-deleted' },
+        agentTargetUnavailableReason: { code: 'org_agent_deleted', contactAdmin: true },
+      });
     } finally {
       await stopServer(server);
     }

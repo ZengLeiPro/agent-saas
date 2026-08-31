@@ -1,6 +1,28 @@
 export * from './types/correlation';
 
 export {
+  AGENT_TARGET_BINDING_VERSION,
+  NO_AVAILABLE_AGENT_TARGET,
+  adaptAgentTargetCatalogResponse,
+  agentTargetAuditFields,
+  isAgentTargetAvailable,
+  parseAgentTarget,
+  resolveNewSessionAgentTarget,
+  resolveTargetSessionAction,
+  sameAgentTarget,
+} from './lib/agentTarget';
+export type {
+  AgentTarget,
+  AgentTargetAvailability,
+  AgentTargetCatalog,
+  AgentTargetCatalogAdapterResult,
+  AgentTargetOption,
+  AgentTargetSelection,
+  AgentTargetUnavailableReason,
+  AgentTargetUnavailableReasonCode,
+} from './lib/agentTarget';
+
+export {
   createSessionMetadataState,
   reduceSessionMetadata,
   sessionMetadataEventFromWs,
@@ -130,6 +152,7 @@ export type {
   OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
+  OrgAgentMineResponse,
   AgentDwsAccount,
   AgentDwsAccountStatus,
   AgentDwsRuntimeStatus,

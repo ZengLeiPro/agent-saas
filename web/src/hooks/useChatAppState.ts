@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { MessageItem, UploadedFile } from "@/components/types";
 import type { ApiSessionListItem } from "@/lib/sessionsApi";
-import type { AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
+import type { AgentTarget, AskUserAnswers, MemoryRecallData, NotificationData, PluginInstallData, RuntimeFailureKind, RuntimeRecoveryAction, SessionRuntimeStatus } from "@agent/shared";
 import type { ModelList } from "@/types/models";
 import type { AppTab } from "@/types/sidebar";
 import type { CanonicalSettingsSectionId } from "@/types/settings";
@@ -986,7 +986,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   // ref：sendChatViaWs 首条消息（无 sessionId）时带上 orgAgentId，收到 'session' 事件
   //（会话真实建立、服务端已写 meta）后清除——ACK 只代表入队，rejected 后重发仍要带上（2026-07 审查 F9）；
   // state：新会话空白态的顶部 banner 展示（会话入列表带 orgAgentId 后由列表接管）。
-  const { pendingOrgAgentIdRef, pendingNewSessionGroupIdRef, pendingOrgAgentId, setPendingOrgAgentId, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
+  const { pendingAgentTargetRef, pendingNewSessionGroupIdRef, pendingAgentTarget, pendingOrgAgentId, setPendingAgentTarget, clearPendingOrgAgent, assignPendingGroup } = usePendingNewSessionTarget();
   const authOwnerKey = user ? `${user.tenantId}:${user.id}` : "anonymous";
   const selectSessionWithUrl = useCallback((id: string) => {
     setTrashPreviewSessionId(null);
@@ -1005,26 +1005,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, dispatchConnection, loadSessionRuntimeToRef, markSessionRead, mutateQueuedInterjections, session.selectSession]);
-  const newSessionWithUrl = useCallback((groupId: string | null = null) => {
-    setTrashPreviewSessionId(null); startNewSandboxProfile();
-    clearPendingOrgAgent(); // 普通新会话 = 个人 Agent 路径
-    pendingNewSessionClientMsgIdRef.current = null;
-    pendingNewSessionGroupIdRef.current = groupId;
-    immediateSessionIdRef.current = null;
-    queuedSessionIdRef.current = null;
-    mutateQueuedInterjections((prev) => prev);
-    wsLatestSessionIdRef.current = { value: null };
-    session.newSession();
-    pushUrl('chat', null);
-  }, [clearPendingOrgAgent, mutateQueuedInterjections, session.newSession, startNewSandboxProfile]);
-
-  /**
-   * 企业专家新草稿：只切换前端会话目标，不制造 meta-only 空会话。
-   * 首条消息沿用下方 sendChatViaWs 的 orgAgentId payload，由服务端一次性创建并绑定。
-   */
-  const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
-    const normalizedAgentId = agentId.trim();
-    if (!normalizedAgentId || !user || loadingRef.current) return;
+  const startAgentTargetSession = useCallback((target: AgentTarget, groupId: string | null = null): void => {
+    if (!user || target.tenantId !== user.tenantId || loadingRef.current) return;
     setTrashPreviewSessionId(null); startNewSandboxProfile();
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;
@@ -1033,11 +1015,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     session.newSession();
     pendingNewSessionClientMsgIdRef.current = null;
     pendingNewSessionGroupIdRef.current = groupId;
-    pendingOrgAgentIdRef.current = normalizedAgentId;
-    setPendingOrgAgentId(normalizedAgentId);
+    setPendingAgentTarget(target);
     pushUrl('chat', null);
     if (activeTabRef.current !== 'chat') setActiveTab('chat');
-  }, [mutateQueuedInterjections, session.newSession, setActiveTab, startNewSandboxProfile, user]);
+  }, [mutateQueuedInterjections, session.newSession, setActiveTab, setPendingAgentTarget, startNewSandboxProfile, user]);
+
+  const newSessionWithUrl = useCallback((groupId: string | null = null) => {
+    if (!user) return;
+    startAgentTargetSession({ kind: 'personal', tenantId: user.tenantId }, groupId);
+  }, [startAgentTargetSession, user]);
+
+  const startOrgAgentSession = useCallback((agentId: string, groupId: string | null = null): void => {
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedAgentId || !user) return;
+    startAgentTargetSession({ kind: 'org-agent', tenantId: user.tenantId, orgAgentId: normalizedAgentId }, groupId);
+  }, [startAgentTargetSession, user]);
 
   useEffect(() => {
     clearPendingOrgAgent();
@@ -2039,7 +2031,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         trackedAiReplyStreamsRef.current.add((data as any).sessionId);
         // 专职 Agent 挂起 ref 此时才清（2026-07 审查 F9）：会话真实建立、
         // 服务端已写 meta 绑定 orgAgentId，后续 resume 以 meta 为准
-        pendingOrgAgentIdRef.current = null;
+        // Keep the canonical target until the session list projection carries the persisted binding.
         pendingNewSessionClientMsgIdRef.current = null;
         assignPendingGroup(authoritativeSessionId);
       }
@@ -2381,13 +2373,28 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     //（不依赖后端 busy 广播是否到达；新会话的 id 在 'session' 事件确定后再 add）
     if (activeSessionId) trackedAiReplyStreamsRef.current.add(activeSessionId);
     // 生成或复用 clientMsgId（vote 重试或 voice 二次调用时复用）
+    const agentTarget = activeSessionId
+      ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget
+        ?? pendingAgentTargetRef.current
+      : pendingAgentTargetRef.current;
+    if (!agentTarget) {
+      fileUpload.reportUploadError('该会话缺少可证明的 Agent 目标，仅支持查看，请联系组织管理员。');
+      return;
+    }
+    const unavailableReason = activeSessionId
+      ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTargetUnavailableReason
+      : undefined;
+    if (unavailableReason) {
+      fileUpload.reportUploadError(`${unavailableReason.message}${unavailableReason.contactAdmin ? ' 请联系组织管理员。' : ''}`);
+      return;
+    }
     const clientMsgId = existingClientMsgId || (crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const normalized = buildWebChatSubmission({
       text: inputText,
       clientMsgId,
       target: {
         ...(activeSessionId ? { sessionId: activeSessionId } : { sandboxProfile: sandboxProfileRef.current }),
-        ...(pendingOrgAgentIdRef.current && !activeSessionId ? { orgAgentId: pendingOrgAgentIdRef.current } : {}),
+        agentTarget,
       },
       deliveryMode,
       model: selectedModelRef.current ?? undefined,
@@ -2538,10 +2545,17 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     resetWatchdog();
     dispatchConnection('connect');
 
+    const agentTarget = sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget;
+    if (!agentTarget) {
+      fileUpload.reportUploadError('该会话缺少可证明的 Agent 目标，仅支持查看，请联系组织管理员。');
+      wsAttachedRef.current = false;
+      setLoading(false);
+      return;
+    }
     const compactSubmission = buildWebChatSubmission({
       text: '/compact',
       clientMsgId: crypto.randomUUID?.() || `c-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      target: { sessionId: activeSessionId },
+      target: { sessionId: activeSessionId, agentTarget },
       deliveryMode: 'queue',
       attachments: [],
     });
@@ -3032,6 +3046,8 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     newSession: newSessionWithUrl,
     selectSession: selectSessionWithUrl,
     startOrgAgentSession,
+    startAgentTargetSession,
+    pendingAgentTarget,
     pendingOrgAgentId,
     confirmDeleteSession: session.confirmDeleteSession,
     confirmDeleteSessions: session.confirmDeleteSessions,

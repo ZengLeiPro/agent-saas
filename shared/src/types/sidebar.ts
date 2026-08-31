@@ -1,4 +1,5 @@
 import type { AgentProfile } from './agent';
+import type { AgentTarget, AgentTargetUnavailableReason } from '../lib/agentTarget';
 
 export type SessionRuntimeStatus =
   | 'busy'
@@ -45,6 +46,9 @@ export interface ChatSessionIndexItem {
   orgAgentName?: string;
   /** 当前登录用户是否仍可续聊该专职 Agent 会话 */
   orgAgentAvailable?: boolean;
+  /** M20-06 persisted target; absence is not equivalent to personal. */
+  agentTarget?: AgentTarget;
+  agentTargetUnavailableReason?: AgentTargetUnavailableReason;
 }
 
 export type AppTab = "chat" | "capabilities" | "scenarios" | "cron" | "tenants" | "tenant-admin" | "platform-admin" | "files" | "profile" | "skills" | "usage" | "mcp" | "models" | "settings" | "trash";

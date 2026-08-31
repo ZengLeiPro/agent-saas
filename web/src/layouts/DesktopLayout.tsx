@@ -86,7 +86,7 @@ export function DesktopLayout(props: LayoutProps) {
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     agentProfile, sessionParticipants,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   } = props;
 
   const { user: authUser, updatePreferences, isLoading: authLoading, authEnabled } = useAuth(); const [organizationSettingsTargetId, setOrganizationSettingsTargetId] = useState<string | null>();
@@ -186,8 +186,10 @@ export function DesktopLayout(props: LayoutProps) {
     if (activeTab === "models") return "模型管理";
     if (activeTab === "trash") return "回收站";
     if (isTrashPreview) return "回收站预览";
-    return sidebarSessions.find(s => s.id === sessionId)?.title || activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent";
-  }, [activeTab, isTrashPreview, sidebarSessions, sessionId, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
+    const sessionTitle = sidebarSessions.find(s => s.id === sessionId)?.title;
+    if (sessionTitle && activeAgentTargetLabel) return `${sessionTitle} · ${activeAgentTargetLabel}`;
+    return sessionTitle || activeAgentTargetLabel || activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent";
+  }, [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
 
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);
@@ -593,7 +595,7 @@ export function DesktopLayout(props: LayoutProps) {
               onAutoApproveRunShellChange={setAutoApproveRunShell}
               onSendVoice={(wavBlob, durationMs) => sendVoiceMessage(wavBlob, durationMs)}
               readOnly={isTrashPreview || activeOrgAgentReadOnly || orgAgentIdentityLoading}
-              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载企业专家..." : (!isTrashPreview && activeOrgAgentReadOnly ? "该企业专家当前不可用，请联系组织管理员" : undefined)}
+              readOnlyInputPlaceholder={!isTrashPreview && orgAgentIdentityLoading ? "正在加载 Agent 目录..." : (!isTrashPreview && activeOrgAgentReadOnly ? activeAgentTargetUnavailableReason?.message ?? "该 Agent 当前不可用，请联系组织管理员" : undefined)}
               agentProfile={orgAgentIdentityLoading ? null : agentProfile}
               sessionParticipants={sessionParticipants}
               emptySlot={activeOrgAgent ? expertEmptySlot : (orgAgentIdentityLoading ? identityLoadingEmptySlot : (personalAgentEnabled ? chatEmptySlot : unavailableEmptySlot))}

@@ -13,6 +13,7 @@ import {
   toCanonicalChatSubmissionWireMessage,
 } from '../../lib/chatSubmission';
 import { getPlatform } from '../../platform/context';
+import type { AgentTarget } from '../../lib/agentTarget';
 
 export interface SendChatOptions {
   inputText: string;
@@ -28,6 +29,8 @@ export interface SendChatOptions {
   showBubble?: boolean;
   selectedModel?: string | null;
   autoApproveRunShell?: boolean;
+  /** Required for a new session; existing sessions use their persisted list projection. */
+  agentTarget?: AgentTarget;
 }
 
 /**
@@ -48,10 +51,14 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
   const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
   const clientMsgId = cryptoApi?.randomUUID?.()
     ?? `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const agentTarget = activeSessionId
+    ? state.sessions.find(session => session.sessionId === activeSessionId)?.agentTarget
+    : opts.agentTarget;
+  if (!agentTarget) return false;
   const normalized = normalizeChatSubmission({
     text: inputText,
     clientMsgId,
-    target: activeSessionId ? { sessionId: activeSessionId } : {},
+    target: { ...(activeSessionId ? { sessionId: activeSessionId } : {}), agentTarget },
     deliveryMode: 'queue',
     model: selectedModel ?? undefined,
     attachments,

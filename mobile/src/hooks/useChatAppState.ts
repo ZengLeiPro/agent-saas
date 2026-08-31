@@ -16,6 +16,10 @@ import type {
   ChatQueueSnapshot,
   ChatQueueItem,
   CanonicalVoiceSubmission,
+  AgentTarget,
+  AgentTargetCatalog,
+  AgentTargetUnavailableReason,
+  OrgAgentSummary,
 } from "@agent/shared";
 import {
   wsClient,
@@ -31,6 +35,8 @@ import {
   reduceChatClientState,
   selectChatClientQueueItems,
   scopedSensitiveKey,
+  adaptAgentTargetCatalogResponse,
+  resolveNewSessionAgentTarget,
 } from "@agent/shared";
 import type {
   ConnectionState,
@@ -95,7 +101,13 @@ export interface ChatAppState {
   // Setters & actions
   setInput: (value: string) => void;
   newSession: () => void;
+  startAgentTargetSession: (target: AgentTarget) => void;
   selectSession: (id: string) => void;
+  agentTargetCatalog: AgentTargetCatalog<OrgAgentSummary> | null;
+  agentTargetCatalogReason: AgentTargetUnavailableReason | null;
+  agentTargetCatalogLoading: boolean;
+  activeAgentTarget: AgentTarget | null;
+  activeAgentTargetUnavailableReason: AgentTargetUnavailableReason | null;
   sendMessage: () => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
@@ -140,7 +152,7 @@ export interface ChatAppState {
     | undefined
   >;
   refreshCurrentSession: () => void;
-  // Agent profile
+  // Agent profile and target catalog
   agentProfile: AgentProfile | null;
   // Session participants (admin 查看他人会话时的身份信息)
   sessionParticipants: SessionParticipants | null;
@@ -153,6 +165,53 @@ export function useChatAppStateCore(): ChatAppState {
   const { user, identity } = useAuth();
   const localAppLock = useLocalAppLock();
   const isAdmin = user?.role === "admin";
+  const [agentTargetCatalog, setAgentTargetCatalog] = useState<AgentTargetCatalog<OrgAgentSummary> | null>(null);
+  const [agentTargetCatalogReason, setAgentTargetCatalogReason] = useState<AgentTargetUnavailableReason | null>(null);
+  const [agentTargetCatalogLoading, setAgentTargetCatalogLoading] = useState(true);
+  const agentTargetCatalogOwnerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
+  const agentTargetCatalogOwnerKeyRef = useRef(agentTargetCatalogOwnerKey);
+  agentTargetCatalogOwnerKeyRef.current = agentTargetCatalogOwnerKey;
+  const [pendingAgentTarget, setPendingAgentTargetState] = useState<AgentTarget | null>(null);
+  const pendingAgentTargetRef = useRef<AgentTarget | null>(null);
+  const setPendingAgentTarget = useCallback((target: AgentTarget | null) => {
+    pendingAgentTargetRef.current = target;
+    setPendingAgentTargetState(target);
+  }, []);
+
+  const refreshAgentTargetCatalog = useCallback(async () => {
+    const requestOwnerKey = agentTargetCatalogOwnerKey;
+    if (!user) {
+      setAgentTargetCatalog(null);
+      setAgentTargetCatalogReason(null);
+      setAgentTargetCatalogLoading(false);
+      return;
+    }
+    setAgentTargetCatalogLoading(true);
+    try {
+      const response = await authFetch('/api/org-agents/mine');
+      if (!response.ok) throw new Error('target_catalog_unavailable');
+      const adapted = adaptAgentTargetCatalogResponse<OrgAgentSummary>(await response.json(), user.tenantId);
+      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
+      if (adapted.kind === 'catalog') {
+        setAgentTargetCatalog(adapted.catalog);
+        setAgentTargetCatalogReason(null);
+      } else {
+        setAgentTargetCatalog(null);
+        setAgentTargetCatalogReason(adapted.reason);
+      }
+    } catch {
+      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
+      setAgentTargetCatalog(null);
+      setAgentTargetCatalogReason({ code: 'target_catalog_unavailable', message: 'Agent 目录加载失败，暂时无法发送。', contactAdmin: true });
+    } finally {
+      if (agentTargetCatalogOwnerKeyRef.current === requestOwnerKey) setAgentTargetCatalogLoading(false);
+    }
+  }, [agentTargetCatalogOwnerKey, user]);
+
+  useEffect(() => {
+    setPendingAgentTarget(null);
+    void refreshAgentTargetCatalog();
+  }, [refreshAgentTargetCatalog, setPendingAgentTarget]);
 
   // M20-04: drafts are account + tenant + generation scoped.
   const draftStorageKey = scopedSensitiveKey(INPUT_DRAFT_KEY, identity);
@@ -322,7 +381,7 @@ export function useChatAppStateCore(): ChatAppState {
     }
   }, [isAdmin, user?.username]);
 
-  // ---- Agent Profile ----
+  // ---- Agent Profile / owner projection ----
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   useEffect(() => {
     if (!user) {
@@ -336,7 +395,7 @@ export function useChatAppStateCore(): ChatAppState {
       .catch(() => setAgentProfile(null));
   }, [user, ownerFilter]);
 
-  // ---- Session Participants (admin 查看他人会话时的身份信息) ----
+  // ---- Session participants（admin 查看他人会话时的身份信息）----
   const [sessionParticipants, setSessionParticipants] =
     useState<SessionParticipants | null>(null);
 
@@ -600,6 +659,15 @@ export function useChatAppStateCore(): ChatAppState {
   });
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const currentSessionItem = session.sessionId
+    ? session.sessions.find(item => item.sessionId === session.sessionId)
+    : undefined;
+  const activeAgentTarget = currentSessionItem?.agentTarget ?? pendingAgentTarget;
+  const activeAgentTargetUnavailableReason: AgentTargetUnavailableReason | null = currentSessionItem
+    ? currentSessionItem.agentTargetUnavailableReason ?? (!currentSessionItem.agentTarget && !pendingAgentTarget
+      ? { code: 'legacy_binding_unproven', message: '该历史会话缺少可证明的 Agent 目标，仅支持查看', contactAdmin: true }
+      : null)
+    : agentTargetCatalogReason;
   const sessionOwner = useMemo(() => {
     if (!session.sessionId) return undefined;
     return session.sessions.find((s) => s.sessionId === session.sessionId)
@@ -608,7 +676,7 @@ export function useChatAppStateCore(): ChatAppState {
   const sessionOwnerRef = useRef(sessionOwner);
   sessionOwnerRef.current = sessionOwner;
 
-  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile ----
+  // ---- sessionParticipants: 监听 session owner 变化，加载对应 Agent Profile ----
   useEffect(() => {
     const owner = session.sessionOwner;
     if (!owner || owner.username === user?.username) {
@@ -881,11 +949,22 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
       const activeSessionId = sessionIdRef.current;
+      const agentTarget = activeSessionId
+        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget
+          ?? pendingAgentTargetRef.current
+        : pendingAgentTargetRef.current;
+      const unavailableReason = activeSessionId
+        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTargetUnavailableReason
+        : agentTargetCatalogReason;
+      if (!agentTarget || unavailableReason) {
+        Alert.alert('仅支持查看', unavailableReason?.message ?? '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
+        return;
+      }
       const clientMsgId = existingClientMsgId || genClientMsgId();
       const normalized = buildMobileChatSubmission({
         text: inputText,
         clientMsgId,
-        target: activeSessionId ? { sessionId: activeSessionId } : {},
+        target: { ...(activeSessionId ? { sessionId: activeSessionId } : {}), agentTarget },
         deliveryMode: 'queue',
         model: selectedModelRef.current ?? undefined,
         attachments,
@@ -982,7 +1061,7 @@ export function useChatAppStateCore(): ChatAppState {
         armAckTimeout(clientMsgId);
       }
     },
-    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState],
+    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState, agentTargetCatalogReason],
   );
 
 
@@ -1597,10 +1676,18 @@ export function useChatAppStateCore(): ChatAppState {
     resetWatchdog();
     dispatchConnection("connect");
 
+    const agentTarget = sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget;
+    if (!agentTarget) {
+      Alert.alert('仅支持查看', '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
+      wsAttachedRef.current = false;
+      setLoading(false);
+      setCompacting(false);
+      return;
+    }
     const compactSubmission = buildMobileChatSubmission({
       text: "/compact",
       clientMsgId: genClientMsgId(),
-      target: { sessionId: activeSessionId },
+      target: { sessionId: activeSessionId, agentTarget },
       deliveryMode: "queue",
       attachments: [],
     });
@@ -1621,6 +1708,10 @@ export function useChatAppStateCore(): ChatAppState {
 
   // Send message (text + files)
   const sendMessage = useCallback(async () => {
+    if (!activeAgentTarget || activeAgentTargetUnavailableReason) {
+      Alert.alert('无法发送', activeAgentTargetUnavailableReason?.message ?? '没有可用的 Agent 目标，请联系组织管理员。');
+      return;
+    }
     const trimmedInput = input.trim();
     const pendingFiles = fileUpload.uploadedFiles;
     if (!trimmedInput && pendingFiles.length === 0) return;
@@ -1646,7 +1737,7 @@ export function useChatAppStateCore(): ChatAppState {
 
     // Voice reaches chat only after the user reviews/edits the authoritative transcript and presses Send.
     void sendChatViaWs(trimmedInput, capturedFiles, !voice, voice);
-  }, [input, fileUpload, msg, sendChatViaWs]);
+  }, [activeAgentTarget, activeAgentTargetUnavailableReason, input, fileUpload, msg, sendChatViaWs]);
 
   // Record -> controlled M50-03 upload -> authoritative STT -> editable draft. No automatic dispatch.
   const sendVoiceMessage = useCallback(async (fileUri: string, durationMs: number) => {
@@ -1813,15 +1904,32 @@ export function useChatAppStateCore(): ChatAppState {
   const selectSessionWrapped = useCallback(
     (id: string) => {
       immediateSessionIdRef.current = id;
+      setPendingAgentTarget(null);
       session.selectSession(id);
     },
-    [session.selectSession],
+    [session.selectSession, setPendingAgentTarget],
   );
 
-  const newSessionWrapped = useCallback(() => {
+  const startAgentTargetSession = useCallback((target: AgentTarget) => {
+    if (!user || target.tenantId !== user.tenantId) {
+      Alert.alert('无法新建会话', 'Agent 目标与当前组织不一致。');
+      return;
+    }
     immediateSessionIdRef.current = null;
+    setPendingAgentTarget(target);
     session.newSession();
-  }, [session.newSession]);
+  }, [session.newSession, setPendingAgentTarget, user]);
+
+  const newSessionWrapped = useCallback(() => {
+    if (!agentTargetCatalog) {
+      Alert.alert('无法新建会话', agentTargetCatalogReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
+      return;
+    }
+    const selection = resolveNewSessionAgentTarget({ catalog: agentTargetCatalog, activeTarget: activeAgentTarget });
+    if (selection.kind === 'selected') startAgentTargetSession(selection.target);
+    else if (selection.kind === 'picker') Alert.alert('请选择 Agent', '请从会话列表的新建入口选择要使用的企业专家。');
+    else Alert.alert('无法新建会话', selection.reason.message);
+  }, [activeAgentTarget, agentTargetCatalog, agentTargetCatalogReason, startAgentTargetSession]);
 
   // ---- Fork from message (从此编辑) ----
   const forkFromMessage = useCallback(
@@ -1882,7 +1990,13 @@ export function useChatAppStateCore(): ChatAppState {
     dismissUploadError: fileUpload.dismissUploadError,
     setInput,
     newSession: newSessionWrapped,
+    startAgentTargetSession,
     selectSession: selectSessionWrapped,
+    agentTargetCatalog,
+    agentTargetCatalogReason,
+    agentTargetCatalogLoading,
+    activeAgentTarget,
+    activeAgentTargetUnavailableReason,
     sendMessage,
     stopping,
     stopGeneration: cancelActiveStream,
@@ -1892,7 +2006,9 @@ export function useChatAppStateCore(): ChatAppState {
     handleAskUserResponse,
     onModelChange: handleModelChange,
     loadMoreSessions: session.loadMoreSessions,
-    refreshSessions: () => session.loadSessions(false, { fresh: true }),
+    refreshSessions: async () => {
+      await Promise.all([session.loadSessions(false, { fresh: true }), refreshAgentTargetCatalog()]);
+    },
     confirmDeleteSession: session.confirmDeleteSession,
     cancelDeleteSession: session.cancelDeleteSession,
     handleDeleteSession: session.handleDeleteSession,

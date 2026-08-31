@@ -38,6 +38,12 @@ beforeEach(() => {
   initPlatform(makePlatform());
   wsEnsureSend.mockReset();
   wsEnsureSend.mockResolvedValue(true);
+  getChatStore().getState().setSessions([{
+    sessionId: 's1',
+    updatedAtMs: 1,
+    source: { type: 'web', label: 'WEB' },
+    agentTarget: { kind: 'personal', tenantId: 'tenant-a' },
+  }]);
 });
 
 describe('sendChatViaWs — 成功路径', () => {
@@ -57,7 +63,7 @@ describe('sendChatViaWs — 成功路径', () => {
   it('showBubble 默认 true：添加 user 消息、置 userMsgIndex、loading、乐观更新会话', async () => {
     const store = getChatStore();
     store.setState({ activeSessionId: 's1' });
-    store.getState().setSessions([{ sessionId: 's1', updatedAtMs: 1, source: { type: 'web', label: 'WEB' } }]);
+    store.getState().setSessions([{ sessionId: 's1', updatedAtMs: 1, source: { type: 'web', label: 'WEB' }, agentTarget: { kind: 'personal', tenantId: 'tenant-a' } }]);
 
     const ok = await sendChatViaWs({ inputText: '问题内容' });
 
@@ -79,7 +85,7 @@ describe('sendChatViaWs — 成功路径', () => {
         version: 1,
         text: '问题内容',
         clientMsgId: expect.any(String),
-        target: { sessionId: 's1' },
+        target: { sessionId: 's1', agentTarget: { kind: 'personal', tenantId: 'tenant-a' } },
         deliveryMode: 'queue',
         attachments: [],
       }),
@@ -114,7 +120,7 @@ describe('sendChatViaWs — 成功路径', () => {
       clientCapabilities: ['chat_submission_v1', 'replaceable_drafts'],
       submission: expect.objectContaining({
         text: '',
-        target: { sessionId: 's1' },
+        target: { sessionId: 's1', agentTarget: { kind: 'personal', tenantId: 'tenant-a' } },
         attachments: [{
           attachmentId: ATTACHMENT_ID,
           display: {

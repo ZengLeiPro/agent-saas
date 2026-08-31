@@ -1,4 +1,5 @@
 import type { SandboxProfile } from '../types/session';
+import { parseAgentTarget, type AgentTarget } from './agentTarget';
 
 /** M20-01 capability: clients declaring this send only the canonical nested submission DTO. */
 export const CHAT_SUBMISSION_V1_CAPABILITY = 'chat_submission_v1' as const;
@@ -30,7 +31,9 @@ export interface CanonicalChatTarget {
   sessionId?: string;
   /** Only honored while creating a session. */
   sandboxProfile?: SandboxProfile;
-  /** Only honored while creating an org-agent session. */
+  /** M20-06 explicit tenant-scoped target. Required for V1 new clients. */
+  agentTarget?: AgentTarget;
+  /** @deprecated N-1 wire compatibility. Server never lets this override a persisted target. */
   orgAgentId?: string;
 }
 
@@ -261,11 +264,22 @@ function normalizeTarget(value: unknown): ChatSubmissionResult<CanonicalChatTarg
   if (sandboxProfile !== undefined && sandboxProfile !== 'daily' && sandboxProfile !== 'coding') {
     return { ok: false, issue: { code: 'invalid_target', message: 'sandboxProfile 无效', field: 'target.sandboxProfile' } };
   }
+  const agentTarget = value.agentTarget === undefined ? undefined : parseAgentTarget(value.agentTarget);
+  if (value.agentTarget !== undefined && !agentTarget) {
+    return { ok: false, issue: { code: 'invalid_target', message: 'agentTarget 无效', field: 'target.agentTarget' } };
+  }
+  if (agentTarget?.kind === 'org-agent' && orgAgentId && agentTarget.orgAgentId !== orgAgentId) {
+    return { ok: false, issue: { code: 'invalid_target', message: 'agentTarget 与 orgAgentId 不一致', field: 'target' } };
+  }
+  if (agentTarget?.kind === 'personal' && orgAgentId) {
+    return { ok: false, issue: { code: 'invalid_target', message: 'personal target 不允许 orgAgentId', field: 'target' } };
+  }
   return {
     ok: true,
     value: {
       ...(sessionId ? { sessionId } : {}),
       ...(sandboxProfile ? { sandboxProfile } : {}),
+      ...(agentTarget ? { agentTarget } : {}),
       ...(orgAgentId ? { orgAgentId } : {}),
     },
   };

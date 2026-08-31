@@ -2,7 +2,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { AGENT_LEGACY_TRANSCRIPTS_ROOT, isValidSessionId } from './projectKey.js';
-import type { SandboxProfile } from '@agent/shared';
+import {
+  AGENT_TARGET_BINDING_VERSION,
+  parseAgentTarget,
+  sameAgentTarget,
+  type AgentTarget,
+  type SandboxProfile,
+} from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
 import {
   atomicWriteTrustedFile,
@@ -47,6 +53,9 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
    * 缺省 = 个人 Agent 会话（存量行为零变化）。PG meta_json 自动投影。
    */
   orgAgentId?: string;
+  /** M20-06 canonical target identity. Absence is N-1 and must not imply personal. */
+  agentTarget?: AgentTarget;
+  agentTargetBindingVersion?: number;
   /** 当前 in-flight run 的组织 Agent 安全快照；新消息更新，approval/interaction resume 固定复用。 */
   orgAgentSnapshot?: unknown;
   /** 软删除时间戳（ISO 8601），存在即表示已删除 */
@@ -202,6 +211,71 @@ async function withMetaLock<T>(metaPath: string, fn: () => Promise<T>): Promise<
 export async function writeSessionMeta(transcriptPath: string, meta: SessionMeta): Promise<void> {
   const metaPath = getMetaPath(transcriptPath);
   await withMetaLock(metaPath, () => persistSessionMeta(transcriptPath, meta));
+}
+
+export type SessionAgentTargetResolution =
+  | { status: 'bound'; target: AgentTarget; needsMigration: boolean }
+  | { status: 'unproven' };
+
+/**
+ * 读取 session 的 Agent target。N-1 只允许 meta.orgAgentId 证明组织 target；
+ * 缺少该证据时绝不把历史会话猜成 personal。
+ */
+export function resolveSessionAgentTarget(
+  meta: SessionMeta | null,
+  expectedTenantId?: string,
+): SessionAgentTargetResolution {
+  if (!meta) return { status: 'unproven' };
+  const canonical = parseAgentTarget(meta.agentTarget);
+  if (canonical) {
+    if (expectedTenantId && canonical.tenantId !== expectedTenantId) return { status: 'unproven' };
+    if (meta.tenantId && canonical.tenantId !== meta.tenantId) return { status: 'unproven' };
+    if (canonical.kind === 'org-agent' && meta.orgAgentId && canonical.orgAgentId !== meta.orgAgentId) {
+      return { status: 'unproven' };
+    }
+    return {
+      status: 'bound',
+      target: canonical,
+      needsMigration: meta.agentTargetBindingVersion !== AGENT_TARGET_BINDING_VERSION,
+    };
+  }
+  const tenantId = meta.tenantId ?? expectedTenantId;
+  if (meta.orgAgentId && tenantId && (!expectedTenantId || tenantId === expectedTenantId)) {
+    return {
+      status: 'bound',
+      target: { kind: 'org-agent', tenantId, orgAgentId: meta.orgAgentId },
+      needsMigration: true,
+    };
+  }
+  return { status: 'unproven' };
+}
+
+/**
+ * 跨进程原子绑定/迁移 target。已绑定会话只能确认同一 target，绝不允许后续请求改绑。
+ */
+export async function ensureSessionAgentTargetBinding(
+  transcriptPath: string,
+  target: AgentTarget,
+): Promise<SessionMeta> {
+  return transformSessionMeta(transcriptPath, existing => {
+    if (!existing) throw new Error('SESSION_AGENT_TARGET_META_MISSING');
+    const resolved = resolveSessionAgentTarget(existing, target.tenantId);
+    if (resolved.status === 'bound' && !sameAgentTarget(resolved.target, target)) {
+      throw new Error('SESSION_AGENT_TARGET_MISMATCH');
+    }
+    if (resolved.status === 'unproven' && existing.agentTarget !== undefined) {
+      throw new Error('SESSION_AGENT_TARGET_INVALID');
+    }
+    if (existing.orgAgentId && (target.kind !== 'org-agent' || existing.orgAgentId !== target.orgAgentId)) {
+      throw new Error('SESSION_AGENT_TARGET_MISMATCH');
+    }
+    return {
+      ...existing,
+      agentTarget: target,
+      agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+      ...(target.kind === 'org-agent' ? { orgAgentId: target.orgAgentId } : {}),
+    };
+  });
 }
 
 /** 跨进程串行的 read-modify-write；用于必须基于最新 meta 保持单调不变量的 upsert。 */

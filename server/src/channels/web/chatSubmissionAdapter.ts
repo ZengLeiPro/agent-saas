@@ -4,6 +4,7 @@ import {
   type CanonicalChatSubmission,
   type ChatSubmissionIssue,
 } from '@agent/shared/lib/chatSubmission';
+import type { AgentTarget } from '@agent/shared';
 
 import type { UploadedFileInfo } from '../../types/index.js';
 import type { ChatRejectReasonCode, WsChatMessage } from './wsTypes.js';
@@ -17,6 +18,7 @@ export interface AdaptedWebChatSubmission {
   model?: string;
   sandboxProfile?: 'daily' | 'coding';
   orgAgentId?: string;
+  agentTarget?: AgentTarget;
   canonical?: CanonicalChatSubmission;
   legacyAttachments?: UploadedFileInfo[];
   issue?: ChatSubmissionIssue;
@@ -44,7 +46,10 @@ export function adaptWebChatSubmission(msg: WsChatMessage): AdaptedWebChatSubmis
         deliveryMode: parsed.value.deliveryMode,
         model: parsed.value.model,
         sandboxProfile: parsed.value.target.sandboxProfile,
-        orgAgentId: parsed.value.target.orgAgentId,
+        orgAgentId: parsed.value.target.agentTarget?.kind === 'org-agent'
+          ? parsed.value.target.agentTarget.orgAgentId
+          : parsed.value.target.orgAgentId,
+        agentTarget: parsed.value.target.agentTarget,
         canonical: parsed.value,
       };
     }

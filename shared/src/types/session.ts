@@ -4,6 +4,7 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 import type { ChatQueueSnapshot } from '../lib/chatQueue';
 import type { RunLiveness } from '../lib/runLiveness';
+import type { AgentTarget, AgentTargetUnavailableReason } from '../lib/agentTarget';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -53,6 +54,11 @@ export interface ApiSessionListItem {
   orgAgentName?: string;
   /** 当前登录用户是否仍可续聊该专职 Agent 会话；false 时前端进入只读态 */
   orgAgentAvailable?: boolean;
+  /** M20-06 持久 Agent target；不得由 owner filter 推断。 */
+  agentTarget?: AgentTarget;
+  agentTargetBindingVersion?: number;
+  /** 历史可读、发送阻断时的结构化原因。 */
+  agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /** 软删除时间戳，仅回收站列表返回 */
   deletedAt?: string;
   /** 执行删除的用户名，仅回收站列表返回 */

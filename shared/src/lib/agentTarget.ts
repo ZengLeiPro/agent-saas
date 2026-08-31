@@ -4,6 +4,14 @@ export type AgentTarget =
   | { kind: 'personal'; tenantId: string }
   | { kind: 'org-agent'; tenantId: string; orgAgentId: string };
 
+/** Server-persisted display identity. Clients must never replace this with the current picker label. */
+export interface AgentTargetIdentitySnapshot {
+  name: string;
+  status: 'available' | 'disabled' | 'revoked' | 'deleted' | 'unproven';
+  /** Monotonic target/availability projection version used to fence stale events. */
+  version: number;
+}
+
 export type AgentTargetUnavailableReasonCode =
   | 'personal_agent_disabled'
   | 'org_agent_unassigned'
@@ -21,8 +29,8 @@ export interface AgentTargetUnavailableReason {
 }
 
 export type AgentTargetAvailability =
-  | { status: 'available' }
-  | { status: 'unavailable'; reason: AgentTargetUnavailableReason };
+  | { status: 'available'; version?: number }
+  | { status: 'unavailable'; reason: AgentTargetUnavailableReason; version?: number };
 
 export interface AgentTargetOption<T = unknown> {
   target: AgentTarget;

@@ -72,6 +72,7 @@ function toSidebarSessions(
     orgAgentName: s.orgAgentName,
     orgAgentAvailable: s.orgAgentAvailable,
     agentTarget: s.agentTarget,
+    agentTargetSnapshot: s.agentTargetSnapshot,
     agentTargetUnavailableReason: s.agentTargetUnavailableReason,
   }));
 }

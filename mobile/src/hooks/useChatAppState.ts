@@ -111,6 +111,8 @@ export interface ChatAppState {
   sendMessage: () => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
+  /** Cancel queued work for Agent switching; true means transport accepted, terminal state still comes from canonical events. */
+  cancelAgentSwitchQueue: () => Promise<boolean>;
   retryMessage: (message: MessageItem) => void;
   forkFromMessage: (message: MessageItem) => Promise<string | null>;
   handlePermissionResponse: (
@@ -1944,8 +1946,17 @@ export function useChatAppStateCore(): ChatAppState {
     }
     immediateSessionIdRef.current = null;
     setPendingAgentTarget(target);
-    session.newSession();
+    session.newSession({ preserveComposer: true });
   }, [session.newSession, setPendingAgentTarget, user]);
+
+  const cancelAgentSwitchQueue = useCallback(async (): Promise<boolean> => {
+    const queued = chatQueueItems.filter(item => item.status === 'queued');
+    const results = await Promise.all(queued.map(item => wsClient.ensureConnectedSend({
+      action: 'cancel_queued',
+      sourceRunId: item.sourceRunId,
+    }).catch(() => false)));
+    return results.every(Boolean);
+  }, [chatQueueItems]);
 
   const newSessionWrapped = useCallback(() => {
     if (!agentTargetCatalog) {
@@ -2027,6 +2038,7 @@ export function useChatAppStateCore(): ChatAppState {
     sendMessage,
     stopping,
     stopGeneration: cancelActiveStream,
+    cancelAgentSwitchQueue,
     retryMessage,
     forkFromMessage,
     handlePermissionResponse,

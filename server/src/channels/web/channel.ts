@@ -3245,7 +3245,11 @@ export class WebChannel implements BaseChannel {
         });
         if (existingSessionRecord) {
           await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
-          await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget);
+          await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget, {
+            name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+            status: 'available',
+            version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+          });
         } else {
           // target 必须与 session policy 在同一次跨进程原子首写中发布；并发首投只能有一个绑定胜出。
           const createdWithTarget = await writeSessionMetaIfAbsent(sessionRecord.transcriptPath, {
@@ -3266,11 +3270,20 @@ export class WebChannel implements BaseChannel {
             ...(sessionRecord.orgAgentId ? { orgAgentId: sessionRecord.orgAgentId } : {}),
             agentTarget,
             agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+            agentTargetSnapshot: {
+              name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+              status: 'available',
+              version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+            },
             ...(sessionRecord.memoryPolicyVersion ? { memoryPolicyVersion: sessionRecord.memoryPolicyVersion } : {}),
           });
           await enqueueRuntime.sessionCatalog.ensure(sessionRecord);
           if (!createdWithTarget) {
-            await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget);
+            await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget, {
+              name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+              status: 'available',
+              version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+            });
           }
         }
         sessionPersisted = true;
@@ -4276,6 +4289,9 @@ export class WebChannel implements BaseChannel {
           orgAgentId: orgAgent.id,
           agentTarget: { kind: 'org-agent', tenantId: owner?.tenantId ?? orgAgent.tenantId, orgAgentId: orgAgent.id },
           agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+          agentTargetSnapshot: existingMeta?.agentTargetSnapshot ?? {
+            name: orgAgent.name, status: 'available', version: Date.parse(orgAgent.updatedAt) || 1,
+          },
           createdAt: existingMeta?.createdAt ?? now,
           updatedAt: now,
         });

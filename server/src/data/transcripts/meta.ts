@@ -7,6 +7,7 @@ import {
   parseAgentTarget,
   sameAgentTarget,
   type AgentTarget,
+  type AgentTargetIdentitySnapshot,
   type SandboxProfile,
 } from '@agent/shared';
 import type { AgentProfileSessionBinding } from '../agentProfiles/types.js';
@@ -56,6 +57,8 @@ export interface SessionMeta extends Partial<AgentProfileSessionBinding> {
   /** M20-06 canonical target identity. Absence is N-1 and must not imply personal. */
   agentTarget?: AgentTarget;
   agentTargetBindingVersion?: number;
+  /** M30-03 immutable session identity label plus versioned availability projection. */
+  agentTargetSnapshot?: AgentTargetIdentitySnapshot;
   /** 当前 in-flight run 的组织 Agent 安全快照；新消息更新，approval/interaction resume 固定复用。 */
   orgAgentSnapshot?: unknown;
   /** 软删除时间戳（ISO 8601），存在即表示已删除 */
@@ -256,6 +259,7 @@ export function resolveSessionAgentTarget(
 export async function ensureSessionAgentTargetBinding(
   transcriptPath: string,
   target: AgentTarget,
+  snapshot?: AgentTargetIdentitySnapshot,
 ): Promise<SessionMeta> {
   return transformSessionMeta(transcriptPath, existing => {
     if (!existing) throw new Error('SESSION_AGENT_TARGET_META_MISSING');
@@ -273,6 +277,11 @@ export async function ensureSessionAgentTargetBinding(
       ...existing,
       agentTarget: target,
       agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+      agentTargetSnapshot: existing.agentTargetSnapshot ?? snapshot ?? {
+        name: target.kind === 'personal' ? '个人 Agent' : '企业专家',
+        status: 'available',
+        version: 1,
+      },
       ...(target.kind === 'org-agent' ? { orgAgentId: target.orgAgentId } : {}),
     };
   });

@@ -87,6 +87,7 @@ import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
 import {
   AGENT_TARGET_BINDING_VERSION,
   type AgentTarget,
+  type AgentTargetIdentitySnapshot,
   type AgentTargetUnavailableReason,
   type SessionListActiveInteraction,
 } from '@agent/shared';
@@ -709,6 +710,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     orgAgentAvailable?: boolean;
     agentTarget?: AgentTarget;
     agentTargetBindingVersion?: number;
+    agentTargetSnapshot?: AgentTargetIdentitySnapshot;
     agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   } {
     if (!meta) return {};
@@ -728,7 +730,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       agentTarget: target,
       agentTargetBindingVersion: meta.agentTargetBindingVersion ?? AGENT_TARGET_BINDING_VERSION,
     };
-    if (target.kind === 'personal') return base;
+    if (target.kind === 'personal') return {
+      ...base,
+      agentTargetSnapshot: meta.agentTargetSnapshot ?? { name: '个人 Agent', status: 'available', version: 1 },
+    };
 
     const record = options.orgAgentStore?.get(target.orgAgentId);
     const adminExempt = reqUser?.role === "admin"
@@ -743,10 +748,25 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     } else if (!record.audience || !(adminExempt || isAssignedToOrgAgent(record, meta.username))) {
       reason = { code: 'org_agent_unassigned', message: '你已无权使用该企业专家，历史会话仅支持查看', contactAdmin: true };
     }
+    const status: AgentTargetIdentitySnapshot['status'] = !reason
+      ? 'available'
+      : reason.code === 'org_agent_deleted' ? 'deleted'
+        : reason.code === 'org_agent_disabled' ? 'disabled'
+          : 'revoked';
+    const snapshotVersion = Math.max(
+      meta.agentTargetSnapshot?.version ?? 1,
+      record?.updatedAt ? Date.parse(record.updatedAt) || 1 : 1,
+    );
+    const agentTargetSnapshot: AgentTargetIdentitySnapshot = {
+      name: reason?.code === 'tenant_mismatch' ? '企业专家' : meta.agentTargetSnapshot?.name ?? record?.name ?? '企业专家',
+      status,
+      version: snapshotVersion,
+    };
     return {
       ...base,
+      agentTargetSnapshot,
       orgAgentId: target.orgAgentId,
-      ...(record && record.tenantId === target.tenantId && record.name ? { orgAgentName: record.name } : {}),
+      orgAgentName: reason?.code === 'tenant_mismatch' ? undefined : agentTargetSnapshot.name,
       orgAgentAvailable: !reason,
       ...(reason ? { agentTargetUnavailableReason: reason } : {}),
     };
@@ -826,6 +846,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         orgAgentId,
         agentTarget: { kind: 'org-agent', tenantId: user.tenantId, orgAgentId },
         agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+        agentTargetSnapshot: { name: record.name, status: 'available', version: Date.parse(record.updatedAt) || 1 },
       });
       sessionsListCache.clear();
       auditLog(req, "session_opened", `created orgAgentId=${orgAgentId} sessionId=${sessionId}`);
@@ -845,6 +866,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           orgAgentId,
           orgAgentName: record.name,
           orgAgentAvailable: true,
+          agentTarget: { kind: 'org-agent', tenantId: user.tenantId, orgAgentId },
+          agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+          agentTargetSnapshot: { name: record.name, status: 'available', version: Date.parse(record.updatedAt) || 1 },
         },
       });
     } catch (err) {
@@ -1098,6 +1122,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
         sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
+        ...orgAgentFields(meta, req.user),
         ...(lastRunState ? { lastRunState } : {}),
         ...({ queueSnapshot }),
         ...(queuedMessages.length ? { queuedMessages } : {}),

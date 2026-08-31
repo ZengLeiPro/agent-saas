@@ -1006,7 +1006,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     pushUrl('chat', id);
   }, [clearPendingOrgAgent, dispatchConnection, loadSessionRuntimeToRef, markSessionRead, mutateQueuedInterjections, session.selectSession]);
   const startAgentTargetSession = useCallback((target: AgentTarget, groupId: string | null = null): void => {
-    if (!user || target.tenantId !== user.tenantId || loadingRef.current) return;
+    if (!user || target.tenantId !== user.tenantId) return;
     setTrashPreviewSessionId(null); startNewSandboxProfile();
     immediateSessionIdRef.current = null;
     queuedSessionIdRef.current = null;

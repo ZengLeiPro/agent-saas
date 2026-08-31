@@ -70,7 +70,7 @@ export interface SessionState {
     id: string,
     opts?: { silent?: boolean; preserveTail?: boolean },
   ) => Promise<void>;
-  newSession: () => void;
+  newSession: (options?: { preserveComposer?: boolean }) => void;
   selectSession: (id: string) => void;
   applySessionInteractionEvent: (event: SessionListInteractionEvent) => void;
   confirmDeleteSession: (id: string) => void;
@@ -536,13 +536,13 @@ export function useSession(
     [updateSessionTitle],
   );
 
-  const newSession = useCallback(() => {
+  const newSession = useCallback((options?: { preserveComposer?: boolean }) => {
     // 作废所有在飞的会话详情请求：否则旧请求返回后仍会 setMessages + setSessionId，
     // 把上一个会话的消息灌进刚清空的草稿页（selectSession 走 loadSessionDetail 会自然递增，
     // 只有新建会话这条路径原先漏了）。
     ++loadNonceRef.current;
     cbRef.current.cancelActiveStream();
-    cbRef.current.clearComposer();
+    if (!options?.preserveComposer) cbRef.current.clearComposer();
     cbRef.current.resetMessages();
     isNewSessionRef.current = true;
     setSessionId(null);

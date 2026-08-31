@@ -6,7 +6,7 @@ import { getV1BuildProfile } from '../../src/app/v1Runtime';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
-import { type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems } from '@agent/shared';
+import { evaluateAgentTargetTransition, type AgentTarget, type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems } from '@agent/shared';
 import { BackButton } from '../../src/components/BackButton';
 import type { PickerExtraSection } from '../../src/components/chat/ModelPicker';
 import type { DrillDownPage } from '../../src/components/overlays/DropdownMenu';
@@ -152,13 +152,15 @@ export default function ChatDetailScreen() {
 
   const sessionOwner = currentSession?.owner?.username;
   const headerAgentTarget = currentSession?.agentTarget ?? chat.activeAgentTarget;
-  const headerAgentTargetLabel = headerAgentTarget?.kind === 'personal'
-    ? '个人 Agent'
-    : headerAgentTarget?.kind === 'org-agent'
-      ? currentSession?.orgAgentName
-        ?? chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === headerAgentTarget.orgAgentId)?.presentation?.name
-        ?? '企业专家'
-      : '绑定不可验证';
+  const [pendingAgentSwitch, setPendingAgentSwitch] = useState<AgentTarget | null>(null);
+
+  const headerAgentTargetLabel = currentSession
+    ? currentSession.agentTargetSnapshot?.name ?? '绑定不可验证'
+    : headerAgentTarget?.kind === 'personal'
+      ? '个人 Agent'
+      : headerAgentTarget?.kind === 'org-agent'
+        ? chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === headerAgentTarget.orgAgentId)?.presentation?.name ?? '企业专家'
+        : '绑定不可验证';
 
   // Fetch the correct agent profile for the session owner (not the global ownerFilter-based one)
   const [sessionAgentProfile, setSessionAgentProfile] = useState<Awaited<ReturnType<typeof fetchAgentProfile>> | null>(null);
@@ -209,13 +211,23 @@ export default function ChatDetailScreen() {
       }
     }
 
+    if (!(isAdminUser && chat.ownerFilter === null) && chat.agentTargetCatalog) {
+      const actions = [chat.agentTargetCatalog.personal, ...chat.agentTargetCatalog.orgAgents]
+        .filter(option => option.availability.status === 'available')
+        .map(option => ({
+          id: option.target.kind === 'personal' ? '_agent:personal' : `_agent:${option.target.orgAgentId}`,
+          label: option.target.kind === 'personal' ? '切换到个人 Agent' : `切换到 ${(option.presentation as { name?: string } | undefined)?.name ?? '企业专家'}`,
+        }));
+      if (actions.length > 0) sections.push({ id: '_agent_section', actions });
+    }
+
     sections.push({
       id: '_compact_section',
       actions: [{ id: '_compact', label: '压缩上下文' }],
     });
 
     return sections;
-  }, [isNewSession, isReadOnlyGroups, currentGroupId]);
+  }, [chat.agentTargetCatalog, chat.ownerFilter, isAdminUser, isNewSession, isReadOnlyGroups, currentGroupId]);
 
   // Drill-down: group selection — 使用 getSortedGroupItems 统一排序，与其他入口一致
   const drillDowns = useMemo<Record<string, DrillDownPage> | undefined>(() => {
@@ -233,8 +245,67 @@ export default function ChatDetailScreen() {
     };
   }, [isNewSession, isReadOnlyGroups, currentGroupId, groups, sorting]);
 
+  const launchAgentSwitch = useCallback((target: AgentTarget) => {
+    chat.startAgentTargetSession(target);
+    router.replace('/chat/new');
+  }, [chat.startAgentTargetSession, router]);
+
+  const requestAgentSwitch = useCallback((target: AgentTarget) => {
+    const option = target.kind === 'personal'
+      ? chat.agentTargetCatalog?.personal
+      : chat.agentTargetCatalog?.orgAgents.find(candidate => candidate.target.kind === 'org-agent' && candidate.target.orgAgentId === target.orgAgentId);
+    const queueItems = chat.chatQueueItems.filter(item => item.sessionId === effectiveSessionId && ['queued', 'running', 'cancel_pending'].includes(item.status));
+    const decision = evaluateAgentTargetTransition({
+      currentSession: effectiveSessionId && currentSession?.agentTarget
+        ? { sessionId: effectiveSessionId, target: currentSession.agentTarget, bindingVersion: currentSession.agentTargetBindingVersion ?? 0 }
+        : null,
+      requestedTarget: target,
+      runLiveness: chat.loading
+        ? { state: 'active', recoveryActions: ['cancel'], version: 1 }
+        : { state: 'terminal', recoveryActions: [], version: 1 },
+      queueSnapshot: effectiveSessionId && queueItems.length ? {
+        version: 1, sessionId: effectiveSessionId, generatedAt: new Date().toISOString(), items: queueItems,
+      } : null,
+      pendingInteraction: currentSession?.activeInteraction ?? null,
+      availability: option?.availability ?? { status: 'unavailable', reason: { code: 'no_available_target', message: '该 Agent 当前不可用', contactAdmin: true } },
+      generation: 1,
+      availabilityVersion: currentSession?.agentTargetSnapshot?.version ?? 1,
+    });
+    if (decision.kind === 'blocked') { Alert.alert('无法切换 Agent', decision.reason.message); return; }
+    if (decision.kind === 'reuse') { chat.selectSession(decision.sessionId); return; }
+    if (decision.kind === 'new-session') { launchAgentSwitch(decision.target); return; }
+    Alert.alert('切换 Agent', '当前会话仍有运行中、排队中或待处理交互。不同 Agent 将开启新会话，草稿和附件会保留。', [
+      { text: '暂不切换', style: 'cancel' },
+      { text: '保留旧会话运行', onPress: () => launchAgentSwitch(target) },
+      { text: '取消活动后切换', style: 'destructive', onPress: () => {
+        setPendingAgentSwitch(target);
+        chat.stopGeneration();
+        void chat.cancelAgentSwitchQueue().then(ok => {
+          if (!ok) { setPendingAgentSwitch(null); Alert.alert('取消失败', '服务端未确认排队消息取消，请重试。'); }
+        });
+      } },
+    ]);
+  }, [chat, currentSession, effectiveSessionId, launchAgentSwitch]);
+
+  useEffect(() => {
+    if (!pendingAgentSwitch) return;
+    const activeQueue = chat.chatQueueItems.some(item => item.sessionId === effectiveSessionId && ['queued', 'running', 'cancel_pending'].includes(item.status));
+    if (chat.loading || activeQueue || currentSession?.activeInteraction) return;
+    const target = pendingAgentSwitch;
+    setPendingAgentSwitch(null);
+    launchAgentSwitch(target);
+  }, [chat.chatQueueItems, chat.loading, currentSession?.activeInteraction, effectiveSessionId, launchAgentSwitch, pendingAgentSwitch]);
+
   const handleTitleAction = useCallback((actionId: string) => {
     if (!sessionId || isNewSession) return;
+    if (actionId.startsWith('_agent:')) {
+      const key = actionId.slice('_agent:'.length);
+      const target = key === 'personal'
+        ? chat.agentTargetCatalog?.personal.target
+        : chat.agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === key)?.target;
+      if (target) requestAgentSwitch(target);
+      return;
+    }
     if (actionId === '_rename') {
       showTextPrompt({
         title: '重命名会话',
@@ -258,7 +329,7 @@ export default function ChatDetailScreen() {
         ],
       );
     }
-  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, isNewSession, currentSession?.title, currentGroupId, chat.agentTargetCatalog, chat.renameSession, chat.autoTitleSession, chat.compactSession, removeSessionsFromGroup, requestAgentSwitch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDrillDownSelect = useCallback((parentId: string, childId: string) => {
     if (!sessionId || isNewSession) return;

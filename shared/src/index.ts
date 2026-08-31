@@ -14,6 +14,7 @@ export {
 export type {
   AgentTarget,
   AgentTargetAvailability,
+  AgentTargetIdentitySnapshot,
   AgentTargetCatalog,
   AgentTargetCatalogAdapterResult,
   AgentTargetOption,
@@ -21,6 +22,23 @@ export type {
   AgentTargetUnavailableReason,
   AgentTargetUnavailableReasonCode,
 } from './lib/agentTarget';
+
+export {
+  canCommitAgentTargetTransition,
+  collectAgentTargetTransitionImpacts,
+  createAgentTargetTransition,
+  evaluateAgentTargetTransition,
+  reduceAgentTargetTransition,
+} from './lib/agentTargetTransition';
+export type {
+  AgentTargetSwitchChoice,
+  AgentTargetTransitionDecision,
+  AgentTargetTransitionEvent,
+  AgentTargetTransitionImpact,
+  AgentTargetTransitionInput,
+  AgentTargetTransitionState,
+  PersistentSessionAgentTarget,
+} from './lib/agentTargetTransition';
 
 export {
   beginSessionListRefresh,

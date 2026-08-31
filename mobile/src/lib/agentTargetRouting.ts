@@ -1,13 +1,10 @@
-/**
- * Web thin boundary for M20-06. Selection/session reuse policy is authoritative in Shared;
- * this module intentionally contains no Web-specific fallback or personal-target inference.
- */
+/** Mobile transport/UI boundary for M30-03. Shared owns every transition and confirmation rule. */
 export {
-  resolveNewSessionAgentTarget,
-  resolveTargetSessionAction,
   createAgentTargetTransition,
   evaluateAgentTargetTransition,
   reduceAgentTargetTransition,
+  resolveNewSessionAgentTarget,
+  resolveTargetSessionAction,
 } from '@agent/shared';
 export type {
   AgentTarget,

@@ -129,9 +129,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
   }), [colors]);
 
   const hasAgentAvatar = agentAvatar !== undefined;
-  const targetLabel = session.agentTarget
-    ? session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || '企业专家'
-    : '绑定不可验证';
+  const targetLabel = session.agentTargetSnapshot?.name ?? '绑定不可验证';
   const separatorLeft = spacing.sm + (selectMode ? 24 + spacing.sm : 0) + 42 + spacing.md;
 
   const avatarElement = hasAgentAvatar ? (

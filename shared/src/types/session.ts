@@ -4,7 +4,7 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 import type { ChatQueueSnapshot } from '../lib/chatQueue';
 import type { RunLiveness } from '../lib/runLiveness';
-import type { AgentTarget, AgentTargetUnavailableReason } from '../lib/agentTarget';
+import type { AgentTarget, AgentTargetIdentitySnapshot, AgentTargetUnavailableReason } from '../lib/agentTarget';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -65,6 +65,8 @@ export interface ApiSessionListItem {
   /** M20-06 持久 Agent target；不得由 owner filter 推断。 */
   agentTarget?: AgentTarget;
   agentTargetBindingVersion?: number;
+  /** Server-persisted authoritative header/list identity; never sourced from the current picker. */
+  agentTargetSnapshot?: AgentTargetIdentitySnapshot;
   /** 历史可读、发送阻断时的结构化原因。 */
   agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /** M20-07 O(1) pending interaction summary; event history is never scanned by selectors. */
@@ -125,6 +127,11 @@ export interface ApiSessionDetail {
   owner?: SessionOwnerInfo;
   source?: { type: string; label: string };
   sandboxProfile?: SandboxProfile;
+  /** M30-03 authoritative identity for the detail header. */
+  agentTarget?: AgentTarget;
+  agentTargetBindingVersion?: number;
+  agentTargetSnapshot?: AgentTargetIdentitySnapshot;
+  agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /**
    * 最近一次 run 的终态。前端进会话时用于对账"后端早结束/失败、UI 仍在转" 的鬼状态。
    * 旧 transcript（无 run_state_changed 事件）会缺省此字段,前端走 legacy 路径。

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   TASKBOARD_PRIORITIES,
@@ -25,13 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { FloatingPanel } from "@/components/ui/floating-panel";
-import {
-  BRAND_SEGMENTED_TABS_LIST_CLASS,
-  BRAND_SEGMENTED_TAB_TRIGGER_CLASS,
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import * as api from "./api";
@@ -49,28 +42,12 @@ import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
+import { inheritedModelHint, taskStageModels, TaskDetailTabs, type TaskDetailTab, useTaskDescriptionResize } from "./TaskDetailLayout";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 type TaskDraftField = "description" | "attachments" | "priority" | "stageModels";
-type TaskDetailTab = "details" | "discussion";
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
-function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
-  if (task.stageModels && Object.keys(task.stageModels).length > 0) {
-    return {
-      ...(task.stageModels.work ? { work: task.stageModels.work } : {}),
-      ...(task.stageModels.review ? { review: task.stageModels.review } : {}),
-    };
-  }
-  return task.model
-    ? { work: task.model, review: task.model }
-    : {};
-}
-
-function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
-  const model = board?.stageModels?.[purpose] ?? board?.model;
-  return model ?? "未指定时继承看板默认模型";
-}
 interface TaskDetailProps {
   open: boolean;
   active?: boolean;
@@ -155,9 +132,8 @@ export function TaskDetail({
   const detailRequestRef = useRef(0);
   const refreshedExecutionRef = useRef<string | null>(null);
   const tabSelectionResolvedTaskIdRef = useRef<string | null>(null);
-  const detailsViewportRef = useRef<HTMLDivElement>(null);
-  const detailsContentRef = useRef<HTMLDivElement>(null);
-  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const { viewportRef: detailsViewportRef, contentRef: detailsContentRef, textareaRef: descriptionRef }
+    = useTaskDescriptionResize({ active, open, taskId: task?.id });
 
   const {
     comments,
@@ -195,45 +171,6 @@ export function TaskDetail({
     if (!dirty.has("priority")) setPriority(next.priority);
     if (!dirty.has("stageModels")) setStageModels(taskStageModels(next));
   }, [taskAttachments.replaceFiles]);
-
-  const resizeDescription = useCallback(() => {
-    const textarea = descriptionRef.current;
-    const viewport = detailsViewportRef.current;
-    const content = detailsContentRef.current;
-    if (!textarea || !viewport || !content) return;
-
-    textarea.style.height = "auto";
-    const styles = window.getComputedStyle(textarea);
-    const cssPixels = (value: string) => Number.parseFloat(value) || 0;
-    const lineHeight = cssPixels(styles.lineHeight) || 20;
-    const verticalChrome = cssPixels(styles.paddingTop) + cssPixels(styles.paddingBottom)
-      + cssPixels(styles.borderTopWidth) + cssPixels(styles.borderBottomWidth);
-    const minimumHeight = Math.ceil(lineHeight * 3 + verticalChrome);
-    const naturalHeight = textarea.scrollHeight;
-    textarea.style.height = `${minimumHeight}px`;
-
-    const fixedContentHeight = content.scrollHeight - textarea.offsetHeight;
-    const availableHeight = Math.max(minimumHeight, viewport.clientHeight - fixedContentHeight);
-    const nextHeight = Math.min(
-      Math.max(naturalHeight, minimumHeight),
-      availableHeight,
-      naturalHeight + lineHeight * 2,
-    );
-    textarea.style.height = `${Math.max(minimumHeight, nextHeight)}px`;
-    textarea.style.overflowY = naturalHeight > nextHeight ? "auto" : "hidden";
-  }, []);
-
-  useLayoutEffect(() => {
-    resizeDescription();
-  });
-
-  useEffect(() => {
-    const viewport = detailsViewportRef.current;
-    if (!viewport || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(resizeDescription);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [active, open, resizeDescription, task?.id]);
 
   useEffect(() => {
     const switchedTask = task?.id !== draftTaskIdRef.current;
@@ -278,8 +215,7 @@ export function TaskDetail({
   const taskId = task?.id ?? null;
   useEffect(() => {
     if (!taskId || !commentsReady || tabSelectionResolvedTaskIdRef.current === taskId) return;
-    setActiveTab(comments.length > 0 ? "discussion" : "details");
-    tabSelectionResolvedTaskIdRef.current = taskId;
+    setActiveTab(comments.length > 0 ? "discussion" : "details"); tabSelectionResolvedTaskIdRef.current = taskId;
   }, [comments.length, commentsReady, taskId]);
 
   useEffect(() => {
@@ -757,35 +693,8 @@ export function TaskDetail({
                 ) : null}
               </div>
             </div>
-            <Tabs
-              value={activeTab}
-              onValueChange={(value) => {
-                tabSelectionResolvedTaskIdRef.current = currentTask.id;
-                setActiveTab(value as TaskDetailTab);
-              }}
-              className="shrink-0 border-b px-4 py-2 sm:px-6"
-            >
-              <TabsList
-                aria-label="任务详情分区"
-                className={`${BRAND_SEGMENTED_TABS_LIST_CLASS} relative grid grid-cols-2`}
-              >
-                <span
-                  aria-hidden="true"
-                  data-task-detail-tab-indicator
-                  className="pointer-events-none absolute inset-y-1 left-1 rounded-[7px] bg-background shadow-[0_1px_4px_rgba(15,23,42,0.10)] transition-transform duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-                  style={{
-                    width: "calc((100% - 0.5rem) / 2)",
-                    transform: `translateX(${activeTab === "details" ? 0 : 100}%)`,
-                  }}
-                />
-                <TabsTrigger value="details" className={`${BRAND_SEGMENTED_TAB_TRIGGER_CLASS} relative z-10`}>
-                  详细信息
-                </TabsTrigger>
-                <TabsTrigger value="discussion" className={`${BRAND_SEGMENTED_TAB_TRIGGER_CLASS} relative z-10`}>
-                  讨论（{Math.max(comments.length, currentTask.commentCount)}）
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <TaskDetailTabs value={activeTab} commentCount={Math.max(comments.length, currentTask.commentCount)}
+              onChange={(value) => { tabSelectionResolvedTaskIdRef.current = currentTask.id; setActiveTab(value); }} />
             {activeTab === "discussion" && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
@@ -799,14 +708,10 @@ export function TaskDetail({
               </section>
             ) : null}
             <div data-testid="task-detail-columns" className="relative min-h-0 flex-1 overflow-hidden">
-              <div
-                ref={detailsViewportRef}
-                id="task-detail-information"
-                data-testid="task-detail-information"
-                aria-hidden={activeTab !== "details"}
-                {...({ inert: activeTab !== "details" } as Record<string, boolean>)}
-                className={`absolute inset-0 overflow-y-auto will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "details" ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-2 opacity-0"}`}
-              >
+              <div ref={detailsViewportRef} id="task-detail-information" data-testid="task-detail-information"
+                aria-hidden={activeTab !== "details"} {...({ inert: activeTab !== "details" } as Record<string, boolean>)}
+                className={`absolute inset-0 overflow-y-auto will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "details" ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-2 opacity-0"}`}>
+
                 <div ref={detailsContentRef} data-testid="task-detail-content" className="p-4 sm:p-6">
               <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">流程与执行</h3>
@@ -1059,11 +964,9 @@ export function TaskDetail({
                 </div>
               </div>
 
-              <div
-                aria-hidden={activeTab !== "discussion"}
+              <div aria-hidden={activeTab !== "discussion"}
                 {...({ inert: activeTab !== "discussion" } as Record<string, boolean>)}
-                className={`absolute inset-0 flex min-h-0 flex-col will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "discussion" ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-2 opacity-0"}`}
-              >
+                className={`absolute inset-0 flex min-h-0 flex-col will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "discussion" ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-2 opacity-0"}`}>
                 <TaskDetailComments
                 comments={comments}
                 commentsLoading={commentsLoading}

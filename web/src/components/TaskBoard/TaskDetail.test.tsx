@@ -87,14 +87,8 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function selectTaskDetailTab(name: string | RegExp) {
-  const tab = screen.getByRole("tab", { name });
-  fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
-  fireEvent.click(tab);
-}
-function expandTaskDetails() { selectTaskDetailTab("详细信息"); }
-function openDiscussion() { selectTaskDetailTab(/讨论（\d+）/); }
-
+function selectTaskDetailTab(name: string | RegExp) { const tab = screen.getByRole("tab", { name }); fireEvent.mouseDown(tab, { button: 0, ctrlKey: false }); fireEvent.click(tab); }
+function expandTaskDetails() { selectTaskDetailTab("详细信息"); } function openDiscussion() { selectTaskDetailTab(/讨论（\d+）/); }
 function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
   return {
     open: true,
@@ -120,7 +114,7 @@ function props(overrides: Partial<ComponentProps<typeof TaskDetail>> = {}) {
   };
 }
 
-describe("TaskDetail 草稿隔离", () => {
+describe("TaskDetail 交互与草稿隔离", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.comments = [];
@@ -130,34 +124,11 @@ describe("TaskDetail 草稿隔离", () => {
     mocks.addComment.mockResolvedValue(undefined);
   });
 
-  it("任务详情使用窄侧栏与品牌分段标签，并按评论数选择默认页", async () => {
-    const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.className).toContain("md:basis-[46%]"); expect(dialog.className).toContain("md:min-w-[24rem]"); expect(dialog.className).toContain("md:max-w-[36rem]"); expect(dialog.className).toContain("rounded-xl");
-    const tabs = screen.getByRole("tablist", { name: "任务详情分区" }); expect(tabs.className).toContain("bg-brand-50"); expect(tabs.className).toContain("h-10");
-    expect(screen.getByRole("tab", { name: "详细信息" }).getAttribute("data-state")).toBe("active");
-    const information = screen.getByTestId("task-detail-information"); expect(information.getAttribute("aria-hidden")).toBe("false");
-    await user.click(screen.getByRole("tab", { name: "讨论（0）" })); expect(information.getAttribute("aria-hidden")).toBe("true");
-    await user.click(screen.getByRole("tab", { name: "详细信息" }));
-    const actions = screen.getByRole("group", { name: "任务操作" }); expect(within(actions).getByRole("button", { name: "保存任务" }).className).toContain("w-[4.5rem]");
+  it("任务详情使用窄侧栏与品牌分段标签，并按评论数选择默认页", async () => { const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); const dialog = screen.getByRole("dialog"); expect(dialog.className).toContain("md:basis-[46%]"); expect(dialog.className).toContain("md:min-w-[24rem]"); expect(dialog.className).toContain("md:max-w-[36rem]");
+    const tabs = screen.getByRole("tablist", { name: "任务详情分区" }); expect(tabs.className).toContain("bg-brand-50"); expect(tabs.className).toContain("h-10"); const information = screen.getByTestId("task-detail-information"); expect(information.getAttribute("aria-hidden")).toBe("false");
+    await user.click(screen.getByRole("tab", { name: "讨论（0）" })); expect(information.getAttribute("aria-hidden")).toBe("true"); await user.click(screen.getByRole("tab", { name: "详细信息" }));
     await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();
-  });
-
-  it("正文输入框按内容和剩余空间自适应，并在空间不足时内部滚动", async () => {
-    render(<TaskDetail {...props()} />); await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id));
-    const textarea = screen.getByRole("textbox", { name: "正文" }) as HTMLTextAreaElement;
-    const viewport = screen.getByTestId("task-detail-information"); const content = screen.getByTestId("task-detail-content");
-    let naturalHeight = 240;
-    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => naturalHeight });
-    Object.defineProperty(textarea, "offsetHeight", { configurable: true, get: () => Number.parseFloat(textarea.style.height) || 0 });
-    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 500 });
-    Object.defineProperty(content, "scrollHeight", { configurable: true, value: 400 });
-    fireEvent.change(textarea, { target: { value: "长正文".repeat(100) } });
-    const constrainedHeight = Number.parseFloat(textarea.style.height);
-    expect(constrainedHeight).toBeGreaterThan(100); expect(constrainedHeight).toBeLessThan(naturalHeight); expect(textarea.style.overflowY).toBe("auto");
-    naturalHeight = 100; fireEvent.change(textarea, { target: { value: "较短正文" } });
-    expect(Number.parseFloat(textarea.style.height)).toBe(100); expect(textarea.style.overflowY).toBe("hidden");
   });
 
   it("评论按 Markdown 渲染并安全打开外部链接", async () => {

@@ -133,7 +133,7 @@ export class PgSessionLock {
           CREATE OR REPLACE FUNCTION ${this.leasesTable}_guard_tenant_lease()
           RETURNS trigger LANGUAGE plpgsql AS $fn$
           BEGIN
-            IF NOT pg_try_advisory_xact_lock(hashtextextended(NEW.tenant_id || chr(0) || NEW.session_id, 0)) THEN
+            IF NOT pg_try_advisory_xact_lock(hashtextextended(length(NEW.tenant_id)::text || ':' || NEW.tenant_id || length(NEW.session_id)::text || ':' || NEW.session_id, 0)) THEN
               RETURN NULL;
             END IF;
             IF EXISTS (
@@ -214,7 +214,7 @@ export class PgSessionLock {
           clock_timestamp()
         WHERE $5::boolean = false
            OR (
-             pg_try_advisory_xact_lock(hashtextextended($1 || chr(0) || $2, 0))
+             pg_try_advisory_xact_lock(hashtextextended(length($1)::text || ':' || $1 || length($2)::text || ':' || $2, 0))
              AND NOT EXISTS (
                SELECT 1 FROM ${this.leasesTable} legacy
                WHERE legacy.tenant_id = $1

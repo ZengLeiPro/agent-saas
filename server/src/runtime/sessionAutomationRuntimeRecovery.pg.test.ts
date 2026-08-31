@@ -324,15 +324,25 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('explicit evaluator receipts remain idempotent and only completed/not_found resolve result_unknown', async () => {
     const setup = await activeExecution();
-    const attempt = await guard.beforeModel(setup.context, 'goal-evaluation:receipt-test', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
-    expect(attempt).toBeDefined();
     const evaluationId = randomUUID();
+    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
-        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,provider_attempt_id)
-       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'result_unknown',$8)`,
+        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state)
+       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'claimed')`,
       [evaluationId, tenantId, setup.sessionId, setup.automationId, setup.dispatch.outboxId, setup.incarnationId,
-        JSON.stringify({ summary: 'unknown', evidenceRefs: ['event:1'], hardGates: {} }), attempt!.providerAttemptId],
+        JSON.stringify({ summary: 'unknown', evidenceRefs: ['event:1'], hardGates: {} })],
+    );
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='evaluating'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, setup.sessionId, setup.automationId],
+    );
+    const attempt = await guard.beforeModel(setup.context, 'goal-evaluation:receipt-test', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
+    expect(attempt).toBeDefined();
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET state='result_unknown',provider_attempt_id=$2 WHERE evaluation_id=$1`,
+      [evaluationId, attempt!.providerAttemptId],
     );
     await guard.finishModel(setup.context, attempt, undefined, new Error('response lost'));
 
@@ -367,15 +377,25 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     }))).rejects.toMatchObject({ code: 'CONFLICT' });
 
     const completedSetup = await activeExecution();
-    const completedAttempt = await guard.beforeModel(completedSetup.context, 'goal-evaluation:completed-receipt', {model: completedSetup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
     const completedEvaluationId = randomUUID();
+    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [completedSetup.dispatch.outboxId]);
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
-        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,provider_attempt_id)
-       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'result_unknown',$8)`,
+        (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state)
+       VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,'claimed')`,
       [completedEvaluationId, tenantId, completedSetup.sessionId, completedSetup.automationId, completedSetup.dispatch.outboxId,
-        completedSetup.incarnationId, JSON.stringify({ summary: 'unknown', evidenceRefs: ['event:2'], hardGates: {} }),
-        completedAttempt!.providerAttemptId],
+        completedSetup.incarnationId, JSON.stringify({ summary: 'unknown', evidenceRefs: ['event:2'], hardGates: {} })],
+    );
+    await pool.query(
+      `UPDATE ${store.tables.automations} SET active_run_id=NULL,phase='evaluating'
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,
+      [tenantId, completedSetup.sessionId, completedSetup.automationId],
+    );
+    const completedAttempt = await guard.beforeModel(completedSetup.context, 'goal-evaluation:completed-receipt', {model: completedSetup.context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation'});
+    expect(completedAttempt).toBeDefined();
+    await pool.query(
+      `UPDATE ${store.tables.evaluations} SET state='result_unknown',provider_attempt_id=$2 WHERE evaluation_id=$1`,
+      [completedEvaluationId, completedAttempt!.providerAttemptId],
     );
     await guard.finishModel(completedSetup.context, completedAttempt, undefined, new Error('response lost'));
     const completedCurrent = await store.get(tenantId, completedSetup.sessionId, completedSetup.automationId);

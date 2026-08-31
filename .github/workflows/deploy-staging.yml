@@ -14,8 +14,9 @@ permissions:
   deployments: write
   pull-requests: read
 
+# Deploy 与 Acceptance 共享唯一在线 Staging 槽位，避免验收中途被换版。
 concurrency:
-  group: staging-deploy
+  group: staging-runtime
   cancel-in-progress: false
 
 env:
@@ -362,7 +363,8 @@ jobs:
             exit 1
           fi
           node scripts/release/migration-plan.mjs \
-            --changed-paths "$RUNNER_TEMP/classification.json" --target "$RELEASE_SHA" \
+            --changed-paths "$RUNNER_TEMP/classification.json" \
+            --baseline "$baseline" --target "$RELEASE_SHA" \
             > "$RUNNER_TEMP/migration.json"
           node scripts/release/produce-release-evidence.mjs \
             --sha "$RELEASE_SHA" \
@@ -539,7 +541,7 @@ jobs:
           diff <(jq -S .components "$RUNNER_TEMP/classification.json") \
                <(jq -S .affectedComponents "$RUNNER_TEMP/authoritative-evidence.json")
           node scripts/release/migration-plan.mjs --changed-paths "$RUNNER_TEMP/classification.json" \
-            --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
+            --baseline "$baseline" --target "$GITHUB_SHA" > "$RUNNER_TEMP/migration-plan.json"
           diff <(jq -S .migrationPlan "$RUNNER_TEMP/migration-plan.json") \
                <(jq -S .migrationPlan "$RUNNER_TEMP/authoritative-evidence.json")
       - name: Resolve exact ACS image when required

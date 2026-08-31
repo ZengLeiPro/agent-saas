@@ -7,6 +7,7 @@ export const RELEASE_STATES = [
   'verified',
   'approved',
   'promoting',
+  'awaiting_expand_confirmation',
   'completed',
   'failed_before_change',
   'rejected',
@@ -39,6 +40,9 @@ export interface ReleaseAttestationTiming {
 export const DEFAULT_MAX_ATTESTATION_AGE_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const DEFAULT_APPROVAL_VALIDITY_MS = 24 * 60 * 60 * 1000;
+const MAX_EXPAND_CONFIRMATION_DELAY_MS = 2 * 60 * 60 * 1000;
+const MAX_CONFIRMATION_EVIDENCE_AGE_MS = 5 * 60 * 1000;
+const MAX_CONFIRMATION_FUTURE_SKEW_MS = 60 * 1000;
 
 const SEQUENTIAL_TRANSITIONS: Partial<Record<ReleaseState, readonly ReleaseState[]>> = {
   created: ['built'],
@@ -46,7 +50,6 @@ const SEQUENTIAL_TRANSITIONS: Partial<Record<ReleaseState, readonly ReleaseState
   staging_deployed: ['verified'],
   verified: ['approved'],
   approved: ['promoting'],
-  promoting: ['completed'],
 };
 const REVOCABLE_STATES = new Set<ReleaseState>([
   'created',
@@ -55,6 +58,7 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'verified',
   'approved',
   'promoting',
+  'awaiting_expand_confirmation',
   'completed',
   'failed_before_change',
   'rejected',
@@ -63,6 +67,8 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'needs_human',
   'superseded',
 ]);
+// Post-mutation failure states are terminal for Promotion; only failed_before_change can re-enter approval.
+// awaiting_expand_confirmation 只能由带完整绑定证据的专用确认操作进入 completed。
 const FAILURE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
@@ -72,9 +78,159 @@ const FAILURE_STATES = new Set<ReleaseState>([
   'superseded',
 ]);
 
+function isRetryablePromotionTail(entries: readonly ReleaseAttestation[]): boolean {
+  if (entries.length === 0) return false;
+  let index = 0;
+  while (index < entries.length) {
+    if (entries[index]?.state !== 'approved') return false;
+    index += 1;
+    if (index === entries.length) return true;
+    if (entries[index]?.state === 'promoting') {
+      if (
+        !promotionContext(
+          entries[index]?.reason,
+          entries[index]!.releaseId,
+          entries[index]!.manifestDigest,
+        )
+      )
+        return false;
+      index += 1;
+      if (index >= entries.length || entries[index]?.state !== 'failed_before_change') return false;
+      index += 1;
+    } else if (entries[index]?.state === 'failed_before_change') index += 1;
+    else return false;
+  }
+  return true;
+}
+
 function assertDigest(digest: string): void {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest))
     throw new Error('Attestation must bind a SHA-256 manifest digest');
+}
+
+type MigrationPhase = 'none' | 'expand';
+
+interface PromotionContext {
+  releaseId: string;
+  releaseSha: string;
+  manifestDigest: string;
+  migrationPhase: MigrationPhase;
+  migrationPlanDigest: string;
+  productionBeforeDigest: string;
+  productionTargetDigest: string;
+}
+
+function promotionContext(
+  reason: string | undefined,
+  releaseId: string,
+  manifestDigest: string,
+): PromotionContext | null {
+  if (!reason) return null;
+  try {
+    const value = JSON.parse(reason) as Record<string, unknown>;
+    if (
+      value.releaseId !== releaseId ||
+      typeof value.releaseSha !== 'string' ||
+      !/^[a-f0-9]{40}$/u.test(value.releaseSha) ||
+      value.manifestDigest !== manifestDigest ||
+      !['none', 'expand'].includes(String(value.migrationPhase)) ||
+      typeof value.migrationPlanDigest !== 'string' ||
+      typeof value.productionBeforeDigest !== 'string' ||
+      typeof value.productionTargetDigest !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.migrationPlanDigest) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.productionBeforeDigest) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(value.productionTargetDigest)
+    )
+      return null;
+    return value as unknown as PromotionContext;
+  } catch {
+    return null;
+  }
+}
+
+function isExpandConfirmationWindowRefresh(
+  input: Pick<ReleaseAttestation, 'state' | 'operationKey' | 'reason' | 'manifestDigest'>,
+  releaseId: string,
+  promotion: PromotionContext | null,
+  recordedAtMs: number,
+  awaitingAtMs: number,
+): boolean {
+  if (
+    input.state !== 'awaiting_expand_confirmation' ||
+    !/^expand-reobservation:[1-9][0-9]*:[1-9][0-9]*$/u.test(input.operationKey) ||
+    !input.reason ||
+    promotion?.migrationPhase !== 'expand' ||
+    recordedAtMs - awaitingAtMs <= MAX_EXPAND_CONFIRMATION_DELAY_MS
+  ) {
+    return false;
+  }
+  try {
+    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
+    return (
+      evidence.status === 'confirmation_window_refreshed' &&
+      evidence.releaseId === releaseId &&
+      evidence.releaseSha === promotion.releaseSha &&
+      evidence.manifestDigest === input.manifestDigest &&
+      evidence.migrationPhase === 'expand' &&
+      evidence.migrationPlanDigest === promotion.migrationPlanDigest &&
+      evidence.productionBeforeDigest === promotion.productionBeforeDigest &&
+      evidence.productionTargetDigest === promotion.productionTargetDigest
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isExpandConfirmation(
+  input: Pick<ReleaseAttestation, 'state' | 'operationKey' | 'reason' | 'manifestDigest'>,
+  releaseId: string,
+  promotion: PromotionContext | null,
+  recordedAtMs: number,
+  awaitingAtMs: number,
+): boolean {
+  if (
+    input.state !== 'completed' ||
+    !/^expand-confirmation:[1-9][0-9]*:[1-9][0-9]*$/u.test(input.operationKey) ||
+    !input.reason ||
+    promotion?.migrationPhase !== 'expand'
+  ) {
+    return false;
+  }
+  try {
+    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
+    if (
+      evidence.schemaVersion !== 1 ||
+      evidence.status !== 'completed' ||
+      evidence.releaseId !== releaseId ||
+      evidence.manifestDigest !== input.manifestDigest ||
+      evidence.apiReadyReleaseId !== releaseId ||
+      evidence.apiReadyReleaseSha !== promotion.releaseSha ||
+      typeof evidence.liveObservedAt !== 'string' ||
+      typeof evidence.confirmedAt !== 'string' ||
+      typeof evidence.operatorReason !== 'string' ||
+      evidence.operatorReason.trim().length === 0 ||
+      typeof evidence.confirmationEvidenceDigest !== 'string' ||
+      !/^sha256:[a-f0-9]{64}$/u.test(evidence.confirmationEvidenceDigest) ||
+      evidence.migrationPlanDigest !== promotion.migrationPlanDigest ||
+      evidence.productionBeforeDigest !== promotion.productionBeforeDigest ||
+      evidence.productionTargetDigest !== promotion.productionTargetDigest
+    ) {
+      return false;
+    }
+    const liveObservedAtMs = timestamp(evidence.liveObservedAt, 'Production live readback');
+    const confirmedAtMs = timestamp(evidence.confirmedAt, 'Migration confirmation');
+    return (
+      recordedAtMs - awaitingAtMs <= MAX_EXPAND_CONFIRMATION_DELAY_MS &&
+      liveObservedAtMs >= awaitingAtMs &&
+      confirmedAtMs >= liveObservedAtMs &&
+      recordedAtMs - liveObservedAtMs <= MAX_CONFIRMATION_EVIDENCE_AGE_MS &&
+      recordedAtMs - confirmedAtMs <= MAX_CONFIRMATION_EVIDENCE_AGE_MS &&
+      liveObservedAtMs <= recordedAtMs + MAX_CONFIRMATION_FUTURE_SKEW_MS &&
+      confirmedAtMs <= recordedAtMs + MAX_CONFIRMATION_FUTURE_SKEW_MS
+    );
+  } catch {
+    return false;
+  }
 }
 
 function timestamp(value: string, label: string): number {
@@ -92,6 +248,7 @@ export class ReleaseAttestationLog {
   private readonly maxFutureSkewMs: number;
   private readonly approvalValidityMs: number;
   private readonly now: () => Date;
+  private replayingLegacyHistory = false;
 
   constructor(
     private readonly releaseId: string,
@@ -118,13 +275,18 @@ export class ReleaseAttestationLog {
       ...timing,
       now: () => replayNow,
     });
-    for (const entry of entries) {
-      if (entry.releaseId !== releaseId)
-        throw new Error('Stored attestation releaseId does not match its log');
-      replayNow = new Date(entry.recordedAt);
-      const { releaseId: _releaseId, ...input } = entry;
-      void _releaseId;
-      log.append(input);
+    log.replayingLegacyHistory = true;
+    try {
+      for (const entry of entries) {
+        if (entry.releaseId !== releaseId)
+          throw new Error('Stored attestation releaseId does not match its log');
+        replayNow = new Date(entry.recordedAt);
+        const { releaseId: _releaseId, ...input } = entry;
+        void _releaseId;
+        log.append(input);
+      }
+    } finally {
+      log.replayingLegacyHistory = false;
     }
     replayNow = timing.now?.() ?? new Date();
     return log;
@@ -172,6 +334,17 @@ export class ReleaseAttestationLog {
       throw new Error('Attestation recordedAt is out of order');
 
     const current = this.currentState();
+    const newPromotionContext =
+      input.state === 'promoting'
+        ? promotionContext(input.reason, this.releaseId, this.manifestDigest)
+        : null;
+    const replayingLegacyPromoting =
+      this.replayingLegacyHistory &&
+      input.state === 'promoting' &&
+      input.reason === undefined &&
+      !newPromotionContext;
+    if (input.state === 'promoting' && !newPromotionContext && !replayingLegacyPromoting)
+      throw new Error('Promoting attestation must bind an immutable migration phase and plan');
     const sequential = SEQUENTIAL_TRANSITIONS[current]?.includes(input.state) ?? false;
     let verifiedIndex = -1;
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
@@ -181,33 +354,61 @@ export class ReleaseAttestationLog {
       }
     }
     const retryTail = verifiedIndex >= 0 ? this.entries.slice(verifiedIndex + 1) : [];
+
     const retryAfterFailureBeforeChange =
       current === 'failed_before_change' &&
       input.state === 'approved' &&
-      retryTail.some((entry) => entry.state === 'approved') &&
-      retryTail.every((entry) =>
-        ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
-      );
-    let lastPromotingIndex = -1;
-    for (let index = retryTail.length - 1; index >= 0; index -= 1) {
-      if (retryTail[index]?.state === 'promoting') {
-        lastPromotingIndex = index;
+      isRetryablePromotionTail(retryTail);
+    let boundPromotionContext: PromotionContext | null = null;
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      const entry = this.entries[index];
+      if (entry?.state === 'promoting') {
+        boundPromotionContext = promotionContext(entry.reason, this.releaseId, this.manifestDigest);
         break;
       }
     }
-    const retryAfterHumanReview =
-      current === 'needs_human' &&
-      input.state === 'approved' &&
-      lastPromotingIndex > 0 &&
-      retryTail[lastPromotingIndex - 1]?.state === 'approved' &&
-      retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human');
+    const promotionOutcome =
+      current === 'promoting' &&
+      ((input.state === 'completed' && boundPromotionContext?.migrationPhase === 'none') ||
+        (input.state === 'awaiting_expand_confirmation' &&
+          boundPromotionContext?.migrationPhase === 'expand'));
+    const replayingLegacyCompletion =
+      this.replayingLegacyHistory &&
+      current === 'promoting' &&
+      boundPromotionContext === null &&
+      input.state === 'completed';
+    const awaitingAtMs =
+      current === 'awaiting_expand_confirmation' && latest !== undefined
+        ? timestamp(latest.recordedAt, 'Awaiting confirmation recordedAt')
+        : null;
+    const expandReobservation =
+      awaitingAtMs !== null &&
+      isExpandConfirmationWindowRefresh(
+        input,
+        this.releaseId,
+        boundPromotionContext,
+        recordedAtMs,
+        awaitingAtMs,
+      );
+    const expandConfirmation =
+      awaitingAtMs !== null &&
+      isExpandConfirmation(
+        input,
+        this.releaseId,
+        boundPromotionContext,
+        recordedAtMs,
+        awaitingAtMs,
+      );
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
     const failure =
       FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&
-      !retryAfterHumanReview &&
+      !promotionOutcome &&
+      !replayingLegacyCompletion &&
+      !expandReobservation &&
+      !expandConfirmation &&
       !revocation &&
       !failure
     )

@@ -11,6 +11,7 @@ const deployPath = new URL('./deploy-staging-release.sh', import.meta.url);
 const resourcePath = new URL('../../infra/staging/resource-plan.json', import.meta.url);
 const acsRuntimePath = new URL('../../infra/staging/acs-runtime.yaml', import.meta.url);
 const observationPath = new URL('./observe-production.mjs', import.meta.url);
+const stagingBindingPath = new URL('./verify-staging-release-binding.mjs', import.meta.url);
 const isolationPath = new URL('../staging/assert-isolation.mjs', import.meta.url);
 const serverUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-server-staging.service.template',
@@ -48,7 +49,7 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   const workflow = await readFile(workflowPath, 'utf8');
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
-  assert.match(workflow, /group: staging-deploy\s+cancel-in-progress: false/u);
+  assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(
     workflow,
     /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
@@ -143,10 +144,13 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
 });
 
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
-  const workflow = await readFile(acceptanceWorkflowPath, 'utf8');
+  const [workflow, stagingBinding] = await Promise.all([
+    readFile(acceptanceWorkflowPath, 'utf8'),
+    readFile(stagingBindingPath, 'utf8'),
+  ]);
   assert.match(workflow, /name: 预发验收/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
-  assert.match(workflow, /group: staging-acceptance\s+cancel-in-progress: false/u);
+  assert.match(workflow, /group: staging-runtime\s+cancel-in-progress: false/u);
   assert.match(workflow, /\[\[ "\$RELEASE_ID_INPUT" =~ \^rc-/u);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ inputs\.release_id \}\}/u);
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
@@ -156,6 +160,17 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /playwright test -c e2e\/playwright\.config\.ts/u);
   assert.match(workflow, /summarize-e2e\.mjs/u);
   assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
+  assert.match(workflow, /Verify Staging Manifest and component identities remained unchanged/u);
+  assert.match(workflow, /staging-web-identity-final\.json/u);
+  assert.match(workflow, /staging-api-ready-final\.json/u);
+  assert.match(workflow, /release-final\/manifest\.json/u);
+  assert.match(workflow, /verify-staging-release-binding\.mjs/u);
+  assert.match(workflow, /--expected-manifest-digest "\$MANIFEST_DIGEST"/u);
+  assert.match(stagingBinding, /configFingerprint/u);
+  assert.match(stagingBinding, /webDigest/u);
+  assert.match(stagingBinding, /serverDigest/u);
+  assert.match(stagingBinding, /acsOrchestratorDigest/u);
+  assert.match(stagingBinding, /acsSandboxImageDigest/u);
   assert.match(workflow, /retention-days: 14/u);
   assert.doesNotMatch(workflow, /releaseAttestationCli|state approved|deploy-staging-release\.sh/u);
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));

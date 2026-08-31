@@ -6,7 +6,15 @@ set -euo pipefail
 : "${MANIFEST_PATH:?MANIFEST_PATH is required}"
 : "${EXPECTED_MANIFEST_DIGEST:?EXPECTED_MANIFEST_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
 case "$PHASE" in acs|app) ;; *) echo 'PHASE must be acs or app' >&2; exit 1 ;; esac
+ROLLBACK_RECEIPT_PATH="${ROLLBACK_RECEIPT_PATH:-}"
+[ -z "$ROLLBACK_RECEIPT_PATH" ] || rm -f "$ROLLBACK_RECEIPT_PATH"
+
+record_rollback_attempt() {
+  [ -z "$ROLLBACK_RECEIPT_PATH" ] || printf '%s\n' "$PHASE:$release_id" >"$ROLLBACK_RECEIPT_PATH"
+}
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -42,7 +50,7 @@ NODE
 
 deploy_acs() {
   local digest target previous main_pid identity_backup env_backup had_previous_identity candidate
-  local acs_committed=false
+  local acs_committed=false acs_mutation_started=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
   previous=""
@@ -58,7 +66,7 @@ deploy_acs() {
   if [ -d "$target" ]; then
     node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component acs >/dev/null
   else
-    candidate="$target.candidate-$GITHUB_RUN_ID"
+    candidate="$target.candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
     rm -rf "$candidate" && mkdir -p "$candidate/.release"
     install -m 0444 "$RELEASE_DIR/acs-orchestrator.tgz" "$candidate/.release/acs-orchestrator.tgz"
     tar -tzf "$candidate/.release/acs-orchestrator.tgz" \
@@ -70,8 +78,8 @@ deploy_acs() {
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
     mv "$candidate" "$target"
   fi
-  env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id"
-  identity_backup="/etc/agent-saas/acs-release-identity.json.before-$release_id"
+  env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  identity_backup="/etc/agent-saas/acs-release-identity.json.before-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   [ -e "$env_backup" ] || cp -a /etc/agent-saas/acs-orchestrator.env "$env_backup"
   had_previous_identity=false
   if [ -e /etc/agent-saas/acs-release-identity.json ]; then
@@ -79,7 +87,8 @@ deploy_acs() {
     [ -e "$identity_backup" ] || cp -a /etc/agent-saas/acs-release-identity.json "$identity_backup"
   fi
   cleanup_acs_failure() {
-    if [ "$acs_committed" = false ]; then
+    if [ "$acs_committed" = false ] && [ "$acs_mutation_started" = true ]; then
+      record_rollback_attempt
       if [ -n "$previous" ]; then
         ln -sfn "$previous" /opt/agent-saas/acs-current
       else
@@ -96,6 +105,7 @@ deploy_acs() {
   }
   trap cleanup_acs_failure EXIT
   trap 'exit 130' HUP INT TERM
+  acs_mutation_started=true
   node - "$MANIFEST_PATH" /etc/agent-saas/acs-orchestrator.env <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
@@ -162,12 +172,13 @@ deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root
   local had_api_env=false had_worker_env=false nginx_changed=false app_committed=false
+  local app_mutation_started=false
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
   if [ -d "$target" ]; then
     node "$VERIFY_INSTALLED_SCRIPT" --action verify --root "$target" --component server >/dev/null
   else
-    candidate="$target.candidate-$GITHUB_RUN_ID"
+    candidate="$target.candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
     rm -rf "$candidate" && mkdir -p "$candidate/.release"
     install -m 0444 "$RELEASE_DIR/server-bundle.tgz" "$candidate/.release/server-bundle.tgz"
     tar -tzf "$candidate/.release/server-bundle.tgz" \
@@ -190,7 +201,7 @@ deploy_app() {
   worker_idle_previous="$(readlink -f "/opt/agent-saas-app/worker/$worker_idle" 2>/dev/null || true)"
   api_env="/etc/agent-saas/server-$api_idle.release.env"
   worker_env="/etc/agent-saas/runtime-worker-$worker_idle.release.env"
-  rollback_root="/tmp/agent-saas-app-rollback-$release_id-$GITHUB_RUN_ID"
+  rollback_root="/tmp/agent-saas-app-rollback-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   rm -rf "$rollback_root"
   mkdir -p "$rollback_root"
   if [ -e "$api_env" ]; then
@@ -202,7 +213,8 @@ deploy_app() {
     cp -a "$worker_env" "$rollback_root/worker.release.env"
   fi
   cleanup_app_failure() {
-    if [ "$app_committed" = false ]; then
+    if [ "$app_committed" = false ] && [ "$app_mutation_started" = true ]; then
+      record_rollback_attempt
       systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
       systemctl disable --now "agent-saas-server@$api_idle" >/dev/null 2>&1 || true
       if [ -n "$worker_idle_previous" ]; then
@@ -237,6 +249,7 @@ deploy_app() {
   }
   trap cleanup_app_failure EXIT
   trap 'exit 130' HUP INT TERM
+  app_mutation_started=true
   ln -sfn "$target" "/opt/agent-saas-app/color/$api_idle"
   ln -sfn "$target" "/opt/agent-saas-app/worker/$worker_idle"
   upsert_env "$MANIFEST_PATH" "$api_env" api

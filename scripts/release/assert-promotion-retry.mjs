@@ -1,46 +1,58 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 
-const RETRYABLE_TAIL_STATES = new Set(['approved', 'failed_before_change', 'needs_human']);
-const RECOVERABLE_MUTATION_TAIL_STATES = new Set([...RETRYABLE_TAIL_STATES, 'promoting']);
+function hasPromotionBinding(entry) {
+  if (entry?.state !== 'promoting' || typeof entry.reason !== 'string') return false;
+  try {
+    const value = JSON.parse(entry.reason);
+    return (
+      ['none', 'expand'].includes(value.migrationPhase) &&
+      [
+        value.manifestDigest,
+        value.migrationPlanDigest,
+        value.productionBeforeDigest,
+        value.productionTargetDigest,
+      ].every((digest) => /^sha256:[a-f0-9]{64}$/u.test(digest ?? ''))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isRetryableTail(tail) {
+  let index = 0;
+  while (index < tail.length) {
+    if (tail[index]?.state !== 'approved') return false;
+    index += 1;
+    if (index === tail.length) return true;
+    if (tail[index]?.state === 'promoting') {
+      if (!hasPromotionBinding(tail[index])) return false;
+      index += 1;
+      if (index >= tail.length || tail[index]?.state !== 'failed_before_change') return false;
+      index += 1;
+    } else if (tail[index]?.state === 'failed_before_change') index += 1;
+    else return false;
+  }
+  return true;
+}
 
 export function assertPromotionRetryable(entries) {
   if (!Array.isArray(entries) || entries.length === 0)
     throw new Error('Release attestation history is empty');
   const latest = entries.at(-1);
   if (latest?.state === 'verified') return { mode: 'fresh', latestState: 'verified' };
-  if (
-    latest?.state !== 'approved' &&
-    latest?.state !== 'needs_human' &&
-    latest?.state !== 'failed_before_change'
-  )
+  if (latest?.state !== 'approved' && latest?.state !== 'failed_before_change')
     throw new Error(`Release cannot be approved from ${String(latest?.state ?? 'unknown')}`);
 
   const verifiedIndex = entries.findLastIndex((entry) => entry?.state === 'verified');
   if (verifiedIndex < 0) throw new Error('Release has no verified Staging attestation');
   const tail = entries.slice(verifiedIndex + 1);
-  const promotingIndex = tail.findLastIndex((entry) => entry?.state === 'promoting');
-  if (latest.state === 'needs_human' && promotingIndex >= 0) {
-    const forbidden = tail.find((entry) => !RECOVERABLE_MUTATION_TAIL_STATES.has(entry?.state));
-    if (forbidden)
-      throw new Error(`Release has a terminal post-mutation state: ${forbidden.state}`);
-    if (tail[promotingIndex - 1]?.state !== 'approved')
-      throw new Error('Release promoting state is not preceded by an approval');
-    if (!tail.slice(promotingIndex + 1).every((entry) => entry?.state === 'needs_human'))
-      throw new Error('Release has an ambiguous post-mutation attestation tail');
-    return {
-      mode: 'retry_after_change',
-      latestState: latest.state,
-      verifiedOperationKey: entries[verifiedIndex]?.operationKey,
-      promotingOperationKey: tail[promotingIndex]?.operationKey,
-      previousApprovalCount: tail.filter((entry) => entry?.state === 'approved').length,
-    };
-  }
-  const forbidden = tail.find((entry) => !RETRYABLE_TAIL_STATES.has(entry?.state));
-  if (forbidden)
-    throw new Error(`Release may have entered production mutation state: ${forbidden.state}`);
   if (!tail.some((entry) => entry?.state === 'approved'))
     throw new Error('Release has no prior approval to recover');
+  if (!isRetryableTail(tail))
+    throw new Error(
+      'Release may have entered production mutation state or lacks bound failure proof',
+    );
 
   return {
     mode: 'retry_before_change',

@@ -16,8 +16,9 @@ permissions:
   contents: read
   actions: read
 
+# 与部署共享唯一在线 Staging 槽位；验收期间禁止新 RC 换版。
 concurrency:
-  group: staging-acceptance
+  group: staging-runtime
   cancel-in-progress: false
 
 env:
@@ -87,10 +88,12 @@ jobs:
             > "$RUNNER_TEMP/staging-web-identity.json"
           curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
             > "$RUNNER_TEMP/staging-api-ready.json"
-          test "$(jq -r .releaseId "$RUNNER_TEMP/staging-web-identity.json")" = "$STAGING_RELEASE_ID"
-          test "$(jq -r .releaseSha "$RUNNER_TEMP/staging-web-identity.json")" = "$release_sha"
-          test "$(jq -r .release.releaseId "$RUNNER_TEMP/staging-api-ready.json")" = "$STAGING_RELEASE_ID"
-          test "$(jq -r .release.releaseSha "$RUNNER_TEMP/staging-api-ready.json")" = "$release_sha"
+          binding_json="$(node scripts/release/verify-staging-release-binding.mjs \
+            --manifest "$RUNNER_TEMP/release/manifest.json" \
+            --web-identity "$RUNNER_TEMP/staging-web-identity.json" \
+            --api-ready "$RUNNER_TEMP/staging-api-ready.json")"
+          test "$(printf '%s' "$binding_json" | jq -r .releaseSha)" = "$release_sha"
+          test "$(printf '%s' "$binding_json" | jq -r .manifestDigest)" = "$manifest_digest"
           {
             echo "STAGING_RELEASE_SHA=$release_sha"
             echo "MANIFEST_DIGEST=$manifest_digest"
@@ -183,6 +186,29 @@ jobs:
             sleep 2
           done
 
+      - name: Verify Staging Manifest and component identities remained unchanged
+        if: always() && env.STAGING_RELEASE_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-final"
+          gh release download "$STAGING_RELEASE_ID" --dir "$RUNNER_TEMP/release-final" \
+            --pattern manifest.json
+          pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
+            "$RUNNER_TEMP/release-final/manifest.json" "$STAGING_RELEASE_ID"
+          test "$(jq -r .releaseSha "$RUNNER_TEMP/release-final/manifest.json")" = "$STAGING_RELEASE_SHA"
+          git cat-file -p "$STAGING_RELEASE_ID^{tag}" | grep -Fx "manifest-digest: $MANIFEST_DIGEST"
+          curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?final=$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/staging-web-identity-final.json"
+          curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
+            > "$RUNNER_TEMP/staging-api-ready-final.json"
+          node scripts/release/verify-staging-release-binding.mjs \
+            --manifest "$RUNNER_TEMP/release-final/manifest.json" \
+            --web-identity "$RUNNER_TEMP/staging-web-identity-final.json" \
+            --api-ready "$RUNNER_TEMP/staging-api-ready-final.json" \
+            --expected-manifest-digest "$MANIFEST_DIGEST"
+
       - name: Upload optional Staging acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -195,6 +221,9 @@ jobs:
             playwright-report/
             ${{ runner.temp }}/staging-web-identity.json
             ${{ runner.temp }}/staging-api-ready.json
+            ${{ runner.temp }}/staging-web-identity-final.json
+            ${{ runner.temp }}/staging-api-ready-final.json
+            ${{ runner.temp }}/release-final/manifest.json
             ${{ runner.temp }}/staging-acceptance-summary.json
             ${{ runner.temp }}/staging-fixture-reset-before.json
             ${{ runner.temp }}/staging-fixture-reset-after.json

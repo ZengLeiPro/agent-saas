@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       reason:
-        description: '生产晋级原因与人工验收结论'
+        description: '生产晋级原因与人工验收结论（写入 approval attestation）'
         required: true
         type: string
 
@@ -17,7 +17,7 @@ permissions:
   actions: read
   deployments: write
 
-# 与 compatibility App/ACS 共用生产写锁。
+# 与 compatibility App/ACS 和 expand confirmation 共享生产写锁。
 concurrency:
   group: production-runtime
   cancel-in-progress: false
@@ -122,7 +122,7 @@ jobs:
              [ "$(tail -n1 "$log" | jq -r .state)" != failed_before_change ]; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID" \
+              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
@@ -169,7 +169,7 @@ jobs:
             '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
+            --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
             --reason "$approval_reason"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
@@ -194,7 +194,7 @@ jobs:
       - name: Read authoritative production baseline before any write
         run: |
           set -euo pipefail
-          remote="/tmp/release-preflight-$GITHUB_RUN_ID"
+          remote="/tmp/release-preflight-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
@@ -283,15 +283,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          before_json="$(jq -cS .components "$RUNNER_TEMP/production-before.json")"
+          target_json="$(jq -cS '{web:{gitSha:.components.web.sourceSha,artifactDigest:.components.web.artifactDigest},api:{gitSha:.components.api.sourceSha,artifactDigest:.components.api.artifactDigest},runtimeWorker:{gitSha:.components.runtimeWorker.sourceSha,artifactDigest:.components.runtimeWorker.artifactDigest},acs:{gitSha:.components.acs.sourceSha,orchestratorArtifactDigest:.components.acs.orchestratorArtifactDigest,sandboxImageDigest:.components.acs.sandboxImageDigest}}' "$RUNNER_TEMP/manifest.json")"
+          before_digest="sha256:$(printf '%s' "$before_json" | sha256sum | cut -d' ' -f1)"
+          target_digest="sha256:$(printf '%s' "$target_json" | sha256sum | cut -d' ' -f1)"
+          promoting_reason="$(jq -nc --arg releaseId "$RELEASE_ID" --arg releaseSha "$RELEASE_SHA" \
+            --arg manifestDigest "$MANIFEST_DIGEST" --arg migrationPhase "$MIGRATION_PHASE" \
+            --arg migrationPlanDigest "$(jq -r .migrationPlan.planDigest "$RUNNER_TEMP/manifest.json")" \
+            --arg productionBeforeDigest "$before_digest" --arg productionTargetDigest "$target_digest" \
+            '{releaseId:$releaseId,releaseSha:$releaseSha,manifestDigest:$manifestDigest,migrationPhase:$migrationPhase,migrationPlanDigest:$migrationPlanDigest,productionBeforeDigest:$productionBeforeDigest,productionTargetDigest:$productionTargetDigest}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state promoting --operation "promoting:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+            --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+            --actor "$GITHUB_ACTOR" --reason "$promoting_reason"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
+            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
 
       - name: Create GitHub Production Deployment
@@ -310,7 +321,7 @@ jobs:
       - name: Upload immutable deploy payload and managed units
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           echo "PROMOTION_REMOTE=$remote" >> "$GITHUB_ENV"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote/artifacts'"
           if [ "$PRODUCTION_ALREADY_TARGET" = true ]; then
@@ -351,7 +362,8 @@ jobs:
           receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
           bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Deploy exact ACS Orchestrator and Sandbox digest first
         id: deploy_acs
@@ -368,7 +380,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-acs.receipt' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -390,7 +402,8 @@ jobs:
           receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
           bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Persist API and Worker operation start receipts
         id: start_app
@@ -410,7 +423,8 @@ jobs:
             receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
             bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
             bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           done
 
       - name: Deploy API blue-green and hand off Runtime Worker
@@ -429,7 +443,7 @@ jobs:
             exit 0
           fi
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_RECEIPT_PATH='$PROMOTION_REMOTE/rollback-app.receipt' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -452,7 +466,8 @@ jobs:
             receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
             bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
             bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           done
 
       - name: Persist Web operation start receipt
@@ -472,7 +487,8 @@ jobs:
           receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
           bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Publish Web entry last and retain prior hashed assets
         id: deploy_web
@@ -501,6 +517,7 @@ jobs:
           aliyun --secure oss cp "$PRODUCTION_WEB_OSS_URI/release-identity.json" \
             "$RUNNER_TEMP/web-before/release-identity.json" --region "$RELEASE_RECORD_OSS_REGION"
           restore_web_entry() {
+            printf '%s\n' "web:$RELEASE_ID" > "$RUNNER_TEMP/rollback-web.receipt"
             aliyun --secure oss cp "$RUNNER_TEMP/web-before/release-identity.json" \
               "$PRODUCTION_WEB_OSS_URI/release-identity.json" --force \
               --region "$RELEASE_RECORD_OSS_REGION" || true
@@ -509,10 +526,14 @@ jobs:
               --region "$RELEASE_RECORD_OSS_REGION" || true
           }
           web_committed=false
+          web_mutation_started=false
           cleanup_web_on_exit() {
-            [ "$web_committed" = true ] || restore_web_entry
+            if [ "$web_committed" = false ] && [ "$web_mutation_started" = true ]; then
+              restore_web_entry
+            fi
           }
           trap cleanup_web_on_exit EXIT
+          web_mutation_started=true
           aliyun --secure oss cp "$RUNNER_TEMP/web-assets/" "$PRODUCTION_WEB_OSS_URI/" \
             --recursive --force --exclude index.html --exclude release-identity.json \
             --region "$RELEASE_RECORD_OSS_REGION"
@@ -557,7 +578,8 @@ jobs:
           receipt_path="$(printf '%s' "$receipt_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$receipt_path"
           bash scripts/release/upload-oss-object-immutable.sh "$receipt_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/operations/$(basename "$receipt_path")" \
+            || echo "::warning title=OSS operation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Read every live component and commit trusted identity only on complete convergence
         id: readback
@@ -565,7 +587,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          remote="/tmp/release-readback-$GITHUB_RUN_ID"
+          remote="/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/production_key scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs scripts/release/read-runtime-identity.mjs \
@@ -609,9 +631,9 @@ jobs:
             external_side_effects=unknown
           fi
           rollback_attempted=false
-          if [ "${{ steps.deploy_acs.outcome }}" = failure ] || \
-             [ "${{ steps.deploy_app.outcome }}" = failure ] || \
-             [ "${{ steps.deploy_web.outcome }}" = failure ]; then
+          if [ -s "$RUNNER_TEMP/rollback-web.receipt" ] || \
+             ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
+               "test -s '$PROMOTION_REMOTE/rollback-acs.receipt' || test -s '$PROMOTION_REMOTE/rollback-app.receipt'"; then
             rollback_attempted=true
           fi
           jq -n --arg releaseId "$RELEASE_ID" --argjson before "$before" --argjson target "$target" \
@@ -643,12 +665,19 @@ jobs:
             outcome=needs_human
             reason='component convergence lacks one or more durable operation receipts'
           fi
+          if [ "$outcome" = completed ] && { \
+            [ "${{ steps.readback.outcome }}" != success ] || \
+            [ "${{ steps.readback.outputs.target_match }}" != true ]; \
+          }; then
+            outcome=needs_human
+            reason='component convergence lacks a confirmed trusted production identity'
+          fi
           migration_confirmation=not_required
           if [ "$MIGRATION_PHASE" = expand ]; then
             migration_confirmation=separate_confirmation_required
             if [ "$outcome" = completed ]; then
-              outcome=needs_human
-              reason='expand migration requires separate deterministic confirmation before completion'
+              outcome=awaiting_expand_confirmation
+              reason='expand migration is physically converged and awaits deterministic confirmation'
             fi
           fi
           reason="$(jq -nc --arg summary "$reason" --arg migrationPhase "$MIGRATION_PHASE" \
@@ -663,15 +692,16 @@ jobs:
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
+            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
           state=failure
-          [ "$outcome" = completed ] && state=success
+          case "$outcome" in completed|awaiting_expand_confirmation) state=success ;; esac
           if printf '%s' "${PRODUCTION_DEPLOYMENT_ID:-}" | grep -Eq '^[0-9]+$'; then
             gh api --method POST "repos/$GITHUB_REPOSITORY/deployments/$PRODUCTION_DEPLOYMENT_ID/statuses" \
               -f state="$state" -f environment=production -f environment_url=https://agent.kaiyan.net >/dev/null
           fi
           echo "PROMOTION_OUTCOME=$outcome" >> "$GITHUB_ENV"
-          test "$outcome" = completed
+          case "$outcome" in completed|awaiting_expand_confirmation) ;; *) exit 1 ;; esac
 
       - name: Record fail-closed outcome before production mutation
         if: failure() && env.APPROVAL_RECORDED == 'true' && env.PROMOTION_STARTED != 'true'
@@ -690,7 +720,8 @@ jobs:
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
+            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
+            || echo "::warning title=OSS attestation mirror::GitHub Release is authoritative; retry OSS mirror maintenance separately"
 
       - name: Upload production promotion evidence
         if: always()

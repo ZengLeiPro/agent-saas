@@ -3,7 +3,53 @@ import { ReleaseAttestationLog, type ReleaseAttestation } from './releaseAttesta
 import { getPromotionEligibility } from './releasePolicy.js';
 
 const DIGEST = `sha256:${'a'.repeat(64)}`;
+const RELEASE_SHA = '1'.repeat(40);
+const MIGRATION_PLAN_DIGEST = `sha256:${'b'.repeat(64)}`;
+const PRODUCTION_BEFORE_DIGEST = `sha256:${'c'.repeat(64)}`;
+const PRODUCTION_TARGET_DIGEST = `sha256:${'d'.repeat(64)}`;
 const NOW = new Date('2026-08-25T12:00:00.000Z');
+function promotingReason(migrationPhase: 'none' | 'expand') {
+  return JSON.stringify({
+    releaseId: 'rc-20260825-01',
+    releaseSha: RELEASE_SHA,
+    manifestDigest: DIGEST,
+    migrationPhase,
+    migrationPlanDigest: MIGRATION_PLAN_DIGEST,
+    productionBeforeDigest: PRODUCTION_BEFORE_DIGEST,
+    productionTargetDigest: PRODUCTION_TARGET_DIGEST,
+  });
+}
+function confirmationReason(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    schemaVersion: 1,
+    status: 'completed',
+    releaseId: 'rc-20260825-01',
+    manifestDigest: DIGEST,
+    confirmationEvidenceDigest: `sha256:${'e'.repeat(64)}`,
+    migrationPlanDigest: MIGRATION_PLAN_DIGEST,
+    productionBeforeDigest: PRODUCTION_BEFORE_DIGEST,
+    productionTargetDigest: PRODUCTION_TARGET_DIGEST,
+    liveObservedAt: NOW.toISOString(),
+    apiReadyReleaseId: 'rc-20260825-01',
+    apiReadyReleaseSha: RELEASE_SHA,
+    confirmedAt: NOW.toISOString(),
+    operatorReason: 'confirmed after production readback',
+    ...overrides,
+  });
+}
+function refreshReason(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    status: 'confirmation_window_refreshed',
+    releaseId: 'rc-20260825-01',
+    releaseSha: RELEASE_SHA,
+    manifestDigest: DIGEST,
+    migrationPhase: 'expand',
+    migrationPlanDigest: MIGRATION_PLAN_DIGEST,
+    productionBeforeDigest: PRODUCTION_BEFORE_DIGEST,
+    productionTargetDigest: PRODUCTION_TARGET_DIGEST,
+    ...overrides,
+  });
+}
 function log(digest = DIGEST) {
   return new ReleaseAttestationLog('rc-20260825-01', digest, { now: () => NOW });
 }
@@ -12,7 +58,13 @@ function append(
   state: Parameters<ReleaseAttestationLog['append']>[0]['state'],
   operationKey: string = state,
 ) {
-  return entry.append({ state, operationKey, actor: 'release-bot', manifestDigest: DIGEST });
+  return entry.append({
+    state,
+    operationKey,
+    actor: 'release-bot',
+    manifestDigest: DIGEST,
+    ...(state === 'promoting' ? { reason: promotingReason('none') } : {}),
+  });
 }
 
 describe('ReleaseAttestationLog', () => {
@@ -38,14 +90,15 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.currentState()).toBe('approved');
     expect(entries.isPromotable()).toBe(true);
 
-    const unsafe = log();
-    append(unsafe, 'built');
-    append(unsafe, 'staging_deployed');
-    append(unsafe, 'verified');
-    append(unsafe, 'approved');
-    append(unsafe, 'promoting');
-    append(unsafe, 'failed_before_change');
-    expect(() => append(unsafe, 'approved', 'unsafe-reapproval')).toThrow(/Illegal or late/u);
+    const closedAttempt = log();
+    append(closedAttempt, 'built');
+    append(closedAttempt, 'staging_deployed');
+    append(closedAttempt, 'verified');
+    append(closedAttempt, 'approved');
+    append(closedAttempt, 'promoting');
+    append(closedAttempt, 'failed_before_change');
+    append(closedAttempt, 'approved', 'safe-reapproval');
+    expect(closedAttempt.currentState()).toBe('approved');
 
     const neverVerified = log();
     append(neverVerified, 'failed_before_change');
@@ -54,18 +107,222 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
-  it('allows human-reviewed recovery after a durable promotion reached needs_human', () => {
+  it('hydrates immutable legacy promoting history without weakening new writes', () => {
+    const historical = log();
+    append(historical, 'built');
+    append(historical, 'staging_deployed');
+    append(historical, 'verified');
+    append(historical, 'approved');
+    append(historical, 'promoting');
+    append(historical, 'completed');
+    const legacy = historical
+      .list()
+      .map((entry) => (entry.state === 'promoting' ? { ...entry, reason: undefined } : entry));
+    const hydrated = ReleaseAttestationLog.hydrate('rc-20260825-01', DIGEST, legacy, {
+      now: () => NOW,
+    });
+    expect(hydrated.currentState()).toBe('completed');
+    expect(hydrated.list()).toEqual(legacy);
+
+    const malformed = legacy.map((entry) =>
+      entry.state === 'promoting' ? { ...entry, reason: '{"migrationPhase":"none"}' } : entry,
+    );
+    expect(() =>
+      ReleaseAttestationLog.hydrate('rc-20260825-01', DIGEST, malformed, { now: () => NOW }),
+    ).toThrow(/immutable migration phase and plan/u);
+
+    const legacyPromoting = ReleaseAttestationLog.hydrate(
+      'rc-20260825-01',
+      DIGEST,
+      legacy.slice(0, -1),
+      { now: () => NOW },
+    );
+    expect(() => append(legacyPromoting, 'completed', 'new-completion')).toThrow(
+      /Illegal or late/u,
+    );
+
+    const strict = log();
+    append(strict, 'built');
+    append(strict, 'staging_deployed');
+    append(strict, 'verified');
+    append(strict, 'approved');
+    expect(() =>
+      strict.append({
+        state: 'promoting',
+        operationKey: 'unbound-promoting',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+      }),
+    ).toThrow(/immutable migration phase and plan/u);
+  });
+
+  it('requires evidence bound to the promoting plan for expand confirmation', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
     append(entries, 'verified');
     append(entries, 'approved', 'approval-1');
-    append(entries, 'promoting', 'promoting-1');
-    append(entries, 'needs_human', 'needs-human-1');
-    append(entries, 'approved', 'recovery-approval');
-    append(entries, 'promoting', 'promoting-2');
-    append(entries, 'completed');
+    const migrationPlanDigest = MIGRATION_PLAN_DIGEST;
+    const productionBeforeDigest = PRODUCTION_BEFORE_DIGEST;
+    const productionTargetDigest = PRODUCTION_TARGET_DIGEST;
+    entries.append({
+      state: 'promoting',
+      operationKey: 'promoting-1',
+      actor: 'release-bot',
+      manifestDigest: DIGEST,
+      reason: JSON.stringify({
+        releaseId: 'rc-20260825-01',
+        releaseSha: RELEASE_SHA,
+        manifestDigest: DIGEST,
+        migrationPhase: 'expand',
+        migrationPlanDigest,
+        productionBeforeDigest,
+        productionTargetDigest,
+      }),
+    });
+    expect(() => append(entries, 'completed', 'generic-completion-from-promoting')).toThrow(
+      /Illegal or late/u,
+    );
+    append(entries, 'awaiting_expand_confirmation');
+    expect(() => append(entries, 'completed', 'generic-completion')).toThrow(/Illegal or late/u);
+    expect(() =>
+      entries.append({
+        state: 'completed',
+        operationKey: 'expand-confirmation:123:1',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+        reason: confirmationReason({
+          migrationPlanDigest: `sha256:${'f'.repeat(64)}`,
+          operatorReason: 'forged cross-plan confirmation',
+        }),
+      }),
+    ).toThrow(/Illegal or late/u);
+    entries.append({
+      state: 'completed',
+      operationKey: 'expand-confirmation:123:1',
+      actor: 'release-bot',
+      manifestDigest: DIGEST,
+      reason: confirmationReason({
+        migrationPlanDigest,
+        productionBeforeDigest,
+        productionTargetDigest,
+      }),
+    });
     expect(entries.currentState()).toBe('completed');
+
+    const unsafe = log();
+    append(unsafe, 'built');
+    append(unsafe, 'staging_deployed');
+    append(unsafe, 'verified');
+    append(unsafe, 'approved');
+    append(unsafe, 'promoting');
+    append(unsafe, 'needs_human');
+    expect(() => append(unsafe, 'approved', 'generic-recovery')).toThrow(/Illegal or late/u);
+  });
+
+  it('rejects stale, incomplete, or cross-release expand confirmation evidence at append time', () => {
+    const awaitingLog = () => {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      entries.append({
+        state: 'promoting',
+        operationKey: 'promoting-expand',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+        reason: promotingReason('expand'),
+      });
+      append(entries, 'awaiting_expand_confirmation');
+      return entries;
+    };
+    const appendConfirmation = (entries: ReleaseAttestationLog, reason: string) =>
+      entries.append({
+        state: 'completed',
+        operationKey: 'expand-confirmation:456:1',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+        reason,
+      });
+
+    const delayed = ReleaseAttestationLog.hydrate('rc-20260825-01', DIGEST, awaitingLog().list(), {
+      now: () => new Date('2026-08-25T14:00:00.001Z'),
+    });
+    expect(() => appendConfirmation(delayed, confirmationReason())).toThrow(/Illegal or late/u);
+    expect(() =>
+      delayed.append({
+        state: 'awaiting_expand_confirmation',
+        operationKey: 'expand-reobservation:456:1',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+        reason: refreshReason({ releaseSha: '2'.repeat(40) }),
+      }),
+    ).toThrow(/Illegal or late/u);
+    delayed.append({
+      state: 'awaiting_expand_confirmation',
+      operationKey: 'expand-reobservation:456:1',
+      actor: 'release-bot',
+      manifestDigest: DIGEST,
+      reason: refreshReason(),
+    });
+    expect(delayed.currentState()).toBe('awaiting_expand_confirmation');
+    appendConfirmation(
+      delayed,
+      confirmationReason({
+        liveObservedAt: '2026-08-25T14:00:00.001Z',
+        confirmedAt: '2026-08-25T14:00:00.001Z',
+      }),
+    );
+    expect(delayed.currentState()).toBe('completed');
+
+    expect(() =>
+      awaitingLog().append({
+        state: 'awaiting_expand_confirmation',
+        operationKey: 'expand-reobservation:789:1',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+        reason: refreshReason(),
+      }),
+    ).toThrow(/Illegal or late/u);
+
+    for (const overrides of [
+      { liveObservedAt: undefined },
+      { confirmedAt: '2026-08-24T00:00:00.000Z' },
+      { apiReadyReleaseId: 'rc-20260825-02' },
+      { apiReadyReleaseSha: '2'.repeat(40) },
+      { schemaVersion: 2 },
+    ]) {
+      expect(() => appendConfirmation(awaitingLog(), confirmationReason(overrides))).toThrow(
+        /Illegal or late/u,
+      );
+    }
+  });
+
+  it('requires a bound migration phase and lets only none complete directly', () => {
+    const missing = log();
+    append(missing, 'built');
+    append(missing, 'staging_deployed');
+    append(missing, 'verified');
+    append(missing, 'approved');
+    expect(() =>
+      missing.append({
+        state: 'promoting',
+        operationKey: 'promoting-without-context',
+        actor: 'release-bot',
+        manifestDigest: DIGEST,
+      }),
+    ).toThrow(/immutable migration phase and plan/u);
+
+    const none = log();
+    append(none, 'built');
+    append(none, 'staging_deployed');
+    append(none, 'verified');
+    append(none, 'approved');
+    append(none, 'promoting');
+    expect(() => append(none, 'awaiting_expand_confirmation')).toThrow(/Illegal or late/u);
+    append(none, 'completed', 'none-completed');
+    expect(none.currentState()).toBe('completed');
   });
 
   it('makes an identical operation idempotent but rejects divergent replay and late receipts', () => {
@@ -273,7 +530,7 @@ describe('ReleaseAttestationLog', () => {
     });
   });
 
-  it.each(['failed_before_change', 'partial_failed', 'rolled_back'] as const)(
+  it.each(['failed_before_change', 'partial_failed', 'rolled_back', 'needs_human'] as const)(
     'records truthful terminal promotion outcome %s without allowing later completion',
     (outcome) => {
       const entries = log();

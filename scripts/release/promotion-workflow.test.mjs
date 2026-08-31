@@ -4,7 +4,23 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
+const confirmationWorkflowPath = new URL(
+  '../../.github/workflows/confirm-expand-migration.yml',
+  import.meta.url,
+);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
+const attestationCliPath = new URL(
+  '../../server/src/release/releaseAttestationCli.ts',
+  import.meta.url,
+);
+const releaseDocsPath = new URL(
+  '../../docs/agent-saas-GitHub测试预览与正式发布流程说明.md',
+  import.meta.url,
+);
+const releaseConfigDocsPath = new URL(
+  '../../docs/release-workflow-configuration.md',
+  import.meta.url,
+);
 const acsUnitPath = new URL(
   '../../daemon-packaging/systemd/agent-saas-acs-orchestrator.service.template',
   import.meta.url,
@@ -21,7 +37,7 @@ const workerUnitPath = new URL(
 function ordered(text, markers) {
   let cursor = -1;
   for (const marker of markers) {
-    const next = text.indexOf(marker);
+    const next = text.indexOf(marker, cursor + 1);
     assert.ok(next > cursor, `${marker} must appear in the required order`);
     cursor = next;
   }
@@ -48,7 +64,7 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);
-  assert.match(workflow, /group: production-promotion/u);
+  assert.match(workflow, /group: production-runtime/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
   assert.match(workflow, /PRODUCTION_SSH_HOST_KEY_SHA256/u);
@@ -68,6 +84,10 @@ test('promotion accepts only an approved release id and serializes production mu
   assert.match(workflow, /assert-promotion-retry\.mjs/u);
   assert.match(workflow, /retry-before-change:\$GITHUB_RUN_ID/u);
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
+  assert.match(workflow, /--arg releaseSha "\$RELEASE_SHA"/u);
+  assert.match(workflow, /releaseSha:\$releaseSha/u);
+  assert.match(workflow, /--arg migrationPhase "\$MIGRATION_PHASE"/u);
+  assert.match(workflow, /migrationPhase:\$migrationPhase/u);
 });
 
 test('malicious multiline dispatch input cannot pass release-id validation or reach shell syntax', async () => {
@@ -104,6 +124,8 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.doesNotMatch(workflow, /oss stat/u);
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
+  assert.match(workflow, /OSS attestation mirror/u);
+  assert.match(workflow, /OSS operation mirror/u);
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
   assert.match(workflow, /already equals the immutable target/u);
   assert.match(workflow, /read-live-production-components\.mjs/u);
@@ -123,6 +145,10 @@ test('all validation and prefetch precede mutation, then ACS, App, and Web conve
   assert.doesNotMatch(workflow, /PRODUCTION_OBSERVATION_(?:TOKEN|URL)/u);
   assert.doesNotMatch(workflow, /production-observation\.json/u);
   assert.doesNotMatch(workflow, /--clobber/u);
+  assert.match(
+    workflow,
+    /GitHub Release is authoritative; retry OSS mirror maintenance separately/u,
+  );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
@@ -134,16 +160,37 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   const workerUnit = await readFile(workerUnitPath, 'utf8');
   assert.match(workflow, /read-live-production-components\.mjs/u);
   assert.match(workflow, /target_match=false/u);
+  assert.match(workflow, /steps\.readback\.outcome.*!= success/su);
+  assert.match(workflow, /steps\.readback\.outputs\.target_match.*!= true/su);
+  assert.match(workflow, /component convergence lacks a confirmed trusted production identity/u);
   assert.match(workflow, /write-production-identity\.mjs/u);
   assert.match(workflow, /verify-installed-release\.mjs/u);
   assert.match(workflow, /separate_release/u);
   assert.doesNotMatch(workflow, /compatibilityEvidenceDigest|appAcsCompatibility/u);
   assert.match(workflow, /separate_confirmation_required/u);
+  assert.match(workflow, /awaiting_expand_confirmation/u);
+  assert.match(workflow, /promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /migrationPlanDigest/u);
+  assert.match(workflow, /productionBeforeDigest/u);
+  assert.match(workflow, /productionTargetDigest/u);
   assert.match(workflow, /optional_staging_acceptance/u);
   assert.doesNotMatch(workflow, /businessAcceptanceEvidenceDigest|observationReportDigest/u);
   assert.match(workflow, /contractExecuted:false/u);
   assert.match(workflow, /restore_web_entry/u);
   assert.match(workflow, /rollback_attempted=true/u);
+  assert.match(workflow, /rollback-web\.receipt/u);
+  assert.match(workflow, /rollback-acs\.receipt/u);
+  assert.match(workflow, /rollback-app\.receipt/u);
+  assert.match(workflow, /agent-saas-promotion-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /release-preflight-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /release-readback-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(deploy, /candidate-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(deploy, /rollback-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(deploy, /before-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u);
+  assert.doesNotMatch(
+    workflow,
+    /steps\.deploy_(?:acs|app|web)\.outcome[^\n]*failure[\s\S]{0,180}rollback_attempted=true/u,
+  );
   assert.match(workflow, /Persist ACS operation receipt/u);
   assert.match(workflow, /Persist ACS operation start receipt/u);
   assert.match(workflow, /Persist API and Worker operation start receipts/u);
@@ -155,6 +202,21 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(workflow, /env\.PROMOTION_STARTED == 'true'/u);
   assert.match(deploy, /cleanup_app_failure/u);
   assert.match(deploy, /cleanup_acs_failure/u);
+  assert.match(deploy, /record_rollback_attempt/u);
+  assert.ok(
+    deploy.indexOf('record_rollback_attempt', deploy.indexOf('cleanup_acs_failure()')) <
+      deploy.indexOf('ln -sfn "$previous"', deploy.indexOf('cleanup_acs_failure()')),
+  );
+  assert.ok(
+    deploy.indexOf('record_rollback_attempt', deploy.indexOf('cleanup_app_failure()')) <
+      deploy.indexOf('systemctl disable --now', deploy.indexOf('cleanup_app_failure()')),
+  );
+  assert.ok(
+    workflow.indexOf('rollback-web.receipt', workflow.indexOf('restore_web_entry()')) <
+      workflow.indexOf('aliyun --secure oss cp', workflow.indexOf('restore_web_entry()')),
+  );
+  assert.match(deploy, /acs_mutation_started=true/u);
+  assert.match(deploy, /app_mutation_started=true/u);
   assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.doesNotMatch(
@@ -200,4 +262,65 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
     /^BindPaths=\/opt\/agent-saas\/workspace-shared:\/opt\/agent-saas-app\/worker\/%i\/workspace-shared$/mu,
   );
   execFileSync('bash', ['-n', deployPath.pathname]);
+});
+
+test('expand confirmation is a separate release-bound and production-serialized workflow', async () => {
+  const [workflow, attestationCli, releaseDocs, releaseConfigDocs] = await Promise.all([
+    readFile(confirmationWorkflowPath, 'utf8'),
+    readFile(attestationCliPath, 'utf8'),
+    readFile(releaseDocsPath, 'utf8'),
+    readFile(releaseConfigDocsPath, 'utf8'),
+  ]);
+  assert.match(workflow, /name: 确认扩展迁移/u);
+  assert.match(workflow, /name: 校验确认请求/u);
+  assert.match(workflow, /group: production-runtime\s+cancel-in-progress: false/u);
+  assert.match(workflow, /environment: production/u);
+  assert.match(workflow, /release_id:/u);
+  assert.match(workflow, /attestation-snapshot\.mjs select/u);
+  assert.match(workflow, /confirm-expand-migration\.mjs/u);
+  assert.match(workflow, /REFRESH_CONFIRMATION_WINDOW/u);
+  assert.match(workflow, /expand-reobservation:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /status:"confirmation_window_refreshed"/u);
+  assert.match(workflow, /Refresh expired confirmation window with an immutable attestation/u);
+  ordered(workflow, [
+    'expand-reobservation:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT',
+    'upload-github-release-asset-immutable.sh',
+    'Read production components and verify migration confirmation binding',
+  ]);
+  assert.match(workflow, /read-live-production-components\.mjs/u);
+  assert.match(workflow, /production-api-ready\.json/u);
+  assert.match(workflow, /upload-oss-object-immutable\.sh[\s\S]*--state completed/u);
+  assert.match(workflow, /Release was already confirmed by another workflow run/u);
+  assert.doesNotMatch(workflow, /--state completed[\s\S]*migration-confirmations\/confirmation-/u);
+  assert.match(workflow, /--api-ready/u);
+  assert.match(workflow, /--state completed/u);
+  assert.match(workflow, /expand-confirmation:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
+  assert.match(workflow, /migration-confirmations\/\$\{confirmation_digest#sha256:\}\.json/u);
+  assert.match(workflow, /api\.agent\.kaiyan\.net\/api\/healthz\/ready/u);
+  ordered(workflow, [
+    '先按内容 digest 持久化独立读回',
+    '--state completed',
+    'GitHub Release 是重跑读取源',
+    'upload-github-release-asset-immutable.sh',
+  ]);
+  assert.match(workflow, /--confirmation-evidence/u);
+  assert.match(attestationCli, /confirmation-evidence/u);
+  assert.match(attestationCli, /currentState === 'awaiting_expand_confirmation'/u);
+  assert.match(attestationCli, /confirmationEvidenceDigest !== evidenceDigest/u);
+  assert.match(releaseDocs, /GitHub 上七个 Workflow/u);
+  assert.match(releaseDocs, /`Confirm Expand Migration`/u);
+  assert.match(releaseDocs, /2 小时确认窗口和 5 分钟现场\/证据新鲜度/u);
+  assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);
+  assert.match(releaseDocs, /全部 INSERT/u);
+  assert.match(releaseDocs, /未自愿标 metadata 也会先进入闭包/u);
+  assert.match(releaseDocs, /expand-reobservation/u);
+  assert.match(releaseConfigDocs, /target_match=true/u);
+  assert.match(releaseConfigDocs, /identity 写入或 `production-confirmed\.json` 回读失败/u);
+  assert.match(releaseConfigDocs, /producer 仅用写 Token/u);
+  assert.match(releaseConfigDocs, /publisher 仅用读 Token/u);
+  assert.doesNotMatch(releaseConfigDocs, /准备发布证据` 只持有读身份/u);
+  assert.match(workflow, /CONFIRMATION_REPAIR=true/u);
+  assert.match(workflow, /Repair OSS attestation mirror/u);
+  assert.doesNotMatch(workflow, /--clobber/u);
+  assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });

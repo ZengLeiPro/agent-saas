@@ -66,9 +66,10 @@ NAS mount、通知配置、生产 ACS 网络拒绝、ACK RBAC 与 PVC/PV；Produ
 Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无损探针。完整证据随后传回
 Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
 Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
-比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。Production
-`部署预发 RC` 的证据前置 job 使用独立写身份创建 Release Evidence，再用只读身份完成回读；写身份
-不会进入后续 Staging 部署 job。相关端点都必须带
+比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。`部署预发 RC` 的
+`prepare-evidence` 前置 job 使用 `production` Environment，并同时注入用途隔离的写、读身份：
+producer 仅用写 Token 执行不可覆盖 `POST`，publisher 仅用读 Token 执行 `GET` 与 canonical 比较；
+两种 Token 均不进入后续 Staging 部署 job。相关端点都必须带
 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
 evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度；它不会在缺少真实探针时
 合成生产观察样本。运行参数：
@@ -104,30 +105,51 @@ RC 来源只要求可验证的 GitHub PR 已合入 `main`，其 `mergeCommitOid`
 CI/check 已成功。Taskboard Delivery、Review 和 Integration 链仍可用于团队协作与附加审计，但不再是
 生成 RC 或晋级 Production 的必要条件。直接合并的 GitHub PR 无需创建 remediation Taskboard 链。
 
+## Migration plan 的闭包边界
+
+Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-export 图。除了路径、命名和独立 metadata 外，权威入口真实 import 的 export binding 会跨 re-export、local alias、default export 与普通 barrel 传播到最终静态声明；其中出现 DDL/DML 就会自动进入分类，不能通过任意文件名、任意变量名或省略 `release-migration` metadata 脱离门禁。所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider 时纳入闭包，纯 type-only edge、普通静态 logger/store 与延迟函数声明不误判；普通 logger/runtime store 的只读查询不会仅因具名 import 自动归为 migration。Expand metadata 只识别真实注释，单引号、双引号、模板字符串及 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文中的伪注释均无效，未闭合 dollar quote 直接 fail closed。Expand SQL 只允许纯 schema CREATE/单一 ALTER 白名单，`DEFAULT`、`CHECK` 等 ALTER 表达式中的不可证明函数调用（含 Unicode 与双引号函数名）与所有 INSERT 均 fail closed；需要数据回填时必须拆到单独受审计流程。
+
 ## 不可变发布记录
 
 `STAGING_RELEASE_OSS_URI/records/<releaseId>/`（生产使用同值的
 `RELEASE_RECORD_OSS_URI`）持久化 canonical Manifest、artifact index、只新增 attestation
 快照和逐组件 operation receipt。GitHub Release 中的同名资产也只新增，禁止 `--clobber`。
 RC annotated tag message 必须包含 `manifest-digest: sha256:...`；Promotion 同时核对 tag、GitHub
-Release 与 OSS 三份绑定。任何分叉 attestation、同路径不同内容或 receipt 缺失都 fail closed。
-OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
-仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。
+Release 与 OSS 三份绑定。`promoting` attestation 必须不可变绑定 release SHA、migration phase、plan
+digest 与生产 before/target digest：`none` 才能直接完成，`expand` 只能先进入
+`awaiting_expand_confirmation`。最终 append 会再次验证 confirmation evidence 的完整 schema、API
+ready release ID/SHA、2 小时确认窗口及 5 分钟 live/evidence 新鲜度；通用 operation key 或陈旧证据
+都不能绕过。窗口过期时，独立确认 Workflow 只能在 `production-runtime` 锁内追加一条完整绑定原
+release SHA/Manifest/plan/before/target 的 `expand-reobservation` 自迁移，并先把新快照不可变写入
+GitHub Release，再重新读取生产现场；未过期或错绑定刷新均拒绝。任何分叉 attestation、同路径
+不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
+仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。
+
+`failed_before_change` 的安全重试尾链允许 `approved → promoting → failed_before_change`，但其中 `promoting` 必须带完整 Manifest、plan 与生产 before/target digest；悬空 `promoting`、缺失绑定或任何 post-mutation outcome 都不能重试。`rolled_back` 只能由部署脚本或 Web 恢复 trap 实际执行后生成的 rollback receipt，加上完整权威读回确认为原生产矩阵后得出；单纯的 deploy step failure 不构成 rollback 证据，trap 安装前失败且现场仍为 before 只记 `failed_before_change`。远端 payload、candidate、backup、rollback 与 readback 临时路径同时绑定 GitHub run ID 和 run attempt，重跑不得复用上一 attempt 的恢复证据。
+
+Production Promotion 的成功状态还硬性依赖 trusted identity 写入后的确认读回：只有 readback step
+成功且输出 `target_match=true`，才允许从 reconcile 的 `completed` 推进到最终 `completed` 或
+`awaiting_expand_confirmation`；identity 写入或 `production-confirmed.json` 回读失败一律记录
+`needs_human`，即使物理组件已等于目标也不能宣称发布完成。
 
 生产 API、Runtime Worker 和 ACS 的运行目录会保留原始压缩包并写入组件级 byte seal，后续复用与
 发布后读回都会重新计算压缩包和展开目录摘要。现有未带 byte seal 的旧目录不会被自动信任；首次
 启用时必须让 RC 对三个运行组件执行 `deploy`，或在停机维护窗口用已知可信制品完成一次受审计的
 seal bootstrap，不能仅根据旧目录名补写摘要。
 
-## 外部设置
+## 外部设置与兼容入口边界
 
 - `deploy-staging.yml` 按 `Evidence 准备/复用 → Staging RC 构建与部署` 两个隔离 job 执行。前置 job
   使用 `production` Environment，实际部署 job 使用 `staging` Environment；若缺少
   `RELEASE_EVIDENCE_WRITE_TOKEN` 或证据不一致，必须在构建 RC 前 fail closed，不得回退为人工伪造、
   复用只读 Token 或跳过生产基线读回。
-- `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工部署入口，可按实际需要部署任意
-  新旧版本；push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
-  Promotion receipt 或物理组件收敛证据，因此通过它们部署不等于新版发布契约已通过。
+- `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工兼容部署入口，但都只接受
+  `refs/heads/main`：App 通道部署 dispatch 时选中的 main SHA；ACS 通道会在部署前校验 latest main，
+  并在 exact-SHA ACR build record 尚未出现时继续拒绝已落后 main 的 dispatch。记录一旦进入
+  `PENDING`/`BUILDING`，Workflow 就锁定该 exact SHA 与镜像继续等待；此后 main 前进不会把本次
+  已锁定部署改成新 SHA，也不会单独取消它。两个入口都不能用于 dispatch 任意旧 commit/tag。
+  push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
+  Promotion receipt 或跨组件物理收敛证据，因此通过它们部署不等于新版发布契约已通过。
   需要完整发布证据链时使用 `promote-release.yml`，但不得因此关闭两个既有人工入口。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的

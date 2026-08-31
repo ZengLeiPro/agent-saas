@@ -236,6 +236,12 @@ export function registerGovernanceCredentialRoutes(options: {
     if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
     const tenantId = options.resourceTenantFor(req, parsed.data.tenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
+    if (parsed.data.kind === 'personal_grant' && tenantId !== req.user!.tenantId) {
+      return res.status(403).json({
+        error: 'Personal credential tenant must match its owner',
+        code: 'PERSONAL_CREDENTIAL_TENANT_MISMATCH',
+      });
+    }
     if (parsed.data.kind === 'org_shared' && !options.canManageOrganization(req)) return res.status(403).json({ error: 'Admin required' });
     if (parsed.data.kind === 'org_shared' && !commitParsed.success) return res.status(409).json({ error: 'Signed impact preview required', code: 'GOVERNANCE_PREVIEW_REQUIRED' });
     if (parsed.data.kind === 'infrastructure' && options.personaFor(req) !== 'platform_admin') return res.status(403).json({ error: 'Platform admin required' });
@@ -276,7 +282,15 @@ export function registerGovernanceCredentialRoutes(options: {
         ]);
     if (!activeCommit?.recovery) {
       if (!connector || connector.status !== 'published') return res.status(409).json({ error: 'Connector unavailable', code: 'CONNECTOR_NOT_PUBLISHED' });
-      if (responsibleUserId && (!membership || membership.status !== 'active')) return res.status(409).json({ error: 'Active in-tenant Credential owner/custodian required', code: 'CREDENTIAL_CUSTODIAN_MEMBERSHIP_REQUIRED' });
+      const platformPersonalOwner = parsed.data.kind === 'personal_grant'
+        && options.personaFor(req) === 'platform_admin'
+        && ownerUserId === req.user!.sub;
+      if (responsibleUserId && !platformPersonalOwner && (!membership || membership.status !== 'active')) {
+        return res.status(409).json({
+          error: 'Active in-tenant Credential owner/custodian required',
+          code: 'CREDENTIAL_CUSTODIAN_MEMBERSHIP_REQUIRED',
+        });
+      }
       if (responsibleUserId && await hasActiveOffboarding(tenantId, responsibleUserId)) return res.status(409).json({ error: 'Credential owner/custodian offboarding is active', code: 'CREDENTIAL_SUBJECT_OFFBOARDING_ACTIVE' });
     }
     if (pendingClaim && commitParsed.success) {

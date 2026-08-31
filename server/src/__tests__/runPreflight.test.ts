@@ -162,6 +162,8 @@ function session(overrides: Partial<RuntimeSessionRecord> = {}): RuntimeSessionR
 }
 
 interface PreflightFixtureOverrides {
+  user?: UserRecord;
+  runtimeSession?: RuntimeSessionRecord;
   membership?: TenantMembership | null;
   platformAdmin?: PlatformAdmin | null;
   entitlement?: TenantEntitlementSet | null;
@@ -194,7 +196,8 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
   const assignmentSets = overrides.assignmentSets ?? new Map([['oa-1', assignmentSetFor('oa-1', [{ assigneeType: 'everyone', effect: 'allow' }])]]);
   const agent = overrides.orgAgent === undefined ? orgAgent() : overrides.orgAgent;
 
-  const userStore = { findById: (id: string) => (id === 'user-1' ? userRecord() : undefined) };
+  const userValue = overrides.user ?? userRecord();
+  const userStore = { findById: (id: string) => (id === 'user-1' ? userValue : undefined) };
   const membershipStore = {
     getMembership: async () => membershipValue,
     getPlatformAdmin: async () => overrides.platformAdmin ?? null,
@@ -208,11 +211,11 @@ function buildService(overrides: PreflightFixtureOverrides = {}) {
     getAssignmentSet: async (_tenantId: string, _type: string, resourceId: string) =>
       assignmentSets.has(resourceId) ? assignmentSets.get(resourceId)! : null,
   };
-  const sessionCatalog = { get: async () => session() };
+  const sessionCatalog = { get: async () => overrides.runtimeSession ?? session({ tenantId: userValue.tenantId }) };
   const orgAgentStore = { get: (id: string) => (agent && id === agent.id ? agent : undefined) };
   const tenantStore = {
-    findById: (id: string) => (id === 'tenant-1'
-      ? ({ id: 'tenant-1', name: 'T', disabled: overrides.tenantDisabled === true } as unknown as TenantRecord)
+    findById: (id: string) => (id === userValue.tenantId
+      ? ({ id: userValue.tenantId, name: 'T', disabled: overrides.tenantDisabled === true } as unknown as TenantRecord)
       : undefined),
   };
 
@@ -425,6 +428,36 @@ describe('RunPreflightService shadow/enforce 行为', () => {
     expect(result.accessDecision.action).toBe('personal_agent.run');
     expect(result.accessDecision.reasonCode).toBe('TENANT_POLICY_DISABLED');
     expect(result.snapshot.agent).toEqual({ type: 'personal_agent', id: 'user-1' });
+  });
+
+  it('平台管理员运行本人 Personal Agent 不依赖客户 Entitlement 与 Tenant Policy', async () => {
+    const platformUser = { ...userRecord('pantheon'), role: 'admin' as const };
+    const service = buildService({
+      user: platformUser,
+      runtimeSession: session({ tenantId: 'pantheon' }),
+      platformAdmin: {
+        userId: 'user-1', status: 'active', source: 'governance', version: 3,
+        createdAt: NOW, createdBy: 'test', updatedAt: NOW, updatedBy: 'test',
+      },
+      entitlement: null,
+      policies: [],
+      enforcementMode: 'enforce',
+    });
+    const result = await service.preflight({
+      ...baseInput,
+      tenantId: 'pantheon',
+      orgAgentId: undefined,
+    });
+    expect(result).toMatchObject({ proceed: true, shadowWouldBlock: false });
+    expect(result.accessDecision).toMatchObject({
+      verdict: 'allow', action: 'personal_agent.run', tenantId: 'pantheon',
+    });
+    expect(result.accessDecision.chain).toContainEqual(expect.objectContaining({
+      layer: 'entitlement', result: 'not_applicable', reasonCode: 'ENTITLEMENT_NOT_REQUIRED',
+    }));
+    expect(result.accessDecision.chain).toContainEqual(expect.objectContaining({
+      layer: 'tenant_policy', result: 'not_applicable', reasonCode: 'TENANT_POLICY_NOT_REQUIRED',
+    }));
   });
 
   it('Personal Agent 的 typed binding 与 Environment Assignment 使用 immutable Agent ID', async () => {

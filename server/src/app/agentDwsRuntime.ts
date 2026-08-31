@@ -22,6 +22,7 @@ import type { RunPreflightService } from '../runtime/runPreflight.js';
 import type { PgRunStore } from '../runtime/runStore.js';
 import type { UserIdentity } from '../types/index.js';
 import type { Logger } from '../utils/logger.js';
+import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
 
 export type ConnectorServerRemoteResolver = (principal: DwsWorkspacePrincipal) => Promise<{
   baseUrl: string;
@@ -52,8 +53,8 @@ export async function authorizeAgentDwsRequesterAccess(input: {
       correlationId: `dws-requester-access-${input.runId}`,
       actorType: 'user',
       actorUserId: input.requester.id,
-      actorPersona: input.requester.role === 'admin' ? 'org_admin' : 'member',
-      actorTenantId: input.account.tenantId,
+      actorPersona: governancePersonaForUser(input.requester),
+      actorTenantId: input.requester.tenantId ?? input.account.tenantId,
       action: 'dws.requester.access_decision',
       targetType: 'org_agent',
       targetId: input.account.agentId,
@@ -165,8 +166,8 @@ export async function createAgentDwsRuntime(options: {
             correlationId: `agent-dws-rejection:${account.accountId}:${eventId}`,
             actorType: requester ? 'user' : 'service',
             actorUserId: requester?.id ?? `agent-dws:${account.accountId}`,
-            actorPersona: requester ? (requester.role === 'admin' ? 'org_admin' : 'member') : 'service',
-            actorTenantId: account.tenantId,
+            actorPersona: requester ? governancePersonaForUser(requester) : 'service',
+            actorTenantId: requester?.tenantId ?? account.tenantId,
             action: 'dws.requester.rejected',
             targetType: 'org_agent',
             targetId: account.agentId,
@@ -182,8 +183,8 @@ export async function createAgentDwsRuntime(options: {
             correlationId: `agent-dws-tool-policy:${runId}`,
             actorType: 'user',
             actorUserId: requester.id,
-            actorPersona: requester.role === 'admin' ? 'org_admin' : 'member',
-            actorTenantId: account.tenantId,
+            actorPersona: governancePersonaForUser(requester),
+            actorTenantId: requester.tenantId ?? account.tenantId,
             action: 'dws.tool_policy.rejected',
             targetType: 'org_agent',
             targetId: account.agentId,

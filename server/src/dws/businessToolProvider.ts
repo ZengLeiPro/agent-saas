@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 import { isPlatformAdmin } from '../auth/types.js';
+import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
 import type {
   AuthorizedToolCall,
   ExecutionAuditRecorder,
@@ -114,7 +115,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         correlationId,
         actorType: operator?.id ? 'user' : 'service',
         actorUserId: operator?.id ?? 'dws-business-broker',
-        actorPersona: operator?.id ? (operator.role === 'admin' ? 'org_admin' : 'member') : 'service',
+        actorPersona: operator?.id ? governancePersonaForUser(operator) : 'service',
         ...(operator?.tenantId ? { actorTenantId: operator.tenantId } : {}),
         action: 'dws.business.rejected',
         targetType: 'org_agent',
@@ -234,7 +235,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
       correlationId,
       actorType: 'user' as const,
       actorUserId: operator.id,
-      actorPersona: operator.role === 'admin' ? 'org_admin' as const : 'member' as const,
+      actorPersona: governancePersonaForUser(operator),
       actorTenantId: operator.tenantId,
       action: `dws.business.${command.risk}`,
       targetType: orgAgentId ? 'org_agent' : 'user',

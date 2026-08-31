@@ -144,6 +144,47 @@ describe('runtime governance connector env', () => {
     }
   });
 
+  it('平台管理员 OAuth 使用平台身份，不读取客户 Entitlement 或 Assignment', async () => {
+    const root = createRoot();
+    const vault = new InMemorySecretVault();
+    vi.stubEnv('GOOGLE_WORKSPACE_CONNECTOR_CLIENT_ID', 'google-client-id');
+    vi.stubEnv('GOOGLE_WORKSPACE_CONNECTOR_CLIENT_SECRET', 'google-client-secret');
+    const user = {
+      id: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin', disabled: false,
+    };
+    const listEffectiveResourceIds = vi.fn().mockRejectedValue(new Error('platform tenant forbidden'));
+    const getEntitlementSet = vi.fn().mockRejectedValue(new Error('platform tenant forbidden'));
+    const runtime = await initializeRuntimeGovernanceConnectors({
+      processCwd: root,
+      agentCwd: join(root, 'agents'),
+      config: {} as AppConfig,
+      secretVault: vault,
+      userStore: { findById: vi.fn(() => user) } as never,
+      membershipStore: {
+        getPlatformAdmin: vi.fn().mockResolvedValue({ status: 'active', version: 1 }),
+        getMembership: vi.fn().mockResolvedValue(null),
+      } as never,
+      governanceChangeJobStore: { findActiveForTarget: vi.fn().mockResolvedValue(null) } as never,
+      assignmentStore: { listEffectiveResourceIds } as never,
+      entitlementStore: {
+        getEntitlementSet,
+        listResourceScopes: vi.fn().mockRejectedValue(new Error('platform tenant forbidden')),
+      } as never,
+      resolveLegacySkillResourceId: (_user, skillId) => skillId,
+    });
+
+    try {
+      await expect(runtime.googleWorkspaceOAuthService?.startAuthorization(
+        user as never,
+        'https://agent.example.test/api/connectors/oauth/callback',
+      )).resolves.toMatchObject({ authorizationUrl: expect.stringContaining('accounts.google.com') });
+      expect(listEffectiveResourceIds).not.toHaveBeenCalled();
+      expect(getEntitlementSet).not.toHaveBeenCalled();
+    } finally {
+      await runtime.mcpClientShutdown();
+    }
+  });
+
   it('preserves a custom MCP x runtime env when native X is paused', async () => {
     const root = createRoot();
     const vault = new InMemorySecretVault();

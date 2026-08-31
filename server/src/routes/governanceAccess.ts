@@ -50,6 +50,7 @@ import {
 } from './governanceAccessValidation.js';
 import { entitlementDependencyImpact, oauthDependencyImpact, tenantDependencyImpact,
   type GovernanceDependencyImpactResolver } from './governanceImpactAuthority.js';
+import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 
 export function createGovernanceAccessRouter(deps: {
   memberships: PgMembershipStore;
@@ -296,7 +297,7 @@ export function createGovernanceAccessRouter(deps: {
   router.use(async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
-    if (platformAdmin?.status === 'active') {
+    if (isActivePlatformAdminIdentity(req.user.tenantId, platformAdmin)) {
       personas.set(req, 'platform_admin');
       return next();
     }
@@ -942,7 +943,8 @@ export function createGovernanceAccessRouter(deps: {
     const tenantId = tenantFor(req, parsed.data.tenantId);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
     const subject = await deps.memberships.getPlatformAdmin(parsed.data.subjectUserId);
-    if (!subject || subject.status !== 'active') {
+    const subjectProfile = deps.getPlatformAdminProfile?.(parsed.data.subjectUserId);
+    if (!subject || subject.status !== 'active' || subjectProfile?.accountStatus !== 'active') {
       return res.status(409).json({ error: 'Active platform administrator required' });
     }
     return res.status(503).json({

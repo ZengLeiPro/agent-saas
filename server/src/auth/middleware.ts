@@ -8,6 +8,7 @@ import type { TenantStore } from "../data/tenants/store.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getEffectivePlatformCapabilities } from "./platformGovernance.js";
+import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 
 export { isPlatformAdmin } from "./types.js";
 
@@ -122,8 +123,10 @@ export function createAuthMiddleware(
         }
         payload.tenantId = record.tenantId;
         if (governanceIdentity) {
-          const platformAdmin = await governanceIdentity.getPlatformAdmin(record.id);
-          if (platformAdmin?.status === 'active') {
+          const platformAdmin = record.tenantId === DEFAULT_TENANT_ID
+            ? await governanceIdentity.getPlatformAdmin(record.id)
+            : null;
+          if (isActivePlatformAdminIdentity(record.tenantId, platformAdmin)) {
             payload.role = 'admin';
           } else {
             const membership = await governanceIdentity.getMembership(record.tenantId, record.id);

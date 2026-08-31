@@ -447,6 +447,16 @@ export function MessageList({
     onScrollBtnVisibilityChange?.(!listPolicyRef.current.nearBottom && distanceFromBottom > NEAR_BOTTOM_THRESHOLD * 2);
   }, [isNearBottomRef, onScrollBtnVisibilityChange]);
 
+  const handleViewableItemsChanged = useCallback(({ viewableItems }: {
+    viewableItems: Array<{ item: BubbleRenderItem; isViewable?: boolean | null }>;
+  }) => {
+    const first = viewableItems.find((token) => token.isViewable !== false)?.item;
+    if (!first) return;
+    listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, {
+      type: 'visible', semanticId: first.id, offset: 0,
+    });
+  }, []);
+
   const bubbleKeys = useMemo(() => bubbleItems.map((item) => item.id), [bubbleItems]);
   useEffect(() => {
     listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, {
@@ -622,6 +632,7 @@ export function MessageList({
         drawDistance={250}
         overrideProps={{ initialDrawBatchSize: 15 }}
         onScroll={handleScroll}
+        onViewableItemsChanged={handleViewableItemsChanged}
         scrollEventThrottle={16}
         maintainVisibleContentPosition={{ disabled: false }}
         onStartReached={handleLoadEarlier}

@@ -17,7 +17,7 @@ import {
   toWebChatWireMessage,
   validateWebUploadedFiles,
 } from "@/lib/chatSubmissionAdapter";
-import { canonicalChatAttachmentToDisplay, createChatClientState, createInteractionRequestId, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay, createChatClientState, createInteractionRequestId, inferHistorySemanticOrder, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, selectSessionUnread, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState, type UnreadSemanticItem } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -732,6 +732,29 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   const markingReadSessionIdsRef = useRef(new Set<string>());
   const markSessionRead = useCallback((targetSessionId: string | null | undefined) => {
     if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
+    const target = session.sessions.find((item) => item.sessionId === targetSessionId);
+    if (target?.hasUnreadAiReply !== true) return;
+    const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
+    const isCurrentTarget = (immediateSessionIdRef.current ?? session.sessionId) === targetSessionId;
+    const semanticItems: UnreadSemanticItem[] = msg.messagesRef.current.map((message) => ({
+      semanticId: message.id,
+      ...(inferHistorySemanticOrder(message.id) ? { order: inferHistorySemanticOrder(message.id) } : {}),
+      kind: message.type === 'user' || message.type === 'user-voice'
+        ? 'user'
+        : message.type === 'permission_request' || message.type === 'ask_user'
+          ? 'interaction'
+          : 'assistant',
+    }));
+    const unread = selectSessionUnread({
+      sessionId: targetSessionId,
+      targetSessionId: isCurrentTarget ? targetSessionId : null,
+      historyRevision: 'live',
+      items: semanticItems,
+      visible: visible && activeTabRef.current === 'chat' && !trashPreviewSessionIdRef.current,
+      atBottom: msg.isNearBottomRef.current,
+      activeInteractionPending: target.activeInteraction !== undefined,
+    });
+    if (!unread.shouldMarkSeen) return;
     markingReadSessionIdsRef.current.add(targetSessionId);
     session.updateSessionMeta(targetSessionId, { hasUnreadAiReply: false });
     // 注意：authFetch 走 Authorization header，绝不能给该请求加 include 级 credentials——
@@ -747,7 +770,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     }).finally(() => {
       markingReadSessionIdsRef.current.delete(targetSessionId);
     });
-  }, [session.updateSessionMeta, session.loadSessions]);
+  }, [msg.isNearBottomRef, msg.messagesRef, session.loadSessions, session.sessionId, session.sessions, session.updateSessionMeta]);
   const sessionRef = useRef(session); sessionRef.current = session;
 
   const {
@@ -830,7 +853,18 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
     if (activeTab === 'chat' && session.sessionId && !trashPreviewSessionId) {
       markSessionRead(session.sessionId);
     }
-  }, [activeTab, session.sessionId, trashPreviewSessionId, markSessionRead]);
+  }, [activeTab, msg.messages, session.sessionId, trashPreviewSessionId, markSessionRead]);
+
+  useEffect(() => {
+    const attempt = () => markSessionRead(sessionIdRef.current);
+    const container = msg.scrollContainerRef.current;
+    container?.addEventListener('scroll', attempt, { passive: true });
+    document.addEventListener('visibilitychange', attempt);
+    return () => {
+      container?.removeEventListener('scroll', attempt);
+      document.removeEventListener('visibilitychange', attempt);
+    };
+  }, [markSessionRead, msg.scrollContainerRef, session.sessionId]);
 
   // 切换会话时清理 SDK 新 state，避免跨会话串扰
   // - notifications 是 user scope（跨会话保留？业务含义说是 REPL 级，切会话应该清）
@@ -1706,8 +1740,10 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         && activeTabRef.current === 'chat'
         && !trashPreviewSessionIdRef.current
         && immediateSessionIdRef.current === data.sessionId
+        && msgRef.current.isNearBottomRef.current
+        && document.visibilityState === 'visible'
       ) {
-        // 当前正在查看的会话不应显示未读。这里必须直接消费事件：若继续交给
+        // Only a visible bottom viewport may consume unread; receipt/open alone is insufficient.
         // processWsEvent，它会在 markSessionRead 的乐观更新之后又把红点写回 true；
         // 服务端状态已是 read 时不会再广播 false，红点就会一直残留。
         markSessionRead(data.sessionId);

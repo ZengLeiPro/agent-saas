@@ -120,6 +120,11 @@ export interface ApiSessionDetail {
   oldestCursor?: string;
   /** 当前客户端已加载到 transcript 起点。 */
   historyComplete?: boolean;
+  /** M40-02 canonical history pager. Cursor encodes sequence/event index + stable id. */
+  nextCursor?: string;
+  hasMore?: boolean;
+  /** Fences old in-flight pages after transcript compaction/replacement. */
+  historyRevision?: string;
   /** delta 响应所基于的客户端游标。 */
   after?: string;
   /** before 响应所基于的客户端最早游标。 */
@@ -373,6 +378,8 @@ export interface ApiTranscriptBlock {
   toolMetadata?: unknown;
   /** 公开分享安全活动摘要：跳过 AskUser/Plan/Agent 的交互历史恢复，不读取原始 payload。 */
   publicActivityOnly?: boolean;
+  /** M40-02 canonical semantic order; never derived from tsMs. */
+  semanticOrder?: { sequence: number; eventIndex: number; stableId: string };
   /**
    * text block：附加呈现块。类型为 unknown——本字段来自不可信来源
    * （transcript 文件 / 演示剧本 / 工具产出），权威校验器是 normalizeDisplay。

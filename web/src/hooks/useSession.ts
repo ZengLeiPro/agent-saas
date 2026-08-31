@@ -339,6 +339,12 @@ export function useSession(
       if (sessionIdRef.current !== id) return;
       const data: ApiSessionDetail = await response.json();
       if (sessionIdRef.current !== id) return;
+      if (detailState.historyRevision && data.historyRevision
+        && detailState.historyRevision !== data.historyRevision) {
+        // Compaction/replacement invalidated this in-flight old page; refresh a new latest generation.
+        void loadSessionDetail(id, { silent: true, preserveTail: true, scrollToBottom: false });
+        return;
+      }
 
       const owner = data.owner?.username ?? sessionOwner?.username;
       const incoming = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, owner);
@@ -346,8 +352,8 @@ export function useSession(
       const merged = data.mode === "before"
         ? mergeSessionMessagePage(current, incoming)
         : incoming;
-      const historyComplete = data.historyComplete !== false;
-      const oldestCursor = data.oldestCursor ?? incoming[0]?.id;
+      const historyComplete = data.hasMore !== undefined ? !data.hasMore : data.historyComplete !== false;
+      const oldestCursor = data.nextCursor ?? data.oldestCursor ?? incoming[0]?.id;
       const tailCursor = data.cursor ?? detailState.tailCursor;
 
       cbRef.current.setMessages(merged, { scrollToBottom: false });
@@ -356,7 +362,9 @@ export function useSession(
         historyComplete,
         ...(tailCursor ? { tailCursor } : {}),
         ...(oldestCursor ? { oldestCursor } : {}),
+        ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
       });
+      // Cache remains N-1 compatible; canonical revision is request-fenced in memory.
       saveSessionMessages(id, merged, {
         historyComplete,
         ...(tailCursor ? { tailCursor } : {}),
@@ -368,7 +376,7 @@ export function useSession(
       loadingEarlierSessionIdsRef.current.delete(id);
       if (sessionIdRef.current === id) setIsLoadingEarlier(false);
     }
-  }, [sessionOwner?.username]);
+  }, [loadSessionDetail, sessionOwner?.username]);
 
   const selectSession = useCallback(
     (id: string) => {

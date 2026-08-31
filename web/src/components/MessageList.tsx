@@ -13,7 +13,6 @@ import { asCompactionItem } from '@/lib/compaction';
 import { cn } from '@/lib/utils';
 import {
   buildMessageVirtualLayout,
-  findMessageRowAtOffset,
   getMessageVirtualRange,
   MAX_RENDERED_MESSAGE_ROWS,
 } from '@/lib/messageVirtualizer';
@@ -23,14 +22,14 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { isDebugModeAvailable, selectRenderModel, type AgentProfile, type AskUserAnswers, type RenderModel, type SessionParticipants } from '@agent/shared';
+import { captureHistoryAnchor, isDebugModeAvailable, restoreHistoryAnchor, selectRenderModel, type AgentProfile, type AskUserAnswers, type HistoryAnchor, type RenderModel, type SessionParticipants } from '@agent/shared';
 import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
 const BusinessStepProcessEvent = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepProcessEvent })));
 const HISTORY_LOAD_TRIGGER_PX = 80;
-const HISTORY_LOAD_REARM_PX = 160;
+const HISTORY_LOAD_REARM_PX = 160; // hysteresis avoids duplicate page retries
 // ---------------------------------------------------------------------------
 // AI 气泡分组，与移动端 groupIntoBubbles() 保持一致。
 
@@ -447,8 +446,7 @@ export const MessageList = memo(function MessageList({
   }, []);
 
   const prependScrollRef = useRef<{
-    anchorKey: string;
-    screenOffset: number;
+    anchor: HistoryAnchor;
     firstKey?: string;
     scrollTop: number;
     scrollHeight: number;
@@ -458,12 +456,10 @@ export const MessageList = memo(function MessageList({
     const body = virtualBodyRef.current;
     if (!el || !body || !onLoadEarlier || isLoadingEarlier) return;
     const localStart = Math.max(0, el.scrollTop - body.offsetTop);
-    const anchorIndex = findMessageRowAtOffset(virtualLayout, localStart);
-    const anchorKey = virtualLayout.keys[anchorIndex];
-    if (anchorKey) {
+    const anchor = captureHistoryAnchor({ semanticIds: virtualLayout.keys, offsets: virtualLayout.offsets }, localStart);
+    if (anchor) {
       prependScrollRef.current = {
-        anchorKey,
-        screenOffset: virtualLayout.offsets[anchorIndex] - localStart,
+        anchor,
         firstKey: virtualLayout.keys[0],
         scrollTop: el.scrollTop,
         scrollHeight: el.scrollHeight,
@@ -522,7 +518,7 @@ export const MessageList = memo(function MessageList({
     handleLoadEarlier();
   }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, messages]);
 
-  // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
+  // Shared semantic anchor preserves prepend, image remeasure and BusinessStep expansion.
   const previousLayoutRef = useRef(virtualLayout);
   useLayoutEffect(() => {
     const el = internalContainerRef.current;
@@ -541,25 +537,29 @@ export const MessageList = memo(function MessageList({
       const didPrepend = pendingPrepend
         && pendingPrepend.firstKey !== virtualLayout.keys[0];
       if (didPrepend) {
-        const nextIndex = virtualLayout.indexByKey.get(pendingPrepend.anchorKey);
-        if (nextIndex !== undefined) {
-          const nextLocalStart = virtualLayout.offsets[nextIndex] - pendingPrepend.screenOffset;
-          el.scrollTop = body.offsetTop + nextLocalStart;
+        const restored = restoreHistoryAnchor(pendingPrepend.anchor, {
+          semanticIds: virtualLayout.keys,
+          offsets: virtualLayout.offsets,
+        });
+        if (restored) {
+          el.scrollTop = body.offsetTop + restored.scrollOffset;
         } else {
-          // 长任务的连续工具活动会跨分页边界重新分组，导致原虚拟行 key 消失。
-          // 此时用实际新增滚动高度补偿，保持用户眼前的内容位置不变。
+          // A grouped row may disappear across the page boundary; preserve actual added height.
           const addedHeight = el.scrollHeight - pendingPrepend.scrollHeight;
           el.scrollTop = Math.max(0, pendingPrepend.scrollTop + addedHeight);
         }
         prependScrollRef.current = null;
       } else {
         const previousLocalStart = Math.max(0, el.scrollTop - body.offsetTop);
-        const anchorIndex = findMessageRowAtOffset(previous, previousLocalStart);
-        const anchorKey = previous.keys[anchorIndex];
-        const nextIndex = virtualLayout.indexByKey.get(anchorKey);
-        if (nextIndex !== undefined) {
-          el.scrollTop += virtualLayout.offsets[nextIndex] - previous.offsets[anchorIndex];
-        }
+        const anchor = captureHistoryAnchor(
+          { semanticIds: previous.keys, offsets: previous.offsets },
+          previousLocalStart,
+        );
+        const restored = anchor ? restoreHistoryAnchor(anchor, {
+          semanticIds: virtualLayout.keys,
+          offsets: virtualLayout.offsets,
+        }) : undefined;
+        if (restored) el.scrollTop = body.offsetTop + restored.scrollOffset;
       }
     }
 

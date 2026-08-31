@@ -123,6 +123,10 @@ type SessionDetailPayload = SessionShareSnapshot & {
   cursor?: string;
   oldestCursor?: string;
   historyComplete?: boolean;
+  /** Canonical M40-02 backward-history cursor (alias of oldestCursor during migration). */
+  nextCursor?: string;
+  hasMore?: boolean;
+  historyRevision?: string;
   after?: string;
   before?: string;
 };
@@ -130,17 +134,33 @@ type SessionDetailPayload = SessionShareSnapshot & {
 interface SessionDetailPayloadOptions {
   after?: string;
   before?: string;
+  /** N-1 numeric compatibility path; never combined with canonical cursors. */
+  offset?: number;
   limit?: number;
   /** window API 未从文件起点解析时，用于避免误报 historyComplete。 */
   windowStartsAtBeginning?: boolean;
   /** before 窗口不含 EOF，由窗口 API 提供真实最新 cursor。 */
   latestCursor?: string;
+  /** Transcript generation fence; changes on truncate/replace/compaction. */
+  historyRevision?: string;
+}
+
+function semanticOrderForBlockId(blockId: string): { sequence: number; eventIndex: number; stableId: string } | undefined {
+  const match = /^line-(\d+)(?:-.*?-(\d+))?(?:-|$)/.exec(blockId);
+  if (!match) return undefined;
+  const sequence = Number(match[1]);
+  const eventIndex = match[2] === undefined ? 0 : Number(match[2]);
+  if (!Number.isSafeInteger(sequence) || !Number.isSafeInteger(eventIndex)) return undefined;
+  return { sequence, eventIndex, stableId: blockId };
 }
 
 function withoutTranscriptRaw(
   blocks: SessionShareSnapshot["blocks"],
 ): SessionShareSnapshot["blocks"] {
-  return blocks.map(({ raw: _raw, ...block }) => block);
+  return blocks.map(({ raw: _raw, ...block }) => {
+    const semanticOrder = semanticOrderForBlockId(block.id);
+    return { ...block, ...(semanticOrder ? { semanticOrder } : {}) };
+  });
 }
 
 /**
@@ -177,6 +197,7 @@ export function buildSessionDetailPayload(
         blocks: withoutTranscriptRaw(detail.blocks.slice(start)),
         after,
         ...(cursor ? { cursor } : {}),
+        ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
       };
     }
   }
@@ -187,28 +208,36 @@ export function buildSessionDetailPayload(
       const limit = requestedLimit ?? SESSION_DETAIL_DEFAULT_PAGE_SIZE;
       const start = Math.max(0, beforeIndex - limit);
       const blocks = detail.blocks.slice(start, beforeIndex + 1);
+      const historyComplete = start === 0 && windowStartsAtBeginning;
       return {
         ...detail,
         mode: "before",
         blocks: withoutTranscriptRaw(blocks),
         before,
-        historyComplete: start === 0 && windowStartsAtBeginning,
-        ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
+        historyComplete,
+        hasMore: !historyComplete,
+        ...(blocks[0]?.id ? { oldestCursor: blocks[0].id, nextCursor: blocks[0].id } : {}),
         ...(cursor ? { cursor } : {}),
+        ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
       };
     }
   }
 
   const limit = requestedLimit;
-  const start = limit === undefined ? 0 : Math.max(0, detail.blocks.length - limit);
-  const blocks = detail.blocks.slice(start);
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const end = offset > 0 ? Math.max(0, detail.blocks.length - offset) : detail.blocks.length;
+  const start = limit === undefined ? 0 : Math.max(0, end - limit);
+  const blocks = detail.blocks.slice(start, end);
+  const historyComplete = start === 0 && windowStartsAtBeginning;
   return {
     ...detail,
     mode: "full",
     blocks: withoutTranscriptRaw(blocks),
-    historyComplete: start === 0 && windowStartsAtBeginning,
-    ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
+    historyComplete,
+    hasMore: !historyComplete,
+    ...(blocks[0]?.id ? { oldestCursor: blocks[0].id, nextCursor: blocks[0].id } : {}),
     ...(cursor ? { cursor } : {}),
+    ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
   };
 }
 
@@ -2471,8 +2500,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const before = typeof req.query.before === "string" && req.query.before.trim()
         ? req.query.before.trim()
         : undefined;
-      if (after && before) {
-        res.status(400).json({ error: "after and before cannot be used together" });
+      const hasOffset = typeof req.query.offset === "string";
+      const parsedOffset = hasOffset ? Number.parseInt(req.query.offset as string, 10) : undefined;
+      const offset = parsedOffset !== undefined && Number.isFinite(parsedOffset)
+        ? Math.max(0, parsedOffset)
+        : undefined;
+      if ((after && before) || (offset !== undefined && (after || before))) {
+        res.status(400).json({ error: "canonical cursor and N-1 offset modes cannot be mixed" });
         return;
       }
       const hasLimit = typeof req.query.limit === "string";
@@ -2491,7 +2525,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
       const built = await buildSessionDetailSnapshot(req, sessionId, {
         includeDeleted,
-        ...(transcriptWindowLimit === undefined ? {} : {
+        ...(transcriptWindowLimit === undefined || offset !== undefined ? {} : {
           transcriptWindow: { after, before, limit: transcriptWindowLimit },
         }),
       });
@@ -2515,12 +2549,14 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const payload = buildSessionDetailPayload(built.detail, {
         after: built.transcriptWindow ? built.transcriptWindow.resolvedAfter : after,
         before: built.transcriptWindow ? built.transcriptWindow.resolvedBefore : before,
+        ...(offset !== undefined ? { offset } : {}),
         limit,
         ...(built.transcriptWindow ? {
           windowStartsAtBeginning: built.transcriptWindow.startsAtBeginning,
           ...(built.transcriptWindow.latestCursor
             ? { latestCursor: built.transcriptWindow.latestCursor }
             : {}),
+          historyRevision: built.transcriptWindow.cursorGeneration,
         } : {}),
       });
       if (built.transcriptWindow) {
@@ -2534,8 +2570,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
         if (encodedCursor) payload.cursor = encodedCursor;
         else delete payload.cursor;
-        if (encodedOldestCursor) payload.oldestCursor = encodedOldestCursor;
-        else delete payload.oldestCursor;
+        if (encodedOldestCursor) {
+          payload.oldestCursor = encodedOldestCursor;
+          payload.nextCursor = encodedOldestCursor;
+        } else {
+          delete payload.oldestCursor;
+          delete payload.nextCursor;
+        }
       }
       const transcriptTiming = built.transcriptWindow
         ? `transcript-index;dur=${built.transcriptWindow.indexDurationMs}, transcript-read-parse;dur=${built.transcriptWindow.readParseDurationMs}`

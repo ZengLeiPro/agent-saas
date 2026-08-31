@@ -12,6 +12,7 @@ import {
   authFetch,
   mapSessionDetailToMessages,
   mergeServerMessagesWithLocalTail,
+  mergeSessionMessagePage,
   SESSION_STORAGE_KEY,
   registerRefresh,
   unregisterRefresh,
@@ -50,6 +51,8 @@ export interface SessionState {
   isLoadingSessions: boolean;
   sessionsHydrated: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
   deleteSessionId: string | null;
   isNewSession: boolean;
   tokenUsage: TokenUsage | null;
@@ -70,6 +73,7 @@ export interface SessionState {
     id: string,
     opts?: { silent?: boolean; preserveTail?: boolean },
   ) => Promise<void>;
+  loadEarlierMessages: () => Promise<void>;
   newSession: (options?: { preserveComposer?: boolean }) => void;
   selectSession: (id: string) => void;
   applySessionInteractionEvent: (event: SessionListInteractionEvent) => void;
@@ -95,6 +99,8 @@ export interface SessionState {
   refreshTokenUsage: () => Promise<void>;
   setIsNewSession: (v: boolean) => void;
   refreshCurrentSession: () => void;
+  /** Called only from a visible at-bottom viewport. */
+  markSessionRead: (sessionId: string) => Promise<void>;
 }
 
 export interface SessionOptions {
@@ -127,6 +133,10 @@ export function useSession(
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
+  const historyCursorRef = useRef(new Map<string, { nextCursor?: string; hasMore: boolean; historyRevision?: string }>());
+  const loadingEarlierSessionIdsRef = useRef(new Set<string>());
   const [sessionOwner, setSessionOwner] = useState<SessionOwnerInfo | null>(
     null,
   );
@@ -273,9 +283,10 @@ export function useSession(
       }
 
       try {
-        const silentParam = opts?.silent ? "?silent=1" : "";
+        const detailParams = new URLSearchParams({ limit: '50' });
+        if (opts?.silent) detailParams.set('silent', '1');
         const response = await authFetch(
-          `/api/sessions/${encodeURIComponent(id)}${silentParam}`,
+          `/api/sessions/${encodeURIComponent(id)}?${detailParams.toString()}`,
         );
         if (isStale()) return;
         if (response.ok) {
@@ -374,6 +385,14 @@ export function useSession(
           cbRef.current.setMessages(finalMsgs);
           setSessionId(id);
           setSessionOwner(data.owner ?? null);
+          const pageHasMore = data.hasMore !== undefined ? data.hasMore : data.historyComplete === false;
+          const nextHistoryCursor = data.nextCursor ?? data.oldestCursor;
+          historyCursorRef.current.set(id, {
+            hasMore: pageHasMore,
+            ...(nextHistoryCursor ? { nextCursor: nextHistoryCursor } : {}),
+            ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
+          });
+          setHasMoreHistory(pageHasMore);
           void fetchTokenUsage(id);
           platform.messageCache.save(id, finalMsgs);
         } else if (response.status === 404 || response.status === 403) {
@@ -391,6 +410,40 @@ export function useSession(
     },
     [fetchTokenUsage],
   );
+
+  const loadEarlierMessages = useCallback(async () => {
+    const id = sessionIdRef.current;
+    const cursorState = id ? historyCursorRef.current.get(id) : undefined;
+    if (!id || !cursorState?.hasMore || !cursorState.nextCursor
+      || loadingEarlierSessionIdsRef.current.has(id)) return;
+    loadingEarlierSessionIdsRef.current.add(id);
+    setIsLoadingEarlier(true);
+    try {
+      const params = new URLSearchParams({ before: cursorState.nextCursor, limit: '50', silent: '1' });
+      const response = await authFetch(`/api/sessions/${encodeURIComponent(id)}?${params.toString()}`);
+      if (!response.ok || sessionIdRef.current !== id) return;
+      const data = await response.json() as ApiSessionDetail;
+      if (cursorState.historyRevision && data.historyRevision
+        && cursorState.historyRevision !== data.historyRevision) {
+        await loadSessionDetail(id, { silent: true, preserveTail: true });
+        return;
+      }
+      const owner = data.owner?.username ?? sessionOwner?.username;
+      const incoming = injectCompactionMessages(data.blocks, mapSessionDetailToMessages(data, owner));
+      cbRef.current.setMessages(mergeSessionMessagePage(cbRef.current.getMessages?.() ?? [], incoming));
+      const hasMore = data.hasMore !== undefined ? data.hasMore : data.historyComplete === false;
+      const nextCursor = data.nextCursor ?? data.oldestCursor;
+      historyCursorRef.current.set(id, {
+        hasMore,
+        ...(nextCursor ? { nextCursor } : {}),
+        ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
+      });
+      setHasMoreHistory(hasMore);
+    } finally {
+      loadingEarlierSessionIdsRef.current.delete(id);
+      if (sessionIdRef.current === id) setIsLoadingEarlier(false);
+    }
+  }, [loadSessionDetail, sessionOwner?.username]);
 
   const confirmDeleteSession = useCallback(
     (id: string) => setDeleteSessionId(id),
@@ -549,6 +602,8 @@ export function useSession(
     setSessionOwner(null);
     setTokenUsage(null);
     setIsLoadingMessages(false);
+    setHasMoreHistory(false);
+    setIsLoadingEarlier(false);
     void getPlatform().storage.removeItem(SESSION_STORAGE_KEY);
   }, []);
 
@@ -561,21 +616,29 @@ export function useSession(
       setSessionId(id);
       setSessionOwner(null);
       setTokenUsage(null);
+      setHasMoreHistory(false);
+      setIsLoadingEarlier(false);
       isNewSessionRef.current = false;
-      const selected = pagerRef.current.byId[id];
-      if (selected) commitPager(upsertSessionListItem(pagerRef.current, { ...selected, hasUnreadAiReply: false }));
-      // Read is optimistic only until the structured server ACK. Failure rehydrates authority.
-      void authFetch(`/api/sessions/${encodeURIComponent(id)}/read`, { method: 'PUT' })
-        .then(async (response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const body = await response.json() as { ack?: { sessionId?: string; hasUnreadAiReply?: boolean } };
-          if (body.ack?.sessionId && body.ack.sessionId !== id) throw new Error('read ACK session mismatch');
-        })
-        .catch(() => { void loadSessions(true, { fresh: true }); });
+      // Opening a session does not mark it read; the visible-at-bottom callback owns that commit.
       loadDetailPromiseRef.current = loadSessionDetail(id);
     },
-    [commitPager, loadSessionDetail, loadSessions, sessionId],
+    [loadSessionDetail, sessionId],
   );
+
+  const markSessionRead = useCallback(async (id: string) => {
+    // Caller is the canonical visible-at-bottom viewport transition.
+    const selected = pagerRef.current.byId[id];
+    if (!selected?.hasUnreadAiReply) return;
+    commitPager(upsertSessionListItem(pagerRef.current, { ...selected, hasUnreadAiReply: false }));
+    try {
+      const response = await authFetch(`/api/sessions/${encodeURIComponent(id)}/read`, { method: 'PUT' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.json() as { ack?: { sessionId?: string } };
+      if (body.ack?.sessionId && body.ack.sessionId !== id) throw new Error('read ACK session mismatch');
+    } catch {
+      await loadSessions(true, { fresh: true });
+    }
+  }, [commitPager, loadSessions]);
 
   const refreshTokenUsage = useCallback(async () => {
     if (sessionId) void fetchTokenUsage(sessionId);
@@ -673,6 +736,8 @@ export function useSession(
     isLoadingSessions,
     sessionsHydrated,
     isLoadingMessages,
+    hasMoreHistory,
+    isLoadingEarlier,
     deleteSessionId,
     isNewSession: isNewSessionRef.current,
     tokenUsage,
@@ -686,6 +751,7 @@ export function useSession(
     loadSessions,
     loadMoreSessions,
     loadSessionDetail,
+    loadEarlierMessages,
     newSession,
     selectSession,
     applySessionInteractionEvent,
@@ -701,5 +767,6 @@ export function useSession(
     refreshTokenUsage,
     setIsNewSession,
     refreshCurrentSession,
+    markSessionRead,
   };
 }

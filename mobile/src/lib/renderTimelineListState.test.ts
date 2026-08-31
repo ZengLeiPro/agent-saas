@@ -4,7 +4,7 @@ import {
   reduceMobileTimelineList,
 } from './renderTimelineListState';
 
-describe('M50-01 mobile timeline list reducer', () => {
+describe('M40-02 mobile timeline list reducer', () => {
   it('uses stable semantic keys and scrolls the initial load without animation', () => {
     const state = reduceMobileTimelineList(INITIAL_MOBILE_TIMELINE_LIST_STATE, { type: 'data', keys: ['message:user:1', 'tool:run:call'] });
     expect(state).toMatchObject({ keys: ['message:user:1', 'tool:run:call'], initialized: true, command: 'instant_end' });
@@ -20,10 +20,11 @@ describe('M50-01 mobile timeline list reducer', () => {
     expect(reduceMobileTimelineList(near, { type: 'data', keys: ['a'] }).command).toBe('animated_end');
   });
 
-  it('keeps the first previously visible semantic key as anchor when history is prepended', () => {
+  it('keeps the actual first visible semantic key as anchor when history is prepended', () => {
     const initial = { ...INITIAL_MOBILE_TIMELINE_LIST_STATE, initialized: true, keys: ['m3', 'm4'], nearBottom: false };
-    const state = reduceMobileTimelineList(initial, { type: 'data', keys: ['m1', 'm2', 'm3', 'm4'] });
-    expect(state).toMatchObject({ anchorKey: 'm3', command: 'none', nearBottom: false });
+    const visible = reduceMobileTimelineList(initial, { type: 'visible', semanticId: 'm4', offset: -12 });
+    const state = reduceMobileTimelineList(visible, { type: 'data', keys: ['m1', 'm2', 'm3', 'm4'] });
+    expect(state).toMatchObject({ anchorKey: 'm4', visibleOffset: -12, command: 'none', nearBottom: false });
   });
 
   it('force-follow is explicit and does not alter near-bottom observation', () => {

@@ -723,6 +723,40 @@ export type {
 } from './lib/chatQueue';
 export { chatQueueReducerEventsFromWsEvent } from './lib/chatQueueWs';
 
+// Lib - canonical shared history paging / anchors / unread / runtime (M40-02)
+export {
+  compareHistorySemanticOrder,
+  createHistoryPagerState,
+  inferHistorySemanticOrder,
+  mergeHistoryValues,
+  reduceHistoryPager,
+  selectHistoryItems,
+  toHistorySemanticItem,
+} from './lib/historyPager';
+export type {
+  HistoryPage,
+  HistoryPagerAction,
+  HistoryPagerState,
+  HistorySemanticItem,
+  HistorySemanticOrder,
+} from './lib/historyPager';
+export { captureHistoryAnchor, restoreHistoryAnchor } from './lib/historyAnchor';
+export type { HistoryAnchor, HistoryAnchorRestore, HistoryLayoutSnapshot } from './lib/historyAnchor';
+export { createSessionSeenCommit, selectSessionUnread } from './lib/sessionUnread';
+export type {
+  SemanticUnreadKind,
+  SessionSeenState,
+  SessionUnreadInput,
+  SessionUnreadSelection,
+  UnreadSemanticItem,
+} from './lib/sessionUnread';
+export { selectSessionRuntime } from './lib/sessionRuntime';
+export type {
+  CanonicalSessionRuntimeState,
+  SessionRuntimeSelection,
+  SessionRuntimeSelectorInput,
+} from './lib/sessionRuntime';
+
 // Lib - server-owned run liveness protocol/reducer/selectors (M40-02)
 export {
   RUN_LIVENESS_VERSION,

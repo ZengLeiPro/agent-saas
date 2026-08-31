@@ -93,6 +93,9 @@ export interface ChatAppState {
   isLoadingSessions: boolean;
   sessionsHydrated: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
+  loadEarlierMessages: () => Promise<void>;
   // File upload
   uploadedFiles: UploadedFile[];
   uploading: boolean;
@@ -154,6 +157,7 @@ export interface ChatAppState {
     | undefined
   >;
   refreshCurrentSession: () => void;
+  markCurrentSessionRead: () => Promise<void>;
   // Agent profile and target catalog
   agentProfile: AgentProfile | null;
   // Session participants (admin 查看他人会话时的身份信息)
@@ -2017,11 +2021,14 @@ export function useChatAppStateCore(): ChatAppState {
     contextUsage: session.contextUsage,
     modelList,
     selectedModel,
-    hasMoreSessions: session.hasMore,
+    hasMoreSessions: session.hasMore, // session-list pager, distinct from history pager
     isLoadingMoreSessions: session.isLoadingMore,
     isLoadingSessions: session.isLoadingSessions,
     sessionsHydrated: session.sessionsHydrated,
     isLoadingMessages: session.isLoadingMessages,
+    hasMoreHistory: session.hasMoreHistory,
+    isLoadingEarlier: session.isLoadingEarlier,
+    loadEarlierMessages: session.loadEarlierMessages,
     uploadedFiles: fileUpload.uploadedFiles,
     uploading: fileUpload.uploading,
     uploadError: fileUpload.uploadError,
@@ -2058,7 +2065,7 @@ export function useChatAppStateCore(): ChatAppState {
     compacting,
     compactionNotice,
     shouldScrollRef: msg.shouldScrollRef,
-    isNearBottomRef: msg.isNearBottomRef,
+    isNearBottomRef: msg.isNearBottomRef, // canonical viewport authority for unread
     pickFile: fileUpload.pickFile,
     pickImage: fileUpload.pickImage,
     takePhoto: fileUpload.takePhoto,
@@ -2067,6 +2074,7 @@ export function useChatAppStateCore(): ChatAppState {
     sendVoiceMessage,
     voiceCallbackRef,
     refreshCurrentSession: session.refreshCurrentSession,
+    markCurrentSessionRead: () => session.sessionId ? session.markSessionRead(session.sessionId) : Promise.resolve(),
     agentProfile,
     sessionParticipants,
     ownerFilter,

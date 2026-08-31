@@ -809,13 +809,7 @@ export class WebChannel implements BaseChannel {
         break;
       case 'permission_request':
       case 'ask_user':
-        if (input.userId) {
-          void this.markSessionUnread({
-            userId: input.userId,
-            sessionId: input.sessionId,
-            eventKey: `interaction:${input.event.interactionId}`,
-          });
-        }
+        // Active interaction has its own pending indicator; it is not an AI unread reply.
         emitSession({
           type: input.event.type,
           interactionId: input.event.interactionId,
@@ -957,14 +951,7 @@ export class WebChannel implements BaseChannel {
       });
       return;
     }
-    if (event.type === 'interaction_requested' && event.userId && event.sessionId) {
-      void this.markSessionUnread({
-        userId: event.userId,
-        sessionId: event.sessionId,
-        eventKey: `interaction:${event.interactionId}`,
-        broadcastEvenIfUnchanged: true,
-      });
-    }
+    // interaction_requested is projected through activeInteraction/pending_interactions, not unread.
     const sessionId = event.sessionId;
     if (!sessionId) return;
     if (event.type === 'interjection_applied') {

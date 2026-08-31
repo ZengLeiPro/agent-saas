@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Keyboard, Alert, Animated, AppState, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { showTextPrompt } from '../../src/lib/prompt';
 import { isV1RouteAllowed } from '../../src/app/v1Capabilities';
 import { getV1BuildProfile } from '../../src/app/v1Runtime';
@@ -85,7 +85,20 @@ export default function ChatDetailScreen() {
     listRef.current?.scrollToEnd({ animated: true });
     chat.isNearBottomRef.current = true;
     setShowScrollBtn(false);
-  }, [listRef, chat.isNearBottomRef]);
+    if (AppState.currentState === 'active') void chat.markCurrentSessionRead();
+  }, [listRef, chat.isNearBottomRef, chat.markCurrentSessionRead]);
+
+  const handleScrollButtonVisibility = useCallback((visible: boolean) => {
+    setShowScrollBtn(visible);
+    if (!visible && AppState.currentState === 'active') void chat.markCurrentSessionRead();
+  }, [chat.markCurrentSessionRead]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && chat.isNearBottomRef.current) void chat.markCurrentSessionRead();
+    });
+    return () => subscription.remove();
+  }, [chat.isNearBottomRef, chat.markCurrentSessionRead]);
 
   const scheduleScrollToBottom = useCallback((delay = 16) => {
     if (pendingScrollTimerRef.current) {
@@ -516,7 +529,10 @@ export default function ChatDetailScreen() {
         onForkMessage={handleFork}
         onPreviewMd={handlePreviewMd}
         onTtsPlay={tts.available ? tts.play : undefined}
-        onScrollBtnVisibilityChange={setShowScrollBtn}
+        onScrollBtnVisibilityChange={handleScrollButtonVisibility}
+        hasMoreHistory={chat.hasMoreHistory}
+        isLoadingEarlier={chat.isLoadingEarlier}
+        onLoadEarlier={chat.loadEarlierMessages}
       />
       </KeyboardAvoidingView>
       <KeyboardStickyView style={styles.inputOverlay} offset={{ closed: 0, opened: 0 }}>

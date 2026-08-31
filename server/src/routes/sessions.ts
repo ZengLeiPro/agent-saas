@@ -454,7 +454,8 @@ export interface SessionsRouterOptions {
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
-  sandboxWarmup?: (sessionId: string) => void; sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
+  sandboxWarmup?: (sessionId: string) => void; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'skipped' | 'queued'>;
+  sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
@@ -3275,26 +3276,24 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
 
       const applySoftDelete = async (): Promise<boolean> => {
-        // 锁内先重读 tombstone，再 enqueue cleanup，避免重复删除覆盖 active claim。
-        const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found");
-        if (currentMeta.deletedAt) return false; await options.sandboxSessionDeletion?.(sessionId);
+        const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
+        if (newlyDeleted) {
+          // prepared 不可投递；meta 成功后才 activate，跨文件/PG 不伪装原子事务。
+          await options.sandboxSessionDeletionIntent?.(sessionId);
+          await updateSessionMeta(transcriptPath, { deletedAt: new Date().toISOString(), deletedBy: req.user?.username || "anonymous" });
+        }
         await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
           apiLogger.warn(
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-        await updateSessionMeta(transcriptPath, {
-          deletedAt: new Date().toISOString(),
-          deletedBy: req.user?.username || "anonymous",
-        });
-        return true;
+        await options.sandboxSessionDeletion?.(sessionId); return newlyDeleted;
       };
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
         : await applySoftDelete();
-      if (!changed) {
-        res.json({ ok: true, softDeleted: true });
-        return;
+      if (!changed) { // 已有 tombstone 仍完成 cleanup 重试，仅跳过重复审计与广播。
+        res.json({ ok: true, softDeleted: true }); return;
       }
 
       auditLog(req, "session_soft_deleted", sessionId);

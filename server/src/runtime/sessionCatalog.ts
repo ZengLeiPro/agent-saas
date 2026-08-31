@@ -129,6 +129,8 @@ export interface RuntimeSessionRecord extends Partial<AgentProfileSessionBinding
   memoryAutomationEligible?: boolean;
   /** Server-authored top-level Sandbox workload classification. Legacy records may omit it. */
   sandboxWorkloadDescriptor?: SandboxWorkloadDescriptor;
+  /** 软删除 tombstone；生命周期 worker 用它恢复 prepared cleanup intent。 */
+  deletedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -282,6 +284,7 @@ export class FileSessionCatalog implements SessionCatalog {
         : {}),
       sandboxWorkloadDescriptor: parseSandboxWorkloadDescriptor(meta.sandboxWorkloadDescriptor)
         ?? { kind: 'interactive' },
+      ...(meta.deletedAt ? { deletedAt: meta.deletedAt } : {}),
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),
       ...(meta.profileVersionId ? { profileVersionId: meta.profileVersionId } : {}),

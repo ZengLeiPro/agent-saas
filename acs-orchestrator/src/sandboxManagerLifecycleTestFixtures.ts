@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 
+import { SANDBOX_NETWORK_CLEANUP_FINALIZER } from './sandboxDeletion.js';
 import { SandboxManager } from './sandboxManager.js';
 
 export function mockCurrentSandboxStatusReads(manager: SandboxManager): void {
@@ -13,6 +14,7 @@ export function mockCurrentSandboxStatusReads(manager: SandboxManager): void {
       raw: {
         metadata: {
           name, uid: `uid-${name}`, resourceVersion: '1',
+          finalizers: [SANDBOX_NETWORK_CLEANUP_FINALIZER],
           labels: { 'agent-saas.kaiyan.net/workload-class': workloadClass },
           annotations: {
             ...(sandbox.createdAt ? { 'agent-saas.kaiyan.net/created-at': sandbox.createdAt } : {}),

@@ -213,26 +213,31 @@ describe('SandboxManager lifecycle mutations', () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it('rejects a non-newer generation on a recreated Sandbox but accepts a post-create generation', async () => {
+  it('recreated Sandbox 以 opaque token 初始化，不依赖跨节点墙钟；已有链仍校验 previous token', async () => {
     const { manager } = setup();
     const createdAt = Date.parse('2026-08-30T00:00:00.000Z');
-    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+    const getStatus = vi.spyOn(manager, 'getStatus');
+    getStatus.mockResolvedValueOnce(status({
       'agent-saas.kaiyan.net/created-at': new Date(createdAt).toISOString(),
     }));
 
     await expect(manager.advanceDeletionGeneration({
       ...identity,
       previousDeletionGeneration: 'generation-before-restore',
-      deletionGeneration: `${createdAt}-same-millisecond-old`,
-    })).rejects.toBeInstanceOf(SandboxBusyError);
+      deletionGeneration: `${createdAt}-same-millisecond`,
+    })).resolves.toMatchObject({ updated: true, missing: false });
+
+    getStatus.mockResolvedValueOnce(status({
+      [DELETION_GENERATION_ANNOTATION]: 'generation-current',
+    }));
     await expect(manager.advanceDeletionGeneration({
       ...identity,
-      previousDeletionGeneration: 'generation-before-restore',
-      deletionGeneration: `${createdAt + 1}-current`,
-    })).resolves.toMatchObject({ updated: true, missing: false });
+      previousDeletionGeneration: 'generation-stale',
+      deletionGeneration: 'generation-next',
+    })).rejects.toBeInstanceOf(SandboxBusyError);
   });
 
-  it('rechecks process-local activity immediately before cleanup deletion', async () => {
+  it('在 cleanup 删除前再次检查 process-local activity', async () => {
     const activeRegistry = new ActiveSandboxRegistry();
     const { manager } = setup(activeRegistry);
     (manager as any).config.lifecyclePolicyMode = 'enforce';

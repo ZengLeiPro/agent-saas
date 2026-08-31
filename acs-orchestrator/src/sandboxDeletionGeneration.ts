@@ -1,4 +1,3 @@
-import { CREATED_AT_ANNOTATION } from './sandboxInventoryReader.js';
 import {
   DELETION_GENERATION_ANNOTATION,
   type SandboxDeletionGenerationUpdate,
@@ -37,9 +36,10 @@ export class SandboxDeletionGenerationCoordinator {
       }
       const current = annotation(status, DELETION_GENERATION_ANNOTATION);
       if (current === input.deletionGeneration) return { name: ref.name, updated: false, missing: false };
-      const initializesFence = current === undefined;
-      if ((initializesFence && !generationCanInitializeRecreatedSandbox(input.deletionGeneration, status))
-        || (!initializesFence && current !== input.previousDeletionGeneration)) {
+      // generation 是不透明的持久 CAS token，不比较 Server/ACS 墙钟。CR 缺少
+      // generation 表示一条新链（首次创建或删除后重建）；已有链只接受 Server
+      // outbox 持久化的 previous -> next 变更。restore 会先取消 claim，再推进新 token。
+      if (current !== undefined && current !== input.previousDeletionGeneration) {
         throw this.host.conflict(ref.name);
       }
       const preconditions = sandboxResourcePreconditions(status);
@@ -118,11 +118,4 @@ function annotation(status: SandboxStatus, name: string): string | undefined {
     : {};
   const value = annotations[name];
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-// A recreated unfenced CR accepts only a generation strictly newer than its creation time.
-function generationCanInitializeRecreatedSandbox(generation: string, status: SandboxStatus): boolean {
-  const generationAt = Number.parseInt(generation.split('-', 1)[0] ?? '', 10);
-  const createdAt = Date.parse(annotation(status, CREATED_AT_ANNOTATION) ?? '');
-  return Number.isFinite(generationAt) && Number.isFinite(createdAt) && generationAt > createdAt;
 }

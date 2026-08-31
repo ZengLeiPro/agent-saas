@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
+import { SANDBOX_NETWORK_CLEANUP_FINALIZER } from './sandboxDeletion.js';
 import { SandboxBusyError, SandboxManager } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
 import {
@@ -36,6 +37,7 @@ function sandboxStatus(input: {
       metadata: {
         uid: input.uid,
         resourceVersion: input.resourceVersion,
+        finalizers: [SANDBOX_NETWORK_CLEANUP_FINALIZER],
         labels: { 'agent-saas.kaiyan.net/workload-class': workloadClass },
         annotations: {
           'agent-saas.kaiyan.net/workspace-id': identity.workspaceId,

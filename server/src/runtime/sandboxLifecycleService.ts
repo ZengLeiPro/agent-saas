@@ -29,6 +29,7 @@ interface SandboxScopeDeletion extends SandboxLifecycleIdentity {
 interface LifecycleCandidate extends SandboxLifecycleIdentity {
   runId: string;
   tenantId?: string;
+  targetHandId?: string;
   status: 'completed' | 'failed' | 'cancelled' | 'orphaned';
   statusReason?: string;
   terminalAt: string;
@@ -98,6 +99,9 @@ export class PgSandboxLifecycleStore {
         status: status as LifecycleCandidate['status'],
         ...(typeof row.status_reason === 'string' ? { statusReason: row.status_reason } : {}),
         terminalAt: String(row.completed_at ?? row.failed_at ?? row.cancelled_at ?? row.updated_at),
+        ...(stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId) ? {
+          targetHandId: stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId),
+        } : {}),
         workload,
       }];
     });
@@ -111,6 +115,26 @@ export class PgSandboxLifecycleStore {
     });
   }
 
+  async pinTerminalTargetHand(runId: string, targetHandId: string): Promise<string | undefined> {
+    const result = await this.pool.query<{ target_hand_id: string }>(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{sandboxLifecycleOutbox}',
+        COALESCE(metadata->'sandboxLifecycleOutbox', '{}'::jsonb)
+          || jsonb_build_object('state','pending','targetHandId',$2::text,'pinnedAt',NOW()::text)),
+          updated_at=NOW()
+      WHERE run_id=$1
+        AND COALESCE(metadata->'sandboxLifecycleOutbox'->>'state','pending') <> 'delivered'
+        AND NULLIF(metadata->'sandboxLifecycleOutbox'->>'targetHandId','') IS NULL
+      RETURNING metadata->'sandboxLifecycleOutbox'->>'targetHandId' AS target_hand_id
+    `, [runId, targetHandId]);
+    if (result.rows[0]?.target_hand_id) return result.rows[0].target_hand_id;
+    const existing = await this.pool.query<{ target_hand_id: string }>(`
+      SELECT metadata->'sandboxLifecycleOutbox'->>'targetHandId' AS target_hand_id
+      FROM ${this.runsTable} WHERE run_id=$1
+    `, [runId]);
+    return stringValue(existing.rows[0]?.target_hand_id);
+  }
+
   async markTerminalDelivered(runId: string, deliveredAt: string): Promise<void> {
     await this.pool.query(`
       UPDATE ${this.runsTable}
@@ -122,9 +146,10 @@ export class PgSandboxLifecycleStore {
 
   async enqueueCleanup(
     candidate: Omit<CleanupCandidate, 'runId' | 'claimId' | 'previousDeletionGeneration'> & { legacyRunId?: string },
+    options: { prepared?: boolean } = {},
   ): Promise<CleanupCandidate | undefined> {
     const payload = JSON.stringify({
-      state: 'pending', workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
+      state: options.prepared ? 'prepared' : 'pending', workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
       sandboxScopeId: candidate.sandboxScopeId, tenantId: candidate.tenantId,
       userId: candidate.userId, username: candidate.username, targetHandId: candidate.targetHandId,
       queuedAt: new Date().toISOString(),
@@ -137,7 +162,7 @@ export class PgSandboxLifecycleStore {
       WITH active AS (
         SELECT run_id FROM ${this.runsTable}
         WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          AND metadata->'sandboxCleanupOutbox'->>'state' IN ('pending','claimed')
+          AND metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','pending','claimed')
           AND NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NOT NULL
           AND NULLIF(metadata->'sandboxCleanupOutbox'->>'deletionGeneration','') IS NOT NULL
         ORDER BY updated_at DESC LIMIT 1
@@ -168,7 +193,7 @@ export class PgSandboxLifecycleStore {
           )), updated_at=NOW()
         FROM target
         WHERE run.run_id=target.run_id AND NOT EXISTS (SELECT 1 FROM active)
-          AND (COALESCE(run.metadata->'sandboxCleanupOutbox'->>'state','') NOT IN ('pending','claimed')
+          AND (COALESCE(run.metadata->'sandboxCleanupOutbox'->>'state','') NOT IN ('prepared','pending','claimed')
             OR EXISTS (SELECT 1 FROM legacy WHERE legacy.run_id=run.run_id))
         RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
                   run.metadata->'sandboxCleanupOutbox' AS cleanup
@@ -191,7 +216,7 @@ export class PgSandboxLifecycleStore {
     }
   }
 
-  // Retry returns only the latest already-cancelled outbox; historical cycles must never regress the fence.
+  // prepared/pending/claimed 均可由 restore 取消；历史 cycle 不得回退 fence。
   async cancelCleanup(sessionId: string, tenantId: string | undefined, deletionGeneration: string): Promise<CleanupCandidate[]> {
     const client = await this.pool.connect();
     try {
@@ -207,7 +232,7 @@ export class PgSandboxLifecycleStore {
             'deletionGeneration',$4::text, 'claimId',NULL
           )), updated_at=NOW()
         WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          AND run.metadata->'sandboxCleanupOutbox'->>'state' IN ('pending','claimed')
+          AND run.metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','pending','claimed')
         RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
                   run.metadata->'sandboxCleanupOutbox' AS cleanup
       ), existing AS (
@@ -235,7 +260,40 @@ export class PgSandboxLifecycleStore {
     }
   }
 
-  // Complete outboxes are deliverable; stale legacy records are upgraded by exact run before claiming.
+  async listPreparedCleanupCandidates(limit = 100): Promise<CleanupCandidate[]> {
+    const result = await this.pool.query<Record<string, unknown>>(`
+      SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
+             metadata->'sandboxCleanupOutbox' AS cleanup
+      FROM ${this.runsTable}
+      WHERE metadata->'sandboxCleanupOutbox'->>'state' = 'prepared'
+      ORDER BY updated_at ASC LIMIT $1
+    `, [limit]);
+    return result.rows.flatMap((row) => {
+      const cleanup = asRecord(row.cleanup);
+      return cleanupCandidateIsComplete(cleanup) ? [cleanupCandidateFromRow(row, cleanup)] : [];
+    });
+  }
+
+  async activatePreparedCleanup(runId: string): Promise<boolean> {
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox,state}', '"pending"'::jsonb), updated_at=NOW()
+      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='prepared'
+    `, [runId]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async activatePreparedCleanupForSession(sessionId: string, tenantId?: string): Promise<boolean> {
+    const result = await this.pool.query(`
+      UPDATE ${this.runsTable}
+      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox,state}', '"pending"'::jsonb), updated_at=NOW()
+      WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
+        AND metadata->'sandboxCleanupOutbox'->>'state'='prepared'
+    `, [sessionId, tenantId ?? null]);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // 完整 outbox 可投递；legacy record 先按精确 run 升级再 claim。
   async listCleanupCandidates(limit = 100): Promise<CleanupCandidate[]> {
     const staleBefore = new Date(Date.now() - 60_000).toISOString();
     const result = await this.pool.query<Record<string, unknown>>(`
@@ -255,6 +313,7 @@ export class PgSandboxLifecycleStore {
   }
 
   async listLegacyCleanupCandidates(limit = 100): Promise<LegacyCleanupCandidate[]> {
+    // 只升级超时 claim 或 pending legacy，prepared intent 必须先由 tombstone 激活。
     const staleBefore = new Date(Date.now() - 60_000).toISOString();
     const result = await this.pool.query<Record<string, unknown>>(`
       SELECT run_id, tenant_id, user_id, metadata->>'username' AS username,
@@ -359,18 +418,24 @@ export class AcsSandboxLifecycleClient {
     terminalAt: string;
     outcome?: unknown;
   }): Promise<void> {
-    await this.request('/sandboxes/lifecycle', 'POST', input);
+    await this.request('/sandboxes/lifecycle', 'POST', input, undefined, false);
   }
 
   async advanceDeletionGeneration(input: SandboxDeletionGenerationUpdate, signal?: AbortSignal): Promise<void> {
-    await this.request('/sandboxes/deletion-generation', 'POST', input, signal);
+    await this.request('/sandboxes/deletion-generation', 'POST', input, signal, true);
   }
 
   async deleteScope(input: SandboxScopeDeletion, signal?: AbortSignal): Promise<void> {
-    await this.request('/sandboxes/scope', 'DELETE', input, signal);
+    await this.request('/sandboxes/scope', 'DELETE', input, signal, true);
   }
 
-  private async request(path: string, method: 'POST' | 'DELETE', body: unknown, externalSignal?: AbortSignal): Promise<void> {
+  private async request(
+    path: string,
+    method: 'POST' | 'DELETE',
+    body: unknown,
+    externalSignal: AbortSignal | undefined,
+    allowMissing: boolean,
+  ): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
     timer.unref?.();
@@ -382,7 +447,7 @@ export class AcsSandboxLifecycleClient {
       });
       if (response.ok) return;
       const text = await response.text().catch(() => '');
-      if (response.status === 404 && /Sandbox .*not found|lifecycle identity not found/i.test(text)) return;
+      if (allowMissing && response.status === 404 && /Sandbox .*not found|lifecycle identity not found/i.test(text)) return;
       throw new Error(`ACS ${method} ${path} HTTP ${response.status}: ${text.slice(0, 300) || 'no body'}`);
     } finally {
       clearTimeout(timer);
@@ -455,6 +520,24 @@ export class SandboxLifecycleService {
     await Promise.all(inFlight.map((delivery) => delivery.promise.catch(() => undefined)));
   }
 
+  async prepareSessionDeletionIntent(sessionId: string): Promise<'skipped' | 'queued'> {
+    const resolved = await this.resolveSessionTarget(sessionId);
+    if (!resolved) return 'skipped';
+    const { identity, tenantId, userId, username, targetHandId } = resolved;
+    const enqueued = await this.options.store.enqueueCleanup({
+      ...identity, targetHandId, deletionGeneration: newDeletionGeneration(),
+      ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
+    }, { prepared: true }); // prepared 不可投递，先避免 tombstone 前产生外部删除。
+    if (!enqueued) throw new Error(`Sandbox cleanup intent 无法持久化: ${sessionId}`);
+    return 'queued';
+  }
+
+  async commitPreparedSessionDeletion(sessionId: string): Promise<'skipped' | 'deleted' | 'queued'> {
+    const record = await this.options.sessionCatalog.get(sessionId);
+    await this.options.store.activatePreparedCleanupForSession(sessionId, record?.tenantId);
+    return await this.prepareSessionDeletion(sessionId);
+  }
+
   async prepareSessionDeletion(sessionId: string): Promise<'skipped' | 'deleted' | 'queued'> {
     const resolved = await this.resolveSessionTarget(sessionId);
     if (!resolved) return 'skipped';
@@ -489,6 +572,12 @@ export class SandboxLifecycleService {
   }
 
   private async scan(): Promise<void> {
+    for (const prepared of (await this.options.store.listPreparedCleanupCandidates?.()) ?? []) {
+      const record = await this.options.sessionCatalog.get(prepared.sessionId);
+      if (record?.deletedAt) {
+        await this.options.store.activatePreparedCleanup(prepared.runId);
+      }
+    }
     for (const legacy of (await this.options.store.listLegacyCleanupCandidates?.()) ?? []) {
       const resolved = await this.resolveSessionTarget(legacy.sessionId);
       if (!resolved) continue;
@@ -516,7 +605,14 @@ export class SandboxLifecycleService {
     }
     for (const candidate of await this.options.store.listTerminalCandidates()) {
       if (await this.options.store.hasActivity(candidate)) continue;
-      const target = await this.resolveClient(candidate.sessionId, candidate.tenantId);
+      let targetHandId = candidate.targetHandId;
+      if (!targetHandId) {
+        const original = await this.resolveSessionTarget(candidate.sessionId);
+        if (!original) continue;
+        targetHandId = await this.options.store.pinTerminalTargetHand(candidate.runId, original.targetHandId);
+      }
+      if (!targetHandId) continue;
+      const target = await this.resolveClient(candidate.sessionId, candidate.tenantId, undefined, { targetHandId });
       if (!target) continue;
       try {
         const timedOut = candidate.status === 'failed' && /timed?\s*out|timeout/i.test(candidate.statusReason ?? '');
@@ -529,7 +625,7 @@ export class SandboxLifecycleService {
         });
         await this.options.store.markTerminalDelivered(candidate.runId, new Date().toISOString());
       } catch (error) {
-        this.options.logger?.warn(`sandbox_terminal_notify_failed run=${candidate.runId} error=${error instanceof Error ? error.message : String(error)}`);
+        this.options.logger?.warn(`sandbox_terminal_notify_failed run=${candidate.runId} hand=${targetHandId} error=${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }

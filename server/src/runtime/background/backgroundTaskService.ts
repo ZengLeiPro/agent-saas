@@ -591,17 +591,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           ...(storedResult?.errorMessage ? { errorMessage: storedResult.errorMessage } : {}), ...(storedResult?.failureKind ? { failureKind: storedResult.failureKind } : {}), ...(storedResult?.recoveryAction ? { recoveryAction: storedResult.recoveryAction } : {}),
           ...(storedResult?.text ? { resultPreview: storedResult.text.slice(0, 2_000) } : {}),
         });
-        await runStore.markStatus(task.runId, task.status, task.statusReason, {
-          lifecycleFinishedAt: new Date().toISOString(),
-        });
+        await runStore.markStatus(task.runId, task.status, task.statusReason, { lifecycleFinishedAt: new Date().toISOString() });
       }
 
       if (await deliverDwsBackgroundCompletion({
         config: this.config, runStore, task, metadata, claimToken,
       })) continue;
 
-      const wakeRunId = `bg-wake-${task.runId}`;
-      const wake = await runStore.upsertPending({
+      const wakeRunId = `bg-wake-${task.runId}`; const sandboxScopeId = metadata.sandboxScopeId ?? task.sandboxScopeId;
+      const topLevelSessionId = metadata.topLevelSessionId ?? metadata.parentSessionId; const wake = await runStore.upsertPending({
         runId: wakeRunId,
         sessionId: metadata.parentSessionId,
         userId: task.userId,
@@ -611,8 +609,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         idempotencyKey: `background-task-wake:${task.runId}`,
         executionTarget: parentSession.executionTarget,
         workspaceId: parentSession.workspaceId,
+        sandboxScopeId,
         metadata: {
-          backgroundTaskWake: true,
+          backgroundTaskWake: true, topLevelSessionId,
+          ...(sandboxScopeId ? { sandboxScopeId } : {}),
           dispatcherCompletion: metadata.executionMode === 'dispatcher',
           outputTransactionMode: metadata.parentOutputTransactionMode,
           backgroundTaskId: task.runId,
@@ -622,7 +622,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
             content: buildTaskNotification(task, metadata),
             senderId: parentSession.userId,
             senderName: parentSession.username,
-            metadata: { backgroundTaskWake: true, backgroundTaskId: task.runId },
+            metadata: { backgroundTaskWake: true, backgroundTaskId: task.runId, topLevelSessionId },
           },
         },
       });

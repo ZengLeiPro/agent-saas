@@ -284,8 +284,7 @@ describe('SandboxManager', () => {
                     },
                   },
                 },
-                metadata: {
-                  annotations: {
+                metadata: { uid: 'uid-broken', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
                     'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
                   },
                 },
@@ -354,7 +353,7 @@ describe('SandboxManager', () => {
             stdout: JSON.stringify({
               status: { phase: 'Running' },
               spec: { template: { spec: { containers: [{ name: 'sandbox', image }] } } },
-              metadata: { annotations: { 'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1' } },
+              metadata: { uid: 'uid-image', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: { 'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1' } },
             }),
             stderr: '',
             exitCode: 0,
@@ -414,7 +413,7 @@ describe('SandboxManager', () => {
   it('recreates a broken Paused Sandbox instead of waiting for resume forever', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:test';
-    let state: 'broken' | 'running' = 'broken';
+    let state: 'broken' | 'missing' | 'running' = 'broken';
     let appliedSandbox = false;
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
@@ -423,11 +422,11 @@ describe('SandboxManager', () => {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
+          if (state === 'missing') return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           if (state === 'broken') {
             return {
               stdout: JSON.stringify({
-                metadata: {
-                  annotations: {
+                metadata: { uid: 'uid-broken', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
                     'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
                   },
                 },
@@ -461,8 +460,7 @@ describe('SandboxManager', () => {
           }
           return {
             stdout: JSON.stringify({
-              metadata: {
-                annotations: {
+              metadata: { uid: 'uid-running', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
                   'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
                 },
               },
@@ -478,7 +476,7 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'delete') {
-          if (args[1]?.startsWith('sandbox/')) state = 'running';
+          if (args[1]?.startsWith('sandbox/') || args[1]?.startsWith('--raw=')) state = 'missing';
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'apply') {
@@ -511,7 +509,7 @@ describe('SandboxManager', () => {
       mountSubPath: 'workspaces/kaiyan/u-1',
     });
 
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${ref.name}`)).toBe(true);
+    expect(calls.some((args) => args[0] === 'delete' && (args[1] === `sandbox/${ref.name}` || args[1]?.includes(`/sandboxes/${ref.name}`)))).toBe(true);
     expect(appliedSandbox).toBe(true);
     expect(calls.some((args) => args[0] === 'patch' && args[1] === `sandbox/${ref.name}` && String(args[4] ?? '').includes('"paused":false'))).toBe(false);
   });
@@ -519,7 +517,7 @@ describe('SandboxManager', () => {
   it('recreates a Failed Sandbox with missing pod instead of waiting until provision timeout', async () => {
     const calls: string[][] = [];
     const currentImage = 'registry.example.com/agent-saas/acs-sandbox:test';
-    let state: 'failed' | 'running' = 'failed';
+    let state: 'failed' | 'missing' | 'running' = 'failed';
     let appliedSandbox = false;
     const kubectl = {
       async run(args: string[], options: { input?: string } = {}): Promise<KubectlResult> {
@@ -528,11 +526,11 @@ describe('SandboxManager', () => {
           return { stdout: JSON.stringify({ items: [] }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
+          if (state === 'missing') return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           if (state === 'failed') {
             return {
               stdout: JSON.stringify({
-                metadata: {
-                  annotations: {
+                metadata: { uid: 'uid-broken', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
                     'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
                   },
                 },
@@ -557,8 +555,7 @@ describe('SandboxManager', () => {
           }
           return {
             stdout: JSON.stringify({
-              metadata: {
-                annotations: {
+              metadata: { uid: 'uid-running', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
                   'agent-saas.kaiyan.net/mount-subpath': 'workspaces/kaiyan/u-1',
                 },
               },
@@ -574,7 +571,7 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'delete') {
-          if (args[1]?.startsWith('sandbox/')) state = 'running';
+          if (args[1]?.startsWith('sandbox/') || args[1]?.startsWith('--raw=')) state = 'missing';
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'apply') {
@@ -607,7 +604,7 @@ describe('SandboxManager', () => {
       mountSubPath: 'workspaces/kaiyan/u-1',
     });
 
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${ref.name}`)).toBe(true);
+    expect(calls.some((args) => args[0] === 'delete' && (args[1] === `sandbox/${ref.name}` || args[1]?.includes(`/sandboxes/${ref.name}`)))).toBe(true);
     expect(appliedSandbox).toBe(true);
   });
 
@@ -653,7 +650,8 @@ describe('SandboxManager', () => {
     let created = false, idleDeleted = false;
     let applied: Record<string, unknown> | undefined;
     const idleSandbox = {
-      metadata: { name: 'as-idle', annotations: {
+      metadata: { name: 'as-idle', uid: 'uid-as-idle', resourceVersion: '1',
+        finalizers: ['agent-saas.kaiyan.net/network-cleanup'], annotations: {
         'agent-saas.kaiyan.net/created-at': '2026-06-27T00:00:00.000Z',
         'agent-saas.kaiyan.net/last-active-at': '2026-06-27T00:00:00.000Z',
       } }, status: { phase: 'Paused' },
@@ -672,7 +670,7 @@ describe('SandboxManager', () => {
           };
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
-          if (args[1] === 'sandbox/as-idle') return { stdout: JSON.stringify(idleSandbox), stderr: '', exitCode: 0, signal: null };
+          if (args[1] === 'sandbox/as-idle') return idleDeleted ? { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null } : { stdout: JSON.stringify(idleSandbox), stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
@@ -975,7 +973,7 @@ describe('SandboxManager', () => {
     }
   });
 
-  it('listSandboxInventory: annotates busy, stale image, TTL, and broken paused reason', async () => {
+  it('listSandboxInventory: derives remaining time from lifecycle deadline, not global TTL', async () => {
     const activeRegistry = new ActiveSandboxRegistry();
     const manager = new SandboxManager({
       ...baseConfig(),
@@ -1018,27 +1016,20 @@ describe('SandboxManager', () => {
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl, noopLogger, activeRegistry);
-    const release = activeRegistry.acquire('as-broken', 'invocation-1');
+    const result = await manager.listSandboxInventory({ now: new Date('2026-07-06T00:30:00.000Z') });
 
-    try {
-      const result = await manager.listSandboxInventory({
-        now: new Date('2026-07-06T00:30:00.000Z'),
-      });
-
-      expect(result).toMatchObject([{
-        name: 'as-broken',
-        workspaceId: 'ws_kaiyan__u-1',
-        phase: 'Paused',
-        brokenReason: 'image_changed',
-        busy: true,
-        imageStale: true,
-        idleMs: 10 * 60_000,
-        effectiveTtlMs: 60 * 60_000,
-        ttlRemainingMs: 50 * 60_000,
-      }]);
-    } finally {
-      release();
-    }
+    expect(result).toMatchObject([{
+      name: 'as-broken',
+      workspaceId: 'ws_kaiyan__u-1',
+      phase: 'Paused',
+      brokenReason: 'image_changed',
+      busy: false,
+      imageStale: true,
+      idleMs: 10 * 60_000,
+      effectiveTtlMs: 30 * 60_000,
+      ttlRemainingMs: 20 * 60_000,
+      lifecycleDeadlineAt: '2026-07-06T00:50:00.000Z',
+    }]);
   });
 
   it('manual pause/resume/delete reject active Sandboxes with 409-class errors', async () => {
@@ -1169,13 +1160,14 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === `sandbox/${oldPausedName}` && !args.includes('--ignore-not-found=true')) {
           return {
             stdout: JSON.stringify({
+              metadata: { uid: 'uid-old-paused', resourceVersion: '1', finalizers: ['agent-saas.kaiyan.net/network-cleanup'] },
               spec: { template: { spec: { containers: [{ name: 'sandbox', image: 'registry.example.com/agent-saas/acs-sandbox:old-tag' }] } } },
               status: { phase: 'Paused' },
             }),
             stderr: '', exitCode: 0, signal: null,
           };
         }
-        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if ((args[0] === 'get' && args.includes('--ignore-not-found=true')) || args[0] === 'delete' || args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
       },
     } as unknown as Kubectl;
@@ -1201,9 +1193,9 @@ describe('SandboxManager', () => {
     expect(result.skipped).toEqual(expect.arrayContaining([noImageName]));
     // stale Paused 只允许 delete：绝不能 applySandbox 原地换镜像（会留 ImageChanged
     // 半状态或让后续 pause 卡死），也绝不能 patch paused。
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${oldPausedName}`)).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, oldPausedName))).toBe(true);
     expect(calls.some((args) => args[0] === 'apply')).toBe(false);
-    expect(calls.some((args) => args[0] === 'patch')).toBe(false);
+    expect(calls.some((args) => args[0] === 'patch' && String(args[4] ?? '').includes('"paused"'))).toBe(false);
     // 镜像已是当前版的 Paused 与 Running 中的旧镜像 sandbox 都不许删。
     expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${currentPausedName}`)).toBe(false);
     expect(calls.some((args) => args[0] === 'delete' && args[1] === `sandbox/${oldRunningName}`)).toBe(false);

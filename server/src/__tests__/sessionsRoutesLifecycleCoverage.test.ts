@@ -51,6 +51,7 @@ async function startServer(
       markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
       listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
     };
+    sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'skipped' | 'queued'>;
     sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>;
     sandboxSessionRestore?: (sessionId: string) => Promise<void>;
     sessionProjectionStore?: {
@@ -78,6 +79,7 @@ async function startServer(
     artifactLifecycle: createSessionArtifactLifecycle(opts.artifactShareStore, opts.artifactService),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
+    ...(opts.sandboxSessionDeletionIntent ? { sandboxSessionDeletionIntent: opts.sandboxSessionDeletionIntent } : {}),
     ...(opts.sandboxSessionDeletion ? { sandboxSessionDeletion: opts.sandboxSessionDeletion } : {}),
     ...(opts.sandboxSessionRestore ? { sandboxSessionRestore: opts.sandboxSessionRestore } : {}),
   }));
@@ -318,8 +320,11 @@ describe('sessions routes lifecycle coverage', () => {
     const { sessionId, transcriptPath } = await writeSession(OWNER);
     const artifactShareStore = new InMemoryArtifactShareStore();
     const revokeBySession = vi.spyOn(artifactShareStore, 'revokeBySession');
+    const sandboxSessionDeletionIntent = vi.fn(async () => 'queued' as const);
     const sandboxSessionDeletion = vi.fn(async () => 'deleted' as const);
-    const { server, baseUrl } = await startServer(agentCwd, OWNER, { artifactShareStore, sandboxSessionDeletion });
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      artifactShareStore, sandboxSessionDeletionIntent, sandboxSessionDeletion,
+    });
     servers.push(server);
 
     // 软删除 → 200 softDeleted，meta 写入 deletedAt
@@ -330,13 +335,14 @@ describe('sessions routes lifecycle coverage', () => {
     expect(meta?.deletedAt).toBeTruthy();
     expect(meta?.deletedBy).toBe(OWNER.username);
     expect(revokeBySession).toHaveBeenCalledWith(sessionId, OWNER.id);
+    expect(sandboxSessionDeletionIntent).toHaveBeenCalledWith(sessionId);
     expect(sandboxSessionDeletion).toHaveBeenCalledWith(sessionId);
 
-    // 重复删除 → 幂等 200，且不得覆盖 active cleanup claim
+    // 重复删除 → 幂等 200，并重试 durable cleanup；store 负责保留 active claim。
     const again = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(again.status).toBe(200);
     expect((await again.json() as { softDeleted: boolean }).softDeleted).toBe(true);
-    expect(sandboxSessionDeletion).toHaveBeenCalledTimes(1);
+    expect(sandboxSessionDeletion).toHaveBeenCalledTimes(2);
 
     // 他人删除本人未删除会话 → 403
     const { sessionId: mySession } = await writeSession(OWNER);
@@ -344,6 +350,29 @@ describe('sessions routes lifecycle coverage', () => {
     servers.push(otherServer);
     const foreign = await fetch(`${otherBase}/api/sessions/${mySession}`, { method: 'DELETE' });
     expect(foreign.status).toBe(403);
+  });
+
+  it('cleanup enqueue 失败时 tombstone 已持久化，进程重启后重复 DELETE 可续跑', async () => {
+    const { sessionId, transcriptPath } = await writeSession(OWNER);
+    const preparedIntent = vi.fn(async () => 'queued' as const);
+    const firstCleanup = vi.fn(async () => { throw new Error('injected cleanup failure'); });
+    const first = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletionIntent: preparedIntent, sandboxSessionDeletion: firstCleanup,
+    });
+    servers.push(first.server);
+
+    const failed = await fetch(`${first.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    expect(preparedIntent).toHaveBeenCalledWith(sessionId);
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBeTruthy();
+
+    const resumedCleanup = vi.fn(async () => 'queued' as const);
+    const restarted = await startServer(agentCwd, OWNER, { sandboxSessionDeletion: resumedCleanup });
+    servers.push(restarted.server);
+    const retried = await fetch(`${restarted.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(retried.status).toBe(200);
+    expect((await retried.json() as { softDeleted: boolean }).softDeleted).toBe(true);
+    expect(resumedCleanup).toHaveBeenCalledWith(sessionId);
   });
 
   it('POST /sessions/:id/restore：未删除 400、非 owner 403、取消 pending Sandbox 清理后恢复', async () => {

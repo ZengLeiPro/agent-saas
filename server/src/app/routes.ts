@@ -334,9 +334,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         runtime.artifactShareStore,
         runtime.artifactService,
       ),
-      sessionProjectionStore: runtime.runtimeSessionProjectionStore,
-      sessionReadStateStore: runtime.sessionReadStateStore,
-      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
+      sessionProjectionStore: runtime.runtimeSessionProjectionStore, sessionReadStateStore: runtime.sessionReadStateStore,
+      sandboxWarmup: (sessionId) => runtime.sandboxWarmupService.fireForSession(sessionId), sandboxSessionDeletionIntent: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.prepareSessionDeletionIntent(sessionId) : undefined, sandboxSessionDeletion: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.commitPreparedSessionDeletion(sessionId) : undefined, sandboxSessionRestore: runtime.sandboxLifecycleService ? (sessionId) => runtime.sandboxLifecycleService!.cancelSessionDeletion(sessionId) : undefined,
       listPendingSteeringBySession: runtime.runtimeRunStore?.listPendingSteeringBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingSteeringBySession!(sessionId)
         : undefined,

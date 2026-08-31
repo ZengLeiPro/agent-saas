@@ -58,8 +58,9 @@ describe('SandboxLifecycleService', () => {
     const store = {
       listCleanupCandidates: vi.fn(async () => []),
       listTerminalCandidates: vi.fn(async () => [{
-        ...identity, runId: 'run-top', tenantId: 'tenant-1', status: 'completed' as const,
-        terminalAt: '2026-08-30T00:00:00.000Z', workload: { kind: 'cron' as const },
+        ...identity, runId: 'run-top', tenantId: 'tenant-1', targetHandId: 'agent-saas-acs',
+        status: 'completed' as const, terminalAt: '2026-08-30T00:00:00.000Z',
+        workload: { kind: 'cron' as const },
       }]),
       hasActivity: vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
       markTerminalDelivered: vi.fn(async () => undefined),
@@ -77,6 +78,50 @@ describe('SandboxLifecycleService', () => {
     await scan();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(store.markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
+  });
+
+  it('terminal outbox 固定原 hand，重启和 rollout 后仍重投原目标，404 不标记 delivered', async () => {
+    const hands = [remote('acs-new', 'http://acs-new.test'), remote('acs-old', 'http://acs-old.test', 'drain')];
+    let pinned: string | undefined;
+    const markTerminalDelivered = vi.fn(async () => undefined);
+    const candidate = () => ({
+      ...identity, runId: 'run-top', tenantId: 'tenant-1', ...(pinned ? { targetHandId: pinned } : {}),
+      status: 'completed' as const, terminalAt: '2026-08-30T00:00:00.000Z', workload: { kind: 'cron' as const },
+    });
+    const store = {
+      listCleanupCandidates: vi.fn(async () => []), listTerminalCandidates: vi.fn(async () => [candidate()]),
+      hasActivity: vi.fn(async () => false),
+      pinTerminalTargetHand: vi.fn(async (_runId: string, handId: string) => { pinned = handId; return handId; }),
+      markTerminalDelivered,
+    };
+    const handStore = {
+      get: async () => ({ providerId: 'server-remote', metadata: { tenantRemoteHandId: 'acs-old', recipe: { sandboxScopeId: 'scope-1' } } }) as never,
+      listBySession: async () => [],
+    };
+    const missingFetch = vi.fn(async () => new Response('Sandbox as-old not found', { status: 404 })) as unknown as typeof fetch;
+    const first = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => session() }, handStore,
+      tenantRemoteHands: () => hands,
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => hands }),
+      fetchImpl: missingFetch,
+    });
+    await (first as unknown as { scan(): Promise<void> }).scan();
+    expect(pinned).toBe('acs-old');
+    expect(markTerminalDelivered).not.toHaveBeenCalled();
+
+    const recoveredFetch = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const restarted = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => null },
+      tenantRemoteHands: () => hands,
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => hands }),
+      fetchImpl: recoveredFetch,
+    });
+    await (restarted as unknown as { scan(): Promise<void> }).scan();
+    expect((recoveredFetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
+      .toBe('http://acs-old.test/sandboxes/lifecycle');
+    expect(markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
   });
 
   it('cancels active descendants and keeps the durable cleanup claimed when ACS is busy', async () => {

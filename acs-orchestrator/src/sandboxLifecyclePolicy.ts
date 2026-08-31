@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
+export { sandboxLifecycleMetrics } from './sandboxLifecycleMetrics.js';
 
 export const WORKLOAD_CLASSES = [
-  'interactive',
-  'taskboard',
+  'interactive', 'taskboard',
   'cron',
   'memory',
   'deploy-smoke',

@@ -54,12 +54,13 @@ export async function enforceSandboxCapacity(input: {
   const evicted: string[] = [];
   if (input.allowEviction) {
     const nowMs = Date.now();
+    // 与 cleanup/inventory 共用 lifecycle deadline，越紧迫越先回收。
     const candidates = quotaSandboxes
       .filter((sandbox) => sandbox.name !== input.currentName && sandbox.phase === 'Paused' && input.canEvict(sandbox))
       .sort((left, right) => {
-        const leftExpired = decideSandboxLifecycle({ ...left, nowMs }).delete ? 0 : 1;
-        const rightExpired = decideSandboxLifecycle({ ...right, nowMs }).delete ? 0 : 1;
-        return leftExpired - rightExpired
+        const leftDeadline = parseDateMs(decideSandboxLifecycle({ ...left, nowMs }).deadlineAt) ?? Number.POSITIVE_INFINITY;
+        const rightDeadline = parseDateMs(decideSandboxLifecycle({ ...right, nowMs }).deadlineAt) ?? Number.POSITIVE_INFINITY;
+        return leftDeadline - rightDeadline
           || (parseDateMs(left.lastActiveAt) ?? 0) - (parseDateMs(right.lastActiveAt) ?? 0);
       });
     for (const candidate of candidates) {

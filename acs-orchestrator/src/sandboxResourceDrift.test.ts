@@ -14,7 +14,11 @@ const identity = {
 
 function sandboxBody(resources: { requests: Record<string, string>; limits?: Record<string, string> }) {
   return {
-    metadata: { annotations: { 'agent-saas.kaiyan.net/mount-subpath': identity.mountSubPath } },
+    metadata: {
+      uid: 'sandbox-uid-1', resourceVersion: 'resource-version-1',
+      finalizers: ['agent-saas.kaiyan.net/network-cleanup'],
+      annotations: { 'agent-saas.kaiyan.net/mount-subpath': identity.mountSubPath },
+    },
     spec: {
       paused: false,
       template: {
@@ -58,18 +62,35 @@ function harness(existing?: ReturnType<typeof sandboxBody>, firstSandboxApplyGat
         return { stdout: '', stderr: '', exitCode: 0, signal: null };
       }
       if (args[0] === 'delete') {
-        if (args[1]?.startsWith('sandbox/')) {
-          deleted.push(args[1]);
+        if (args[1]?.startsWith('sandbox/') || args[1]?.startsWith('--raw=')) {
+          const rawName = args[1]?.startsWith('--raw=') ? decodeURIComponent(args[1].split('/').at(-1) ?? '') : undefined;
+          deleted.push(rawName ? `sandbox/${rawName}` : args[1]);
           current = undefined;
         }
         return { stdout: '', stderr: '', exitCode: 0, signal: null };
       }
-      if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+      if (args[0] === 'patch') {
+        const patchIndex = args.indexOf('-p');
+        const patch = patchIndex >= 0 ? JSON.parse(args[patchIndex + 1] ?? '{}') as Record<string, any> : {};
+        if (current && !Array.isArray(patch)) {
+          const currentMetadata = current.metadata as Record<string, any>;
+          current.metadata = {
+            ...currentMetadata,
+            ...patch.metadata,
+            labels: { ...currentMetadata.labels, ...patch.metadata?.labels },
+            annotations: { ...currentMetadata.annotations, ...patch.metadata?.annotations },
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0, signal: null };
+      }
       throw new Error(`unexpected kubectl args: ${args.join(' ')}`);
     },
   } as unknown as Kubectl;
   const logger = { info: (message: string) => logs.push(message), warn: (message: string) => logs.push(message), error: (message: string) => logs.push(message) };
-  return { kubectl, deleted, sandboxManifests, logs, logger };
+  return {
+    kubectl, deleted, sandboxManifests, logs, logger,
+    current: (): Record<string, any> | undefined => current as Record<string, any> | undefined,
+  };
 }
 
 const daily: SandboxResourceOverride = { cpuLimit: '1', memoryLimit: '2048Mi' };
@@ -90,7 +111,7 @@ describe('SandboxManager profile resources', () => {
     });
   });
 
-  it('recreates an idle Running Sandbox when actual requests/limits drift from target', async () => {
+  it('actual requests/limits 漂移时重建空闲 Running Sandbox', async () => {
     const h = harness(sandboxBody({
       requests: { cpu: '250m', memory: '512Mi' },
       limits: { cpu: '2', memory: '4096Mi' },
@@ -120,7 +141,27 @@ describe('SandboxManager profile resources', () => {
     expect(h.logs.some((line) => line.includes('sandbox_ensure_resource_followup'))).toBe(true);
   });
 
-  it('defers resource drift while busy and reuses the existing Running Sandbox', async () => {
+  it('兼容 leader 与 workload follower 并发时，follower 会补写 descriptor 而不遗留 unknown', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const h = harness(undefined, firstGate);
+    const manager = new SandboxManager(baseConfig(), h.kubectl, h.logger);
+    const first = manager.ensureRunning({ ...identity });
+    while (h.sandboxManifests.length === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = manager.ensureRunning({
+      ...identity,
+      workload: { class: 'taskboard', taskKind: 'delivery', purpose: 'work' },
+    });
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(h.sandboxManifests).toHaveLength(1);
+    expect(h.logs.some((line) => line.includes('sandbox_ensure_resource_followup'))).toBe(true);
+    expect(JSON.parse(h.current()?.metadata?.annotations?.['agent-saas.kaiyan.net/workload-descriptor'] ?? '{}'))
+      .toEqual({ class: 'taskboard', taskKind: 'delivery', purpose: 'work' });
+  });
+
+  it('busy 时延后 resource drift 并复用现有 Running Sandbox', async () => {
     const h = harness(sandboxBody({
       requests: { cpu: '250m', memory: '512Mi' },
       limits: { cpu: '2', memory: '4096Mi' },

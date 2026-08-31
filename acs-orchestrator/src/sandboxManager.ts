@@ -9,7 +9,7 @@ import { Kubectl } from './kubectl.js';
 import type { KubeApi } from './kubeApi.js';
 import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './networkPolicyManager.js';
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
-import { deleteSandboxAndReclaimNetwork, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
+import { deleteSandboxAndReclaimNetwork, sandboxResourcePreconditions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
 import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyPausedWithPreconditions, applyWorkloadDescriptor } from './sandboxLifecycleMutations.js';
 import {
@@ -23,11 +23,9 @@ import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
 import { pauseSandboxWhenIdle } from './sandboxSafePause.js';
 import { SandboxDeletionGenerationCoordinator } from './sandboxDeletionGeneration.js';
 import {
-  WORKLOAD_CLASS_LABEL,
-  WORKLOAD_DESCRIPTOR_ANNOTATION,
-  decideSandboxLifecycle,
-  isActiveInvocationLeaseProtected,
-  lifecycleStateFromMetadata,
+  WORKLOAD_CLASS_LABEL, WORKLOAD_DESCRIPTOR_ANNOTATION,
+  decideSandboxLifecycle, sandboxLifecycleMetrics,
+  isActiveInvocationLeaseProtected, lifecycleStateFromMetadata,
   type SandboxDeletionGenerationUpdate,
   type SandboxLifecycleUpdate,
   type SandboxScopeDeletion,
@@ -181,7 +179,7 @@ export class SandboxManager {
         this.logger.info(`sandbox_ensure_join name=${ref.name}`);
         const result = await inFlight.promise;
         if (sameResourceTarget(inFlight.ref, ref)) return result;
-        // 不同 profile 不能并发 create；join leader 后重新进入 drift 检查。
+        // 不同 profile/workload 不能共享 leader 结果；join 后重新进入 drift/descriptor 检查。
         this.logger.info(`sandbox_ensure_resource_followup name=${ref.name}`);
         continue;
       }
@@ -415,14 +413,13 @@ export class SandboxManager {
     return (await this.listManagedSandboxes()).map((sandbox) => {
       const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt);
       const idleMs = lastActiveAtMs === undefined ? undefined : Math.max(0, nowMs - lastActiveAtMs);
-      const effectiveTtlMs = this.config.sandboxTtlMs;
-      const ttlRemainingMs = idleMs === undefined || effectiveTtlMs <= 0
-        ? undefined
-        : Math.max(0, effectiveTtlMs - idleMs);
       const active = this.isBusy(sandbox.name, input.busySandboxNames)
         || isActiveInvocationLeaseProtected(sandbox, nowMs);
       const backgroundProtected = isBackgroundShellProtected(sandbox, nowMs);
       const lifecycle = decideSandboxLifecycle({ ...sandbox, nowMs, active, backgroundProtected });
+      const { effectiveTtlMs, ttlRemainingMs } = sandboxLifecycleMetrics({
+        ...sandbox, deadlineAt: lifecycle.deadlineAt, nowMs,
+      });
       return {
         ...sandbox,
         workloadClass: lifecycle.workloadClass,
@@ -434,7 +431,7 @@ export class SandboxManager {
         ...(lifecycle.deadlineAt ? { lifecycleDeadlineAt: lifecycle.deadlineAt } : {}),
         ...(lifecycle.terminalDeadlineAt ? { terminalDeadlineAt: lifecycle.terminalDeadlineAt } : {}),
         ...(idleMs === undefined ? {} : { idleMs }),
-        ...(effectiveTtlMs > 0 ? { effectiveTtlMs } : {}),
+        ...(effectiveTtlMs === undefined ? {} : { effectiveTtlMs }),
         ...(ttlRemainingMs === undefined ? {} : { ttlRemainingMs }),
       };
     });
@@ -1120,12 +1117,14 @@ export class SandboxManager {
     };
   }
 
-  /** Sandbox 消失后才允许回收 TrafficPolicy/SNAT；精确 scope 删除还绑定 CR UID/resourceVersion。 */
+  /** finalizer 在网络回收完成前固定旧 CR UID，禁止同名 Sandbox 穿插重建。 */
   private async deleteSandboxAndReclaimNetwork(name: string, preconditions?: SandboxDeletionPreconditions): Promise<string[]> {
-    return await deleteSandboxAndReclaimNetwork({
-      name, resource: this.resourceName(name), apiVersion: this.config.sandboxApiVersion,
+    const resolvedPreconditions = preconditions ?? sandboxResourcePreconditions(await this.getStatus(name) ?? { raw: {} });
+    if (!resolvedPreconditions) return [];
+    return await deleteSandboxAndReclaimNetwork({ name, resource: this.resourceName(name),
+      apiVersion: this.config.sandboxApiVersion,
       kind: this.config.sandboxKind, namespace: this.config.namespace, timeoutMs: this.config.sandboxWaitTimeoutMs,
-      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager, preconditions,
+      kubectl: this.kubectl, networkPolicyManager: this.networkPolicyManager, snatManager: this.snatManager, preconditions: resolvedPreconditions,
     });
   }
 

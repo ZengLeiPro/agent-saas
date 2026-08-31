@@ -1,4 +1,4 @@
-import { parseSessionAutomationCommand } from '@agent/shared/lib/sessionAutomationCommands.js';
+import { parseSessionAutomationCommand } from '@agent/shared';
 import type { SessionAutomationCommandResponse, SessionAutomationControlAction, SessionAutomationControlRequest, SessionAutomationSnapshot } from '@agent/shared/types/sessionAutomation.js';
 import { commandDigest, PgSessionAutomationStore, SessionAutomationConflictError, type AutomationIdentity, type SessionAutomationReconciliationEvidence } from './sessionAutomationStore.js';
 

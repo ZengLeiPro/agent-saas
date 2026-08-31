@@ -7,7 +7,7 @@
  * WS 消息协议见 wsTypes.ts。
  */
 
-import { randomUUID } from 'crypto'; import { parseSessionAutomationCommand } from '@agent/shared/lib/sessionAutomationCommands.js';
+import { randomUUID } from 'crypto'; import { parseSessionAutomationCommand } from '@agent/shared';
 import { homedir } from 'os';
 import { resolve as resolvePath } from 'path';
 import type { Express } from 'express';

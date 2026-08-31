@@ -47,6 +47,8 @@ export class ClientDaemonRunner {
   private readonly activeInvocations = new Map<string, ActiveInvocation>();
   private stopped = false;
   private ws: WebSocket | undefined;
+  private registeredSocket: WebSocket | undefined;
+  private readonly pendingCompletions = new Map<string, Extract<ClientDaemonMessage, { type: 'invoke_completed' }>>();
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: ClientDaemonRunnerOptions) {
@@ -84,14 +86,40 @@ export class ClientDaemonRunner {
     if (settlements.length > 0) {
       await Promise.race([Promise.allSettled(settlements), delay(1_000)]);
     }
+    this.pendingCompletions.clear();
   }
 
   private async connectOnce(): Promise<void> {
     const ws = new WebSocket(this.withAuthToken(this.options.url));
     this.ws = ws;
+    this.registeredSocket = undefined;
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
       ws.once('error', reject);
+    });
+
+    // 先挂消息监听再发送 hello，避免服务端快速 ACK 在 listener 建立前丢失。
+    const connectionEnded = new Promise<void>((resolve, reject) => {
+      ws.on('message', (raw) => {
+        if (this.ws !== ws) return;
+        void this.handleMessage(ws, raw.toString()).catch(() => {
+          this.options.logger?.warn?.('client daemon message rejected');
+        });
+      });
+      ws.once('close', () => {
+        if (this.ws !== ws) return resolve();
+        if (this.registeredSocket === ws) this.registeredSocket = undefined;
+        this.stopHeartbeat();
+        this.failActiveInvocations('client daemon websocket closed');
+        resolve();
+      });
+      ws.once('error', (err) => {
+        if (this.ws !== ws) return reject(err);
+        if (this.registeredSocket === ws) this.registeredSocket = undefined;
+        this.stopHeartbeat();
+        this.failActiveInvocations('client daemon websocket error');
+        reject(err);
+      });
     });
 
     const caps = this.capabilities();
@@ -114,27 +142,7 @@ export class ClientDaemonRunner {
 
     this.startHeartbeat(ws);
     this.options.logger?.info?.('client daemon connected');
-
-    await new Promise<void>((resolve, reject) => {
-      ws.on('message', (raw) => {
-        if (this.ws !== ws) return;
-        void this.handleMessage(ws, raw.toString()).catch(() => {
-          this.options.logger?.warn?.('client daemon message rejected');
-        });
-      });
-      ws.once('close', () => {
-        if (this.ws !== ws) return resolve();
-        this.stopHeartbeat();
-        this.failActiveInvocations('client daemon websocket closed');
-        resolve();
-      });
-      ws.once('error', (err) => {
-        if (this.ws !== ws) return reject(err);
-        this.stopHeartbeat();
-        this.failActiveInvocations('client daemon websocket error');
-        reject(err);
-      });
-    });
+    await connectionEnded;
   }
 
   private capabilities(): HandCapability[] {
@@ -154,6 +162,8 @@ export class ClientDaemonRunner {
     const message = parseClientDaemonMessage(raw);
     switch (message.type) {
       case 'daemon_registered':
+        this.registeredSocket = ws;
+        this.flushPendingCompletions(ws);
         this.options.logger?.info?.(`client daemon registered as hand ${message.handId}`);
         return;
       case 'invoke_request':
@@ -326,8 +336,21 @@ export class ClientDaemonRunner {
 
   private send(ws: WebSocket, message: ClientDaemonMessage): void {
     const target = ws.readyState === WebSocket.OPEN ? ws : this.ws;
+    if (message.type === 'invoke_completed'
+      && (!target || target.readyState !== WebSocket.OPEN || this.registeredSocket !== target)) {
+      this.pendingCompletions.set(message.requestId, message);
+      return;
+    }
     if (!target || target.readyState !== WebSocket.OPEN) return;
     target.send(serializeClientDaemonMessage(message));
+  }
+
+  private flushPendingCompletions(ws: WebSocket): void {
+    if (this.ws !== ws || this.registeredSocket !== ws || ws.readyState !== WebSocket.OPEN) return;
+    for (const [requestId, message] of this.pendingCompletions) {
+      ws.send(serializeClientDaemonMessage(message));
+      this.pendingCompletions.delete(requestId);
+    }
   }
 }
 

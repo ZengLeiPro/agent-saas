@@ -6,10 +6,12 @@ import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { ClientDaemonGateway, type ClientDaemonGatewayOptions } from '../runtime/clientDaemonGateway.js';
 import { ClientDaemonRunner } from '../runtime/clientDaemonRunner.js';
+import { InMemoryClientDaemonRegistry, issueClientDaemonDeviceCredential } from '../runtime/clientDaemonRegistry.js';
 import { ClientDaemonTransport } from '../runtime/clientDaemonTransport.js';
 import { deriveClientDaemonHandId, parseClientDaemonMessage, serializeClientDaemonMessage, type ClientDaemonMessage } from '../runtime/clientDaemonProtocol.js';
 import type { HandRecord, HandStatus, HandStore, RegisterHandInput } from '../runtime/handStore.js';
 import type { ToolInvocationRequest, ToolInvocationResponse } from '../runtime/handProtocol.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
 
 class MemoryHandStore implements HandStore {
   records = new Map<string, HandRecord>();
@@ -48,7 +50,8 @@ class MemoryHandStore implements HandStore {
 }
 
 type GatewayOverrides = Partial<Pick<ClientDaemonGatewayOptions,
-  'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'>>;
+  'heartbeatTimeoutMs' | 'heartbeatScanIntervalMs' | 'disconnectGracePeriodMs' | 'logger'
+  | 'deviceRegistry' | 'deviceSecretVault'>>;
 
 async function withGateway<T>(
   fn: (args: { url: string; transport: ClientDaemonTransport; handStore: MemoryHandStore; gateway: ClientDaemonGateway }) => Promise<T>,
@@ -91,6 +94,20 @@ async function waitUntil(predicate: () => boolean, { timeoutMs = 2_000, interval
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error('waitUntil timed out');
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 2_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -218,8 +235,30 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
     }, { disconnectGracePeriodMs: 2_000 });
   });
 
-  // coverage 并发会放大本地 WebSocket 重连调度延迟，单独放宽本条生命周期用例。
+  // 显式阻塞重连 hello 认证，覆盖 socket OPEN 到 daemon_registered 之间的完成消息竞态。
   it('resumes a built-in runner invocation across a grace-period reconnect', async () => {
+    const vault = new InMemorySecretVault();
+    const registry = new InMemoryClientDaemonRegistry();
+    const { bearer } = await issueClientDaemonDeviceCredential({
+      registry,
+      vault,
+      input: { deviceId: 'daemon-grace-runner' },
+    });
+    let resolveReconnectAuthentication: (() => void) | undefined;
+    let markReconnectAuthenticationStarted: (() => void) | undefined;
+    const reconnectAuthenticationStarted = new Promise<void>((resolve) => { markReconnectAuthenticationStarted = resolve; });
+    const reconnectAuthentication = new Promise<void>((resolve) => { resolveReconnectAuthentication = resolve; });
+    const getDevice = registry.get.bind(registry);
+    let authAttempts = 0;
+    registry.get = async (deviceId) => {
+      authAttempts += 1;
+      if (authAttempts === 2) {
+        markReconnectAuthenticationStarted?.();
+        await reconnectAuthentication;
+      }
+      return getDevice(deviceId);
+    };
+
     await withGateway(async ({ url, transport }) => {
       let resolveExecution: ((response: ToolInvocationResponse) => void) | undefined;
       let executionSignal: AbortSignal | undefined;
@@ -237,6 +276,7 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
         workspaceRoot: await mkdtemp(join(tmpdir(), 'client-daemon-grace-runner-')),
         reconnectDelayMs: 50,
         provider,
+        authToken: bearer,
       });
       const run = runner.runForever();
       try {
@@ -250,21 +290,33 @@ describe('ClientDaemonGateway reconnect lifecycle', () => {
           },
         });
         await waitUntil(() => provider.execute.mock.calls.length === 1);
-        const internal = runner as unknown as { ws?: WebSocket };
+        const internal = runner as unknown as {
+          ws?: WebSocket;
+          pendingCompletions?: Map<string, ClientDaemonMessage>;
+        };
         const disconnectedSocket = internal.ws!;
         disconnectedSocket.terminate();
         await waitUntil(() => executionSignal?.aborted === true);
         await waitUntil(() => internal.ws !== disconnectedSocket && internal.ws?.readyState === WebSocket.OPEN);
+        await withTimeout(reconnectAuthenticationStarted, 'reconnect authentication start');
 
+        // 执行可能在 gateway 完成异步 daemon_hello 认证前结束；终态必须等待 daemon_registered 后补发。
         resolveExecution?.({ status: 'success', content: 'resumed' });
-        await expect(pending).resolves.toMatchObject({ status: 'success', content: 'resumed' });
+        await waitUntil(() => internal.pendingCompletions?.size === 1);
+        resolveReconnectAuthentication?.();
+        await expect(withTimeout(pending, 'resumed invocation')).resolves.toMatchObject({ status: 'success', content: 'resumed' });
         expect(provider.execute).toHaveBeenCalledTimes(1);
       } finally {
+        resolveReconnectAuthentication?.();
         resolveExecution?.({ status: 'error', error: 'test cleanup' });
-        await runner.stop();
-        await run;
+        await withTimeout(runner.stop(), 'runner stop');
+        await withTimeout(run, 'runner loop stop');
       }
-    }, { disconnectGracePeriodMs: 2_000 });
+    }, {
+      disconnectGracePeriodMs: 2_000,
+      deviceRegistry: registry,
+      deviceSecretVault: vault,
+    });
   }, 20_000);
 
   // C2: grace-period reconnect — when the socket drops with pending invokes

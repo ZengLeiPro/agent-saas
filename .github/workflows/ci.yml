@@ -43,8 +43,93 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
-    name: Build & Check
+  preflight_checks:
+    name: Preflight / Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run static checks
+        run: bash scripts/pr-preflight-task.sh checks
+
+  coverage:
+    name: Preflight / Coverage (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [shared, server, web]
+
+    # Server coverage 包含 PostgreSQL 测试。三个矩阵实例使用相互隔离的数据库容器，
+    # 避免并行任务共享状态；Shared/Web 虽不访问数据库，也保持完全一致的 Runner 定义。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agent_test
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: agent_saas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent_test -d agent_saas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ${{ matrix.workspace }} coverage
+        env:
+          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+          MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+        run: bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"
+
+      # 跨 Runner 汇总 PR diff coverage 所需的最小文件；中间 artifact 仅保留一天。
+      - name: Upload ${{ matrix.workspace }} coverage part
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-part-${{ matrix.workspace }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ matrix.workspace }}/coverage/lcov.info
+            ${{ matrix.workspace }}/coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  postgres_contracts:
+    name: Preflight / PostgreSQL contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -61,6 +146,61 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run PostgreSQL contracts
+        env:
+          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+          MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
+        run: bash scripts/pr-preflight-task.sh postgres
+
+  web_production:
+    name: Preflight / Web production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Web production checks
+        run: bash scripts/pr-preflight-task.sh web
+
+  # 保留仓库 Ruleset 使用的唯一 required check 名称。任一并行门禁失败或取消，
+  # 本汇总 Job 都会明确失败；生产部署仍只依赖 build，不会绕过任何子门禁。
+  build:
+    name: Build & Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [preflight_checks, coverage, postgres_contracts, web_production]
+    if: always()
 
     # 评论 PR diff coverage 需要 pull-requests: write；
     # push/dispatch 事件下该权限未使用不产生副作用。
@@ -85,14 +225,28 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      # 下载失败不掩盖测试结果：覆盖率测试本身由 coverage 矩阵守门，artifact
+      # 仅用于汇总与评论，沿用原先“报告上传失败不判红”的策略。
+      - name: Download server coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: coverage-part-server-${{ github.run_id }}-${{ github.run_attempt }}
+          path: server/coverage
 
-      - name: Run PR preflight
-        env:
-          TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-          MEMORY_CONSOLIDATION_TEST_PG_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test
-        run: pnpm preflight:pr
+      - name: Download web coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: coverage-part-web-${{ github.run_id }}-${{ github.run_attempt }}
+          path: web/coverage
+
+      - name: Download shared coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: coverage-part-shared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: shared/coverage
 
       - name: Report coverage summary
         if: always()
@@ -158,6 +312,30 @@ jobs:
             shared/coverage/coverage-summary.json
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Verify parallel preflight results
+        if: always()
+        env:
+          PREFLIGHT_CHECKS_RESULT: ${{ needs.preflight_checks.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          POSTGRES_CONTRACTS_RESULT: ${{ needs.postgres_contracts.result }}
+          WEB_PRODUCTION_RESULT: ${{ needs.web_production.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for gate in \
+            "preflight_checks=$PREFLIGHT_CHECKS_RESULT" \
+            "coverage=$COVERAGE_RESULT" \
+            "postgres_contracts=$POSTGRES_CONTRACTS_RESULT" \
+            "web_production=$WEB_PRODUCTION_RESULT"; do
+            name="${gate%%=*}"
+            result="${gate#*=}"
+            if [ "$result" != "success" ]; then
+              echo "::error title=Parallel preflight failed::$name concluded with $result"
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   deploy_plan:
     name: Plan production deployment

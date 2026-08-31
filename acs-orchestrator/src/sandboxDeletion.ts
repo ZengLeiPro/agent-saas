@@ -1,4 +1,5 @@
 import type { Kubectl } from './kubectl.js';
+import type { SandboxStatus } from './sandboxState.js';
 
 interface SandboxNetworkReclaimer {
   deleteForSandboxName(name: string): Promise<unknown>;
@@ -15,6 +16,15 @@ export interface SandboxDeletionPreconditions {
 
 export class SandboxDeletionPreconditionError extends Error {
   readonly statusCode = 409;
+}
+
+export function sandboxResourcePreconditions(status: SandboxStatus): SandboxDeletionPreconditions | undefined {
+  const metadata = status.raw?.metadata && typeof status.raw.metadata === 'object'
+    ? status.raw.metadata as Record<string, unknown>
+    : {};
+  const uid = typeof metadata.uid === 'string' ? metadata.uid : undefined;
+  const resourceVersion = typeof metadata.resourceVersion === 'string' ? metadata.resourceVersion : undefined;
+  return uid && resourceVersion ? { uid, resourceVersion } : undefined;
 }
 
 export async function deleteSandboxAndReclaimNetwork(input: {

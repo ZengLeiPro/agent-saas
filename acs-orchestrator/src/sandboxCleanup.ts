@@ -16,7 +16,11 @@ export interface SandboxCleanupHost {
     busySandboxNames: Set<string>,
     canDelete?: (latest: ManagedSandbox) => boolean,
   ): Promise<string[] | null>;
-  patchPaused(name: string): Promise<void>;
+  pauseWhenIdle(
+    name: string,
+    busySandboxNames: Set<string>,
+    canPause: (latest: ManagedSandbox) => boolean,
+  ): Promise<boolean>;
   cleanupOrphanSnat(): Promise<SnatCleanupReport>;
   warn(message: string): void;
 }
@@ -75,12 +79,16 @@ export async function cleanupManagedSandboxes(
     const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
     const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
     if (phase === 'Running' && host.sandboxIdlePauseMs > 0 && idleMs >= host.sandboxIdlePauseMs) {
-      if (host.isBusy(sandbox.name, busySandboxNames)) {
-        skippedBusy.push(sandbox.name);
-        continue;
-      }
-      await host.patchPaused(sandbox.name);
-      paused.push(sandbox.name);
+      const pausedNow = await host.pauseWhenIdle(sandbox.name, busySandboxNames, (latest) => {
+        const current = mergeLatestSandbox(sandbox, latest);
+        const currentCreatedAtMs = parseDateMs(current.createdAt);
+        const currentLastActiveAtMs = parseDateMs(current.lastActiveAt) ?? currentCreatedAtMs;
+        return current.phase === 'Running' && currentLastActiveAtMs !== undefined
+          && nowMs - currentLastActiveAtMs >= host.sandboxIdlePauseMs
+          && cleanupDeletionReason(host, current, nowMs) === undefined;
+      });
+      if (pausedNow) paused.push(sandbox.name);
+      else skippedBusy.push(sandbox.name);
     }
   }
 

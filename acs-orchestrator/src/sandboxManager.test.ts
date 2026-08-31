@@ -7,6 +7,8 @@ import { ActiveSandboxRegistry } from './activeSandboxRegistry.js';
 import type { Kubectl, KubectlResult } from './kubectl.js';
 import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
+import { isRawSandboxDelete, mockCurrentSandboxStatusReads } from './sandboxManagerLifecycleTestFixtures.js';
+
 describe('SandboxManager egress injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
     const applies: Array<Record<string, unknown>> = [];
@@ -648,7 +650,7 @@ describe('SandboxManager', () => {
 
   it('evicts the oldest still-Paused Sandbox before enforcing allocated quota', async () => {
     const calls: string[][] = [];
-    let created = false;
+    let created = false, idleDeleted = false;
     let applied: Record<string, unknown> | undefined;
     const idleSandbox = {
       metadata: { name: 'as-idle', annotations: {
@@ -662,7 +664,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get' && args[1] === 'sandbox' && args.includes('-l')) {
           return {
             stdout: JSON.stringify({
-              items: [idleSandbox],
+              items: idleDeleted ? [] : [idleSandbox],
             }),
             stderr: '',
             exitCode: 0,
@@ -674,7 +676,9 @@ describe('SandboxManager', () => {
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
-        if (args[0] === 'patch' || args[0] === 'delete') return { stdout: '', stderr: '', exitCode: 0, signal: null };
+        if (args[0] === 'delete') { if (isRawSandboxDelete(args, 'as-idle')) idleDeleted = true;
+          return { stdout: '', stderr: '', exitCode: 0, signal: null }; }
+        if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         if (args[0] === 'apply') {
           applied = JSON.parse(options.input ?? '{}') as Record<string, unknown>;
           created = true;
@@ -689,12 +693,11 @@ describe('SandboxManager', () => {
       maxRunningSandboxes: 1,
       sandboxIdlePauseMs: 1,
       sandboxTtlMs: 0,
-    }, kubectl, noopLogger);
-
+    }, kubectl, noopLogger); mockCurrentSandboxStatusReads(manager);
     await manager.ensureRunning({ workspaceId: 'ws_kaiyan__test', sessionId: 'session-123' });
 
     expect(applied).toBeTruthy();
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-idle')).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'as-idle'))).toBe(true);
   });
 
   it('never force-pauses a Running Sandbox to make room', async () => {
@@ -816,8 +819,7 @@ describe('SandboxManager', () => {
       ...baseConfig(),
       sandboxIdlePauseMs: 5 * 60_000,
       sandboxTtlMs: 7 * 24 * 60 * 60_000,
-    }, kubectl, noopLogger);
-
+    }, kubectl, noopLogger); mockCurrentSandboxStatusReads(manager);
     const report = await manager.cleanupSandboxes({
       now: new Date('2026-06-27T00:20:00.000Z'),
       busySandboxNames: new Set(['as-busy']),
@@ -827,7 +829,7 @@ describe('SandboxManager', () => {
     expect(report.deleted).toEqual(['as-expired']);
     expect(report.skippedBusy).toEqual(['as-busy']);
     expect(calls.some((args) => args[0] === 'patch' && args[1] === 'sandbox/as-idle')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-expired')).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'as-expired'))).toBe(true);
   });
 
   it('keeps a sandbox running while a durable background shell protection is active', async () => {
@@ -1274,18 +1276,15 @@ describe('SandboxManager', () => {
       ...baseConfig(),
       sandboxImage: 'registry.example.com/agent-saas/acs-sandbox:new-tag',
       sandboxBrokenRecycleGraceMs: 300_000,
-    }, kubectl, noopLogger);
-
+    }, kubectl, noopLogger); mockCurrentSandboxStatusReads(manager);
     const report = await manager.cleanupSandboxes({ busySandboxNames: new Set(['busy-broken']), now });
 
     expect(report.brokenRecycled.sort()).toEqual(['pause-stuck', 'stale-half']);
     expect(report.skippedBusy).toEqual(['busy-broken']);
     expect(report.deleted).toEqual([]);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/stale-half')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/pause-stuck')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/fresh-transition')).toBe(false);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/busy-broken')).toBe(false);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/healthy-paused')).toBe(false);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'stale-half'))).toBe(true); expect(calls.some((args) => isRawSandboxDelete(args, 'pause-stuck'))).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'fresh-transition'))).toBe(false); expect(calls.some((args) => isRawSandboxDelete(args, 'busy-broken'))).toBe(false);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'healthy-paused'))).toBe(false);
   });
 
   it('cleanupSandboxes: CI 命名前缀与用户 Sandbox 使用相同 TTL', async () => {
@@ -1345,6 +1344,7 @@ describe('SandboxManager', () => {
       sandboxIdlePauseMs: 5 * 60_000,
       sandboxTtlMs: 6 * 60 * 60_000,
     }, kubectl, noopLogger);
+    mockCurrentSandboxStatusReads(manager);
 
     // now = 2026-06-27 00:00：两个 8h idle Sandbox 都应删除，4h idle 的不删除。
     const report = await manager.cleanupSandboxes({ now: new Date('2026-06-27T00:00:00.000Z') });
@@ -1353,9 +1353,9 @@ describe('SandboxManager', () => {
       'as-ws-ci-acr-12345-abc',
       'as-ws-pantheon-user-workspace-xxx',
     ]);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acr-12345-abc')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-pantheon-user-workspace-xxx')).toBe(true);
-    expect(calls.some((args) => args[0] === 'delete' && args[1] === 'sandbox/as-ws-ci-acs-manual-99999')).toBe(false);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'as-ws-ci-acr-12345-abc'))).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'as-ws-pantheon-user-workspace-xxx'))).toBe(true);
+    expect(calls.some((args) => isRawSandboxDelete(args, 'as-ws-ci-acs-manual-99999'))).toBe(false);
   });
 
   it('prewarmStaleImagePausedSandboxes: 没有 sandbox 时返回空报告', async () => {

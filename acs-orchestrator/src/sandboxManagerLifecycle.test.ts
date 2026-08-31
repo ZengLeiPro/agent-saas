@@ -137,7 +137,9 @@ describe('SandboxManager lifecycle mutations', () => {
 
     const enforce = await cleanup('enforce');
     expect(enforce.report.deleted).toEqual(['as-task']);
-    expect(enforce.remove).toHaveBeenCalledWith('as-task');
+    expect(enforce.remove).toHaveBeenCalledWith('as-task', {
+      uid: 'sandbox-uid-1', resourceVersion: 'resource-version-1',
+    });
   });
 
   it('deletes only the exact fenced scope, is idempotent when missing, and rejects busy/protected sandboxes', async () => {
@@ -331,6 +333,8 @@ describe('SandboxManager lifecycle mutations', () => {
     (manager as any).cleanupOrphanSnat = vi.fn(async () => ({ deleted: [], unexpected: [] }));
     const report = await manager.cleanupSandboxes({ now: new Date('2026-08-30T00:00:00.000Z') });
     expect(report.deleted).toEqual(['as-legacy']);
-    expect(remove).toHaveBeenCalledWith('as-legacy');
+    expect(remove).toHaveBeenCalledWith('as-legacy', {
+      uid: 'sandbox-uid-1', resourceVersion: 'resource-version-1',
+    });
   });
 });

@@ -6,12 +6,12 @@ import {
 } from './sandboxLifecyclePolicy.js';
 import type { ManagedSandbox, SandboxStatus } from './sandboxState.js';
 import type { SandboxRef } from './sandboxManagerTypes.js';
-import type { SandboxDeletionPreconditions } from './sandboxDeletion.js';
+import { sandboxResourcePreconditions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 
 export interface SandboxDeletionGenerationHost {
   getStatus(name: string): Promise<SandboxStatus | null>;
   refFromStatus(name: string, status: SandboxStatus): SandboxRef;
-  patchGeneration(name: string, generation: string): Promise<void>;
+  patchGeneration(name: string, generation: string, preconditions: SandboxDeletionPreconditions): Promise<void>;
   conflict(name: string): Error;
   deleteWhenIdle(
     name: string,
@@ -42,7 +42,16 @@ export class SandboxDeletionGenerationCoordinator {
         || (!initializesFence && current !== input.previousDeletionGeneration)) {
         throw this.host.conflict(ref.name);
       }
-      await this.host.patchGeneration(ref.name, input.deletionGeneration);
+      const preconditions = sandboxResourcePreconditions(status);
+      if (!preconditions) throw this.host.conflict(ref.name);
+      try {
+        await this.host.patchGeneration(ref.name, input.deletionGeneration, preconditions);
+      } catch (err) {
+        if (err && typeof err === 'object' && 'statusCode' in err && err.statusCode === 409) {
+          throw this.host.conflict(ref.name);
+        }
+        throw err;
+      }
       return { name: ref.name, updated: true, missing: false };
     });
   }
@@ -64,7 +73,7 @@ export class SandboxDeletionGenerationCoordinator {
       if (annotation(latest, DELETION_GENERATION_ANNOTATION) !== input.deletionGeneration) {
         return { name: ref.name, deleted: false, missing: false, stale: true };
       }
-      const preconditions = resourcePreconditions(latest);
+      const preconditions = sandboxResourcePreconditions(latest);
       if (!preconditions) return { name: ref.name, deleted: false, missing: false, busy: true };
       const reclaimed = await this.host.deleteWhenIdle(
         ref.name,
@@ -111,16 +120,7 @@ function annotation(status: SandboxStatus, name: string): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function resourcePreconditions(status: SandboxStatus): SandboxDeletionPreconditions | undefined {
-  const metadata = status.raw?.metadata && typeof status.raw.metadata === 'object'
-    ? status.raw.metadata as Record<string, unknown>
-    : {};
-  const uid = typeof metadata.uid === 'string' ? metadata.uid : undefined;
-  const resourceVersion = typeof metadata.resourceVersion === 'string' ? metadata.resourceVersion : undefined;
-  return uid && resourceVersion ? { uid, resourceVersion } : undefined;
-}
-
-// An unfenced CR may be recreated; only a strictly newer generation may initialize that incarnation.
+// A recreated unfenced CR accepts only a generation strictly newer than its creation time.
 function generationCanInitializeRecreatedSandbox(generation: string, status: SandboxStatus): boolean {
   const generationAt = Number.parseInt(generation.split('-', 1)[0] ?? '', 10);
   const createdAt = Date.parse(annotation(status, CREATED_AT_ANNOTATION) ?? '');

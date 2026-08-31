@@ -1,5 +1,6 @@
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
+import type { SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import {
   DELETION_GENERATION_ANNOTATION,
   RETENTION_DEADLINE_ANNOTATION,
@@ -14,6 +15,10 @@ import {
 } from './sandboxLifecyclePolicy.js';
 import { BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION } from './sandboxState.js';
 
+export class SandboxMutationPreconditionError extends Error {
+  readonly statusCode = 409;
+}
+
 async function patchMetadata(
   config: AcsOrchestratorConfig,
   kubectl: Kubectl,
@@ -25,6 +30,30 @@ async function patchMetadata(
     'patch', resourceName, '--type=merge', '-p', JSON.stringify({ metadata }),
   ], { timeoutMs: config.sandboxWaitTimeoutMs });
   if (result.exitCode !== 0) throw new Error(`${errorPrefix}: ${result.stderr || result.stdout}`);
+}
+
+async function patchWithResourcePreconditions(
+  config: AcsOrchestratorConfig,
+  kubectl: Kubectl,
+  resourceName: string,
+  preconditions: SandboxDeletionPreconditions,
+  changes: Array<{ path: string; value: unknown }>,
+  errorPrefix: string,
+): Promise<void> {
+  const patch = [
+    { op: 'test', path: '/metadata/uid', value: preconditions.uid },
+    { op: 'test', path: '/metadata/resourceVersion', value: preconditions.resourceVersion },
+    ...changes.map(({ path, value }) => ({ op: 'add', path, value })),
+  ];
+  const result = await kubectl.run([
+    'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
+  ], { timeoutMs: config.sandboxWaitTimeoutMs });
+  if (result.exitCode === 0) return;
+  const detail = result.stderr || result.stdout;
+  if (/conflict|test failed|object has been modified|precondition|resourceversion|uid.*immutable/i.test(detail)) {
+    throw new SandboxMutationPreconditionError(`${errorPrefix}: ${detail}`);
+  }
+  throw new Error(`${errorPrefix}: ${detail}`);
 }
 
 export async function applyLifecycleUpdate(
@@ -40,10 +69,21 @@ export async function applyLifecycleUpdate(
 
 export async function applyDeletionGeneration(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string, generation: string,
+  preconditions: SandboxDeletionPreconditions,
 ): Promise<void> {
-  await patchMetadata(config, kubectl, resourceName, {
-    annotations: { [DELETION_GENERATION_ANNOTATION]: generation },
-  }, '更新 Sandbox deletion generation 失败');
+  await patchWithResourcePreconditions(config, kubectl, resourceName, preconditions, [{
+    path: `/metadata/annotations/${jsonPointerSegment(DELETION_GENERATION_ANNOTATION)}`,
+    value: generation,
+  }], '更新 Sandbox deletion generation 失败');
+}
+
+export async function applyPausedWithPreconditions(
+  config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string, paused: boolean,
+  preconditions: SandboxDeletionPreconditions,
+): Promise<void> {
+  await patchWithResourcePreconditions(config, kubectl, resourceName, preconditions, [
+    { path: '/spec/paused', value: paused },
+  ], `patch sandbox paused=${paused} 失败`);
 }
 
 export async function applyInvocationLease(
@@ -70,6 +110,10 @@ export async function applyWorkloadDescriptor(
       [RETENTION_DEADLINE_ANNOTATION]: null,
     },
   }, '更新 workload descriptor 失败');
+}
+
+function jsonPointerSegment(value: string): string {
+  return value.replace(/~/g, '~0').replace(/\//g, '~1');
 }
 
 export async function applyBackgroundShellProtection(

@@ -11,9 +11,7 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
-import {
-  applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyWorkloadDescriptor,
-} from './sandboxLifecycleMutations.js';
+import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyPausedWithPreconditions, applyWorkloadDescriptor } from './sandboxLifecycleMutations.js';
 import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
   NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL,
@@ -22,6 +20,7 @@ import {
 } from './sandboxInventoryReader.js';
 import { SingleflightCleanup } from './singleflightCleanup.js';
 import { deleteSandboxWhenIdle } from './sandboxSafeDeletion.js';
+import { pauseSandboxWhenIdle } from './sandboxSafePause.js';
 import { SandboxDeletionGenerationCoordinator } from './sandboxDeletionGeneration.js';
 import {
   WORKLOAD_CLASS_LABEL,
@@ -114,7 +113,7 @@ export class SandboxManager {
   private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef> }>();
   /** Serializes deletion against ensureRunning; new invocations wait and recreate safely. */
   private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
-  /** Scope-delete generation/UID fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator;
+  /** Scope delete generation/UID CAS fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator;
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
@@ -131,7 +130,7 @@ export class SandboxManager {
     this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
     this.deletionGeneration = new SandboxDeletionGenerationCoordinator({
       getStatus: (name) => this.getStatus(name), refFromStatus: (name, status) => this.refFromStatus(name, status),
-      patchGeneration: (name, generation) => applyDeletionGeneration(config, kubectl, this.resourceName(name), generation),
+      patchGeneration: (name, generation, preconditions) => applyDeletionGeneration(config, kubectl, this.resourceName(name), generation, preconditions),
       conflict: (name) => new SandboxBusyError(`ACS Sandbox ${name} deletion generation changed`),
       deleteWhenIdle: (name, busy, canDelete, preconditions) => this.deleteWhenIdle(name, busy, canDelete, preconditions),
     });
@@ -609,7 +608,7 @@ export class SandboxManager {
       listManagedSandboxes: () => this.listManagedSandboxes(),
       isBusy: (name, busy) => this.isBusy(name, busy),
       deleteWhenIdle: (name, busy, canDelete) => this.deleteWhenIdle(name, busy, canDelete),
-      patchPaused: (name) => this.patchPaused(name, true),
+      pauseWhenIdle: (name, busy, canPause) => this.pauseWhenIdle(name, busy, canPause),
       cleanupOrphanSnat: () => this.cleanupOrphanSnat(),
       warn: (message) => this.logger.warn(message),
     }, input);
@@ -640,17 +639,18 @@ export class SandboxManager {
     return { workspaceId: id, archived: true, archiveId, archivePath };
   }
 
-  async patchPaused(name: string, paused: boolean, options: { activeKey?: string } = {}): Promise<void> {
+  async patchPaused(name: string, paused: boolean, options: { activeKey?: string; preconditions?: SandboxDeletionPreconditions } = {}): Promise<void> {
     if (paused) this.assertIdle(name, 'pause', options.activeKey);
     this.invalidateEnsureFastPath(name);
+    if (options.preconditions) return await applyPausedWithPreconditions(this.config, this.kubectl, this.resourceName(name), paused, options.preconditions);
     const result = await this.kubectl.run([
-      'patch',
-      this.resourceName(name),
-      '--type=merge',
-      '-p',
-      JSON.stringify({ spec: { paused } }),
+      'patch', this.resourceName(name), '--type=merge', '-p', JSON.stringify({ spec: { paused } }),
     ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
     if (result.exitCode !== 0) throw new Error(`patch sandbox paused=${paused} 失败: ${result.stderr || result.stdout}`);
+  }
+  private async pauseWhenIdle(name: string, busy: Set<string>, canPause: (latest: ManagedSandbox) => boolean) {
+    return await pauseSandboxWhenIdle({ name, config: this.config, canPause, isBusy: () => this.isBusy(name, busy), isEnsuring: () => this.ensureInFlight.has(name),
+      getStatus: () => this.getStatus(name), pause: (preconditions) => this.patchPaused(name, true, { preconditions }) });
   }
 
   async updateLifecycle(input: SandboxLifecycleUpdate): Promise<{ name: string; retentionDeadline?: string }> {
@@ -680,13 +680,13 @@ export class SandboxManager {
     const existing = this.deleteInFlight.get(name);
     if (existing) return await existing;
     const promise = deleteSandboxWhenIdle({
-      name, config: this.config, canDelete,
+      name, config: this.config, canDelete, expectedPreconditions: preconditions,
       isBusy: () => this.isBusy(name, busySandboxNames),
       isEnsuring: () => this.ensureInFlight.has(name),
       getStatus: () => this.getStatus(name),
-      delete: async () => {
+      delete: async (latestPreconditions) => {
         this.invalidateEnsureFastPath(name);
-        return preconditions === undefined ? await this.deleteSandboxAndReclaimNetwork(name) : await this.deleteSandboxAndReclaimNetwork(name, preconditions);
+        return await this.deleteSandboxAndReclaimNetwork(name, latestPreconditions);
       },
     });
     this.deleteInFlight.set(name, promise);

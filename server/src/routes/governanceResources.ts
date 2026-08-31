@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import multer from 'multer';
 import { Router } from 'express';
 import type { Request } from 'express';
+import { z } from 'zod';
 
 import type { PgAgentResourceStore } from '../data/agentResources/index.js';
 import { governanceDigest, type GovernanceAuditStore } from '../data/governance-audit/index.js';
@@ -31,6 +32,12 @@ import {
   expectedRevisionSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
   userOffboardingJobSchema, userOffboardingPreviewSchema,
 } from './governanceResourceSchemas.js';
+
+const createSkillPromotionSchema = z.object({
+  tenantId: z.string().min(1).max(128),
+  skillId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
+  sourceUser: z.string().min(1).max(128),
+}).strict();
 
 function signedPreviewId(prefix: 'opv1', secret: string, payload: Record<string, unknown>): string {
   const signature = createHmac('sha256', secret).update(governanceDigest(payload)).digest('hex');
@@ -112,6 +119,12 @@ export function createGovernanceResourcesRouter(deps: {
     actorUserId: string;
     files: Express.Multer.File[];
   }) => Promise<PersonalSkillGovernanceUploadResult>;
+  promotePersonalSkillToTenant?: (input: {
+    tenantId: string;
+    actorUserId: string;
+    sourceUsername: string;
+    skillId: string;
+  }) => Promise<TenantSkillGovernanceUploadResult>;
   connectors: PgConnectorCatalogStore;
   credentials: PgCredentialStore;
   environments: PgEnvironmentStore;
@@ -553,6 +566,49 @@ export function createGovernanceResourcesRouter(deps: {
         }
       })();
     });
+  });
+
+  router.post('/skills/promote-to-tenant', async (req, res) => {
+    const parsed = createSkillPromotionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: '提升技能请求无效', code: 'SKILL_PROMOTION_INVALID' });
+    }
+    if (!deps.promotePersonalSkillToTenant) {
+      return res.status(503).json({ error: '技能提升服务暂不可用', code: 'SKILL_PROMOTION_UNAVAILABLE' });
+    }
+    const persona = personas.get(req);
+    if (persona === 'platform_admin') {
+      if (!hasPlatformCapability(req.user, 'skill.tenant.manage')) {
+        return res.status(403).json({ error: '当前平台管理员无组织技能管理权限', code: 'PLATFORM_CAPABILITY_REQUIRED' });
+      }
+    } else if (persona !== 'org_admin') {
+      return res.status(403).json({ error: '仅组织管理员可以提升组织技能', code: 'ORGANIZATION_ADMIN_REQUIRED' });
+    }
+    const tenantId = tenantFor(req, parsed.data.tenantId);
+    if (!tenantId) {
+      return res.status(403).json({ error: '不能向其他组织提升技能', code: 'SKILL_TENANT_SCOPE_DENIED' });
+    }
+    if (deps.tenantExists && !deps.tenantExists(tenantId)) {
+      return res.status(404).json({ error: '目标组织不存在', code: 'SKILL_TENANT_NOT_FOUND' });
+    }
+    if (deps.isCustomSkillsEnabled && !deps.isCustomSkillsEnabled(tenantId)) {
+      return res.status(403).json({ error: '自定义技能已被当前组织禁用', code: 'TENANT_FEATURE_DISABLED' });
+    }
+    try {
+      const result = await deps.promotePersonalSkillToTenant({
+        tenantId,
+        actorUserId: req.user!.sub,
+        sourceUsername: parsed.data.sourceUser,
+        skillId: parsed.data.skillId,
+      });
+      return res.status(201).json(result);
+    } catch (error) {
+      if (error instanceof SkillPackageUploadError) {
+        return res.status(error.status).json({ error: error.message, code: error.code });
+      }
+      serverLogger.error(`Governance Skill promotion failed: ${error}`);
+      return res.status(500).json({ error: '技能提升失败，请稍后重试', code: 'SKILL_PROMOTION_FAILED' });
+    }
   });
 
   router.post('/skills', async (req, res) => {

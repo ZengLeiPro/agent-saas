@@ -507,14 +507,14 @@ describe('skillsApi', () => {
   });
 
   describe('promoteSkillToTenant', () => {
-    it('POST tenants/:id/promote，body 带 skillId+sourceUser', async () => {
+    it('通过治理资源 API 提升，body 显式绑定 tenantId+skillId+sourceUser', async () => {
       mockAuthFetch.mockResolvedValue(ok());
       await promoteSkillToTenant('t1', 's1', 'alice');
 
       const { url, init } = lastCall();
-      expect(url).toBe('/api/skills/tenants/t1/promote');
+      expect(url).toBe('/api/governance/resources/skills/promote-to-tenant');
       expect(init.method).toBe('POST');
-      expect(init.body).toBe(JSON.stringify({ skillId: 's1', sourceUser: 'alice' }));
+      expect(init.body).toBe(JSON.stringify({ tenantId: 't1', skillId: 's1', sourceUser: 'alice' }));
     });
 
     it('失败时优先抛 body.error', async () => {

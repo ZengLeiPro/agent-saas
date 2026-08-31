@@ -25,7 +25,7 @@
     "typecheck": "pnpm -r --parallel run --if-present typecheck",
     "typecheck:staged": "node scripts/typecheck-staged.mjs",
     "preflight:pr": "bash scripts/pr-preflight.sh",
-    "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs",
+    "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs scripts/pr-preflight-contract.test.mjs",
     "check:ratchets": "pnpm test:ratchets && node scripts/check-max-lines-ratchet.mjs && node scripts/check-env-var-count.mjs",
     "check:web-startup-budget": "node scripts/check-web-startup-budget.mjs",
     "scenarios:lint": "pnpm -F server scenarios:lint",

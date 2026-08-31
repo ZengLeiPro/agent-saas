@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { PgImageBlobStore } from '../runtime/imageBlobStore.js';
 
@@ -72,5 +72,25 @@ describePg('模型图片 blob PostgreSQL 契约', () => {
       bytes: Buffer.alloc(5 * 1024 * 1024 + 1),
     });
     expect(await store.get('/ws/c', 'huge-v1.png')).toBeUndefined();
+  });
+});
+
+
+describe('PgImageBlobStore init 竞态恢复', () => {
+  it('42710 且目标表已存在时视为并发建表成功', async () => {
+    const duplicateType = Object.assign(new Error('type already exists'), { code: '42710' });
+    const query = vi.fn()
+      .mockRejectedValueOnce(duplicateType)
+      .mockResolvedValueOnce({ rows: [{ oid: 'imgblob_race_image_blobs' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const pool = { query } as unknown as InstanceType<typeof Pool>;
+    const store = new PgImageBlobStore({ pool, tablePrefix: 'imgblob_race' });
+
+    await expect(store.init()).resolves.toBeUndefined();
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      'SELECT to_regclass($1)::text AS oid',
+      ['imgblob_race_image_blobs'],
+    );
   });
 });

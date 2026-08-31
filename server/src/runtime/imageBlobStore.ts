@@ -79,7 +79,7 @@ export class PgImageBlobStore implements ImageBlobStore {
 
   /**
    * `CREATE ... IF NOT EXISTS` 在 PG 里不是原子的：蓝绿双实例同时启动时，
-   * 后手会撞 23505(pg_type 唯一约束)/42P07(已存在)。此时对象已由先手建出，
+   * 后手会撞 23505(pg_type 唯一约束)/42P07(表已存在)/42710(内部类型已存在)。此时对象已由先手建出，
    * 重查确认存在即视为成功；确认不到才是真失败。
    */
   private async createIfAbsent(sql: string, objectName: string): Promise<void> {
@@ -87,7 +87,7 @@ export class PgImageBlobStore implements ImageBlobStore {
       await this.pool.query(sql);
     } catch (error) {
       const code = (error as { code?: string }).code;
-      if (code !== '23505' && code !== '42P07') throw error;
+      if (code !== '23505' && code !== '42P07' && code !== '42710') throw error;
       const existing = await this.pool.query<{ oid: string | null }>(
         'SELECT to_regclass($1)::text AS oid',
         [objectName],

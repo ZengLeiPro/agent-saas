@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [workflow, wrapper, tasks] = await Promise.all([
+const [workflow, wrapper, tasks, serverPackage] = await Promise.all([
   readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
   readFile(new URL('./pr-preflight.sh', import.meta.url), 'utf8'),
   readFile(new URL('./pr-preflight-task.sh', import.meta.url), 'utf8'),
+  readFile(new URL('../server/package.json', import.meta.url), 'utf8').then(JSON.parse),
 ]);
 
 const requiredTaskCommands = [
@@ -26,6 +27,12 @@ const requiredTaskCommands = [
 test('分片脚本保留原 PR preflight 的全部门禁', () => {
   for (const command of requiredTaskCommands)
     assert.match(tasks, new RegExp(escapeRegExp(command), 'u'));
+});
+
+test('生产 server bundle 内联工作区 shared 包', () => {
+  const build = serverPackage.scripts?.build ?? '';
+  assert.match(build, /--packages=external/u);
+  assert.match(build, /--alias:@agent\/shared=\.\.\/shared\/src\/index\.ts/u);
 });
 
 test('本地 PR preflight 仍按原顺序串行执行全部任务', () => {

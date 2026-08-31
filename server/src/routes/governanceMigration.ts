@@ -7,6 +7,7 @@ import {
   GovernanceMigrationControlInvariantError,
   type PgGovernanceMigrationControlStore,
 } from '../data/migrationControl/index.js';
+import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 
 const settingsSchema = z.object({
   expectedRevision: z.number().int().positive(),
@@ -45,7 +46,7 @@ export function createGovernanceMigrationRouter(deps: {
   router.use(async (req, res, next) => {
     if (!req.user?.sub) return res.status(401).json({ error: 'Unauthorized' });
     const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
-    if (platformAdmin?.status !== 'active') {
+    if (!isActivePlatformAdminIdentity(req.user.tenantId, platformAdmin)) {
       return res.status(403).json({ error: '仅平台管理员可操作治理迁移门禁', code: 'PLATFORM_ADMIN_REQUIRED' });
     }
     next();

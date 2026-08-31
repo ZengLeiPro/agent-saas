@@ -82,6 +82,36 @@ describe('disabled tenant hard-stop guards', () => {
     expect(deniedRes.body).toMatchObject({ code: 'GOVERNANCE_MEMBERSHIP_INACTIVE' });
   });
 
+  it('客户组织用户即使残留 active platform_admin 记录也不会被提升为平台管理员', async () => {
+    const secret = 'stale-platform-admin-secret';
+    const token = jwt.sign(
+      { sub: 'u-customer', username: 'customer_admin', role: 'admin', tenantId: 'acme' },
+      secret,
+      { expiresIn: '1h' },
+    );
+    const getPlatformAdmin = vi.fn().mockResolvedValue({ status: 'active' });
+    const getMembership = vi.fn().mockResolvedValue({ persona: 'org_admin', status: 'active' });
+    const middleware = createAuthMiddleware(
+      secret,
+      { findById: vi.fn(() => ({ id: 'u-customer', username: 'customer_admin', role: 'admin', tenantId: 'acme' })) } as any,
+      { findById: vi.fn(() => ({ id: 'acme', name: 'Acme' })) } as any,
+      '30d',
+      { getPlatformAdmin, getMembership },
+    );
+    const req = {
+      method: 'GET', path: '/auth/me', headers: { authorization: `Bearer ${token}` }, query: {},
+    } as any;
+    const res = fakeResponse();
+    const next = vi.fn();
+
+    await middleware(req, res as any, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(req.user).toMatchObject({ tenantId: 'acme', role: 'admin' });
+    expect(getPlatformAdmin).not.toHaveBeenCalled();
+    expect(getMembership).toHaveBeenCalledWith('acme', 'u-customer');
+  });
+
   it('dispatch wrapper short-circuits runs for disabled tenants', async () => {
     const dispatch = vi.fn(async function* () {
       yield { type: 'done' } as any;

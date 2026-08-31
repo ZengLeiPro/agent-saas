@@ -10,6 +10,7 @@ import { SubjectResolver } from '../governance/subject/resolver.js';
 import type { ServiceSubjectContext, SubjectContext } from '../governance/subject/types.js';
 import type { RuntimeSessionRecord, SessionCatalog } from './sessionCatalog.js';
 import type { ResolvedResourceRef, RunResolutionSnapshotDraft } from './runResolutionSnapshotStore.js';
+import { PLATFORM_TENANT_ID } from '../data/tenants/types.js';
 
 export type GovernanceEnforcementMode = 'shadow' | 'enforce';
 
@@ -345,6 +346,10 @@ export class RunPreflightService {
         evaluatedAt,
       };
     }
+    const isPlatformAdminPersonalRun = subject.subjectType === 'human'
+      && subject.persona === 'platform_admin'
+      && subject.tenantId === PLATFORM_TENANT_ID
+      && resolved.tenantId === PLATFORM_TENANT_ID;
     return {
       subject,
       action: 'personal_agent.run',
@@ -356,10 +361,12 @@ export class RunPreflightService {
         enabled: resolved.managedAgent ? resolved.managedAgent.status === 'enabled' : true,
         tenantStatus: this.tenantStatus(resolved.tenantId),
       },
-      context: {
-        entitlement: { resourceType: 'tool', resourceId: 'personal_agent' },
-        tenantPolicyKey: 'agent.personal.enabled',
-      },
+      context: isPlatformAdminPersonalRun
+        ? {}
+        : {
+          entitlement: { resourceType: 'tool', resourceId: 'personal_agent' },
+          tenantPolicyKey: 'agent.personal.enabled',
+        },
       evaluatedAt,
     };
   }

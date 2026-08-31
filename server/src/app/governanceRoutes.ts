@@ -9,6 +9,7 @@ import type { GovernanceCredential } from '../data/credentials/types.js';
 import { createGovernanceUiRouter } from '../routes/governanceUi.js';
 import { provisionTenant, rollbackProvisionedTenant } from '../data/tenants/provision.js';
 import { withTenantDebugModeLock } from '../data/tenants/debugModeLock.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { validateGovernanceCredentialHealth } from '../governance/credentialHealth.js';
 import { revokePendingAliyunCredentials } from '../connectors/aliyun.js';
 import { revokePendingGithubCredentials } from '../connectors/github.js';
@@ -163,11 +164,12 @@ export function registerGovernanceRoutes(
       listEntitlementResources: createEntitlementResourceCatalogResolver(runtime),
       getPlatformAdminProfile: userId => {
         const user = runtime.userStore?.findById(userId);
-        return user ? {
+        if (!user || user.tenantId !== DEFAULT_TENANT_ID) return null;
+        return {
           username: user.username,
           displayName: user.realName ?? user.username,
           accountStatus: user.disabled ? 'disabled' as const : 'active' as const,
-        } : null;
+        };
       },
       getAgentProfile: (tenantId, agentId) => {
         const agent = runtime.orgAgentStore?.get(agentId);

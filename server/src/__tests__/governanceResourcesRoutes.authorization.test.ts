@@ -285,6 +285,10 @@ describe('typed governance resource routes: authorization and credential boundar
     const sameTenantPlatform = await rig({
       platformAdmin: true,
       user: { sub: 'platform-1', username: 'root', tenantId: 'tenant-a', role: 'admin' },
+      getMembership: vi.fn().mockResolvedValue({
+        tenantId: 'tenant-a', userId: 'platform-1', persona: 'member',
+        isOwner: false, status: 'active', version: 1,
+      }),
     });
     expect((await sameTenantPlatform.request('/api/governance/resources/agents', json('POST', { kind: 'org_agent' }))).status).toBe(403);
     expect((await sameTenantPlatform.request('/api/governance/resources/skills', json('POST', {
@@ -440,6 +444,26 @@ describe('typed governance resource routes: authorization and credential boundar
     expect(test.credentialCreate).toHaveBeenCalledWith(expect.objectContaining({
       tenantId: 'tenant-a', ownerUserId: 'user-1', secretRef: 'sec-1',
     }));
+  });
+
+  it('平台管理员可以为本人创建平台租户 Personal Credential，无需客户 Membership', async () => {
+    const test = await rig({
+      platformAdmin: true,
+      user: { sub: 'platform-1', username: 'root', tenantId: 'pantheon', role: 'admin' },
+      getMembership: vi.fn().mockResolvedValue(null),
+    });
+    const response = await test.request('/api/governance/resources/credentials', json('POST', {
+      connectorId: 'github', kind: 'personal_grant', purpose: 'platform repository automation',
+      secret: 'github_pat_platform_sensitive',
+    }));
+
+    expect(response.status).toBe(201);
+    expect(test.credentialCreate).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: 'pantheon', ownerUserId: 'platform-1', kind: 'personal_grant',
+    }));
+    expect(test.putSecret).toHaveBeenCalledWith(
+      'platform-1', 'connector', 'github_pat_platform_sensitive', expect.any(Object), expect.any(Object),
+    );
   });
 
   it('个人 Credential 所有者可通过签名治理撤销，并同步撤销 SecretVault Secret', async () => {

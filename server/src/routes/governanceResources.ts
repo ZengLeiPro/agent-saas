@@ -30,6 +30,7 @@ import { registerGovernanceAgentResourceRoutes } from './governanceAgentResource
 import { registerGovernanceCredentialRoutes } from './governanceCredentialRoutes.js';
 import { registerGovernanceEnvironmentRoutes } from './governanceEnvironmentRoutes.js';
 import { registerGovernanceResourceCatalogRoutes } from './governanceResourceCatalogRoutes.js';
+import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 import {
   connectorPublishSchema, connectorStatusSchema, createCandidateSchema, createSkillSchema,
   expectedRevisionSchema, publishCandidateSchema, publishSchema, reviewSchema, statusSchema,
@@ -317,7 +318,7 @@ export function createGovernanceResourcesRouter(deps: {
   router.use(async (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
-    if (platformAdmin?.status === 'active') {
+    if (isActivePlatformAdminIdentity(req.user.tenantId, platformAdmin)) {
       personas.set(req, 'platform_admin');
       return next();
     }

@@ -291,6 +291,13 @@ describe('authoritative governance UI routes', () => {
     expect(await platformResponse.json()).toMatchObject({
       persona: 'platform_admin', desktopPath: '/platform-console/overview/overview', attention: { status: 'desktop_required' },
     });
+
+    const stalePlatformFact = await rig({
+      jwt: { sub: 'platform-1', username: 'root', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const staleResponse = await stalePlatformFact('/api/me/governance-summary');
+    expect(staleResponse.status).toBe(403);
+    expect(await staleResponse.json()).toMatchObject({ code: 'GOVERNANCE_MEMBERSHIP_INACTIVE' });
   });
 
   it('依赖或审计不可用时返回 503 并 fail closed', async () => {

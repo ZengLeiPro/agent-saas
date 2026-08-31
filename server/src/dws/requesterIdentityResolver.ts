@@ -6,6 +6,7 @@ import type { AgentDwsAccountRecord } from '../data/agentDwsAccounts/index.js';
 import type { GovernanceAuditStore } from '../data/governance-audit/types.js';
 import type { UserStore } from '../data/users/store.js';
 import type { UserIdentity } from '../types/index.js';
+import { governancePersonaForUser } from '../governance/subject/platformIdentity.js';
 import {
   deriveDwsPrincipalWorkspaceId,
   deriveDwsWorkspaceMountSubPath,
@@ -107,8 +108,8 @@ export class DwsRequesterIdentityResolver {
       correlationId: `dws-requester-decision-${randomUUID()}`,
       actorType: requester ? 'user' : 'service',
       actorUserId: requester?.id ?? `agent-dws:${account.accountId}`,
-      actorPersona: requester ? (requester.role === 'admin' ? 'org_admin' : 'member') : 'service',
-      actorTenantId: account.tenantId,
+      actorPersona: requester ? governancePersonaForUser(requester) : 'service',
+      actorTenantId: requester?.tenantId ?? account.tenantId,
       action: 'dws.requester.resolve_decision',
       targetType: 'org_agent',
       targetId: account.agentId,

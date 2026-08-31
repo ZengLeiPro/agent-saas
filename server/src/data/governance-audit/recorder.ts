@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { GovernanceAuditEvent, GovernanceAuditMetadata, GovernanceAuditStore } from './types.js';
+import { governancePersonaForUser } from '../../governance/subject/platformIdentity.js';
 
 export interface GovernanceActor {
   sub: string;
@@ -43,7 +44,7 @@ export async function recordGovernanceIntent(
       correlationId: randomUUID(),
       actorType: 'user',
       actorUserId: actor.sub,
-      actorPersona: actor.role === 'admin' ? 'platform_admin' : 'org_admin',
+      actorPersona: governancePersonaForUser(actor),
       ...(actor.tenantId ? { actorTenantId: actor.tenantId } : {}),
       action: input.action,
       targetType: input.targetType,

@@ -19,6 +19,7 @@ import {
   ManagementSnapshotService,
   type ManagementSnapshotDeps,
 } from '../governance/ui/managementSnapshotService.js';
+import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 
 const resourceSchema = z.object({
   type: z.string().min(1).max(80),
@@ -128,7 +129,7 @@ export function createGovernanceUiRouter(deps: GovernanceUiRouterDeps): Router {
     if (!deps.memberships) return res.status(503).json({ code: 'GOVERNANCE_DEPENDENCY_UNAVAILABLE', message: '治理权威依赖不可用' });
     try {
       const platformAdmin = await deps.memberships.getPlatformAdmin(req.user.sub);
-      if (platformAdmin?.status === 'active') {
+      if (isActivePlatformAdminIdentity(req.user.tenantId, platformAdmin)) {
         return res.json({ persona: 'platform_admin', label: '平台管理员', desktopPath: '/platform-console/overview/overview', attention: { status: 'desktop_required' } });
       }
       const membership = await deps.memberships.getMembership(req.user.tenantId, req.user.sub);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import type {
   TaskBoardComment,
   TaskBoardExecution,
@@ -31,6 +31,16 @@ const EXECUTION_PURPOSE_DOT_CLASSES: Record<TaskBoardExecutionPurpose, string> =
   review: "bg-violet-500",
   merge: "bg-emerald-500",
 };
+
+type NavigationItemKind = "task" | TaskBoardComment["authorType"];
+
+function navigationDotClass(kind: NavigationItemKind, purpose: TaskBoardExecutionPurpose | null) {
+  if (kind === "user") return "bg-orange-500 dark:bg-orange-400";
+  if (kind === "agent") {
+    return purpose ? EXECUTION_PURPOSE_DOT_CLASSES[purpose] : "bg-blue-500";
+  }
+  return "bg-slate-400 dark:bg-slate-500";
+}
 
 type TaskDetailCommentsProps = {
   comments: TaskBoardComment[];
@@ -82,9 +92,10 @@ export function TaskDetailComments({
   const commentsScrollRef = useRef<HTMLDivElement>(null);
   const commentBodyRef = useRef<HTMLTextAreaElement>(null);
   const navigationTargetRefs = useRef(new Map<string, HTMLElement>());
+  const [selectedNavigationId, setSelectedNavigationId] = useState<string | null>(null);
   const navigationItems = [
     ...(taskDescription !== undefined && taskDescription !== null
-      ? [{ id: "task-description", label: "任务正文", purpose: null }]
+      ? [{ id: "task-description", label: "任务正文", purpose: null, kind: "task" as const }]
       : []),
     ...comments.map((comment) => ({
       id: comment.id,
@@ -93,8 +104,23 @@ export function TaskDetailComments({
         : comment.authorType === "system" ? "系统评论"
           : comment.authorType === "agent" ? "Agent 评论" : "用户评论",
       purpose: comment.executionPurpose ?? null,
+      kind: comment.authorType,
     })),
   ];
+
+  useEffect(() => {
+    setSelectedNavigationId(null);
+  }, [currentTask.id]);
+
+  useEffect(() => {
+    setSelectedNavigationId((selectedId) => {
+      if (!selectedId) return null;
+      if (selectedId === "task-description") {
+        return taskDescription !== undefined && taskDescription !== null ? selectedId : null;
+      }
+      return comments.some((comment) => comment.id === selectedId) ? selectedId : null;
+    });
+  }, [comments, taskDescription]);
 
   useEffect(() => {
     if (commentsLoading) return;
@@ -110,6 +136,7 @@ export function TaskDetailComments({
     const target = navigationTargetRefs.current.get(id);
     if (!container || !target) return;
 
+    setSelectedNavigationId(id);
     container.style.paddingBottom = "";
     const targetTop = target.getBoundingClientRect().top
       - container.getBoundingClientRect().top
@@ -158,9 +185,10 @@ export function TaskDetailComments({
                 else navigationTargetRefs.current.delete("task-description");
               }}
               data-testid="task-description-comment"
+              data-navigation-selected={selectedNavigationId === "task-description" ? "true" : undefined}
               className="pb-6"
             >
-              <div className="min-w-0 rounded-2xl rounded-tr-md border border-transparent bg-user-bubble p-3 text-foreground shadow-sm ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]">
+              <div className={`min-w-0 rounded-2xl rounded-tr-md border border-transparent bg-user-bubble p-3 text-foreground shadow-sm ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)] transition-[outline-color,box-shadow] ${selectedNavigationId === "task-description" ? "outline outline-2 outline-primary/70 outline-offset-2" : ""}`}>
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                   <span className="text-xs font-medium text-foreground">任务正文</span>
                   <time className="text-xs text-muted-foreground">{new Date(currentTask.createdAt).toLocaleString("zh-CN")}</time>
@@ -183,9 +211,10 @@ export function TaskDetailComments({
                   else navigationTargetRefs.current.delete(comment.id);
                 }}
                 data-comment-id={comment.id}
+                data-navigation-selected={selectedNavigationId === comment.id ? "true" : undefined}
                 className="pb-6 last:pb-0"
               >
-                <div className={`min-w-0 rounded-lg border p-3 shadow-sm ${comment.authorType === "user" ? "rounded-2xl rounded-tr-md border-transparent bg-user-bubble text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]" : "bg-card"}`}>
+                <div className={`min-w-0 rounded-lg border p-3 shadow-sm transition-[outline-color,box-shadow] ${comment.authorType === "user" ? "rounded-2xl rounded-tr-md border-orange-200/80 bg-user-bubble text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)] dark:border-orange-800/80" : "bg-card"} ${selectedNavigationId === comment.id ? "outline outline-2 outline-primary/70 outline-offset-2" : ""}`}>
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-medium text-foreground">
                       {comment.authorType === "agent" ? (
@@ -193,7 +222,7 @@ export function TaskDetailComments({
                           Agent{" "}
                           {purpose ? <span className={`ml-0.5 inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none ${EXECUTION_PURPOSE_CLASSES[purpose]}`}>{EXECUTION_PURPOSE_LABELS[purpose]}</span> : null}
                         </span>
-                      ) : comment.authorType === "system" ? "系统" : comment.authorName}
+                      ) : comment.authorType === "system" ? "系统" : <span className="text-orange-800 dark:text-orange-200">{comment.authorName}</span>}
                       {sessionHref ? (
                         <a
                           href={sessionHref}
@@ -225,19 +254,24 @@ export function TaskDetailComments({
         <nav aria-label="评论阶段导航" className="shrink-0 overflow-x-auto border-t bg-background px-4 py-2 sm:px-6">
           <div className="relative inline-flex min-w-full items-center justify-around gap-3">
             <span aria-hidden className="pointer-events-none absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-border" />
-            {navigationItems.map((item, index) => (
-              <button
-                key={item.id}
-                type="button"
-                className="relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                aria-label={`跳转到第 ${index + 1} 条：${item.label}`}
-                title={item.label}
-                data-purpose={item.purpose ?? "general"}
-                onClick={() => scrollToNavigationTarget(item.id)}
-              >
-                <span className={`size-3 rounded-full ring-2 ring-background ${item.purpose ? EXECUTION_PURPOSE_DOT_CLASSES[item.purpose] : "bg-slate-400 dark:bg-slate-500"}`} />
-              </button>
-            ))}
+            {navigationItems.map((item, index) => {
+              const selected = selectedNavigationId === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "scale-110 bg-primary/10 ring-2 ring-primary ring-offset-2 ring-offset-background" : "bg-background hover:bg-muted/60"}`}
+                  aria-label={`跳转到第 ${index + 1} 条：${item.label}`}
+                  aria-current={selected ? "true" : undefined}
+                  title={item.label}
+                  data-kind={item.kind}
+                  data-purpose={item.purpose ?? "general"}
+                  onClick={() => scrollToNavigationTarget(item.id)}
+                >
+                  <span className={`${selected ? "size-4" : "size-3"} rounded-full ring-2 ring-background transition-[width,height] ${navigationDotClass(item.kind, item.purpose)}`} />
+                </button>
+              );
+            })}
           </div>
         </nav>
       ) : null}

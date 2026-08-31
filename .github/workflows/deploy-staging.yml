@@ -796,13 +796,19 @@ jobs:
             --region "$RELEASE_RECORD_OSS_REGION"
           rm -rf "$RUNNER_TEMP/web-oss-readback"
           mkdir -p "$RUNNER_TEMP/web-oss-readback"
-          while IFS= read -r -d '' source; do
-            relative="${source#"$RUNNER_TEMP/web-assets/"}"
-            mkdir -p "$RUNNER_TEMP/web-oss-readback/$(dirname "$relative")"
-            aliyun --secure oss cp "$STAGING_WEB_OSS_URI/$relative" \
-              "$RUNNER_TEMP/web-oss-readback/$relative" --region "$RELEASE_RECORD_OSS_REGION"
-            cmp "$source" "$RUNNER_TEMP/web-oss-readback/$relative"
-          done < <(find "$RUNNER_TEMP/web-assets" -type f -print0)
+          export WEB_ASSETS_ROOT="$RUNNER_TEMP/web-assets"
+          export WEB_OSS_READBACK_ROOT="$RUNNER_TEMP/web-oss-readback"
+          export STAGING_WEB_OSS_URI RELEASE_RECORD_OSS_REGION
+          find "$WEB_ASSETS_ROOT" -type f -print0 | \
+            xargs -0 -r -P 8 -n 1 bash -euo pipefail -c '
+              source="$1"
+              relative="${source#"$WEB_ASSETS_ROOT/"}"
+              target="$WEB_OSS_READBACK_ROOT/$relative"
+              mkdir -p "$(dirname "$target")"
+              aliyun --secure oss cp "$STAGING_WEB_OSS_URI/$relative" \
+                "$target" --region "$RELEASE_RECORD_OSS_REGION"
+              cmp "$source" "$target"
+            ' _
           curl -fsS --retry 10 "$STAGING_WEB_URL" >/dev/null
 
       - name: Verify migrations and isolated Integration fixture

@@ -81,6 +81,12 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
     workflow,
     /oss cp "\$RUNNER_TEMP\/web-assets\/" "\$STAGING_WEB_OSS_URI\/"[\s\S]*--recursive --force --exclude index\.html --exclude release-identity\.json/u,
   );
+  assert.match(
+    workflow,
+    /find "\$WEB_ASSETS_ROOT" -type f -print0 \| \\\s+xargs -0 -r -P 8 -n 1 bash -euo pipefail -c/u,
+  );
+  assert.match(workflow, /cmp "\$source" "\$target"/u);
+  assert.doesNotMatch(workflow, /done < <\(find "\$RUNNER_TEMP\/web-assets" -type f -print0\)/u);
   assert.doesNotMatch(workflow, /oss sync|--delete/u);
   const webIdentityIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/release-identity.json" --force');
   const webEntryIndex = workflow.indexOf('"$STAGING_WEB_OSS_URI/index.html" --force');

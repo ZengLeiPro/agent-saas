@@ -518,6 +518,45 @@ export type {
   ScenarioSanitizeReport,
 } from './security/sanitizeCustomerFacingText';
 
+// M30-02 canonical cache schema, budgets, migration and backup/restore kernel
+export {
+  CACHE_KEY_PREFIX,
+  CACHE_MAX_BACKUP_BYTES,
+  CACHE_MAX_JSON_BYTES,
+  CACHE_MAX_KEY_LENGTH,
+  CACHE_SCHEMA_VERSION,
+  CacheKeyBuilder,
+  CacheSchemaError,
+  KeyValueAtomicCacheAdapter,
+  assertCacheSendAllowed,
+  cacheDigest,
+  cacheKeyForIdentity,
+  canonicalSerialize,
+  createCacheBackup,
+  createCacheSyncGate,
+  markCacheFullSyncComplete,
+  markCacheRestored,
+  migrateKnownLegacyCache,
+  parseCacheJson,
+  restoreCacheBackup,
+  verifyCacheBackup,
+} from './lib/cacheSchemaV2';
+export type {
+  AtomicCacheAdapter,
+  CacheBackup,
+  CacheBackupEntry,
+  CacheBackupManifest,
+  CacheEntryInput,
+  CacheManifestEntry,
+  CacheMigrationResult,
+  CacheKeyValueBackend,
+  CacheOwner,
+  CacheSyncGate,
+  LegacyCacheRecord,
+  ParsedCacheKey,
+  VerifiedCacheBackup,
+} from './lib/cacheSchemaV2';
+
 // M30-02 optional local app-lock kernel (shared)
 export {
   DEFAULT_LOCAL_LOCK_BACKGROUND_MS,

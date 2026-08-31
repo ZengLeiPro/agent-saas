@@ -16,16 +16,16 @@ const TB = { userId: 'a', tenantId: 'tb', generation: 3 };
 const NEXT = { userId: 'a', tenantId: 'ta', generation: 4 };
 const session = (id: string) => ({ sessionId: id, title: id, updatedAtMs: 1 } as never);
 
-describe('mobile M20-04 cache boundary', () => {
+describe('mobile M30-02 cache schema v2 boundary', () => {
   beforeEach(() => values.clear());
 
-  it('isolates account, tenant and generation', async () => {
+  it('isolates tenant/user and preserves same-owner display cache across auth generations', async () => {
     saveSessionListCache([session('private-a')], false, '', A);
     await Promise.resolve();
     expect((await loadSessionListCache('', A))?.sessions[0]?.sessionId).toBe('private-a');
     await expect(loadSessionListCache('', B)).resolves.toBeNull();
     await expect(loadSessionListCache('', TB)).resolves.toBeNull();
-    await expect(loadSessionListCache('', NEXT)).resolves.toBeNull();
+    expect((await loadSessionListCache('', NEXT))?.sessions[0]?.sessionId).toBe('private-a');
   });
 
   it('offline next generation cannot replay ownerless legacy session cache', async () => {

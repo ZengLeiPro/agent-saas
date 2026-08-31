@@ -34,7 +34,7 @@ import {
   createInteractionRequestId,
   reduceChatClientState,
   selectChatClientQueueItems,
-  scopedSensitiveKey,
+  cacheKeyForIdentity,
   adaptAgentTargetCatalogResponse,
   resolveNewSessionAgentTarget,
 } from "@agent/shared";
@@ -214,7 +214,7 @@ export function useChatAppStateCore(): ChatAppState {
   }, [refreshAgentTargetCatalog, setPendingAgentTarget]);
 
   // M20-04: drafts are account + tenant + generation scoped.
-  const draftStorageKey = scopedSensitiveKey(INPUT_DRAFT_KEY, identity);
+  const draftStorageKey = (() => { try { return cacheKeyForIdentity(identity, 'draft-text', 'new'); } catch { return null; } })();
   const [input, setInputRaw] = useState("");
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLatestRef = useRef<string>("");

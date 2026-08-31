@@ -11,12 +11,12 @@ const makeSession = (id: string) => ({ sessionId: id, title: id, updatedAtMs: 1 
 describe("web session cache M20-04 boundary", () => {
   beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
-  it("isolates A -> logout -> B, tenant switch and next generation", () => {
+  it("isolates tenant/user while retaining same-owner display cache across auth generations", () => {
     saveSessionListCache([makeSession("secret-a")], false, A);
     expect(loadSessionListCache(A)?.sessions[0]?.sessionId).toBe("secret-a");
     expect(loadSessionListCache(B)).toBeNull();
     expect(loadSessionListCache(TB)).toBeNull();
-    expect(loadSessionListCache(NEXT)).toBeNull();
+    expect(loadSessionListCache(NEXT)?.sessions[0]?.sessionId).toBe("secret-a");
   });
 
   it("fails closed and deletes ownerless N-1 cache", () => {
@@ -30,7 +30,7 @@ describe("web session cache M20-04 boundary", () => {
     expect(loadSessionListCache(null)).toBeNull();
   });
 
-  it("clear removes all scoped generations", () => {
+  it("clear removes all v2 tenant/user scopes", () => {
     saveSessionListCache([makeSession("a")], false, A);
     saveSessionListCache([makeSession("b")], false, B);
     clearSessionListCache();

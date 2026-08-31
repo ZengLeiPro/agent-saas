@@ -1,8 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { IMessageCache, MessageItem } from '@agent/shared';
-import { MESSAGE_CACHE_TTL_MS } from '@agent/shared';
+import type { BoundaryIdentity, IMessageCache, MessageItem } from '@agent/shared';
+import { CACHE_KEY_PREFIX, MESSAGE_CACHE_TTL_MS, cacheKeyForIdentity, canonicalSerialize, parseCacheJson } from '@agent/shared';
 
-const CACHE_PREFIX = 'msgCache:';
+const LEGACY_CACHE_PREFIX = 'msgCache:';
+let activeIdentity: BoundaryIdentity | null = null;
+export function setMobileMessageCacheIdentity(identity: BoundaryIdentity | null): void { activeIdentity = identity; }
+function cacheKey(sessionId: string): string | null {
+  try { return cacheKeyForIdentity(activeIdentity, 'messages', sessionId); } catch { return null; }
+}
 const MAX_MESSAGES = 500;
 
 interface CacheEntry {
@@ -12,22 +17,29 @@ interface CacheEntry {
 
 export const mobileMessageCache: IMessageCache = {
   save(sessionId: string, messages: MessageItem[]): void {
+    const key = cacheKey(sessionId);
+    if (!key) return;
     const trimmed = messages.slice(-MAX_MESSAGES).map((m) =>
       'streaming' in m && m.streaming ? { ...m, streaming: false } : m,
     );
     const entry: CacheEntry = { messages: trimmed, timestamp: Date.now() };
-    void AsyncStorage.setItem(CACHE_PREFIX + sessionId, JSON.stringify(entry))
+    let payload: string;
+    try { payload = canonicalSerialize(entry); } catch { return; }
+    void AsyncStorage.setItem(key, payload)
       .then(() => evictIfNeeded())
       .catch(() => { /* silent */ });
   },
 
   async load(sessionId: string): Promise<MessageItem[] | null> {
     try {
-      const raw = await AsyncStorage.getItem(CACHE_PREFIX + sessionId);
+      const key = cacheKey(sessionId);
+      if (!key) return null;
+      await AsyncStorage.removeItem(LEGACY_CACHE_PREFIX + sessionId);
+      const raw = await AsyncStorage.getItem(key);
       if (!raw) return null;
-      const entry: CacheEntry = JSON.parse(raw);
+      const entry = parseCacheJson(raw) as CacheEntry;
       if (Date.now() - entry.timestamp > MESSAGE_CACHE_TTL_MS) {
-        await AsyncStorage.removeItem(CACHE_PREFIX + sessionId);
+        await AsyncStorage.removeItem(key);
         return null;
       }
       return entry.messages.map(m =>
@@ -40,7 +52,8 @@ export const mobileMessageCache: IMessageCache = {
 
   async clear(sessionId: string): Promise<void> {
     try {
-      await AsyncStorage.removeItem(CACHE_PREFIX + sessionId);
+      const key = cacheKey(sessionId);
+      if (key) await AsyncStorage.removeItem(key);
     } catch { /* silent */ }
   },
 };
@@ -49,7 +62,7 @@ export const mobileMessageCache: IMessageCache = {
 export async function clearAllMessageCache(): Promise<void> {
   try {
     const keys = await AsyncStorage.getAllKeys();
-    const cacheKeys = keys.filter(k => k.startsWith(CACHE_PREFIX));
+    const cacheKeys = keys.filter(k => (k.startsWith(`${CACHE_KEY_PREFIX}:`) && k.includes(':resource=messages:')) || k.startsWith(LEGACY_CACHE_PREFIX));
     if (cacheKeys.length > 0) {
       await AsyncStorage.multiRemove(cacheKeys);
     }
@@ -61,7 +74,7 @@ async function evictIfNeeded(): Promise<void> {
   if (++evictCounter % 20 !== 0) return;
   try {
     const keys = await AsyncStorage.getAllKeys();
-    const cacheKeys = keys.filter(k => k.startsWith(CACHE_PREFIX));
+    const cacheKeys = keys.filter(k => k.startsWith(`${CACHE_KEY_PREFIX}:`) && k.includes(':resource=messages:'));
     if (cacheKeys.length === 0) return;
 
     const multiGet = await AsyncStorage.multiGet(cacheKeys);
@@ -71,7 +84,7 @@ async function evictIfNeeded(): Promise<void> {
     for (const [key, raw] of multiGet) {
       if (!raw) continue;
       try {
-        const { timestamp } = JSON.parse(raw) as CacheEntry;
+        const { timestamp } = parseCacheJson(raw) as CacheEntry;
         if (now - timestamp > MESSAGE_CACHE_TTL_MS) {
           toRemove.push(key);
         }

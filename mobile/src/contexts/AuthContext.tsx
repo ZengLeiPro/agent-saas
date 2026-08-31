@@ -26,7 +26,8 @@ import {
   type MobileServicePolicy,
 } from '../platform/trustedServiceOrigin';
 import { clearSessionListCache } from '../lib/sessionListCache';
-import { clearAllMessageCache } from '../platform/mobileMessageCache';
+import { clearAllMessageCache, setMobileMessageCacheIdentity } from '../platform/mobileMessageCache';
+import { clearMobileCacheV2Namespace } from '../platform/mobileCacheAdapter';
 import { fileCacheService } from '../services/fileCacheService';
 import { textContentCache } from '../services/textContentCache';
 import { clearFileListCache } from '../hooks/useFileList';
@@ -84,6 +85,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const next = identityReducer(identityRef.current, event);
     identityRef.current = next;
     setIdentityState(next);
+    setMobileMessageCacheIdentity(next.identity);
     await AsyncStorage.setItem(IDENTITY_META_KEY, JSON.stringify(next));
     if (next.identity && (event.type === 'authenticated' || event.type === 'principal-switched' || event.type === 'tenant-switched')) {
       wsClient.unfreezeSending();
@@ -127,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const scopedUser = cachedUserKey(identityRef.current.identity);
         if (scopedUser) await AsyncStorage.removeItem(scopedUser); // pre-M30 compatibility key
         await Promise.all([
-          clearSessionListCache(), clearGroupsCache(), clearAllMessageCache(),
+          clearMobileCacheV2Namespace(), clearSessionListCache(), clearGroupsCache(), clearAllMessageCache(),
           fileCacheService.clearAll(), textContentCache.clearAll(), clearFileListCache(),
         ]);
         clearPreviewTokenCache();
@@ -318,8 +320,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const applyLoginResponse = useCallback(async (data: { token: string; authEpoch: number; generation: number; user: AuthUser }) => {
     const principal = { userId: data.user.id, tenantId: data.user.tenantId };
     const current = identityRef.current.identity;
+    const switchingOwner = !!current && (current.userId !== principal.userId || current.tenantId !== principal.tenantId);
     await lifecycle.login({ authEpoch: data.authEpoch, generation: data.generation }, {
-      fenceUntilCommit: () => { setSensitiveTransportAllowed(false); wsClient.freezeSending(); },
+      fenceUntilCommit: async () => {
+        setSensitiveTransportAllowed(false);
+        wsClient.freezeSending();
+        if (switchingOwner) {
+          setMobileMessageCacheIdentity(null);
+          await clearMobileCacheV2Namespace();
+          resetChatStore();
+          wsClient.resetRecovery({ sessionId: null });
+        }
+      },
       persistTokenAndBinding: async (binding) => {
         await mobileSecureStorage.setItem(TOKEN_KEY, data.token);
         await mobileSecureStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));

@@ -20,6 +20,8 @@ import { authPreload } from "@/lib/preload";
 import { apiUrl } from '@/lib/apiBase';
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache, setMessageCacheIdentity } from "@/lib/messageCache";
+import { clearAllComposerAttachmentDrafts } from "@/lib/composerDraftStorage";
+import { clearWebCacheV2Namespace } from "@/platform/webCacheAdapter";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
 import {
   loginWithPassword,
@@ -100,9 +102,11 @@ function clearAccountScopedState(): void {
   resetChatStore();
   setMessageCacheIdentity(null);
   localStorage.removeItem(SESSION_STORAGE_KEY);
+  clearWebCacheV2Namespace();
   clearSessionListCache();
   void clearAllMessageCache();
   void clearGroupsCache();
+  void clearAllComposerAttachmentDrafts();
 }
 
 function unsubscribeCurrentBrowserPush(): Promise<void> {
@@ -174,12 +178,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         wsClient.resetRecovery({ sessionId: null });
         localStorage.removeItem(SESSION_STORAGE_KEY);
       },
-      clearCache: async () => { // includes all M20 generation-scoped namespaces
+      clearCache: async () => { // includes every v2 namespace and N-1 sensitive cache
         setMessageCacheIdentity(null);
+        clearWebCacheV2Namespace();
         await Promise.all([
           Promise.resolve(clearSessionListCache()),
           clearAllMessageCache(),
           clearGroupsCache(),
+          clearAllComposerAttachmentDrafts(),
           unsubscribeCurrentBrowserPush(),
         ]);
         for (let index = localStorage.length - 1; index >= 0; index--) {

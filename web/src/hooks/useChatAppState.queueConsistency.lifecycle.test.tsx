@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
-import type { CanonicalChatSubmissionWireMessage } from "@agent/shared";
+import type { AgentTarget, CanonicalChatSubmissionWireMessage } from "@agent/shared";
 
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
@@ -13,6 +13,8 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    pendingAgentTargetRef: { current: { kind: 'personal', tenantId: 'tenant-a' } as AgentTarget | null },
+    pendingNewSessionGroupIdRef: { current: null as string | null },
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -68,6 +70,17 @@ vi.mock("@/hooks/useSession", () => ({
     harness.sessionCallbacks = callbacks;
     return harness.session;
   },
+}));
+vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
+  usePendingNewSessionTarget: () => ({
+    pendingAgentTargetRef: harness.pendingAgentTargetRef,
+    pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingAgentTarget: harness.pendingAgentTargetRef.current,
+    pendingOrgAgentId: null,
+    setPendingAgentTarget: vi.fn((target: AgentTarget | null) => { harness.pendingAgentTargetRef.current = target; }),
+    clearPendingOrgAgent: vi.fn(),
+    assignPendingGroup: vi.fn(async () => {}),
+  }),
 }));
 vi.mock("@/hooks/useFileUpload", () => ({
   useFileUpload: () => ({
@@ -136,6 +149,8 @@ beforeEach(() => {
   harness.sends.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
+  harness.pendingAgentTargetRef.current = { kind: 'personal', tenantId: 'tenant-a' };
+  harness.pendingNewSessionGroupIdRef.current = null;
   harness.session.sessionId = null;
   harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {

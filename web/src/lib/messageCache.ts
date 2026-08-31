@@ -1,6 +1,6 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { MessageItem } from "@/components/types";
-import { MESSAGE_CACHE_TTL_MS, scopedSensitiveKey } from '@agent/shared';
+import { MESSAGE_CACHE_TTL_MS, cacheKeyForIdentity, canonicalSerialize, createCacheBackup, parseCacheJson, scopedSensitiveKey } from '@agent/shared';
 import type { BoundaryIdentity } from '@agent/shared';
 
 const DB_NAME = 'agentChatDB';
@@ -15,11 +15,14 @@ const LS_CACHE_KEY_PREFIX = "agentChat.msgCache.";
 const LS_MIGRATED_FLAG = "agentChat.idbMigrated";
 let activeIdentity: BoundaryIdentity | null = null;
 export function setMessageCacheIdentity(identity: BoundaryIdentity | null): void { activeIdentity = identity; cacheMetadata.clear(); }
-function cacheKey(sessionId: string): string | null { return scopedSensitiveKey(sessionId, activeIdentity); }
+function cacheKey(sessionId: string): string | null {
+  try { return cacheKeyForIdentity(activeIdentity, 'messages', sessionId); } catch { return null; }
+}
 
 interface CachedEntry {
   sessionId: string;
-  messages: MessageItem[];
+  messages?: MessageItem[];
+  payload?: string;
   timestamp: number;
   /** 是否已加载到 transcript 起点。 */
   historyComplete?: boolean;
@@ -183,14 +186,15 @@ export function saveSessionMessages(
   void (async () => {
     try {
       const db = await getDB();
-      await db.put(STORE_NAME, {
-        sessionId: scopedSessionId,
+      const timestamp = Date.now();
+      const payload = canonicalSerialize({
         messages: trimmed,
-        timestamp: Date.now(),
+        timestamp,
         historyComplete,
         ...(knownMetadata?.tailCursor ? { tailCursor: knownMetadata.tailCursor } : {}),
         ...(oldestCursor ? { oldestCursor } : {}),
-      } satisfies CachedEntry);
+      });
+      await db.put(STORE_NAME, { sessionId: scopedSessionId, timestamp, payload } satisfies CachedEntry);
 
       if (++saveCounter % EVICT_CHECK_INTERVAL === 0) {
         await evictExpiredEntries(db);
@@ -209,8 +213,31 @@ export async function loadSessionMessageSnapshot(
   if (!scopedSessionId) return null;
   try {
     const db = await getDB();
-    const entry: CachedEntry | undefined = await db.get(STORE_NAME, scopedSessionId);
-    if (!entry) return null;
+    let stored: CachedEntry | undefined = await db.get(STORE_NAME, scopedSessionId);
+    if (!stored && activeIdentity) {
+      const legacyKey = scopedSensitiveKey(sessionId, activeIdentity);
+      const legacy: CachedEntry | undefined = legacyKey ? await db.get(STORE_NAME, legacyKey) : undefined;
+      if (legacyKey && legacy) {
+        try {
+          if (!Array.isArray(legacy.messages)) throw new Error('invalid legacy messages');
+          createCacheBackup(activeIdentity, [{ resource: 'messages', resourceId: sessionId, type: 'message-display', data: legacy.messages }]);
+          const timestamp = legacy.timestamp;
+          const payload = canonicalSerialize({ messages: legacy.messages, timestamp, historyComplete: false });
+          stored = { sessionId: scopedSessionId, timestamp, payload };
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          await tx.store.put(stored);
+          await tx.store.delete(legacyKey);
+          await tx.done;
+        } catch {
+          await db.delete(STORE_NAME, legacyKey);
+          return null;
+        }
+      }
+    }
+    if (!stored) return null;
+    const decoded = stored.payload ? parseCacheJson(stored.payload) as Omit<CachedEntry, 'sessionId' | 'payload'> : stored;
+    const entry: CachedEntry = { ...decoded, sessionId: scopedSessionId, timestamp: stored.timestamp };
+    if (!Array.isArray(entry.messages)) { await db.delete(STORE_NAME, scopedSessionId); return null; }
     if (Date.now() - entry.timestamp > MESSAGE_CACHE_TTL_MS) {
       await db.delete(STORE_NAME, scopedSessionId);
       return null;

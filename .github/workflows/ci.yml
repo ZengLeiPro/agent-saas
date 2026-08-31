@@ -2477,7 +2477,6 @@ jobs:
             "$ECS_USER@$ECS_HOST" \
             "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
             < scripts/deploy-recovery-web.sh
-          touch "$RUNNER_TEMP/recovery-web-activated"
 
       - name: Verify recovery Web endpoint
         run: |
@@ -2510,6 +2509,9 @@ jobs:
             ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
           }
           trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "grep -Fx 'state=activated' \
+             '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/ecs_recovery_key \
             scripts/release/artifact-lib.mjs \
@@ -2538,16 +2540,14 @@ jobs:
       - name: Restore previous recovery Web on failure
         if: failure() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
-          if [ ! -f "$RUNNER_TEMP/recovery-web-activated" ]; then
-            echo "recovery Web was not activated; nothing to restore"
-            exit 0
-          fi
+          set -euo pipefail
           printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
             "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
-             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q bash -s" \
+             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
+             RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' bash -s" \
             < scripts/rollback-recovery-web.sh
 
       - name: Restore previous Web entry files on failure
@@ -2601,6 +2601,9 @@ jobs:
             ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "rm -rf -- '$remote'" || true
           }
           trap cleanup EXIT
+          ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
+            "grep -Ex 'state=(rolled_back|not_started)' \
+             '$RECOVERY_WEB_ROOT/transactions/${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.activation' >/dev/null"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" "mkdir -p '$remote'"
           scp -i ~/.ssh/ecs_recovery_key \
             scripts/release/artifact-lib.mjs \

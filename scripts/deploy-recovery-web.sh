@@ -5,6 +5,7 @@ set -Eeuo pipefail
 : "${RELEASE_ID:?Missing RELEASE_ID}"
 : "${RUN_ID:?Missing RUN_ID}"
 : "${ARCHIVE:?Missing ARCHIVE}"
+printf '%s' "$RUN_ID" | grep -Eq '^[A-Za-z0-9._-]+$' || { echo "invalid RUN_ID" >&2; exit 1; }
 
 RELEASES_DIR="$RECOVERY_WEB_ROOT/releases"
 ARTIFACTS_DIR="$RECOVERY_WEB_ROOT/artifacts"
@@ -14,8 +15,13 @@ STAGING_DIR="$RELEASES_DIR/.${RELEASE_ID}.${RUN_ID}.staging"
 ARCHIVE_TARGET="$ARTIFACTS_DIR/${RELEASE_ID}.${RUN_ID}.tgz"
 CURRENT_LINK="$RECOVERY_WEB_ROOT/current"
 PREVIOUS_LINK="$RECOVERY_WEB_ROOT/previous"
+TRANSACTIONS_DIR="$RECOVERY_WEB_ROOT/transactions"
+RECEIPT_PATH="$TRANSACTIONS_DIR/$RUN_ID.activation"
+LOCK_PATH="$RECOVERY_WEB_ROOT/.transaction.lock"
 
-mkdir -p "$RELEASES_DIR" "$ARTIFACTS_DIR" "$SHARED_ROOT/assets"
+mkdir -p "$RELEASES_DIR" "$ARTIFACTS_DIR" "$SHARED_ROOT/assets" "$TRANSACTIONS_DIR"
+exec 9>"$LOCK_PATH"
+flock 9
 if [ ! -d "$RELEASE_DIR" ]; then
   if [ -e "$STAGING_DIR" ]; then
     echo "stale recovery staging directory requires manual inspection: $STAGING_DIR"
@@ -42,9 +48,36 @@ for workbox_file in "$RELEASE_DIR"/workbox-*.js; do
 done
 
 mv "$ARCHIVE" "$ARCHIVE_TARGET"
-PREVIOUS_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)
-if [ -n "$PREVIOUS_TARGET" ] && [ "$PREVIOUS_TARGET" != "$RELEASE_DIR" ]; then
-  ln -sfn "$PREVIOUS_TARGET" "$PREVIOUS_LINK"
+CURRENT_BEFORE=""
+PREVIOUS_BEFORE=""
+if [ -L "$CURRENT_LINK" ]; then
+  CURRENT_BEFORE="$(readlink -f "$CURRENT_LINK")"
+elif [ -e "$CURRENT_LINK" ]; then
+  echo "recovery Web current path must be a symlink" >&2
+  exit 1
+fi
+if [ -L "$PREVIOUS_LINK" ]; then
+  PREVIOUS_BEFORE="$(readlink -f "$PREVIOUS_LINK")"
+elif [ -e "$PREVIOUS_LINK" ]; then
+  echo "recovery Web previous path must be a symlink" >&2
+  exit 1
+fi
+receipt_candidate="$RECEIPT_PATH.candidate"
+write_receipt() {
+  local state="$1"
+  {
+    printf 'state=%s\n' "$state"
+    printf 'current_before=%s\n' "$CURRENT_BEFORE"
+    printf 'previous_before=%s\n' "$PREVIOUS_BEFORE"
+    printf 'target=%s\n' "$RELEASE_DIR"
+  } >"$receipt_candidate"
+  mv "$receipt_candidate" "$RECEIPT_PATH"
+}
+write_receipt attempted
+if [ -n "$CURRENT_BEFORE" ] && [ "$CURRENT_BEFORE" != "$RELEASE_DIR" ]; then
+  ln -sfn "$CURRENT_BEFORE" "$PREVIOUS_LINK"
 fi
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+test "$(readlink -f "$CURRENT_LINK")" = "$RELEASE_DIR"
+write_receipt activated
 echo "recovery Web active: $RELEASE_ID"

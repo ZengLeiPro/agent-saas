@@ -611,6 +611,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       const bindings = new Set();
       const callableBindings = new Set();
       const clause = statement.importClause;
+      if (clause?.isTypeOnly) continue;
       if (!clause) bindings.add('*');
       else {
         if (clause.name) {
@@ -631,12 +632,12 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
               callableBindings.add('*');
           } else {
             for (const element of clause.namedBindings.elements) {
+              if (element.isTypeOnly) continue;
               const importedName = (element.propertyName ?? element.name).text;
               bindings.add(importedName);
               if (
-                !element.isTypeOnly &&
-                (calledIdentifiers.has(element.name.text) ||
-                  callableLocalBindings.has(element.name.text))
+                calledIdentifiers.has(element.name.text) ||
+                callableLocalBindings.has(element.name.text)
               )
                 callableBindings.add(importedName);
             }
@@ -651,12 +652,13 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
               (ts.isNamespaceImport(clause.namedBindings) ||
                 clause.namedBindings.elements.length === 0 ||
                 clause.namedBindings.elements.some((element) => !element.isTypeOnly)))));
-      dependencies.push({
-        specifier: statement.moduleSpecifier.text,
-        bindings,
-        callableBindings,
-        sideEffect,
-      });
+      if (bindings.size > 0 || sideEffect)
+        dependencies.push({
+          specifier: statement.moduleSpecifier.text,
+          bindings,
+          callableBindings,
+          sideEffect,
+        });
       continue;
     }
     if (
@@ -665,6 +667,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       ts.isStringLiteral(statement.moduleSpecifier) &&
       RELATIVE_MODULE_SPECIFIER.test(statement.moduleSpecifier.text)
     ) {
+      if (statement.isTypeOnly) continue;
       const bindings = new Set();
       const callableBindings = new Set();
       if (!statement.exportClause) {
@@ -677,6 +680,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
           callableBindings.add('*');
       } else {
         for (const element of statement.exportClause.elements) {
+          if (element.isTypeOnly) continue;
           if (requestedAll || requestedBindings.has(element.name.text))
             bindings.add((element.propertyName ?? element.name).text);
           if (requestedCallableAll || requestedCallableBindings.has(element.name.text))

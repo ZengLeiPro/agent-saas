@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { closeSync, openSync } from 'node:fs';
+import { mkdtemp, mkdir, readFile, readlink, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -183,6 +185,8 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   const rollback = appWorkflow.slice(rollbackStart, finalFailureStart);
   assert.match(identityCommit, /id: commit_trusted_identity/u);
   assert.match(identityCommit, /continue-on-error: true/u);
+  assert.match(identityCommit, /grep -Fx 'state=activated'/u);
+  assert.doesNotMatch(identityCommit, /state=\(rolled_back\|not_started\)/u);
   for (const failurePoint of [
     'read-live-production-components.mjs',
     'write-live-production-identity.mjs',
@@ -207,10 +211,15 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(appWorkflow, /_releases\/\$GITHUB_SHA\/previous\/\$f/u);
   assert.match(appWorkflow, /recovery-web-target\.before/u);
   assert.match(appWorkflow, /RECOVERY_WEB_BEFORE_TARGET=\$recovery_web_before_q/u);
+  assert.match(appWorkflow, /RUN_ID='\$\{GITHUB_RUN_ID\}\.\$\{GITHUB_RUN_ATTEMPT\}'/u);
+  assert.doesNotMatch(appWorkflow, /recovery-web-activated/u);
   assert.match(recoveryRollback, /RECOVERY_WEB_BEFORE_TARGET/u);
+  assert.match(recoveryRollback, /transactions\/\$RUN_ID\.activation/u);
+  assert.match(recoveryRollback, /state=rolled_back/u);
   assert.match(rollback, /runtime-identity\.before\.json/u);
   assert.match(rollback, /production-state\.restored\.json/u);
   assert.match(rollback, /web-oss-restored/u);
+  assert.match(rollback, /state=\(rolled_back\|not_started\)/u);
   assert.match(rollback, /web-recovery-restored/u);
   assert.match(
     rollback,
@@ -276,3 +285,56 @@ for (const [label, failurePoint] of [
     assert.match(workflow.slice(failStart), /exit 1/u);
   });
 }
+
+test('rolls back recovery Web when activation mutates current before remote output fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'recovery-activation-failure-'));
+  const oldRelease = join(root, 'releases', 'old');
+  const source = join(root, 'source');
+  const archive = join(root, 'new.tgz');
+  await mkdir(oldRelease, { recursive: true });
+  await mkdir(source, { recursive: true });
+  for (const [path, content] of [
+    ['index.html', '<html>old</html>'],
+    ['sw.js', 'old'],
+  ])
+    await writeFile(join(oldRelease, path), content);
+  for (const [path, content] of [
+    ['index.html', '<html>new</html>'],
+    ['sw.js', 'new'],
+  ])
+    await writeFile(join(source, path), content);
+  await symlink(oldRelease, join(root, 'current'));
+  const tar = spawnSync('tar', ['-C', source, '-czf', archive, '.'], { encoding: 'utf8' });
+  assert.equal(tar.status, 0, tar.stderr);
+
+  const full = openSync('/dev/full', 'w');
+  const activation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: root,
+      RELEASE_ID: 'new',
+      RUN_ID: '123.1',
+      ARCHIVE: archive,
+    },
+    stdio: ['ignore', full, 'pipe'],
+    encoding: 'utf8',
+  });
+  closeSync(full);
+  assert.notEqual(activation.status, 0);
+  assert.equal(await readlink(join(root, 'current')), join(root, 'releases', 'new'));
+  assert.match(
+    await readFile(join(root, 'transactions', '123.1.activation'), 'utf8'),
+    /state=activated/u,
+  );
+
+  const rollback = spawnSync('bash', ['scripts/rollback-recovery-web.sh'], {
+    env: { ...process.env, RECOVERY_WEB_ROOT: root, RUN_ID: '123.1' },
+    encoding: 'utf8',
+  });
+  assert.equal(rollback.status, 0, rollback.stderr);
+  assert.equal(await readlink(join(root, 'current')), oldRelease);
+  assert.match(
+    await readFile(join(root, 'transactions', '123.1.activation'), 'utf8'),
+    /state=rolled_back/u,
+  );
+});

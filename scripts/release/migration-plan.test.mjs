@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { createMigrationPlan, isMigrationPath } from './migration-plan.mjs';
 
@@ -217,9 +218,12 @@ test('fails closed for class evaluation side effects in a runtime dependency', (
 test('does not follow type-only import or re-export edges at runtime', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const danger = 'server/src/data/governance-schema/danger.ts';
-  const dangerSource = "await db.query('DROP TABLE users');\nexport type T = string;";
+  const dangerSource =
+    "await import('../../utils/logger.js');\nawait db.query('DROP TABLE users');\nexport type T = string;";
   for (const rootSource of [
+    "import type { T } from './danger.js';\nexport type { T };",
     "import { type T } from './danger.js';\nexport type { T };",
+    "export type { T } from './danger.js';",
     "export { type T } from './danger.js';",
   ]) {
     const result = plan('', '', {
@@ -832,4 +836,16 @@ test('fails closed for removed migrations and unreadable baseline comparisons', 
   });
   assert.equal(noDiff.ok, false);
   assert.match(noDiff.blockingReasons.join('\n'), /could not be compared/u);
+});
+
+test('real repository closure ignores unrelated TypeScript changes behind type-only edges', () => {
+  const baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+  const target = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const result = createMigrationPlan({
+    changedPaths: ['server/src/release/releaseAttestation.ts'],
+    baseline,
+    target,
+  });
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'none');
 });

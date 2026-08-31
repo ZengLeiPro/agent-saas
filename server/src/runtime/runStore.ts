@@ -10,7 +10,7 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
-import { initializePgRunStore } from './runStoreSchema.js';
+import { contractPgRunStoreTenantSchema, initializePgRunStore, tenantScopedCompatibilityKey, type PgRunStoreContractGate } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
 const { Pool } = pg;
@@ -53,6 +53,8 @@ export class PgRunStore implements RunStore {
     await initializePgRunStore(this);
   }
 
+  /** Explicit release-management entry; ordinary init is expand-only. */
+  async contractTenantSchema(gate: PgRunStoreContractGate): Promise<void> { await contractPgRunStoreTenantSchema(this, gate); }
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
@@ -105,7 +107,6 @@ export class PgRunStore implements RunStore {
   async enqueueSteeringAware(input: UpsertRunInput): Promise<RunRecord> {
     return this.enqueueUserMessage({ ...input, idempotencyKey: input.idempotencyKey ?? input.runId }, 'steer');
   }
-
   async enqueueUserMessage(input: UpsertRunInput, deliveryMode: MessageDeliveryMode): Promise<RunRecord> {
     if (!input.idempotencyKey) throw new Error('User message enqueue requires idempotencyKey');
     const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
@@ -120,16 +121,19 @@ export class PgRunStore implements RunStore {
       const userScope = input.submitterUserId ?? input.userId ?? '__anonymous__';
       const submission = await client.query<{ run_id: string }>(`
         INSERT INTO ${this.messageSubmissionsTable}
-          (tenant_id, user_scope, client_message_id, run_id, session_id, delivery_mode, accepted_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT (tenant_id, user_scope, client_message_id) DO NOTHING
+          (tenant_id, user_scope, client_message_id, run_id, session_id, delivery_mode, accepted_at,
+           tenant_user_scope, tenant_client_message_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ON CONFLICT (tenant_id, tenant_user_scope, tenant_client_message_id) WHERE tenant_id IS NOT NULL DO NOTHING
         RETURNING run_id
-      `, [tenantId, userScope, input.idempotencyKey, input.runId, input.sessionId, deliveryMode, now]);
+      `, [tenantId, tenantScopedCompatibilityKey(tenantId, userScope),
+        tenantScopedCompatibilityKey(tenantId, input.idempotencyKey), input.runId, input.sessionId,
+        deliveryMode, now, userScope, input.idempotencyKey]);
       if (!submission.rows[0]) {
         const existingSubmission = await client.query<{ run_id: string }>(`
           SELECT run_id
           FROM ${this.messageSubmissionsTable}
-          WHERE tenant_id = $1 AND user_scope = $2 AND client_message_id = $3
+          WHERE tenant_id = $1 AND tenant_user_scope = $2 AND tenant_client_message_id = $3
         `, [tenantId, userScope, input.idempotencyKey]);
         const existingRunId = existingSubmission.rows[0]?.run_id;
         const existing = existingRunId
@@ -143,7 +147,6 @@ export class PgRunStore implements RunStore {
         await client.query('COMMIT');
         return normalizeRunRecord(existing.rows[0].row_json);
       }
-
       const acceptedAt = typeof input.metadata?.steeringAcceptedAt === 'string'
         ? input.metadata.steeringAcceptedAt
         : undefined;
@@ -151,14 +154,13 @@ export class PgRunStore implements RunStore {
         const stop = await client.query<{ stopped_at: string | Date | null }>(`
           SELECT stopped_at
           FROM ${this.steeringSessionsTable}
-          WHERE tenant_id = $1 AND session_id = $2
+          WHERE tenant_id = $1 AND tenant_session_id = $2
         `, [tenantId, input.sessionId]);
         const stoppedAt = stop.rows[0]?.stopped_at;
         if (stoppedAt && Date.parse(acceptedAt) <= new Date(stoppedAt).getTime()) {
           throw new Error('chat was accepted before the latest session stop');
         }
       }
-
       let targetRunId: string | undefined;
       let queuedBehindRunId: string | undefined;
       if (deliveryMode === 'steer') {
@@ -726,7 +728,6 @@ export class PgRunStore implements RunStore {
     const result = await this.cancelSteeringBeforeDispatchInternal(sessionId, reason, targetRunId, undefined, tenantId);
     return result.cancelled;
   }
-
   async cancelSteeringBeforeDispatchBySessionWithEvent(
     sessionId: string,
     reason: string,
@@ -748,7 +749,6 @@ export class PgRunStore implements RunStore {
       eventCreated: result.eventCreated,
     };
   }
-
   private async cancelSteeringBeforeDispatchInternal(
     sessionId: string,
     reason: string,
@@ -785,11 +785,11 @@ export class PgRunStore implements RunStore {
         }
       }
       await client.query(`
-        INSERT INTO ${this.steeringSessionsTable} (tenant_id, session_id, stopped_at)
-        VALUES ($1, $2, $3::timestamptz)
-        ON CONFLICT (tenant_id, session_id) DO UPDATE
+        INSERT INTO ${this.steeringSessionsTable} (tenant_id, session_id, stopped_at, tenant_session_id)
+        VALUES ($1, $2, $3::timestamptz, $4)
+        ON CONFLICT (tenant_id, tenant_session_id) WHERE tenant_id IS NOT NULL DO UPDATE
         SET stopped_at = GREATEST(${this.steeringSessionsTable}.stopped_at, EXCLUDED.stopped_at)
-      `, [tenantId, sessionId, now]);
+      `, [tenantId, tenantScopedCompatibilityKey(tenantId, sessionId), now, sessionId]);
       const candidateIds = await client.query<{ source_run_id: string }>(`
         SELECT input.source_run_id
         FROM ${this.steeringInputsTable} input

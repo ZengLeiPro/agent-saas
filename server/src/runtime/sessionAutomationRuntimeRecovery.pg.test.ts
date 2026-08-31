@@ -10,6 +10,7 @@ import {
   SessionAutomationRuntimeGuard,
 } from './sessionAutomationRuntimeGuard.js';
 import { SessionAutomationEvaluator, type GoalEvaluatorPort } from './sessionAutomationEvaluator.js';
+import { deriveChildAutomationFence } from './subagent/subagentRunner.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
 import type { RunContext } from './types.js';
 
@@ -200,6 +201,70 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'cancelled', phase: 'terminal' });
   });
 
+  it('admits a child session against its root automation while preserving the invoking child lineage', async () => {
+    const setup = await activeExecution();
+    const childSessionId = `${setup.sessionId}-child`;
+    const childRunId = `child-${randomUUID()}`;
+    await runs.createPending({
+      runId: childRunId, tenantId, sessionId: childSessionId, userId: 'user-a',
+      metadata: { subagent: true, parentRunId: setup.dispatch.targetRunId, parentSessionId: setup.sessionId },
+    });
+    const childContext = {
+      ...setup.context,
+      sessionId: childSessionId,
+      runId: childRunId,
+      automationFence: deriveChildAutomationFence(
+        setup.context.automationFence,
+        childRunId,
+        setup.sessionId,
+      ),
+    } as RunContext;
+
+    const attempt = await guard.beforeModel(childContext, 'turn:child', {
+      model: childContext.model, inputTokens: 10, maxOutputTokens: 20,
+    });
+    expect(attempt).toBeDefined();
+    const audit = await pool.query(
+      `SELECT tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,
+              invoking_session_id,invoking_run_id,idempotency_key,request_payload
+         FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`,
+      [attempt!.providerAttemptId],
+    );
+    expect(audit.rows[0]).toMatchObject({
+      tenant_id: tenantId,
+      session_id: setup.sessionId,
+      automation_id: setup.automationId,
+      incarnation_id: setup.incarnationId,
+      generation: '1',
+      execution_id: setup.dispatch.outboxId,
+      run_id: setup.dispatch.targetRunId,
+      invoking_session_id: childSessionId,
+      invoking_run_id: childRunId,
+      idempotency_key: `model:${setup.dispatch.outboxId}:${childSessionId.length}:${childSessionId}:${childRunId}:turn:child`,
+      request_payload: expect.objectContaining({
+        rootSessionId: setup.sessionId,
+        rootRunId: setup.dispatch.targetRunId,
+        invokingSessionId: childSessionId,
+        invokingRunId: childRunId,
+      }),
+    });
+    await guard.finishModel(childContext, attempt, { inputTokens: 10, outputTokens: 5 });
+
+    await expect(guard.beforeModel({
+      ...childContext,
+      automationFence: { ...childContext.automationFence!, rootSessionId: `${setup.sessionId}-spoofed` },
+    }, 'turn:spoof-root', { model: childContext.model, inputTokens: 10, maxOutputTokens: 20 }))
+      .rejects.toMatchObject({ reason: 'automation_not_found' });
+    await expect(guard.beforeModel({ ...childContext, tenantId: `${tenantId}-other` }, 'turn:cross-tenant', {
+      model: childContext.model, inputTokens: 10, maxOutputTokens: 20,
+    })).rejects.toMatchObject({ reason: 'automation_not_found' });
+    await expect(guard.beforeModel({
+      ...childContext,
+      automationFence: { ...childContext.automationFence!, executionId: randomUUID() },
+    }, 'turn:wrong-execution', { model: childContext.model, inputTokens: 10, maxOutputTokens: 20 }))
+      .rejects.toMatchObject({ reason: 'execution_mismatch' });
+  });
+
   it('the first settled reservation consumes the final turn atomically and budget expiry drains before terminal projection', async () => {
     const setup = await activeExecution({ maxTurns: 1 });
     const first = await guard.beforeModel(setup.context, 'turn:first', {model: setup.context.model, inputTokens: 10, maxOutputTokens: 20});
@@ -254,7 +319,11 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('creates a goal evaluation only after the current execution durably nominates frozen evidence', async () => {
     const setup = await activeExecution();
-    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    const evaluate = vi.fn(async () => ({ decision: 'met' as const, reason: 'verified', confidence: 0.99 }));
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate } as unknown as GoalEvaluatorPort);
+    const evidenceEvent = await events.append({
+      type: 'assistant_message', runId: setup.dispatch.targetRunId, sessionId: setup.sessionId, content: 'host observed completion',
+    }, { tenantId });
     await expect(evaluator.nominate({
       tenantId,
       sessionId: setup.sessionId,
@@ -265,7 +334,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       generation: 1,
       specVersion: 1,
       summary: 'candidate complete',
-      evidenceRefs: ['event:candidate'],
+      evidenceRefs: [`event:${evidenceEvent.id}`],
     })).resolves.toEqual({ queued: true });
     expect((await pool.query(
       `SELECT count(*)::int AS count FROM ${store.tables.evaluations} WHERE execution_id=$1`,
@@ -291,10 +360,66 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
     expect(projected.rows).toHaveLength(1);
     expect(projected.rows[0].evidence).toMatchObject({
       summary: 'candidate complete',
-      evidenceRefs: ['event:candidate'],
+      evidenceManifest: { entries: [{ ref: `event:${evidenceEvent.id}`, kind: 'event' }] },
       hardGates: { runTerminal: true },
     });
     expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'evaluating' });
+    expect(await evaluator.evaluatePending()).toBe(1);
+    expect(evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      evidence: expect.objectContaining({ evidenceManifest: expect.objectContaining({ canonicalHash: expect.any(String) }) }),
+    }));
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ status: 'completing', phase: 'draining' });
+  });
+
+  it('rejects fake and cross-session evidence refs before candidate persistence', async () => {
+    const setup = await activeExecution();
+    const other = await activeExecution();
+    const cross = await events.append({ type: 'assistant_message', runId: other.dispatch.targetRunId,
+      sessionId: other.sessionId, content: 'other session evidence' }, { tenantId });
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    const base = { tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
+      executionId: setup.dispatch.outboxId, runId: setup.dispatch.targetRunId, incarnationId: setup.incarnationId,
+      generation: 1, specVersion: 1, summary: 'done' };
+    await expect(evaluator.nominate({ ...base, evidenceRefs: ['fake'] })).resolves.toEqual({ queued: false, reason: 'evidence_ref_invalid_format' });
+    await expect(evaluator.nominate({ ...base, evidenceRefs: [`event:${cross.id}`] })).resolves.toEqual({ queued: false, reason: 'evidence_ref_not_found' });
+    expect((await pool.query(`SELECT count(*)::int n FROM ${store.tables.goalCompletionCandidates} WHERE execution_id=$1`, [setup.dispatch.outboxId])).rows[0].n).toBe(0);
+  });
+
+  it('rejects stale test evidence after a later host-recorded source edit', async () => {
+    const setup = await activeExecution();
+    const toolCallId = randomUUID();
+    await events.append({ type: 'assistant_tool_calls', runId: setup.dispatch.targetRunId, sessionId: setup.sessionId,
+      content: '', toolCalls: [{ id: toolCallId, name: 'Shell', arguments: JSON.stringify({ command: 'pnpm test' }) }] }, { tenantId });
+    const testResult = await events.append({ type: 'tool_result', runId: setup.dispatch.targetRunId,
+      sessionId: setup.sessionId, toolCallId, toolName: 'Shell', content: 'tests passed', metadata: { exitCode: 0 } }, { tenantId });
+    const editCallId = randomUUID();
+    await events.append({ type: 'assistant_tool_calls', runId: setup.dispatch.targetRunId, sessionId: setup.sessionId,
+      content: '', toolCalls: [{ id: editCallId, name: 'Edit', arguments: '{}' }] }, { tenantId });
+    await events.append({ type: 'tool_result', runId: setup.dispatch.targetRunId, sessionId: setup.sessionId,
+      toolCallId: editCallId, toolName: 'Edit', content: 'edited' }, { tenantId });
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    await expect(evaluator.nominate({ tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
+      executionId: setup.dispatch.outboxId, runId: setup.dispatch.targetRunId, incarnationId: setup.incarnationId,
+      generation: 1, specVersion: 1, summary: 'done', evidenceRefs: [`event:${testResult.id}`] }))
+      .resolves.toEqual({ queued: false, reason: 'evidence_ref_stale' });
+  });
+
+  it('rejects direct database mutation of frozen candidate evidence', async () => {
+    const setup = await activeExecution();
+    const evidence = await events.append({ type: 'assistant_message', runId: setup.dispatch.targetRunId,
+      sessionId: setup.sessionId, content: 'done' }, { tenantId });
+    const evaluator = new SessionAutomationEvaluator(store, { evaluate: vi.fn() } as unknown as GoalEvaluatorPort);
+    await evaluator.nominate({ tenantId, sessionId: setup.sessionId, automationId: setup.automationId,
+      executionId: setup.dispatch.outboxId, runId: setup.dispatch.targetRunId, incarnationId: setup.incarnationId,
+      generation: 1, specVersion: 1, summary: 'done', evidenceRefs: [`event:${evidence.id}`] });
+    await expect(pool.query(`UPDATE ${store.tables.goalCompletionCandidates}
+      SET evidence_manifest=jsonb_set(evidence_manifest,'{entries,0,source,eventId}','\"tampered\"'::jsonb),
+          evidence_manifest_hash='attacker-recomputed-hash'
+      WHERE execution_id=$1`, [setup.dispatch.outboxId])).rejects.toThrow('immutable goal candidate evidence');
+    const frozen = await pool.query(`SELECT evidence_manifest,evidence_manifest_hash
+      FROM ${store.tables.goalCompletionCandidates} WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    expect(frozen.rows[0].evidence_manifest.entries[0].source.eventId).toBe(evidence.id);
+    expect(frozen.rows[0].evidence_manifest_hash).toBe(frozen.rows[0].evidence_manifest.canonicalHash);
   });
 
   it('a lease-expired evaluator admitted with the execution correlation key before a crash is frozen for explicit reconciliation', async () => {

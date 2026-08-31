@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
 import { PgSessionLock } from '../runtime/pgSessionLock.js';
 import { PgRunStore } from '../runtime/runStore.js';
+import { RUN_STORE_TENANT_SCHEMA_VERSION } from '../runtime/runStoreSchema.js';
 import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
 const { Pool } = pg;
@@ -24,6 +25,10 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
         [`${prefix}_%`],
       )).rows.map((row) => row.tablename);
       for (const table of tables) await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
+      for (const fn of ['message_submissions_tenant_expand_fn', 'steering_inputs_tenant_expand_fn',
+        'steering_sessions_tenant_expand_fn', 'runs_tenant_aux_catchup_fn']) {
+        await pool.query(`DROP FUNCTION IF EXISTS ${prefix}_${fn}()`);
+      }
     }
     await pool.end();
   }, 30_000);
@@ -119,7 +124,7 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
     await Promise.all([dual.close(), lease.close()]);
   }, 30_000);
 
-  it('旧辅助表并发 init：可证明行回填，orphan/ambiguous 原子进 quarantine 且不阻断 NOT NULL', async () => {
+  it('旧辅助表并发 init 仅 expand；显式 contract 才 quarantine 并收紧', async () => {
     const prefix = makePrefix('legacy_identity');
     prefixes.push(prefix);
     await pool.query(`
@@ -167,25 +172,57 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
     await Promise.all(stores.map((store) => store.init()));
     await stores[0]!.init(); // full migration is idempotent after validation
 
+    // Ordinary startup is expand/backfill only: old arbiters and nullable unresolved rows remain.
     const submissions = await pool.query(`SELECT run_id, tenant_id FROM ${prefix}_message_submissions ORDER BY run_id`);
-    expect(submissions.rows).toEqual([{ run_id: 'owned-a', tenant_id: 'tenant-a' }]);
+    expect(submissions.rows).toEqual([
+      { run_id: 'missing-run', tenant_id: null },
+      { run_id: 'owned-a', tenant_id: 'tenant-a' },
+    ]);
     const inputs = await pool.query(`SELECT source_run_id, tenant_id FROM ${prefix}_steering_inputs ORDER BY source_run_id`);
-    expect(inputs.rows).toEqual([{ source_run_id: 'owned-a', tenant_id: 'tenant-a' }]);
-    const sessions = await pool.query(`SELECT session_id, tenant_id FROM ${prefix}_steering_sessions`);
-    expect(sessions.rows).toEqual([{ session_id: 'unique-session', tenant_id: 'tenant-c' }]);
+    expect(inputs.rows).toEqual([
+      { source_run_id: 'missing-source', tenant_id: null },
+      { source_run_id: 'owned-a', tenant_id: 'tenant-a' },
+      { source_run_id: 'owned-e', tenant_id: null },
+    ]);
+    const quarantinedBeforeContract = await pool.query(`
+      SELECT (SELECT count(*) FROM ${prefix}_message_submissions_tenant_quarantine)
+           + (SELECT count(*) FROM ${prefix}_steering_inputs_tenant_quarantine)
+           + (SELECT count(*) FROM ${prefix}_steering_sessions_tenant_quarantine) AS count
+    `);
+    expect(Number(quarantinedBeforeContract.rows[0]?.count)).toBe(0);
+    const nullableBeforeContract = await pool.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM information_schema.columns
+      WHERE table_name IN ($1, $2, $3) AND column_name = 'tenant_id' AND is_nullable = 'YES'
+    `, [`${prefix}_message_submissions`, `${prefix}_steering_inputs`, `${prefix}_steering_sessions`]);
+    expect(nullableBeforeContract.rows[0]?.count).toBe('3');
+
+    // A pre-v1 writer still has matching conflict arbiters throughout overlap.
+    await expect(pool.query(`
+      INSERT INTO ${prefix}_message_submissions
+        (user_scope,client_message_id,run_id,session_id,delivery_mode,accepted_at)
+      VALUES ('legacy','retry','owned-c','unique-session','queue',now())
+      ON CONFLICT (user_scope,client_message_id) DO NOTHING
+    `)).resolves.toMatchObject({ rowCount: 1 });
+    await expect(pool.query(`
+      INSERT INTO ${prefix}_steering_inputs
+        (input_id,source_run_id,target_run_id,session_id,accepted_at)
+      VALUES ('legacy-steer','owned-c','owned-c','unique-session',now())
+      ON CONFLICT (source_run_id) DO NOTHING
+    `)).resolves.toMatchObject({ rowCount: 1 });
+
+    await expect(stores[0]!.contractTenantSchema({ expectedExpandVersion: 0, oldWritersDrained: true } as never))
+      .rejects.toThrow('contract gate rejected');
+    await stores[0]!.contractTenantSchema({
+      expectedExpandVersion: RUN_STORE_TENANT_SCHEMA_VERSION,
+      oldWritersDrained: true,
+    });
 
     const submissionQuarantine = await pool.query(`SELECT reason, payload->>'run_id' AS id FROM ${prefix}_message_submissions_tenant_quarantine`);
-    expect(submissionQuarantine.rows).toEqual([{ reason: 'orphan_run', id: 'missing-run' }]);
-    const inputQuarantine = await pool.query(`SELECT reason, payload->>'source_run_id' AS id FROM ${prefix}_steering_inputs_tenant_quarantine ORDER BY reason`);
-    expect(inputQuarantine.rows).toEqual([
-      { reason: 'orphan_source_run', id: 'missing-source' },
-      { reason: 'tenant_session_mismatch', id: 'owned-e' },
-    ]);
-    const sessionQuarantine = await pool.query(`SELECT reason, payload->>'session_id' AS id FROM ${prefix}_steering_sessions_tenant_quarantine ORDER BY reason`);
-    expect(sessionQuarantine.rows).toEqual([
-      { reason: 'ambiguous_session', id: 'ambiguous-session' },
-      { reason: 'orphan_session', id: 'orphan-session' },
-    ]);
+    expect(submissionQuarantine.rows).toEqual([{ reason: 'unprovable_tenant_identity', id: 'missing-run' }]);
+    const inputQuarantine = await pool.query(`SELECT payload->>'source_run_id' AS id FROM ${prefix}_steering_inputs_tenant_quarantine ORDER BY id`);
+    expect(inputQuarantine.rows).toEqual([{ id: 'missing-source' }, { id: 'owned-e' }]);
+    const sessionQuarantine = await pool.query(`SELECT payload->>'session_id' AS id FROM ${prefix}_steering_sessions_tenant_quarantine ORDER BY id`);
+    expect(sessionQuarantine.rows).toEqual([{ id: 'ambiguous-session' }, { id: 'orphan-session' }]);
     const nullable = await pool.query<{ count: string }>(`
       SELECT COUNT(*)::text AS count FROM information_schema.columns
       WHERE table_name IN ($1, $2, $3) AND column_name = 'tenant_id' AND is_nullable <> 'NO'

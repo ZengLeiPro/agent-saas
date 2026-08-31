@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolveAutomationBudgetReason } from './sessionAutomationBudgetProgress.js';
 export { reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type pg from 'pg';
@@ -9,10 +9,36 @@ import { SessionAutomationRuntimeGuard, type AutomationAttemptHandle } from './s
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import { estimateContextTokens } from './contextBreakdown.js';
 
+export type GoalEvidenceKind = 'event' | 'tool_result' | 'test' | 'build';
+export interface GoalEvidenceManifestEntry {
+  ref: string;
+  kind: GoalEvidenceKind;
+  tenantId: string;
+  sessionId: string;
+  rootAutomationId: string;
+  source: { eventId: string; runId: string; toolCallId?: string };
+  version: { globalSequence: number; sha256: string };
+  freshness: { capturedAt: string; freshThroughGlobalSequence: number };
+}
+export interface GoalEvidenceManifest {
+  version: 1;
+  fence: {
+    tenantId: string;
+    sessionId: string;
+    rootAutomationId: string;
+    executionId: string;
+    incarnationId: string;
+    generation: number;
+    specVersion: number;
+    runId: string;
+  };
+  entries: GoalEvidenceManifestEntry[];
+  canonicalHash: string;
+}
 /** Evidence consumed by the monotonically versioned automation projection. */
 export interface GoalEvidence {
   summary: string;
-  evidenceRefs: string[];
+  evidenceManifest: GoalEvidenceManifest;
   hardGates: {
     runTerminal: boolean;
     noPendingInteraction: boolean;
@@ -39,12 +65,39 @@ export interface GoalEvaluatorPort {
   }): Promise<{ decision: GoalDecision; reason: string; confidence: number; usage?: ModelUsage }>;
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+function sha256(value: unknown): string { return createHash('sha256').update(canonicalJson(value)).digest('hex'); }
+export function goalEvidenceManifestHash(manifest: Omit<GoalEvidenceManifest, 'canonicalHash'>): string { return sha256(manifest); }
+export function isValidGoalEvidenceManifest(manifest: unknown, expectedHash?: string): manifest is GoalEvidenceManifest {
+  if (!manifest || typeof manifest !== 'object') return false;
+  const value = manifest as GoalEvidenceManifest;
+  if (value.version !== 1 || !value.fence || typeof value.fence !== 'object'
+    || typeof value.fence.tenantId !== 'string' || typeof value.fence.sessionId !== 'string'
+    || typeof value.fence.rootAutomationId !== 'string' || typeof value.fence.executionId !== 'string'
+    || typeof value.fence.incarnationId !== 'string' || !Number.isSafeInteger(value.fence.generation)
+    || !Number.isSafeInteger(value.fence.specVersion) || typeof value.fence.runId !== 'string'
+    || !Array.isArray(value.entries) || value.entries.length === 0 || typeof value.canonicalHash !== 'string') return false;
+  if (value.entries.some(entry => !entry || typeof entry.ref !== 'string' || !['event','tool_result','test','build'].includes(entry.kind)
+    || typeof entry.tenantId !== 'string' || typeof entry.sessionId !== 'string' || typeof entry.rootAutomationId !== 'string'
+    || !entry.source || typeof entry.source.eventId !== 'string' || typeof entry.source.runId !== 'string'
+    || !entry.version || !Number.isSafeInteger(entry.version.globalSequence) || typeof entry.version.sha256 !== 'string'
+    || !entry.freshness || typeof entry.freshness.capturedAt !== 'string' || !Number.isSafeInteger(entry.freshness.freshThroughGlobalSequence))) return false;
+  const { canonicalHash, ...body } = value;
+  return canonicalHash === goalEvidenceManifestHash(body) && (!expectedHash || canonicalHash === expectedHash);
+}
 export function passesGoalHardGates(evidence: GoalEvidence): boolean {
   return evidence.hardGates.runTerminal
     && evidence.hardGates.noPendingInteraction
     && evidence.hardGates.noActiveResources
     && evidence.hardGates.budgetValid
-    && evidence.evidenceRefs.length > 0;
+    && isValidGoalEvidenceManifest(evidence.evidenceManifest);
 }
 
 function parsePersistedGoalDecision(payload: unknown): { decision: GoalDecision; reason: string; confidence: number } | undefined {
@@ -77,6 +130,7 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
     billing: () => BillingService | undefined;
     resolveIdentity: (userId: string) => { username: string } | undefined;
     runtimeGuard?: SessionAutomationRuntimeGuard;
+    executionEnabled?: () => boolean;
   }) {}
 
   async evaluate(input: Parameters<GoalEvaluatorPort['evaluate']>[0]): Promise<{ decision: GoalDecision; reason: string; confidence: number }> {
@@ -126,12 +180,17 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         { role: 'system' as const, content: 'You are an independent completion verifier. Never trust a claimant assertion without evidence. Return only JSON: {"decision":"met|continue|blocked|unverifiable","reason":"...","confidence":0..1}.' },
         { role: 'user' as const, content: JSON.stringify({ completionCondition: input.condition, evidence: input.evidence }) },
       ];
+      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
       attempt = await this.options.runtimeGuard?.beforeModel(context, `goal-evaluation:${input.executionId}`, {
         model: resolved.model, inputTokens: estimateContextTokens(evaluationMessages), maxOutputTokens: 500, purpose: 'goal_evaluation',
       });
       if (attempt) await input.onAttemptPrepared?.(attempt.providerAttemptId);
+      // Recheck after durable preparation and immediately before transport. If the switch changed,
+      // the catch path releases the reservation without sending provider bytes.
+      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
       // Evaluator owns this transport boundary: authorize before any provider bytes are sent.
       await context.authorizeModelTurn?.();
+      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
       transportStarted = true;
       const transportContext = { ...context, authorizeModelTurn: undefined };
       for await (const event of adapter.stream({
@@ -276,6 +335,181 @@ export class SessionAutomationEvaluator {
     };
   }
 
+  private get runtimeEventsTable(): string { return `${this.store.tablePrefix}_events`; }
+
+  private classifyEvidenceEvent(event: Record<string, unknown>, toolInputs: Map<string, { name: string; command?: string }>): GoalEvidenceKind | undefined {
+    // Assistant prose is model-authored progress narration, never host evidence of completion.
+    if (event.type !== 'tool_result' || event.isError === true || typeof event.toolCallId !== 'string') return undefined;
+    const call = toolInputs.get(event.toolCallId);
+    if (!call || call.name !== event.toolName) return undefined;
+    if (call.name !== 'Shell') return 'tool_result';
+    const exitCode = (event.metadata as Record<string, unknown> | undefined)?.exitCode;
+    if (exitCode !== 0) return undefined;
+    const command = (call.command ?? '').trim();
+    // Shell input is model-authored. Only attest a direct, single recognized test/build
+    // invocation whose success is host-derived; substring matches such as `echo test`
+    // and compound commands are deliberately ordinary tool evidence.
+    if (!command || /(?:&&|\|\||[;|`<>\n]|\$\()/u.test(command)) return 'tool_result';
+    const packagePrefix = String.raw`(?:pnpm(?:\s+(?:-[A-Za-z]|--filter)\s+\S+)*\s+|npm\s+|yarn\s+|bun\s+)`;
+    if (new RegExp(`^(?:${packagePrefix}(?:test|typecheck|run\\s+(?:test|typecheck)|exec\\s+(?:vitest|jest|tsc))\\b|(?:npx\\s+)?(?:vitest|jest|pytest|tsc)\\b|cargo\\s+test\\b|go\\s+test\\b)`, 'i').test(command)) return 'test';
+    if (new RegExp(`^(?:${packagePrefix}(?:build|run\\s+build|exec\\s+(?:vite|webpack|rollup)\\s+build)\\b|(?:npx\\s+)?(?:vite|webpack|rollup)\\s+build\\b|cargo\\s+build\\b)`, 'i').test(command)) return 'build';
+    return 'tool_result';
+  }
+
+  async freezeEvidenceManifest(client: pg.Pool | pg.PoolClient, input: {
+    tenantId: string; sessionId: string; automationId: string; executionId: string; runId: string;
+    incarnationId: string; generation: number; specVersion: number; evidenceRefs: string[];
+  }): Promise<{ manifest?: GoalEvidenceManifest; reason?: string }> {
+    const normalized: string[] = [];
+    for (const raw of input.evidenceRefs) {
+      const match = /^\s*event:([^\s]+)\s*$/i.exec(raw);
+      if (!match) return { reason: 'evidence_ref_invalid_format' };
+      const ref = `event:${match[1]}`;
+      if (!normalized.includes(ref)) normalized.push(ref);
+    }
+    if (!normalized.length) return { reason: 'evidence_ref_empty' };
+    const ids = normalized.map(ref => ref.slice('event:'.length));
+    const execution = await client.query(
+      `SELECT 1 FROM ${this.store.tables.executions}
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4 AND run_id=$5`,
+      [input.tenantId, input.sessionId, input.automationId, input.executionId, input.runId],
+    );
+    if (!execution.rowCount) return { reason: 'evidence_ref_outside_fence' };
+    const events = await client.query(
+      `SELECT global_sequence,event_id,event_json,timestamp
+         FROM ${this.runtimeEventsTable}
+        WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3
+        ORDER BY global_sequence`,
+      [input.tenantId, input.sessionId, input.runId],
+    );
+    const byId = new Map<string, { global_sequence: string | number; event_id: string; event_json: Record<string, unknown>; timestamp: Date | string }>();
+    const toolInputs = new Map<string, { name: string; command?: string }>();
+    let freshThrough = 0;
+    const mutationSequences: number[] = [];
+    for (const row of events.rows) {
+      const sequence = Number(row.global_sequence);
+      if (!Number.isSafeInteger(sequence)) return { reason: 'evidence_source_version_invalid' };
+      freshThrough = Math.max(freshThrough, sequence);
+      byId.set(String(row.event_id), row);
+      const event = row.event_json as Record<string, unknown>;
+      if (event.type === 'assistant_tool_calls' && event.runId === input.runId && event.sessionId === input.sessionId && Array.isArray(event.toolCalls)) {
+        for (const rawCall of event.toolCalls) {
+          const call = rawCall as Record<string, unknown>;
+          if (typeof call.id !== 'string' || typeof call.name !== 'string' || typeof call.arguments !== 'string') continue;
+          let command: string | undefined;
+          try { const parsed = JSON.parse(call.arguments) as Record<string, unknown>; if (typeof parsed.command === 'string') command = parsed.command; } catch { /* unsupported input is fail-closed below */ }
+          toolInputs.set(call.id, { name: call.name, ...(command ? { command } : {}) });
+        }
+      }
+    }
+    for (const row of events.rows) {
+      const event = row.event_json as Record<string, unknown>;
+      if (event.type === 'tool_result' && event.isError !== true && ['Write','Edit','Shell'].includes(String(event.toolName))) {
+        mutationSequences.push(Number(row.global_sequence));
+      }
+    }
+    const capturedAt = new Date().toISOString();
+    const entries: GoalEvidenceManifestEntry[] = [];
+    for (let index = 0; index < ids.length; index++) {
+      const row = byId.get(ids[index]!);
+      if (!row) return { reason: 'evidence_ref_not_found' };
+      const event = row.event_json;
+      if (event.runId !== input.runId || event.sessionId !== input.sessionId) return { reason: 'evidence_ref_outside_fence' };
+      const kind = this.classifyEvidenceEvent(event, toolInputs);
+      if (!kind) return { reason: 'evidence_ref_unsupported' };
+      const sequence = Number(row.global_sequence);
+      if ((kind === 'test' || kind === 'build') && mutationSequences.some(value => value > sequence)) return { reason: 'evidence_ref_stale' };
+      entries.push({
+        ref: normalized[index]!, kind, tenantId: input.tenantId, sessionId: input.sessionId,
+        rootAutomationId: input.automationId,
+        source: { eventId: String(row.event_id), runId: input.runId,
+          ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}) },
+        version: { globalSequence: sequence, sha256: sha256(event) },
+        freshness: { capturedAt, freshThroughGlobalSequence: freshThrough },
+      });
+    }
+    const body = {
+      version: 1 as const,
+      fence: {
+        tenantId: input.tenantId, sessionId: input.sessionId, rootAutomationId: input.automationId,
+        executionId: input.executionId, incarnationId: input.incarnationId, generation: input.generation,
+        specVersion: input.specVersion, runId: input.runId,
+      },
+      entries,
+    };
+    return { manifest: { ...body, canonicalHash: goalEvidenceManifestHash(body) } };
+  }
+
+  async validateEvidenceManifest(client: pg.Pool | pg.PoolClient, manifest: unknown, expectedHash: string, input: {
+    tenantId: string; sessionId: string; automationId: string; executionId: string; incarnationId: string;
+    generation: number; specVersion: number; runId: string; throughGlobalSequence?: number;
+  }): Promise<{ valid: boolean; reason?: string }> {
+    if (!isValidGoalEvidenceManifest(manifest, expectedHash)) return { valid: false, reason: 'evidence_manifest_tampered' };
+    const frozen = manifest as GoalEvidenceManifest;
+    if (frozen.fence.tenantId !== input.tenantId || frozen.fence.sessionId !== input.sessionId
+      || frozen.fence.rootAutomationId !== input.automationId || frozen.fence.executionId !== input.executionId
+      || frozen.fence.incarnationId !== input.incarnationId || frozen.fence.generation !== input.generation
+      || frozen.fence.specVersion !== input.specVersion || frozen.fence.runId !== input.runId) {
+      return { valid: false, reason: 'evidence_manifest_fence_mismatch' };
+    }
+    for (const entry of frozen.entries) {
+      if (entry.tenantId !== input.tenantId || entry.sessionId !== input.sessionId
+        || entry.rootAutomationId !== input.automationId || entry.source.runId !== input.runId) return { valid: false, reason: 'evidence_ref_outside_fence' };
+      const row = await client.query(
+        `SELECT global_sequence,event_json FROM ${this.runtimeEventsTable}
+          WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND event_id=$4`,
+        [input.tenantId, input.sessionId, input.runId, entry.source.eventId],
+      );
+      if (!row.rowCount) return { valid: false, reason: 'evidence_ref_not_found' };
+      if (Number(row.rows[0].global_sequence) !== entry.version.globalSequence || sha256(row.rows[0].event_json) !== entry.version.sha256) {
+        return { valid: false, reason: 'evidence_source_changed' };
+      }
+      if (entry.kind === 'test' || entry.kind === 'build') {
+        const stale = await client.query(
+          `SELECT 1 FROM ${this.runtimeEventsTable}
+            WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND global_sequence>$4
+              AND ($5::bigint IS NULL OR global_sequence<=$5)
+              AND event_type='tool_result' AND COALESCE((event_json->>'isError')::boolean,false)=false
+              AND event_json->>'toolName' IN ('Write','Edit','Shell') LIMIT 1`,
+          [input.tenantId, input.sessionId, input.runId, entry.version.globalSequence, input.throughGlobalSequence ?? null],
+        );
+        if (stale.rowCount) return { valid: false, reason: 'evidence_ref_stale' };
+      }
+    }
+    return { valid: true };
+  }
+
+  private async validateEvaluationEvidence(client: pg.Pool | pg.PoolClient, job: {
+    tenant_id: string; session_id: string; automation_id: string; execution_id: string;
+    incarnation_id: string; generation: string | number; spec_version: string | number;
+    decision_epoch: string | number; run_id: string; evidence_manifest_hash?: string;
+    evidence_manifest?: GoalEvidenceManifest; evidence?: GoalEvidence;
+  }, evidence: GoalEvidence): Promise<{ valid: boolean; reason?: string }> {
+    if (!job.evidence_manifest_hash || !job.evidence_manifest
+      || canonicalJson(job.evidence_manifest) !== canonicalJson(evidence.evidenceManifest)) {
+      return { valid: false, reason: 'evidence_manifest_tampered' };
+    }
+    const candidate = await client.query(
+      `SELECT summary,evidence_manifest,evidence_manifest_hash FROM ${this.store.tables.goalCompletionCandidates}
+        WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4
+          AND incarnation_id=$5 AND generation=$6 AND spec_version=$7 AND run_id=$8 AND projected_at IS NOT NULL`,
+      [job.tenant_id, job.session_id, job.automation_id, job.execution_id, job.incarnation_id,
+        job.generation, job.spec_version, job.run_id],
+    );
+    const frozen = candidate.rows[0];
+    if (!frozen || String(frozen.evidence_manifest_hash ?? '') !== job.evidence_manifest_hash
+      || canonicalJson(frozen.evidence_manifest) !== canonicalJson(job.evidence_manifest)
+      || frozen.summary !== evidence.summary) {
+      return { valid: false, reason: 'evidence_candidate_mismatch' };
+    }
+    return this.validateEvidenceManifest(client, evidence.evidenceManifest, job.evidence_manifest_hash, {
+      tenantId: job.tenant_id, sessionId: job.session_id, automationId: job.automation_id,
+      executionId: job.execution_id, incarnationId: job.incarnation_id,
+      generation: Number(job.generation), specVersion: Number(job.spec_version), runId: job.run_id,
+      throughGlobalSequence: Number(job.decision_epoch),
+    });
+  }
+
   async nominate(input: {
     tenantId: string;
     sessionId: string;
@@ -288,7 +522,7 @@ export class SessionAutomationEvaluator {
     summary: string;
     evidenceRefs: string[];
   }): Promise<{ queued: boolean; reason?: string }> {
-    if (input.evidenceRefs.length === 0) return { queued: false, reason: 'hard_gate' };
+    if (input.evidenceRefs.length === 0) return { queued: false, reason: 'evidence_ref_empty' };
     return this.store.tx(async client => {
       const snapshot = await this.store.getLocked(client, input.tenantId, input.sessionId, input.automationId);
       if (!snapshot || snapshot.spec.kind !== 'goal' || snapshot.status !== 'active'
@@ -305,16 +539,18 @@ export class SessionAutomationEvaluator {
           input.incarnationId, input.generation, input.specVersion],
       );
       if (!execution.rowCount) return { queued: false, reason: 'stale_fence' };
-      await client.query(
+      const frozen = await this.freezeEvidenceManifest(client, input);
+      if (!frozen.manifest) return { queued: false, reason: frozen.reason ?? 'evidence_ref_unsupported' };
+      const inserted = await client.query(
         `INSERT INTO ${this.store.tables.goalCompletionCandidates}
-          (candidate_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,run_id,summary,evidence_refs)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          (candidate_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,run_id,summary,evidence_refs,evidence_manifest,evidence_manifest_hash)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT(execution_id) DO NOTHING`,
         [randomUUID(), input.tenantId, input.sessionId, input.automationId, input.executionId,
           input.incarnationId, input.generation, input.specVersion, input.runId, input.summary,
-          JSON.stringify(input.evidenceRefs)],
+          JSON.stringify(frozen.manifest.entries.map(entry => entry.ref)), JSON.stringify(frozen.manifest), frozen.manifest.canonicalHash],
       );
-      return { queued: true };
+      return inserted.rowCount ? { queued: true } : { queued: false, reason: 'candidate_exists' };
     });
   }
 
@@ -324,6 +560,7 @@ export class SessionAutomationEvaluator {
       evaluation_id: string; tenant_id: string; session_id: string; automation_id: string;
       execution_id: string; incarnation_id: string; generation: string | number;
       spec_version: string | number; decision_epoch: string | number; run_id: string;
+      evidence_manifest_hash?: string; evidence_manifest?: GoalEvidenceManifest;
     },
     evidence: GoalEvidence,
     result: { decision: GoalDecision; reason: string; confidence: number },
@@ -342,8 +579,9 @@ export class SessionAutomationEvaluator {
       && current.generation === Number(job.generation)
       && current.specVersion === Number(job.spec_version)
       && current.status === 'active';
+    const manifestValidation = await this.validateEvaluationEvidence(client, job, evidence);
     const decision = result.decision === 'met'
-      && (!passesGoalHardGates({ ...evidence, hardGates: latestGates }) || result.confidence < 0.8)
+      && (!manifestValidation.valid || !passesGoalHardGates({ ...evidence, hardGates: latestGates }) || result.confidence < 0.8)
       ? { ...result, decision: 'unverifiable' as const, reason: 'final_gate_or_confidence_failed' }
       : result;
     const updated = 'leaseToken' in authority
@@ -398,7 +636,7 @@ export class SessionAutomationEvaluator {
     let restored = 0;
     const completed = await this.store.pool.query(
       `SELECT e.evaluation_id,e.tenant_id,e.session_id,e.automation_id,e.execution_id,e.incarnation_id,
-              e.generation,e.spec_version,e.decision_epoch,e.evidence,x.run_id,p.provider_attempt_id,p.result_payload
+              e.generation,e.spec_version,e.decision_epoch,e.evidence,e.evidence_manifest,e.evidence_manifest_hash,x.run_id,p.provider_attempt_id,p.result_payload
          FROM ${this.store.tables.evaluations} e
          JOIN ${this.store.tables.executions} x
            ON x.tenant_id=e.tenant_id AND x.session_id=e.session_id AND x.automation_id=e.automation_id
@@ -527,7 +765,7 @@ export class SessionAutomationEvaluator {
   private async checkInBlocked(): Promise<number> {
     const blocked = await this.store.pool.query(
       `SELECT e.evaluation_id,e.tenant_id,e.session_id,e.automation_id,e.execution_id,e.incarnation_id,
-              e.generation,e.spec_version,e.evidence,x.run_id
+              e.generation,e.spec_version,e.decision_epoch,e.evidence,e.evidence_manifest,e.evidence_manifest_hash,x.run_id
          FROM ${this.store.tables.evaluations} e
          JOIN ${this.store.tables.executions} x ON x.execution_id=e.execution_id
         WHERE e.state='blocked' AND e.decision->>'reason'='hard_gate'`,
@@ -542,7 +780,9 @@ export class SessionAutomationEvaluator {
           tenantId: job.tenant_id, sessionId: job.session_id, automationId: job.automation_id,
           executionId: job.execution_id, runId: job.run_id,
         });
-        if (!passesGoalHardGates({ ...job.evidence, hardGates: gates })) return 0;
+        const evidence: GoalEvidence = { ...job.evidence, hardGates: gates };
+        const manifestValidation = await this.validateEvaluationEvidence(client, job, evidence);
+        if (!manifestValidation.valid || !passesGoalHardGates(evidence)) return 0;
         const updated = await client.query(
           `UPDATE ${this.store.tables.evaluations}
               SET state='pending',decision=NULL,updated_at=now()
@@ -590,6 +830,10 @@ export class SessionAutomationEvaluator {
     });
 
     for (const job of jobs) {
+      if (!this.executionEnabled()) {
+        await this.releaseClaimForDisabledExecution(job.evaluation_id, job.lease_token);
+        continue;
+      }
       const snapshot = await this.store.get(job.tenant_id, job.session_id, job.automation_id);
       if (!snapshot) continue;
       const gates = await this.resolveHardGates(this.store.pool, {
@@ -600,6 +844,16 @@ export class SessionAutomationEvaluator {
         runId: job.run_id,
       });
       const evidence: GoalEvidence = { ...job.evidence, hardGates: gates };
+      const manifestValidation = await this.validateEvaluationEvidence(this.store.pool, job, evidence);
+      if (!manifestValidation.valid) {
+        await this.store.pool.query(
+          `UPDATE ${this.store.tables.evaluations}
+              SET state='unverifiable',decision=$2,lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+            WHERE evaluation_id=$1 AND lease_token=$3`,
+          [job.evaluation_id, JSON.stringify({ decision: 'unverifiable', reason: manifestValidation.reason ?? 'evidence_manifest_invalid', confidence: 1 }), job.lease_token],
+        );
+        continue;
+      }
       if (!passesGoalHardGates(evidence)) {
         await this.store.pool.query(
           `UPDATE ${this.store.tables.evaluations}
@@ -610,8 +864,12 @@ export class SessionAutomationEvaluator {
         continue;
       }
 
-      // Close the claim-to-provider race: revalidate the complete automation fence immediately
-      // before the evaluator can reserve budget or send provider bytes.
+      // Close the claim-to-provider race: revalidate the switch and complete automation fence
+      // immediately before the evaluator can reserve budget or send provider bytes.
+      if (!this.executionEnabled()) {
+        await this.releaseClaimForDisabledExecution(job.evaluation_id, job.lease_token);
+        continue;
+      }
       const admitted = await this.store.pool.query(
         `SELECT 1 FROM ${this.store.tables.evaluations} e
           JOIN ${this.store.tables.automations} a
@@ -631,6 +889,10 @@ export class SessionAutomationEvaluator {
         continue;
       }
 
+      if (!this.executionEnabled()) {
+        await this.releaseClaimForDisabledExecution(job.evaluation_id, job.lease_token);
+        continue;
+      }
       let result: { decision: GoalDecision; reason: string; confidence: number };
       try {
         result = await this.evaluator.evaluate({
@@ -675,6 +937,15 @@ export class SessionAutomationEvaluator {
       const published=await this.store.get(job.tenant_id,job.session_id,job.automation_id);if(published)this.store.publish(published);
     }
     return jobs.length;
+  }
+
+  private async releaseClaimForDisabledExecution(evaluationId: string, leaseToken: string): Promise<void> {
+    await this.store.pool.query(
+      `UPDATE ${this.store.tables.evaluations}
+          SET state='pending',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+        WHERE evaluation_id=$1 AND lease_token=$2 AND state='claimed'`,
+      [evaluationId, leaseToken],
+    );
   }
 
   start(pollMs = 2_000): void {

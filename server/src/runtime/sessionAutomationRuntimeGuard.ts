@@ -36,6 +36,7 @@ export interface AutomationModelAdmission {
 interface AutomationLineage {
   tenantId: string;
   sessionId: string;
+  invokingSessionId: string;
   automationId: string;
   incarnationId: string;
   generation: number;
@@ -78,7 +79,8 @@ export class SessionAutomationRuntimeGuard {
     if (context.runId !== fence.runId) throw new AutomationFenceRejectedError('context_run_mismatch');
     return {
       tenantId: context.tenantId,
-      sessionId: context.sessionId,
+      sessionId: fence.rootSessionId ?? context.sessionId,
+      invokingSessionId: context.sessionId,
       automationId: fence.automationId,
       incarnationId: fence.incarnationId,
       generation: fence.generation,
@@ -129,8 +131,19 @@ export class SessionAutomationRuntimeGuard {
           lineage.generation, lineage.specVersion, lineage.executionId, lineage.executionRunId],
       );
       if (!evaluation.rowCount) throw new AutomationFenceRejectedError('evaluation_execution_mismatch');
-    } else if (automation.active_run_id !== lineage.executionRunId) {
-      throw new AutomationFenceRejectedError('active_run_mismatch');
+    } else {
+      const execution = await client.query(
+        `SELECT 1 FROM ${this.tables.executions}
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND incarnation_id=$4 AND generation=$5 AND spec_version=$6
+            AND execution_id=$7 AND run_id=$8 AND state='running'`,
+        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+          lineage.generation, lineage.specVersion, lineage.executionId, lineage.executionRunId],
+      );
+      if (!execution.rowCount) throw new AutomationFenceRejectedError('execution_mismatch');
+      if (automation.active_run_id !== lineage.executionRunId) {
+        throw new AutomationFenceRejectedError('active_run_mismatch');
+      }
     }
 
     return resolveAutomationBudgetReason({
@@ -231,7 +244,14 @@ export class SessionAutomationRuntimeGuard {
     // Estimators are approximate; reserve a deterministic 10% input margin plus framing overhead.
     const inputTokens = Math.ceil(estimatedInputTokens * 1.1) + 16;
     const purpose = admission.purpose ?? 'work';
-    const sourceKey = `model:${lineage.executionId}:${operation}`;
+    // Keep the legacy root-run key stable for rolling retries, while child attempts must include
+    // their invoking session as well as run. Child run ids are not an authority boundary and may
+    // collide across independently-created hidden sessions.
+    const invocationKey = lineage.invokingSessionId === lineage.sessionId
+      && lineage.invokingRunId === lineage.executionRunId
+      ? lineage.invokingRunId
+      : `${lineage.invokingSessionId.length}:${lineage.invokingSessionId}:${lineage.invokingRunId}`;
+    const sourceKey = `model:${lineage.executionId}:${invocationKey}:${operation}`;
     const client = await this.pool.connect();
     let committed = false;
     try {
@@ -240,8 +260,13 @@ export class SessionAutomationRuntimeGuard {
       if (budgetReason === 'max_runs') budgetReason = undefined;
 
       const budgetRow = await client.query<{spec: SessionAutomationSpec;run_count:string|number}>(
-        `SELECT s.spec,a.run_count FROM ${this.tables.automations} a JOIN ${this.tables.specs} s ON s.automation_id=a.automation_id AND s.spec_version=a.spec_version WHERE a.tenant_id=$1 AND a.automation_id=$2`,
-        [lineage.tenantId,lineage.automationId],
+        `SELECT s.spec,a.run_count FROM ${this.tables.automations} a
+          JOIN ${this.tables.specs} s
+            ON s.tenant_id=a.tenant_id AND s.session_id=a.session_id AND s.automation_id=a.automation_id
+           AND s.spec_version=a.spec_version
+         WHERE a.tenant_id=$1 AND a.session_id=$2 AND a.automation_id=$3
+           AND a.incarnation_id=$4 AND a.generation=$5 AND a.spec_version=$6`,
+        [lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.specVersion],
       );
       const budget = budgetRow.rows[0]?.spec.budget ?? {};
       if (Number(budgetRow.rows[0]?.run_count ?? 0) > (budget.maxRuns ?? Number.MAX_SAFE_INTEGER)) budgetReason='max_runs';
@@ -333,8 +358,8 @@ export class SessionAutomationRuntimeGuard {
         [id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,kind,purpose,amount,unit,`${sourceKey}:${kind}`],
       );
       await client.query(
-        `INSERT INTO ${this.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,provider,operation,idempotency_key,request_payload,state,dispatched_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'model',$10,$11,$12,'dispatched',now())`,
-        [providerAttemptId,prepared.rows[0].prepared_dispatch_attempt_id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,operation,sourceKey,JSON.stringify({model:admission.model,inputTokens,maxOutputTokens,purpose,invokingRunId:lineage.invokingRunId})],
+        `INSERT INTO ${this.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,invoking_session_id,invoking_run_id,provider,operation,idempotency_key,request_payload,state,dispatched_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'model',$12,$13,$14,'dispatched',now())`,
+        [providerAttemptId,prepared.rows[0].prepared_dispatch_attempt_id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,lineage.invokingSessionId,lineage.invokingRunId,operation,sourceKey,JSON.stringify({model:admission.model,inputTokens,maxOutputTokens,purpose,incarnationId:lineage.incarnationId,generation:lineage.generation,specVersion:lineage.specVersion,executionId:lineage.executionId,rootSessionId:lineage.sessionId,rootRunId:lineage.executionRunId,invokingSessionId:lineage.invokingSessionId,invokingRunId:lineage.invokingRunId})],
       );
       await client.query('COMMIT'); committed=true;
       return {providerAttemptId,reservationIds:reservations.map(x=>x[0]),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
@@ -342,7 +367,7 @@ export class SessionAutomationRuntimeGuard {
     finally { client.release(); }
   }
 
-  /** Release a prepared evaluator attempt when platform authorization fails before transport. */
+  /** Release a prepared evaluator attempt if platform authorization fails before transport. */
   async releaseModel(context: RunContext, handle: AutomationAttemptHandle | undefined, reason: string): Promise<void> {
     if (!handle) return;
     const lineage=this.lineage(context)!;

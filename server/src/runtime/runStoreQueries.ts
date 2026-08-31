@@ -313,8 +313,8 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         ON run.tenant_id = submission.tenant_id
        AND run.run_id = submission.run_id
       WHERE submission.tenant_id = $1
-        AND submission.user_scope = $2
-        AND submission.client_message_id = $3
+        AND submission.tenant_user_scope = $2
+        AND submission.tenant_client_message_id = $3
       LIMIT 1
     `, [tenantId, userScope, idempotencyKey]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
@@ -327,8 +327,8 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
       JOIN ${this.runsTable} run
         ON run.tenant_id = submission.tenant_id
        AND run.run_id = submission.run_id
-      WHERE submission.user_scope = $1
-        AND submission.client_message_id = $2
+      WHERE submission.tenant_user_scope = $1
+        AND submission.tenant_client_message_id = $2
       ORDER BY submission.tenant_id
       LIMIT 2
     `, [userId, idempotencyKey]);

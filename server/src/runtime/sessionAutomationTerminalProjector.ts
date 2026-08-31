@@ -4,6 +4,7 @@ import type { SdkResultModelUsage } from '../agent/types.js';
 import type { PlatformEvent } from './types.js';
 import { extractRunProgressEvidence, reduceNoProgress } from './sessionAutomationBudgetProgress.js';
 import type { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import { SessionAutomationEvaluator, type GoalEvaluatorPort } from './sessionAutomationEvaluator.js';
 
 export interface AutomationTerminalEvent {
   globalSequence: number;
@@ -29,11 +30,15 @@ export class SessionAutomationTerminalProjector {
   private timer?: NodeJS.Timeout;
   private running = false;
 
+  private readonly evidenceValidator: SessionAutomationEvaluator;
   constructor(
     readonly store: PgSessionAutomationStore,
     readonly consumerName = 'session-automation-terminal-v2',
     readonly noProgressThreshold = 3,
-  ) {}
+  ) {
+    const unavailable: GoalEvaluatorPort = { evaluate: async () => { throw new Error('evaluator_unavailable'); } };
+    this.evidenceValidator = new SessionAutomationEvaluator(store, unavailable, () => false);
+  }
 
   async cursor(): Promise<number> {
     await this.store.pool.query(
@@ -203,25 +208,53 @@ export class SessionAutomationTerminalProjector {
           }
 
           if (row.mode === 'goal') {
-            const evaluation = await client.query(
+            const candidate = await client.query(
+              `SELECT evidence_manifest,evidence_manifest_hash FROM ${this.store.tables.goalCompletionCandidates}
+                WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND execution_id=$4
+                  AND run_id=$5 AND incarnation_id=$6 AND generation=$7 AND spec_version=$8 AND projected_at IS NULL`,
+              [event.tenantId, event.sessionId, row.automation_id, row.execution_id, event.runId,
+                row.current_incarnation, row.current_generation, row.spec_version],
+            );
+            const frozen = candidate.rows[0];
+            const validation = frozen
+              ? await this.evidenceValidator.validateEvidenceManifest(client, frozen.evidence_manifest, String(frozen.evidence_manifest_hash), {
+                tenantId: event.tenantId, sessionId: event.sessionId, automationId: row.automation_id,
+                executionId: row.execution_id, incarnationId: row.current_incarnation,
+                generation: Number(row.current_generation), specVersion: Number(row.spec_version),
+                runId: event.runId, throughGlobalSequence: event.globalSequence,
+              })
+              : { valid: false, reason: 'evidence_manifest_missing' };
+            if (frozen && !validation.valid) {
+              await client.query(
+                `UPDATE ${this.store.tables.goalCompletionCandidates}
+                    SET projected_at=now(),rejection_reason=$2
+                  WHERE execution_id=$1 AND tenant_id=$3 AND session_id=$4 AND automation_id=$5
+                    AND incarnation_id=$6 AND generation=$7 AND spec_version=$8 AND projected_at IS NULL`,
+                [row.execution_id, validation.reason ?? 'evidence_manifest_invalid', event.tenantId, event.sessionId,
+                  row.automation_id, row.current_incarnation, row.current_generation, row.spec_version],
+              );
+            }
+            const evaluation = validation.valid ? await client.query(
               `INSERT INTO ${this.store.tables.evaluations}
-                (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence)
+                (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,evidence_manifest,evidence_manifest_hash)
                SELECT $1,c.tenant_id,c.session_id,c.automation_id,c.execution_id,c.incarnation_id,c.generation,c.spec_version,$2,
                       jsonb_build_object(
                         'summary',c.summary,
-                        'evidenceRefs',c.evidence_refs,
+                        'evidenceManifest',c.evidence_manifest,
                         'hardGates',jsonb_build_object(
-                          'runTerminal',true,'noPendingInteraction',false,'noActiveResources',false,'budgetValid',false))
+                          'runTerminal',true,'noPendingInteraction',false,'noActiveResources',false,'budgetValid',false)),
+                      c.evidence_manifest,c.evidence_manifest_hash
                  FROM ${this.store.tables.goalCompletionCandidates} c
                 WHERE c.tenant_id=$3 AND c.session_id=$4 AND c.automation_id=$5 AND c.execution_id=$6
                   AND c.run_id=$7 AND c.incarnation_id=$8 AND c.generation=$9 AND c.spec_version=$10
-                  AND c.projected_at IS NULL AND jsonb_array_length(c.evidence_refs)>0
+                  AND c.projected_at IS NULL AND c.evidence_manifest_hash=$11
                   AND NOT EXISTS (SELECT 1 FROM ${this.store.tables.evaluations} e WHERE e.execution_id=c.execution_id)
                ON CONFLICT(tenant_id,automation_id,generation,decision_epoch) DO NOTHING
                RETURNING evaluation_id`,
               [randomUUID(), event.globalSequence, event.tenantId, event.sessionId, row.automation_id,
-                row.execution_id, event.runId, row.current_incarnation, row.current_generation, row.spec_version],
-            );
+                row.execution_id, event.runId, row.current_incarnation, row.current_generation, row.spec_version,
+                frozen?.evidence_manifest_hash],
+            ) : { rowCount: 0 };
             if (evaluation.rowCount) {
               await client.query(
                 `UPDATE ${this.store.tables.goalCompletionCandidates}

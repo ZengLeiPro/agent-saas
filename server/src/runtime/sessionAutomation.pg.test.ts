@@ -17,8 +17,39 @@ describePg('session automation real PostgreSQL integration',()=>{
  const prefix=`automation_${randomUUID().replaceAll('-','').slice(0,12)}`;let pool:InstanceType<typeof Pool>;let events:PgEventStore;let runs:PgRunStore;let store:PgSessionAutomationStore;const tenant='tenant-a',session='session-a',automation=randomUUID(),incarnation=randomUUID();
  beforeAll(async()=>{pool=new Pool({connectionString:url!,max:8});events=new PgEventStore({connectionString:url!,tablePrefix:prefix,poolMax:4});await events.init();runs=new PgRunStore({pool,tablePrefix:prefix});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[automation,tenant,session,incarnation]);await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[automation,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);},30_000);
  afterAll(async()=>{if(!pool)return;await events.close();await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP; END $$`).catch(()=>undefined);await pool.end();},30_000);
- async function wake(key:string,generation=1){const current=await pool.query(`SELECT incarnation_id,continuation_epoch FROM ${store.tables.automations} WHERE automation_id=$1`,[automation]);await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId:session,automationId:automation,incarnationId:String(current.rows[0].incarnation_id),generation,specVersion:1,continuationEpoch:Number(current.rows[0].continuation_epoch),triggerKey:key,dueAt:new Date(0),payload:{}}));}
+ async function schedule(automationId:string,sessionId:string,key:string,dueAt:Date,generation:number){const current=await pool.query(`SELECT incarnation_id,continuation_epoch FROM ${store.tables.automations} WHERE automation_id=$1`,[automationId]);await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId,automationId,incarnationId:String(current.rows[0].incarnation_id),generation,specVersion:1,continuationEpoch:Number(current.rows[0].continuation_epoch),triggerKey:key,dueAt,payload:{}}));}
+ async function wake(key:string,generation=1){await schedule(automation,session,key,new Date(0),generation);}
  it('multi-worker claims exactly once and crash lease is recovered',async()=>{await wake('multi');await Promise.all([store.claimDue(10,10),store.claimDue(10,10)]);const [a,b]=await Promise.all([store.claimDispatch(10,10),store.claimDispatch(10,10)]);expect([...a,...b]).toHaveLength(1);await new Promise(r=>setTimeout(r,20));await store.recoverLeases();expect(await store.claimDispatch(10,1000)).toHaveLength(1);});
+ it('claimDue coalesces double-due generations and keeps producing around an existing open dispatch',async()=>{
+  await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);
+  await pool.query(`UPDATE ${store.tables.automations} SET generation=3,status='active',phase='idle',active_run_id=NULL,run_count=0,limit_hit_reason=NULL,limit_hit_at=NULL WHERE automation_id=$1`,[automation]);
+  const otherAutomation=randomUUID(),otherIncarnation=randomUUID(),otherSession=`session-${randomUUID()}`;
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[otherAutomation,tenant,otherSession,otherIncarnation]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[otherAutomation,tenant,otherSession,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
+  await schedule(automation,session,'double-due-late',new Date(1),3);
+  await schedule(automation,session,'double-due-early',new Date(0),3);
+  await schedule(otherAutomation,otherSession,'other-first',new Date(0),1);
+
+  expect(await store.claimDue(10)).toBe(2); // one coalesced winner per automation; the batch does not roll back
+  const first=await pool.query(`SELECT trigger_key FROM ${store.tables.outbox} WHERE automation_id=$1 AND generation=3 AND state='pending'`,[automation]);
+  expect(first.rows).toEqual([{trigger_key:'double-due-early'}]);
+  expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.wakeups} WHERE automation_id=$1 AND generation=3 AND state='pending'`,[automation])).rows[0].count).toBe(1);
+
+  await pool.query(`UPDATE ${store.tables.outbox} SET state='dead' WHERE automation_id=$1`,[otherAutomation]);
+  const [firstDispatch]=await store.claimDispatch();
+  expect(firstDispatch?.automationId).toBe(automation);
+  await runs.createPending({runId:firstDispatch!.targetRunId,sessionId:session,tenantId:tenant,userId:'user-a',metadata:{schedulerState:'staged'}});
+  await store.markDispatched(firstDispatch!);
+  await events.append({type:'run_finished',runId:firstDispatch!.targetRunId,sessionId:session,subtype:'success',numTurns:1},{tenantId:tenant});
+  await new SessionAutomationTerminalProjector(store,`claim-due-${randomUUID()}`).recover(events);
+  expect((await pool.query(`SELECT state FROM ${store.tables.outbox} WHERE outbox_id=$1`,[firstDispatch!.outboxId])).rows[0]?.state).toBe('completed');
+
+  await schedule(otherAutomation,otherSession,'other-second',new Date(0),1);
+  expect(await store.claimDue(10)).toBe(2);
+  expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.outbox} WHERE automation_id=$1 AND generation=3 AND state='pending'`,[automation])).rows[0].count).toBe(1);
+  expect((await pool.query(`SELECT count(*)::int AS count FROM ${store.tables.outbox} WHERE automation_id=$1 AND state='pending'`,[otherAutomation])).rows[0].count).toBe(1);
+  expect(await store.claimDue(10)).toBe(0);
+ });
  it('cancel/generation fence prevents stale dispatch',async()=>{await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);await wake('old-generation');await store.claimDue();await pool.query(`UPDATE ${store.tables.automations} SET generation=2,status='cancelled' WHERE automation_id=$1`,[automation]);expect(await store.claimDispatch()).toEqual([]);});
  it('tool visibility requires matching host fence',()=>{const provider=new SessionAutomationToolProvider({} as never);expect(provider.list()).toEqual([]);const base={channelContext:{channel:'web'},workspace:{root:'.',executionTarget:'server-local'},sessionId:session,runId:'run-a'} as any;expect(provider.list(base)).toEqual([]);expect(provider.list({...base,automationFence:{automationId:automation,incarnationId:incarnation,generation:2,specVersion:1,executionId:'e',runId:'run-a'}}).map(t=>t.id)).toEqual(['ScheduleWakeup','UpdateGoal']);});
  it('fixed terminal schedules from the durable wakeup slot and advances the projection',async()=>{

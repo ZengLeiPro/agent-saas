@@ -14,11 +14,11 @@ const context = {
     automationId: '11111111-1111-4111-8111-111111111111',
     incarnationId: '22222222-2222-4222-8222-222222222222',
     generation: 2, specVersion: 3,
-    executionId: '33333333-3333-4333-8333-333333333333', runId: 'run-a',
+    executionId: '33333333-3333-4333-8333-333333333333', runId: 'run-a', rootSessionId: 'session-a',
   },
 } as RunContext;
 
-class FakePool { // SQL-aware test double for RuntimeGuard transactions
+class FakePool { // SQL-aware transaction test double for RuntimeGuard
   readonly statements: string[] = [];
   automation: {
     status: string; incarnation_id: string; generation: number; spec_version: number; active_run_id: string | null;
@@ -210,13 +210,34 @@ describe('SessionAutomationRuntimeGuard', () => {
     expect(work.allowanceRemaining).toBe(2);
   });
 
-  it('source/idempotency key 稳定绑定 execution+operation，不含随机重试后缀', async () => {
+  it('root key 滚动兼容，child key 同时按 invoking session/run 隔离', async () => {
+    const rootWithoutRootSession = {
+      ...context,
+      automationFence: { ...context.automationFence!, rootSessionId: undefined },
+    } as RunContext;
     const first = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
-      .beforeModel(context, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+      .beforeModel(rootWithoutRootSession, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
     const retry = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
-      .beforeModel(context, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
-    expect(first?.sourceKey).toBe(`model:${context.automationFence!.executionId}:turn:stable`);
+      .beforeModel(rootWithoutRootSession, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+    expect(first?.sourceKey).toBe(`model:${context.automationFence!.executionId}:${context.runId}:turn:stable`);
     expect(retry?.sourceKey).toBe(first?.sourceKey);
+
+    const child = (sessionId: string) => ({
+      ...context,
+      sessionId,
+      runId: 'shared-child-run',
+      automationFence: {
+        ...context.automationFence!, rootSessionId: context.sessionId, rootRunId: context.runId,
+        runId: 'shared-child-run',
+      },
+    } as RunContext);
+    const childA = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+      .beforeModel(child('child-session-a'), 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+    const childB = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+      .beforeModel(child('child-session-b'), 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
+    expect(childA?.sourceKey).toContain(':15:child-session-a:shared-child-run:turn:stable');
+    expect(childB?.sourceKey).toContain(':15:child-session-b:shared-child-run:turn:stable');
+    expect(childA?.sourceKey).not.toBe(childB?.sourceKey);
   });
 
   it('实际用量超过 reservation 时进入 reconcile，不能静默结算', async () => {
@@ -229,7 +250,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     await guard.finishModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
-      purpose: 'work', sourceKey: `model:${context.automationFence!.executionId}:turn:over`,
+      purpose: 'work', sourceKey: `model:${context.automationFence!.executionId}:${context.runId}:turn:over`,
     }, { inputTokens: 10, outputTokens: 20 });
     expect(pool.statements.join('\n')).toContain("status='reconcile_required'");
   });
@@ -241,7 +262,7 @@ describe('SessionAutomationRuntimeGuard', () => {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
       purpose: 'goal_evaluation', allowanceUsed: true,
-      sourceKey: `model:${context.automationFence!.executionId}:goal`,
+      sourceKey: `model:${context.automationFence!.executionId}:${context.runId}:goal`,
     }, 'billing denied');
     const joined = pool.statements.join('\n');
     expect(joined).toContain("state='cancelled'");

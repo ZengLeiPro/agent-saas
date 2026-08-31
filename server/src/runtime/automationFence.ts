@@ -20,6 +20,7 @@ export function automationFenceFromMetadata(metadata: unknown): RunContext['auto
     specVersion: fence.specVersion,
     executionId: fence.executionId,
     runId: fence.runId,
+    ...(typeof fence.rootSessionId === 'string' ? { rootSessionId: fence.rootSessionId } : {}),
     ...(typeof fence.rootRunId === 'string' ? { rootRunId: fence.rootRunId } : {}),
   };
 }

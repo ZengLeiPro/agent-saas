@@ -59,6 +59,7 @@ export function createSessionAutomationWorkers(options: {
   cancelRun: (runId:string,reason:string)=>Promise<void>;
   onError: (error: unknown) => void;
 }) {
+  // The evaluator shares the same live execution gate at claim and provider transport boundaries.
   const runtimeGuard = new SessionAutomationRuntimeGuard(
     options.store.pool,
     options.store.tablePrefix,
@@ -67,6 +68,7 @@ export function createSessionAutomationWorkers(options: {
   const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator({
     ...options.evaluator,
     runtimeGuard,
+    executionEnabled: options.executionEnabled,
   }), options.executionEnabled);
   return {
     evaluator,

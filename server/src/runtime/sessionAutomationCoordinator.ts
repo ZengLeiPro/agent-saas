@@ -66,10 +66,15 @@ export class SessionAutomationCoordinator {
       await this.store.recoverLeases();
       await this.processCancellations();
       await this.store.processLifecycleWork?.(this.options.lifecycleAdapters, this.options.batchSize ?? 25);
+      // Reconciliation is maintenance, not execution: it must keep converging while the
+      // execution kill switch is off. Individual stage and activate effects are gated below.
       await this.recoverStagedActivations();
-      if (this.options.executionEnabled()) {
-        await this.store.claimDue(this.options.batchSize ?? 25);
-        for (const item of await this.store.claimDispatch(this.options.batchSize ?? 10)) await this.dispatchOne(item);
+      if (!this.options.executionEnabled()) return;
+      await this.store.claimDue(this.options.batchSize ?? 25);
+      if (!this.options.executionEnabled()) return;
+      for (const item of await this.store.claimDispatch(this.options.batchSize ?? 10)) {
+        if (!this.options.executionEnabled()) break;
+        await this.dispatchOne(item);
       }
     } catch (error) { this.options.onError?.(error); }
     finally { this.running = false; }
@@ -98,7 +103,10 @@ export class SessionAutomationCoordinator {
         // A stage result may be known while the automation outbox is still waiting to reclaim.
         // Never activate that Run until markDispatched durably owns the execution and active slot.
         if (run.rows[0]?.admitted === true && fence?.executionId === attempt.outboxId) {
-          if (run.rows[0].status === 'pending') await this.dispatcher.activate(attempt.runId);
+          if (run.rows[0].status === 'pending') {
+            if (!this.options.executionEnabled()) continue;
+            await this.dispatcher.activate(attempt.runId);
+          }
           await this.store.transitionPreparedDispatch(attempt.outboxId, 'dispatched', 'completed');
         }
         continue;
@@ -120,6 +128,7 @@ export class SessionAutomationCoordinator {
           );
           continue;
         }
+        if (!this.options.executionEnabled()) continue;
         await this.dispatcher.stage(stage);
       } else if (fence?.executionId !== attempt.outboxId) {
         await this.store.transitionPreparedDispatch(
@@ -138,7 +147,9 @@ export class SessionAutomationCoordinator {
       const prompt = snapshot.spec.kind === 'goal' ? `Continue working toward this completion condition:\n${snapshot.spec.condition}` : snapshot.spec.prompt!;
       const fence = { rootAutomationId: item.automationId, automationId: item.automationId, automationGeneration: item.generation, generation: item.generation, automationSpecVersion: item.specVersion, specVersion: item.specVersion, incarnationId: item.incarnationId, automationTriggerKey: item.triggerKey, executionId: item.outboxId, runId: item.targetRunId };
       const stageInput = { tenantId: item.tenantId, sessionId: item.sessionId, runId: item.targetRunId, prompt, metadata: fence };
+      if (!this.options.executionEnabled()) return;
       await this.store.prepareDispatch(item,{stage:stageInput});
+      if (!this.options.executionEnabled()) return;
       try {
         await this.dispatcher.stage(stageInput);
         await this.store.transitionPreparedDispatch(item.outboxId,'prepared','dispatched');
@@ -146,7 +157,11 @@ export class SessionAutomationCoordinator {
         await this.store.transitionPreparedDispatch(item.outboxId,'prepared','result_unknown',error instanceof Error?error.message:String(error));
         throw error;
       }
+      // If the switch changed after create-only staging, preserve that durable staged Run.
+      // A later enabled tick will reclaim the outbox and idempotently continue admission.
+      if (!this.options.executionEnabled()) return;
       try{await this.store.markDispatched(item);dispatchCommitted=true;}catch(error){await this.store.supersedeDispatch(item,true);throw error;}
+      if (!this.options.executionEnabled()) return;
       try {
         await this.dispatcher.activate(item.targetRunId);
       } catch (error) {

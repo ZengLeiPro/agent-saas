@@ -9,6 +9,14 @@ export interface PgRunStoreSchemaTarget {
   steeringSessionsTable: string;
 }
 
+export const RUN_STORE_TENANT_SCHEMA_VERSION = 1;
+
+export interface PgRunStoreContractGate {
+  expectedExpandVersion: typeof RUN_STORE_TENANT_SCHEMA_VERSION;
+  /** Operator assertion: deployment telemetry has reached zero pre-v1 writers. */
+  oldWritersDrained: true;
+}
+
 export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promise<void> {
     // 门禁加固（2026-06-22）：用 PG advisory lock 串行化并发 init。多进程（many-brains
     // 多实例同时启动 / chaos 多 worker 同时 init）会并发跑 `CREATE INDEX IF NOT EXISTS`，
@@ -46,20 +54,22 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${store.messageSubmissionsTable} (
-          tenant_id TEXT NOT NULL,
+          tenant_id TEXT,
           user_scope TEXT NOT NULL,
           client_message_id TEXT NOT NULL,
+          tenant_user_scope TEXT,
+          tenant_client_message_id TEXT,
           run_id TEXT NOT NULL UNIQUE,
           session_id TEXT NOT NULL,
           delivery_mode TEXT NOT NULL,
           accepted_at TIMESTAMPTZ NOT NULL,
-          PRIMARY KEY (tenant_id, user_scope, client_message_id)
+          PRIMARY KEY (user_scope, client_message_id)
         )
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${store.steeringInputsTable} (
           input_id TEXT PRIMARY KEY,
-          tenant_id TEXT NOT NULL,
+          tenant_id TEXT,
           source_run_id TEXT NOT NULL UNIQUE,
           target_run_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
@@ -72,10 +82,11 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS ${store.steeringSessionsTable} (
-          tenant_id TEXT NOT NULL,
+          tenant_id TEXT,
           session_id TEXT NOT NULL,
+          tenant_session_id TEXT,
           stopped_at TIMESTAMPTZ,
-          PRIMARY KEY (tenant_id, session_id)
+          PRIMARY KEY (session_id)
         )
       `);
       const existingColumns = new Set((await client.query<{ column_name: string }>(`
@@ -94,12 +105,91 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       // A composite FK may only target a matching unique key. Install the parent key before any
       // session-automation schema can add its (tenant, session, run) FK (rolling deploy order).
       await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.runsTable}_tenant_session_run_uidx ON ${store.runsTable} (tenant_id, session_id, run_id)`);
-      // Expand first, then backfill. Rows whose owner cannot be proved are atomically moved into a
-      // JSONB quarantine before validation; they must never be guessed as LEGACY_TENANT_ID or block
-      // startup. The fingerprint makes every phase restart-safe.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${store.runsTable}_schema_migrations (
+          module TEXT PRIMARY KEY,
+          version INTEGER NOT NULL,
+          phase TEXT NOT NULL CHECK (phase IN ('expand','contract')),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`
+        INSERT INTO ${store.runsTable}_schema_migrations (module, version, phase)
+        VALUES ('tenant_auxiliary_identity', ${RUN_STORE_TENANT_SCHEMA_VERSION}, 'expand')
+        ON CONFLICT (module) DO UPDATE SET
+          version=GREATEST(${store.runsTable}_schema_migrations.version, EXCLUDED.version),
+          phase=CASE WHEN ${store.runsTable}_schema_migrations.phase='contract' THEN 'contract' ELSE EXCLUDED.phase END,
+          updated_at=now()
+      `);
+      // Expand is the only phase executed by ordinary startup. Keep the legacy conflict
+      // arbiters intact until an operator explicitly contracts after all old writers drain.
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
+      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_user_scope TEXT`);
+      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_client_message_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
+      await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_session_id TEXT`);
+      // Continuous legacy catch-up: old writers omit tenant columns. Resolve only identities proven
+      // by authoritative runs; ambiguity stays NULL and therefore fail-closed to tenant-aware reads.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.messageSubmissionsTable}_tenant_expand_fn() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.tenant_id IS NULL THEN
+            SELECT tenant_id INTO NEW.tenant_id FROM ${store.runsTable}
+            WHERE run_id=NEW.run_id AND session_id=NEW.session_id;
+          END IF;
+          IF NEW.tenant_id IS NOT NULL THEN
+            NEW.tenant_user_scope := COALESCE(NEW.tenant_user_scope, NEW.user_scope);
+            NEW.tenant_client_message_id := COALESCE(NEW.tenant_client_message_id, NEW.client_message_id);
+          END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS tenant_expand ON ${store.messageSubmissionsTable}`);
+      await client.query(`CREATE TRIGGER tenant_expand BEFORE INSERT ON ${store.messageSubmissionsTable} FOR EACH ROW EXECUTE FUNCTION ${store.messageSubmissionsTable}_tenant_expand_fn()`);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.steeringInputsTable}_tenant_expand_fn() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.tenant_id IS NULL THEN
+            SELECT source.tenant_id INTO NEW.tenant_id
+            FROM ${store.runsTable} source JOIN ${store.runsTable} target
+              ON target.run_id=NEW.target_run_id AND target.tenant_id=source.tenant_id
+             AND target.session_id=source.session_id
+            WHERE source.run_id=NEW.source_run_id AND source.session_id=NEW.session_id;
+          END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS tenant_expand ON ${store.steeringInputsTable}`);
+      await client.query(`CREATE TRIGGER tenant_expand BEFORE INSERT ON ${store.steeringInputsTable} FOR EACH ROW EXECUTE FUNCTION ${store.steeringInputsTable}_tenant_expand_fn()`);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.steeringSessionsTable}_tenant_expand_fn() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.tenant_id IS NULL THEN
+            SELECT MIN(tenant_id) INTO NEW.tenant_id FROM ${store.runsTable}
+            WHERE session_id=NEW.session_id HAVING COUNT(DISTINCT tenant_id)=1;
+          END IF;
+          IF NEW.tenant_id IS NOT NULL THEN
+            NEW.tenant_session_id := COALESCE(NEW.tenant_session_id, NEW.session_id);
+          END IF;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS tenant_expand ON ${store.steeringSessionsTable}`);
+      await client.query(`CREATE TRIGGER tenant_expand BEFORE INSERT ON ${store.steeringSessionsTable} FOR EACH ROW EXECUTE FUNCTION ${store.steeringSessionsTable}_tenant_expand_fn()`);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.runsTable}_tenant_aux_catchup_fn() RETURNS trigger AS $$
+        BEGIN
+          UPDATE ${store.messageSubmissionsTable}
+          SET tenant_id=NEW.tenant_id,
+              tenant_user_scope=COALESCE(tenant_user_scope,user_scope),
+              tenant_client_message_id=COALESCE(tenant_client_message_id,client_message_id)
+          WHERE run_id=NEW.run_id AND session_id=NEW.session_id AND tenant_id IS NULL;
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS tenant_aux_catchup ON ${store.runsTable}`);
+      await client.query(`CREATE TRIGGER tenant_aux_catchup AFTER INSERT OR UPDATE OF tenant_id, session_id ON ${store.runsTable} FOR EACH ROW EXECUTE FUNCTION ${store.runsTable}_tenant_aux_catchup_fn()`);
       for (const table of [store.messageSubmissionsTable, store.steeringInputsTable, store.steeringSessionsTable]) {
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${table}_tenant_quarantine (
@@ -110,10 +200,16 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           )
         `);
       }
+      // Restart-safe best-effort backfill. Unprovable rows remain nullable (and invisible to
+      // tenant-aware reads) until the explicit quarantine/contract phase.
       await client.query(`
-        UPDATE ${store.messageSubmissionsTable} submission SET tenant_id = run.tenant_id
+        UPDATE ${store.messageSubmissionsTable} submission
+        SET tenant_id = run.tenant_id,
+            tenant_user_scope = COALESCE(submission.tenant_user_scope, submission.user_scope),
+            tenant_client_message_id = COALESCE(submission.tenant_client_message_id, submission.client_message_id)
         FROM ${store.runsTable} run
-        WHERE submission.run_id = run.run_id AND submission.session_id = run.session_id AND submission.tenant_id IS NULL
+        WHERE submission.run_id = run.run_id AND submission.session_id = run.session_id
+          AND (submission.tenant_id IS NULL OR submission.tenant_user_scope IS NULL OR submission.tenant_client_message_id IS NULL)
       `);
       await client.query(`
         UPDATE ${store.steeringInputsTable} input SET tenant_id = source.tenant_id
@@ -123,68 +219,18 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           AND input.session_id = source.session_id AND input.tenant_id IS NULL
       `);
       await client.query(`
-        UPDATE ${store.steeringSessionsTable} steering_session SET tenant_id = identity.tenant_id
+        UPDATE ${store.steeringSessionsTable} steering_session
+        SET tenant_id = identity.tenant_id,
+            tenant_session_id = COALESCE(steering_session.tenant_session_id, steering_session.session_id)
         FROM (
           SELECT session_id, MIN(tenant_id) AS tenant_id FROM ${store.runsTable}
           GROUP BY session_id HAVING COUNT(DISTINCT tenant_id) = 1
         ) identity
-        WHERE steering_session.session_id = identity.session_id AND steering_session.tenant_id IS NULL
+        WHERE steering_session.session_id = identity.session_id
+          AND (steering_session.tenant_id IS NULL OR steering_session.tenant_session_id IS NULL)
       `);
-      // DELETE ... RETURNING + quarantine INSERT is one statement: a crash or concurrent legacy
-      // writer can never leave a deleted row without its durable quarantine copy.
-      await client.query(`
-        WITH moved AS (
-          DELETE FROM ${store.messageSubmissionsTable} WHERE tenant_id IS NULL RETURNING *
-        )
-        INSERT INTO ${store.messageSubmissionsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(moved)::text),
-               CASE WHEN EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.run_id)
-                    THEN 'session_mismatch' ELSE 'orphan_run' END,
-               row_to_json(moved)::jsonb
-        FROM moved
-        ON CONFLICT (fingerprint) DO NOTHING
-      `);
-      await client.query(`
-        WITH moved AS (
-          DELETE FROM ${store.steeringInputsTable} WHERE tenant_id IS NULL RETURNING *
-        )
-        INSERT INTO ${store.steeringInputsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(moved)::text),
-               CASE WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.source_run_id) THEN 'orphan_source_run'
-                    WHEN NOT EXISTS (SELECT 1 FROM ${store.runsTable} run WHERE run.run_id=moved.target_run_id) THEN 'orphan_target_run'
-                    ELSE 'tenant_session_mismatch' END,
-               row_to_json(moved)::jsonb
-        FROM moved
-        ON CONFLICT (fingerprint) DO NOTHING
-      `);
-      await client.query(`
-        WITH moved AS (
-          DELETE FROM ${store.steeringSessionsTable} WHERE tenant_id IS NULL RETURNING *
-        )
-        INSERT INTO ${store.steeringSessionsTable}_tenant_quarantine (fingerprint, reason, payload)
-        SELECT md5(row_to_json(moved)::text),
-               CASE WHEN EXISTS (
-                 SELECT 1 FROM ${store.runsTable} run WHERE run.session_id = moved.session_id
-               ) THEN 'ambiguous_session' ELSE 'orphan_session' END,
-               row_to_json(moved)::jsonb
-        FROM moved
-        ON CONFLICT (fingerprint) DO NOTHING
-      `);
-      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
-      await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD CONSTRAINT ${store.steeringInputsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
-      await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_tenant_present CHECK (tenant_id IS NOT NULL) NOT VALID`).catch(error => { if ((error as { code?: string }).code !== '42710') throw error; });
-      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} VALIDATE CONSTRAINT ${store.messageSubmissionsTable}_tenant_present`);
-      await client.query(`ALTER TABLE ${store.steeringInputsTable} VALIDATE CONSTRAINT ${store.steeringInputsTable}_tenant_present`);
-      await client.query(`ALTER TABLE ${store.steeringSessionsTable} VALIDATE CONSTRAINT ${store.steeringSessionsTable}_tenant_present`);
-      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
-      await client.query(`ALTER TABLE ${store.steeringInputsTable} ALTER COLUMN tenant_id SET NOT NULL`);
-      await client.query(`ALTER TABLE ${store.steeringSessionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
-      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} DROP CONSTRAINT IF EXISTS ${store.messageSubmissionsTable}_pkey`);
-      await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_pkey PRIMARY KEY (tenant_id, user_scope, client_message_id)`);
-      await client.query(`ALTER TABLE ${store.steeringSessionsTable} DROP CONSTRAINT IF EXISTS ${store.steeringSessionsTable}_pkey`);
-      await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_pkey PRIMARY KEY (tenant_id, session_id)`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.messageSubmissionsTable}_tenant_idempotency_uidx ON ${store.messageSubmissionsTable} (tenant_id, user_scope, client_message_id)`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.steeringSessionsTable}_tenant_session_uidx ON ${store.steeringSessionsTable} (tenant_id, session_id)`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.messageSubmissionsTable}_tenant_uidx ON ${store.messageSubmissionsTable} (tenant_id, tenant_user_scope, tenant_client_message_id) WHERE tenant_id IS NOT NULL`);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${store.steeringSessionsTable}_tenant_uidx ON ${store.steeringSessionsTable} (tenant_id, tenant_session_id) WHERE tenant_id IS NOT NULL`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS sequence BIGSERIAL`);
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMPTZ`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.steeringInputsTable}_target_sequence_idx ON ${store.steeringInputsTable} (target_run_id, state, sequence)`);
@@ -274,3 +320,99 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       client.release();
     }
   }
+
+/** Physical key used only while legacy global UNIQUE arbiters must remain inferable. */
+export function tenantScopedCompatibilityKey(tenantId: string, value: string): string {
+  return `${tenantId.length}:${tenantId}:${value}`;
+}
+
+/**
+ * Destructive tenant-key contract. Never called by PgRunStore.init(); release automation must
+ * invoke it with the version/drain gate after observing zero legacy writers.
+ */
+export async function contractPgRunStoreTenantSchema(
+  store: PgRunStoreSchemaTarget,
+  gate: PgRunStoreContractGate,
+): Promise<void> {
+  if (gate.expectedExpandVersion !== RUN_STORE_TENANT_SCHEMA_VERSION || gate.oldWritersDrained !== true) {
+    throw new Error('run-store tenant contract gate rejected');
+  }
+  const client = await store.pool.connect();
+  const lockKey = `${store.runsTable}:init`;
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    await client.query('BEGIN');
+    const migration = await client.query<{ version: number; phase: string }>(`
+      SELECT version, phase FROM ${store.runsTable}_schema_migrations
+      WHERE module='tenant_auxiliary_identity' FOR UPDATE
+    `);
+    const state = migration.rows[0];
+    if (state?.version === gate.expectedExpandVersion && state.phase === 'contract') {
+      await client.query('COMMIT');
+      return;
+    }
+    if (state?.version !== gate.expectedExpandVersion || state.phase !== 'expand') {
+      throw new Error('run-store tenant contract requires matching expand phase');
+    }
+    // One final backfill after the old-writer drain observation, then quarantine only identities
+    // that still cannot be proven from authoritative run rows.
+    await client.query(`
+      UPDATE ${store.messageSubmissionsTable} submission
+      SET tenant_id=run.tenant_id,
+          tenant_user_scope=COALESCE(submission.tenant_user_scope, submission.user_scope),
+          tenant_client_message_id=COALESCE(submission.tenant_client_message_id, submission.client_message_id)
+      FROM ${store.runsTable} run
+      WHERE submission.run_id=run.run_id AND submission.session_id=run.session_id
+        AND (submission.tenant_id IS NULL OR submission.tenant_user_scope IS NULL OR submission.tenant_client_message_id IS NULL)
+    `);
+    await client.query(`
+      UPDATE ${store.steeringInputsTable} input SET tenant_id=source.tenant_id
+      FROM ${store.runsTable} source, ${store.runsTable} target
+      WHERE input.source_run_id=source.run_id AND input.target_run_id=target.run_id
+        AND source.tenant_id=target.tenant_id AND source.session_id=target.session_id
+        AND input.session_id=source.session_id AND input.tenant_id IS NULL
+    `);
+    await client.query(`
+      UPDATE ${store.steeringSessionsTable} steering_session
+      SET tenant_id=identity.tenant_id,
+          tenant_session_id=COALESCE(steering_session.tenant_session_id, steering_session.session_id)
+      FROM (SELECT session_id, MIN(tenant_id) tenant_id FROM ${store.runsTable}
+            GROUP BY session_id HAVING COUNT(DISTINCT tenant_id)=1) identity
+      WHERE steering_session.session_id=identity.session_id
+        AND (steering_session.tenant_id IS NULL OR steering_session.tenant_session_id IS NULL)
+    `);
+    for (const [table, predicate] of [
+      [store.messageSubmissionsTable, 'tenant_id IS NULL OR tenant_user_scope IS NULL OR tenant_client_message_id IS NULL'],
+      [store.steeringInputsTable, 'tenant_id IS NULL'],
+      [store.steeringSessionsTable, 'tenant_id IS NULL OR tenant_session_id IS NULL'],
+    ] as const) {
+      await client.query(`
+        WITH moved AS (DELETE FROM ${table} WHERE ${predicate} RETURNING *)
+        INSERT INTO ${table}_tenant_quarantine (fingerprint, reason, payload)
+        SELECT md5(row_to_json(moved)::text), 'unprovable_tenant_identity', row_to_json(moved)::jsonb FROM moved
+        ON CONFLICT (fingerprint) DO NOTHING
+      `);
+    }
+    await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ALTER COLUMN tenant_user_scope SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ALTER COLUMN tenant_client_message_id SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.steeringInputsTable} ALTER COLUMN tenant_id SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.steeringSessionsTable} ALTER COLUMN tenant_id SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.steeringSessionsTable} ALTER COLUMN tenant_session_id SET NOT NULL`);
+    await client.query(`ALTER TABLE ${store.messageSubmissionsTable} DROP CONSTRAINT IF EXISTS ${store.messageSubmissionsTable}_pkey`);
+    await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_pkey PRIMARY KEY (tenant_id, tenant_user_scope, tenant_client_message_id)`);
+    await client.query(`ALTER TABLE ${store.steeringSessionsTable} DROP CONSTRAINT IF EXISTS ${store.steeringSessionsTable}_pkey`);
+    await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_pkey PRIMARY KEY (tenant_id, tenant_session_id)`);
+    await client.query(`
+      UPDATE ${store.runsTable}_schema_migrations SET phase='contract', updated_at=now()
+      WHERE module='tenant_auxiliary_identity' AND version=${RUN_STORE_TENANT_SCHEMA_VERSION}
+    `);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}

@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest'; // schema migration contract coverage
 import {buildSessionAutomationSchema,sessionAutomationTables} from './sessionAutomationStoreSchema.js';
 
-describe('session automation PG schema',()=>{
+describe('session automation PG schema and rolling migration guards',()=>{
   it('maps the configured runtime prefix and all durable components',()=>{
     const t=sessionAutomationTables('agent_runtime');
     expect(t).toEqual({
@@ -21,13 +21,22 @@ describe('session automation PG schema',()=>{
     expect(sql).toContain("CHECK(state IN ('prepared','dispatched','completed','cancelled','result_unknown','reconcile'))");
     expect(sql).toContain('automation_execution_lineage');
     expect(sql).toContain('UNIQUE(tenant_id,provider,idempotency_key)');
+    expect(sql).toContain('invoking_session_id TEXT');
+    expect(sql).toContain('invoking_run_id TEXT');
+    expect(sql).toContain('provider_attempt_invoker');
     expect(sql).toContain('UNIQUE(tenant_id,receipt_key)');
     expect(sql).toContain(`ALTER TABLE ${t.reconciliationReceipts} ADD COLUMN IF NOT EXISTS receipt_authority TEXT NOT NULL DEFAULT 'legacy_untrusted'`);
     expect(sql).toContain(`ALTER TABLE ${t.reconciliationReceipts} ALTER COLUMN receipt_authority SET DEFAULT 'legacy_untrusted'`);
     expect(sql).toContain("CHECK(receipt_authority IN ('provider_adapter','operator','legacy_untrusted')) NOT VALID");
     expect(sql).toContain(`ALTER TABLE ${t.outbox} ADD COLUMN IF NOT EXISTS updated_at`);
     expect(sql).toContain(`ALTER TABLE ${t.lifecycleWork} ADD COLUMN IF NOT EXISTS next_attempt_at`);
+    expect(sql).toContain(`ALTER TABLE ${t.goalCompletionCandidates} ADD COLUMN IF NOT EXISTS evidence_manifest JSONB`);
+    expect(sql).toContain(`ALTER TABLE ${t.goalCompletionCandidates} ADD COLUMN IF NOT EXISTS evidence_manifest_hash TEXT`);
+    expect(sql).toContain(`ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS evidence_manifest JSONB`);
+    expect(sql).toContain(`ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS evidence_manifest_hash TEXT`);
+    expect(sql).toContain('ledger_goal_candidate_evidence_immutable');
+    expect(sql).toContain('ledger_goal_evaluation_evidence_immutable');
     expect(sql).toContain("CHECK(state IN ('pending','claimed','waiting','completed','result_unknown','dead'))");
   });
-  it('rejects identifier injection',()=>{expect(()=>sessionAutomationTables('runtime;drop table x')).toThrow();expect(()=>buildSessionAutomationSchema('runtime','x;drop')).toThrow();});
+  it('rejects identifier injection',()=>{expect(()=>sessionAutomationTables('runtime;drop table x')).toThrow();expect(()=>buildSessionAutomationSchema('runtime','x;drop')).toThrow();}); // schema names remain quoted by construction
 });

@@ -171,7 +171,7 @@ END $$`,
 `CREATE TABLE IF NOT EXISTS ${t.providerAttempts} (
  provider_attempt_id UUID PRIMARY KEY, prepared_dispatch_attempt_id UUID NOT NULL, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL,
  incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, execution_id UUID NOT NULL, run_id TEXT NOT NULL,
- provider TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_payload JSONB NOT NULL,
+ invoking_session_id TEXT, invoking_run_id TEXT, provider TEXT NOT NULL, operation TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_payload JSONB NOT NULL,
  state TEXT NOT NULL DEFAULT 'prepared' CHECK(state IN ('prepared','dispatched','completed','cancelled','result_unknown','reconcile')),
  version BIGINT NOT NULL DEFAULT 1 CHECK(version > 0), lease_token UUID, lease_expires_at TIMESTAMPTZ,
  provider_request_id TEXT, result_payload JSONB, last_error TEXT, prepared_at TIMESTAMPTZ NOT NULL DEFAULT now(), dispatched_at TIMESTAMPTZ,
@@ -182,6 +182,9 @@ END $$`,
  FOREIGN KEY(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id)
    REFERENCES ${t.executions}(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id) DEFERRABLE INITIALLY DEFERRED
 )`,
+`ALTER TABLE ${t.providerAttempts} ADD COLUMN IF NOT EXISTS invoking_session_id TEXT`,
+`ALTER TABLE ${t.providerAttempts} ADD COLUMN IF NOT EXISTS invoking_run_id TEXT`,
+`CREATE INDEX IF NOT EXISTS ${tablePrefix}_provider_attempt_invoker ON ${t.providerAttempts}(tenant_id,invoking_session_id,invoking_run_id,prepared_at)`,
 `CREATE INDEX IF NOT EXISTS ${tablePrefix}_provider_attempt_claim ON ${t.providerAttempts}(state,lease_expires_at,prepared_at) WHERE state IN ('prepared','result_unknown','reconcile')`,
 `CREATE TABLE IF NOT EXISTS ${t.budgetReservations} (
  reservation_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, incarnation_id UUID NOT NULL,
@@ -248,19 +251,65 @@ END $$`,
 `CREATE TABLE IF NOT EXISTS ${t.goalCompletionCandidates} (
  candidate_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, execution_id UUID NOT NULL,
  incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, run_id TEXT NOT NULL,
- summary TEXT NOT NULL, evidence_refs JSONB NOT NULL, projected_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ summary TEXT NOT NULL, evidence_refs JSONB NOT NULL, evidence_manifest JSONB, evidence_manifest_hash TEXT,
+ projected_at TIMESTAMPTZ, rejection_reason TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(execution_id),
  FOREIGN KEY(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id)
    REFERENCES ${t.executions}(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id) DEFERRABLE INITIALLY DEFERRED
 )`,
+`ALTER TABLE ${t.goalCompletionCandidates} ADD COLUMN IF NOT EXISTS evidence_manifest JSONB`,
+`ALTER TABLE ${t.goalCompletionCandidates} ADD COLUMN IF NOT EXISTS evidence_manifest_hash TEXT`,
+`ALTER TABLE ${t.goalCompletionCandidates} ADD COLUMN IF NOT EXISTS rejection_reason TEXT`,
+`CREATE OR REPLACE FUNCTION ${tablePrefix}_reject_goal_candidate_evidence_mutation() RETURNS trigger AS $$
+ BEGIN
+  IF NEW.candidate_id IS DISTINCT FROM OLD.candidate_id
+    OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.session_id IS DISTINCT FROM OLD.session_id
+    OR NEW.automation_id IS DISTINCT FROM OLD.automation_id OR NEW.execution_id IS DISTINCT FROM OLD.execution_id
+    OR NEW.incarnation_id IS DISTINCT FROM OLD.incarnation_id OR NEW.generation IS DISTINCT FROM OLD.generation
+    OR NEW.spec_version IS DISTINCT FROM OLD.spec_version OR NEW.run_id IS DISTINCT FROM OLD.run_id
+    OR NEW.summary IS DISTINCT FROM OLD.summary OR NEW.evidence_refs IS DISTINCT FROM OLD.evidence_refs
+    OR NEW.evidence_manifest IS DISTINCT FROM OLD.evidence_manifest
+    OR NEW.evidence_manifest_hash IS DISTINCT FROM OLD.evidence_manifest_hash THEN
+   RAISE EXCEPTION 'immutable goal candidate evidence';
+  END IF;
+  RETURN NEW;
+ END $$ LANGUAGE plpgsql`,
+`DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='${t.goalCompletionCandidates}'::regclass AND tgname='${tablePrefix}_goal_candidate_evidence_immutable') THEN
+  CREATE TRIGGER ${tablePrefix}_goal_candidate_evidence_immutable BEFORE UPDATE ON ${t.goalCompletionCandidates}
+   FOR EACH ROW EXECUTE FUNCTION ${tablePrefix}_reject_goal_candidate_evidence_mutation();
+ END IF;
+END $$`,
 `CREATE TABLE IF NOT EXISTS ${t.evaluations} (
  evaluation_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, execution_id UUID NOT NULL,
  incarnation_id UUID NOT NULL, generation BIGINT NOT NULL, spec_version BIGINT NOT NULL, decision_epoch BIGINT NOT NULL,
- evidence JSONB NOT NULL, state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','claimed','result_unknown','met','continue','blocked','unverifiable','cancelled','dead')),
+ evidence JSONB NOT NULL, evidence_manifest JSONB, evidence_manifest_hash TEXT,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','claimed','result_unknown','met','continue','blocked','unverifiable','cancelled','dead')),
  decision JSONB, provider_attempt_id UUID, lease_token UUID, lease_expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(tenant_id,automation_id,generation,decision_epoch), FOREIGN KEY(execution_id) REFERENCES ${t.executions}(execution_id),
  FOREIGN KEY(provider_attempt_id) REFERENCES ${t.providerAttempts}(provider_attempt_id)
 )`,
+`ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS evidence_manifest JSONB`,
+`ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS evidence_manifest_hash TEXT`,
+`CREATE OR REPLACE FUNCTION ${tablePrefix}_reject_goal_evaluation_evidence_mutation() RETURNS trigger AS $$
+ BEGIN
+  IF NEW.evaluation_id IS DISTINCT FROM OLD.evaluation_id
+    OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.session_id IS DISTINCT FROM OLD.session_id
+    OR NEW.automation_id IS DISTINCT FROM OLD.automation_id OR NEW.execution_id IS DISTINCT FROM OLD.execution_id
+    OR NEW.incarnation_id IS DISTINCT FROM OLD.incarnation_id OR NEW.generation IS DISTINCT FROM OLD.generation
+    OR NEW.spec_version IS DISTINCT FROM OLD.spec_version OR NEW.decision_epoch IS DISTINCT FROM OLD.decision_epoch
+    OR NEW.evidence IS DISTINCT FROM OLD.evidence OR NEW.evidence_manifest IS DISTINCT FROM OLD.evidence_manifest
+    OR NEW.evidence_manifest_hash IS DISTINCT FROM OLD.evidence_manifest_hash THEN
+   RAISE EXCEPTION 'immutable goal evaluation evidence';
+  END IF;
+  RETURN NEW;
+ END $$ LANGUAGE plpgsql`,
+`DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='${t.evaluations}'::regclass AND tgname='${tablePrefix}_goal_evaluation_evidence_immutable') THEN
+  CREATE TRIGGER ${tablePrefix}_goal_evaluation_evidence_immutable BEFORE UPDATE ON ${t.evaluations}
+   FOR EACH ROW EXECUTE FUNCTION ${tablePrefix}_reject_goal_evaluation_evidence_mutation();
+ END IF;
+END $$`,
 `CREATE INDEX IF NOT EXISTS ${tablePrefix}_goal_candidate_fence ON ${t.goalCompletionCandidates}(tenant_id,automation_id,incarnation_id,generation,execution_id)`,
 `ALTER TABLE ${t.evaluations} ADD COLUMN IF NOT EXISTS provider_attempt_id UUID`,
 `DO $$ BEGIN

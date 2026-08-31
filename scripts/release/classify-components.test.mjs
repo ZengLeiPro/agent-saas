@@ -59,6 +59,10 @@ test('shared changes conservatively require every dependent component deployment
 });
 
 test('classifies root dependency files while explicitly ignoring release-only governance files', () => {
+  assert.deepEqual(classifyPath('Dockerfile'), {
+    components: ['web', 'api', 'runtimeWorker', 'acs'],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('pnpm-lock.yaml'), {
     components: ['web', 'api', 'runtimeWorker', 'acs'],
     blockingReason: null,
@@ -109,6 +113,16 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  for (const filePath of [
+    'scripts/pr-preflight-contract.test.mjs',
+    'scripts/pr-preflight-task.sh',
+    'scripts/pr-preflight.sh',
+  ]) {
+    assert.deepEqual(classifyPath(filePath), {
+      components: [],
+      blockingReason: null,
+    });
+  }
   assert.deepEqual(classifyPath('scripts/typecheck-staged.mjs'), {
     components: [],
     blockingReason: null,
@@ -125,6 +139,28 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+});
+
+test('classifies the exact paths that blocked automatic release evidence for PR 371', () => {
+  assert.deepEqual(
+    classifyChangedPaths([
+      'Dockerfile',
+      'scripts/pr-preflight-contract.test.mjs',
+      'scripts/pr-preflight-task.sh',
+      'scripts/pr-preflight.sh',
+    ]),
+    {
+      ok: true,
+      changedFiles: [
+        'Dockerfile',
+        'scripts/pr-preflight-contract.test.mjs',
+        'scripts/pr-preflight-task.sh',
+        'scripts/pr-preflight.sh',
+      ],
+      components: ['web', 'api', 'runtimeWorker', 'acs'],
+      blockingReasons: [],
+    },
+  );
 });
 
 test('unknown paths fail closed while retaining mapped components', () => {

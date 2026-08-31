@@ -33,12 +33,17 @@ Staging 会在解析任何 Vault 引用前先安装无凭据、全代理、`fail
 
 | 路径前缀            | 组件                                 |
 | ------------------- | ------------------------------------ |
+| `Dockerfile`        | `web`, `api`, `runtimeWorker`, `acs` |
 | `web/`              | `web`                                |
 | `server/`           | `api`, `runtimeWorker`, `acs`        |
 | `shared/`           | `web`, `api`, `runtimeWorker`, `acs` |
 | `workspace-shared/` | `api`, `runtimeWorker`, `acs`        |
 | `hand-server/`      | `api`, `runtimeWorker`               |
 | `acs-orchestrator/` | `acs`                                |
+
+`scripts/pr-preflight.sh`、`scripts/pr-preflight-task.sh` 与
+`scripts/pr-preflight-contract.test.mjs` 只定义 CI 门禁，不进入运行时制品，明确按非运行时文件处理；
+其他未映射的 `scripts/**` 仍保持 fail-closed。
 
 ## Runtime identity contract
 

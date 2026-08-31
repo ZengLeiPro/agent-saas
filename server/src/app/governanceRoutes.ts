@@ -24,6 +24,7 @@ import {
   createPersonalSkillGovernanceUpload,
   createTenantSkillGovernanceUpload,
 } from '../services/tenantSkillGovernanceUpload.js';
+import { createPersonalSkillGovernancePromotion } from '../services/personalSkillGovernancePromotion.js';
 import { applyTenantLifecycleChange, type TenantLifecycleChange } from './tenantLifecycleEffects.js';
 import { resolveUserCwd, ensureUserWorkspace } from '../workspace/resolver.js';
 import type { MembershipCreateInput } from '../routes/governanceAccessValidation.js';
@@ -348,6 +349,35 @@ export function registerGovernanceRoutes(
     && runtime.governanceProjectionOutboxStore
     && previewSecret
   ) {
+    const governedSkillServices = runtime.skillConfigStore && runtime.userStore
+      ? (() => {
+          const importTenantSkill = createTenantSkillGovernanceUpload({
+            skills: runtime.skillGovernanceStore!,
+            skillConfigStore: runtime.skillConfigStore!,
+            userStore: runtime.userStore!,
+            agentCwd: runtime.agentCwd,
+            sharedDir: runtime.sharedDir,
+            tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+          });
+          return {
+            importTenantSkill,
+            importPersonalSkill: createPersonalSkillGovernanceUpload({
+              skills: runtime.skillGovernanceStore!,
+              skillConfigStore: runtime.skillConfigStore!,
+              userStore: runtime.userStore!,
+              agentCwd: runtime.agentCwd,
+              sharedDir: runtime.sharedDir,
+              tenantSkillsRootDir: runtime.tenantSkillsRootDir,
+            }),
+            promotePersonalSkillToTenant: createPersonalSkillGovernancePromotion({
+              skills: runtime.skillGovernanceStore!,
+              userStore: runtime.userStore!,
+              agentCwd: runtime.agentCwd,
+              importTenantSkill,
+            }),
+          };
+        })()
+      : undefined;
     app.use('/api/governance/resources', createGovernanceResourcesRouter({
       memberships: runtime.membershipStore,
       agents: runtime.agentResourceStore,
@@ -355,24 +385,7 @@ export function registerGovernanceRoutes(
         ? { validateOrgAgentDispatcherRuntime: runtime.validateOrgAgentDispatcherRuntime }
         : {}),
       skills: runtime.skillGovernanceStore,
-      ...(runtime.skillConfigStore && runtime.userStore ? {
-        importTenantSkill: createTenantSkillGovernanceUpload({
-          skills: runtime.skillGovernanceStore,
-          skillConfigStore: runtime.skillConfigStore,
-          userStore: runtime.userStore,
-          agentCwd: runtime.agentCwd,
-          sharedDir: runtime.sharedDir,
-          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-        }),
-        importPersonalSkill: createPersonalSkillGovernanceUpload({
-          skills: runtime.skillGovernanceStore,
-          skillConfigStore: runtime.skillConfigStore,
-          userStore: runtime.userStore,
-          agentCwd: runtime.agentCwd,
-          sharedDir: runtime.sharedDir,
-          tenantSkillsRootDir: runtime.tenantSkillsRootDir,
-        }),
-      } : {}),
+      ...(governedSkillServices ?? {}),
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,

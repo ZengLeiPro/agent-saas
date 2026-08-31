@@ -380,10 +380,10 @@ export async function deleteTenantOwnSkill(tenantId: string, skillId: string): P
 
 /** 把成员自建 skill 提升为组织自有 skill */
 export async function promoteSkillToTenant(tenantId: string, skillId: string, sourceUser: string): Promise<void> {
-  const res = await authFetch(`/api/skills/tenants/${encodeURIComponent(tenantId)}/promote`, {
+  const res = await authFetch('/api/governance/resources/skills/promote-to-tenant', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ skillId, sourceUser }),
+    body: JSON.stringify({ tenantId, skillId, sourceUser }),
   });
   if (!res.ok) {
     let message = `发布技能到组织失败：${res.status}`;

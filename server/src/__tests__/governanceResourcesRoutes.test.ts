@@ -40,6 +40,7 @@ async function rig(input: {
   skillPublishCandidate?: ReturnType<typeof vi.fn>;
   skillImport?: ReturnType<typeof vi.fn>;
   personalSkillImport?: ReturnType<typeof vi.fn>;
+  personalSkillPromotion?: ReturnType<typeof vi.fn>;
   listCredentials?: ReturnType<typeof vi.fn>;
   getCredential?: ReturnType<typeof vi.fn>;
   updateCredential?: ReturnType<typeof vi.fn>;
@@ -101,6 +102,12 @@ async function rig(input: {
     resource: { skillId: 'personal-hash', tenantId: 'tenant-a', scope: 'personal', ownerUserId: 'user-1', status: 'published', revision: 2 },
     version: { versionId: 'skillv-personal', skillId: 'personal-hash', versionNumber: 1 },
   });
+  const personalSkillPromotion = input.personalSkillPromotion ?? vi.fn().mockResolvedValue({
+    ok: true, status: 'succeeded',
+    skill: { id: 'personal-skill', name: 'personal-skill', description: 'uploaded' },
+    resource: { skillId: 'tenant-hash', tenantId: 'tenant-a', scope: 'tenant', status: 'published', revision: 2 },
+    version: { versionId: 'skillv-tenant', skillId: 'tenant-hash', versionNumber: 1 },
+  });
   const connectorUpdateStatus = input.connectorUpdateStatus ?? vi.fn();
   const environmentRetire = input.environmentRetire ?? vi.fn();
   const updateCredential = input.updateCredential ?? vi.fn();
@@ -145,6 +152,7 @@ async function rig(input: {
     } as never,
     importTenantSkill: skillImport as never,
     importPersonalSkill: personalSkillImport as never,
+    promotePersonalSkillToTenant: personalSkillPromotion as never,
     connectors: {
       get: vi.fn().mockResolvedValue({ connectorId: 'github', status: 'published' }),
       list: vi.fn().mockResolvedValue([]), updateStatus: connectorUpdateStatus,
@@ -203,7 +211,7 @@ async function rig(input: {
     request: (path: string, init?: RequestInit) => fetch(`${base}${path}`, init),
     auditAppend, agentCreate, agentPublish, agentSetStatus, agentArchive,
     skillCreate, skillPublishVersion, skillCreateCandidate, skillSubmitCandidate,
-    skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, credentialCreate, updateCredential,
+    skillReviewCandidate, skillPublishCandidate, skillImport, personalSkillImport, personalSkillPromotion, credentialCreate, updateCredential,
     connectorUpdateStatus, environmentRetire, putSecret,
   };
 }
@@ -305,6 +313,51 @@ describe('typed governance resource routes', () => {
     });
     expect(denied.status).toBe(403);
     expect(member.skillImport).not.toHaveBeenCalled();
+  });
+
+  it('组织管理员通过治理资源 API 把本组织成员技能提升为组织技能', async () => {
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const response = await admin.request(
+      '/api/governance/resources/skills/promote-to-tenant',
+      json('POST', { tenantId: 'tenant-a', skillId: 'personal-skill', sourceUser: 'member' }),
+    );
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      status: 'succeeded',
+      skill: { id: 'personal-skill' },
+      resource: { scope: 'tenant' },
+    });
+    expect(admin.personalSkillPromotion).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      actorUserId: 'admin-1',
+      sourceUsername: 'member',
+      skillId: 'personal-skill',
+    });
+  });
+
+  it('普通成员和跨组织管理员不能调用治理技能提升', async () => {
+    const member = await rig({
+      user: { sub: 'member-1', username: 'member', tenantId: 'tenant-a', role: 'user' },
+    });
+    const memberResponse = await member.request(
+      '/api/governance/resources/skills/promote-to-tenant',
+      json('POST', { tenantId: 'tenant-a', skillId: 'personal-skill', sourceUser: 'member' }),
+    );
+    expect(memberResponse.status).toBe(403);
+    expect(member.personalSkillPromotion).not.toHaveBeenCalled();
+
+    const admin = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const crossResponse = await admin.request(
+      '/api/governance/resources/skills/promote-to-tenant',
+      json('POST', { tenantId: 'tenant-b', skillId: 'personal-skill', sourceUser: 'member' }),
+    );
+    expect(crossResponse.status).toBe(403);
+    expect(admin.personalSkillPromotion).not.toHaveBeenCalled();
   });
 
   it('普通成员的组织上传在 multipart 解析前拒绝', async () => {

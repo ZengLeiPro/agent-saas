@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -338,6 +338,46 @@ describe('组织 Skill 治理上传服务', () => {
     expect(test.createAndPublishResource).toHaveBeenCalledTimes(1);
     expect(await readFile(join(test.installedDir('concurrent-skill'), 'SKILL.md'), 'utf-8'))
       .toContain('governed upload');
+  });
+
+  it('个人技能提升仅忽略来源所有者的同名目录，并记录来源治理版本', async () => {
+    const test = rig({ users: [
+      { id: 'user-1', username: 'alice', tenantId: 'tenant-a', role: 'user' },
+    ] });
+    const sourceDir = join(test.root, 'agents', 'tenant-a', 'user-1', '.ky-agent', 'skills', 'promoted-skill');
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, 'SKILL.md'), validSkill('promoted-skill'));
+    const expectedContentDigest = await computeSkillPackageFingerprint(sourceDir);
+
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadFile(validSkill('promoted-skill'))],
+      promotionSource: {
+        ownerUserId: 'user-1', resourceId: 'personal-resource-1', versionId: 'personal-version-1',
+        expectedSkillId: 'promoted-skill', expectedContentDigest,
+      },
+    })).resolves.toMatchObject({ status: 'succeeded' });
+    expect(test.createAndPublishResource).toHaveBeenCalledWith(expect.objectContaining({
+      definition: expect.objectContaining({
+        source: 'personal_skill_promotion',
+        sourceResourceId: 'personal-resource-1',
+        sourceVersionId: 'personal-version-1',
+      }),
+    }));
+  });
+
+  it('个人技能内容与已发布治理版本不一致时拒绝提升', async () => {
+    const test = rig();
+    await expect(test.upload({
+      tenantId: 'tenant-a', actorUserId: 'admin-1',
+      files: [uploadFile(validSkill('drifted-skill'))],
+      promotionSource: {
+        ownerUserId: 'user-1', resourceId: 'personal-resource-1', versionId: 'personal-version-1',
+        expectedSkillId: 'drifted-skill', expectedContentDigest: '0'.repeat(64),
+      },
+    })).rejects.toMatchObject({ code: 'SKILL_SOURCE_VERSION_DRIFT', status: 409 });
+    expect(test.createAndPublishResource).not.toHaveBeenCalled();
+    expect(existsSync(test.installedDir('drifted-skill'))).toBe(false);
   });
 
   it('平台同名、治理资源重复时返回可理解冲突且不覆盖现有数据', async () => {

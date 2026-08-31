@@ -72,10 +72,26 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
     tenantId: string;
     actorUserId: string;
     files: Express.Multer.File[];
+    promotionSource?: {
+      ownerUserId: string;
+      resourceId: string;
+      versionId: string;
+      expectedSkillId: string;
+      expectedContentDigest: string;
+    };
   }): Promise<TenantSkillGovernanceUploadResult> => {
     const staged = await stageSkillPackage(input.files);
     let installedDir: string | undefined;
     try {
+      if (input.promotionSource
+        && (staged.skillId !== input.promotionSource.expectedSkillId
+          || staged.contentDigest !== input.promotionSource.expectedContentDigest)) {
+        throw new SkillPackageUploadError(
+          'SKILL_SOURCE_VERSION_DRIFT',
+          '个人技能内容已发生变化，请让技能所有者重新上传形成新治理版本后再试',
+          409,
+        );
+      }
       const poolDir = resolveAgentPath(deps.sharedDir, 'skills-pool');
       const platformSkillIds = new Set([
         ...(await scanPoolSkillsAsync(poolDir)).map(skill => skill.id),
@@ -90,6 +106,7 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
       }
       for (const user of deps.userStore.listAll()) {
         if (user.tenantId !== input.tenantId) continue;
+        if (user.id === input.promotionSource?.ownerUserId) continue;
         if (existsSync(join(userSkillsDir(deps, user), staged.skillId))) {
           throw new SkillPackageUploadError(
             'SKILL_SCOPE_CONFLICT',
@@ -113,7 +130,11 @@ export function createTenantSkillGovernanceUpload(deps: TenantSkillGovernanceUpl
         scope: 'tenant',
         tenantId: input.tenantId,
         legacySkillId: staged.skillId,
-        source: 'governance_upload',
+        source: input.promotionSource ? 'personal_skill_promotion' : 'governance_upload',
+        ...(input.promotionSource ? {
+          sourceResourceId: input.promotionSource.resourceId,
+          sourceVersionId: input.promotionSource.versionId,
+        } : {}),
         packageFormat: 'skill-package-v1',
         contentDigestAlgorithm: MATERIALIZED_CONTENT_DIGEST_ALGORITHM,
         name: staged.name,

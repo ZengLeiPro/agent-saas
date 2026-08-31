@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import type { AutomationInFlightSummary } from './sessionAutomationInFlight.js';
 import { parseWholeNumeric } from './sessionAutomationRuntimeGuard.js';
 import { PgSessionAutomationAttributionStore } from './sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
@@ -115,7 +116,10 @@ describePg('session automation real PostgreSQL integration',()=>{
    await c.query(`UPDATE ${store.tables.cancellations} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND state IN ('pending','claimed')`,scope);
   });
   const runId=randomUUID();
-  await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await pool.query(`UPDATE ${store.tables.automations} SET generation=20,status='active',phase='running',active_run_id=$4 WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[tenant,session,automation,runId]);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'clear');});let [item]=await store.claimCancellations();expect(item?.runId).toBe(runId);await store.failCancellation(item!,new Error('transient'));await pool.query(`UPDATE ${store.tables.cancellations} SET next_attempt_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND run_id=$4`,[tenant,session,automation,runId]);[item]=await store.claimCancellations();await runs.markStatus(runId,'cancelled','authoritative cancel adapter');await store.completeCancellation(item!);expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});});
+  await runs.createPending({runId,sessionId:session,tenantId:tenant,userId:'user-a'});await pool.query(`UPDATE ${store.tables.automations} SET generation=20,status='active',phase='running',active_run_id=$4 WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[tenant,session,automation,runId]);await store.tx(async c=>{const current=await store.getLocked(c,tenant,session,automation);await store.control(c,current!,'clear');});let [item]=await store.claimCancellations();expect(item?.runId).toBe(runId);await store.failCancellation(item!,new Error('transient'));await pool.query(`UPDATE ${store.tables.cancellations} SET next_attempt_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND run_id=$4`,[tenant,session,automation,runId]);[item]=await store.claimCancellations();await runs.markStatus(runId,'cancelled','authoritative cancel adapter');await store.completeCancellation(item!);
+  const summary=await store.tx(c=>(store as unknown as {inFlightSummaryLocked(client:typeof c,tenantId:string,automationId:string):Promise<AutomationInFlightSummary>}).inFlightSummaryLocked(c,tenant,automation));
+  expect(summary).toEqual({activeRuns:0,wakeups:0,outbox:0,executions:0,evaluations:0,providerAttempts:0,interactions:0,backgroundResources:0,budgetReservations:0,cancellations:0,typedWork:0,unknownOrDead:0});
+  expect(await store.get(tenant,session,automation)).toMatchObject({status:'cancelled',phase:'terminal'});});
  it('the first budget limit drains typed lifecycle work before expiring and prevents another dispatch',async()=>{
   await pool.query(`UPDATE ${store.tables.specs} SET spec=$2 WHERE automation_id=$1 AND spec_version=1`,[automation,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{maxRuns:1}})]);
   const budgetRun=randomUUID();

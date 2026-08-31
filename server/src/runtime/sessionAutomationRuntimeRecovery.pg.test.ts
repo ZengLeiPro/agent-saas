@@ -40,10 +40,16 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   afterEach(async () => {
     if (!pool) return;
-    // evaluatePending scans the durable queue globally; keep retryable jobs isolated between cases.
+    // Queue scanners are table-wide. Retire only this suite's retryable test jobs between cases.
+    const sessionPattern = `${sessionId}-%`;
     await pool.query(`UPDATE ${store.tables.evaluations}
       SET state='cancelled',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-      WHERE state IN ('pending','claimed')`);
+      WHERE tenant_id=$1 AND session_id LIKE $2 AND state IN ('pending','claimed')`,
+    [tenantId, sessionPattern]);
+    await pool.query(`UPDATE ${store.tables.wakeups}
+      SET state='superseded',lease_token=NULL,lease_expires_at=NULL
+      WHERE tenant_id=$1 AND session_id LIKE $2 AND state IN ('pending','claimed')`,
+    [tenantId, sessionPattern]);
   });
 
   afterAll(async () => {
@@ -108,6 +114,36 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       },
     } as RunContext;
     return { automationId, incarnationId, sessionId: executionSessionId, dispatch, context };
+  }
+
+  async function closeExecutionAsProjected(setup: Awaited<ReturnType<typeof activeExecution>>) {
+    // Evaluator recovery cases seed a post-terminal boundary directly. Mirror the dispatch-artifact
+    // closure performed by SessionAutomationTerminalProjector without exercising projector policy.
+    await store.tx(async client => {
+      await client.query(
+        `UPDATE ${store.tables.executions}
+            SET state='terminal',terminal_status='completed',updated_at=now()
+          WHERE execution_id=$1`,
+        [setup.dispatch.outboxId],
+      );
+      await client.query(
+        `UPDATE ${store.tables.outbox}
+            SET state='completed',lease_token=NULL,lease_expires_at=NULL
+          WHERE outbox_id=$1`,
+        [setup.dispatch.outboxId],
+      );
+      await client.query(
+        `UPDATE ${store.tables.preparedDispatchAttempts}
+            SET state='completed',version=version+1,lease_token=NULL,lease_expires_at=NULL,
+                completed_at=COALESCE(completed_at,now()),updated_at=now()
+          WHERE outbox_id=$1 AND state IN ('prepared','dispatched','result_unknown','reconcile')`,
+        [setup.dispatch.outboxId],
+      );
+      await client.query(
+        `UPDATE ${store.tables.wakeups} SET state='consumed' WHERE wakeup_id=$1`,
+        [setup.dispatch.wakeupId],
+      );
+    });
   }
 
   it('clear ACK supersedes its wakeup before model admission and stale generation starts no provider attempt', async () => {
@@ -264,7 +300,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
   it('a lease-expired evaluator admitted with the execution correlation key before a crash is frozen for explicit reconciliation', async () => {
     const setup = await activeExecution();
     const evaluationId = randomUUID();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
         (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state,lease_token,lease_expires_at)
@@ -293,7 +329,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('finishModel crash recovery replays a persisted verdict without calling provider', async () => {
     const setup = await activeExecution();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     const evaluationId = randomUUID();
     const leaseToken = randomUUID();
     await pool.query(
@@ -341,7 +377,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('completed evaluator attempt without a durable verdict becomes explicitly unverifiable without replay', async () => {
     const setup = await activeExecution();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     const evaluationId = randomUUID();
     const leaseToken = randomUUID();
     await pool.query(
@@ -382,7 +418,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('claimed lease expiry is retryable but result_unknown never blind-replays', async () => {
     const setup = await activeExecution();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     const claimedId = randomUUID();
     const unknownId = randomUUID();
     for (const [evaluationId, state] of [[claimedId, 'claimed'], [unknownId, 'result_unknown']] as const) {
@@ -414,7 +450,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
   it('send failure after terminal projection remains receipt-reconcilable after active_run_id is cleared', async () => {
     const setup = await activeExecution();
     const evaluationId = randomUUID();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
         (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state)
@@ -470,7 +506,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
     const completedSetup = await activeExecution();
     const completedEvaluationId = randomUUID();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [completedSetup.dispatch.outboxId]);
+    await closeExecutionAsProjected(completedSetup);
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
         (evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence,state)
@@ -507,7 +543,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
 
   it('blocked hard gate check-in resumes only after the durable resource is released', async () => {
     const setup = await activeExecution();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     const evaluationId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}
@@ -536,7 +572,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
   });
   it('does not claim or call the provider for a stale evaluator fence', async () => {
     const setup = await activeExecution();
-    await pool.query(`UPDATE ${store.tables.executions} SET state='terminal' WHERE execution_id=$1`, [setup.dispatch.outboxId]);
+    await closeExecutionAsProjected(setup);
     const evaluationId = randomUUID();
     await pool.query(
       `INSERT INTO ${store.tables.evaluations}

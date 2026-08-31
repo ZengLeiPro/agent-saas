@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const workflowPath = new URL(
+const removedWorkflowPath = new URL(
   '../../.github/workflows/prepare-release-evidence.yml',
   import.meta.url,
 );
@@ -12,29 +12,30 @@ const promotionWorkflowPath = new URL(
   import.meta.url,
 );
 
-test('automatic Evidence Writer runs only after successful main push CI', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+test('Release Evidence is the first isolated stage of manual Staging RC deployment', async () => {
+  await assert.rejects(access(removedWorkflowPath), { code: 'ENOENT' });
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
+  assert.doesNotMatch(workflow, /workflow_run:/u);
   assert.match(
     workflow,
-    /workflow_run:[\s\S]*workflows: \['App CI \/ Deploy'\][\s\S]*types: \[completed\]/u,
+    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
   );
-  assert.match(workflow, /workflow_run\.conclusion == 'success'/u);
-  assert.match(workflow, /workflow_run\.event == 'push'/u);
-  assert.match(workflow, /workflow_run\.head_branch == 'main'/u);
-  assert.doesNotMatch(workflow, /workflow_dispatch:/u);
-  assert.match(workflow, /environment: production/u);
-  assert.match(workflow, /Verify automatic Evidence Writer configuration/u);
-  assert.match(
-    workflow,
-    /permissions:[\s\S]*actions: read[\s\S]*contents: read[\s\S]*pull-requests: read/u,
-  );
-});
-
-test('automatic Evidence Writer binds independent sources to one immutable SHA', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
-  assert.match(workflow, /github\.event\.workflow_run\.head_sha/u);
+  assert.ok(workflow.indexOf('prepare-evidence:') < workflow.indexOf('build-deploy-verify:'));
+  assert.match(workflow, /prepare-evidence:[\s\S]*FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true/u);
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ github\.sha \}\}/u);
+  assert.match(workflow, /actions\/workflows\/ci\.yml\/runs/u);
+  assert.match(workflow, /head_sha="\$RELEASE_SHA"/u);
+  assert.match(workflow, /\.conclusion == "success"/u);
   assert.match(workflow, /commits\/\$RELEASE_SHA\/pulls/u);
   assert.match(workflow, /merge_commit_sha == \$sha/u);
+});
+
+test('Staging evidence stage safely reuses or creates one immutable same-SHA record', async () => {
+  const workflow = await readFile(stagingWorkflowPath, 'utf8');
+  assert.match(workflow, /Reuse immutable Release Evidence when present/u);
+  assert.match(workflow, /validateReleaseEvidenceDocument/u);
+  assert.match(workflow, /REUSE_RELEASE_EVIDENCE=true/u);
   assert.match(workflow, /acs-classify\.sh/u);
   assert.match(workflow, /actions\/workflows\/acs-sandbox\.yml\/runs/u);
   assert.match(workflow, /workflow: "Build & Check"/u);
@@ -54,11 +55,12 @@ test('automatic Evidence Writer binds independent sources to one immutable SHA',
   assert.doesNotMatch(workflow, /compatibility|N\/N\+1/u);
 });
 
-test('Evidence write identity never enters deployment or Production Promotion workflows', async () => {
+test('Evidence write identity stays inside the production pre-stage and out of deployment jobs', async () => {
   const [staging, promotion] = await Promise.all([
     readFile(stagingWorkflowPath, 'utf8'),
     readFile(promotionWorkflowPath, 'utf8'),
   ]);
-  assert.doesNotMatch(staging, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
+  const deploymentJob = staging.slice(staging.indexOf('  build-deploy-verify:'));
+  assert.doesNotMatch(deploymentJob, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.doesNotMatch(promotion, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
 });

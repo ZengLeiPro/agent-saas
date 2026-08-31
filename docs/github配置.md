@@ -436,9 +436,9 @@ gh variable set STAGING_SSH_HOST_KEY_SHA256 \
 
 - 使用生产专用、最小权限的 RAM 与 SSH 身份。
 - `PRODUCTION_OBSERVATION_TOKEN` 必须是 Evidence Service 的只读 Token，当前仅用于
-  `准备发布证据` 写后回读。
+  `部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读。
 - `RELEASE_EVIDENCE_WRITE_TOKEN` 必须是同一 Evidence Service 的独立写 Token，仅供
-  `准备发布证据` 自动 Workflow 使用；禁止与只读 Token 相同。
+  `prepare-evidence` 前置 job 使用；禁止与只读 Token 相同，也禁止进入实际 Staging 部署 job。
 - Environment Secret 可以与现有 Repository Secret 使用同一真实生产凭据，但必须由可信凭据源重新写入；
   GitHub 不允许读取已保存 Secret 的明文。
 - 不得删除同名 Repository Secrets，旧人工部署入口仍依赖它们。
@@ -469,7 +469,7 @@ gh secret set '<SECRET_NAME>' \
 | `RELEASE_RECORD_OSS_URI`         | `oss://agent-saas-release-records`                            |
 | `RELEASE_RECORD_OSS_REGION`      | `cn-shenzhen`                                                 |
 
-该 URL 目前是隔离 Evidence Service 的兼容基址，`准备发布证据` 会改写末尾路径并访问
+该 URL 目前是隔离 Evidence Service 的兼容基址，`部署预发 RC` 的证据前置 job 会改写末尾路径并访问
 `/release-evidence`。Production Promotion 不再访问 `/production-observation`；完整浏览器、Agent
 与业务验收已移到独立的 `预发验收`，默认不运行、不阻断发布。
 

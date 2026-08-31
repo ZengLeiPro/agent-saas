@@ -7,13 +7,14 @@ const resourcePath = new URL('../../infra/staging/resource-plan.json', import.me
 
 test('Staging RC collects, publishes, and reads back fresh isolation evidence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
+  const deploymentJob = workflow.slice(workflow.indexOf('  build-deploy-verify:'));
 
-  assert.match(workflow, /collect-isolation-host\.mjs/u);
-  assert.match(workflow, /collect-isolation-evidence\.mjs/u);
-  assert.match(workflow, /publish-isolation-evidence\.mjs/u);
-  assert.match(workflow, /isolation-summary-expected\.json/u);
-  assert.match(workflow, /diff <\(jq -S \. .*isolation-evidence-input\.json/u);
-  assert.doesNotMatch(workflow, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
+  assert.match(deploymentJob, /collect-isolation-host\.mjs/u);
+  assert.match(deploymentJob, /collect-isolation-evidence\.mjs/u);
+  assert.match(deploymentJob, /publish-isolation-evidence\.mjs/u);
+  assert.match(deploymentJob, /isolation-summary-expected\.json/u);
+  assert.match(deploymentJob, /diff <\(jq -S \. .*isolation-evidence-input\.json/u);
+  assert.doesNotMatch(deploymentJob, /RELEASE_EVIDENCE_WRITE_TOKEN/u);
   assert.ok(
     workflow.indexOf('Verify live reverse-isolation evidence') <
       workflow.indexOf('Record deterministic Staging deployment and verification'),

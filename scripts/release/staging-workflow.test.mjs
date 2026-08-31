@@ -49,6 +49,10 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
   assert.match(workflow, /workflow_dispatch:[\s\S]*reason:/u);
   assert.doesNotMatch(workflow, /release_sha:/u);
   assert.match(workflow, /group: staging-deploy\s+cancel-in-progress: false/u);
+  assert.match(
+    workflow,
+    /prepare-evidence:[\s\S]*environment: production[\s\S]*build-deploy-verify:[\s\S]*needs: prepare-evidence[\s\S]*environment: staging/u,
+  );
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/u);
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$GITHUB_SHA"/u);
   assert.match(

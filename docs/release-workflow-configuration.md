@@ -35,16 +35,16 @@ Secrets：`ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ECS_HOST`、`EC
 `ECS_SSH_KEY`、`PRODUCTION_OBSERVATION_TOKEN`、`RELEASE_EVIDENCE_WRITE_TOKEN`。
 
 `PRODUCTION_OBSERVATION_TOKEN` 是 Evidence Service 的只读身份，当前只供
-`准备发布证据` 写后回读使用；
-`RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于自动任务调用不可覆盖 `POST /release-evidence` 的独立写
-身份。二者禁止复用。写 Token 只进入受 `main` 分支策略保护的 `准备发布证据`
-Workflow，不进入 Staging 部署或 Production Promotion Workflow。
+`部署预发 RC` 的 `prepare-evidence` 前置 job 写后回读使用；
+`RELEASE_EVIDENCE_WRITE_TOKEN` 是专用于该前置 job 调用不可覆盖 `POST /release-evidence` 的独立写
+身份。二者禁止复用。写 Token 只进入使用 `production` Environment 的证据 job，不进入使用
+`staging` Environment 的实际部署 job 或 Production Promotion Workflow。
 
 Variables：`PRODUCTION_OBSERVATION_URL`、`PRODUCTION_SSH_HOST_KEY_SHA256`、
 `RELEASE_RECORD_OSS_URI`、`RELEASE_RECORD_OSS_REGION`。OSS Region 必须是对应 bucket 的实际
 地域，Workflow 会对每次 OSS 请求显式传入，不依赖 runner 的隐式 CLI profile。
 `PRODUCTION_OBSERVATION_URL` 目前仅作为同域 Evidence Service 的兼容基址，
-`准备发布证据` 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
+`部署预发 RC` 的证据前置 job 会把末尾路径替换为 `/release-evidence`；Production Promotion 不再
 读取 `/production-observation`，也不把 Agent、浏览器或业务验收放进部署门禁。
 
 ## 权威证据服务
@@ -67,7 +67,8 @@ Runner 使用 Staging 专用 RAM 身份发起带 `x-oss-forbid-overwrite` 的无
 Staging ECS，由仅存在于该 ECS 的 Evidence Writer 写 Token 通过本机回环地址 `POST`；GitHub
 Environment 只保存读 Token，既不保存也不传输写 Token。Workflow 再通过 HTTPS `GET` 回读并逐字段
 比较，证据缺项、写权限意外放开或读写内容不一致都会 fail closed。Production
-`准备发布证据` 只持有读身份完成写后回读。相关端点都必须带
+`部署预发 RC` 的证据前置 job 使用独立写身份创建 Release Evidence，再用只读身份完成回读；写身份
+不会进入后续 Staging 部署 job。相关端点都必须带
 `Authorization: Bearer <token>`，读写 token 禁止复用。服务会重算 release
 evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜度；它不会在缺少真实探针时
 合成生产观察样本。运行参数：
@@ -76,9 +77,10 @@ evidence digest，并校验隔离拒绝与共享 NAS 逻辑隔离读回的新鲜
 `RELEASE_EVIDENCE_WRITE_TOKEN_FILE=<0600 write token file>`、可选 `RELEASE_EVIDENCE_HOST` 和
 `RELEASE_EVIDENCE_PORT`。
 
-`准备发布证据` 在 `main` 的 `App CI / Deploy` 成功结束后自动运行，无需管理员手工生成
-或上传 JSON。它锁定该 CI 的完整 SHA，验证唯一关联的已合并 GitHub PR，使用与 ACS Workflow 相同
-的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。随后通过固定
+`部署预发 RC` 被人工触发后，`prepare-evidence` 作为第一阶段锁定 dispatch 的完整 SHA，限时等待
+同 SHA 的 `main` push `App CI / Deploy` 成功，验证唯一关联的已合并 GitHub PR，并使用与 ACS
+Workflow 相同的分类器决定 `ACS Impact Gate` 是否必要；必要时等待并验证同 SHA 的 ACS push run。
+如果该 SHA 已有通过 Schema 校验的不可变证据则直接复用，否则通过固定
 host key 的 SSH 只读生产状态，在 `RELEASE_RECORD_OSS_URI` 的 `baselines/` 与 `records/` 中按每个
 组件的生产 source SHA 和 digest 解析不可变 artifact index，绑定四类基线制品。解析不依赖 GitHub
 Release 已存在，因此可覆盖首次 RC 前已经 seal 的生产基线；找不到摘要一致的对象时 fail closed。
@@ -119,9 +121,10 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
 
 ## 外部设置
 
-- `prepare-release-evidence.yml` 自动完成 `main CI 成功 → Evidence 写入 → 独立读回`。若缺少
-  `production` Environment Secret `RELEASE_EVIDENCE_WRITE_TOKEN`，它必须 fail closed；不得回退为
-  人工伪造、复用只读 Token 或跳过生产基线读回。
+- `deploy-staging.yml` 按 `Evidence 准备/复用 → Staging RC 构建与部署` 两个隔离 job 执行。前置 job
+  使用 `production` Environment，实际部署 job 使用 `staging` Environment；若缺少
+  `RELEASE_EVIDENCE_WRITE_TOKEN` 或证据不一致，必须在构建 RC 前 fail closed，不得回退为人工伪造、
+  复用只读 Token 或跳过生产基线读回。
 - `ci.yml` 与 `acs-sandbox.yml` 永久保留 `workflow_dispatch` 人工部署入口，可按实际需要部署任意
   新旧版本；push/PR 仍只执行 CI，不自动部署生产。这两个入口不生成不可变 RC、Staging E2E、
   Promotion receipt 或物理组件收敛证据，因此通过它们部署不等于新版发布契约已通过。

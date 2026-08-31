@@ -64,11 +64,13 @@ describe("businessStepOverallStatus", () => {
       .toEqual({ completed: 1, label: "等待中", tone: "pending" });
   });
 
-  it("识别全部完成和待处理，异常 outcome tone 不影响完成计数", () => {
+  it("识别全部完成、待处理和已关闭计划，异常 outcome tone 不影响完成计数", () => {
     expect(businessStepOverallStatus([todo("completed", "warn"), todo("completed", "fail")]))
       .toEqual({ completed: 2, label: "已完成", tone: "success" });
     expect(businessStepOverallStatus([todo("pending")]))
       .toEqual({ completed: 0, label: "待处理", tone: "neutral" });
+    expect(businessStepOverallStatus([todo("completed"), todo("in_progress"), todo("pending")], true))
+      .toEqual({ completed: 1, label: "已结束", tone: "neutral" });
   });
 });
 
@@ -120,14 +122,25 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(screen.getByText("核验订单").getAttribute("title")).toBe("核验订单");
   });
 
-  it("多步骤显示连接线，单步骤不显示多余连接线", () => {
+  it("连接线按行锚定图标中心，首尾不越界，单步骤不显示多余线段", () => {
     const { container, rerender } = render(<BusinessStepFlow event={event()} selected={null} />);
+    const rows = container.querySelectorAll("[data-business-step-list] > li");
     expect(container.querySelector("[data-business-step-list]")?.getAttribute("data-business-step-connected"))
       .toBe("true");
+    expect(rows[0].getAttribute("data-business-step-connect-before")).toBe("false");
+    expect(rows[0].getAttribute("data-business-step-connect-after")).toBe("true");
+    expect(rows[1].className).toContain("before:left-[1.375rem]");
+    expect(rows[1].className).toContain("after:left-[1.375rem]");
+    expect(rows[2].getAttribute("data-business-step-connect-before")).toBe("true");
+    expect(rows[2].getAttribute("data-business-step-connect-after")).toBe("false");
+    expect(rows[2].className).not.toContain("after:bottom-[-0.125rem]");
 
     rerender(<BusinessStepFlow event={event({ todos: [todo("pending")] })} selected={null} />);
+    const onlyRow = container.querySelector("[data-business-step-list] > li");
     expect(container.querySelector("[data-business-step-list]")?.getAttribute("data-business-step-connected"))
       .toBe("false");
+    expect(onlyRow?.getAttribute("data-business-step-connect-before")).toBe("false");
+    expect(onlyRow?.getAttribute("data-business-step-connect-after")).toBe("false");
   });
 
   it("点击整行回传稳定选择，并同时表达 selected 与 current，保留无障碍关系", () => {
@@ -165,12 +178,15 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("reset 关闭的历史计划不再把旧 in_progress 步骤标成当前运行", () => {
+  it("reset 关闭的历史计划不再把旧 in_progress 步骤或头部标成运行中", () => {
     render(<BusinessStepFlow event={event({ isClosed: true })} sessionId="session-1" selected={null} />);
     const row = screen.getByRole("button", { name: /核验订单/ });
     expect(row.getAttribute("aria-current")).toBeNull();
     expect(row.getAttribute("data-business-step-current")).toBe("false");
     expect(within(row).getByLabelText("已结束")).toBeTruthy();
+    expect(screen.getByText("1/3")).toBeTruthy();
+    expect(screen.getByText("已结束", { selector: "header span" })).toBeTruthy();
+    expect(screen.queryByText("运行中")).toBeNull();
   });
 
   it("start / terminal / update 事件不再生成第二套主区步骤正文", () => {

@@ -233,13 +233,16 @@ export function BusinessStepStatusIcon({ todo, className }: { todo: TodoItem; cl
 
 export interface BusinessStepOverallStatus {
   completed: number;
-  label: "运行中" | "已阻断" | "有失败" | "等待中" | "已完成" | "待处理";
+  label: "运行中" | "已阻断" | "有失败" | "等待中" | "已完成" | "已结束" | "待处理";
   tone: ActivityStatusTone;
 }
 
-export function businessStepOverallStatus(todos: TodoItem[]): BusinessStepOverallStatus {
+export function businessStepOverallStatus(
+  todos: TodoItem[],
+  planClosed = false,
+): BusinessStepOverallStatus {
   const completed = todos.filter((todo) => todo.status === "completed").length;
-  if (todos.some((todo) => todo.status === "in_progress")) {
+  if (!planClosed && todos.some((todo) => todo.status === "in_progress")) {
     return { completed, label: "运行中", tone: "active" };
   }
   if (todos.some((todo) => todo.status === "blocked")) {
@@ -254,12 +257,17 @@ export function businessStepOverallStatus(todos: TodoItem[]): BusinessStepOveral
   if (todos.length > 0 && completed === todos.length) {
     return { completed, label: "已完成", tone: "success" };
   }
+  if (planClosed) {
+    return { completed, label: "已结束", tone: "neutral" };
+  }
   return { completed, label: "待处理", tone: "neutral" };
 }
 
 function PlanTodoRow({
   todo,
   index,
+  isFirst,
+  isLast,
   planId,
   sessionId,
   runId,
@@ -271,6 +279,8 @@ function PlanTodoRow({
 }: {
   todo: TodoItem;
   index: number;
+  isFirst: boolean;
+  isLast: boolean;
   planId: string;
   sessionId?: string | null;
   runId?: string | null;
@@ -293,7 +303,17 @@ function PlanTodoRow({
   const isCurrent = !planClosed && todo.status === "in_progress";
 
   return (
-    <li className="relative">
+    <li
+      className={cn(
+        "relative",
+        !isFirst
+          && "before:absolute before:left-[1.375rem] before:top-[-0.125rem] before:h-[1.375rem] before:w-px before:-translate-x-1/2 before:bg-border/70",
+        !isLast
+          && "after:absolute after:bottom-[-0.125rem] after:left-[1.375rem] after:top-5 after:w-px after:-translate-x-1/2 after:bg-border/70",
+      )}
+      data-business-step-connect-before={!isFirst ? "true" : "false"}
+      data-business-step-connect-after={!isLast ? "true" : "false"}
+    >
       <button
         type="button"
         className={cn(
@@ -356,7 +376,7 @@ export function BusinessStepFlow({
 }) {
   if (event.kind !== "plan") return null;
   const todos = event.todos ?? [];
-  const overall = businessStepOverallStatus(todos);
+  const overall = businessStepOverallStatus(todos, event.isClosed);
   return (
     <section
       aria-label="业务步骤"
@@ -373,11 +393,7 @@ export function BusinessStepFlow({
         <span className={activityStatusBadgeClass(overall.tone)}>{overall.label}</span>
       </header>
       <ol
-        className={cn(
-          "relative mt-0.5 space-y-0.5",
-          todos.length > 1
-            && "before:absolute before:bottom-5 before:left-5 before:top-5 before:w-px before:bg-border/70",
-        )}
+        className="relative mt-0.5 space-y-0.5"
         data-business-step-list
         data-business-step-connected={todos.length > 1 ? "true" : "false"}
       >
@@ -386,6 +402,8 @@ export function BusinessStepFlow({
             key={todo.id || `${index}-${todo.content}`}
             todo={todo}
             index={index + 1}
+            isFirst={index === 0}
+            isLast={index === todos.length - 1}
             planId={event.id}
             sessionId={sessionId}
             runId={event.runId}

@@ -26,6 +26,9 @@ import type {
 export interface WsAuthMessage {
     action: 'auth';
     token: string;
+    /** M30-01 binding persisted from the login/legacy-upgrade response. */
+    authEpoch?: number;
+    generation?: number;
 }
 
 /**
@@ -174,6 +177,9 @@ export type WsInboundMessage =
 
 /** 下行事件信封：每个事件可携带 eventId / seq 供断线重连和 gap 检测使用 */
 export interface WsOutboundEnvelope {
+    /** M30-01 binding; clients reject downstream ACK/replay from an old login. */
+    authEpoch?: number;
+    generation?: number;
     /** 递增事件 ID（per-session，缓冲模式下存在），用于断线重连回放 */
     eventId?: number;
     /** Durable runtime EventStore cursor for cross-process replay. */

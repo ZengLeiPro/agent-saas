@@ -233,6 +233,7 @@ import { BillingService } from '../data/billing/service.js';
 import { clearSessionsListCache } from '../routes/sessions.js';
 import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
+import { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
 import type { ContextStore } from '../context/store/index.js';
@@ -393,9 +394,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     guardrail: config.guardrail,
     logger: serverLogger,
   });
-  // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
+  // Auth 与 epoch authority 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
   let tenantStore: TenantStore | undefined;
+  let authEpochAuthority: AuthEpochAuthority | undefined;
   // 跨进程刷新用（见 sharedConfigRefresher）：runtime-worker 要能感知 ws-only
   // 进程对 tenants.json 的改写，所以路径需要在这个 if 块之外可见。
   let tenantsFilePath: string | undefined;
@@ -403,6 +405,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   if (config.auth?.enabled && config.auth.jwtSecret) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     userStore = new UserStore(usersFilePath);
+    authEpochAuthority = new AuthEpochAuthority(
+      join(dirname(usersFilePath), 'auth-epochs.json'),
+      (event) => serverLogger.info(JSON.stringify({ category: 'auth_lifecycle', ...event })),
+    );
+
     // Tenant store 与 user store 共生命周期；tenants.json 放在 users.json 同目录。
     // 启动期保证平台根组织和开沿日常组织都始终存在。
     tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
@@ -418,7 +425,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     } : { useLocalLock: false });
     await tenantStore.ensureDefaultTenant();
     await tenantStore.ensureKaiyanTenant();
-    authMiddleware = createAuthMiddleware(config.auth.jwtSecret, userStore, tenantStore, config.auth.tokenExpiresIn || '30d');
+    authMiddleware = createAuthMiddleware(config.auth.jwtSecret, userStore, tenantStore, config.auth.tokenExpiresIn || '30d', undefined, authEpochAuthority);
     serverLogger.info('Auth enabled');
     serverLogger.info(`Tenant store loaded: ${tenantStore.count()} tenant(s), platform='${DEFAULT_TENANT_ID}', legacy='${LEGACY_TENANT_ID}'`);
   }
@@ -755,6 +762,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tenantStore,
       orgAgentStore,
       skillConfigStore,
+      authEpochAuthority,
     }));
     if (enableSchedulerWorker) {
       runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
@@ -2574,7 +2582,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
     voiceTranscriptionService,
-    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
+    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret, authEpochAuthority } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
     uploadManager,
@@ -2942,6 +2950,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     codexDeviceAuthService,
     codexWebSocketShutdown: () => codexWebSocketPool.close(),
     userStore,
+    authEpochAuthority,
     dwsConnectionStore,
     dwsAuthFlowService,
     agentDwsAccountStore,

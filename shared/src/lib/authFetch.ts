@@ -1,5 +1,6 @@
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
+import { AUTH_SESSION_KEY } from './authLifecycle';
 
 let onUnauthorized: (() => void) | null = null;
 let sensitiveTransportAllowed = true;
@@ -63,12 +64,25 @@ async function guardedAuthFetch(
     } catch { /* ignore parse errors */ }
   }
 
-  // 滑动过期：后端在 token 即将过期时签发新 token
+  // Sliding expiry and N-1 upgrade are one fail-closed persistence boundary.
   const refreshToken = response.headers.get('X-Refresh-Token');
+  const authEpoch = Number(response.headers.get('X-Auth-Epoch'));
+  const generation = Number(response.headers.get('X-Auth-Generation'));
   if (refreshToken && sensitiveTransportAllowed) {
-    platform.secureStorage.setItem(TOKEN_KEY, refreshToken).catch((e) => {
-      console.warn('[authFetch] Failed to save refreshed token:', e);
-    });
+    try {
+      await platform.secureStorage.setItem(TOKEN_KEY, refreshToken);
+      if (Number.isSafeInteger(authEpoch) && authEpoch > 0 && Number.isSafeInteger(generation) && generation > 0) {
+        await platform.secureStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch, generation }));
+      }
+    } catch (error) {
+      await Promise.allSettled([
+        platform.secureStorage.removeItem(TOKEN_KEY),
+        platform.secureStorage.removeItem(AUTH_SESSION_KEY),
+      ]);
+      console.warn('[authFetch] Failed to persist refreshed auth generation:', error);
+      onUnauthorized?.();
+      throw new Error('AUTH_BINDING_PERSIST_FAILED');
+    }
   }
 
   return response;

@@ -844,7 +844,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     });
     app.use(
       '/api/auth',
-      createAuthRouter({
+      createAuthRouter({ // shared HTTP/WS auth epoch authority
         userStore: runtime.userStore,
         tenantStore: runtime.tenantStore,
         jwtSecret: config.auth.jwtSecret,
@@ -870,7 +870,16 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         signupConfigStore: runtime.signupConfigStore,
         secretVault: runtime.secretVault,
         getModelsConfig: () => config.models,
-        runStore: runtime.runtimeRunStore, legacyWriteGate,
+        runStore: runtime.runtimeRunStore,
+        authEpochAuthority: runtime.authEpochAuthority,
+        onAuthFenced: async (userId, reason) => { // login also evicts older WS generations
+          webChannel?.disconnectUser(userId);
+          if (reason === 'revoke' || reason === 'delete_account') {
+            const user = userStore.findById(userId);
+            if (user) await terminateAndRevokeUserConnectors(user);
+          }
+        },
+        legacyWriteGate,
       }),
     );
     app.use('/api/auth', createAuthConnectionCapabilityRouter({

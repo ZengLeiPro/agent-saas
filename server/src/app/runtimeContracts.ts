@@ -1,4 +1,5 @@
 import type { AppConfig } from '../types/index.js';
+import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
@@ -161,6 +162,8 @@ export interface AppRuntime {
   codexDeviceAuthService: CodexDeviceAuthService;
   codexWebSocketShutdown?: () => void;
   userStore?: UserStore;
+  /** M30-01 durable auth epoch/generation authority. */
+  authEpochAuthority?: AuthEpochAuthority;
   /** DWS 连接状态只保存非敏感元数据；token 始终留在用户 workspace 的 .dws。 */
   dwsConnectionStore?: DwsConnectionStore;
   /** DWS 首次绑定：能力中心连接器页启动 device flow，短期授权码落 PG，token 仍只进用户 workspace。 */

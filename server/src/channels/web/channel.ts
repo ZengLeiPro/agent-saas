@@ -506,9 +506,10 @@ export class WebChannel implements BaseChannel {
       userStore: this.userStore,
       tenantStore: this.config.tenantStore,
       allowedOrigins: this.config.allowedOrigins,
+      authEpochAuthority: this.config.authEpochAuthority,
     });
 
-    // 创建 EventBus（所有 WS 下行事件的唯一出口）
+    // 创建 EventBus（所有 WS 下行事件的唯一出口及 auth binding gate）
     this.eventBus = new EventBus({
       eventBufferStore: this.eventBufferStore,
       userEventLog: this.wsServer.userEventLog,
@@ -518,9 +519,7 @@ export class WebChannel implements BaseChannel {
         return this.userStore.listAll().filter(u => u.role === 'admin').map(u => u.id);
       },
       sendTo: (ws, envelope) => {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(envelope));
-        }
+        this.wsServer!.sendTo(ws, envelope as { eventId?: number; eventCursor?: string; seq?: number; data: object });
       },
       isActiveStream: (ws, streamId) => this.wsActiveStream.get(ws) === streamId,
     });
@@ -1139,15 +1138,19 @@ export class WebChannel implements BaseChannel {
       }
     }
   }
-  // ── WS 辅助方法 ──────────────────────────────────────
+  // ── WS 辅助方法（统一经过 auth binding gate）──────────
 
   private wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({
-        ...(eventId !== undefined ? { eventId } : {}),
-        ...(eventCursor ? { eventCursor } : {}),
-        data,
-      }));
+    const envelope = {
+      ...(eventId !== undefined ? { eventId } : {}),
+      ...(eventCursor ? { eventCursor } : {}),
+      data,
+    };
+    if (this.wsServer) {
+      this.wsServer.sendTo(ws, envelope);
+    } else if (ws.readyState === ws.OPEN) {
+      // Unit-only construction before start(); production always uses WsServer.
+      ws.send(JSON.stringify(envelope));
     }
   }
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
+import { AUTH_SESSION_KEY } from './authLifecycle';
 import { authFetch, authFetchForLocalUnlockValidation, setOnUnauthorized, setSensitiveTransportAllowed } from './authFetch';
 
 // ── 构造一个最小可用的 platform，用真实的 initPlatform 注入 ──────────────
@@ -167,6 +168,20 @@ describe('authFetch', () => {
     await Promise.resolve();
 
     expect(store.get(TOKEN_KEY)).toBe('new-token');
+  });
+
+  it('M30-01 persists an N-1 upgraded token binding before returning', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse({
+      status: 200,
+      headers: {
+        'X-Refresh-Token': 'epoch-token',
+        'X-Auth-Epoch': '7',
+        'X-Auth-Generation': '9',
+      },
+    })));
+    await authFetch('/api/auth/me');
+    expect(store.get(TOKEN_KEY)).toBe('epoch-token');
+    expect(JSON.parse(store.get(AUTH_SESSION_KEY)!)).toEqual({ authEpoch: 7, generation: 9 });
   });
 
   it('M30-02 blocks locked/offline sensitive transport before token read', async () => {

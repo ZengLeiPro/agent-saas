@@ -14,6 +14,7 @@
 
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
+import { AUTH_SESSION_KEY, type AuthSessionBinding } from './authLifecycle';
 import type { SandboxProfile } from '../types/session';
 import type { WsEvent } from '../types/ws';
 import {
@@ -151,6 +152,8 @@ export type WsOutboundMessage =
 
 /** Inbound message envelope */
 export interface WsEnvelope {
+    authEpoch?: number;
+    generation?: number;
     eventId?: number;
     eventCursor?: string;
     /** 用户级事件序号（per-user，user/dual/admin scope），用于 gap 检测和主动 sync */
@@ -177,6 +180,7 @@ class WsClient {
     // M20-04 boundary fence. Every disconnect/boundary invalidates old socket callbacks.
     private boundaryGeneration = 0;
     private sendingFrozen = false;
+    private activeAuthBinding: AuthSessionBinding | null = null;
 
     // Reference counting (for mobile multi-screen)
     private refCount = 0;
@@ -203,7 +207,7 @@ class WsClient {
     }
 
     /** Resolve endpoint and credential separately so JWT never enters URLs/logs. */
-    private async getConnectionParams(): Promise<{ url: string; token?: string }> {
+    private async getConnectionParams(): Promise<{ url: string; token?: string; binding?: AuthSessionBinding }> {
         const platform = getPlatform();
         const url = platform.platformConfig.getWsUrl();
         this.assertTrustedWsUrl(url);
@@ -211,7 +215,16 @@ class WsClient {
         if (!authEnabled) return { url };
         const token = await platform.secureStorage.getItem(TOKEN_KEY);
         if (!token) throw new Error('Missing authentication token');
-        return { url, token };
+        const rawBinding = await platform.secureStorage.getItem(AUTH_SESSION_KEY);
+        if (!rawBinding) throw new Error('Missing authentication epoch');
+        let binding: AuthSessionBinding;
+        try { binding = JSON.parse(rawBinding) as AuthSessionBinding; }
+        catch { throw new Error('Invalid authentication epoch'); }
+        if (!Number.isSafeInteger(binding.authEpoch) || binding.authEpoch < 1
+            || !Number.isSafeInteger(binding.generation) || binding.generation < 1) {
+            throw new Error('Invalid authentication epoch');
+        }
+        return { url, token, binding };
     }
 
     /** Reference-counted connect. Returns a release function. */
@@ -303,8 +316,8 @@ class WsClient {
         }, CONNECT_TIMEOUT_MS);
 
         try {
-            const { url, token } = await this.getConnectionParams();
-            this.doConnect(url, token);
+            const { url, token, binding } = await this.getConnectionParams();
+            this.doConnect(url, token, binding);
         } catch {
             this.scheduleRetry();
         }
@@ -391,9 +404,10 @@ class WsClient {
         return envelope;
     }
 
-    private doConnect(url: string, token?: string): void {
+    private doConnect(url: string, token?: string, binding?: AuthSessionBinding): void {
         if (this.sendingFrozen) return;
         const socketBoundaryGeneration = this.boundaryGeneration;
+        this.activeAuthBinding = binding ?? null;
         const isCurrentBoundary = () => socketBoundaryGeneration === this.boundaryGeneration && !this.sendingFrozen;
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
@@ -428,19 +442,24 @@ class WsClient {
             }
             // Auth-enabled deployments require auth as the first client frame. In no-auth
             // mode the server sends auth_ok immediately, so the client must stay silent.
-            if (token) ws.send(JSON.stringify({ action: 'auth', token }));
+            if (token) ws.send(JSON.stringify({ action: 'auth', token, ...binding }));
         };
 
         ws.onmessage = (event: MessageEvent) => {
             if (this.ws !== ws || !isCurrentBoundary()) return;
             try {
-                const envelope = JSON.parse(event.data as string) as WsEnvelope;
+                const wireEnvelope = JSON.parse(event.data as string) as WsEnvelope;
+                if (this.activeAuthBinding && (
+                    wireEnvelope.authEpoch !== this.activeAuthBinding.authEpoch
+                    || wireEnvelope.generation !== this.activeAuthBinding.generation
+                )) return;
+                const { authEpoch: _authEpoch, generation: _generation, ...envelope } = wireEnvelope;
                 const now = Date.now();
                 // Any inbound frame proves the WS path is alive. Do not depend on
                 // a pong/sync frame specifically; streaming frames may arrive while
                 // heartbeat replies are queued behind other downstream messages.
                 this.lastPongAt = now;
-                const messageData = envelope.data as { type?: string } | null | undefined;
+                const messageData = envelope.data as { type?: string } | null | undefined; // binding already validated/stripped
                 const msgType = messageData?.type;
                 if (msgType === 'auth_ok') {
                     this.retryAttempt = 0;
@@ -501,12 +520,12 @@ class WsClient {
             void this.checkAuthStatus();
         }
 
-        this.retryTimer = setTimeout(async () => {
+        this.retryTimer = setTimeout(async () => { // reload token + binding after backoff
             this.retryTimer = null;
             if (!this.intentionalClose && !this.sendingFrozen) {
                 try {
-                    const { url, token } = await this.getConnectionParams();
-                    this.doConnect(url, token);
+                    const { url, token, binding } = await this.getConnectionParams();
+                    this.doConnect(url, token, binding);
                 } catch {
                     this.scheduleRetry();
                 }
@@ -566,6 +585,7 @@ class WsClient {
                 lastSeq: this.lastSeq,
                 ...(this.serverEpoch ? { epoch: this.serverEpoch } : {}),
                 clientTs: this.lastPingSentAt,
+                ...(this.activeAuthBinding ?? {}),
             }));
         }, HEARTBEAT_INTERVAL_MS);
     }
@@ -639,6 +659,7 @@ class WsClient {
             this.ws.close(1000, 'Client disconnect');
             this.ws = null;
         }
+        this.activeAuthBinding = null;
         this.setState('disconnected');
         this.connectPromiseResolve?.();
         this.connectPromiseResolve = null;
@@ -666,7 +687,7 @@ class WsClient {
                     ...((msg.sessionId ?? this.syncSessionId) ? { sessionId: msg.sessionId ?? this.syncSessionId! } : {}),
                 }
                 : msg;
-            this.ws.send(JSON.stringify(outbound));
+            this.ws.send(JSON.stringify({ ...outbound, ...(this.activeAuthBinding ?? {}) }));
             return true;
         }
         console.warn('[WS] Cannot send: not connected');

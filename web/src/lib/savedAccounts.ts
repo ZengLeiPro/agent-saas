@@ -1,3 +1,4 @@
+import type { AuthSessionBinding } from '@agent/shared';
 import type { AuthUser } from "@/types/auth";
 
 const SAVED_ACCOUNTS_KEY = "agentChat.savedAccounts.v1";
@@ -5,6 +6,7 @@ const SAVED_ACCOUNTS_KEY = "agentChat.savedAccounts.v1";
 interface SavedAccountRecord {
   key: string;
   token: string;
+  binding: AuthSessionBinding;
   user: AuthUser;
 }
 
@@ -24,6 +26,8 @@ function isSavedAccountRecord(value: unknown): value is SavedAccountRecord {
     typeof record.key === "string" &&
     typeof record.token === "string" &&
     record.token.length > 0 &&
+    Number.isSafeInteger(record.binding?.authEpoch) && record.binding!.authEpoch > 0 &&
+    Number.isSafeInteger(record.binding?.generation) && record.binding!.generation > 0 &&
     !!record.user &&
     typeof record.user.id === "string" &&
     typeof record.user.username === "string" &&
@@ -63,18 +67,23 @@ export function readSavedAccounts(): SavedAccountSummary[] {
   return toSummaries(readRecords());
 }
 
-export function rememberSavedAccount(token: string, user: AuthUser): SavedAccountSummary[] {
+export function rememberSavedAccount(token: string, user: AuthUser, binding: AuthSessionBinding): SavedAccountSummary[] {
   const key = getAccountKey(user);
   const records = [
-    { key, token, user },
+    { key, token, binding, user },
     ...readRecords().filter((record) => record.key !== key),
   ];
   writeRecords(records);
   return toSummaries(records);
 }
 
+export function getSavedAccountAuth(key: string): { token: string; binding: AuthSessionBinding } | null {
+  const record = readRecords().find((candidate) => candidate.key === key);
+  return record ? { token: record.token, binding: record.binding } : null;
+}
+
 export function getSavedAccountToken(key: string): string | null {
-  return readRecords().find((record) => record.key === key)?.token ?? null;
+  return getSavedAccountAuth(key)?.token ?? null;
 }
 
 export function forgetSavedAccountByToken(token: string): SavedAccountSummary[] {

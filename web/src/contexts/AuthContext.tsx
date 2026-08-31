@@ -2,11 +2,22 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from "react";
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
 import type { BoundaryIdentity, IdentityEvent, IdentityState, PlatformCapability, TenantFeatureFlags, UserPreferences } from "@agent/shared";
-import { DEFAULT_TENANT_ID, INITIAL_IDENTITY_STATE, clearGroupsCache, identityReducer, isDebugModeAvailable, resetChatStore } from "@agent/shared";
+import {
+  AUTH_SESSION_KEY,
+  AuthLifecycleTransaction,
+  DEFAULT_TENANT_ID,
+  INITIAL_IDENTITY_STATE,
+  clearGroupsCache,
+  createStorageJournalStore,
+  identityReducer,
+  isDebugModeAvailable,
+  resetChatStore,
+} from "@agent/shared";
 import { setOnUnauthorized } from "@/lib/authFetch";
 import { wsClient } from "@/lib/wsClient";
 import { TOKEN_KEY, SESSION_STORAGE_KEY } from "@/lib/constants";
 import { authPreload } from "@/lib/preload";
+import { apiUrl } from '@/lib/apiBase';
 import { clearSessionListCache } from "@/lib/sessionListCache";
 import { clearAllMessageCache, setMessageCacheIdentity } from "@/lib/messageCache";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
@@ -18,9 +29,9 @@ import {
 import {
   clearSavedAccounts,
   forgetSavedAccount,
-  forgetSavedAccountByToken,
+  forgetSavedAccountByToken, // N-1 invalid-token cleanup
   getAccountKey,
-  getSavedAccountToken,
+  getSavedAccountAuth,
   readSavedAccounts,
   rememberSavedAccount,
   type SavedAccountSummary,
@@ -49,11 +60,11 @@ interface AuthContextValue {
   accounts: SavedAccountSummary[];
   login: (credentials: LoginCredentials) => Promise<void>;
   loginWithSms: (credentials: SmsLoginCredentials) => Promise<void>;
-  activateAccount: (response: AuthResponse) => void;
+  activateAccount: (response: AuthResponse) => Promise<void>;
   switchAccount: (accountKey: string) => void;
-  logoutCurrentAccount: (nextAccountKey?: string) => void;
-  logoutAllAccounts: () => void;
-  logout: () => void;
+  logoutCurrentAccount: (nextAccountKey?: string) => Promise<void>;
+  logoutAllAccounts: () => Promise<void>;
+  logout: () => Promise<void>;
   /** 更新当前用户头像 URL + 版本号 */
   updateAvatar: (avatar: string | undefined, avatarVersion?: number) => void;
   /** 更新当前用户手机号验证状态 */
@@ -133,50 +144,101 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistIdentityState(next);
     setIdentityState(next);
     setMessageCacheIdentity(next.identity);
-    wsClient.unfreezeSending();
+    if (next.identity && (event.type === 'authenticated' || event.type === 'principal-switched' || event.type === 'tenant-switched')) {
+      wsClient.unfreezeSending();
+    }
     return next.identity;
   }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   const [accounts, setAccounts] = useState<SavedAccountSummary[]>(readSavedAccounts);
+  const lifecycle = useMemo(() => new AuthLifecycleTransaction(
+    createStorageJournalStore({
+      getItem: (key) => localStorage.getItem(key),
+      setItem: (key, value) => localStorage.setItem(key, value),
+      removeItem: (key) => localStorage.removeItem(key),
+    }),
+    {
+      fenceGeneration: () => {
+        wsClient.freezeSending();
+        if (identityRef.current.identity) transitionIdentity({ type: 'logout' });
+        setUser(null);
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (token) void fetch(apiUrl('/api/auth/logout'), {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+      },
+      disconnectWs: () => wsClient.disconnect(),
+      stopQueue: () => resetChatStore(),
+      clearCursorEpoch: () => {
+        wsClient.resetRecovery({ sessionId: null });
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      },
+      clearCache: async () => { // includes all M20 generation-scoped namespaces
+        setMessageCacheIdentity(null);
+        await Promise.all([
+          Promise.resolve(clearSessionListCache()),
+          clearAllMessageCache(),
+          clearGroupsCache(),
+          unsubscribeCurrentBrowserPush(),
+        ]);
+        for (let index = localStorage.length - 1; index >= 0; index--) {
+          const key = localStorage.key(index);
+          if (key && (
+            key.startsWith('agentChat.queue') || key.startsWith('agentChat.runtime')
+            || key.startsWith('agentChat.interaction') || key.startsWith('agentChat.upload')
+            || key.startsWith('agentChat.model.') || key.startsWith('agentChat.inputDraft')
+          )) localStorage.removeItem(key);
+        }
+      },
+      deleteToken: () => {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AUTH_SESSION_KEY);
+      },
+    },
+  ), [transitionIdentity]);
 
-  const logoutAllAccounts = useCallback(() => {
-    // Offline-first: credential and local boundary are completed before any push/server cleanup.
-    localStorage.removeItem(TOKEN_KEY);
+  const requestServerLogout = useCallback((): Promise<void> => {
+    // Capture the valid token before teardown; await the server receipt only
+    // after local sensitive state and the token are already cleared.
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return Promise.resolve();
+    return fetch(apiUrl('/api/auth/logout'), {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    }).then(() => undefined).catch(() => undefined);
+  }, []);
+
+  const logoutAllAccounts = useCallback(async () => {
+    const serverFence = requestServerLogout();
+    await lifecycle.logout();
+    await serverFence;
     clearSavedAccounts();
-    clearAccountScopedState();
-    transitionIdentity({ type: "logout" });
     setAccounts([]);
-    setUser(null);
-    void unsubscribeCurrentBrowserPush();
-  }, [transitionIdentity]);
+  }, [lifecycle, requestServerLogout]);
 
-  const logoutCurrentAccount = useCallback((nextAccountKey?: string) => {
+  const logoutCurrentAccount = useCallback(async (nextAccountKey?: string) => {
     const currentKey = user ? getAccountKey(user) : null;
     const remainingAccounts = currentKey ? forgetSavedAccount(currentKey) : readSavedAccounts();
     const targetAccount = nextAccountKey
       ? remainingAccounts.find((account) => account.key === nextAccountKey)
       : remainingAccounts[0];
-
-    localStorage.removeItem(TOKEN_KEY);
-    clearAccountScopedState();
-    transitionIdentity({ type: "logout" });
+    const serverFence = requestServerLogout();
+    await lifecycle.logout();
+    await serverFence;
     setAccounts(remainingAccounts);
-    setUser(null);
-    void unsubscribeCurrentBrowserPush();
-
-    const nextToken = targetAccount ? getSavedAccountToken(targetAccount.key) : null;
-    if (nextToken) {
-      localStorage.setItem(TOKEN_KEY, nextToken);
-      window.location.replace("/");
+    const nextAuth = targetAccount ? getSavedAccountAuth(targetAccount.key) : null;
+    if (nextAuth) {
+      localStorage.setItem(TOKEN_KEY, nextAuth.token);
+      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(nextAuth.binding));
+      window.location.replace('/');
     }
-  }, [transitionIdentity, user]);
+  }, [lifecycle, requestServerLogout, user]);
 
-  const logout = useCallback(() => {
-    logoutCurrentAccount();
+  const logout = useCallback(async () => {
+    await logoutCurrentAccount();
   }, [logoutCurrentAccount]);
 
-  // 注册 401 回调
+  // 401 and WS auth failure enter the same canonical transaction.
   useEffect(() => {
     setOnUnauthorized(() => {
       logout();
@@ -186,45 +248,87 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [logout]);
 
-  // 启动时校验 token — 消费模块级预加载结果
+  // Recover any durable logout/delete journal before accepting cached auth.
   useEffect(() => {
-    authPreload.then((result) => {
-      if (result.status === "authenticated") {
+    void (async () => {
+      await lifecycle.resume();
+      await lifecycle.failClosedIncompleteLogin({
+        fenceUntilCommit: () => wsClient.freezeSending(),
+        persistTokenAndBinding: () => undefined,
+        installAuthenticatedState: () => undefined,
+        commitConnections: () => undefined,
+        failClosed: () => {
+          wsClient.disconnect();
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(AUTH_SESSION_KEY);
+          setUser(null);
+        },
+      });
+      const result = await authPreload;
+      if (result.status === 'authenticated') {
         const nextUser = normalizeAuthUser(result.user);
-        setUser(nextUser);
-        transitionIdentity({ type: "authenticated", principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
-        const token = localStorage.getItem(TOKEN_KEY);
-        if (token) setAccounts(rememberSavedAccount(token, nextUser));
-        setAuthEnabled(true);
-      } else if (result.status === "no-auth") {
+        const bindingRaw = localStorage.getItem(AUTH_SESSION_KEY);
+        if (!bindingRaw) {
+          localStorage.removeItem(TOKEN_KEY);
+          clearAccountScopedState();
+        } else {
+          setUser(nextUser);
+          transitionIdentity({ type: 'authenticated', principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
+          const token = localStorage.getItem(TOKEN_KEY);
+          if (token) {
+            const binding = JSON.parse(bindingRaw) as { authEpoch: number; generation: number };
+            setAccounts(rememberSavedAccount(token, nextUser, binding));
+          }
+          setAuthEnabled(true);
+        }
+      } else if (result.status === 'no-auth') {
         setAuthEnabled(false);
-      } else if (result.status === "unauthenticated") {
+      } else if (result.status === 'unauthenticated') {
         const invalidToken = localStorage.getItem(TOKEN_KEY);
         localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AUTH_SESSION_KEY);
         clearAccountScopedState();
-        transitionIdentity({ type: "token-invalidated" });
+        if (identityRef.current.identity) transitionIdentity({ type: 'token-invalidated' });
         if (invalidToken) setAccounts(forgetSavedAccountByToken(invalidToken));
       }
-      // "error" 状态：保持默认即可
       setIsLoading(false);
-    });
-  }, [transitionIdentity]);
+    })();
+  }, [lifecycle, transitionIdentity]);
 
   const activateAccount = useCallback(async (data: AuthResponse) => {
     const nextUser = normalizeAuthUser(data.user);
     const isSwitching = user !== null && getAccountKey(user) !== getAccountKey(nextUser);
-    if (isSwitching) { clearAccountScopedState(); void unsubscribeCurrentBrowserPush(); }
-    localStorage.setItem(TOKEN_KEY, data.token);
-    setAccounts(rememberSavedAccount(data.token, nextUser));
-    setUser(nextUser);
-    transitionIdentity({ type: isSwitching ? "principal-switched" : "authenticated", principal: { userId: nextUser.id, tenantId: nextUser.tenantId } });
-    if (isSwitching) {
-      window.location.replace("/");
-    }
-  }, [transitionIdentity, user]);
+    await lifecycle.login({ authEpoch: data.authEpoch, generation: data.generation }, {
+      fenceUntilCommit: () => {
+        wsClient.freezeSending();
+        if (isSwitching) clearAccountScopedState();
+      },
+      persistTokenAndBinding: async (binding) => {
+        localStorage.setItem(TOKEN_KEY, data.token);
+        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+      },
+      installAuthenticatedState: () => {
+        setAccounts(rememberSavedAccount(data.token, nextUser, { authEpoch: data.authEpoch, generation: data.generation }));
+        setUser(nextUser);
+        transitionIdentity({
+          type: isSwitching ? 'principal-switched' : 'authenticated',
+          principal: { userId: nextUser.id, tenantId: nextUser.tenantId },
+        });
+      },
+      commitConnections: () => wsClient.unfreezeSending(),
+      failClosed: () => {
+        wsClient.freezeSending();
+        wsClient.disconnect();
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        setUser(null);
+      },
+    });
+    if (isSwitching) window.location.replace('/');
+  }, [lifecycle, transitionIdentity, user]);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
-    await activateAccount(await loginWithPassword(credentials));
+    await activateAccount(await loginWithPassword(credentials)); // commits epoch before WS use
   }, [activateAccount]);
 
   const loginWithSms = useCallback(async (credentials: SmsLoginCredentials) => {
@@ -233,15 +337,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const switchAccount = useCallback((accountKey: string) => {
     if (user && getAccountKey(user) === accountKey) return;
-    const token = getSavedAccountToken(accountKey);
-    if (!token) {
+    const savedAuth = getSavedAccountAuth(accountKey);
+    if (!savedAuth) {
       setAccounts(readSavedAccounts());
       return;
     }
     clearAccountScopedState();
     transitionIdentity({ type: "logout" });
     void unsubscribeCurrentBrowserPush();
-    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_KEY, savedAuth.token);
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(savedAuth.binding));
     window.location.replace("/");
   }, [transitionIdentity, user]);
 

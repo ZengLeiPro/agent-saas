@@ -1,6 +1,19 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { authFetch, setOnUnauthorized, wsClient, TOKEN_KEY, INPUT_DRAFT_KEY, resetChatStore, INITIAL_IDENTITY_STATE, identityReducer, scopedSensitiveKey } from '@agent/shared';
+import {
+  AUTH_SESSION_KEY,
+  AuthLifecycleTransaction,
+  authFetch,
+  createStorageJournalStore,
+  setOnUnauthorized,
+  wsClient,
+  TOKEN_KEY,
+  INPUT_DRAFT_KEY,
+  resetChatStore,
+  INITIAL_IDENTITY_STATE,
+  identityReducer,
+  scopedSensitiveKey,
+} from '@agent/shared';
 import type { AuthUser, BoundaryIdentity, IdentityEvent, IdentityState } from '@agent/shared';
 import { mobileSecureStorage, migrateLegacyKeychainItem } from '../platform/mobileSecureStorage';
 import {
@@ -72,56 +85,89 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     identityRef.current = next;
     setIdentityState(next);
     await AsyncStorage.setItem(IDENTITY_META_KEY, JSON.stringify(next));
-    wsClient.unfreezeSending();
+    if (next.identity && (event.type === 'authenticated' || event.type === 'principal-switched' || event.type === 'tenant-switched')) {
+      wsClient.unfreezeSending();
+    }
     return next.identity;
   }, []);
   const cachedUserKey = useCallback((identity: BoundaryIdentity | null) => scopedSensitiveKey(CACHED_USER_KEY, identity), []);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // held until journal recovery completes
   const [serviceConfig, setServiceConfig] = useState<MobileServicePolicy>(
     getServiceConfigSnapshot,
   );
 
+  const lifecycle = useMemo(() => new AuthLifecycleTransaction(
+    createStorageJournalStore({
+      getItem: (key) => AsyncStorage.getItem(key),
+      setItem: (key, value) => AsyncStorage.setItem(key, value),
+      removeItem: (key) => AsyncStorage.removeItem(key),
+    }),
+    {
+      fenceGeneration: async () => {
+        setSensitiveTransportAllowed(false);
+        wsClient.freezeSending();
+        if (identityRef.current.identity) await transitionIdentity({ type: 'logout' });
+        setUser(null);
+        const token = await mobileSecureStorage.getItem(TOKEN_KEY);
+        const config = getServiceConfigSnapshot();
+        if (token && config.ready) void fetch(`${config.apiOrigin}/api/auth/logout`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+      },
+      disconnectWs: () => wsClient.disconnect(),
+      stopQueue: () => resetChatStore(),
+      clearCursorEpoch: async () => {
+        wsClient.resetRecovery({ sessionId: null });
+        await getPlatform().storage.removeItem('agentChat.sessionId');
+      },
+      clearCache: async () => {
+        await clearAllLocalAppLockPolicies();
+        await cancelNativeOAuthTransaction();
+        await AsyncStorage.removeItem(CACHED_USER_KEY);
+        const scopedUser = cachedUserKey(identityRef.current.identity);
+        if (scopedUser) await AsyncStorage.removeItem(scopedUser); // pre-M30 compatibility key
+        await Promise.all([
+          clearSessionListCache(), clearGroupsCache(), clearAllMessageCache(),
+          fileCacheService.clearAll(), textContentCache.clearAll(), clearFileListCache(),
+        ]);
+        clearPreviewTokenCache();
+        await Promise.all([
+          Promise.resolve(getPlatform().storage.removeItem('avatarMap')),
+          Promise.resolve(getPlatform().storage.removeItem(INPUT_DRAFT_KEY)),
+        ]);
+        const localKeys = await AsyncStorage.getAllKeys();
+        const sensitiveKeys = localKeys.filter((key) =>
+          key.startsWith('agentChat.model.') || key.startsWith('agentChat.inputDraft::') ||
+          key.startsWith('agentChat.queue') || key.startsWith('agentChat.runtime') ||
+          key.startsWith('agentChat.interaction') || key.startsWith('agentChat.upload') ||
+          key.startsWith(CACHED_USER_KEY),
+        );
+        if (sensitiveKeys.length) await AsyncStorage.multiRemove(sensitiveKeys);
+      },
+      deleteToken: async () => {
+        await mobileSecureStorage.removeItem(TOKEN_KEY);
+        await mobileSecureStorage.removeItem(AUTH_SESSION_KEY);
+      },
+    },
+  ), [cachedUserKey, transitionIdentity]);
+
   const clearAccountData = useCallback(async (_disconnectRealtime: boolean) => {
-    // M20-04: offline logout uses the same local atomic boundary and never waits for server.
-    setSensitiveTransportAllowed(false);
-    wsClient.freezeSending();
-    wsClient.disconnect();
-    wsClient.resetRecovery({ sessionId: null });
-    resetChatStore();
-    await mobileSecureStorage.removeItem(TOKEN_KEY);
-    await clearAllLocalAppLockPolicies();
-    await cancelNativeOAuthTransaction();
-    // Clear in-memory auth immediately after the credential is gone; later
-    // cache cleanup failures must not leave the UI authenticated.
-    setUser(null);
-    await AsyncStorage.removeItem(CACHED_USER_KEY);
-    const scopedUser = cachedUserKey(identityRef.current.identity);
-    if (scopedUser) await AsyncStorage.removeItem(scopedUser);
-    await clearSessionListCache();
-    await clearGroupsCache();
-    await clearAllMessageCache();
-    await fileCacheService.clearAll();
-    await textContentCache.clearAll();
-    await clearFileListCache();
-    clearPreviewTokenCache();
-    void getPlatform().storage.removeItem('avatarMap');
-    void getPlatform().storage.removeItem(INPUT_DRAFT_KEY);
-    void getPlatform().storage.removeItem('agentChat.sessionId');
-    const localKeys = await AsyncStorage.getAllKeys();
-    const sensitiveKeys = localKeys.filter((key) =>
-      key.startsWith('agentChat.model.') || key.startsWith('agentChat.inputDraft::') ||
-      key.startsWith('agentChat.queue') || key.startsWith('agentChat.runtime') ||
-      key.startsWith('agentChat.interaction') || key.startsWith('agentChat.upload'),
-    );
-    if (sensitiveKeys.length) await AsyncStorage.multiRemove(sensitiveKeys);
-  }, [cachedUserKey]);
+    await lifecycle.logout();
+  }, [lifecycle]);
 
-  const logout = useCallback(async () => {
-    await clearAccountData(false);
-    await transitionIdentity({ type: 'logout' });
-  }, [clearAccountData, transitionIdentity]);
+  const logout = useCallback(async () => { // shared transaction remains authoritative
+    const token = await mobileSecureStorage.getItem(TOKEN_KEY);
+    const config = getServiceConfigSnapshot();
+    const serverFence = token && config.ready
+      ? fetch(`${config.apiOrigin}/api/auth/logout`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        }).then(() => undefined).catch(() => undefined)
+      : Promise.resolve();
+    await lifecycle.logout();
+    await serverFence;
+  }, [lifecycle]);
 
-  // Check existing token on mount. Service configuration is resolved first;
+  // Check existing token on mount only after lifecycle recovery. Service configuration is resolved first;
   // invalid production builds never touch an auth endpoint or cached login.
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +191,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch { await AsyncStorage.removeItem(IDENTITY_META_KEY); }
         }
+        // Journal recovery precedes every cached-token or reconnect decision.
+        await lifecycle.resume();
+        await lifecycle.failClosedIncompleteLogin({
+          fenceUntilCommit: () => { setSensitiveTransportAllowed(false); wsClient.freezeSending(); },
+          persistTokenAndBinding: () => undefined,
+          installAuthenticatedState: () => undefined,
+          commitConnections: () => undefined,
+          failClosed: async () => {
+            wsClient.disconnect();
+            await mobileSecureStorage.removeItem(TOKEN_KEY);
+            await mobileSecureStorage.removeItem(AUTH_SESSION_KEY);
+            setUser(null);
+          },
+        });
         // Migrate before checking the origin binding so a legacy keychain token
         // is also removed when this build selects a different trusted origin.
         await migrateLegacyKeychainItem(TOKEN_KEY);
@@ -165,8 +225,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const res = await timedAuthFetch('/api/auth/me');
+        const res = await timedAuthFetch('/api/auth/me'); // may atomically upgrade an N-1 token
         if (res.ok) {
+          const binding = await mobileSecureStorage.getItem(AUTH_SESSION_KEY);
+          if (!binding) {
+            await clearAccountData(false);
+            return;
+          }
           const data = await res.json() as AuthUser;
           const identity = await transitionIdentity({ type: 'authenticated', principal: { userId: data.id, tenantId: data.tenantId } });
           if (!cancelled) setUser(data);
@@ -212,7 +277,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [cachedUserKey, clearAccountData, logout, transitionIdentity]);
+  }, [cachedUserKey, clearAccountData, lifecycle, logout, transitionIdentity]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);
@@ -250,18 +315,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [cachedUserKey, clearAccountData, transitionIdentity]);
 
-  const applyLoginResponse = useCallback(async (data: { token: string; user: AuthUser }) => {
-    // The response can only arrive through authFetch after the trusted-origin
-    // guard; persist its token only after that boundary has succeeded.
+  const applyLoginResponse = useCallback(async (data: { token: string; authEpoch: number; generation: number; user: AuthUser }) => {
     const principal = { userId: data.user.id, tenantId: data.user.tenantId };
     const current = identityRef.current.identity;
-    if (current && (current.userId !== principal.userId || current.tenantId !== principal.tenantId)) await clearAccountData(false);
-    await mobileSecureStorage.setItem(TOKEN_KEY, data.token);
-    const identity = await transitionIdentity({ type: current ? 'principal-switched' : 'authenticated', principal });
-    const key = cachedUserKey(identity);
-    if (key) await AsyncStorage.setItem(key, JSON.stringify(data.user));
-    setUser(data.user);
-  }, [cachedUserKey, clearAccountData, transitionIdentity]);
+    await lifecycle.login({ authEpoch: data.authEpoch, generation: data.generation }, {
+      fenceUntilCommit: () => { setSensitiveTransportAllowed(false); wsClient.freezeSending(); },
+      persistTokenAndBinding: async (binding) => {
+        await mobileSecureStorage.setItem(TOKEN_KEY, data.token);
+        await mobileSecureStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+      },
+      installAuthenticatedState: async () => {
+        const identity = await transitionIdentity({ type: current ? 'principal-switched' : 'authenticated', principal });
+        const key = cachedUserKey(identity);
+        if (key) await AsyncStorage.setItem(key, JSON.stringify(data.user));
+        setUser(data.user);
+      },
+      commitConnections: () => { setSensitiveTransportAllowed(true); wsClient.unfreezeSending(); },
+      failClosed: async () => {
+        setSensitiveTransportAllowed(false);
+        wsClient.disconnect();
+        await mobileSecureStorage.removeItem(TOKEN_KEY);
+        await mobileSecureStorage.removeItem(AUTH_SESSION_KEY);
+        setUser(null);
+      },
+    });
+  }, [cachedUserKey, lifecycle, transitionIdentity]);
 
   const postLogin = useCallback(async (url: string, body: unknown) => {
     const currentConfig = getServiceConfigSnapshot();
@@ -273,6 +351,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
+      // Logged-out transport is reopened only for the trusted login endpoint;
+      // WS remains fenced until the shared transaction commits.
+      setSensitiveTransportAllowed(true);
       const res = await timedAuthFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -284,7 +365,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: responseBody.error || '登录失败' };
       }
 
-      const data = await res.json() as { token: string; user: AuthUser };
+      const data = await res.json() as { token: string; authEpoch: number; generation: number; user: AuthUser };
       await applyLoginResponse(data);
       return { ok: true };
     } catch {

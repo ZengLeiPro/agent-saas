@@ -518,7 +518,7 @@ export type {
   ScenarioSanitizeReport,
 } from './security/sanitizeCustomerFacingText';
 
-// M30-02 optional local app-lock kernel
+// M30-02 optional local app-lock kernel (shared)
 export {
   DEFAULT_LOCAL_LOCK_BACKGROUND_MS,
   INITIAL_LOCAL_APP_LOCK_STATE,
@@ -553,6 +553,26 @@ export type {
 } from './lib/identity';
 export { runIdentityBoundary } from './lib/identityBoundary';
 export type { IdentityBoundaryHooks } from './lib/identityBoundary';
+
+// M30-01 canonical auth lifecycle transaction
+export {
+  AUTH_LIFECYCLE_JOURNAL_KEY,
+  AUTH_SESSION_KEY,
+  AUTH_TERMINATION_STEPS,
+  AuthLifecycleBusyError,
+  AuthLifecycleTransaction,
+  createStorageJournalStore,
+} from './lib/authLifecycle';
+export type {
+  AuthLifecycleJournal,
+  AuthLifecycleJournalStore,
+  AuthLifecycleOperation,
+  AuthLifecycleStatus,
+  AuthLoginEffects,
+  AuthSessionBinding,
+  AuthTerminationEffects,
+  AuthTerminationStep,
+} from './lib/authLifecycle';
 
 // Lib - constants
 export {

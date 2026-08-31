@@ -10,10 +10,10 @@ export function useOnlineStatus(): boolean {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const online = state.isConnected !== false;
       setIsOnline(online);
-      // offline -> online: force reconnect after a short delay for network stability
+      // offline -> online: reconnect only a committed, non-fenced generation
       if (online && !prevOnline.current && !wsClient.isConnected) {
         setTimeout(() => {
-          if (!wsClient.isConnected) {
+          if (!wsClient.isConnected && !wsClient.isSendingFrozen) {
             wsClient.forceReconnect().catch(() => {});
           }
         }, 1000);

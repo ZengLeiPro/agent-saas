@@ -20,12 +20,15 @@ import type { UserOverrides } from '../../security/extraDirs.js';
 import type { OutboundEvent } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';
 import type { VoiceTranscriptionService } from '../../services/voiceTranscriptionService.js';
+import type { AuthEpochAuthority } from '../../auth/authEpochAuthority.js';
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
 export interface WebChannelRuntimeConfig {
   /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
   authEnabled?: boolean;
+  /** M30-01 durable authority shared by HTTP tokens and WS. */
+  authEpochAuthority?: AuthEpochAuthority;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;

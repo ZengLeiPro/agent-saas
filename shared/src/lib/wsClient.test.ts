@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
+import { AUTH_SESSION_KEY } from './authLifecycle';
 import { wsClient, type WsState } from './wsClient';
 
 // ── 可控假 WebSocket ──────────────────────────────────────────────────
@@ -58,11 +59,14 @@ class FakeWebSocket {
   simulateOpen(completeAuth = true): void {
     this.readyState = FAKE_OPEN;
     this.onopen?.();
-    if (completeAuth) this.simulateMessage({ data: { type: 'auth_ok' } });
+    if (completeAuth) this.simulateMessage({ authEpoch: 1, generation: 1, data: { type: 'auth_ok' } });
   }
-  /** 模拟收到一帧（envelope JSON） */
+  /** 模拟收到一帧（默认注入当前 M30-01 binding） */
   simulateMessage(envelope: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(envelope) });
+    const framed = envelope && typeof envelope === 'object'
+      ? { authEpoch: 1, generation: 1, ...(envelope as object) }
+      : envelope;
+    this.onmessage?.({ data: JSON.stringify(framed) });
   }
   /** 模拟连接关闭 */
   simulateClose(code = 1006, reason = ''): void {
@@ -74,7 +78,10 @@ class FakeWebSocket {
 // ── 最小 platform：secureStorage 提供 token，platformConfig 提供 URL/策略 ──
 function makePlatform(token: string | null = 'tok', authEnabled = true): PlatformDeps {
   const store = new Map<string, string>();
-  if (token) store.set(TOKEN_KEY, token);
+  if (token) {
+    store.set(TOKEN_KEY, token);
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 1 }));
+  }
   return {
     storage: {} as PlatformDeps['storage'],
     secureStorage: {
@@ -136,7 +143,7 @@ describe('wsClient - 建立连接', () => {
     expect(states).toContain('connecting');
 
     ws.simulateOpen();
-    expect(JSON.parse(ws.sent[0])).toEqual({ action: 'auth', token: 'tok' });
+    expect(JSON.parse(ws.sent[0])).toEqual({ action: 'auth', token: 'tok', authEpoch: 1, generation: 1 });
     await p;
 
     expect(wsClient.isConnected).toBe(true);
@@ -152,8 +159,8 @@ describe('wsClient - 建立连接', () => {
     ws.simulateOpen(false);
     expect(wsClient.currentState).toBe('connecting');
     expect(wsClient.send({ action: 'detach' })).toBe(false);
-    expect(ws.sent.map((frame) => JSON.parse(frame))).toEqual([{ action: 'auth', token: 'tok' }]);
-    ws.simulateMessage({ data: { type: 'auth_ok' } });
+    expect(ws.sent.map((frame) => JSON.parse(frame))).toEqual([{ action: 'auth', token: 'tok', authEpoch: 1, generation: 1 }]);
+    ws.simulateMessage({ authEpoch: 1, generation: 1, data: { type: 'auth_ok' } });
     await p;
     expect(wsClient.currentState).toBe('connected');
   });
@@ -223,7 +230,7 @@ describe('wsClient - 建立连接', () => {
   });
 });
 
-describe('wsClient - 消息收发与分发', () => {
+describe('wsClient - 消息收发、auth binding 与分发', () => {
   async function connectAndOpen() {
     const p = wsClient.connect();
     await vi.advanceTimersByTimeAsync(0);
@@ -242,6 +249,14 @@ describe('wsClient - 消息收发与分发', () => {
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith(envelope);
     off();
+  });
+
+  it('rejects an injected event/ACK/replay from an old auth binding', async () => {
+    await connectAndOpen();
+    const handler = vi.fn();
+    wsClient.onMessage(handler);
+    latestWs().simulateMessage({ authEpoch: 0, generation: 0, data: { type: 'chat_ack', client_msg_id: 'old' } });
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('pong 帧被内部消费，不转发给 handler', async () => {
@@ -285,7 +300,7 @@ describe('wsClient - 发送', () => {
     const ok = wsClient.send({ action: 'abort', runId: 'r1' });
     expect(ok).toBe(true);
     const ws = latestWs();
-    expect(JSON.parse(ws.sent[ws.sent.length - 1])).toEqual({ action: 'abort', runId: 'r1' });
+    expect(JSON.parse(ws.sent[ws.sent.length - 1])).toEqual({ action: 'abort', runId: 'r1', authEpoch: 1, generation: 1 });
   });
 
   it('send(sync) 自动带回最近由 sync 确认的服务端 epoch', async () => {
@@ -295,7 +310,7 @@ describe('wsClient - 发送', () => {
 
     expect(wsClient.send({ action: 'sync', lastSeq: 4 })).toBe(true);
     expect(JSON.parse(ws.sent.at(-1)!)).toEqual({
-      action: 'sync', lastSeq: 4, epoch: 'server-epoch-2',
+      action: 'sync', lastSeq: 4, epoch: 'server-epoch-2', authEpoch: 1, generation: 1,
     });
   });
 
@@ -333,7 +348,7 @@ describe('wsClient - 发送', () => {
     const ok = await p;
     expect(ok).toBe(true);
     const ws = latestWs();
-    expect(JSON.parse(ws.sent[ws.sent.length - 1])).toEqual({ action: 'detach' });
+    expect(JSON.parse(ws.sent[ws.sent.length - 1])).toEqual({ action: 'detach', authEpoch: 1, generation: 1 });
   });
 });
 
@@ -394,7 +409,7 @@ describe('wsClient - 重连', () => {
 
     expect(wsClient.send({ action: 'sync', lastSeq: 4 })).toBe(true);
     expect(JSON.parse(second.sent.at(-1)!)).toEqual({
-      action: 'sync', lastSeq: 4, epoch: 'epoch-2',
+      action: 'sync', lastSeq: 4, epoch: 'epoch-2', authEpoch: 1, generation: 1,
     });
   });
 
@@ -485,7 +500,7 @@ describe('wsClient - authoritative recovery', () => {
     ws.simulateMessage({ seq: 6, data: { type: 'title_updated', sessionId: 'session-1', title: 'duplicate gap' } });
 
     const syncs = ws.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.action === 'sync');
-    expect(syncs).toEqual([{ action: 'sync', lastSeq: 4, epoch: 'epoch-1', sessionId: 'session-1' }]);
+    expect(syncs).toEqual([{ action: 'sync', lastSeq: 4, epoch: 'epoch-1', sessionId: 'session-1', authEpoch: 1, generation: 1 }]);
     expect(handler).not.toHaveBeenCalled();
 
     ws.simulateMessage({ data: { type: 'sync_ok', seq: 6, epoch: 'epoch-1', events: [

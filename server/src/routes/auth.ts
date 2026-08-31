@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
 import { getEffectivePlatformCapabilities, isSuperAdmin, normalizePlatformCapabilities, requireSuperAdmin } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
+import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { isDebugModeAvailable } from "../../../shared/src/types/tenant.js";
 import { isModelAllowedForTenant } from "../app/models.js";
@@ -280,6 +281,10 @@ export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
   getModelsConfig?: () => ModelsConfig | undefined;
   /** TASK-256：账户批准档位变化时，服务端原子收敛该用户所有 active run metadata。 */
   runStore?: Pick<RunStore, "updateApprovalPolicyForActiveByUser">;
+  /** M30-01 durable token/session generation authority. */
+  authEpochAuthority?: AuthEpochAuthority;
+  /** Disconnects all sockets/active work after a generation is fenced. */
+  onAuthFenced?: (userId: string, reason: 'login' | 'logout' | 'revoke' | 'delete_account') => void | Promise<void>;
 }
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
@@ -329,6 +334,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
 
   function buildAuthResponse(user: UserRecord) {
     const tenantId = user.tenantId || DEFAULT_TENANT_ID;
+    const binding = deps.authEpochAuthority?.issueLogin(user.id);
     const authPayload: JwtPayload = {
       sub: user.id,
       username: user.username,
@@ -343,14 +349,17 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         username: user.username,
         role: user.role,
         tenantId,
+        ...(binding ?? {}),
       },
       jwtSecret,
       { expiresIn: tokenExpiresIn } as SignOptions,
     );
     return {
       token,
+      ...(binding ?? {}),
       user: {
         id: user.id,
+        ...(binding ?? {}),
         username: user.username,
         role: user.role,
         tenantId,
@@ -728,7 +737,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         ).catch(() => {});
       }
 
-      res.json(buildAuthResponse(user));
+      const response = buildAuthResponse(user);
+      await deps.onAuthFenced?.(user.id, 'login');
+      res.json(response);
     } catch (err) {
       res
         .status(500)
@@ -860,7 +871,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         ).catch(() => {});
       }
 
-      res.json(buildAuthResponse(user));
+      const response = buildAuthResponse(user);
+      await deps.onAuthFenced?.(user.id, 'login');
+      res.json(response);
     } catch (err) {
       res
         .status(500)
@@ -868,7 +881,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
-  // GET /api/auth/me
+  // GET /api/auth/me (also confirms the active M30-01 binding)
   router.get("/me", (req, res) => {
     const startedAt = Date.now();
     if (!req.user) {
@@ -884,6 +897,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // /me handler 原先漏返。前端依赖此字段判断"当前组织"标签 / 是否平台 admin。
       // JWT payload 里有，所以直接透传 req.user.tenantId 即可。
       tenantId: req.user.tenantId,
+      authEpoch: req.user.authEpoch,
+      generation: req.user.generation,
       tenantName: resolveTenantName(req.user.tenantId),
       // 兼容旧客户端字段；所有平台管理员均返回 true。
       isSuperAdmin: isSuperAdmin(req.user),
@@ -1222,6 +1237,35 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
+  // POST /api/auth/logout — duplicate-safe server fence; local teardown remains token-last.
+  router.post('/logout', async (req, res) => {
+    const bearer = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : undefined;
+    let payload = req.user;
+    if (!payload && bearer) {
+      try { payload = jwt.verify(bearer, jwtSecret) as JwtPayload; }
+      catch { /* handled below */ }
+    }
+    const userId = payload?.sub;
+    if (!userId || !userStore.findById(userId)) {
+      res.status(401).json({ error: 'Invalid logout token' });
+      return;
+    }
+    const current = deps.authEpochAuthority?.current(userId);
+    const duplicate = !!current?.fenced
+      && typeof payload?.authEpoch === 'number'
+      && payload.authEpoch < current.authEpoch;
+    if (deps.authEpochAuthority && !duplicate && !deps.authEpochAuthority.validates(userId, payload)) {
+      res.status(401).json({ error: 'Authentication generation revoked', code: 'AUTH_EPOCH_REVOKED' });
+      return;
+    }
+    const binding = duplicate ? current : deps.authEpochAuthority?.fence(userId, 'logout');
+    if (!duplicate) await deps.onAuthFenced?.(userId, 'logout');
+    apiLogger.info(JSON.stringify({ event: 'auth_lifecycle', operation: 'logout', duplicate, userId, ...binding, at: new Date().toISOString() }));
+    res.json({ ok: true, duplicate, ...binding });
+  });
+
   // DELETE /api/auth/users/:id (admin only)
   router.delete("/users/:id", requireAdmin, async (req, res) => {
     try {
@@ -1247,7 +1291,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
-      // 最后有效管理员保护必须先于 Connector/Cron 等清理副作用。
+      // M30-01 deletion is fail-fenced: once accepted for processing, business
+      // cleanup failure must never resurrect the previous token/socket.
+      const deletionFence = deps.authEpochAuthority?.fence(target.id, 'delete_account');
+      await deps.onAuthFenced?.(target.id, 'delete_account');
+      apiLogger.info(JSON.stringify({ event: 'auth_lifecycle', operation: 'delete_account', userId: target.id, actorUserId: req.user!.sub, ...deletionFence, at: new Date().toISOString() }));
+      // 最后有效管理员保护及后续业务失败均保留上面的 fence。
       userStore.assertCanDelete(target.id);
       await deps.onUserDeleting?.(target);
       if (!deps.onUserDeleting) {

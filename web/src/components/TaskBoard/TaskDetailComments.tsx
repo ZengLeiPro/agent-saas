@@ -234,8 +234,8 @@ export function TaskDetailComments({
         ) : null}
       </div>
       {navigationItems.length > 0 ? (
-        <nav aria-label="评论阶段导航" className="shrink-0 overflow-x-auto border-t bg-background px-6 py-1.5 sm:px-10">
-          <div className="relative mx-auto flex w-[88%] min-w-max items-center justify-around gap-3 py-1">
+        <nav aria-label="评论阶段导航" className="shrink-0 overflow-x-auto border-t bg-background px-4 py-1 sm:px-6">
+          <div className="relative inline-flex min-w-full items-center justify-around gap-3">
             <span aria-hidden className="pointer-events-none absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-border" />
             {navigationItems.map((item, index) => {
               const selected = selectedNavigationId === item.id;

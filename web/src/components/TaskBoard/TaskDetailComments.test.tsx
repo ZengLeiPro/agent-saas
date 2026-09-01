@@ -128,8 +128,6 @@ describe("TaskDetailComments", () => {
     renderComments({ taskDescription: "很长的任务正文".repeat(20), comments });
 
     const navigation = screen.getByRole("navigation", { name: "评论阶段导航" });
-    expect(navigation.className).toContain("px-6");
-    expect(navigation.firstElementChild?.className).toContain("w-[88%]");
     const buttons = within(navigation).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "跳转到第 1 条：任务正文",
@@ -149,6 +147,29 @@ describe("TaskDetailComments", () => {
     expect(buttons[3]?.firstElementChild?.className).toContain("bg-violet-500");
     expect(buttons[4]?.firstElementChild?.className).toContain("bg-emerald-500");
     expect(buttons[5]?.firstElementChild?.className).toContain("bg-orange-500");
+  });
+
+  it("导航轨道横向铺满可用宽度，不再使用百分比限宽", () => {
+    renderComments({ comments: [agentComment] });
+
+    const navigation = screen.getByRole("navigation", { name: "评论阶段导航" });
+    const track = navigation.firstElementChild;
+    expect(track?.className).toContain("min-w-full");
+    expect(track?.className).not.toContain("w-[88%]");
+    expect(track?.className).not.toContain("mx-auto");
+  });
+
+  it("导航条仅收窄纵向高度，同时保留圆点点击热区", () => {
+    renderComments({ comments: [agentComment] });
+
+    const navigation = screen.getByRole("navigation", { name: "评论阶段导航" });
+    const track = navigation.firstElementChild;
+    const button = within(navigation).getByRole("button");
+    expect(navigation.className).toContain("py-1");
+    expect(navigation.className).not.toContain("py-1.5");
+    expect(track?.className).not.toContain("py-1");
+    expect(button.className).toContain("size-5");
+    expect(button.firstElementChild?.className).toContain("size-3");
   });
 
   it("点击圆点后仅用贴紧细蓝环强调当前圆点，不描边目标评论", () => {

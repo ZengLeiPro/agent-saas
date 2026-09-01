@@ -140,6 +140,10 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
       migrationIndex < isolationIndex &&
       isolationIndex < recordIndex,
   );
+  assert.match(
+    workflow,
+    /--arg releaseSha "\$\(jq -r \.components\.web\.sourceSha "\$RUNNER_TEMP\/manifest\.json"\)"/u,
+  );
   assert.ok(runScriptLines(workflow).every((line) => !/\$\{\{\s*inputs\./u.test(line)));
 });
 
@@ -156,10 +160,12 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);
+  assert.match(workflow, /staging-acs-health\.json/u);
   assert.match(workflow, /Prepare browser and Agent acceptance suite/u);
   assert.match(workflow, /Re-verify exact RC immediately before acceptance execution/u);
   assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-api-ready-critical\.json/u);
+  assert.match(workflow, /staging-acs-health-critical\.json/u);
   const criticalRecheck = workflow.indexOf(
     '      - name: Re-verify exact RC immediately before acceptance execution',
   );
@@ -175,14 +181,25 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /summarize-e2e\.mjs/u);
   assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
   assert.match(workflow, /Verify Staging Manifest and component identities remained unchanged/u);
+  assert.ok(
+    workflow.indexOf('Verify Staging Manifest and component identities remained unchanged') <
+      workflow.indexOf('Revoke temporary Staging SSH ingress'),
+  );
   assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-web-identity-final\.json/u);
   assert.match(workflow, /staging-api-ready-final\.json/u);
+  assert.match(workflow, /staging-acs-health-final\.json/u);
   assert.match(workflow, /release-final\/manifest\.json/u);
-  assert.match(workflow, /verify-staging-release-binding\.mjs/u);
+  assert.equal(workflow.match(/verify-staging-release-binding\.mjs/gu)?.length, 3);
+  assert.equal(workflow.match(/--acs-health/gu)?.length, 3);
+  assert.equal(workflow.match(/127\.0\.0\.1:3410\/health/gu)?.length, 3);
+  assert.match(workflow, /releaseIdentityAttested|--acs-health/u);
   assert.match(workflow, /--expected-manifest-digest "\$MANIFEST_DIGEST"/u);
   assert.match(stagingBinding, /configFingerprint/u);
   assert.match(stagingBinding, /webDigest/u);
+  assert.match(stagingBinding, /apiSourceSha/u);
+  assert.match(stagingBinding, /webSourceSha/u);
+  assert.match(stagingBinding, /acsSourceSha/u);
   assert.match(stagingBinding, /serverDigest/u);
   assert.match(stagingBinding, /acsOrchestratorDigest/u);
   assert.match(stagingBinding, /acsSandboxImageDigest/u);
@@ -210,7 +227,7 @@ test('Staging browser authentication is preloaded without recording the password
   assert.match(chatInput, /aria-label="消息输入"/u);
 });
 
-test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {
+test('target deployment consumes bundles with component identities and only Staging paths', async () => {
   const deploy = await readFile(deployPath, 'utf8');
   assert.doesNotMatch(deploy, /pnpm (install|build)|npm (install|run)/u);
   assert.doesNotMatch(deploy, /\/opt\/agent-saas-app|agent-saas-server@|active-color/u);
@@ -224,10 +241,7 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy,
     /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1" "\$2"/u,
   );
-  assert.doesNotMatch(
-    deploy,
-    /install -d[^\n]*"\$runtime_dir"/u,
-  );
+  assert.doesNotMatch(deploy, /install -d[^\n]*"\$runtime_dir"/u);
   assert.match(deploy, /Artifact directory owner does not match the persistent runtime owner/u);
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
@@ -334,6 +348,9 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy.indexOf('Staging runtime profile preflight failed') <
       deploy.indexOf('ln -sfn "$target" "$current"'),
   );
+  assert.match(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.components\.api\.sourceSha/u);
+  assert.match(deploy, /release\.releaseSha !== manifest\.components\.api\.sourceSha/u);
+  assert.doesNotMatch(deploy, /AGENT_SAAS_RELEASE_SHA: manifest\.releaseSha/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT/u);

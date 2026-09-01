@@ -17,6 +17,7 @@ export function verifyStagingReleaseBinding({
   manifest,
   webIdentity,
   apiReady,
+  acsHealth,
   expectedManifestDigest,
 }) {
   const releaseId = required(manifest?.releaseId, 'Manifest release ID', /^rc-\d{8}-\d{2,}$/u);
@@ -25,6 +26,21 @@ export function verifyStagingReleaseBinding({
   if (expectedManifestDigest !== undefined)
     equal(manifestDigest, expectedManifestDigest, 'Manifest digest');
 
+  const apiSourceSha = required(
+    manifest?.components?.api?.sourceSha,
+    'Manifest API source SHA',
+    SHA_PATTERN,
+  );
+  const webSourceSha = required(
+    manifest?.components?.web?.sourceSha,
+    'Manifest Web source SHA',
+    SHA_PATTERN,
+  );
+  const acsSourceSha = required(
+    manifest?.components?.acs?.sourceSha,
+    'Manifest ACS source SHA',
+    SHA_PATTERN,
+  );
   const serverDigest = required(
     manifest?.components?.api?.artifactDigest,
     'Manifest API digest',
@@ -48,14 +64,14 @@ export function verifyStagingReleaseBinding({
 
   equal(webIdentity?.environment, 'staging', 'Web environment');
   equal(webIdentity?.releaseId, releaseId, 'Web release ID');
-  equal(webIdentity?.releaseSha, releaseSha, 'Web release SHA');
+  equal(webIdentity?.releaseSha, webSourceSha, 'Web component source SHA');
   equal(webIdentity?.configFingerprint, manifestDigest, 'Web Manifest fingerprint');
   equal(webIdentity?.webDigest, webDigest, 'Web artifact digest');
 
   equal(apiReady?.status, 'ok', 'API readiness');
   equal(apiReady?.release?.environment, 'staging', 'API environment');
   equal(apiReady?.release?.releaseId, releaseId, 'API release ID');
-  equal(apiReady?.release?.releaseSha, releaseSha, 'API release SHA');
+  equal(apiReady?.release?.releaseSha, apiSourceSha, 'API component source SHA');
   equal(apiReady?.release?.serverDigest, serverDigest, 'API artifact digest');
   equal(apiReady?.release?.webDigest, webDigest, 'API-declared Web digest');
   equal(
@@ -69,9 +85,25 @@ export function verifyStagingReleaseBinding({
     'API-declared ACS Sandbox digest',
   );
 
+  equal(acsHealth?.status, 'ok', 'ACS health');
+  equal(acsHealth?.environment, 'staging', 'ACS environment');
+  equal(acsHealth?.releaseId, releaseId, 'ACS release ID');
+  equal(acsHealth?.sourceSha, acsSourceSha, 'ACS component source SHA');
+  equal(
+    acsHealth?.orchestratorArtifactDigest,
+    acsOrchestratorDigest,
+    'ACS Orchestrator artifact digest',
+  );
+  equal(acsHealth?.sandboxImageDigest, acsSandboxImageDigest, 'ACS Sandbox image digest');
+  equal(acsHealth?.namespace, 'agent-saas-staging', 'ACS namespace');
+  equal(acsHealth?.releaseIdentityAttested, true, 'ACS release identity attestation');
+
   return {
     releaseId,
     releaseSha,
+    apiSourceSha,
+    webSourceSha,
+    acsSourceSha,
     manifestDigest,
     serverDigest,
     webDigest,
@@ -97,16 +129,17 @@ async function readJson(path) {
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const options = parse(process.argv);
-  for (const key of ['manifest', 'web-identity', 'api-ready']) {
+  for (const key of ['manifest', 'web-identity', 'api-ready', 'acs-health']) {
     if (!options[key])
       throw new Error(
-        'usage: verify-staging-release-binding.mjs --manifest <file> --web-identity <file> --api-ready <file> [--expected-manifest-digest <sha256:...>]',
+        'usage: verify-staging-release-binding.mjs --manifest <file> --web-identity <file> --api-ready <file> --acs-health <file> [--expected-manifest-digest <sha256:...>]',
       );
   }
   const result = verifyStagingReleaseBinding({
     manifest: await readJson(options.manifest),
     webIdentity: await readJson(options['web-identity']),
     apiReady: await readJson(options['api-ready']),
+    acsHealth: await readJson(options['acs-health']),
     expectedManifestDigest: options['expected-manifest-digest'],
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);

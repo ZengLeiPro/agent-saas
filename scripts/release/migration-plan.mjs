@@ -1084,36 +1084,179 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const isMethodCall = (node, owner, method) =>
     methodCallArguments(node, owner, method) !== undefined;
-  // A local zero-side-effect wrapper does not erase the descriptor container's source object.
-  const descriptorContainerFactories = new Map();
-  const registerDescriptorContainerFactory = (name, parameters, body) => {
-    let returned;
-    if (!ts.isBlock(body)) returned = unwrapExpression(body);
-    else {
-      const returns = [];
-      const collectReturns = (node) => {
-        if (ts.isReturnStatement(node) && node.expression) {
-          returns.push(unwrapExpression(node.expression));
+  // Proven local wrappers preserve descriptor targets and keys; ambiguous or compound writes fail closed.
+  const descriptorFactories = new Map();
+  const unprovenDescriptorFactories = new Set();
+  const returnedFactoryExpression = (body) => {
+    if (!ts.isBlock(body)) return { returned: unwrapExpression(body), localValues: new Map() };
+    const returns = [];
+    const localValues = new Map();
+    const ambiguousLocalValues = new Set();
+    const registerLocalValue = (name, value) => {
+      if (ambiguousLocalValues.has(name)) return;
+      if (localValues.has(name)) {
+        localValues.delete(name);
+        ambiguousLocalValues.add(name);
+        return;
+      }
+      localValues.set(name, unwrapExpression(value));
+    };
+    const assignmentOperators = new Set([
+      ts.SyntaxKind.EqualsToken,
+      ts.SyntaxKind.PlusEqualsToken,
+      ts.SyntaxKind.MinusEqualsToken,
+      ts.SyntaxKind.AsteriskEqualsToken,
+      ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+      ts.SyntaxKind.SlashEqualsToken,
+      ts.SyntaxKind.PercentEqualsToken,
+      ts.SyntaxKind.LessThanLessThanEqualsToken,
+      ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+      ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+      ts.SyntaxKind.AmpersandEqualsToken,
+      ts.SyntaxKind.BarEqualsToken,
+      ts.SyntaxKind.CaretEqualsToken,
+      ts.SyntaxKind.BarBarEqualsToken,
+      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+      ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ]);
+    const markAmbiguousLocalValue = (name) => {
+      localValues.delete(name);
+      ambiguousLocalValues.add(name);
+    };
+    const markAssignedBindingsAmbiguous = (target) => {
+      const current = unwrapExpression(target);
+      if (ts.isIdentifier(current)) {
+        markAmbiguousLocalValue(current.text);
+        return;
+      }
+      ts.forEachChild(current, markAssignedBindingsAmbiguous);
+    };
+    const collectLocalValues = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
+        registerLocalValue(node.name.text, node.initializer);
+      if (ts.isBinaryExpression(node) && assignmentOperators.has(node.operatorToken.kind)) {
+        if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left))
+          registerLocalValue(node.left.text, node.right);
+        else markAssignedBindingsAmbiguous(node.left);
+      }
+      if (
+        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator) &&
+        ts.isIdentifier(node.operand)
+      )
+        markAssignedBindingsAmbiguous(node.operand);
+      if (!ts.isFunctionLike(node) || node === body) ts.forEachChild(node, collectLocalValues);
+    };
+    collectLocalValues(body);
+    const collectReturns = (node) => {
+      if (ts.isReturnStatement(node) && node.expression) {
+        returns.push(unwrapExpression(node.expression));
+        return;
+      }
+      if (!ts.isFunctionLike(node) || node === body) ts.forEachChild(node, collectReturns);
+    };
+    collectReturns(body);
+    if (returns.length !== 1) return undefined;
+    let returned = returns[0];
+    const visited = new Set();
+    while (ts.isIdentifier(returned) && localValues.has(returned.text)) {
+      if (visited.has(returned.text)) return undefined;
+      visited.add(returned.text);
+      returned = localValues.get(returned.text);
+    }
+    return { returned, localValues, ambiguousLocalValues };
+  };
+  const containsDescriptorCall = (body) => {
+    let found = false;
+    const visit = (node) => {
+      if (found) return;
+      if (
+        ['Reflect', 'Object'].some((owner) =>
+          isMethodCall(node, owner, 'getOwnPropertyDescriptor'),
+        ) ||
+        isMethodCall(node, 'Object', 'getOwnPropertyDescriptors')
+      ) {
+        found = true;
+        return;
+      }
+      if (!ts.isFunctionLike(node) || node === body) ts.forEachChild(node, visit);
+    };
+    visit(body);
+    return found;
+  };
+  const registerDescriptorFactory = (name, parameters, body) => {
+    if (containsDescriptorCall(body)) unprovenDescriptorFactories.add(name);
+    const returnedFactory = returnedFactoryExpression(body);
+    if (!returnedFactory) return;
+    const { returned, localValues, ambiguousLocalValues = new Set() } = returnedFactory;
+    const parameterNames = parameters.map((parameter) =>
+      ts.isIdentifier(parameter.name) ? parameter.name.text : undefined,
+    );
+    const parameterBindingNames = new Set();
+    const collectBindingNames = (name) => {
+      if (ts.isIdentifier(name)) {
+        parameterBindingNames.add(name.text);
+        return;
+      }
+      for (const element of name.elements)
+        if (ts.isBindingElement(element)) collectBindingNames(element.name);
+    };
+    for (const parameter of parameters) {
+      collectBindingNames(parameter.name);
+      const names = new Set();
+      const collectParameterNames = (name) => {
+        if (ts.isIdentifier(name)) {
+          names.add(name.text);
           return;
         }
-        if (!ts.isFunctionLike(node) || node === body) ts.forEachChild(node, collectReturns);
+        for (const element of name.elements)
+          if (ts.isBindingElement(element)) collectParameterNames(element.name);
       };
-      collectReturns(body);
-      if (returns.length === 1) returned = returns[0];
+      collectParameterNames(parameter.name);
+      for (const parameterName of names) {
+        if (
+          parameter.initializer ||
+          !ts.isIdentifier(parameter.name) ||
+          localValues.has(parameterName) ||
+          ambiguousLocalValues.has(parameterName)
+        ) {
+          localValues.delete(parameterName);
+          ambiguousLocalValues.add(parameterName);
+        }
+      }
     }
-    if (!returned || !isMethodCall(returned, 'Object', 'getOwnPropertyDescriptors')) return;
+    for (const owner of ['Reflect', 'Object']) {
+      if (!isMethodCall(returned, owner, 'getOwnPropertyDescriptor')) continue;
+      const [target, key] = methodCallArguments(returned, owner, 'getOwnPropertyDescriptor');
+      if (target && key)
+        descriptorFactories.set(name, {
+          kind: 'member',
+          parameters: parameterNames,
+          localValues,
+          ambiguousLocalValues,
+          parameterBindingNames,
+          target,
+          key,
+        });
+      unprovenDescriptorFactories.delete(name);
+      return;
+    }
+    if (!isMethodCall(returned, 'Object', 'getOwnPropertyDescriptors')) return;
     const [target] = methodCallArguments(returned, 'Object', 'getOwnPropertyDescriptors');
-    if (!target) return;
-    descriptorContainerFactories.set(name, {
-      parameters: parameters.map((parameter) =>
-        ts.isIdentifier(parameter.name) ? parameter.name.text : undefined,
-      ),
-      target,
-    });
+    if (target)
+      descriptorFactories.set(name, {
+        kind: 'container',
+        parameters: parameterNames,
+        localValues,
+        ambiguousLocalValues,
+        parameterBindingNames,
+        target,
+      });
+    unprovenDescriptorFactories.delete(name);
   };
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name && statement.body)
-      registerDescriptorContainerFactory(statement.name.text, statement.parameters, statement.body);
+      registerDescriptorFactory(statement.name.text, statement.parameters, statement.body);
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
       if (
@@ -1122,24 +1265,55 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         (ts.isArrowFunction(declaration.initializer) ||
           ts.isFunctionExpression(declaration.initializer))
       )
-        registerDescriptorContainerFactory(
+        registerDescriptorFactory(
           declaration.name.text,
           declaration.initializer.parameters,
           declaration.initializer.body,
         );
     }
   }
+  const descriptorFactoryCall = (node, kind) => {
+    const current = unwrapExpression(node);
+    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) return undefined;
+    const name = current.expression.text;
+    if (unprovenDescriptorFactories.has(name))
+      throw new Error(`descriptor wrapper ${name} cannot be proven statically`);
+    const factory = descriptorFactories.get(name);
+    return factory?.kind === kind ? { call: current, factory } : undefined;
+  };
+  const resolveFactoryValue = ({ call, factory }, value) => {
+    let current = unwrapExpression(value);
+    const visited = new Set();
+    while (ts.isIdentifier(current)) {
+      if (visited.has(current.text)) return undefined;
+      visited.add(current.text);
+      if (factory.ambiguousLocalValues.has(current.text))
+        throw new Error(`descriptor wrapper alias ${current.text} cannot be proven statically`);
+      const parameterIndex = factory.parameters.indexOf(current.text);
+      if (parameterIndex >= 0) return call.arguments[parameterIndex];
+      const localValue = factory.localValues.get(current.text);
+      if (!localValue) return current;
+      current = unwrapExpression(localValue);
+    }
+    let containsFactoryBinding = false;
+    const visit = (node) => {
+      if (ts.isIdentifier(node) && factory.parameterBindingNames.has(node.text)) {
+        containsFactoryBinding = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(current);
+    if (containsFactoryBinding)
+      throw new Error('descriptor wrapper expression cannot be proven statically');
+    return current;
+  };
   const descriptorContainerTarget = (node) => {
     const current = unwrapExpression(node);
     if (isMethodCall(current, 'Object', 'getOwnPropertyDescriptors'))
       return methodCallArguments(current, 'Object', 'getOwnPropertyDescriptors')?.[0];
-    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) return undefined;
-    const factory = descriptorContainerFactories.get(current.expression.text);
-    if (!factory) return undefined;
-    const target = unwrapExpression(factory.target);
-    if (!ts.isIdentifier(target)) return target;
-    const parameterIndex = factory.parameters.indexOf(target.text);
-    return parameterIndex >= 0 ? current.arguments[parameterIndex] : target;
+    const factoryCall = descriptorFactoryCall(current, 'container');
+    return factoryCall ? resolveFactoryValue(factoryCall, factoryCall.factory.target) : undefined;
   };
   const appendMember = (reference, member) => {
     if (!reference) return undefined;
@@ -1181,6 +1355,13 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     for (const owner of ['Reflect', 'Object']) {
       if (!isMethodCall(current, owner, 'getOwnPropertyDescriptor')) continue;
       const [target, key] = methodCallArguments(current, owner, 'getOwnPropertyDescriptor');
+      if (!target || !key) return undefined;
+      return appendMember(objectReference(target), staticMemberKey(key));
+    }
+    const factoryCall = descriptorFactoryCall(current, 'member');
+    if (factoryCall) {
+      const target = resolveFactoryValue(factoryCall, factoryCall.factory.target);
+      const key = resolveFactoryValue(factoryCall, factoryCall.factory.key);
       if (!target || !key) return undefined;
       return appendMember(objectReference(target), staticMemberKey(key));
     }

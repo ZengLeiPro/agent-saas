@@ -67,7 +67,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - name: Verify exact RC is still active on Staging
+      - name: Validate exact RC subject
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,16 +84,6 @@ jobs:
           git cat-file -p "$STAGING_RELEASE_ID^{tag}" | grep -Fx "manifest-digest: $manifest_digest"
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$release_sha" origin/main
-          curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?run=$GITHUB_RUN_ID" \
-            > "$RUNNER_TEMP/staging-web-identity.json"
-          curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
-            > "$RUNNER_TEMP/staging-api-ready.json"
-          binding_json="$(node scripts/release/verify-staging-release-binding.mjs \
-            --manifest "$RUNNER_TEMP/release/manifest.json" \
-            --web-identity "$RUNNER_TEMP/staging-web-identity.json" \
-            --api-ready "$RUNNER_TEMP/staging-api-ready.json")"
-          test "$(printf '%s' "$binding_json" | jq -r .releaseSha)" = "$release_sha"
-          test "$(printf '%s' "$binding_json" | jq -r .manifestDigest)" = "$manifest_digest"
           {
             echo "STAGING_RELEASE_SHA=$release_sha"
             echo "MANIFEST_DIGEST=$manifest_digest"
@@ -148,6 +138,24 @@ jobs:
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
+      - name: Verify exact RC is still active on Staging
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?run=$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/staging-web-identity.json"
+          curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
+            > "$RUNNER_TEMP/staging-api-ready.json"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            'curl -fsS http://127.0.0.1:3410/health' > "$RUNNER_TEMP/staging-acs-health.json"
+          binding_json="$(node scripts/release/verify-staging-release-binding.mjs \
+            --manifest "$RUNNER_TEMP/release/manifest.json" \
+            --web-identity "$RUNNER_TEMP/staging-web-identity.json" \
+            --api-ready "$RUNNER_TEMP/staging-api-ready.json" \
+            --acs-health "$RUNNER_TEMP/staging-acs-health.json" \
+            --expected-manifest-digest "$MANIFEST_DIGEST")"
+          test "$(printf '%s' "$binding_json" | jq -r .releaseSha)" = "$STAGING_RELEASE_SHA"
+          test "$(printf '%s' "$binding_json" | jq -r .manifestDigest)" = "$MANIFEST_DIGEST"
+
       - name: Prepare browser and Agent acceptance suite
         run: |
           set -euo pipefail
@@ -163,10 +171,14 @@ jobs:
             > "$RUNNER_TEMP/staging-web-identity-critical.json"
           curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
             > "$RUNNER_TEMP/staging-api-ready-critical.json"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            'curl -fsS http://127.0.0.1:3410/health' \
+            > "$RUNNER_TEMP/staging-acs-health-critical.json"
           node scripts/release/verify-staging-release-binding.mjs \
             --manifest "$RUNNER_TEMP/release/manifest.json" \
             --web-identity "$RUNNER_TEMP/staging-web-identity-critical.json" \
             --api-ready "$RUNNER_TEMP/staging-api-ready-critical.json" \
+            --acs-health "$RUNNER_TEMP/staging-acs-health-critical.json" \
             --expected-manifest-digest "$MANIFEST_DIGEST"
 
       - name: Run browser and Agent acceptance suite
@@ -188,21 +200,6 @@ jobs:
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-after.json"
 
-      - name: Revoke temporary Staging SSH ingress
-        if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            if aliyun --region cn-shenzhen ecs RevokeSecurityGroup \
-              --RegionId cn-shenzhen --SecurityGroupId "$STAGING_SSH_SECURITY_GROUP_ID" \
-              --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$STAGING_SSH_SOURCE_CIDR" \
-              --Policy accept --Priority 1 >/dev/null; then
-              exit 0
-            fi
-            test "$attempt" -lt 5
-            sleep 2
-          done
-
       - name: Verify Staging Manifest and component identities remained unchanged
         if: always() && env.STAGING_RELEASE_SHA != ''
         env:
@@ -220,11 +217,30 @@ jobs:
             > "$RUNNER_TEMP/staging-web-identity-final.json"
           curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
             > "$RUNNER_TEMP/staging-api-ready-final.json"
+          ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
+            'curl -fsS http://127.0.0.1:3410/health' \
+            > "$RUNNER_TEMP/staging-acs-health-final.json"
           node scripts/release/verify-staging-release-binding.mjs \
             --manifest "$RUNNER_TEMP/release-final/manifest.json" \
             --web-identity "$RUNNER_TEMP/staging-web-identity-final.json" \
             --api-ready "$RUNNER_TEMP/staging-api-ready-final.json" \
+            --acs-health "$RUNNER_TEMP/staging-acs-health-final.json" \
             --expected-manifest-digest "$MANIFEST_DIGEST"
+
+      - name: Revoke temporary Staging SSH ingress
+        if: always() && env.STAGING_SSH_SOURCE_CIDR != ''
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if aliyun --region cn-shenzhen ecs RevokeSecurityGroup \
+              --RegionId cn-shenzhen --SecurityGroupId "$STAGING_SSH_SECURITY_GROUP_ID" \
+              --IpProtocol TCP --PortRange 22/22 --SourceCidrIp "$STAGING_SSH_SOURCE_CIDR" \
+              --Policy accept --Priority 1 >/dev/null; then
+              exit 0
+            fi
+            test "$attempt" -lt 5
+            sleep 2
+          done
 
       - name: Upload optional Staging acceptance evidence
         if: always()
@@ -238,10 +254,13 @@ jobs:
             playwright-report/
             ${{ runner.temp }}/staging-web-identity.json
             ${{ runner.temp }}/staging-api-ready.json
+            ${{ runner.temp }}/staging-acs-health.json
             ${{ runner.temp }}/staging-web-identity-critical.json
             ${{ runner.temp }}/staging-api-ready-critical.json
+            ${{ runner.temp }}/staging-acs-health-critical.json
             ${{ runner.temp }}/staging-web-identity-final.json
             ${{ runner.temp }}/staging-api-ready-final.json
+            ${{ runner.temp }}/staging-acs-health-final.json
             ${{ runner.temp }}/release-final/manifest.json
             ${{ runner.temp }}/staging-acceptance-summary.json
             ${{ runner.temp }}/staging-fixture-reset-before.json

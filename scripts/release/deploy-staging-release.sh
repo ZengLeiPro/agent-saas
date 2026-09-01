@@ -413,7 +413,7 @@ const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const desired = {
   AGENT_SAAS_RELEASE_ID: manifest.releaseId,
-  AGENT_SAAS_RELEASE_SHA: manifest.releaseSha,
+  AGENT_SAAS_RELEASE_SHA: manifest.components.api.sourceSha,
   AGENT_SAAS_SERVER_DIGEST: manifest.components.api.artifactDigest,
   AGENT_SAAS_WEB_DIGEST: manifest.components.web.artifactDigest,
   AGENT_SAAS_ACS_ORCHESTRATOR_DIGEST: manifest.components.acs.orchestratorArtifactDigest,
@@ -501,8 +501,11 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const api = JSON.parse(fs.readFileSync(apiPath, 'utf8'));
 const acs = JSON.parse(fs.readFileSync(acsPath, 'utf8'));
 const release = api.release ?? {};
-if (release.releaseId !== manifest.releaseId || release.releaseSha !== manifest.releaseSha)
-  throw new Error('Staging API readiness identity does not match Manifest');
+if (
+  release.releaseId !== manifest.releaseId ||
+  release.releaseSha !== manifest.components.api.sourceSha
+)
+  throw new Error('Staging API component identity does not match Manifest');
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
 if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging')

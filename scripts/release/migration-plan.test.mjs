@@ -167,7 +167,7 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
-test('tracks imported callbacks through class fields, nested members, and re-exports', () => {
+test('tracks imported callbacks through aliases, wrappers, class fields, and re-exports', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const barrel = 'server/src/data/governance-schema/providers/index.ts';
   const provider = 'server/src/data/governance-schema/providers/run.ts';
@@ -510,6 +510,143 @@ test('tracks imported callbacks through class fields, nested members, and re-exp
       },
     },
     {
+      label: 'singular Reflect descriptor returned by a parameterized wrapper',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = (target, key) => Reflect.getOwnPropertyDescriptor(target, key);\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular Reflect descriptor returned through a block alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { const result = Reflect.getOwnPropertyDescriptor(target, key); return result; }\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper resolves block-local parameter aliases',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { const owner = target, name = key; const result = Reflect.getOwnPropertyDescriptor(owner, name); return result; }\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper resolves aliases from a nested block',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { let result; { const first = target, owner = first, name = key; result = Reflect.getOwnPropertyDescriptor(owner, name); } return result; }\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper fails closed for an ambiguous local target',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { let owner = target; if (useOther) owner = other; return Reflect.getOwnPropertyDescriptor(owner, key); }\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper fails closed when a parameter is reassigned',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { target = wrapper; return Reflect.getOwnPropertyDescriptor(target, key); }\ndescriptor(other, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper fails closed for logical parameter assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { target ||= wrapper; return Reflect.getOwnPropertyDescriptor(target, key); }\ndescriptor(undefined, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper fails closed for destructuring parameter assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor(target, key) { ({ target } = { target: wrapper }); return Reflect.getOwnPropertyDescriptor(target, key); }\ndescriptor(other, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'singular descriptor wrapper fails closed for default and destructured parameters',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor({ target } = { target: wrapper }, key = 'run') { return Reflect.getOwnPropertyDescriptor(target, key); }\ndescriptor().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptors returned through a block alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { const result = Object.getOwnPropertyDescriptors(target); return result; }\ndescriptors(wrapper).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper resolves a block-local parameter alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { const owner = target; const result = Object.getOwnPropertyDescriptors(owner); return result; }\ndescriptors(wrapper).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper resolves aliases from a nested block',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { let result; { const first = target, owner = first; result = Object.getOwnPropertyDescriptors(owner); } return result; }\ndescriptors(wrapper).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper fails closed for ambiguous return branches and targets',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { if (useOther) return Object.getOwnPropertyDescriptors(other); return Object.getOwnPropertyDescriptors(target); }\ndescriptors(wrapper).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper fails closed for parameter member expressions',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(options) { return Object.getOwnPropertyDescriptors(options.target); }\ndescriptors({ target: wrapper }).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper fails closed for nullish parameter assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { target ??= wrapper; return Object.getOwnPropertyDescriptors(target); }\ndescriptors(undefined).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'plural descriptor wrapper fails closed for array parameter assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptors(target) { [target] = [wrapper]; return Object.getOwnPropertyDescriptors(target); }\ndescriptors(other).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'Reflect descriptor callable through Function.prototype.call.bind',
       rootSource:
         "import { wrapper } from './providers/index.js';\nconst descriptor = Function.prototype.call.bind(Reflect.getOwnPropertyDescriptor, Reflect);\ndescriptor(wrapper, 'run').value(db);",
@@ -685,7 +822,11 @@ test('tracks imported callbacks through class fields, nested members, and re-exp
       nameStatus: `M\t${provider}`,
     });
     assert.equal(result.ok, false, callbackCase.label);
-    assert.match(result.blockingReasons.join('\n'), /run\.ts/u, callbackCase.label);
+    assert.match(
+      result.blockingReasons.join('\n'),
+      callbackCase.closureOnly ? /dependency closure could not be proven/u : /run\.ts/u,
+      callbackCase.label,
+    );
   }
 });
 

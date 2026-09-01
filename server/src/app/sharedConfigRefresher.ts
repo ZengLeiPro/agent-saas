@@ -148,10 +148,12 @@ export interface SharedConfigRefresher {
    * 返回 false 表示磁盘候选未安全提交，安全敏感调用方应 fail closed。
    */
   refreshIfChanged(force?: boolean): boolean | Promise<boolean>;
-  /** 管理端提交后仅在稳定磁盘快照仍是本次精确文本时推进指纹。 */
-  acknowledgeConfigApplied(
+  /** 普通管理端提交后仅在 gate clean 且稳定磁盘仍是精确文本时推进指纹。 */
+  acknowledgeConfigApplied(expectedConfigText: string): boolean;
+  /** 恢复事务专用：只接受当前 active permit，并确认已恢复的精确磁盘文本。 */
+  acknowledgeRecoveryConfigApplied(
     expectedConfigText: string,
-    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
   ): boolean;
   /** 供测试与诊断：返回已应用的磁盘指纹（不包含待修复的脏执行切面）。 */
   getAppliedStamps(): { config?: FileStamp; tenants?: FileStamp };
@@ -623,7 +625,7 @@ export function createSharedConfigRefresher(params: {
       }
       appliedTenantsStamp = afterReload;
       tenantRefreshNeedsRetry = false;
-      logger?.info('[SharedConfig] 已两阶段提交组织配置快照（模型白名单/功能开关）');
+      logger?.info('[SharedConfig] 已提交组织配置两阶段快照（模型白名单/功能开关）');
       return true;
     } catch (error) {
       tenantRefreshNeedsRetry = true;
@@ -632,6 +634,24 @@ export function createSharedConfigRefresher(params: {
       );
       return false;
     }
+  }
+
+  function acknowledgeStableConfig(expectedConfigText: string): boolean {
+    const snapshot = readSnapshot(configPath);
+    if (dirtyConfigChanges.size > 0) {
+      configRefreshNeedsRetry = true;
+      logger?.warn(`[SharedConfig] 存在脏执行切面，拒绝仅推进配置指纹：${dirtyChangeLabels().join(', ')}`);
+      return false;
+    }
+    if (!snapshot?.stamp.stable || snapshot.text !== expectedConfigText) {
+      configRefreshNeedsRetry = true;
+      appliedConfigStamp = undefined;
+      return false;
+    }
+    appliedConfigStamp = snapshot.stamp;
+    configRefreshNeedsRetry = false;
+    lastCheckedAtMs = now();
+    return true;
   }
 
   return {
@@ -659,31 +679,19 @@ export function createSharedConfigRefresher(params: {
         ? configFresh.then((fresh) => fresh && tenantsFresh)
         : configFresh && tenantsFresh;
     },
-    acknowledgeConfigApplied(expectedConfigText, recoveryPermit) {
-      if (
-        recoveryGate?.isDirty()
-        && !recoveryGate.allowsRecoveryCompletion(recoveryPermit)
-      ) {
+    acknowledgeConfigApplied(expectedConfigText) {
+      if (recoveryGate?.isDirty()) {
         configRefreshNeedsRetry = true;
         return false;
       }
-      const snapshot = readSnapshot(configPath);
-      if (dirtyConfigChanges.size > 0) {
+      return acknowledgeStableConfig(expectedConfigText);
+    },
+    acknowledgeRecoveryConfigApplied(expectedConfigText, recoveryPermit) {
+      if (!recoveryGate?.allowsRecoveryCompletion(recoveryPermit)) {
         configRefreshNeedsRetry = true;
-        logger?.warn(
-          `[SharedConfig] 存在脏执行切面，拒绝仅推进配置指纹：${dirtyChangeLabels().join(', ')}`,
-        );
         return false;
       }
-      if (!snapshot?.stamp.stable || snapshot.text !== expectedConfigText) {
-        configRefreshNeedsRetry = true;
-        appliedConfigStamp = undefined;
-        return false;
-      }
-      appliedConfigStamp = snapshot.stamp;
-      configRefreshNeedsRetry = false;
-      lastCheckedAtMs = now();
-      return true;
+      return acknowledgeStableConfig(expectedConfigText);
     },
     getAppliedStamps() {
       return { config: appliedConfigStamp, tenants: appliedTenantsStamp };

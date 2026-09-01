@@ -17,7 +17,8 @@ export function createRuntimeConfigGovernance(options: {
   onConfigCommitted?: (
     candidateText: string,
     recoveryPermit?: ConfigRuntimeRecoveryPermit,
-  ) => void | Promise<void>;
+  ) => void | (() => void) | Promise<void | (() => void)>;
+  /** 在恢复事务进入后置阶段前同步撤销旧 observation。 */
   onConfigInvalidated?: () => void;
 }) {
   const runtimeIdentity = readRuntimeIdentity();

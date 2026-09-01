@@ -153,7 +153,7 @@ export interface AppRuntime {
    * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
    */
   getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
-  /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门。 */
+  /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门及 permit 所有者。 */
   configRuntimeRecoveryGate: ConfigRuntimeRecoveryGate;
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
@@ -254,11 +254,17 @@ export interface AppRuntime {
   /** 纯同步撤销 ConfigIdentity observation、取消在途计算并发布 not_collected。 */
   invalidateSharedConfigIdentity: () => void;
   /** 管理端原子提交后撤销旧 ConfigIdentity observation 并重算。 */
-  notifySharedConfigChanged: (recoveryPermit?: ConfigRuntimeRecoveryPermit) => void;
-  /** 管理端提交后按精确文本推进指纹；并发改写时返回 false 并强制重载。 */
-  acknowledgeSharedConfigApplied: (
+  notifySharedConfigChanged: () => void;
+  /** 恢复事务只计算 observation；由 mutation service 在 audit 成功后同步提交。 */
+  prepareSharedConfigIdentityPublication: (
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
+  ) => Promise<() => void>;
+  /** 普通管理端提交后按精确文本推进指纹；gate dirty 时始终拒绝。 */
+  acknowledgeSharedConfigApplied: (expectedConfigText: string) => boolean;
+  /** 恢复事务专用精确文本确认；只接受当前 active permit。 */
+  acknowledgeRecoveryConfigApplied: (
     expectedConfigText: string,
-    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
   ) => boolean;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化

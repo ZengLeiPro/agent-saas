@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -35,7 +35,7 @@ function deferred(): {
 }
 
 describe('ConfigRuntimeRecoveryGate integration', () => {
-  it('keeps rollback and recovery post-steps fail closed until the original recipe fully recovers', async () => {
+  it('keeps recovery audit and observation commit fail closed until synchronous completion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'config-runtime-recovery-'));
     roots.push(root);
     await mkdir(join(root, 'data'));
@@ -64,28 +64,41 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
       recoveryGate: assembly.recoveryGate,
       ...assembly.modelResolverHooks,
     });
-    let recoveryPublishTail: Promise<void> | undefined;
-    let recoveryPublishStarted: (() => void) | undefined;
-    const publish = async (text: string, recoveryPermit?: ConfigRuntimeRecoveryPermit) => {
-      await publishAdminCommittedConfigIdentity({
+    const publish = (text: string, recoveryPermit?: ConfigRuntimeRecoveryPermit) =>
+      publishAdminCommittedConfigIdentity({
         acknowledgeSharedConfigApplied: refresher.acknowledgeConfigApplied,
+        acknowledgeRecoveryConfigApplied: refresher.acknowledgeRecoveryConfigApplied,
         invalidateSharedConfigIdentity: assembly.invalidate,
         notifySharedConfigChanged: assembly.modelResolverHooks.onConfigReloaded,
+        prepareSharedConfigIdentityPublication: assembly.prepareRecoveryPublication,
         refreshSharedConfig: refresher.refreshIfChanged,
       }, text, recoveryPermit);
-      if (recoveryPermit && recoveryPublishTail) {
-        recoveryPublishStarted?.();
-        await recoveryPublishTail;
-      }
-    };
+    let recoveryAuditTail: Promise<void> | undefined;
+    let recoveryAuditStarted: (() => void) | undefined;
+    let returnAsyncObservationCommit = false;
     const service = new AdminConfigMutationService({
       configPath,
       processCwd: root,
       environment: 'staging',
       processRole: 'ws-only',
       recoveryGate: assembly.recoveryGate,
-      onCommitted: publish,
+      onCommitted: async (text, recoveryPermit) => {
+        const commit = await publish(text, recoveryPermit);
+        if (!recoveryPermit || !commit || !returnAsyncObservationCommit) return commit;
+        return async () => {
+          commit();
+          await Promise.resolve();
+        };
+      },
       onRuntimeDirty: assembly.invalidate,
+      auditAppender: async (path, line) => {
+        const record = JSON.parse(line) as { result?: string };
+        if (record.result === 'recovered' && recoveryAuditTail) {
+          recoveryAuditStarted?.();
+          await recoveryAuditTail;
+        }
+        await appendFile(path, line, { encoding: 'utf8', mode: 0o600 });
+      },
     });
 
     const rollback = deferred();
@@ -123,10 +136,10 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
     rollback.reject(new Error('rollback partially applied'));
     await expect(failedMutation).rejects.toBeInstanceOf(ConfigRuntimeRecoveryError);
 
-    const recoveryPublish = deferred();
-    const recoveryPublishEntered = deferred();
-    recoveryPublishTail = recoveryPublish.promise;
-    recoveryPublishStarted = recoveryPublishEntered.resolve;
+    const recoveryAudit = deferred();
+    const recoveryAuditEntered = deferred();
+    recoveryAuditTail = recoveryAudit.promise;
+    recoveryAuditStarted = recoveryAuditEntered.resolve;
     const blockedBuildCandidate = vi.fn((text: string) => text);
     const blockedApplyRuntime = vi.fn();
     const blockedMutation = service.mutate({
@@ -135,35 +148,50 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
       buildCandidate: blockedBuildCandidate,
       applyRuntime: blockedApplyRuntime,
     });
-    await recoveryPublishEntered.promise;
+    await recoveryAuditEntered.promise;
 
     expect(assembly.recoveryGate.isDirty()).toBe(true);
     expect(refresher.refreshIfChanged(true)).toBe(false);
     expect(refresher.acknowledgeConfigApplied(originalText)).toBe(false);
-    assembly.modelResolverHooks.onConfigReloaded();
+    await new Promise((resolve) => setTimeout(resolve, 75));
     expect(assembly.getSummary().status).toBe('not_collected');
 
-    recoveryPublish.reject(new Error('recovery observation publish failed'));
+    recoveryAudit.reject(new Error('recovery audit failed'));
     await expect(blockedMutation).rejects.toBeInstanceOf(ConfigRuntimeRecoveryError);
     expect(assembly.recoveryGate.isDirty()).toBe(true);
+    expect(assembly.getSummary().status).toBe('not_collected');
     expect(blockedBuildCandidate).not.toHaveBeenCalled();
     expect(blockedApplyRuntime).not.toHaveBeenCalled();
 
-    recoveryPublishTail = undefined;
-    recoveryPublishStarted = undefined;
+    recoveryAuditTail = undefined;
+    recoveryAuditStarted = undefined;
+    returnAsyncObservationCommit = true;
+    const asyncCommitBuildCandidate = vi.fn((text: string) => text);
+    await expect(service.mutate({
+      actor: 'admin-3',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: asyncCommitBuildCandidate,
+      applyRuntime: vi.fn(),
+    })).rejects.toBeInstanceOf(ConfigRuntimeRecoveryError);
+    await Promise.resolve();
+    expect(assembly.recoveryGate.isDirty()).toBe(true);
+    expect(assembly.getSummary().status).toBe('not_collected');
+    expect(asyncCommitBuildCandidate).not.toHaveBeenCalled();
+
+    returnAsyncObservationCommit = false;
     const nextApplyRuntime = vi.fn(async (next: AppConfig) => {
       config.agent.maxTurns = next.agent.maxTurns;
     });
     await service.mutate({
-      actor: 'admin-3',
+      actor: 'admin-4',
       changedPaths: ['agent.maxTurns'],
       buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 30, {})),
       applyRuntime: nextApplyRuntime,
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(originalApplyRuntime).toHaveBeenCalledTimes(4);
-    expect(originalApplyRuntime.mock.calls[3]?.[0].agent.maxTurns).toBe(20);
+    expect(originalApplyRuntime).toHaveBeenCalledTimes(5);
+    expect(originalApplyRuntime.mock.calls[4]?.[0].agent.maxTurns).toBe(20);
     expect(assembly.recoveryGate.isDirty()).toBe(false);
     expect(nextApplyRuntime).toHaveBeenCalledOnce();
     expect(config.agent.maxTurns).toBe(30);

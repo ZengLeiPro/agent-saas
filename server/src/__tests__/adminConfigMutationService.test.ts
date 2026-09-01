@@ -28,7 +28,7 @@ async function fixture(callbacks: {
   onCommitted?: (
     candidateText: string,
     recoveryPermit?: ConfigRuntimeRecoveryPermit,
-  ) => void | Promise<void>;
+  ) => void | (() => void) | Promise<void | (() => void)>;
   onRuntimeDirty?: () => void;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'admin-config-mutation-'));
@@ -106,11 +106,15 @@ describe('AdminConfigMutationService', () => {
     expect(audit).toContain('"result":"rolled_back"');
   });
 
-  it('keeps the shared gate closed until a successful rollback is published and audited', async () => {
+  it('keeps the shared gate closed until rollback audit and observation commit both succeed', async () => {
     const recoveryGate = new ConfigRuntimeRecoveryGate();
+    const commitObservation = vi.fn(() => {
+      expect(recoveryGate.isDirty()).toBe(true);
+    });
     const onCommitted = vi.fn((_text: string, permit?: ConfigRuntimeRecoveryPermit) => {
       expect(recoveryGate.isDirty()).toBe(true);
       expect(recoveryGate.allowsRecoveryCompletion(permit)).toBe(true);
+      return commitObservation;
     });
     const test = await fixture({ recoveryGate, onCommitted });
     const applyRuntime = vi
@@ -126,7 +130,57 @@ describe('AdminConfigMutationService', () => {
     })).rejects.toThrow('runtime rejected candidate');
 
     expect(onCommitted).toHaveBeenCalledOnce();
+    expect(commitObservation).toHaveBeenCalledOnce();
     expect(recoveryGate.isDirty()).toBe(false);
+  });
+
+  it('keeps the shared gate closed when recovery publication is missing, fails or returns async commit', async () => {
+    const failures = [
+      {
+        phase: 'missing', expectedError: '未返回 observation commit',
+        onCommitted: () => undefined,
+      },
+      {
+        phase: 'prepare', expectedError: 'prepare publication failed',
+        onCommitted: () => { throw new Error('prepare publication failed'); },
+      },
+      {
+        phase: 'commit', expectedError: 'observation commit failed',
+        onCommitted: () => () => { throw new Error('observation commit failed'); },
+      },
+      {
+        phase: 'async-commit', expectedError: '必须同步完成',
+        onCommitted: () => async () => { await Promise.resolve(); },
+      },
+    ] as const;
+
+    for (const failure of failures) {
+      const recoveryGate = new ConfigRuntimeRecoveryGate();
+      const onRuntimeDirty = vi.fn();
+      const test = await fixture({
+        recoveryGate,
+        onCommitted: failure.onCommitted,
+        onRuntimeDirty,
+      });
+      const applyRuntime = vi
+        .fn()
+        .mockRejectedValueOnce(new Error(`candidate failed before ${failure.phase}`))
+        .mockResolvedValueOnce(undefined);
+
+      const error = await test.service.mutate({
+        actor: `admin-${failure.phase}`,
+        changedPaths: ['agent.maxTurns'],
+        buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 40, {})),
+        applyRuntime,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ConfigRuntimeRecoveryError);
+      expect(recoveryGate.isDirty()).toBe(true);
+      expect(onRuntimeDirty).toHaveBeenCalledTimes(2);
+      expect((error as ConfigRuntimeRecoveryError).recoveryError).toEqual(
+        expect.objectContaining({ message: expect.stringContaining(failure.expectedError) }),
+      );
+    }
   });
 
   it('does not swallow a runtime rollback rejection or publish the restored disk identity', async () => {

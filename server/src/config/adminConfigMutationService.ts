@@ -144,9 +144,11 @@ export class AdminConfigMutationService {
       onCommitted?: (
         candidateText: string,
         recoveryPermit?: ConfigRuntimeRecoveryPermit,
-      ) => void | Promise<void>;
+      ) => void | (() => void) | Promise<void | (() => void)>;
       /** runtime 与磁盘身份不再可信时，同步撤销当前身份 observation。 */
       onRuntimeDirty?: () => void;
+      /** audit 故障注入/替代持久化；生产默认使用原生 appendFile。 */
+      auditAppender?: (path: string, line: string) => Promise<void>;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -243,7 +245,10 @@ export class AdminConfigMutationService {
           let rollbackCompleted = false;
           try {
             permit = this.options.recoveryGate?.beginRecoveryCompletion();
-            await this.options.onCommitted?.(currentText, permit);
+            const commitObservation = await this.options.onCommitted?.(currentText, permit);
+            if (permit && typeof commitObservation !== 'function') {
+              throw new Error('恢复配置身份发布未返回 observation commit');
+            }
             await this.appendAudit({
               at: (this.options.now?.() ?? new Date()).toISOString(),
               actor: input.actor,
@@ -259,6 +264,7 @@ export class AdminConfigMutationService {
               candidateStillOwned,
               diskRestored,
             });
+            this.commitObservation(typeof commitObservation === 'function' ? commitObservation : undefined);
             if (permit) this.options.recoveryGate?.completeRecovery(permit);
             rollbackCompleted = true;
           } catch (postRollbackError) {
@@ -337,10 +343,13 @@ export class AdminConfigMutationService {
     if (recoveryError === undefined) {
       let permit: ConfigRuntimeRecoveryPermit | undefined;
       try {
-        // 必须复用失败 mutation 原有 recipe；gate 在 publish 与 audit 完成前始终保持 dirty。
+        // 必须复用失败 mutation 原有 recipe；gate 在 observation commit 与 audit 完成前始终保持 dirty。
         await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
         permit = this.options.recoveryGate?.beginRecoveryCompletion();
-        await this.options.onCommitted?.(recovery.targetText, permit);
+        const commitObservation = await this.options.onCommitted?.(recovery.targetText, permit);
+        if (permit && typeof commitObservation !== 'function') {
+          throw new Error('恢复配置身份发布未返回 observation commit');
+        }
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: triggerActor,
@@ -358,6 +367,7 @@ export class AdminConfigMutationService {
           candidateStillOwned: recovery.candidateStillOwned,
           diskRestored: recovery.diskRestored,
         });
+        this.commitObservation(typeof commitObservation === 'function' ? commitObservation : undefined);
         if (permit) this.options.recoveryGate?.completeRecovery(permit);
         this.runtimeRecovery = undefined;
         return;
@@ -367,7 +377,7 @@ export class AdminConfigMutationService {
       }
     }
 
-    // applyRuntime、trusted publish 或 audit 任一步失败都保持门关闭并撤销 observation。
+    // applyRuntime、prepare、audit 或 observation commit 任一步失败都保持门关闭并撤销 observation。
     this.markRuntimeDirty();
     await this.appendAudit({
       at: (this.options.now?.() ?? new Date()).toISOString(),
@@ -464,11 +474,23 @@ export class AdminConfigMutationService {
     }
   }
 
+  private commitObservation(commit?: () => void): void {
+    if (!commit) return;
+    const result: unknown = commit();
+    if (result === undefined) return;
+    if (typeof (result as PromiseLike<unknown>)?.then === 'function') {
+      void Promise.resolve(result).catch(() => undefined);
+    }
+    throw new Error('恢复 observation commit 必须同步完成');
+  }
+
   private async appendAudit(record: Record<string, unknown>): Promise<void> {
-    await appendFile(this.auditPath, `${JSON.stringify(record)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
+    const line = `${JSON.stringify(record)}\n`;
+    if (this.options.auditAppender) {
+      await this.options.auditAppender(this.auditPath, line);
+      return;
+    }
+    await appendFile(this.auditPath, line, { encoding: 'utf8', mode: 0o600 });
   }
 
   private async pruneBackups(): Promise<void> {

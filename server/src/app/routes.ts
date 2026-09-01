@@ -383,7 +383,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
         }),
-        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText), onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
+        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText).then(() => undefined), onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
         onSystemPromptOverridesUpdated: (next) => runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
       }),
     );
@@ -426,7 +426,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
       secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
       validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig,
-      onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
+      onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText).then(() => undefined),
     }),
   );
   // 连接器映射词典（2026-08-03）：决定工具行怎么把命令行还原成业务语言、

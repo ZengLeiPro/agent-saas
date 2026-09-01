@@ -38,8 +38,11 @@ export interface RuntimeConfigIdentityAssembly {
   recoveryGate: ConfigRuntimeRecoveryGate;
   modelResolverHooks: {
     validateConfigReload?: (next: AppConfig) => Promise<void>;
-    onConfigReloaded: (recoveryPermit?: ConfigRuntimeRecoveryPermit) => void;
+    onConfigReloaded: () => void;
   };
+  prepareRecoveryPublication: (
+    recoveryPermit: ConfigRuntimeRecoveryPermit,
+  ) => Promise<() => void>;
   invalidate: () => void;
   getSummary: () => ConfigIdentitySummary;
 }
@@ -78,13 +81,16 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
       ...(runtimeIdentity.environment === 'production'
         ? { validateConfigReload: (next: AppConfig) => runtime.validateConfigReload(next) }
         : {}),
-      onConfigReloaded: (recoveryPermit) => {
-        if (
-          recoveryGate.isDirty()
-          && !recoveryGate.allowsRecoveryCompletion(recoveryPermit)
-        ) runtime.invalidateObservation();
+      onConfigReloaded: () => {
+        if (recoveryGate.isDirty()) runtime.invalidateObservation();
         else runtime.notifyConfigChanged('config_file_hot_reload');
       },
+    },
+    prepareRecoveryPublication: async (recoveryPermit) => {
+      if (!recoveryGate.allowsRecoveryCompletion(recoveryPermit)) {
+        throw new Error('运行时配置恢复许可无效');
+      }
+      return await runtime.prepareConfigChanged('config_runtime_recovery');
     },
     invalidate: () => runtime.invalidateObservation(),
     getSummary: () => runtime.getSummary(),

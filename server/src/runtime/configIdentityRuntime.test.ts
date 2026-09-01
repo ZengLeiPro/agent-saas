@@ -116,7 +116,7 @@ describe('createConfigIdentityRuntime', () => {
     expect(runtime.getSummary().status).toBe('consistent');
     expect(runtime.getSummary().lastChangedAt).toBeUndefined();
 
-    // SharedConfigRefresher 对同一 AppConfig 对象原地替换各配置段；运行时持有
+    // SharedConfigRefresher 对同一 AppConfig 对象原地替换各配置段；运行时共享
     // 同一引用，因此显式 refresh 必须观察到新的 port 并发布 drift。
     config.server.port = 9999;
     currentTime = '2026-08-29T12:00:01.000Z';
@@ -125,6 +125,28 @@ describe('createConfigIdentityRuntime', () => {
     expect(summary.status).toBe('drifted');
     expect(summary.lastChangedAt).toBe(currentTime);
     expect(summary.lastObservedAt).toBe(currentTime);
+  });
+
+  it('prepareConfigChanged 仅在显式 commit 时发布，并拒绝 generation 已失效的结果', async () => {
+    const config = baseConfig();
+    const runtime = createConfigIdentityRuntime({
+      config,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+    });
+    await runtime.initialize();
+
+    config.server.port = 9999;
+    const commit = await runtime.prepareConfigChanged('runtime_recovery');
+    expect(runtime.getSummary().status).toBe('not_collected');
+    commit();
+    expect(runtime.getSummary().status).toBe('drifted');
+
+    config.server.port = 3000;
+    const staleCommit = await runtime.prepareConfigChanged('runtime_recovery');
+    runtime.invalidateObservation();
+    expect(() => staleCommit()).toThrow('became stale');
+    expect(runtime.getSummary().status).toBe('not_collected');
   });
 
   it('notifyConfigChanged 在异步重算期间立即同步撤销旧 consistent 快照', async () => {

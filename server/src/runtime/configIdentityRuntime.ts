@@ -53,6 +53,8 @@ export interface ConfigIdentityRuntime {
   validateConfigReload(nextConfig: AppConfig): Promise<void>;
   /** 纯同步撤销 observation、取消在途计算并发布 not_collected；不启动重算。 */
   invalidateObservation(): void;
+  /** 为恢复事务计算但不发布 observation；返回同步 commit，供 audit 成功后调用。 */
+  prepareConfigChanged(reason: string): Promise<() => void>;
   /** 配置热更新成功后先失效再重算（内部捕获异常，绝不打断热更新主流程）。 */
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
@@ -143,21 +145,37 @@ export function createConfigIdentityRuntime(
     logger?.info(`[ConfigIdentity] observed identity computed: ${next.digest.slice(0, 19)}…`);
   }
 
-  async function refresh(reason: string): Promise<void> {
+  async function prepareRefresh(reason: string): Promise<() => void> {
     const comparisonObservation = observationInvalidated
       ? invalidatedComparisonObservation
       : observation;
     const generation = ++computeGeneration;
     const next = await compute();
-    if (generation !== computeGeneration) {
+    return () => {
+      if (generation !== computeGeneration) {
+        throw new Error(`ConfigIdentity recompute became stale after ${reason}`);
+      }
+      observationInvalidated = false;
+      invalidatedComparisonObservation = undefined;
+      applyObservation(next, comparisonObservation);
+      lastComputedAtMs = now().getTime();
+      logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
+    };
+  }
+
+  async function refresh(reason: string): Promise<void> {
+    const commit = await prepareRefresh(reason);
+    try {
+      commit();
+    } catch (error) {
       logger?.info(`[ConfigIdentity] discarded stale recompute after ${reason}`);
-      return;
+      if (!(error instanceof Error) || !error.message.includes('became stale')) throw error;
     }
-    observationInvalidated = false;
-    invalidatedComparisonObservation = undefined;
-    applyObservation(next, comparisonObservation);
-    lastComputedAtMs = now().getTime();
-    logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
+  }
+
+  async function prepareConfigChanged(reason: string): Promise<() => void> {
+    invalidateObservation();
+    return await prepareRefresh(reason);
   }
 
   function invalidateObservation(): void {
@@ -221,6 +239,7 @@ export function createConfigIdentityRuntime(
     initialize,
     validateConfigReload,
     invalidateObservation,
+    prepareConfigChanged,
     notifyConfigChanged,
     refresh: (reason = 'explicit') => refresh(reason),
     getSummary(): ConfigIdentitySummary {

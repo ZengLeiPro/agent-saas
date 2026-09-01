@@ -674,11 +674,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let runtimeScheduler: RuntimeScheduler | undefined;
   let runtimeSchedulerConfigStore: PgRuntimeSchedulerConfigStore | undefined;
   let runtimeSchedulerCapacity: RuntimeSchedulerCapacityController | undefined;
-  let sessionAutomationStore: PgSessionAutomationStore | undefined;
-  let sessionAutomationCommandService: SessionAutomationCommandService | undefined;
-  let sessionAutomationCoordinator: SessionAutomationCoordinator | undefined;
-  let sessionAutomationTerminalProjector: SessionAutomationTerminalProjector | undefined;
-  let sessionAutomationEvaluator: SessionAutomationEvaluator | undefined, cancelSessionAutomationRun: ((runId: string, reason: string) => Promise<void>) | undefined;
+  let sessionAutomationStore: PgSessionAutomationStore | undefined, sessionAutomationCommandService: SessionAutomationCommandService | undefined;
+  let sessionAutomationCoordinator: SessionAutomationCoordinator | undefined, sessionAutomationTerminalProjector: SessionAutomationTerminalProjector | undefined, sessionAutomationEvaluator: SessionAutomationEvaluator | undefined;
+  let cancelSessionAutomationRun: ((runId: string, reason: string) => Promise<void>) | undefined;
   const isRuntimeExecutionEnabled = async (): Promise<boolean> => (
     runtimeSchedulerConfigStore ? (await runtimeSchedulerConfigStore.get()).executionEnabled : true
   );
@@ -860,10 +858,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     });
     await pgRunStore.init();
     ({ store: sessionAutomationStore, commandService: sessionAutomationCommandService } = await createSessionAutomationPersistence({
-      pool: pgEventStore.pool,
-      tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime',
-      runsTable: pgRunStore.runsTable,
-      flags: config.sessionAutomation,
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime', runsTable: pgRunStore.runsTable, flags: config.sessionAutomation,
       cancelRun: cancelSessionAutomationRun = createSessionAutomationCancelRun({ runStore: pgRunStore, eventStore: pgEventStore!, logger: serverLogger.child('SessionAutomationCancel'), abort: (runId, reason) => runtimeRunController.abort(runId, reason) }),
     }));
     const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
@@ -2026,20 +2021,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       store: runtimeSchedulerConfigStore!, scheduler: runtimeScheduler, sessionLockMode,
     });
     if (sessionAutomationStore && defaultModelResolver && cancelSessionAutomationRun) {
-      const workers = createSessionAutomationWorkers({
-        store: sessionAutomationStore,
-        evaluator: {
-          resolveModel: (tenantId) => defaultModelResolver(tenantId),
-          createAdapter: (connection, providerOptions) => rawRuntimeConfig.modelAdapterFactory!(connection ?? {}, providerOptions),
-          billing: () => billingService,
-          resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
-        },
-        dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
-        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: cancelSessionAutomationRun,
-        onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
+      const workers = createSessionAutomationWorkers({ store: sessionAutomationStore, evaluator: {
+        resolveModel: (tenantId) => defaultModelResolver(tenantId), createAdapter: (connection, providerOptions) => rawRuntimeConfig.modelAdapterFactory!(connection ?? {}, providerOptions), billing: () => billingService,
+        resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
+      }, dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
+        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: cancelSessionAutomationRun, onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
       });
-      ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers);
-      rawRuntimeConfig.sessionAutomationProvider = workers.provider;
+      ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers); rawRuntimeConfig.sessionAutomationProvider = workers.provider;
     }
   }
   // Runtime audit 读 API：

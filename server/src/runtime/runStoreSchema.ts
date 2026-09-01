@@ -546,16 +546,26 @@ export async function disablePgRunStoreLegacyWriterCapability(
   if (!dbRole.trim()) throw new Error('legacy writer disable requires dbRole');
   const client = await store.pool.connect();
   const lockKey = `${store.runsTable}:init`;
+  let transactionOpen = false;
   try {
     await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+
+    // First, make the durable safety state visible. Draining before this commit allows a pooled
+    // legacy writer to reconnect while LOGIN is still visible and race the activity recheck.
     await client.query('BEGIN');
-    const registry = await client.query(`SELECT 1 FROM ${store.runsTable}_writer_capabilities
-      WHERE db_role=$1 AND capability='legacy-single-tenant' AND enabled FOR UPDATE`, [dbRole]);
-    if (registry.rowCount !== 1) throw new Error('enabled legacy writer capability was not registered');
+    transactionOpen = true;
+    const registry = await client.query(`SELECT enabled FROM ${store.runsTable}_writer_capabilities
+      WHERE db_role=$1 AND capability='legacy-single-tenant' FOR UPDATE`, [dbRole]);
+    if (registry.rowCount !== 1) throw new Error('legacy writer capability was not registered');
     const ddl = await client.query<{ sql: string }>(`SELECT format('ALTER ROLE %I NOLOGIN',$1::text) sql`, [dbRole]);
     await client.query(ddl.rows[0]!.sql);
     await client.query(`UPDATE ${store.runsTable}_writer_capabilities
-      SET enabled=false,disabled_at=clock_timestamp() WHERE db_role=$1`, [dbRole]);
+      SET enabled=false,disabled_at=COALESCE(disabled_at,clock_timestamp())
+      WHERE db_role=$1 AND capability='legacy-single-tenant'`, [dbRole]);
+    await client.query('COMMIT');
+    transactionOpen = false;
+
+    // NOLOGIN is now visible to every session, so terminated pool connections cannot reconnect.
     await client.query(`SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity
       WHERE usename=$1 AND pid<>pg_backend_pid()`, [dbRole]);
     const active = await client.query<{ count: number }>(
@@ -563,9 +573,11 @@ export async function disablePgRunStoreLegacyWriterCapability(
     if (active.rows[0]?.count !== 0) {
       throw new Error('legacy writer drain could not terminate every session_user activity');
     }
-    await client.query('COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    if (transactionOpen) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      transactionOpen = false;
+    }
     throw error;
   } finally {
     await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);

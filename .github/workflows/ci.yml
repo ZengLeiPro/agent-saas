@@ -250,8 +250,19 @@ jobs:
       - name: Lint native Maestro flows and test receipt contracts
         run: pnpm -F mobile lint:maestro && pnpm -F mobile test:m60-02
 
-      - name: Run Android and iOS clean prebuild smoke
-        run: pnpm -F mobile test:m60-02:prebuild
+      - name: Run M60-03 native mutation contracts and clean prebuild policy gate
+        env:
+          M60_03_ARTIFACT_DIR: .ci-artifacts/native-policy
+        run: pnpm -F mobile test:m60-03 && pnpm -F mobile test:m60-03:prebuild
+
+      - name: Upload bounded normalized M60-03 failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: m60-03-native-policy-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-artifacts/native-policy/*.json
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Run deterministic Shared and Mobile contract gate
         env:
@@ -291,7 +302,7 @@ jobs:
         with:
           name: mobile-contract-failure-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci-artifacts/mobile-contract-failure.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 1
 
   # 保留仓库 Ruleset 使用的唯一 required check 名称。任一并行门禁失败或取消，

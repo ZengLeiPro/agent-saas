@@ -89,7 +89,10 @@ const VALID_IOS_ENTITLEMENTS = `<?xml version="1.0"?><plist><dict>
 <key>keychain-access-groups</key><array><string>$(AppIdentifierPrefix)group.fixture</string></array>
 </dict></plist>`;
 const VALID_PRIVACY_INFO = `<?xml version="1.0"?><plist><dict>
-<key>NSPrivacyAccessedAPITypes</key><array/>
+<key>NSPrivacyAccessedAPITypes</key><array><dict>
+<key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+<key>NSPrivacyAccessedAPITypeReasons</key><array><string>CA92.1</string></array>
+</dict></array>
 <key>NSPrivacyCollectedDataTypes</key><array/>
 <key>NSPrivacyTracking</key><false/>
 <key>NSPrivacyTrackingDomains</key><array/>
@@ -101,6 +104,7 @@ function validIosArtifacts(overrides = {}) {
     entitlements: VALID_IOS_ENTITLEMENTS,
     privacyInfo: VALID_PRIVACY_INFO,
     pbxProject: 'path = PrivacyInfo.xcprivacy;',
+    // M60-03 structurally re-checks this fixture and rejects reason removal.
     ...overrides,
   };
 }
@@ -246,7 +250,12 @@ test('M10-05 Expo config profiles cleartext and backup without weakening product
     faceIDPermission: '用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面',
   });
   assert.deepEqual(production.ios.privacyManifests, {
-    NSPrivacyAccessedAPITypes: [],
+    NSPrivacyAccessedAPITypes: [
+      {
+        NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults',
+        NSPrivacyAccessedAPITypeReasons: ['CA92.1'],
+      },
+    ],
     NSPrivacyCollectedDataTypes: [],
     NSPrivacyTracking: false,
     NSPrivacyTrackingDomains: [],
@@ -320,7 +329,7 @@ test('M10-05 Android static gate rejects cleartext, backup, permission, service,
   );
 });
 
-test('M10-05 iOS static gate rejects production exceptions, background audio, entitlement injection, and guessed PrivacyInfo values', () => {
+test('M10-05 iOS static gate rejects production exceptions, background audio, entitlement injection, and PrivacyInfo drift', () => {
   assert.doesNotThrow(() => verifyProductionIosTexts(validIosArtifacts()));
   assert.throws(
     () =>
@@ -374,13 +383,10 @@ test('M10-05 iOS static gate rejects production exceptions, background audio, en
     () =>
       verifyProductionIosTexts(
         validIosArtifacts({
-          privacyInfo: VALID_PRIVACY_INFO.replace(
-            '<key>NSPrivacyAccessedAPITypes</key><array/>',
-            '<key>NSPrivacyAccessedAPITypes</key><array><dict/></array>',
-          ),
+          privacyInfo: VALID_PRIVACY_INFO.replace('<string>CA92.1</string>', ''),
         }),
       ),
-    /pending-review empty array/,
+    /missing the reviewed UserDefaults CA92\.1 reason/,
   );
 });
 

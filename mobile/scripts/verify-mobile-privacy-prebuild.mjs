@@ -193,14 +193,16 @@ export function verifyProductionIosTexts({ infoPlist, entitlements, privacyInfo,
     }
   }
 
-  for (const key of [
-    'NSPrivacyAccessedAPITypes',
-    'NSPrivacyCollectedDataTypes',
-    'NSPrivacyTrackingDomains',
-  ]) {
+  if (
+    !privacyInfo.includes('<string>NSPrivacyAccessedAPICategoryUserDefaults</string>') ||
+    !privacyInfo.includes('<string>CA92.1</string>')
+  ) {
+    fail('main App PrivacyInfo is missing the reviewed UserDefaults CA92.1 reason');
+  }
+  for (const key of ['NSPrivacyCollectedDataTypes', 'NSPrivacyTrackingDomains']) {
     const emptyArray = new RegExp(`<key>${key}</key>\\s*<array\\s*\\/>`);
     if (!emptyArray.test(privacyInfo)) {
-      fail(`main App PrivacyInfo ${key} must remain an explicit pending-review empty array`);
+      fail(`main App PrivacyInfo ${key} must remain an explicit reviewed empty array`);
     }
   }
   if (!/<key>NSPrivacyTracking<\/key>\s*<false\s*\/>/.test(privacyInfo)) {

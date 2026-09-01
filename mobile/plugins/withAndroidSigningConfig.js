@@ -18,6 +18,8 @@ const PREFACE_START = '// M00-02: Android release signing policy (begin)';
 const PREFACE_END = '// M00-02: Android release signing policy (end)';
 const VALIDATION_START = '// M00-02: Android release task fail-closed gate (begin)';
 const VALIDATION_END = '// M00-02: Android release task fail-closed gate (end)';
+const DISTRIBUTION_START = '// M60-03: native distribution contract (begin)';
+const DISTRIBUTION_END = '// M60-03: native distribution contract (end)';
 
 const RELEASE_ENV_MAP = RELEASE_SIGNING_ENV.map(
   (name) => `    "${name}": System.getenv("${name}")`,
@@ -398,10 +400,28 @@ function verifyGeneratedAndroidSigningConfig(contents) {
   return true;
 }
 
+function applyAndroidDistributionContract(contents, distributionConfig) {
+  const distribution = distributionConfig?.flavor;
+  const artifactType = distributionConfig?.artifactType;
+  const expectedArtifact = distribution === 'store' ? 'aab' : distribution === 'enterprise' ? 'apk' : 'none';
+  if (!['store', 'enterprise', 'unselected'].includes(distribution) || artifactType !== expectedArtifact) {
+    throw new Error('[M60-03] Android distribution/artifact contract is missing or inconsistent');
+  }
+  const managed = `${DISTRIBUTION_START}\ndef agentSaasDistribution = "${distribution}"\ndef agentSaasArtifactType = "${artifactType}"\n${DISTRIBUTION_END}`;
+  const existingPattern = new RegExp(
+    `${escapeRegExp(DISTRIBUTION_START)}[\\s\\S]*?${escapeRegExp(DISTRIBUTION_END)}\\n*`,
+    'g',
+  );
+  const withoutExisting = contents.replace(existingPattern, '').trimStart();
+  return `${managed}\n\n${withoutExisting}`;
+}
+
 function withAndroidSigningConfig(config) {
   return withAppBuildGradle(config, (configWithGradle) => {
-    configWithGradle.modResults.contents = applyAndroidSigningConfig(
-      configWithGradle.modResults.contents,
+    const signingConfigured = applyAndroidSigningConfig(configWithGradle.modResults.contents);
+    configWithGradle.modResults.contents = applyAndroidDistributionContract(
+      signingConfigured,
+      config.extra?.androidDistribution,
     );
     return configWithGradle;
   });
@@ -409,5 +429,6 @@ function withAndroidSigningConfig(config) {
 
 module.exports = withAndroidSigningConfig;
 module.exports.RELEASE_SIGNING_ENV = RELEASE_SIGNING_ENV;
+module.exports.applyAndroidDistributionContract = applyAndroidDistributionContract;
 module.exports.applyAndroidSigningConfig = applyAndroidSigningConfig;
 module.exports.verifyGeneratedAndroidSigningConfig = verifyGeneratedAndroidSigningConfig;

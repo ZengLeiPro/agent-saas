@@ -26,7 +26,14 @@
         "NSFaceIDUsageDescription": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面"
       },
       "privacyManifests": {
-        "NSPrivacyAccessedAPITypes": [],
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          }
+        ],
         "NSPrivacyCollectedDataTypes": [],
         "NSPrivacyTracking": false,
         "NSPrivacyTrackingDomains": []

@@ -28,8 +28,8 @@
 - 仅保留由用户动作触发的麦克风、相机、图库用途说明。
 - 移除 Location/Face ID 用途键、后台 audio mode、定位日志地图入口配置。
 - production 删除 Expo 默认 local-network ATS 例外及任意加载/exception-domain 类例外；development/preview 的 Expo 本地网络开发例外不进入 production。
-- 主 App 通过 `ios.privacyManifests` 生成可审计的 `PrivacyInfo.xcprivacy` 基础结构：tracking=false，tracking domains、collected data types、required-reason API types 暂为空数组。
-- 空数组表示“尚未取得人工/依赖审计结论”，**不表示 App Store 隐私申报已完成或应用不处理任何数据**。
+- 主 App 通过 `ios.privacyManifests` 生成可审计的 `PrivacyInfo.xcprivacy`：tracking=false，tracking domains 与 collected data types 为空；UserDefaults 使用由受审真源明确声明为 `NSPrivacyAccessedAPICategoryUserDefaults/CA92.1`，M60-03 对主 App 与 Share Extension 的生成结果做结构化一致性门禁。
+- 空的 collected/tracking 数组仍只表示当前受审代码事实，**不表示 App Store 隐私申报已完成或应用不处理任何数据**。
 
 ### 4. 本地数据边界（代码事实，不等于保留政策）
 
@@ -46,7 +46,7 @@ M10-05 只关闭 Android 系统 backup/restore 通道，没有改变这些数据
 
 - [ ] 对外隐私政策正文、公开 URL、主体名称、联系方式、生效日期与版本。
 - [ ] Apple App Privacy：实际收集的数据类型、是否关联身份、用途、是否用于 tracking、第三方 SDK/服务端处理边界。
-- [ ] Apple required-reason API：对主 App 及全部依赖/扩展做归档级扫描后，逐项确认 API category 与 Apple 允许的 reason code。当前主 App 文件故意不猜值。
+- [ ] Apple required-reason API：`UserDefaults/CA92.1` 已进入受审真源；仍须对主 App、全部依赖与扩展做归档级扫描，确认没有 clean prebuild 尚未覆盖的 category/reason。
 - [ ] Google Play Data Safety：数据收集/共享、加密、删除请求、安全实践等答案。本文没有代填任何答案。
 - [ ] iPad 支持口径。源码继承 `supportsTablet=true`，但未取得产品/QA 的支持承诺，不能据此宣称已支持。
 - [ ] iOS/Android 最低系统版本、目标设备矩阵与商店兼容口径；应以正式发布配置和真机验收为准。

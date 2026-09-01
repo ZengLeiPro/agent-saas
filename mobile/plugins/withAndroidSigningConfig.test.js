@@ -3,6 +3,7 @@ const { readFileSync } = require('node:fs');
 const { describe, it } = require('node:test');
 const {
   RELEASE_SIGNING_ENV,
+  applyAndroidDistributionContract,
   applyAndroidSigningConfig,
   verifyGeneratedAndroidSigningConfig,
 } = require('./withAndroidSigningConfig');
@@ -144,6 +145,22 @@ describe('M00-02 Android release signing config plugin', () => {
           output.replace('gradle.taskGraph.whenReady', 'gradle.taskGraph.whenReadyDisabled'),
         ),
       /fail-closed validation/,
+    );
+  });
+
+  it('emits an idempotent Store AAB or Enterprise APK contract without credentials', () => {
+    const signed = applyAndroidSigningConfig(EXPO_GRADLE_FIXTURE);
+    const store = applyAndroidDistributionContract(signed, { flavor: 'store', artifactType: 'aab' });
+    const enterprise = applyAndroidDistributionContract(store, { flavor: 'enterprise', artifactType: 'apk' });
+
+    assert.match(store, /agentSaasDistribution = "store"/);
+    assert.match(store, /agentSaasArtifactType = "aab"/);
+    assert.match(enterprise, /agentSaasDistribution = "enterprise"/);
+    assert.match(enterprise, /agentSaasArtifactType = "apk"/);
+    assert.equal(enterprise.split('M60-03: native distribution contract (begin)').length - 1, 1);
+    assert.throws(
+      () => applyAndroidDistributionContract(signed, { flavor: 'store', artifactType: 'apk' }),
+      /distribution\/artifact contract/,
     );
   });
 

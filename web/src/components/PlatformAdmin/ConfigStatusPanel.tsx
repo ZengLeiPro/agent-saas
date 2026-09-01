@@ -11,24 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from './api';
+import { ConfigStatusCapabilities, ConfigStatusSecrets } from './ConfigStatusDetails';
 import type { EffectiveConfigStatus } from './types';
-
-const CAPABILITY_LABELS: Record<string, string> = {
-  models: '模型',
-  codex: 'Codex',
-  webTools: 'WebTools',
-  imageGen: 'ImageGen',
-  stt: '语音转写',
-  tts: '语音合成',
-  memory: 'Memory',
-  memoryPolling: '记忆轮询',
-  memoryConsolidation: '记忆整合',
-  cron: '定时任务',
-  systemMonitor: '系统监控',
-  eventRetention: '事件保留',
-  toolControls: '工具控制',
-  acs: 'ACS 执行环境',
-};
 
 function shortFingerprint(value: string | undefined): string {
   return value ? value.replace(/^sha256:/u, '').slice(0, 12) : '—';
@@ -127,39 +111,30 @@ export function ConfigStatusPanel() {
             value={readinessLabel(status?.secretReadiness)}
             description={
               status
-                ? `${status.secrets.references} 个引用，${status.secrets.inlineLegacy} 个历史内联项`
+                ? `${status.secrets.references} 个引用，${status.secrets.inlineLegacy} 个历史内联项，${status.secrets.missing} 个缺失项`
                 : '不返回明文或引用标识'
             }
             tone={status?.secretReadiness === 'ready' ? 'good' : 'warn'}
           />
         </div>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">当前实例能力</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {status ? (
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {Object.entries(status.capabilities).map(([key, active]) => (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
-                  >
-                    <span>{CAPABILITY_LABELS[key] ?? key}</span>
-                    <span className={active ? 'text-success-ink' : 'text-muted-foreground'}>
-                      {active ? '已启用' : '未启用'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
+        {status ? (
+          <>
+            <ConfigStatusCapabilities capabilities={status.capabilities} />
+            <ConfigStatusSecrets secrets={status.secrets} />
+          </>
+        ) : (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">当前实例能力</CardTitle>
+            </CardHeader>
+            <CardContent>
               <div className="flex h-28 items-center justify-center text-sm text-muted-foreground">
                 <Loader2 className="mr-2 size-4 animate-spin" />
                 加载配置状态...
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
         {status?.environment === 'production' ? (
           <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-ink">
             当前是 Production。此页面保持只读；任何配置保存、凭据迁移或重新授权都需要单独确认。

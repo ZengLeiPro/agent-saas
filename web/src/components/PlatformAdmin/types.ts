@@ -468,5 +468,14 @@ export interface EffectiveConfigStatus {
   processRole: string;
   appliedAt: string;
   capabilities: Record<string, boolean>;
-  secrets: { references: number; inlineLegacy: number; missing: number };
+  secrets: {
+    references: number;
+    inlineLegacy: number;
+    missing: number;
+    items?: Array<{
+      path: string;
+      status: "reference" | "legacy_inline" | "missing";
+      target: "models" | "tools" | "memory" | "system" | "execution" | null;
+    }>;
+  };
 }

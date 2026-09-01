@@ -1084,7 +1084,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const isMethodCall = (node, owner, method) =>
     methodCallArguments(node, owner, method) !== undefined;
-  // Proven local wrappers preserve descriptor targets and keys; ambiguous or compound writes fail closed.
+  // Proven wrappers preserve descriptor targets and keys across local, nested/spread member, destructured, and invocation aliases.
   const descriptorFactories = new Map();
   const unprovenDescriptorFactories = new Set();
   const returnedFactoryExpression = (body) => {
@@ -1272,14 +1272,361 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         );
     }
   }
+  const descriptorFactoryAliasWrites = new Map();
+  const descriptorFactoryAliasReferences = new Map();
+  const descriptorFactoryObjectSpreadReferences = new Map();
+  const addDescriptorFactoryAliasWrite = (name, expression) => {
+    const writes = descriptorFactoryAliasWrites.get(name) ?? [];
+    writes.push(unwrapExpression(expression));
+    descriptorFactoryAliasWrites.set(name, writes);
+  };
+  const addDescriptorFactoryAliasReference = (name, reference) => {
+    const references = descriptorFactoryAliasReferences.get(name) ?? [];
+    references.push(reference);
+    descriptorFactoryAliasReferences.set(name, references);
+  };
+  const addDescriptorFactoryObjectSpreadReference = (owner, reference) => {
+    const references = descriptorFactoryObjectSpreadReferences.get(owner) ?? [];
+    references.push(reference);
+    descriptorFactoryObjectSpreadReferences.set(owner, references);
+  };
+  const staticObjectPropertyName = (node) => {
+    if (!node) return undefined;
+    const current = unwrapExpression(node);
+    if (ts.isComputedPropertyName(current)) {
+      const key = staticMemberKey(current.expression);
+      return key === '*' ? undefined : key;
+    }
+    if (ts.isIdentifier(current) || ts.isStringLiteral(current) || ts.isNumericLiteral(current))
+      return current.text;
+    return staticMemberKey(current);
+  };
+  const staticDescriptorAliasReferenceKey = (node) => {
+    const current = unwrapExpression(node);
+    if (ts.isIdentifier(current)) return current.text;
+    if (ts.isPropertyAccessExpression(current)) {
+      const owner = staticDescriptorAliasReferenceKey(current.expression);
+      return owner ? `${owner}.${current.name.text}` : undefined;
+    }
+    if (ts.isElementAccessExpression(current) && current.argumentExpression) {
+      const owner = staticDescriptorAliasReferenceKey(current.expression);
+      const member = staticMemberKey(current.argumentExpression);
+      return owner && member !== '*' ? `${owner}.${member}` : undefined;
+    }
+    return undefined;
+  };
+  const objectLiteralPropertyValue = (object, key) => {
+    if (!ts.isObjectLiteralExpression(object)) return undefined;
+    for (const property of object.properties) {
+      const propertyKey = staticObjectPropertyName(property.name);
+      if (propertyKey !== key) continue;
+      if (ts.isShorthandPropertyAssignment(property)) return property.name;
+      if (ts.isPropertyAssignment(property)) return property.initializer;
+    }
+    return undefined;
+  };
+  const addDescriptorFactoryBindingWrites = (pattern, source) => {
+    const currentPattern = unwrapExpression(pattern);
+    const currentSource = unwrapExpression(source);
+    if (ts.isIdentifier(currentPattern)) {
+      addDescriptorFactoryAliasWrite(currentPattern.text, currentSource);
+      return;
+    }
+    if (ts.isArrayBindingPattern(currentPattern) || ts.isArrayLiteralExpression(currentPattern)) {
+      const sourceReference = staticDescriptorAliasReferenceKey(currentSource);
+      for (const [index, element] of currentPattern.elements.entries()) {
+        if (ts.isOmittedExpression(element)) continue;
+        const target = ts.isBindingElement(element) ? element.name : element;
+        if (
+          ts.isBindingElement(element) &&
+          element.dotDotDotToken &&
+          ts.isIdentifier(target) &&
+          ts.isArrayLiteralExpression(currentSource)
+        ) {
+          for (const [restIndex, value] of currentSource.elements.slice(index).entries())
+            if (!ts.isSpreadElement(value))
+              addDescriptorFactoryAliasWrite(`${target.text}.${restIndex}`, value);
+          continue;
+        }
+        const value = ts.isArrayLiteralExpression(currentSource)
+          ? currentSource.elements[index]
+          : undefined;
+        if (value && !ts.isSpreadElement(value)) addDescriptorFactoryBindingWrites(target, value);
+        else if (sourceReference && ts.isIdentifier(target))
+          addDescriptorFactoryAliasReference(target.text, `${sourceReference}.${index}`);
+      }
+      return;
+    }
+    if (ts.isObjectBindingPattern(currentPattern)) {
+      const sourceReference = staticDescriptorAliasReferenceKey(currentSource);
+      for (const element of currentPattern.elements) {
+        if (
+          element.dotDotDotToken &&
+          ts.isIdentifier(element.name) &&
+          ts.isObjectLiteralExpression(currentSource)
+        ) {
+          addDescriptorFactoryObjectMemberWrites(element.name.text, currentSource);
+          continue;
+        }
+        const keyNode = element.propertyName ?? element.name;
+        const key =
+          ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode) ? keyNode.text : undefined;
+        const value = key ? objectLiteralPropertyValue(currentSource, key) : undefined;
+        if (value) addDescriptorFactoryBindingWrites(element.name, value);
+        else if (key && sourceReference && ts.isIdentifier(element.name))
+          addDescriptorFactoryAliasReference(element.name.text, `${sourceReference}.${key}`);
+      }
+      return;
+    }
+    if (ts.isObjectLiteralExpression(currentPattern)) {
+      const sourceReference = staticDescriptorAliasReferenceKey(currentSource);
+      for (const property of currentPattern.properties) {
+        const key = staticObjectPropertyName(property.name);
+        const target = ts.isShorthandPropertyAssignment(property)
+          ? property.name
+          : ts.isPropertyAssignment(property)
+            ? property.initializer
+            : undefined;
+        const value = key ? objectLiteralPropertyValue(currentSource, key) : undefined;
+        if (target && value) addDescriptorFactoryBindingWrites(target, value);
+        else if (key && sourceReference && target && ts.isIdentifier(target))
+          addDescriptorFactoryAliasReference(target.text, `${sourceReference}.${key}`);
+      }
+    }
+  };
+  const addDescriptorFactoryObjectMemberWrites = (owner, object) => {
+    if (!ts.isObjectLiteralExpression(object)) return;
+    for (const property of object.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        const spread = unwrapExpression(property.expression);
+        if (ts.isObjectLiteralExpression(spread))
+          addDescriptorFactoryObjectMemberWrites(owner, spread);
+        else {
+          const reference = staticDescriptorAliasReferenceKey(spread);
+          if (reference) addDescriptorFactoryObjectSpreadReference(owner, reference);
+        }
+        continue;
+      }
+      const key = staticObjectPropertyName(property.name);
+      const value = ts.isShorthandPropertyAssignment(property)
+        ? property.name
+        : ts.isPropertyAssignment(property)
+          ? property.initializer
+          : undefined;
+      if (key && key !== '*' && value) {
+        const member = `${owner}.${key}`;
+        addDescriptorFactoryAliasWrite(member, value);
+        addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(value));
+        addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(value));
+      }
+    }
+  };
+  const addDescriptorFactoryArrayMemberWrites = (owner, array) => {
+    if (!ts.isArrayLiteralExpression(array)) return;
+    let outputIndex = 0;
+    for (const element of array.elements) {
+      if (ts.isSpreadElement(element)) {
+        const spread = unwrapExpression(element.expression);
+        if (ts.isArrayLiteralExpression(spread)) {
+          for (const value of spread.elements) {
+            if (ts.isSpreadElement(value)) continue;
+            const member = `${owner}.${outputIndex++}`;
+            addDescriptorFactoryAliasWrite(member, value);
+            addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(value));
+            addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(value));
+          }
+        }
+        continue;
+      }
+      const member = `${owner}.${outputIndex++}`;
+      addDescriptorFactoryAliasWrite(member, element);
+      addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(element));
+      addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(element));
+    }
+  };
+  const collectDescriptorFactoryAliases = (node) => {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      addDescriptorFactoryBindingWrites(node.name, node.initializer);
+      if (ts.isIdentifier(node.name)) {
+        const initializer = unwrapExpression(node.initializer);
+        addDescriptorFactoryObjectMemberWrites(node.name.text, initializer);
+        addDescriptorFactoryArrayMemberWrites(node.name.text, initializer);
+      }
+    }
+    if (
+      ts.isPropertyDeclaration(node) &&
+      node.initializer &&
+      node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) &&
+      ts.isClassDeclaration(node.parent) &&
+      node.parent.name
+    ) {
+      const key = staticObjectPropertyName(node.name);
+      if (key && key !== '*')
+        addDescriptorFactoryAliasWrite(`${node.parent.name.text}.${key}`, node.initializer);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      [
+        ts.SyntaxKind.EqualsToken,
+        ts.SyntaxKind.BarBarEqualsToken,
+        ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+        ts.SyntaxKind.QuestionQuestionEqualsToken,
+      ].includes(node.operatorToken.kind) &&
+      ts.isIdentifier(node.left)
+    )
+      addDescriptorFactoryAliasWrite(
+        node.left.text,
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? node.right : node,
+      );
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !ts.isIdentifier(node.left)
+    ) {
+      addDescriptorFactoryBindingWrites(node.left, node.right);
+      const member = staticDescriptorAliasReferenceKey(node.left);
+      if (member) addDescriptorFactoryAliasWrite(member, node.right);
+    }
+    ts.forEachChild(node, collectDescriptorFactoryAliases);
+  };
+  collectDescriptorFactoryAliases(sourceFile);
+  const resolveDescriptorFactoryName = (name, visited = new Set()) => {
+    if (descriptorFactories.has(name) || unprovenDescriptorFactories.has(name)) return name;
+    if (visited.has(name)) return undefined;
+    const writes = descriptorFactoryAliasWrites.get(name) ?? [];
+    const references = descriptorFactoryAliasReferences.get(name) ?? [];
+    const nextVisited = new Set(visited).add(name);
+    if (writes.length === 0 && references.length === 0) {
+      const separator = name.lastIndexOf('.');
+      if (separator < 0) return undefined;
+      const owner = name.slice(0, separator);
+      const member = name.slice(separator + 1);
+      const ownerWrites = descriptorFactoryAliasWrites.get(owner) ?? [];
+      const ownerReferences = descriptorFactoryAliasReferences.get(owner) ?? [];
+      const ownerTargets = [
+        ...ownerReferences,
+        ...ownerWrites
+          .map((write) => staticDescriptorAliasReferenceKey(write))
+          .filter((reference) => reference),
+      ];
+      const spreadTargets = descriptorFactoryObjectSpreadReferences.get(owner) ?? [];
+      const resolvedMembers = new Set();
+      for (const target of ownerTargets.concat(spreadTargets)) {
+        const resolved = resolveDescriptorFactoryName(`${target}.${member}`, nextVisited);
+        if (resolved) resolvedMembers.add(resolved);
+      }
+      if (resolvedMembers.size === 0) return undefined;
+      if (ownerTargets.length + spreadTargets.length !== 1 || resolvedMembers.size !== 1)
+        throw new Error(`descriptor wrapper alias ${name} cannot be proven statically`);
+      return [...resolvedMembers][0];
+    }
+    const resolved = new Set();
+    let ambiguous = writes.length + references.length !== 1;
+    for (const reference of references) {
+      const target = resolveDescriptorFactoryName(reference, nextVisited);
+      if (target) resolved.add(target);
+    }
+    for (const write of writes) {
+      if (ts.isIdentifier(write)) {
+        const target = resolveDescriptorFactoryName(write.text, nextVisited);
+        if (target) resolved.add(target);
+        continue;
+      }
+      const reference = staticDescriptorAliasReferenceKey(write);
+      if (reference) {
+        const target = resolveDescriptorFactoryName(reference, nextVisited);
+        if (target) resolved.add(target);
+        continue;
+      }
+      const referencedFactories = new Set();
+      const visit = (node) => {
+        if (ts.isIdentifier(node)) {
+          const target = resolveDescriptorFactoryName(node.text, nextVisited);
+          if (target) referencedFactories.add(target);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(write);
+      if (referencedFactories.size > 0) {
+        ambiguous = true;
+        for (const target of referencedFactories) resolved.add(target);
+      }
+    }
+    if (resolved.size === 0) return undefined;
+    if (ambiguous || resolved.size !== 1)
+      throw new Error(`descriptor wrapper alias ${name} cannot be proven statically`);
+    return [...resolved][0];
+  };
+  const expressionReferencesDescriptorFactory = (expression) => {
+    let referenced = false;
+    const visit = (node) => {
+      if (referenced) return;
+      if (ts.isIdentifier(node) && resolveDescriptorFactoryName(node.text)) {
+        referenced = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(expression);
+    return referenced;
+  };
   const descriptorFactoryCall = (node, kind) => {
     const current = unwrapExpression(node);
-    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) return undefined;
-    const name = current.expression.text;
+    if (!ts.isCallExpression(current)) return undefined;
+    let calledName = staticDescriptorAliasReferenceKey(current.expression);
+    let callArguments = [...current.arguments];
+    let name = calledName ? resolveDescriptorFactoryName(calledName) : undefined;
+    const invokedCallee = unwrapExpression(current.expression);
+    if (
+      !name &&
+      (ts.isPropertyAccessExpression(invokedCallee) || ts.isElementAccessExpression(invokedCallee))
+    ) {
+      const invocation = ts.isPropertyAccessExpression(invokedCallee)
+        ? invokedCallee.name.text
+        : invokedCallee.argumentExpression
+          ? staticMemberKey(invokedCallee.argumentExpression)
+          : '*';
+      if (invocation === 'call' || invocation === 'apply') {
+        calledName = staticDescriptorAliasReferenceKey(invokedCallee.expression);
+        name = calledName ? resolveDescriptorFactoryName(calledName) : undefined;
+        if (name && invocation === 'call') callArguments = [...current.arguments].slice(1);
+        if (name && invocation === 'apply') {
+          const applied = current.arguments[1] && unwrapExpression(current.arguments[1]);
+          if (
+            !applied ||
+            !ts.isArrayLiteralExpression(applied) ||
+            applied.elements.some(ts.isSpreadElement)
+          )
+            throw new Error(
+              `descriptor wrapper ${calledName}.apply arguments cannot be proven statically`,
+            );
+          callArguments = [...applied.elements];
+        }
+      }
+    }
+    if (!name && ts.isCallExpression(invokedCallee)) {
+      const boundCallee = unwrapExpression(invokedCallee.expression);
+      if (
+        (ts.isPropertyAccessExpression(boundCallee) || ts.isElementAccessExpression(boundCallee)) &&
+        (ts.isPropertyAccessExpression(boundCallee)
+          ? boundCallee.name.text
+          : boundCallee.argumentExpression
+            ? staticMemberKey(boundCallee.argumentExpression)
+            : '*') === 'bind'
+      ) {
+        calledName = staticDescriptorAliasReferenceKey(boundCallee.expression);
+        name = calledName ? resolveDescriptorFactoryName(calledName) : undefined;
+        if (name)
+          callArguments = [...invokedCallee.arguments].slice(1).concat([...current.arguments]);
+      }
+    }
+    if (!name && current.arguments.some(expressionReferencesDescriptorFactory))
+      throw new Error('descriptor wrapper callback target cannot be proven statically');
+    if (!calledName || !name) return undefined;
     if (unprovenDescriptorFactories.has(name))
-      throw new Error(`descriptor wrapper ${name} cannot be proven statically`);
+      throw new Error(`descriptor wrapper ${calledName} cannot be proven statically`);
     const factory = descriptorFactories.get(name);
-    return factory?.kind === kind ? { call: current, factory } : undefined;
+    return factory?.kind === kind ? { call: { arguments: callArguments }, factory } : undefined;
   };
   const resolveFactoryValue = ({ call, factory }, value) => {
     let current = unwrapExpression(value);

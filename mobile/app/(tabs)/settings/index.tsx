@@ -282,7 +282,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="settings-screen" accessibilityLabel="设置">
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -312,7 +312,7 @@ export default function SettingsScreen() {
                   <Text style={styles.avatarText}>{initial}</Text>
                 </View>
               )}
-              <Text style={styles.avatarUsername}>
+              <Text style={styles.avatarUsername} testID="account-username" accessibilityLabel="当前账户">
                 {agentProfile?.realName || user?.username || "-"}
               </Text>
               <ChevronRight
@@ -506,6 +506,8 @@ export default function SettingsScreen() {
         {/* Logout */}
         <View style={styles.section}>
           <TouchableOpacity
+            testID="logout-button"
+            accessibilityLabel="退出登录"
             style={styles.logoutBtn}
             onPress={handleLogout}
             activeOpacity={0.7}

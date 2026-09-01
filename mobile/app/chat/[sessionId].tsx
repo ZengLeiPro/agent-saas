@@ -459,7 +459,7 @@ export default function ChatDetailScreen() {
   const interactionDisabled = Boolean(chat.activeAgentTargetUnavailableReason || !chat.activeAgentTarget);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="chat-screen">
       <Stack.Screen
         options={{
           title: '',
@@ -484,6 +484,7 @@ export default function ChatDetailScreen() {
             );
             const inner = chat.modelList ? (
               <ModelPicker
+                testID="agent-target-picker"
                 modelList={chat.modelList}
                 selectedModel={chat.selectedModel}
                 onModelChange={chat.onModelChange}

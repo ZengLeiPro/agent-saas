@@ -144,6 +144,9 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
 
   const rowContent = (
     <Pressable
+      testID={session.id}
+      accessibilityLabel={`会话：${session.title || '新会话'}`}
+      accessibilityRole="button"
       style={({ pressed }) => [styles.sessionRow, pressed && styles.sessionRowPressed]}
       onPress={selectMode ? onSelectToggle : () => onPress(session.id)}
     >
@@ -155,7 +158,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       {avatarElement}
       <View style={styles.sessionContent}>
         <View style={styles.titleRow}>
-          <Text style={styles.sessionTitle} numberOfLines={1}>
+          <Text style={styles.sessionTitle} numberOfLines={1} testID={`${session.id}-title`}>
             {session.title || '新会话'}
           </Text>
           <Text style={styles.sessionTime}>

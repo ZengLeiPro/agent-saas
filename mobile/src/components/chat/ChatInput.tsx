@@ -276,13 +276,15 @@ export function ChatInput({
     }
     if (hasContent) {
       return (
-        <TouchableOpacity style={[btnBase, styles.sendBtn]} onPress={handleSend} activeOpacity={0.7}>
+        <TouchableOpacity testID="chat-send-button" accessibilityLabel="发送消息" style={[btnBase, styles.sendBtn]} onPress={handleSend} activeOpacity={0.7}>
           <ArrowUp size={18} color={colors.primaryForeground} strokeWidth={2} />
         </TouchableOpacity>
       );
     }
     return (
       <TouchableOpacity
+        testID="chat-microphone-button"
+        accessibilityLabel="按住录音"
         style={[btnBase, styles.micBtn]}
         onPressIn={handleRecordPressIn}
         onPressOut={handleRecordPressOut}
@@ -296,7 +298,7 @@ export function ChatInput({
   const hasAttachments = uploadedFiles.length > 0 || uploading || !!uploadError;
 
   return (
-    <View style={styles.wrapper}>
+    <View style={styles.wrapper} testID="chat-composer">
       {disabledReason ? <Text style={styles.disabledReason}>{disabledReason}</Text> : null}
       {/* Attachments — independent floating card above the row */}
       {hasAttachments && (
@@ -316,6 +318,8 @@ export function ChatInput({
         {/* Left: attach button */}
         <TouchableOpacity
           ref={attachBtnRef}
+          testID="chat-attachment-button"
+          accessibilityLabel="添加附件"
           style={styles.circleBtn}
           onPress={showAttachOptions}
           disabled={isRecording || !!disabledReason}
@@ -342,6 +346,8 @@ export function ChatInput({
         ) : (
           <TextInput
             ref={inputRef}
+            testID="chat-composer-input"
+            accessibilityLabel="消息输入框"
             style={styles.inputPill}
             placeholder={disabledReason || "输入消息..."}
             placeholderTextColor={colors.mutedForeground}

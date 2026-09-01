@@ -49,7 +49,7 @@ function useVisibleTabs() {
   );
 }
 
-// ── iOS: NativeTabs (keep native experience) ─────────────────────────
+// ── iOS: NativeTabs (native labels are the stable accessibility selectors) ──
 
 function IOSTabs() {
   const colors = useColors();
@@ -130,6 +130,8 @@ function AndroidCustomTabBar({ state, descriptors, navigation }: any) {
         return (
           <Pressable
             key={route.key}
+            testID={`${route.name}-tab`}
+            accessibilityLabel={tab.label}
             accessibilityRole="button"
             accessibilityState={focused ? { selected: true } : undefined}
             onPress={onPress}

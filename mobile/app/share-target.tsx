@@ -77,7 +77,7 @@ export default function ShareTargetScreen() {
   if (!share) return <View style={styles.container}><Stack.Screen options={{ headerShown: false }} /></View>;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top }]} testID="share-target-screen" accessibilityLabel="分享至草稿">
       <Stack.Screen options={{ headerShown: false }} />
       <View style={styles.header}>
         <Pressable onPress={handleCancel} hitSlop={12}><Text style={styles.cancel}>取消</Text></Pressable>
@@ -106,7 +106,7 @@ export default function ShareTargetScreen() {
           </Pressable>
         )}
       </View>
-      <Pressable onPress={() => proceed('new')} disabled={!canProceed} style={[styles.newSession, !canProceed && { opacity: 0.4 }]}>
+      <Pressable testID="share-target-send" accessibilityLabel="新建会话并保留为草稿" onPress={() => proceed('new')} disabled={!canProceed} style={[styles.newSession, !canProceed && { opacity: 0.4 }]}>
         <CirclePlus size={22} color={colors.primaryForeground} /><Text style={styles.newSessionText}>新建会话并保留为草稿</Text>
       </Pressable>
       <Text style={styles.sectionTitle}>最近会话</Text>

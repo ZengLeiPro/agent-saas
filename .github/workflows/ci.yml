@@ -223,9 +223,9 @@ jobs:
         run: bash scripts/pr-preflight-task.sh web
 
   mobile_contract:
-    name: Preflight / Mobile contract
+    name: Preflight / Mobile + native E2E contract
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -246,6 +246,12 @@ jobs:
 
       - name: Install frozen workspace dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint native Maestro flows and test receipt contracts
+        run: pnpm -F mobile lint:maestro && pnpm -F mobile test:m60-02
+
+      - name: Run Android and iOS clean prebuild smoke
+        run: pnpm -F mobile test:m60-02:prebuild
 
       - name: Run deterministic Shared and Mobile contract gate
         env:

@@ -316,7 +316,7 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} testID="login-screen" accessibilityLabel="登录">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
@@ -361,6 +361,8 @@ export default function LoginScreen() {
 
           <View style={styles.segmented}>
             <TouchableOpacity
+              testID="login-password-mode"
+              accessibilityLabel="密码登录"
               style={[styles.segment, mode === "password" && styles.segmentActive]}
               onPress={() => { setMode("password"); setError(""); }}
               activeOpacity={0.8}
@@ -368,6 +370,8 @@ export default function LoginScreen() {
               <Text style={[styles.segmentText, mode === "password" && styles.segmentTextActive]}>密码登录</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              testID="login-sms-mode"
+              accessibilityLabel="验证码登录"
               style={[styles.segment, mode === "sms" && styles.segmentActive]}
               onPress={() => { setMode("sms"); setError(""); }}
               activeOpacity={0.8}
@@ -379,6 +383,8 @@ export default function LoginScreen() {
           {mode === "password" ? (
             <>
               <TextInput
+                testID="login-username-input"
+                accessibilityLabel="用户名"
                 style={styles.input}
                 placeholder="用户名"
                 placeholderTextColor={colors.mutedForeground}
@@ -390,6 +396,8 @@ export default function LoginScreen() {
               />
 
               <TextInput
+                testID="login-password-input"
+                accessibilityLabel="密码"
                 style={styles.input}
                 placeholder="密码"
                 placeholderTextColor={colors.mutedForeground}
@@ -403,6 +411,8 @@ export default function LoginScreen() {
           ) : (
             <>
               <TextInput
+                testID="login-phone-input"
+                accessibilityLabel="手机号"
                 style={styles.input}
                 placeholder="手机号"
                 placeholderTextColor={colors.mutedForeground}
@@ -417,6 +427,8 @@ export default function LoginScreen() {
 
               <View style={styles.codeRow}>
                 <TextInput
+                  testID="login-otp-input"
+                  accessibilityLabel="验证码"
                   style={[styles.input, styles.codeInput]}
                   placeholder="验证码"
                   placeholderTextColor={colors.mutedForeground}
@@ -428,6 +440,8 @@ export default function LoginScreen() {
                   onSubmitEditing={handleLogin}
                 />
                 <TouchableOpacity
+                  testID="login-send-otp"
+                  accessibilityLabel="获取验证码"
                   style={[
                     styles.codeButton,
                     (sendingCode || countdown > 0 || loading || !serviceConfig.ready) && styles.codeButtonDisabled,
@@ -451,6 +465,8 @@ export default function LoginScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity
+            testID="login-submit"
+            accessibilityLabel="提交登录"
             style={[styles.button, (loading || !serviceConfig.ready) && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={loading || !serviceConfig.ready}

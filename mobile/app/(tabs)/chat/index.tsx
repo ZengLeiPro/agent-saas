@@ -817,6 +817,8 @@ export default function SessionListScreen() {
     }
     return (
       <FlashList
+        testID="chat-session-list"
+        accessibilityLabel="会话列表"
         key={`${isSelectMode ? "select" : "list"}-${chat.sessionsHydrated ? "hydrated" : "cold"}`}
         ref={listRef}
         data={listData}
@@ -862,7 +864,7 @@ export default function SessionListScreen() {
   const canBatchGroup = hasSelection && !isReadOnlyGroups;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="chat-home-screen">
       <Stack.Screen
         options={{
           title: "Agent SaaS",

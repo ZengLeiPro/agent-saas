@@ -1239,6 +1239,7 @@ export function PermissionBlock({ message, onResponse, disabled = false }: {
       {message.status === 'pending' && (
         <View style={styles.permissionButtons}>
           <TouchableOpacity
+            testID="permission-deny-button"
             style={[styles.permButton, styles.denyButton]}
             accessibilityRole="button"
             accessibilityLabel={`拒绝权限请求 ${message.toolName}`}
@@ -1249,6 +1250,7 @@ export function PermissionBlock({ message, onResponse, disabled = false }: {
             <Text style={styles.denyText}>拒绝</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="permission-allow-button"
             style={[styles.permButton, styles.allowButton]}
             accessibilityRole="button"
             accessibilityLabel={`允许权限请求 ${message.toolName}`}
@@ -1441,6 +1443,7 @@ export function AskUserBlock({ message, onResponse, disabled = false }: {
       })}
       {isPending && onResponse && (
         <TouchableOpacity
+          testID="ask-user-submit"
           style={[styles.submitButton, !hasAnySelection && { opacity: 0.5 }]}
           accessibilityRole="button"
           accessibilityLabel="提交回答"
@@ -1593,6 +1596,8 @@ function FileDownloadCard({ message, onPreviewMd }: {
 
   return (
     <TouchableOpacity
+      testID={artifactId ? `artifact-${artifactId}` : undefined}
+      accessibilityLabel={`${artifactId ? 'Artifact' : '文件'}：${message.fileName}`}
       style={styles.fileCard}
       onPress={() => void handlePress()}
       activeOpacity={0.7}

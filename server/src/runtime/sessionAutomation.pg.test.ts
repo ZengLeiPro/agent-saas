@@ -20,15 +20,28 @@ describePg('session automation real PostgreSQL integration',()=>{
  afterAll(async()=>{if(!pool)return;await events.close();await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP; END $$`).catch(()=>undefined);await pool.end();},30_000);
  afterEach(async()=>{
   if(!pool)return;
-  const ids=`SELECT automation_id FROM ${store.tables.automations} WHERE session_id LIKE 'goal-race-%'`;
-  await pool.query(`DELETE FROM ${store.tables.lifecycleWork} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.cancellations} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.events} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.executions} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.outbox} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.wakeups} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.specs} WHERE automation_id IN (${ids})`);
-  await pool.query(`DELETE FROM ${store.tables.automations} WHERE session_id LIKE 'goal-race-%'`);
+  const ids=`SELECT automation_id FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id LIKE 'goal-race-%'`;
+  await store.tx(async c=>{
+   await c.query(`DELETE FROM ${store.tables.reconciliationReceipts} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.evaluations} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.goalCompletionCandidates} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.budgetSettlements} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.providerAttempts} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.budgetReservations} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.interactions} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.backgroundResources} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.preparedDispatchAttempts} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.lifecycleWork} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.cancellations} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.usage} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.events} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.completionAllowances} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.executions} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.outbox} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.wakeups} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.specs} WHERE automation_id IN (${ids})`,[tenant]);
+   await c.query(`DELETE FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id LIKE 'goal-race-%'`,[tenant]);
+  });
  });
  async function schedule(automationId:string,sessionId:string,key:string,dueAt:Date,generation:number){const current=await pool.query(`SELECT incarnation_id,continuation_epoch FROM ${store.tables.automations} WHERE automation_id=$1`,[automationId]);await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId,automationId,incarnationId:String(current.rows[0].incarnation_id),generation,specVersion:1,continuationEpoch:Number(current.rows[0].continuation_epoch),triggerKey:key,dueAt,payload:{}}));}
  async function wake(key:string,generation=1){await schedule(automation,session,key,new Date(0),generation);}

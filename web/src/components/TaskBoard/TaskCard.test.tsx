@@ -63,7 +63,6 @@ describe("TaskCard", () => {
     renderCard(task({
       providerPullRequestId: "235",
       pullRequestNumber: 235,
-      reviewedSubjectDigest: "reviewed-digest",
     }));
 
     const pullRequestBadge = screen.getByText("PR 235");

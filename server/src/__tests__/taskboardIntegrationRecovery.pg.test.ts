@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
-import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -69,7 +68,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     }
   }, 30_000);
 
-  it('reconciles a pull request merged outside the taskboard while recording review subject', async () => {
+  it('reconciles a pull request merged outside the taskboard when review finishes', async () => {
     const board = await store.createBoard(identity, {
       name: 'External merge reconciliation',
       repository: {
@@ -105,7 +104,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       }),
     });
 
-    await expect(store.recordReviewedExecutionSubjectV2(identity, runId)).resolves.toMatchObject({
+    await expect(store.finishExecutionV2(identity, runId, { targetStatus: 'ready_to_merge', body: 'Independent review completed; provider reports the PR already merged.' })).resolves.toMatchObject({
       status: 'done', mergedCommitOid: 'merge-32',
     });
     const execution = await pool.query(

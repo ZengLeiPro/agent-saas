@@ -116,20 +116,13 @@ export function rig() {
       version: input.expectedVersion + 1,
     })),
     inspectExecutionPullRequestV2: vi.fn(async () => ({
-      gateStatus: 'success' as const,
-      receipt: {
-        inspectionId: 'inspection-1', digest: 'digest', executionId: execution.id,
-        taskId: task.id, purpose: 'review' as const, repositoryId: 'repo-1',
-        providerPullRequestId: '42', headOid: 'head-42', providerQueriedAt: task.updatedAt,
-      },
-      snapshot: {
-        providerPullRequestId: '42', number: 42, state: 'open' as const, draft: false,
-        headRef: task.branch!, headOid: 'head-42', baseRef: 'main', baseOid: 'base-1',
-        mergeable: true, requiredChecksKnown: true,
-        requiredChecks: [{ name: 'Build & Check', status: 'success' as const }],
-        subjectDigest: 'subject-42', repositoryId: 'repo-1', providerQueriedAt: task.updatedAt,
-        workflowRuns: [],
-      },
+      providerPullRequestId: '42', number: 42, state: 'open' as const, draft: false,
+      headRef: task.branch!, headOid: 'head-42', baseRef: 'main', baseOid: 'base-1',
+      mergeable: true, requiredChecksKnown: true,
+      requiredChecks: [{ name: 'Build & Check', status: 'success' as const }],
+      observedChecks: [{ name: 'Build & Check', status: 'success' as const }],
+      subjectDigest: 'subject-42', repositoryId: 'repo-1', providerQueriedAt: task.updatedAt,
+      workflowRuns: [],
     })),
   } as unknown as TaskboardService;
   const executionService = {

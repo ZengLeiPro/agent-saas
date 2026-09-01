@@ -67,13 +67,12 @@ const CRON_MANAGE_ACTIONS = ['delete', 'run', ...TASKBOARD_MANAGE_ACTIONS] as co
 const dateTimeSchema = z.string().datetime({ offset: true });
 const cronManageSchema = z.object({
   target: z.enum(['cron', 'taskboard']).optional().describe('操作对象。默认 cron；taskboard 由服务端按当前用户与租户鉴权。'),
-  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution/integration 资源 action。Execution 可按当前用户权限读取上下文，并用 execution.finish({targetStatus, body}) 完成职责。普通 Delivery Work/Review 继续使用 pull request inspection 门禁；Integration task 只运行一个 durable work Agent，由它自主使用标准 Git/GitHub 完成合并与清理，最终仅回报 done 或 blocked。'),
+  action: z.enum(CRON_MANAGE_ACTIONS).describe('cron 支持 list/create/update/delete/run；taskboard 支持 board/task/comment/execution/integration 资源 action。Execution 可按当前用户权限读取上下文，并用 execution.finish({targetStatus, body}) 完成职责。普通 Delivery Work/Review 自主读取当前 PR/head、observed checks、workflow 与日志并判断交接质量；服务端只维护事实一致性；Integration task 只运行一个 durable work Agent，由它自主使用标准 Git/GitHub 完成合并与清理，最终仅回报 done 或 blocked。'),
   id: z.string().optional().describe('cron job、旧 taskboard 任务或评论 id。'),
   boardId: z.string().optional().describe('taskboard 看板 id。'),
   taskId: z.string().optional().describe('taskboard 任务 id。'),
   providerPullRequestId: z.string().optional().describe('仓库 Provider 的 pull request id 或编号。'),
-  inspectionId: z.string().uuid().optional().describe('execution.pull_request.inspect 返回的受控快照 id。'),
-  providerJobId: z.string().regex(/^\d+$/).optional().describe('当前 inspection receipt 中的 GitHub Actions job id。'),
+  providerJobId: z.string().regex(/^\d+$/).optional().describe('当前 PR 最新 observed workflow 中的 GitHub Actions job id。'),
   kind: z.enum(['delivery', 'advisory', 'integration', 'remediation']).optional(),
   name: z.string().trim().min(1).max(120).optional().describe('cron 或 taskboard 看板名称。'),
   title: z.string().trim().min(1).max(240).optional(),

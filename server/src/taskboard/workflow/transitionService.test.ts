@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { finishExecutionV2 } from './transitionService.js';
 
+// Shared identity for Integration and Delivery transaction-level workflow tests.
 const identity = { tenantId: 'tenant-1', ownerUserId: 'owner-1', username: 'owner' };
 const now = new Date('2026-08-26T06:00:00.000Z');
 
@@ -33,7 +34,10 @@ function executionRow(purpose: 'work' | 'review' | 'merge' = 'work') {
   };
 }
 
-function options(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> }) {
+function options(
+  client: { query: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> },
+  repositoryProvider?: { getPullRequest: ReturnType<typeof vi.fn>; inspectPullRequest: ReturnType<typeof vi.fn> },
+) {
   return {
     pool: { connect: vi.fn(async () => client) },
     boardsTable: 'boards', tasksTable: 'tasks', commentsTable: 'comments', executionsTable: 'executions',
@@ -41,8 +45,89 @@ function options(client: { query: ReturnType<typeof vi.fn>; release: ReturnType<
     remediationAttemptsTable: 'remediation_attempts', integrationLanesTable: 'lanes',
     mergeAuthorizationsTable: 'authorizations', mergeOperationsTable: 'operations',
     blockEpisodesTable: 'blocks', integrationTriggerOutboxTable: 'triggers',
-    cancellationOutboxTable: 'cancellations',
+    cancellationOutboxTable: 'cancellations', repositoryProvider,
   } as never;
+}
+
+function deliveryTaskRow(
+  status: 'in_progress' | 'in_review' | 'ready_to_merge',
+  providerPullRequestId?: string,
+) {
+  return {
+    id: 'delivery-1', board_id: 'board-1', identifier: 'TASK-359', kind: 'delivery',
+    title: 'Delivery', description: '', branch: 'task/TASK-359-delivery', attachments: [],
+    status, priority: 'none', labels: [], sort_order: 1, stage_models: {},
+    next_action: status === 'in_progress' ? 'work' : status === 'in_review' ? 'review' : 'merge',
+    next_action_revision: 0, comment_count: 0, version: 1,
+    provider_pull_request_id: providerPullRequestId ?? null,
+    pull_request_number: providerPullRequestId ? 359 : null,
+    completed_at: null, created_at: now, updated_at: now,
+  };
+}
+
+function loadedDeliveryTaskRow(
+  status: 'in_progress' | 'in_review' | 'ready_to_merge',
+  providerPullRequestId?: string,
+) {
+  return {
+    ...deliveryTaskRow(status, providerPullRequestId), actual_board_id: 'board-1',
+    board_owner_user_id: 'owner-1', board_name: 'Board', board_description: '',
+    board_visibility: 'personal', board_prompt: '', board_stage_prompts: {}, board_stage_models: {},
+    board_repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false },
+    board_integration_policy: {}, board_version: 1, board_role: 'owner',
+    board_created_at: now, board_updated_at: now,
+  };
+}
+
+function deliveryExecutionRow(purpose: 'work' | 'review') {
+  return {
+    id: 'execution-359', task_id: 'delivery-1', run_id: 'run-359', session_id: 'session-359',
+    status: 'running', purpose, trigger: 'initial', protocol_version: 2, requested_by: 'owner-1',
+    fence_epoch: 0, created_at: now, updated_at: now,
+  };
+}
+
+function deliveryClient(
+  initialStatus: 'in_progress' | 'in_review',
+  purpose: 'work' | 'review',
+  providerPullRequestId?: string,
+) {
+  let status: 'in_progress' | 'in_review' | 'ready_to_merge' = initialStatus;
+  const query = vi.fn(async (sql: string, values?: unknown[]) => {
+    if (sql.includes('SELECT t.id AS task_id') && sql.includes('agent.integration_task_id')) {
+      return { rows: [{
+        task_id: 'delivery-1', kind: 'delivery', task_branch: 'task/TASK-359-delivery',
+        provider_pull_request_id: providerPullRequestId ?? null,
+        execution_id: 'execution-359', purpose, execution_status: 'running',
+        repository: { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false },
+        owner_user_id: 'owner-1',
+      }] };
+    }
+    if (sql.includes('SELECT e.task_id') && sql.includes('JOIN boards')) return { rows: [{ task_id: 'delivery-1' }] };
+    if (sql.includes('SELECT t.*') && sql.includes('JOIN boards')) {
+      return { rows: [loadedDeliveryTaskRow(status, providerPullRequestId)] };
+    }
+    if (sql.includes('SELECT e.*') && sql.includes('FOR UPDATE')) return { rows: [deliveryExecutionRow(purpose)] };
+    if (sql.includes('INSERT INTO comments')) return { rows: [{ id: 'comment-359' }] };
+    if (sql.includes(') AS merged')) return { rows: [{ merged: false }] };
+    if (sql.includes('UPDATE tasks') && sql.includes('SET status=$2') && values?.[0] === 'delivery-1') {
+      status = String(values[1]) as typeof status;
+      return { rows: [] };
+    }
+    if (sql.includes('UPDATE executions') && sql.includes('transitioned_at=now()')) {
+      return { rows: [{ id: 'execution-359', run_id: 'run-359', task_id: 'delivery-1', fence_epoch: 1 }] };
+    }
+    if (sql.includes('SELECT t.*') && sql.includes('FROM tasks t WHERE')) {
+      return { rows: [deliveryTaskRow(status, providerPullRequestId)] };
+    }
+    return { rows: [] };
+  });
+  return { query, release: vi.fn() };
+}
+
+function expectNoLegacyDeliveryGateSql(query: ReturnType<typeof vi.fn>): void {
+  const sql = query.mock.calls.map(([text]) => String(text)).join('\n');
+  expect(sql).not.toMatch(/reviewed_subject_digest|provider_ci|inspection(?:_id)?|required_checks|gate_status/i);
 }
 
 describe('single Integration Agent finish transition', () => {
@@ -126,4 +211,48 @@ describe('single Integration Agent finish transition', () => {
     expect(query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO blocks'))).toBe(true);
     expect(query.mock.calls.some(([sql]) => String(sql).includes("SET state='merged'"))).toBe(false);
   });
+});
+
+describe('TASK-359 ordinary Delivery finish transitions', () => {
+  it('moves Work to in_review with an attached PR without legacy evidence or provider gates', async () => {
+    const client = deliveryClient('in_progress', 'work', '359');
+    const provider = { getPullRequest: vi.fn(), inspectPullRequest: vi.fn() };
+
+    await expect(finishExecutionV2(options(client, provider), identity, 'run-359', {
+      targetStatus: 'in_review', body: 'Implementation is ready for independent review.',
+    })).resolves.toMatchObject({ kind: 'delivery', status: 'in_review', providerPullRequestId: '359' });
+
+    expectNoLegacyDeliveryGateSql(client.query);
+    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.inspectPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('moves Review to ready_to_merge without review subject, inspection, or Provider CI', async () => {
+    const client = deliveryClient('in_review', 'review');
+    const provider = { getPullRequest: vi.fn(), inspectPullRequest: vi.fn() };
+
+    await expect(finishExecutionV2(options(client, provider), identity, 'run-359', {
+      targetStatus: 'ready_to_merge', body: 'Independent review approved the delivery.',
+    })).resolves.toMatchObject({ kind: 'delivery', status: 'ready_to_merge' });
+
+    expectNoLegacyDeliveryGateSql(client.query);
+    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.inspectPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('still rejects Work to in_review when no PR is attached', async () => {
+    const client = deliveryClient('in_progress', 'work');
+    const provider = { getPullRequest: vi.fn(), inspectPullRequest: vi.fn() };
+
+    await expect(finishExecutionV2(options(client, provider), identity, 'run-359', {
+      targetStatus: 'in_review', body: 'Implementation is ready but no PR was attached.',
+    })).rejects.toMatchObject({ code: 'TASKBOARD_PULL_REQUEST_REQUIRED' });
+
+    expectNoLegacyDeliveryGateSql(client.query);
+    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.inspectPullRequest).not.toHaveBeenCalled();
+  });
+
+  // Terminal/merge-fact irreversibility remains covered by taskboardWorkflow.pg.test.ts
+  // (terminal execution fencing and “TASK-69 merge fact fences a late review transition”).
 });

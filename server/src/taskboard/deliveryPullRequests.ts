@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
@@ -23,24 +22,7 @@ export interface DeliveryPullRequestHost extends IntegrationFinalizationHost {
   repositoryProvider?: RepositoryProvider;
 }
 
-export interface ExecutionPullRequestInspectionReceipt {
-  inspectionId: string;
-  digest: string;
-  executionId: string;
-  taskId: string;
-  purpose: 'work' | 'review';
-  repositoryId: string;
-  providerPullRequestId: string;
-  headOid: string;
-  providerQueriedAt: string;
-  integrationAgent?: boolean;
-}
-
-export interface ExecutionPullRequestInspection {
-  receipt: ExecutionPullRequestInspectionReceipt;
-  snapshot: RepositoryPullRequestInspection;
-  gateStatus: 'success' | 'pending' | 'failure' | 'unavailable' | 'unconfigured';
-}
+export type ExecutionPullRequestInspection = RepositoryPullRequestInspection;
 
 export async function inspectExecutionPullRequest(
   host: DeliveryPullRequestHost,
@@ -55,255 +37,67 @@ export async function inspectExecutionPullRequest(
     );
   }
   const provider = requireProvider(host);
-  const snapshot = provider.inspectPullRequest
-    ? await provider.inspectPullRequest(
-        context.repository,
-        context.providerPullRequestId,
-        context.boardOwnerUserId,
-      )
-    : {
-        ...(await provider.getPullRequest(
-          context.repository,
-          context.providerPullRequestId,
-          context.boardOwnerUserId,
-        )),
-        repositoryId: context.repository.repositoryId,
-        providerQueriedAt: new Date().toISOString(),
-        workflowRuns: [],
-      };
-  assertPullRequestIdentity(context, snapshot);
-  const gateStatus = pullRequestGateStatus(snapshot);
-  const inspectionId = randomUUID();
-  const receipt: ExecutionPullRequestInspectionReceipt = {
-    inspectionId,
-    digest: inspectionDigest(context, inspectionId, snapshot),
-    executionId: context.executionId,
-    taskId: context.taskId,
-    purpose: context.purpose,
-    repositoryId: context.repository.repositoryId,
-    providerPullRequestId: snapshot.providerPullRequestId,
-    headOid: snapshot.headOid,
-    providerQueriedAt: snapshot.providerQueriedAt,
-    ...(context.isIntegrationAgent ? { integrationAgent: true } : {}),
-  };
-  const client = await host.pool.connect();
-  try {
-    await client.query('BEGIN');
-    await lockExecution(client, host, runId, context.taskId);
-    if (context.isIntegrationAgent) {
-      const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
-      const current = await client.query(
-        `SELECT provider_pull_request_id,integration_branch FROM ${agentsTable}
-          WHERE integration_task_id=$1 FOR UPDATE`,
-        [context.taskId],
-      );
-      if (
-        String(current.rows[0]?.provider_pull_request_id ?? '') !==
-          snapshot.providerPullRequestId ||
-        String(current.rows[0]?.integration_branch ?? '') !== snapshot.headRef
-      ) {
-        throw new TaskboardValidationError(
-          'Integration Agent pull request changed during inspection',
-          'TASKBOARD_SUBJECT_STALE',
-        );
-      }
-    } else {
-      const current = await client.query(
-        `SELECT provider_pull_request_id,head_oid FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
-        [context.taskId],
-      );
-      if (
-        String(current.rows[0]?.provider_pull_request_id ?? '') !==
-          snapshot.providerPullRequestId ||
-        (current.rows[0]?.head_oid && String(current.rows[0].head_oid) !== snapshot.headOid)
-      ) {
-        throw new TaskboardValidationError(
-          'Pull request head changed during inspection',
-          'TASKBOARD_SUBJECT_STALE',
-        );
-      }
-    }
-    await client.query(
-      `UPDATE ${host.tasksTable}
-          SET provider_ci_inspection_id=$2,provider_ci_execution_id=$3,
-              provider_ci_purpose=$4,provider_ci_head_oid=$5,provider_ci_status=$6,
-              provider_ci_inspected_at=$7,version=version+1,updated_at=now()
-        WHERE id=$1`,
-      [
-        context.taskId,
-        inspectionId,
-        context.executionId,
-        context.purpose,
-        snapshot.headOid,
-        gateStatus,
-        snapshot.providerQueriedAt,
-      ],
+  if (!provider.inspectPullRequest) {
+    throw new TaskboardValidationError(
+      'Provider workflow inspection is unavailable',
+      'TASKBOARD_CI_UNAVAILABLE',
     );
-    await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id, change_type, actor_type, actor_id, execution_id, payload)
-       VALUES ($1,'pull_request.inspected','agent',$2,$3,$4::jsonb)`,
-      [
-        context.taskId,
-        runId,
-        context.executionId,
-        JSON.stringify({ receipt, gateStatus, snapshot }),
-      ],
-    );
-    await client.query('COMMIT');
-    return { receipt, snapshot, gateStatus };
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
   }
+  const snapshot = await provider.inspectPullRequest(
+    context.repository,
+    context.providerPullRequestId,
+    context.boardOwnerUserId,
+  );
+  assertObservedPullRequestIdentity(context, snapshot);
+  return snapshot;
 }
 
 export async function readExecutionPullRequestJobLog(
   host: DeliveryPullRequestHost,
   identity: TaskboardIdentity,
   runId: string,
-  inspectionId: string,
   providerJobId: string,
-): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+): Promise<{ providerJobId: string; log: string }> {
   const context = await loadContext(host, identity, runId, ['work', 'review']);
-  const readClient = await host.pool.connect();
-  let payload: Record<string, unknown> | undefined;
-  try {
-    const result = await readClient.query(
-      `SELECT payload FROM ${host.changesTable}
-        WHERE task_id=$1 AND execution_id=$2 AND change_type='pull_request.inspected'
-          AND payload->'receipt'->>'inspectionId'=$3
-        ORDER BY seq DESC LIMIT 1`,
-      [context.taskId, context.executionId, inspectionId],
-    );
-    payload = jsonObject(result.rows[0]?.payload);
-  } finally {
-    readClient.release();
+  if (!context.providerPullRequestId) {
+    throw new TaskboardValidationError('Current execution has no pull request', 'TASKBOARD_PULL_REQUEST_REQUIRED');
   }
-  const snapshot = jsonObject(payload?.snapshot);
-  const runs = Array.isArray(snapshot?.workflowRuns) ? snapshot.workflowRuns : [];
-  const job = runs
-    .flatMap((run) => {
-      const jobs = jsonObject(run)?.jobs;
-      return Array.isArray(jobs) ? jobs : [];
-    })
-    .map(jsonObject)
-    .find((candidate) => candidate?.id === providerJobId);
+  const provider = requireProvider(host);
+  if (!provider.inspectPullRequest) {
+    throw new TaskboardValidationError(
+      'Provider workflow inspection is unavailable',
+      'TASKBOARD_CI_UNAVAILABLE',
+    );
+  }
+  const snapshot = await provider.inspectPullRequest(
+    context.repository,
+    context.providerPullRequestId,
+    context.boardOwnerUserId,
+  );
+  assertObservedPullRequestIdentity(context, snapshot);
+  const job = snapshot.workflowRuns
+    .flatMap((run) => run.jobs ?? [])
+    .find((candidate) => candidate.id === providerJobId);
   if (!job || job.failureLogRef !== `github-job:${providerJobId}`) {
     throw new TaskboardValidationError(
-      'Workflow job is not part of this inspection receipt',
+      'Workflow job is not part of the current pull request workflow observation',
       'TASKBOARD_CI_LOG_SCOPE_INVALID',
     );
   }
-  const provider = requireProvider(host);
   if (!provider.getWorkflowJobLog) {
     throw new TaskboardValidationError(
       'Provider job log reader is unavailable',
       'TASKBOARD_CI_UNAVAILABLE',
     );
   }
-  const log = await provider.getWorkflowJobLog(
-    context.repository,
+  return {
     providerJobId,
-    context.boardOwnerUserId,
-  );
-  const client = await host.pool.connect();
-  try {
-    await client.query('BEGIN');
-    await lockExecution(client, host, runId, context.taskId);
-    await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id, change_type, actor_type, actor_id, execution_id, payload)
-       VALUES ($1,'pull_request.failure_log_read','agent',$2,$3,$4::jsonb)`,
-      [context.taskId, runId, context.executionId, JSON.stringify({ inspectionId, providerJobId })],
-    );
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-  return { inspectionId, providerJobId, log };
-}
-
-export function pullRequestGateStatus(
-  snapshot: RepositoryPullRequestSnapshot,
-): ExecutionPullRequestInspection['gateStatus'] {
-  if (snapshot.state !== 'open' || snapshot.draft) return 'failure';
-  if (snapshot.requiredChecksKnown !== true) return 'unavailable';
-  if (snapshot.requiredChecksConfigured === false) return 'unconfigured';
-  if (snapshot.requiredChecks.some((check) => check.status === 'failure')) return 'failure';
-  if (
-    snapshot.requiredChecks.length === 0 ||
-    snapshot.requiredChecks.some((check) => check.status !== 'success')
-  )
-    return 'pending';
-  return 'success';
-}
-
-export function assertPullRequestGate(
-  snapshot: RepositoryPullRequestSnapshot,
-  expected: {
-    providerPullRequestId: string;
-    headOid: string;
-    baseOid?: string;
-    subjectDigest?: string;
-    requireMergeable?: boolean;
-  },
-): void {
-  if (
-    snapshot.providerPullRequestId !== expected.providerPullRequestId ||
-    snapshot.headOid !== expected.headOid ||
-    (expected.baseOid && snapshot.baseOid !== expected.baseOid) ||
-    (expected.subjectDigest && snapshot.subjectDigest !== expected.subjectDigest)
-  ) {
-    throw new TaskboardValidationError(
-      'Pull request subject changed after inspection',
-      'TASKBOARD_SUBJECT_STALE',
-    );
-  }
-  if (snapshot.state !== 'open' || snapshot.draft) {
-    throw new TaskboardValidationError('Pull request is closed or draft', 'TASKBOARD_PR_NOT_OPEN');
-  }
-  if (expected.requireMergeable && snapshot.mergeable !== true) {
-    throw new TaskboardValidationError(
-      snapshot.mergeable === false
-        ? 'Pull request is not mergeable'
-        : 'Pull request mergeability is unknown',
-      snapshot.mergeable === false
-        ? 'TASKBOARD_PR_NOT_MERGEABLE'
-        : 'TASKBOARD_MERGEABILITY_UNKNOWN',
-    );
-  }
-  if (snapshot.requiredChecksKnown !== true) {
-    throw new TaskboardValidationError(
-      'Provider could not authoritatively determine required checks',
-      'TASKBOARD_CI_UNAVAILABLE',
-    );
-  }
-  if (snapshot.requiredChecksConfigured === false) {
-    throw new TaskboardValidationError(
-      'CI gate is not configured: add GitHub required checks for the base branch',
-      'TASKBOARD_CI_UNCONFIGURED',
-    );
-  }
-  const failed = snapshot.requiredChecks.filter((check) => check.status === 'failure');
-  if (failed.length) {
-    throw new TaskboardValidationError(
-      `Required checks failed: ${failed.map((check) => check.name).join(', ')}`,
-      'TASKBOARD_CI_FAILED',
-    );
-  }
-  const pending = snapshot.requiredChecks.filter((check) => check.status !== 'success');
-  if (snapshot.requiredChecks.length === 0 || pending.length) {
-    throw new TaskboardValidationError(
-      `Required checks are pending: ${pending.map((check) => check.name).join(', ') || 'no checks observed'}`,
-      'TASKBOARD_CI_PENDING',
-    );
-  }
+    log: await provider.getWorkflowJobLog(
+      context.repository,
+      providerJobId,
+      context.boardOwnerUserId,
+    ),
+  };
 }
 
 export async function attachExecutionPullRequest(
@@ -349,10 +143,7 @@ export async function attachExecutionPullRequest(
       await client.query(
         `UPDATE ${host.tasksTable}
             SET provider_pull_request_id=$2, pull_request_number=$3,
-                head_oid=$4, base_oid=$5, reviewed_subject_digest=NULL,
-                provider_ci_inspection_id=NULL,provider_ci_execution_id=NULL,
-                provider_ci_purpose=NULL,provider_ci_head_oid=NULL,
-                provider_ci_status=NULL,provider_ci_inspected_at=NULL,
+                head_oid=$4, base_oid=$5,
                 version=version+1, updated_at=now()
           WHERE id=$1`,
         [
@@ -397,147 +188,30 @@ export async function attachExecutionPullRequest(
   }
 }
 
-export async function recordReviewedExecutionSubject(
+export async function reconcileExecutionPullRequestMerge(
   host: DeliveryPullRequestHost,
   identity: TaskboardIdentity,
   runId: string,
-): Promise<TaskBoardTask> {
+): Promise<TaskBoardTask | undefined> {
   const context = await loadContext(host, identity, runId, ['review']);
-  if (!context.providerPullRequestId) {
-    throw new TaskboardValidationError('Delivery task has no pull request');
-  }
-  assertRemediationPullRequest(context, context.providerPullRequestId);
-  const provider = requireProvider(host);
-  const pullRequest = await provider.getPullRequest(
+  if (!context.providerPullRequestId) return undefined;
+  const pullRequest = await requireProvider(host).getPullRequest(
     context.repository,
     context.providerPullRequestId,
     context.boardOwnerUserId,
   );
-  assertPullRequestIdentity(context, pullRequest);
-  if (pullRequest.state === 'merged') {
-    if (!pullRequest.mergeCommitOid) {
-      throw new TaskboardValidationError(
-        'Provider did not return the merged commit oid',
-        'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
-      );
-    }
-    if (!context.isIntegrationAgent) {
-      return reconcileExternallyMergedPullRequest(host, context, {
-        ...pullRequest,
-        mergeCommitOid: pullRequest.mergeCommitOid,
-      });
-    }
-    // Do not converge here. The review may race an external merge, but an
-    // Integration Agent must still transition through merge receipt persistence,
-    // checkpointed cleanup, and the single finalization state machine.
-  } else if (pullRequest.state !== 'open' || pullRequest.draft) {
-    throw new TaskboardValidationError('Pull request is not reviewable', 'TASKBOARD_PR_NOT_OPEN');
+  assertObservedPullRequestIdentity(context, pullRequest);
+  if (pullRequest.state !== 'merged') return undefined;
+  if (!pullRequest.mergeCommitOid) {
+    throw new TaskboardValidationError(
+      'Provider did not return the merged commit oid',
+      'TASKBOARD_PROVIDER_RECEIPT_INCOMPLETE',
+    );
   }
-  const client = await host.pool.connect();
-  try {
-    await client.query('BEGIN');
-    await lockExecution(client, host, runId, context.taskId);
-    if (context.isIntegrationAgent) {
-      const { agentsTable } = integrationAgentTableNames(host.integrationSourcesTable);
-      const current = await client.query(
-        `SELECT a.provider_pull_request_id,a.integration_branch,a.repository_id,
-                t.provider_ci_execution_id,t.provider_ci_purpose,t.provider_ci_head_oid,t.provider_ci_status
-           FROM ${agentsTable} a JOIN ${host.tasksTable} t ON t.id=a.integration_task_id
-          WHERE a.integration_task_id=$1 FOR UPDATE OF a,t`,
-        [context.taskId],
-      );
-      const binding = current.rows[0];
-      if (
-        String(binding?.provider_pull_request_id ?? '') !== pullRequest.providerPullRequestId ||
-        String(binding?.integration_branch ?? '') !== pullRequest.headRef ||
-        String(binding?.repository_id ?? '') !== context.repository.repositoryId ||
-        String(binding?.provider_ci_execution_id ?? '') !== context.executionId ||
-        String(binding?.provider_ci_purpose ?? '') !== 'review' ||
-        String(binding?.provider_ci_head_oid ?? '') !== pullRequest.headOid ||
-        String(binding?.provider_ci_status ?? '') !== 'success'
-      ) {
-        throw new TaskboardValidationError(
-          'Integration Agent pull request changed during review',
-          'TASKBOARD_SUBJECT_STALE',
-        );
-      }
-    } else {
-      const current = await client.query(
-        `SELECT provider_pull_request_id FROM ${host.tasksTable} WHERE id=$1 FOR UPDATE`,
-        [context.taskId],
-      );
-      if (current.rows[0]?.provider_pull_request_id !== context.providerPullRequestId) {
-        throw new TaskboardValidationError(
-          'Pull request changed during review',
-          'TASKBOARD_SUBJECT_STALE',
-        );
-      }
-    }
-    const result = await client.query(
-      `UPDATE ${host.tasksTable}
-          SET pull_request_number=$2, head_oid=$3, base_oid=$4,
-              reviewed_subject_digest=$5, version=version+1, updated_at=now()
-        WHERE id=$1
-        RETURNING *,
-          (SELECT count(*)::int FROM ${host.commentsTable} c WHERE c.task_id=${host.tasksTable}.id AND ${visibleCommentPredicate('c', host.changesTable)}) AS comment_count`,
-      [
-        context.taskId,
-        pullRequest.number,
-        pullRequest.headOid,
-        pullRequest.baseOid,
-        pullRequest.subjectDigest,
-      ],
-    );
-    await client.query(
-      `INSERT INTO ${host.changesTable}
-         (task_id, change_type, actor_type, actor_id, execution_id, payload)
-       VALUES ($1,'review.subject_recorded','agent',$2,$3,$4::jsonb)`,
-      [
-        context.taskId,
-        runId,
-        context.executionId,
-        JSON.stringify({
-          providerPullRequestId: pullRequest.providerPullRequestId,
-          headOid: pullRequest.headOid,
-          baseOid: pullRequest.baseOid,
-          subjectDigest: pullRequest.subjectDigest,
-        }),
-      ],
-    );
-    await client.query(
-      `UPDATE ${host.integrationSourcesTable}
-          SET provider_pull_request_id=$2, reviewed_subject_digest=$3,
-              state=CASE WHEN remediation_task_id=$1 THEN state ELSE 'pending' END,
-              last_error=NULL, updated_at=now()
-        WHERE (delivery_task_id=$1 AND state='re_reviewing')
-           OR (remediation_task_id=$1 AND state='waiting_remediation')`,
-      [context.taskId, pullRequest.providerPullRequestId, pullRequest.subjectDigest],
-    );
-    await client.query(
-      `UPDATE ${host.tasksTable} d
-          SET provider_pull_request_id=$2, pull_request_number=$3,
-              head_oid=$4, base_oid=$5, reviewed_subject_digest=$6,
-              version=version+1, updated_at=now()
-         FROM ${host.integrationSourcesTable} s
-        WHERE s.remediation_task_id=$1 AND s.state='waiting_remediation'
-          AND d.id=s.delivery_task_id`,
-      [
-        context.taskId,
-        pullRequest.providerPullRequestId,
-        pullRequest.number,
-        pullRequest.headOid,
-        pullRequest.baseOid,
-        pullRequest.subjectDigest,
-      ],
-    );
-    await client.query('COMMIT');
-    return rowToTask(result.rows[0]!);
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  return reconcileExternallyMergedPullRequest(host, context, {
+    ...pullRequest,
+    mergeCommitOid: pullRequest.mergeCommitOid,
+  });
 }
 
 async function reconcileExternallyMergedPullRequest(
@@ -557,7 +231,7 @@ async function reconcileExternallyMergedPullRequest(
       const finalized = await finalizeMergedSource(host, String(source.rows[0].id), {
         providerRequestId: `external-merge:${context.taskId}:${pullRequest.mergeCommitOid}`,
         mergedCommitOid: pullRequest.mergeCommitOid,
-        raw: { reconciled: true, source: 'review_subject', pullRequest },
+        raw: { reconciled: true, source: 'review_finish', pullRequest },
         expectedReview: {
           deliveryTaskId: context.taskId,
           providerPullRequestId: context.providerPullRequestId!,
@@ -626,7 +300,7 @@ async function reconcileExternallyMergedPullRequest(
           commandId,
           providerPullRequestId: pullRequest.providerPullRequestId,
           mergedCommitOid: pullRequest.mergeCommitOid,
-          reconciledFrom: 'review_subject',
+          reconciledFrom: 'review_finish',
         }),
       ],
     );
@@ -776,14 +450,13 @@ async function lockExecution(
   if (!result.rows[0]) throw new TaskboardValidationError('Taskboard execution changed');
 }
 
-function assertPullRequestIdentity(
+function assertObservedPullRequestIdentity(
   context: Awaited<ReturnType<typeof loadContext>>,
   snapshot: RepositoryPullRequestSnapshot,
 ): void {
   if (
     ('repositoryId' in snapshot && snapshot.repositoryId !== context.repository.repositoryId) ||
-    snapshot.providerPullRequestId !== context.providerPullRequestId ||
-    snapshot.baseRef !== context.repository.baseBranch
+    snapshot.providerPullRequestId !== context.providerPullRequestId
   ) {
     throw new TaskboardValidationError(
       'Provider returned a pull request outside the registered subject',
@@ -798,28 +471,6 @@ function assertPullRequestIdentity(
   }
   assertRemediationPullRequest(context, snapshot.providerPullRequestId);
   assertRemediationBranch(context, snapshot.headRef);
-}
-
-function inspectionDigest(
-  context: Awaited<ReturnType<typeof loadContext>>,
-  inspectionId: string,
-  snapshot: RepositoryPullRequestInspection,
-): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify({
-        executionId: context.executionId,
-        inspectionId,
-        repositoryId: snapshot.repositoryId,
-        providerPullRequestId: snapshot.providerPullRequestId,
-        headOid: snapshot.headOid,
-        subjectDigest: snapshot.subjectDigest,
-        providerQueriedAt: snapshot.providerQueriedAt,
-        integrationAgent: context.isIntegrationAgent,
-        integrationBranch: context.integrationBranch,
-      }),
-    )
-    .digest('hex');
 }
 
 function assertRemediationPullRequest(
@@ -867,7 +518,7 @@ function jsonObject(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== 'string') return undefined;
   try {
     const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined;
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined;
   } catch {
     return undefined;
   }

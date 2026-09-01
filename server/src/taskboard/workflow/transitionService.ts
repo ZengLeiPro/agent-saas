@@ -6,6 +6,7 @@ import type {
   TaskBoardExecutionFinishInput,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
+import { reconcileExecutionPullRequestMerge } from '../deliveryPullRequests.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
@@ -19,7 +20,6 @@ import {
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { fenceTaskExecutions, loadWorkflowFacts } from './commandService.js';
 import { EXECUTION_TRANSITIONED_REASON } from './cancellationOutbox.js';
-import { assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
@@ -30,6 +30,10 @@ export async function finishExecutionV2(
   runId: string,
   input: TaskBoardExecutionFinishInput,
 ): Promise<TaskBoardTask> {
+  if (input.targetStatus === 'ready_to_merge') {
+    const reconciled = await reconcileExecutionPullRequestMerge(options, identity, runId);
+    if (reconciled) return reconciled;
+  }
   return withTransaction(options, async (client) => {
     const ownership = await client.query(
       `SELECT e.task_id FROM ${options.executionsTable} e
@@ -75,13 +79,6 @@ export async function finishExecutionV2(
     if (execution.purpose === 'work' && loaded.task.kind !== 'advisory'
       && nextStatus === 'in_review' && !loaded.task.providerPullRequestId) {
       throw new TaskboardValidationError('Delivery work must attach its pull request before review', 'TASKBOARD_PULL_REQUEST_REQUIRED');
-    }
-    if (execution.purpose === 'review' && nextStatus === 'ready_to_merge' && !loaded.task.reviewedSubjectDigest) {
-      throw new TaskboardValidationError('Review must record the exact pull request subject before approval', 'TASKBOARD_REVIEW_SUBJECT_REQUIRED');
-    }
-    if ((execution.purpose === 'work' && nextStatus === 'in_review')
-      || (execution.purpose === 'review' && nextStatus === 'ready_to_merge')) {
-      await assertCurrentPullRequestGate(options, client, loaded.task, loaded.board, execution.id, execution.purpose);
     }
     await updateTaskStatus(options, client, taskId, nextStatus);
     if (nextStatus === 'blocked') await recordBlock(options, client, taskId, execution);

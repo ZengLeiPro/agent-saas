@@ -252,7 +252,6 @@ test('formal taskboard integration spec is Agent-first and contains no retired p
 test('Integration runtime exposes one work Agent and no dedicated Review/Merge gateway actions', () => {
   const files = [
     'server/src/taskboard/workflowContract.ts',
-    'server/src/taskboard/workflow/pullRequestGate.ts',
     'server/src/taskboard/executionPrompt.ts',
     'server/src/agent/taskboardToolActions.ts',
     'server/src/agent/taskboardExecutionScope.ts',
@@ -265,7 +264,7 @@ test('Integration runtime exposes one work Agent and no dedicated Review/Merge g
     assert.equal(source.includes(retired), false, `retired Integration runtime action remains: ${retired}`);
   }
   assert.equal(source.includes("allowedStatuses: ['done', 'blocked']"), true);
-  assert.equal(source.includes('标准 Git 与 GitHub 能力'), true);
+  assert.equal(source.includes('标准 Git 与 GitHub merge 能力'), true);
   assert.equal(source.includes("taskboardIntegrationRole: 'integration'"), false, 'metadata is assembled outside the scanned policy files');
   const metadata = fs.readFileSync(path.join(process.cwd(), 'server/src/taskboard/executionSessionMetadata.ts'), 'utf8');
   assert.equal(metadata.includes("taskboardIntegrationRole: 'integration'"), true);
@@ -276,8 +275,11 @@ test('Integration runtime exposes one work Agent and no dedicated Review/Merge g
   const triggerClaim = triggers.slice(triggers.indexOf('async function claimTrigger'), triggers.indexOf('async function eligibleSources'));
   assert.equal(triggerClaim.includes('active_integration_task_id'), false, 'historical lane cannot gate new Integration triggers');
   assert.equal(triggers.includes('trigger.activeIntegrationTaskId'), false);
+  assert.equal(triggers.includes('t.reviewed_subject_digest'), false, 'task review digest cannot gate Integration eligibility');
+  const sourceStore = fs.readFileSync(path.join(process.cwd(), 'server/src/taskboard/v2Store.ts'), 'utf8');
+  assert.equal(sourceStore.includes('row.reviewed_subject_digest'), false, 'v3 sources must not copy retired task review digest');
   const scope = fs.readFileSync(path.join(process.cwd(), 'server/src/agent/taskboardExecutionScope.ts'), 'utf8');
-  assert.equal(scope.includes('不进入 Delivery PR receipt 协议'), true);
+  assert.equal(scope.includes('不使用 Delivery PR 读取工具'), true);
   const store = fs.readFileSync(path.join(process.cwd(), 'server/src/taskboard/store.ts'), 'utf8');
   assert.equal(store.includes('INSERT INTO ${this.integrationLanesTable}'), false, 'new boards must not create workflow lanes');
   assert.equal(store.includes('Integration policy cannot change while an integration task is active'), false);

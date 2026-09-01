@@ -81,12 +81,12 @@ export async function createStoredTaskWithResult(
     await client.query(
       `INSERT INTO ${store.tasksTable}
          (id,board_id,identifier,kind,title,description,branch,attachments,status,priority,labels,sort_order,
-          due_at,model,stage_models,provider_pull_request_id,pull_request_number,reviewed_subject_digest,
+          due_at,model,stage_models,provider_pull_request_id,pull_request_number,
           creator_user_id,creator_name,completed_at,client_request_id,creation_request_digest,creation_state,
           creation_lease_id,creation_lease_expires_at,version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,$20,
-               CASE WHEN $9='done' THEN now() END,$21,$22,$23,$24,
-               CASE WHEN $23='pending' THEN now()+interval '5 minutes' END,1)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18,$19,
+               CASE WHEN $9='done' THEN now() END,$20,$21,$22,$23,
+               CASE WHEN $22='pending' THEN now()+interval '5 minutes' END,1)`,
       [
         taskId, boardId, `TASK-${Number(numberResult.rows[0]?.task_number)}`, input.kind ?? 'delivery',
         input.title ?? '', input.description ?? '', optionalText(input.branch),
@@ -94,7 +94,7 @@ export async function createStoredTaskWithResult(
         normalizeLabels(input.labels), Number(tailResult.rows[0]?.max_sort_order ?? 0) + 1024,
         input.dueAt ?? null, normalizeModel(input.stageModels !== undefined ? undefined : input.model),
         stageModelsToJson(input.stageModels), optionalText(input.providerPullRequestId),
-        input.pullRequestNumber ?? null, optionalText(input.reviewedSubjectDigest), identity.ownerUserId,
+        input.pullRequestNumber ?? null, identity.ownerUserId,
         identity.displayName?.trim() || identity.username, optionalText(input.clientRequestId),
         input.clientRequestId ? requestDigest : null, creation.state, creation.token,
       ],
@@ -150,7 +150,7 @@ function validateTaskCreateInput(input: TaskBoardTaskCreateInput): void {
     );
   }
   if (input.kind === 'advisory' && (
-    input.branch || input.providerPullRequestId || input.pullRequestNumber || input.reviewedSubjectDigest
+    input.branch || input.providerPullRequestId || input.pullRequestNumber
   )) {
     throw new TaskboardValidationError(
       'Advisory tasks cannot carry repository or pull request fields',

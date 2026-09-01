@@ -384,21 +384,11 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
   async readExecutionPullRequestJobLogV2(
     identity: TaskboardIdentity,
     runId: string,
-    inspectionId: string,
     providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
+  ): Promise<{ providerJobId: string; log: string }> {
     await this.init();
     if (!this.target.readExecutionPullRequestJobLogV2) throw new Error('Taskboard repository provider unavailable');
-    return this.target.readExecutionPullRequestJobLogV2(identity, runId, inspectionId, providerJobId);
-  }
-
-  async recordReviewedExecutionSubjectV2(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask> {
-    await this.init();
-    if (!this.target.recordReviewedExecutionSubjectV2) throw new Error('Taskboard repository provider unavailable');
-    return this.target.recordReviewedExecutionSubjectV2(identity, runId);
+    return this.target.readExecutionPullRequestJobLogV2(identity, runId, providerJobId);
   }
 
   async claimIntegrationDispatchCandidatesV2(limit?: number): Promise<TaskboardIntegrationDispatchCandidate[]> {

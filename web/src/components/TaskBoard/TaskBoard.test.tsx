@@ -613,7 +613,6 @@ describe("TaskBoardView", () => {
       status: "ready_to_merge" as const,
       providerPullRequestId: "pr-1",
       pullRequestNumber: 88,
-      reviewedSubjectDigest: "sha256:reviewed",
       mergeEligibility: "eligible" as const,
     };
     const integrationTask = {

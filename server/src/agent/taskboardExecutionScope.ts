@@ -28,12 +28,11 @@ export function assertTaskboardExecutionScope(
   const executionActions = [
     'execution.context', 'execution.finish',
     'execution.pull_request.set', 'execution.pull_request.inspect', 'execution.pull_request.log',
-    'execution.review_subject.record',
     'integration.sources',
   ];
   if (context.task.kind === 'integration'
-    && (input.action.startsWith('execution.pull_request.') || input.action === 'execution.review_subject.record')) {
-    throw new Error('Integration Agent 直接使用标准 Git/GitHub，不进入 Delivery PR receipt 协议');
+    && input.action.startsWith('execution.pull_request.')) {
+    throw new Error('Integration Agent 直接使用标准 Git/GitHub，不使用 Delivery PR 读取工具');
   }
   if (executionActions.includes(input.action)) {
     if (input.taskId && input.taskId !== context.task.id) throw new Error('看板 Agent 只能操作当前任务');

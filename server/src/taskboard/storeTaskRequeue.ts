@@ -40,14 +40,7 @@ export function manualTaskRequeueResetSql(enabled: boolean): string {
                 workflow_epoch=t.workflow_epoch+1,
                 next_action='none',
                 next_action_revision=t.next_action_revision+1,
-                resume_context=NULL,
-                reviewed_subject_digest=NULL,
-                provider_ci_inspection_id=NULL,
-                provider_ci_execution_id=NULL,
-                provider_ci_purpose=NULL,
-                provider_ci_head_oid=NULL,
-                provider_ci_status=NULL,
-                provider_ci_inspected_at=NULL` : '';
+                resume_context=NULL` : '';
 }
 
 export function taskMoveChangeType(sameStatus: boolean, manuallyRequeued: boolean): string {

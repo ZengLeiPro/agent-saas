@@ -28,13 +28,6 @@ export function taskTableSql(tasksTable: string, boardsTable: string): string {
       pull_request_number INTEGER,
       head_oid TEXT,
       base_oid TEXT,
-      reviewed_subject_digest TEXT,
-      provider_ci_inspection_id TEXT,
-      provider_ci_execution_id TEXT,
-      provider_ci_purpose TEXT,
-      provider_ci_head_oid TEXT,
-      provider_ci_status TEXT,
-      provider_ci_inspected_at TIMESTAMPTZ,
       merged_commit_oid TEXT,
       completed_at TIMESTAMPTZ,
       client_request_id TEXT,
@@ -65,13 +58,6 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS pull_request_number INTEGER;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS head_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS base_oid TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS reviewed_subject_digest TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_inspection_id TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_execution_id TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_purpose TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_head_oid TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_status TEXT;
-    ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS provider_ci_inspected_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS merged_commit_oid TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS client_request_id TEXT;
@@ -80,6 +66,13 @@ export function taskFieldsMigrationSql(tasksTable: string): string {
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_id TEXT;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS creation_lease_expires_at TIMESTAMPTZ;
     ALTER TABLE ${tasksTable} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS reviewed_subject_digest;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_inspection_id;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_execution_id;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_purpose;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_head_oid;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_status;
+    ALTER TABLE ${tasksTable} DROP COLUMN IF EXISTS provider_ci_inspected_at;
     ALTER TABLE ${tasksTable} DROP CONSTRAINT IF EXISTS ${tasksTable}_creation_state_check;
     ALTER TABLE ${tasksTable} ADD CONSTRAINT ${tasksTable}_creation_state_check
       CHECK (creation_state IN ('pending', 'complete'));

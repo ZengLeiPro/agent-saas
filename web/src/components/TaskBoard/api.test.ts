@@ -209,7 +209,6 @@ describe("任务看板 API 错误对象", () => {
       deliveryTaskId: task.id,
       repositoryId: "repo-1",
       providerPullRequestId: "pr-1",
-      reviewedSubjectDigest: "sha256:reviewed",
       order: 0,
       state: "ready" as const,
       attemptCount: 1,

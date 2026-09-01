@@ -92,7 +92,7 @@ import {
   type AgentTargetUnavailableReason,
   type SessionListActiveInteraction,
 } from '@agent/shared';
-import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
+import { parseCanonicalChatSubmission } from '@agent/shared';
 import type { ChatQueueSnapshot } from '@agent/shared';
 import { buildChatQueueSnapshot } from '../channels/web/chatQueueSnapshot.js';
 import type { RunRecord } from '../runtime/runStoreTypes.js';

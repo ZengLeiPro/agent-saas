@@ -10,7 +10,7 @@ import type { SyncOverflowRecovery } from './syncProtocol.js';
 import type {
     CanonicalChatSubmissionWireMessage,
     ChatClientCapability,
-} from '@agent/shared/lib/chatSubmission';
+} from '@agent/shared';
 import type {
     UploadedFileInfo,
     ContextUsageData,

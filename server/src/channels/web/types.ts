@@ -1,5 +1,5 @@
 import type { UploadedFileInfo } from '../../types/index.js';
-import type { CanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
+import type { CanonicalChatSubmission } from '@agent/shared';
 
 /** Canonical HTTP-equivalent boundary (the active transport is WS). */
 export interface ChatRequest {

@@ -1,7 +1,7 @@
 import {
   normalizeChatSubmissionAttachment,
   type CanonicalChatAttachment,
-} from '@agent/shared/lib/chatSubmission';
+} from '@agent/shared';
 
 import type { CanonicalAttachmentInfo, UploadedFileInfo } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';

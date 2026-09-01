@@ -9,7 +9,7 @@ import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
 import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
-import { isValidAttachmentId } from '@agent/shared/lib/chatSubmission';
+import { isValidAttachmentId } from '@agent/shared';
 import type { MessageAttachmentDisplay } from '@agent/shared';
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";

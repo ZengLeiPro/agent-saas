@@ -5,7 +5,7 @@ import {
   type ChatQueueSnapshot,
   type ChatQueueStatus,
 } from '@agent/shared';
-import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
+import { parseCanonicalChatSubmission } from '@agent/shared';
 import type { RunRecord } from '../../runtime/runStoreTypes.js';
 import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.js';
 

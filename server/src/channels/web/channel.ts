@@ -123,7 +123,7 @@ import {
   CHAT_SUBMISSION_VERSION,
   canonicalChatAttachmentToDisplay,
   type CanonicalChatSubmission,
-} from '@agent/shared/lib/chatSubmission';
+} from '@agent/shared';
 import {
   AGENT_TARGET_BINDING_VERSION,
   sameAgentTarget,

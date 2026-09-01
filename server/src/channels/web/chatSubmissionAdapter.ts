@@ -3,7 +3,7 @@ import {
   parseCanonicalChatSubmission,
   type CanonicalChatSubmission,
   type ChatSubmissionIssue,
-} from '@agent/shared/lib/chatSubmission';
+} from '@agent/shared';
 import type { AgentTarget } from '@agent/shared';
 
 import type { UploadedFileInfo } from '../../types/index.js';

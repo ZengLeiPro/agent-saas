@@ -3,7 +3,7 @@ import type { InboundMessage } from '../types/index.js';
 import type { RunRecord, RunStatus } from './runStore.js';
 import type { RuntimeSessionRecord } from './sessionCatalog.js';
 import type { PlatformEvent } from './types.js';
-import { parseCanonicalChatSubmission } from '@agent/shared/lib/chatSubmission';
+import { parseCanonicalChatSubmission } from '@agent/shared';
 
 export function isTerminalRunStatus(status: RunStatus | undefined): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'orphaned';

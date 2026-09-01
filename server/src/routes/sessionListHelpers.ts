@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { EventStore, PlatformEvent } from "../runtime/types.js";
-import { isValidAttachmentId } from '@agent/shared/lib/chatSubmission';
+import { isValidAttachmentId } from '@agent/shared';
 
 /** Build an agent session id -> DingTalk sender nickname index. */
 export async function buildDingtalkSessionIndex(

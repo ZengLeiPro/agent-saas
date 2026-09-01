@@ -86,6 +86,12 @@ ARG ALIYUN_CLI_VERSION=3.4.4
 ARG ALIYUN_CLI_SHA256=11dc3c6999e0e2f3cdac6e38775920e14ace7b52567534ff1222db22ae327684
 ARG GWS_CLI_VERSION=0.22.5
 ARG GWS_CLI_TARGET=x86_64-unknown-linux-musl
+ARG ACS_GIT_VERSION=2.39.5
+ARG ACS_PYTHON_VERSION=3.12.14
+ARG NTN_CLI_VERSION=0.21.6
+ARG BIRD_CLI_VERSION=0.8.0
+ARG DWS_CLI_VERSION=1.0.60
+ARG LARK_CLI_VERSION=1.0.90
 
 COPY --from=node-bookworm /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-bookworm /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -154,7 +160,9 @@ RUN printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https:
     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo Asia/Shanghai > /etc/timezone \
     && fc-cache -fv \
-    && update-ca-certificates
+    && update-ca-certificates \
+    && test "$(git --version)" = "git version ${ACS_GIT_VERSION}" \
+    && test "$(python3 --version)" = "Python ${ACS_PYTHON_VERSION}"
 
 # GitHub CLI 的 apt 仓库只保留有限版本，固定版本会在下架后让历史镜像无法重建。
 # 改用 GitHub 官方 immutable release，并校验官方发布的 SHA256。
@@ -205,13 +213,13 @@ RUN pnpm install --frozen-lockfile \
     --filter '!mobile' \
     --filter '!web'
 
-# 能力中心官方 CLI — 全部 pin 版本，避免 latest 漂浮。
+# 能力中心官方 CLI — 全部由上方 ARG pin 版本，避免 latest 漂浮。
 # Notion npm 包名/命令均为 ntn。
-RUN npm install -g ntn@0.21.6 \
+RUN npm install -g "ntn@${NTN_CLI_VERSION}" \
     && ntn --version
 
 # X 连接器依赖的 bird CLI；固定版本并在镜像构建期做可执行性 smoke。
-RUN npm install -g @steipete/bird@0.8.0 \
+RUN npm install -g "@steipete/bird@${BIRD_CLI_VERSION}" \
     && command -v bird \
     && bird --version
 
@@ -238,12 +246,12 @@ RUN set -eu; \
 
 # dws CLI（钉钉 DWS skill 与平台连接器依赖）
 # npm 包名: dingtalk-workspace-cli（bin 名: dws）；不用 dws@... 会拉到无关的 Decarta wrapper。
-RUN npm install -g dingtalk-workspace-cli@1.0.60 \
+RUN npm install -g "dingtalk-workspace-cli@${DWS_CLI_VERSION}" \
     && dws --version
 
 # 飞书官方 CLI（能力中心飞书连接器 + feishu skill）。
 # @larksuite/cli 的 postinstall 会按当前平台下载官方二进制，bin 名为 lark-cli。
-RUN npm install -g @larksuite/cli@1.0.90 \
+RUN npm install -g "@larksuite/cli@${LARK_CLI_VERSION}" \
     && lark-cli --version \
     && mkdir -p /tmp/lark-smoke/config /tmp/lark-smoke/data \
     && output="$(LARKSUITE_CLI_CONFIG_DIR=/tmp/lark-smoke/config \

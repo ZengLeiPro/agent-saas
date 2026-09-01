@@ -13,6 +13,53 @@ import {
 
 const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
+const ACS_SANDBOX_TOOL_VERSION_ARGUMENTS = Object.freeze({
+  git: 'ACS_GIT_VERSION',
+  python: 'ACS_PYTHON_VERSION',
+  gh: 'GH_CLI_VERSION',
+  aliyun: 'ALIYUN_CLI_VERSION',
+  gws: 'GWS_CLI_VERSION',
+  ntn: 'NTN_CLI_VERSION',
+  bird: 'BIRD_CLI_VERSION',
+  dws: 'DWS_CLI_VERSION',
+  'lark-cli': 'LARK_CLI_VERSION',
+});
+const ACS_SANDBOX_TOOL_INSTALLER_PATTERNS = Object.freeze({
+  git: /test "\$\(git --version\)" = "git version \$\{ACS_GIT_VERSION\}"/u,
+  python: /test "\$\(python3 --version\)" = "Python \$\{ACS_PYTHON_VERSION\}"/u,
+  gh: /releases\/download\/v\$\{GH_CLI_VERSION\}\/gh_\$\{GH_CLI_VERSION\}_linux_amd64/u,
+  aliyun: /aliyun-cli-linux-\$\{ALIYUN_CLI_VERSION\}-amd64\.tgz/u,
+  gws: /release_url="https:\/\/github\.com\/googleworkspace\/cli\/releases\/download\/v\$\{GWS_CLI_VERSION\}"/u,
+  ntn: /npm install -g "ntn@\$\{NTN_CLI_VERSION\}"[\s\S]*?ntn --version/u,
+  bird: /npm install -g "@steipete\/bird@\$\{BIRD_CLI_VERSION\}"[\s\S]*?bird --version/u,
+  dws: /npm install -g "dingtalk-workspace-cli@\$\{DWS_CLI_VERSION\}"[\s\S]*?dws --version/u,
+  'lark-cli': /npm install -g "@larksuite\/cli@\$\{LARK_CLI_VERSION\}"[\s\S]*?lark-cli --version/u,
+});
+
+function assertAcsSandboxDockerToolMatrix(dockerfile, contract) {
+  const tools = contract.tools.filter((tool) => tool.components.includes('acsSandbox'));
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    Object.keys(ACS_SANDBOX_TOOL_VERSION_ARGUMENTS).sort(),
+    'every ACS Sandbox Runtime tool must have one Docker version source',
+  );
+
+  for (const tool of tools) {
+    const argument = ACS_SANDBOX_TOOL_VERSION_ARGUMENTS[tool.name];
+    const versionMatch = dockerfile.match(new RegExp(`^ARG ${argument}=([^\\s]+)$`, 'mu'));
+    assert.ok(versionMatch, `${tool.name} Docker version ARG is missing`);
+    assert.equal(
+      versionMatch[1],
+      tool.version,
+      `${tool.name} Docker version ARG must match the Runtime contract`,
+    );
+    assert.match(
+      dockerfile,
+      ACS_SANDBOX_TOOL_INSTALLER_PATTERNS[tool.name],
+      `${tool.name} installer must consume its Docker version ARG and run a version smoke`,
+    );
+  }
+}
 
 async function fixture() {
   return structuredClone(await loadRuntimeDependencyContract());
@@ -300,6 +347,21 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
         },
       }),
     /tool aliyun is missing/u,
+  );
+});
+
+test('ACS Sandbox Docker tool versions stay synchronized with the Runtime contract', async () => {
+  const contract = await fixture();
+  const dockerfile = await readFile('Dockerfile', 'utf8');
+  assertAcsSandboxDockerToolMatrix(dockerfile, contract);
+
+  const driftedDockerfile = dockerfile.replace(
+    'ARG DWS_CLI_VERSION=1.0.60',
+    'ARG DWS_CLI_VERSION=1.0.61',
+  );
+  assert.throws(
+    () => assertAcsSandboxDockerToolMatrix(driftedDockerfile, contract),
+    /dws Docker version ARG must match the Runtime contract/u,
   );
 });
 

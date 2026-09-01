@@ -527,14 +527,147 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     throw new Error(`Migration dependency ${path} is not valid TypeScript`);
 
   const calledIdentifiers = new Set();
+  const calledMemberBindings = new Map();
   const collectCallTargetIdentifiers = (node) => {
     if (ts.isIdentifier(node)) calledIdentifiers.add(node.text);
     ts.forEachChild(node, collectCallTargetIdentifiers);
   };
+  const memberReference = (node) => {
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression))
+      return { owner: node.expression.text, member: node.name.text };
+    if (
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.argumentExpression &&
+      ts.isStringLiteral(node.argumentExpression)
+    )
+      return { owner: node.expression.text, member: node.argumentExpression.text };
+    return undefined;
+  };
+  const markCallableMember = (node) => {
+    const reference = memberReference(node);
+    if (!reference) return;
+    const members = calledMemberBindings.get(reference.owner) ?? new Set();
+    members.add(reference.member);
+    calledMemberBindings.set(reference.owner, members);
+  };
+  const isCalledReference = (node) => {
+    if (ts.isIdentifier(node)) return calledIdentifiers.has(node.text);
+    const reference = memberReference(node);
+    return (
+      reference !== undefined &&
+      calledMemberBindings.get(reference.owner)?.has(reference.member) === true
+    );
+  };
+  const callbackMethodArguments = new Map([
+    ['map', [0]],
+    ['flatMap', [0]],
+    ['forEach', [0]],
+    ['filter', [0]],
+    ['some', [0]],
+    ['every', [0]],
+    ['find', [0]],
+    ['findIndex', [0]],
+    ['findLast', [0]],
+    ['findLastIndex', [0]],
+    ['reduce', [0]],
+    ['reduceRight', [0]],
+    ['sort', [0]],
+    ['then', [0, 1]],
+    ['catch', [0]],
+    ['finally', [0]],
+    ['from', [1]],
+    ['replace', [1]],
+    ['replaceAll', [1]],
+  ]);
+  const callbackFunctionArguments = new Map([
+    ['setTimeout', [0]],
+    ['setInterval', [0]],
+    ['setImmediate', [0]],
+    ['queueMicrotask', [0]],
+  ]);
+  const callbackArgumentIndexes = (node) => {
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'Promise'
+    )
+      return [0];
+    if (!ts.isCallExpression(node)) return [];
+    if (ts.isIdentifier(node.expression))
+      return callbackFunctionArguments.get(node.expression.text) ?? [];
+    if (ts.isPropertyAccessExpression(node.expression))
+      return callbackMethodArguments.get(node.expression.name.text) ?? [];
+    if (
+      ts.isElementAccessExpression(node.expression) &&
+      node.expression.argumentExpression &&
+      ts.isStringLiteral(node.expression.argumentExpression)
+    )
+      return callbackMethodArguments.get(node.expression.argumentExpression.text) ?? [];
+    return [];
+  };
+  const collectCallableReference = (node) => {
+    if (ts.isIdentifier(node)) {
+      calledIdentifiers.add(node.text);
+      return;
+    }
+    if (ts.isSpreadElement(node)) {
+      collectCallableReference(node.expression);
+      return;
+    }
+    if (ts.isArrayLiteralExpression(node)) {
+      for (const element of node.elements) collectCallableReference(element);
+      return;
+    }
+    if (ts.isParenthesizedExpression(node)) {
+      collectCallableReference(node.expression);
+      return;
+    }
+    if (
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isSatisfiesExpression(node)
+    ) {
+      collectCallableReference(node.expression);
+      return;
+    }
+    if (ts.isConditionalExpression(node)) {
+      collectCallableReference(node.whenTrue);
+      collectCallableReference(node.whenFalse);
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      [
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.CommaToken,
+      ].includes(node.operatorToken.kind)
+    ) {
+      collectCallableReference(node.left);
+      collectCallableReference(node.right);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      collectCallTargetIdentifiers(node);
+      markCallableMember(node);
+    }
+  };
   const visitCalls = (node) => {
-    if (ts.isCallExpression(node) || ts.isNewExpression(node))
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       collectCallTargetIdentifiers(node.expression);
-    if (ts.isTaggedTemplateExpression(node)) collectCallTargetIdentifiers(node.tag);
+      markCallableMember(node.expression);
+      for (const index of callbackArgumentIndexes(node)) {
+        const argument = node.arguments?.[index];
+        if (argument) collectCallableReference(argument);
+      }
+    }
+    if (ts.isTaggedTemplateExpression(node)) {
+      collectCallTargetIdentifiers(node.tag);
+      markCallableMember(node.tag);
+    }
     ts.forEachChild(node, visitCalls);
   };
   for (const statement of sourceFile.statements) {
@@ -566,8 +699,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       if (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left) &&
-        calledIdentifiers.has(node.left.text)
+        isCalledReference(node.left)
       )
         collectAliasSources(node.right);
       ts.forEachChild(node, visitAliases);
@@ -625,9 +757,12 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         if (clause.namedBindings) {
           if (ts.isNamespaceImport(clause.namedBindings)) {
             bindings.add('*');
+            const localName = clause.namedBindings.name.text;
+            const calledMembers = calledMemberBindings.get(localName);
+            if (calledMembers) for (const member of calledMembers) callableBindings.add(member);
             if (
-              calledIdentifiers.has(clause.namedBindings.name.text) ||
-              callableLocalBindings.has(clause.namedBindings.name.text)
+              callableLocalBindings.has(localName) ||
+              (calledIdentifiers.has(localName) && !calledMembers?.size)
             )
               callableBindings.add('*');
           } else {
@@ -704,6 +839,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     }
     if (
       ts.isImportEqualsDeclaration(statement) &&
+      !statement.isTypeOnly &&
       ts.isExternalModuleReference(statement.moduleReference) &&
       statement.moduleReference.expression &&
       ts.isStringLiteral(statement.moduleReference.expression) &&
@@ -1019,6 +1155,109 @@ function isMigrationExecutionModule(path, content) {
   );
 }
 
+function hasRequestedCallableExport(path, content, requestedCallableBindings) {
+  if (requestedCallableBindings.size === 0 || !SCRIPT_MIGRATION_PATTERN.test(path)) return false;
+  const sourceFile = ts.createSourceFile(
+    path,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  if ((sourceFile.parseDiagnostics ?? []).length > 0)
+    throw new Error(`Migration dependency ${path} is not valid TypeScript`);
+
+  const hasModifier = (node, kind) =>
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === kind);
+  const callableLocals = new Set();
+  const callableInitializer = (node) => {
+    if (!node) return false;
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isSatisfiesExpression(node)
+    )
+      return callableInitializer(node.expression);
+    return (
+      ts.isArrowFunction(node) ||
+      ts.isFunctionExpression(node) ||
+      (ts.isIdentifier(node) && callableLocals.has(node.text))
+    );
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const addCallable = (name) => {
+      if (!callableLocals.has(name)) {
+        callableLocals.add(name);
+        changed = true;
+      }
+    };
+    for (const statement of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name) addCallable(statement.name.text);
+      if (ts.isVariableStatement(statement))
+        for (const declaration of statement.declarationList.declarations)
+          if (
+            ts.isIdentifier(declaration.name) &&
+            declaration.initializer &&
+            callableInitializer(declaration.initializer)
+          )
+            addCallable(declaration.name.text);
+      if (
+        ts.isExpressionStatement(statement) &&
+        ts.isBinaryExpression(statement.expression) &&
+        statement.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(statement.expression.left) &&
+        callableInitializer(statement.expression.right)
+      )
+        addCallable(statement.expression.left.text);
+    }
+  }
+
+  const exportedCallables = new Set();
+  for (const statement of sourceFile.statements) {
+    const exported = hasModifier(statement, ts.SyntaxKind.ExportKeyword);
+    const defaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword);
+    if (ts.isFunctionDeclaration(statement) && exported) {
+      if (defaultExport) exportedCallables.add('default');
+      else if (statement.name) exportedCallables.add(statement.name.text);
+      continue;
+    }
+    if (ts.isVariableStatement(statement) && exported) {
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name) && callableLocals.has(declaration.name.text))
+          exportedCallables.add(declaration.name.text);
+      continue;
+    }
+    if (
+      ts.isExportDeclaration(statement) &&
+      !statement.moduleSpecifier &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      for (const element of statement.exportClause.elements) {
+        if (element.isTypeOnly) continue;
+        const localName = (element.propertyName ?? element.name).text;
+        if (callableLocals.has(localName)) exportedCallables.add(element.name.text);
+      }
+      continue;
+    }
+    if (ts.isExportAssignment(statement) && callableInitializer(statement.expression))
+      exportedCallables.add(statement.isExportEquals ? '*' : 'default');
+  }
+
+  return (
+    (requestedCallableBindings.has('*') && exportedCallables.size > 0) ||
+    [...requestedCallableBindings].some(
+      (binding) => exportedCallables.has(binding) || exportedCallables.has('*'),
+    )
+  );
+}
+
 function isDeclarativeSqlProvider(path, content, requestedBindings) {
   if (!SCRIPT_MIGRATION_PATTERN.test(path)) return false;
   const sourceFile = ts.createSourceFile(
@@ -1166,7 +1405,7 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
       throw new Error(`Migration dependency ${path} uses dynamic import or require`);
     if (
       isMigrationExecutionModule(path, content) ||
-      requestedCallableBindings.size > 0 ||
+      hasRequestedCallableExport(path, content, requestedCallableBindings) ||
       (sideEffectPaths.has(path) && hasTopLevelExecutableCode(path, content)) ||
       isDeclarativeSqlProvider(path, content, requestedBindings)
     )

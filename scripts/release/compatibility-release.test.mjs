@@ -19,6 +19,35 @@ const SHA = 'a'.repeat(40);
 const DIGEST = `sha256:${'b'.repeat(64)}`;
 const RELEASE_ID = 'rc-20260828-33185461811';
 
+async function writeRecoveryRelease(directory, label) {
+  await mkdir(directory, { recursive: true });
+  for (const [path, content] of [
+    ['manifest.webmanifest', `{"name":"${label}"}`],
+    [
+      'release-identity.json',
+      JSON.stringify({
+        schemaVersion: 1,
+        environment: 'production',
+        releaseId: label,
+        releaseSha: label,
+        webDigest: `sha256:${label}`,
+      }),
+    ],
+    ['index.html', `<html>${label}</html>`],
+    ['sw.js', label],
+  ])
+    await writeFile(join(directory, path), content);
+}
+
+async function createRecoveryArchive(root, label) {
+  const source = join(root, `${label}-source`);
+  const archive = join(root, `${label}.tgz`);
+  await writeRecoveryRelease(source, label);
+  const tar = spawnSync('tar', ['-C', source, '-czf', archive, '.'], { encoding: 'utf8' });
+  assert.equal(tar.status, 0, tar.stderr);
+  return archive;
+}
+
 test('creates component-scoped immutable artifact indexes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compat-index-'));
   const artifactPath = join(root, 'server-bundle.tgz');
@@ -210,6 +239,18 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /\$WEB_TRANSACTION_PREFIX\/before\/\$f/u);
   assert.doesNotMatch(appWorkflow, /_releases\/\$GITHUB_SHA\/previous\/\$f/u);
   assert.match(appWorkflow, /recovery-web-target\.before/u);
+  const recoverySnapshotStart = appWorkflow.indexOf(
+    '      - name: Snapshot trusted Production identity before Web transaction',
+  );
+  const webEntrySnapshotStart = appWorkflow.indexOf(
+    '      - name: Snapshot current Web entry files',
+  );
+  const recoverySnapshot = appWorkflow.slice(recoverySnapshotStart, webEntrySnapshotStart);
+  assert.match(
+    recoverySnapshot,
+    /for f in manifest\.webmanifest release-identity\.json index\.html sw\.js/u,
+  );
+  assert.match(recoverySnapshot, /jq -e '[^']*schemaVersion[^']*webDigest'/u);
   assert.match(appWorkflow, /RECOVERY_WEB_BEFORE_TARGET=\$recovery_web_before_q/u);
   assert.match(appWorkflow, /RUN_ID='\$\{GITHUB_RUN_ID\}\.\$\{GITHUB_RUN_ATTEMPT\}'/u);
   assert.doesNotMatch(appWorkflow, /recovery-web-activated/u);
@@ -289,29 +330,16 @@ for (const [label, failurePoint] of [
 test('rolls back recovery Web when activation mutates current before remote output fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'recovery-activation-failure-'));
   const oldRelease = join(root, 'releases', 'old');
-  const source = join(root, 'source');
-  const archive = join(root, 'new.tgz');
-  await mkdir(oldRelease, { recursive: true });
-  await mkdir(source, { recursive: true });
-  for (const [path, content] of [
-    ['index.html', '<html>old</html>'],
-    ['sw.js', 'old'],
-  ])
-    await writeFile(join(oldRelease, path), content);
-  for (const [path, content] of [
-    ['index.html', '<html>new</html>'],
-    ['sw.js', 'new'],
-  ])
-    await writeFile(join(source, path), content);
+  await writeRecoveryRelease(oldRelease, 'old');
+  const archive = await createRecoveryArchive(root, 'new');
   await symlink(oldRelease, join(root, 'current'));
-  const tar = spawnSync('tar', ['-C', source, '-czf', archive, '.'], { encoding: 'utf8' });
-  assert.equal(tar.status, 0, tar.stderr);
 
   const full = openSync('/dev/full', 'w');
   const activation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
     env: {
       ...process.env,
       RECOVERY_WEB_ROOT: root,
+      RECOVERY_WEB_BEFORE_TARGET: oldRelease,
       RELEASE_ID: 'new',
       RUN_ID: '123.1',
       ARCHIVE: archive,
@@ -328,7 +356,12 @@ test('rolls back recovery Web when activation mutates current before remote outp
   );
 
   const rollback = spawnSync('bash', ['scripts/rollback-recovery-web.sh'], {
-    env: { ...process.env, RECOVERY_WEB_ROOT: root, RUN_ID: '123.1' },
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: root,
+      RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+      RUN_ID: '123.1',
+    },
     encoding: 'utf8',
   });
   assert.equal(rollback.status, 0, rollback.stderr);
@@ -337,4 +370,137 @@ test('rolls back recovery Web when activation mutates current before remote outp
     await readFile(join(root, 'transactions', '123.1.activation'), 'utf8'),
     /state=rolled_back/u,
   );
+});
+
+test('rejects late recovery deploys after terminal receipts and replays terminal rollback safely', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'recovery-terminal-replay-'));
+  const olderRelease = join(root, 'releases', 'older');
+  const oldRelease = join(root, 'releases', 'old');
+  await writeRecoveryRelease(olderRelease, 'older');
+  await writeRecoveryRelease(oldRelease, 'old');
+  await symlink(oldRelease, join(root, 'current'));
+  await symlink(olderRelease, join(root, 'previous'));
+
+  const notStartedRollback = spawnSync('bash', ['scripts/rollback-recovery-web.sh'], {
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: root,
+      RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+      RUN_ID: 'late.1',
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(notStartedRollback.status, 0, notStartedRollback.stderr);
+  const lateArchive = await createRecoveryArchive(root, 'late');
+  const lateDeploy = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: root,
+      RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+      RELEASE_ID: 'late',
+      RUN_ID: 'late.1',
+      ARCHIVE: lateArchive,
+    },
+    encoding: 'utf8',
+  });
+  assert.notEqual(lateDeploy.status, 0);
+  assert.equal(await readlink(join(root, 'current')), oldRelease);
+  assert.match(
+    await readFile(join(root, 'transactions', 'late.1.activation'), 'utf8'),
+    /state=not_started/u,
+  );
+
+  const archive = await createRecoveryArchive(root, 'new');
+  const deployEnv = {
+    ...process.env,
+    RECOVERY_WEB_ROOT: root,
+    RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+    RELEASE_ID: 'new',
+    RUN_ID: 'rolled.1',
+    ARCHIVE: archive,
+  };
+  const activation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: deployEnv,
+    encoding: 'utf8',
+  });
+  assert.equal(activation.status, 0, activation.stderr);
+  const duplicateActivation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: deployEnv,
+    encoding: 'utf8',
+  });
+  assert.equal(duplicateActivation.status, 0, duplicateActivation.stderr);
+
+  const partialRollback = spawnSync('ln', ['-sfn', oldRelease, join(root, 'current')], {
+    encoding: 'utf8',
+  });
+  assert.equal(partialRollback.status, 0, partialRollback.stderr);
+
+  const rollbackEnv = {
+    ...process.env,
+    RECOVERY_WEB_ROOT: root,
+    RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+    RUN_ID: 'rolled.1',
+  };
+  const rollback = spawnSync('bash', ['scripts/rollback-recovery-web.sh'], {
+    env: rollbackEnv,
+    encoding: 'utf8',
+  });
+  assert.equal(rollback.status, 0, rollback.stderr);
+  const duplicateRollback = spawnSync('bash', ['scripts/rollback-recovery-web.sh'], {
+    env: rollbackEnv,
+    encoding: 'utf8',
+  });
+  assert.equal(duplicateRollback.status, 0, duplicateRollback.stderr);
+  assert.equal(await readlink(join(root, 'current')), oldRelease);
+  assert.equal(await readlink(join(root, 'previous')), olderRelease);
+
+  const replayDeploy = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: deployEnv,
+    encoding: 'utf8',
+  });
+  assert.notEqual(replayDeploy.status, 0);
+  assert.equal(await readlink(join(root, 'current')), oldRelease);
+  assert.match(
+    await readFile(join(root, 'transactions', 'rolled.1.activation'), 'utf8'),
+    /state=rolled_back/u,
+  );
+});
+
+test('rejects recovery activation before mutation when the rollback baseline is incomplete', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'recovery-bad-baseline-'));
+  const badRelease = join(root, 'releases', 'missing');
+  await mkdir(badRelease, { recursive: true });
+  await writeFile(join(badRelease, 'index.html'), '<html>incomplete</html>');
+  await symlink(badRelease, join(root, 'current'));
+  const archive = await createRecoveryArchive(root, 'new');
+  const activation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: root,
+      RECOVERY_WEB_BEFORE_TARGET: badRelease,
+      RELEASE_ID: 'new',
+      RUN_ID: 'bad.1',
+      ARCHIVE: archive,
+    },
+    encoding: 'utf8',
+  });
+  assert.notEqual(activation.status, 0);
+  assert.equal(await readlink(join(root, 'current')), badRelease);
+  await assert.rejects(readFile(join(root, 'transactions', 'bad.1.activation'), 'utf8'));
+
+  const emptyRoot = await mkdtemp(join(tmpdir(), 'recovery-empty-baseline-'));
+  const emptyArchive = await createRecoveryArchive(emptyRoot, 'new');
+  const emptyActivation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+    env: {
+      ...process.env,
+      RECOVERY_WEB_ROOT: emptyRoot,
+      RECOVERY_WEB_BEFORE_TARGET: join(emptyRoot, 'releases', 'missing'),
+      RELEASE_ID: 'new',
+      RUN_ID: 'empty.1',
+      ARCHIVE: emptyArchive,
+    },
+    encoding: 'utf8',
+  });
+  assert.notEqual(emptyActivation.status, 0);
+  await assert.rejects(readFile(join(emptyRoot, 'transactions', 'empty.1.activation'), 'utf8'));
 });

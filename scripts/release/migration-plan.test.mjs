@@ -167,6 +167,94 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
+test('tracks imported callbacks through aliases and barrel re-exports', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const barrel = 'server/src/data/governance-schema/providers/index.ts';
+  const provider = 'server/src/data/governance-schema/providers/run.ts';
+  const baselineProvider =
+    "export async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
+  const targetProvider = "export async function run(db) { await db.query('DROP TABLE users'); }";
+  for (const callbackCase of [
+    {
+      label: 'array map callback',
+      rootSource: "import { run } from './providers/run.js';\n[db].map(run);",
+      extraTree: {},
+    },
+    {
+      label: 'aliased forEach callback',
+      rootSource:
+        "import { run } from './providers/run.js';\nconst callback = run;\n[db].forEach(callback);",
+      extraTree: {},
+    },
+    {
+      label: 'spread callback',
+      rootSource: "import { run } from './providers/run.js';\n[db].map(...[run]);",
+      extraTree: {},
+    },
+    {
+      label: 'logical callback fallback',
+      rootSource: "import { run } from './providers/run.js';\n[db].map(run || fallback);",
+      extraTree: {},
+    },
+    {
+      label: 'assigned property callback',
+      rootSource:
+        "import { run } from './providers/run.js';\nconst holder = {};\nholder.cb = run;\n[db].map(holder.cb);",
+      extraTree: {},
+    },
+    {
+      label: 'namespace member callback',
+      rootSource: "import * as provider from './providers/run.js';\n[db].map(provider.run);",
+      extraTree: {},
+    },
+    {
+      label: 'barrel Promise callback',
+      rootSource:
+        "import { runMigration } from './providers/index.js';\nPromise.resolve(db).then(runMigration);",
+      extraTree: { [barrel]: "export { run as runMigration } from './run.js';" },
+    },
+  ]) {
+    const baselines = {
+      [root]: callbackCase.rootSource,
+      [provider]: baselineProvider,
+      ...callbackCase.extraTree,
+    };
+    const targets = {
+      [root]: callbackCase.rootSource,
+      [provider]: targetProvider,
+      ...callbackCase.extraTree,
+    };
+    const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
+      changedPaths: [provider],
+      baselines,
+      targets,
+      diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
+      nameStatus: `M\t${provider}`,
+    });
+    assert.equal(result.ok, false, callbackCase.label);
+    assert.match(result.blockingReasons.join('\n'), /run\.ts/u, callbackCase.label);
+  }
+});
+
+test('does not treat ordinary imported data arguments as callable providers', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/provider.ts';
+  const rootSource = "import * as provider from './provider.js';\nregistry.map(provider.config);";
+  const baselineProvider =
+    "export const config = { name: 'safe' };\nexport async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
+  const targetProvider =
+    "export const config = { name: 'safe' };\nexport async function run(db) { await db.query('DROP TABLE users'); }";
+  const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
+    changedPaths: [provider],
+    baselines: { [root]: rootSource, [provider]: baselineProvider },
+    targets: { [root]: rootSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.migrationPlan.phase, 'none');
+});
+
 test('fails closed for dynamic import, require, and createRequire loaders', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   for (const source of [
@@ -237,6 +325,39 @@ test('does not follow type-only import or re-export edges at runtime', () => {
     assert.equal(result.ok, true, rootSource);
     assert.equal(result.migrationPlan.phase, 'none', rootSource);
   }
+});
+
+test('skips type-only import-equals while preserving runtime import-equals callable edges', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const danger = 'server/src/data/governance-schema/danger.ts';
+  const baselineDanger =
+    "export type T = string;\nexport async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
+  const targetDanger =
+    "export type T = string;\nexport async function run(db) { await db.query('DROP TABLE users'); }";
+
+  const typeOnlyRoot =
+    "import type Danger = require('./danger.js');\nexport type Alias = Danger.T;";
+  const typeOnly = plan(targetDanger, addedSourceDiff("await db.query('DROP TABLE users');"), {
+    changedPaths: [danger],
+    baselines: { [root]: typeOnlyRoot, [danger]: baselineDanger },
+    targets: { [root]: typeOnlyRoot, [danger]: targetDanger },
+    diffs: { [danger]: addedSourceDiff("await db.query('DROP TABLE users');") },
+    nameStatus: `M\t${danger}`,
+  });
+  assert.equal(typeOnly.ok, true);
+  assert.equal(typeOnly.migrationPlan.phase, 'none');
+
+  const runtimeRoot =
+    "import Danger = require('./danger.js');\nexport async function migrate(db) { await Danger.run(db); }";
+  const runtime = plan(targetDanger, addedSourceDiff("await db.query('DROP TABLE users');"), {
+    changedPaths: [danger],
+    baselines: { [root]: runtimeRoot, [danger]: baselineDanger },
+    targets: { [root]: runtimeRoot, [danger]: targetDanger },
+    diffs: { [danger]: addedSourceDiff("await db.query('DROP TABLE users');") },
+    nameStatus: `M\t${danger}`,
+  });
+  assert.equal(runtime.ok, false);
+  assert.match(runtime.blockingReasons.join('\n'), /danger\.ts/u);
 });
 
 test('reprocesses a previously visited binding when it later becomes side-effect reachable', () => {

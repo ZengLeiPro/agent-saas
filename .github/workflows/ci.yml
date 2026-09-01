@@ -2362,13 +2362,18 @@ jobs:
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "readlink -f '$RECOVERY_WEB_ROOT/current'" \
+            "set -e; \
+             target=\$(readlink -f '$RECOVERY_WEB_ROOT/current'); \
+             case \"\$target\" in '$RECOVERY_WEB_ROOT'/releases/*) ;; \
+               *) echo 'recovery Web current target is not an immutable release' >&2; exit 1 ;; \
+             esac; \
+             for f in manifest.webmanifest release-identity.json index.html sw.js; do \
+               test -s \"\$target/\$f\" || { echo \"recovery Web before target is missing \$f\" >&2; exit 1; }; \
+             done; \
+             jq -e '.schemaVersion == 1 and .environment == \"production\" and .releaseId and .releaseSha and .webDigest' \
+               \"\$target/release-identity.json\" >/dev/null; \
+             printf '%s\\n' \"\$target\"" \
             > "$RUNNER_TEMP/recovery-web-target.before"
-          recovery_web_before="$(cat "$RUNNER_TEMP/recovery-web-target.before")"
-          case "$recovery_web_before" in
-            "$RECOVERY_WEB_ROOT"/releases/*) ;;
-            *) echo "recovery Web current target is not an immutable release" >&2; exit 1 ;;
-          esac
 
       - name: Snapshot current Web entry files
         run: |
@@ -2472,10 +2477,14 @@ jobs:
 
       - name: Activate recovery Web release
         run: |
+          printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             "$ECS_USER@$ECS_HOST" \
-            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
+            "RECOVERY_WEB_ROOT='$RECOVERY_WEB_ROOT' \
+             RECOVERY_WEB_BEFORE_TARGET=$recovery_web_before_q \
+             RELEASE_ID='$GITHUB_SHA' RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' \
+             ARCHIVE='/tmp/agent-saas-recovery-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tgz' bash -s" \
             < scripts/deploy-recovery-web.sh
 
       - name: Verify recovery Web endpoint

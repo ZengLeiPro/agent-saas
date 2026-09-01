@@ -19,7 +19,7 @@ const url = process.env.TEST_DATABASE_URL;
 const describePg = url ? describe : describe.skip; // real PostgreSQL recovery coverage
 
 describePg('automation background child recovery on PostgreSQL', () => {
-  const prefix = `automation_background_child_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const prefix = `abc_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const tenantId = 'tenant-automation-background-child';
   let pool: InstanceType<typeof Pool>;
   let events: PgEventStore;

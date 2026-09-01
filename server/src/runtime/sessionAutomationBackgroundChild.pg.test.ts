@@ -272,11 +272,14 @@ describePg('automation background child recovery on PostgreSQL', () => {
             WHERE a.tenant_id=$1 AND a.automation_id=$2`,
           [tenantId, setup.automationId, persisted!.runId, childRunId],
         );
-        expect(authority.rows[0]).toMatchObject({
+        const expectedAuthority = {
           automation_status: 'active', active_run_id: setup.dispatch.targetRunId, execution_state: 'running',
           parent_status: 'running', parent_session_id: persisted!.sessionId,
           child_status: 'running', child_session_id: childSessionId,
-        });
+        };
+        if (Object.entries(expectedAuthority).some(([key, value]) => authority.rows[0]?.[key] !== value)) {
+          throw new Error(`unexpected dispatch authority fixture: ${JSON.stringify(authority.rows[0])}`);
+        }
         await params.onChildRunCreated?.({ childSessionId, childRunId, model: 'test-model' });
         await params.beforeChildSideEffects?.({ childSessionId, childRunId });
         const active = await pool.query(

@@ -313,6 +313,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
         expect(replay?.sourceKey).toBe(attempt!.sourceKey);
         await guard.finishModel(childContext, attempt, { inputTokens: 10, outputTokens: 5 });
         await runs.markStatus(childRunId, 'completed', 'subagent_completed');
+        expect((await runs.get(childRunId))?.status).toBe('completed');
         return {
           status: 'completed', text: 'done', totalTokens: 15, toolUseCount: 0, turnCount: 1,
           durationMs: 1, childSessionId, childRunId, model: 'test-model',

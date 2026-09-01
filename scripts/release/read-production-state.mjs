@@ -82,7 +82,6 @@ function configIdentitySide(value, label, { observed = false } = {}) {
 const CONFIG_IDENTITY_STATUSES = ['consistent', 'drifted', 'unverifiable', 'not_collected'];
 const CONFIG_IDENTITY_REASONS = [
   'expected_not_bound',
-  'observed_unavailable',
   'secret_ref_version_unresolved',
   'schema_version_unsupported',
 ];
@@ -105,7 +104,6 @@ function assertConfigIdentityRelationship(summary, expected, observed) {
     // 原因必须服从 evaluator 的优先级：缺 binding、schema、config drift、版本解析。
     const reasonMatches =
       (summary.reason === 'expected_not_bound' && !expected && Boolean(observed)) ||
-      (summary.reason === 'observed_unavailable' && !observed) ||
       (summary.reason === 'secret_ref_version_unresolved' &&
         Boolean(expected) &&
         Boolean(observed) &&
@@ -188,6 +186,9 @@ export function validateConfigIdentitySummary(value) {
   }
   if (summary.status === 'unverifiable' && !summary.reason) {
     throw new Error('Production API unverifiable config identity requires reason');
+  }
+  if (summary.status === 'unverifiable' && !summary.observed) {
+    throw new Error('Production API unverifiable config identity requires observed');
   }
   if (summary.status !== 'unverifiable' && summary.reason) {
     throw new Error('Production API config identity reason is only valid for unverifiable');
@@ -417,9 +418,7 @@ export async function validateCandidateReleaseReadiness({
   if (!['production', 'staging'].includes(environment)) {
     throw new Error(`Unsupported candidate environment: ${environment}`);
   }
-  assertAnonymousReadinessOmitsConfigIdentity(
-    required(readiness, 'Candidate readiness response'),
-  );
+  assertAnonymousReadinessOmitsConfigIdentity(required(readiness, 'Candidate readiness response'));
   const release = required(readiness.release, 'Candidate readiness release identity');
   const expectedSourceSha =
     environment === 'production' ? manifest?.components?.api?.sourceSha : manifest?.releaseSha;
@@ -440,11 +439,9 @@ export async function validateCandidateReleaseReadiness({
   }
   // 部署入口传入的是 config-identity-cli 的 observed 形态；严格校验全部
   // version metadata 后，仅用 release expected 拥有的三个字段做绑定比较。
-  const expected = configIdentitySide(
-    expectedConfigIdentity,
-    'Candidate computed configIdentity',
-    { observed: true },
-  );
+  const expected = configIdentitySide(expectedConfigIdentity, 'Candidate computed configIdentity', {
+    observed: true,
+  });
   for (const field of ['schemaVersion', 'digest', 'credentialVersionDigest']) {
     if ((summary.expected?.[field] ?? null) !== (expected[field] ?? null)) {
       throw new Error(

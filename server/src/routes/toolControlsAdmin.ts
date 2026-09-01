@@ -28,7 +28,11 @@ import {
   PLATFORM_TOOL_SOURCE_MODULE,
 } from '../agent/toolCatalog.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
-import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import {
+  AdminConfigMutationService,
+  ConfigConflictError,
+  configFingerprint,
+} from '../config/adminConfigMutationService.js';
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { Request } from 'express';
@@ -322,11 +326,17 @@ async function persistUpdatedSettings(
   options: CreateToolControlsAdminRouterOptions,
   configMutationService: AdminConfigMutationService,
   req: Request,
+  expectedConfigText: string,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
 ): Promise<{ settings: Pick<AppConfig, 'toolControls' | 'webTools'>; revision: string }> {
   const result = await configMutationService.mutate({
     ...mutationRequestContext(req),
     changedPaths: ['toolControls', 'webTools'],
+    validateBaseline: (currentText) => {
+      if (currentText !== expectedConfigText) {
+        throw new ConfigConflictError(configFingerprint(parseJsonc(currentText)));
+      }
+    },
     buildCandidate: (configText) => {
       const withWebTools = applyEdits(configText, modify(configText, ['webTools'], nextSettings.webTools, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
@@ -343,6 +353,7 @@ async function persistUpdatedSettings(
         webTools: candidate.webTools,
       });
     },
+    ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
   });
   return {
     settings: { toolControls: result.config.toolControls, webTools: result.config.webTools },
@@ -397,7 +408,13 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     try {
-      const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
+      const persisted = await persistUpdatedSettings(
+        options,
+        configMutationService,
+        req,
+        configText,
+        nextSettings,
+      );
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
       res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
@@ -447,7 +464,13 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     try {
-      const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
+      const persisted = await persistUpdatedSettings(
+        options,
+        configMutationService,
+        req,
+        configText,
+        nextSettings,
+      );
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
       res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {

@@ -59,7 +59,6 @@ const REVOCABLE_STATES = new Set<ReleaseState>([
   'failed_before_change',
   'rejected',
   'partial_failed',
-  'rolled_back',
   'needs_human',
   'superseded',
 ]);
@@ -81,7 +80,7 @@ const RECOVERABLE_TAIL_STATES = new Set<ReleaseState>([
 const RECOVERABLE_TAIL_TRANSITIONS = new Map<ReleaseState, ReadonlySet<ReleaseState>>([
   ['approved', new Set(['promoting', 'failed_before_change', 'needs_human'])],
   ['failed_before_change', new Set(['approved', 'failed_before_change', 'needs_human'])],
-  ['promoting', new Set(['partial_failed', 'needs_human', 'rolled_back'])],
+  ['promoting', new Set(['failed_before_change', 'partial_failed', 'needs_human', 'rolled_back'])],
   ['partial_failed', new Set(['rolled_back'])],
   ['needs_human', new Set(['approved', 'needs_human', 'rolled_back'])],
   ['rolled_back', new Set(['approved'])],
@@ -222,13 +221,18 @@ export class ReleaseAttestationLog {
       }
     }
     const retryTail = verifiedIndex >= 0 ? this.entries.slice(verifiedIndex + 1) : [];
+    const hasProductionMutation = retryTail.some(
+      (entry) => entry.state === 'promoting' || entry.state === 'rolled_back',
+    );
     const retryAfterFailureBeforeChange =
       current === 'failed_before_change' &&
       input.state === 'approved' &&
       retryTail.some((entry) => entry.state === 'approved') &&
-      retryTail.every((entry) =>
-        ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
-      );
+      (hasProductionMutation
+        ? isUnambiguousRecoverableTail(retryTail)
+        : retryTail.every((entry) =>
+            ['approved', 'failed_before_change', 'needs_human'].includes(entry.state),
+          ));
     let lastPromotingIndex = -1;
     let lastRolledBackIndex = -1;
     for (let index = retryTail.length - 1; index >= 0; index -= 1) {
@@ -243,9 +247,7 @@ export class ReleaseAttestationLog {
     const retryAfterHumanReview =
       current === 'needs_human' &&
       input.state === 'approved' &&
-      lastPromotingIndex > 0 &&
-      retryTail[lastPromotingIndex - 1]?.state === 'approved' &&
-      retryTail.slice(lastPromotingIndex + 1).every((entry) => entry.state === 'needs_human') &&
+      hasProductionMutation &&
       isUnambiguousRecoverableTail(retryTail);
     const authoritativeRollback =
       input.state === 'rolled_back' &&
@@ -255,10 +257,20 @@ export class ReleaseAttestationLog {
     const retryAfterRolledBack =
       current === 'rolled_back' &&
       input.state === 'approved' &&
+      hasProductionMutation &&
       isUnambiguousRecoverableTail(retryTail);
     const revocation = input.state === 'revoked' && REVOCABLE_STATES.has(current);
+    const recoverablePostMutationFailure =
+      !hasProductionMutation ||
+      RECOVERABLE_TAIL_TRANSITIONS.get(current)?.has(input.state) === true ||
+      input.state === 'rejected' ||
+      input.state === 'superseded';
     const failure =
-      FAILURE_STATES.has(input.state) && current !== 'completed' && current !== 'revoked';
+      FAILURE_STATES.has(input.state) &&
+      current !== 'completed' &&
+      current !== 'revoked' &&
+      current !== 'rolled_back' &&
+      recoverablePostMutationFailure;
     if (
       !sequential &&
       !retryAfterFailureBeforeChange &&

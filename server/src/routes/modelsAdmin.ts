@@ -38,6 +38,8 @@ export interface CreateModelsAdminRouterOptions {
   ensureConfigBaselineApplied?: (expectedText: string) => Promise<boolean>;
 }
 
+class RuntimeConfigValidationError extends Error {}
+
 type ModelsAdminUpdate = {
   candidateConfig: AppConfig;
   models: ModelsConfig;
@@ -177,12 +179,16 @@ async function persistSubmittedModelCredentials(input: {
   createdRefs: CreatedSecretRef[];
   replacedRefs: CreatedSecretRef[];
   previousRefs: Map<string, string | undefined>;
+  allowInlineWithoutVault?: boolean;
 }): Promise<ModelsConfig> {
   return {
     ...input.models,
     groups: await Promise.all(input.models.groups.map(async (group) => {
       if (!input.submittedGroups.has(group.id) || !group.apiKey) return group;
-      if (!input.secretVault) throw new Error('SecretVault 未配置，不能保存模型 API Key');
+      if (!input.secretVault) {
+        if (input.allowInlineWithoutVault) return group;
+        throw new Error('SecretVault 未配置，不能保存模型 API Key');
+      }
       const ref = await input.secretVault.putSecret(
         GLOBAL_OWNER_ID,
         'models',
@@ -339,6 +345,14 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       const result = await configMutationService.mutate({
         ...requestContext,
         changedPaths: ['models', 'memory.index', 'titleGenerator', 'systemPrompts.utility.title'],
+        validateBaseline: async (configText) => {
+          if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) {
+            throw new ConfigConflictError(configRevision(configText));
+          }
+          if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) {
+            throw new Error('当前配置基线未完整应用，拒绝写入');
+          }
+        },
         buildCandidate: async (configText, rawConfig) => {
           const persisted = parseAppConfig(rawConfig);
           nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, persisted));
@@ -352,6 +366,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
               createdRefs,
               replacedRefs,
               previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.apiKeyRef])),
+              allowInlineWithoutVault: Boolean(options.validateConfigReload),
             }),
           };
           nextUpdate = {
@@ -379,8 +394,23 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
           return updatedText;
         },
+        ...(options.validateConfigReload
+          ? {
+              validateCandidate: async (candidate: AppConfig) => {
+                try {
+                  await options.validateConfigReload?.(candidate);
+                } catch (error) {
+                  throw new RuntimeConfigValidationError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              },
+            }
+          : {}),
         applyRuntime: async (candidate) => {
           if (!candidate.models) throw new Error('models 未配置');
+          const commitPreparedConfig = options.prepareConfigUpdate?.(candidate);
+          commitPreparedConfig?.();
           options.config.models = candidate.models;
           if (candidate.memory) options.config.memory = candidate.memory;
           else delete options.config.memory;
@@ -388,10 +418,13 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           else delete options.config.titleGenerator;
           if (candidate.systemPrompts) options.config.systemPrompts = candidate.systemPrompts;
           else delete options.config.systemPrompts;
-          await options.onModelsUpdated?.(candidate.models);
+          if (!commitPreparedConfig) {
+            await options.onModelsUpdated?.(candidate.models);
+            options.onSystemPromptOverridesUpdated?.(candidate.systemPrompts ?? {});
+          }
           await options.onMemoryIndexUpdated?.(candidate.memory?.index);
-          options.onSystemPromptOverridesUpdated?.(candidate.systemPrompts ?? {});
         },
+        ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
       await revokeModelRefs(options.secretVault, replacedRefs);
       res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
@@ -405,9 +438,13 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
       });
     } catch (error) {
       await revokeModelRefs(options.secretVault, createdRefs);
+      if (error instanceof RuntimeConfigValidationError) {
+        sendConfigMutationError(res, error);
+        return;
+      }
       if (error instanceof Error && !(error instanceof ConfigConflictError)) {
         // Validation failures remain client errors; mutation/readback failures use the shared handler.
-        if (/models|memory|标题|提示语|配置/u.test(error.message)) {
+        if (/models|memory|标题|提示语|配置|门禁模型/u.test(error.message)) {
           res.status(400).json({ error: error.message });
           return;
         }

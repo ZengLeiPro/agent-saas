@@ -78,7 +78,7 @@ test('promotion accepts only an approved release id and shares the production mu
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
 });
 
-test('rolled-back App/Web failures require staging revalidation and reviewed retry_after_change', async () => {
+test('rolled-back App and Web failures require staging revalidation and reviewed retry_after_change', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const fixture = JSON.parse(await readFile(rollbackRetryFixturePath, 'utf8'));
   const approvalStart = workflow.indexOf(
@@ -172,12 +172,60 @@ test('Web rollback marker is written only by the armed restore path', async () =
   assert.ok(web.indexOf(markerWrite) < web.indexOf('trap cleanup_web_on_exit EXIT'));
 });
 
-test('reconcile derives rollback attempts only from isolated markers and probes remote safely', async () => {
+test('deploy output creates exact run-attempt fallback evidence without swallowing SSH failure', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const deploy = await readFile(deployPath, 'utf8');
+  for (const phase of ['acs', 'app']) {
+    const start = workflow.indexOf(
+      phase === 'acs'
+        ? '- name: Deploy exact ACS Orchestrator and Sandbox digest first'
+        : '- name: Deploy API blue-green and hand off Runtime Worker',
+    );
+    const end = workflow.indexOf(
+      phase === 'acs'
+        ? '- name: Persist ACS operation receipt'
+        : '- name: Persist API and Worker operation receipts',
+      start,
+    );
+    const deployStep = workflow.slice(start, end);
+    const exactSentinel =
+      `AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=${phase} ` +
+      'GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT';
+    ordered(deployStep, [
+      `rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${phase}"`,
+      `rollback_sentinel="${exactSentinel}"`,
+      'set +e',
+      '2>&1 | tee "$rollback_output"',
+      'pipeline_status=("${PIPESTATUS[@]}")',
+      'set -e\n          if grep',
+      'grep -Fx -- "$rollback_sentinel" "$rollback_output"',
+      'exit "${pipeline_status[0]}"',
+      'exit "${pipeline_status[1]}"',
+    ]);
+    assert.doesNotMatch(deployStep, /if\s+ssh/u);
+  }
+  for (const name of [
+    'PHASE',
+    'GITHUB_RUN_ID',
+    'GITHUB_RUN_ATTEMPT',
+    'ROLLBACK_ATTEMPTED_MARKER',
+  ]) {
+    assert.match(deploy, new RegExp(`-u ${name}`));
+  }
+  assert.match(deploy, /2> >\(sed 's\/\^\/\[config-identity-cli\] \/' >&2\)/u);
+});
+
+test('reconcile derives rollback attempts from Web local, ACS/App fallback, and remote markers', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const start = workflow.indexOf('- name: Reconcile component outcome');
   const end = workflow.indexOf('- name: Record truthful final outcome', start);
   const reconcile = workflow.slice(start, end);
-  assert.match(reconcile, /\[ -f "\$web_rollback_attempted_marker" \]/u);
+  assert.match(reconcile, /for component in web acs app; do/u);
+  assert.match(
+    reconcile,
+    /local_rollback_attempted_marker="\$RUNNER_TEMP\/rollback-attempted-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$component"/u,
+  );
+  assert.match(reconcile, /\[ -f "\$local_rollback_attempted_marker" \]/u);
   assert.match(reconcile, /\[ -n "\$\{PROMOTION_REMOTE:-\}" \]/u);
   assert.match(reconcile, /if ssh -o BatchMode=yes -o ConnectTimeout=10/u);
   assert.doesNotMatch(reconcile, /steps\.deploy_(?:acs|app|web)\.outcome/u);
@@ -366,7 +414,27 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /systemctl reset-failed "agent-saas-server@\$api_active"/u);
   assert.match(deploy, /cleanup_acs_failure/u);
   assert.match(deploy, /mark_rollback_attempted/u);
-  assert.equal(deploy.match(/^[ ]{6}mark_rollback_attempted$/gmu)?.length, 2);
+  assert.equal(deploy.match(/^[ ]{4}mark_rollback_attempted$/gmu)?.length, 1);
+  assert.equal(deploy.match(/^[ ]{4}emit_rollback_attempted_sentinel$/gmu)?.length, 1);
+  assert.match(deploy, /trap '' HUP INT TERM/u);
+  assert.match(
+    deploy,
+    /AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=%s GITHUB_RUN_ID=%s GITHUB_RUN_ATTEMPT=%s/u,
+  );
+  assert.match(
+    deploy,
+    /acs-orchestrator\.env\.before-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u,
+  );
+  assert.match(
+    deploy,
+    /acs-release-identity\.json\.before-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u,
+  );
+  assert.match(
+    deploy,
+    /agent-saas-app-rollback-\$release_id-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT/u,
+  );
+  assert.doesNotMatch(deploy, /\[ -e "\$env_backup" \] \|\| cp/u);
+  assert.doesNotMatch(deploy, /\[ -e "\$identity_backup" \] \|\| cp/u);
   assert.match(deploy, /if \[ -L \/opt\/agent-saas\/acs-current \]; then/u);
   assert.match(deploy, /Existing ACS release path must be a symlink/u);
   assert.doesNotMatch(
@@ -386,7 +454,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
     /systemctl show "agent-saas-runtime-worker@\$worker_idle" --property Environment --value/u,
   );
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
-  assert.match(deploy, /app_committed=true/u);
+  assert.match(deploy, /DEPLOY_APP_ROLLBACK_COMMITTED=true/u);
   assert.match(
     deploy,
     /systemctl disable --now "agent-saas-server@\$api_idle"[\s\S]{0,180}systemctl is-active --quiet "agent-saas-server@\$api_idle"/u,

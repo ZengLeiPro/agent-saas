@@ -1,4 +1,9 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error Release workflow scripts are intentionally plain ESM.
+import { assertPromotionRetryable } from '../../../scripts/release/assert-promotion-retry.mjs';
+// @ts-expect-error Release workflow scripts are intentionally plain ESM.
+import { reconcilePromotion } from '../../../scripts/release/reconcile-promotion.mjs';
 import { ReleaseAttestationLog, type ReleaseAttestation } from './releaseAttestation.js';
 import { getPromotionEligibility } from './releasePolicy.js';
 
@@ -27,7 +32,7 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.isPromotable()).toBe(true);
   });
 
-  it('allows a newly reasoned approval only after a proven failure before change', () => {
+  it('allows renewed approval after failure before change in pre- or post-mutation history', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -38,14 +43,16 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.currentState()).toBe('approved');
     expect(entries.isPromotable()).toBe(true);
 
-    const unsafe = log();
-    append(unsafe, 'built');
-    append(unsafe, 'staging_deployed');
-    append(unsafe, 'verified');
-    append(unsafe, 'approved');
-    append(unsafe, 'promoting');
-    append(unsafe, 'failed_before_change');
-    expect(() => append(unsafe, 'approved', 'unsafe-reapproval')).toThrow(/Illegal or late/u);
+    const postMutation = log();
+    append(postMutation, 'built');
+    append(postMutation, 'staging_deployed');
+    append(postMutation, 'verified');
+    append(postMutation, 'approved', 'post-approval-1');
+    append(postMutation, 'promoting', 'post-promoting-1');
+    append(postMutation, 'failed_before_change', 'post-reconcile-1');
+    append(postMutation, 'approved', 'post-approval-2');
+    append(postMutation, 'promoting', 'post-promoting-2');
+    expect(postMutation.currentState()).toBe('promoting');
 
     const neverVerified = log();
     append(neverVerified, 'failed_before_change');
@@ -54,7 +61,99 @@ describe('ReleaseAttestationLog', () => {
     );
   });
 
-  it('allows human-reviewed recovery after a durable promotion reaches needs_human', () => {
+  it('runs reconcile through append and retry assertion into the next reviewed promotion', async () => {
+    const fixturePath = new URL(
+      '../../../scripts/release/fixtures/promotion-rollback-retry.json',
+      import.meta.url,
+    );
+    const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
+    const scenario = fixture.failedBeforeChangeRetry;
+    const entries = new ReleaseAttestationLog(scenario.releaseId, DIGEST, { now: () => NOW });
+    for (const attestation of scenario.initialAttestations) {
+      append(entries, attestation.state, attestation.operationKey);
+    }
+
+    const reconciliation = reconcilePromotion({
+      releaseId: scenario.releaseId,
+      before: fixture.before,
+      target: fixture.target,
+      observed: fixture.before,
+      observationComplete: scenario.reconcile.observationComplete,
+      rollbackAttempted: scenario.reconcile.rollbackAttempted,
+    });
+    expect(reconciliation.outcome).toBe(scenario.reconcile.expectedOutcome);
+    entries.append({
+      state: reconciliation.outcome,
+      operationKey: scenario.reconcile.operationKey,
+      actor: scenario.actor,
+      manifestDigest: DIGEST,
+      reason: JSON.stringify(reconciliation),
+    });
+
+    expect(assertPromotionRetryable(entries.list())).toEqual({
+      mode: scenario.retry.expectedMode,
+      latestState: scenario.reconcile.expectedOutcome,
+      verifiedOperationKey: 'verified:failed-before-change',
+      promotingOperationKey: 'promoting:failed-before-change:1',
+      previousApprovalCount: 1,
+    });
+
+    append(entries, 'approved', scenario.retry.approvalOperationKey);
+    append(entries, 'promoting', scenario.retry.promotingOperationKey);
+    expect(
+      entries
+        .list()
+        .slice(-3)
+        .map(({ state, operationKey }) => ({ state, operationKey })),
+    ).toEqual([
+      {
+        state: scenario.reconcile.expectedOutcome,
+        operationKey: scenario.reconcile.operationKey,
+      },
+      { state: 'approved', operationKey: scenario.retry.approvalOperationKey },
+      { state: 'promoting', operationKey: scenario.retry.promotingOperationKey },
+    ]);
+  });
+
+  it('keeps every appendable post-mutation recoverable tail accepted by the retry gate', () => {
+    const entries = log();
+    for (const [state, operationKey] of [
+      ['built', 'closure-built'],
+      ['staging_deployed', 'closure-staging'],
+      ['verified', 'closure-verified'],
+      ['approved', 'closure-approval-1'],
+      ['promoting', 'closure-promoting-1'],
+    ] as const) {
+      append(entries, state, operationKey);
+    }
+
+    const appendRecoverable = (
+      state: Parameters<ReleaseAttestationLog['append']>[0]['state'],
+      operationKey: string,
+    ) => {
+      append(entries, state, operationKey);
+      expect(assertPromotionRetryable(entries.list()).mode).toBe('retry_after_change');
+    };
+
+    appendRecoverable('failed_before_change', 'closure-failed-1');
+    appendRecoverable('failed_before_change', 'closure-failed-2');
+    appendRecoverable('needs_human', 'closure-human-1');
+    appendRecoverable('approved', 'closure-approval-2');
+    appendRecoverable('needs_human', 'closure-human-before-mutation-2');
+    appendRecoverable('approved', 'closure-approval-3');
+    append(entries, 'promoting', 'closure-promoting-2');
+    append(entries, 'partial_failed', 'closure-partial-2');
+    appendRecoverable('rolled_back', 'closure-rollback-2');
+    appendRecoverable('approved', 'closure-approval-4');
+    appendRecoverable('failed_before_change', 'closure-failed-before-mutation-3');
+    appendRecoverable('approved', 'closure-approval-5');
+    append(entries, 'promoting', 'closure-promoting-3');
+    appendRecoverable('needs_human', 'closure-human-3');
+    appendRecoverable('needs_human', 'closure-human-3-repeat');
+    appendRecoverable('rolled_back', 'closure-rollback-3');
+  });
+
+  it('allows direct human-reviewed recovery after a durable promotion reaches needs_human', () => {
     const entries = log();
     append(entries, 'built');
     append(entries, 'staging_deployed');
@@ -86,7 +185,7 @@ describe('ReleaseAttestationLog', () => {
     expect(entries.currentState()).toBe('completed');
   });
 
-  it('allows authoritative rollback and renewed approval after partial_failed or needs_human', () => {
+  it('allows authoritative rollback plus renewed approval after partial_failed or needs_human', () => {
     for (const recoverable of ['partial_failed', 'needs_human'] as const) {
       const entries = log();
       append(entries, 'built');
@@ -98,6 +197,48 @@ describe('ReleaseAttestationLog', () => {
       append(entries, 'rolled_back', `rollback-${recoverable}`);
       append(entries, 'approved', `recovery-approval-${recoverable}`);
       expect(entries.currentState()).toBe('approved');
+    }
+  });
+
+  it.each([
+    'needs_human',
+    'failed_before_change',
+    'partial_failed',
+    'rejected',
+    'superseded',
+    'revoked',
+  ] as const)('allows only a new approval after rolled_back, rejecting %s', (rejectedState) => {
+    const entries = log();
+    append(entries, 'built');
+    append(entries, 'staging_deployed');
+    append(entries, 'verified');
+    append(entries, 'approved');
+    append(entries, 'promoting');
+    append(entries, 'rolled_back');
+
+    expect(() => append(entries, rejectedState, `after-rollback-${rejectedState}`)).toThrow(
+      /Illegal or late/u,
+    );
+    append(entries, 'approved', 'new-reviewed-approval');
+    expect(entries.currentState()).toBe('approved');
+  });
+
+  it('rejects post-mutation recoverable transitions absent from the retry assertion map', () => {
+    for (const [firstOutcome, deadTail] of [
+      ['partial_failed', 'needs_human'],
+      ['needs_human', 'failed_before_change'],
+      ['failed_before_change', 'partial_failed'],
+    ] as const) {
+      const entries = log();
+      append(entries, 'built');
+      append(entries, 'staging_deployed');
+      append(entries, 'verified');
+      append(entries, 'approved');
+      append(entries, 'promoting');
+      append(entries, firstOutcome);
+      expect(() => append(entries, deadTail, `${firstOutcome}-to-${deadTail}`)).toThrow(
+        /Illegal or late/u,
+      );
     }
   });
 

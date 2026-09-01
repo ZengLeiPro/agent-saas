@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AppConfig } from './config.js';
 import { createSharedConfigRefresher } from './sharedConfigRefresher.js';
+import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js';
 import { configureModelPricing, computeCostMicro } from '../data/usage/pricing.js';
 
 function group(id: string, price: number) {
@@ -435,5 +436,108 @@ describe('SharedConfigRefresher commit/post-check/rollback 与脏切面恢复事
     expect(harness.state().prompt).toBe('old prompt');
     expect(harness.state().webProvider).toBe('tencent_wsa');
     expect(harness.state().reloadCalls).toBe(1);
+  });
+
+  it('toolControls loser commit 被 winner 覆盖时回滚 RawRuntime，并只发布 winner', async () => {
+    const loser = {
+      ...structuredClone(OLD),
+      toolControls: { tools: { Shell: { enabled: false } } },
+    };
+    const winner = {
+      ...structuredClone(OLD),
+      toolControls: {
+        tools: {
+          Write: { descriptionOverride: { mode: 'replace', text: 'winner description' } },
+        },
+      },
+    };
+    writeConfig(dir, OLD);
+    const config = structuredClone(OLD) as unknown as AppConfig;
+    const rawTarget: { toolControls?: AppConfig['toolControls'] } = {};
+    const prepareSnapshot = createToolControlsRuntimeUpdatePreparer(rawTarget);
+    let reloadCalls = 0;
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { titleGeneratorConfigs: [], updateGuardrailModelConfigs: () => {} },
+      prepareToolControlsUpdate: (next) => {
+        const commit = prepareSnapshot(next);
+        return () => {
+          commit();
+          if (next?.tools?.Shell?.enabled === false) writeConfig(dir, winner);
+        };
+      },
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+    });
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    reloadCalls = 0;
+    writeConfig(dir, loser);
+
+    expect(await refresher.refreshIfChanged(true)).toBe(false);
+    expect(config.toolControls).toBeUndefined();
+    expect(rawTarget.toolControls).toBeUndefined();
+    expect(reloadCalls).toBe(0);
+
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    expect(config.toolControls).toEqual(winner.toolControls);
+    expect(rawTarget.toolControls).toEqual(winner.toolControls);
+    expect(reloadCalls).toBe(1);
+  });
+
+  it('toolControls rollback 失败标脏，磁盘等于旧 AppConfig 时下一轮仍强制重放', async () => {
+    const old = {
+      ...structuredClone(OLD),
+      toolControls: { tools: { Shell: { enabled: true } } },
+    };
+    const candidate = {
+      ...structuredClone(OLD),
+      toolControls: { tools: { Shell: { enabled: false } } },
+    };
+    writeConfig(dir, old);
+    const config = structuredClone(old) as unknown as AppConfig;
+    const rawTarget = { toolControls: structuredClone(old.toolControls) };
+    const prepareSnapshot = createToolControlsRuntimeUpdatePreparer(rawTarget);
+    let failOldRollback = true;
+    let reloadCalls = 0;
+    const warns: string[] = [];
+    const refresher = createSharedConfigRefresher({
+      config,
+      processCwd: dir,
+      target: { titleGeneratorConfigs: [], updateGuardrailModelConfigs: () => {} },
+      prepareToolControlsUpdate: (next) => {
+        const commit = prepareSnapshot(next);
+        return () => {
+          if (next?.tools?.Shell?.enabled === false) {
+            commit();
+            writeConfig(dir, old);
+            return;
+          }
+          if (failOldRollback) {
+            failOldRollback = false;
+            throw new Error('tool controls rollback failed');
+          }
+          commit();
+        };
+      },
+      onConfigReloaded: () => {
+        reloadCalls += 1;
+      },
+      logger: { info: () => {}, warn: (message) => warns.push(message) },
+    });
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    reloadCalls = 0;
+    writeConfig(dir, candidate);
+
+    expect(await refresher.refreshIfChanged(true)).toBe(false);
+    expect(config.toolControls).toEqual(old.toolControls);
+    expect(rawTarget.toolControls).toEqual(candidate.toolControls);
+    expect(reloadCalls).toBe(0);
+    expect(warns.some((message) => message.includes('toolControls'))).toBe(true);
+
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    expect(rawTarget.toolControls).toEqual(old.toolControls);
+    expect(reloadCalls).toBe(1);
   });
 });

@@ -7,7 +7,11 @@ import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, SttConfig } from '../app/config.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
-import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import {
+  AdminConfigMutationService,
+  ConfigConflictError,
+  configFingerprint,
+} from '../config/adminConfigMutationService.js';
 import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { ConfigWriteConflictError } from './configWriteLock.js';
@@ -263,6 +267,11 @@ export function createAudioTranscribeAdminRouter(
       await configMutationService.mutate({
         ...mutationRequestContext(req),
         changedPaths: ['stt'],
+        validateBaseline: (freshText) => {
+          if (freshText !== configText) {
+            throw new ConfigConflictError(configFingerprint(parseJsonc(freshText)));
+          }
+        },
         buildCandidate: (freshText) => applyEdits(freshText, modify(freshText, ['stt'], staged, {
           formattingOptions: { insertSpaces: true, tabSize: 2 },
         })),
@@ -270,10 +279,13 @@ export function createAudioTranscribeAdminRouter(
           options.config.stt = candidate.stt;
           await options.onUpdated?.(candidate.stt);
         },
+        ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
       res.json(adminView(options.config));
     } catch (error) {
-      res.status(error instanceof ConfigWriteConflictError ? 409 : 500)
+      res.status(
+        error instanceof ConfigWriteConflictError || error instanceof ConfigConflictError ? 409 : 500,
+      )
         .json({ error: safeErrorMessage(error, staged, req.body) });
     }
   });

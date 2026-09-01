@@ -385,6 +385,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         configMutationService,
         secretVault: runtime.secretVault,
+        requireRevision: true,
         ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
         ...(runtime.validateSharedConfigCandidate
           ? { validateConfigReload: runtime.validateSharedConfigCandidate }
@@ -436,6 +437,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       configMutationService,
+      requireRevision: true,
       ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
       secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,

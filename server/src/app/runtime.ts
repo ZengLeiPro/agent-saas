@@ -181,7 +181,7 @@ import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
 import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js';
+import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -1544,6 +1544,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   configureImageGenPricing(config.imageGenTools?.pricing);
   // 模型解析器：如果配置了 models，则绑定到 RawRuntime、WebChannel 与 Cron。
   // 安全入口解析前强制对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
+  let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
   let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
   let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
@@ -1554,6 +1555,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
     prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next),
+    prepareToolControlsUpdate: (next) => prepareToolControlsRuntimeUpdate(next),
     prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
     prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
@@ -1645,7 +1647,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       providerOptions,
       { codexCredentialManager, codexFetch: egressFetch, codexWebSocketPool },
     ),
-    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: async () => { const refreshed = await sharedConfigRefresher.refreshIfChanged(true); if (refreshed) rawRuntimeConfig.toolControls = config.toolControls; return refreshed; },
+    getSystemPrompt: (id) => systemPromptRegistry.get(id), refreshSharedConfig: () => sharedConfigRefresher.refreshIfChanged(true),
     agentRuntimeProfileResolver,
     ...(userActivityService.available ? { userActivityService } : {}),
     memory: {
@@ -1807,7 +1809,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     logger: serverLogger.child('RawRuntime'),
   };
   const validateToolSettingsConfig = async (settings: Pick<AppConfig, 'toolControls' | 'webTools'>): Promise<void> => { await resolveWebToolsConfig(settings.webTools, secretVault); };
-  prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger }); prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({ target: rawRuntimeConfig, webChannelTarget: webChannelSttRuntime, secretVault }); if (!await sharedConfigRefresher.refreshIfChanged(true)) throw new Error('共享配置启动对齐失败');
+  prepareToolControlsRuntimeUpdate = createToolControlsRuntimeUpdatePreparer(rawRuntimeConfig); prepareWebToolsRuntimeUpdate = createWebToolsRuntimeUpdatePreparer({ target: rawRuntimeConfig, secretVault, logger: serverLogger }); prepareSttRuntimeUpdate = createSttRuntimeUpdatePreparer({ target: rawRuntimeConfig, webChannelTarget: webChannelSttRuntime, secretVault }); if (!await sharedConfigRefresher.refreshIfChanged(true)) throw new Error('共享配置启动对齐失败');
   const applyWebToolsRuntimeUpdate = createWebToolsRuntimeUpdater({ target: rawRuntimeConfig, secretVault, logger: serverLogger });
   const updateToolSettingsConfig = createToolSettingsUpdater({ config, target: rawRuntimeConfig, applyWebTools: applyWebToolsRuntimeUpdate });
   const validateImageGenToolsConfig = async (imageGenTools: AppConfig['imageGenTools']): Promise<void> => { await resolveImageGenToolsConfig(imageGenTools, secretVault); };

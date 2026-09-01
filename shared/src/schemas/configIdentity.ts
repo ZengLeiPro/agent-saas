@@ -43,7 +43,6 @@ export type ConfigIdentityVersionResolution = z.infer<typeof configIdentityVersi
 /** 不可验证原因（机器可读，供 evidence / 测试断言；文本渲染由前端负责）。 */
 export const configIdentityUnverifiableReasonSchema = z.enum([
   'expected_not_bound',
-  'observed_unavailable',
   'secret_ref_version_unresolved',
   'schema_version_unsupported',
 ]);
@@ -109,6 +108,13 @@ export const configIdentitySummarySchema = z
     if (value.status === 'unverifiable' && !value.reason) {
       ctx.addIssue({ code: 'custom', path: ['reason'], message: 'unverifiable requires reason' });
     }
+    if (value.status === 'unverifiable' && !value.observed) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['observed'],
+        message: 'unverifiable requires observed',
+      });
+    }
     if (value.status !== 'unverifiable' && value.reason) {
       ctx.addIssue({
         code: 'custom',
@@ -120,7 +126,6 @@ export const configIdentitySummarySchema = z
       // 原因必须服从 evaluator 的优先级：缺 binding、schema、config drift、版本解析。
       const reasonMatches =
         (value.reason === 'expected_not_bound' && !value.expected && Boolean(value.observed)) ||
-        (value.reason === 'observed_unavailable' && !value.observed) ||
         (value.reason === 'secret_ref_version_unresolved' &&
           Boolean(value.expected) &&
           Boolean(value.observed) &&

@@ -17,7 +17,6 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { parseAppConfig, type AppConfig } from '../app/config.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
-const LOCK_WAIT_MS = 5_000;
 const LOCK_STALE_MS = 120_000;
 const BACKUP_LIMIT = 20;
 
@@ -40,11 +39,17 @@ interface MutationInput {
   actor: string;
   changedPaths: string[];
   expectedFingerprint?: string;
+  /** 锁内、任何 secret/候选副作用前确认完整磁盘基线。 */
+  validateBaseline?: (currentText: string, current: AppConfig) => void | Promise<void>;
   buildCandidate: (
     currentText: string,
     currentRaw: Record<string, unknown>,
   ) => string | Promise<string>;
+  /** 写盘前的 Production 安全门禁与异步候选校验。 */
+  validateCandidate?: (next: AppConfig) => void | Promise<void>;
   applyRuntime: (next: AppConfig, previous: AppConfig) => void | Promise<void>;
+  /** durable/runtime commit 后发布调用方观察面；失败不回滚 durable commit。 */
+  onCommitted?: (candidateText: string) => void | Promise<void>;
 }
 
 function canonicalJson(value: unknown): string {
@@ -69,10 +74,6 @@ function parseRaw(text: string): Record<string, unknown> {
     throw new Error('config.json 根节点必须是对象');
   }
   return parsed as Record<string, unknown>;
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class AdminConfigMutationService {
@@ -108,9 +109,17 @@ export class AdminConfigMutationService {
       if (input.expectedFingerprint && input.expectedFingerprint !== beforeFingerprint) {
         throw new ConfigConflictError(beforeFingerprint);
       }
+      await input.validateBaseline?.(currentText, previousConfig);
+      if (await readFile(this.options.configPath, 'utf8') !== currentText) {
+        throw new ConfigConflictError(beforeFingerprint);
+      }
       const candidateText = await input.buildCandidate(currentText, currentRaw);
       const candidateRaw = parseRaw(candidateText);
       const config = parseAppConfig(candidateRaw);
+      await input.validateCandidate?.(config);
+      if (await readFile(this.options.configPath, 'utf8') !== currentText) {
+        throw new ConfigConflictError(beforeFingerprint);
+      }
       const effectiveConfigFingerprint = configFingerprint(candidateRaw);
       const appliedAt = (this.options.now?.() ?? new Date()).toISOString();
       if (effectiveConfigFingerprint === beforeFingerprint) {
@@ -121,11 +130,11 @@ export class AdminConfigMutationService {
       await this.replaceConfig(candidateText);
       try {
         await input.applyRuntime(config, previousConfig);
-        const readbackRaw = parseRaw(await readFile(this.options.configPath, 'utf8'));
-        if (configFingerprint(readbackRaw) !== effectiveConfigFingerprint) {
-          throw new Error('配置落盘读回指纹不一致');
+        const readbackText = await readFile(this.options.configPath, 'utf8');
+        const readbackRaw = parseRaw(readbackText);
+        if (readbackText !== candidateText || configFingerprint(readbackRaw) !== effectiveConfigFingerprint) {
+          throw new ConfigConflictError(configFingerprint(readbackRaw));
         }
-        await this.options.onCommitted?.(candidateText);
         await this.appendAudit({
           at: appliedAt,
           actor: input.actor,
@@ -138,9 +147,13 @@ export class AdminConfigMutationService {
           backup: basename(backupPath),
         });
       } catch (error) {
-        await this.replaceConfig(currentText);
+        const currentDiskText = await readFile(this.options.configPath, 'utf8').catch(() => undefined);
+        const candidateStillOwned = currentDiskText === candidateText;
+        if (candidateStillOwned) await this.replaceConfig(currentText);
         await Promise.resolve(input.applyRuntime(previousConfig, config)).catch(() => undefined);
-        await Promise.resolve(this.options.onCommitted?.(currentText)).catch(() => undefined);
+        if (candidateStillOwned) {
+          await Promise.resolve(this.options.onCommitted?.(currentText)).catch(() => undefined);
+        }
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: input.actor,
@@ -155,6 +168,9 @@ export class AdminConfigMutationService {
         }).catch(() => undefined);
         throw error;
       }
+      // 身份/观察面发布失败时响应 fail closed，但 durable/runtime commit 保持，供后续强制刷新收敛。
+      await input.onCommitted?.(candidateText);
+      await this.options.onCommitted?.(candidateText);
       await this.pruneBackups();
       return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, appliedAt };
     } finally {
@@ -164,7 +180,6 @@ export class AdminConfigMutationService {
 
   private async acquireLock(): Promise<() => Promise<void>> {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
-    const deadline = Date.now() + LOCK_WAIT_MS;
     while (true) {
       try {
         await mkdir(this.lockPath, { mode: 0o700 });
@@ -191,8 +206,8 @@ export class AdminConfigMutationService {
           await rm(this.lockPath, { recursive: true, force: true });
           continue;
         }
-        if (Date.now() >= deadline) throw new Error('配置正在由另一个进程更新，请稍后重试');
-        await delay(25);
+        const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
+        throw new ConfigConflictError(configFingerprint(parseRaw(currentText)));
       }
     }
   }

@@ -23,6 +23,72 @@ mark_rollback_attempted() {
   fi
 }
 
+emit_rollback_attempted_sentinel() {
+  printf 'AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=%s GITHUB_RUN_ID=%s GITHUB_RUN_ATTEMPT=%s\n' \
+    "$PHASE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+}
+
+# BEGIN deploy rollback cleanup lifecycle
+# EXIT runs after an errexit failure has unwound the deployment function, so the
+# trap may only dispatch through script-scope state and handlers.
+DEPLOY_ROLLBACK_ARMED=false
+DEPLOY_ROLLBACK_HANDLER=
+
+arm_deploy_rollback() {
+  DEPLOY_ROLLBACK_HANDLER="$1"
+  DEPLOY_ROLLBACK_ARMED=true
+  trap deploy_rollback_cleanup EXIT
+  trap 'exit 130' HUP INT TERM
+}
+
+disarm_deploy_rollback() {
+  DEPLOY_ROLLBACK_ARMED=false
+  DEPLOY_ROLLBACK_HANDLER=
+  trap - EXIT HUP INT TERM
+}
+
+deploy_rollback_cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  # Cleanup is one-shot, best-effort, and must run every recovery step even when
+  # the marker or an earlier recovery operation fails. The strict stdout sentinel
+  # is an independent run-attempt-bound receipt when marker installation fails.
+  set +e
+  if [ "$DEPLOY_ROLLBACK_ARMED" = true ]; then
+    local rollback_handler="$DEPLOY_ROLLBACK_HANDLER"
+    DEPLOY_ROLLBACK_ARMED=false
+    DEPLOY_ROLLBACK_HANDLER=
+    emit_rollback_attempted_sentinel
+    mark_rollback_attempted
+    "$rollback_handler"
+  fi
+  return "$exit_status"
+}
+# END deploy rollback cleanup lifecycle
+
+# Rollback state must outlive deploy_acs/deploy_app function scope for EXIT.
+DEPLOY_ACS_ROLLBACK_COMMITTED=false
+DEPLOY_ACS_ROLLBACK_PREVIOUS=
+DEPLOY_ACS_ROLLBACK_ENV_BACKUP=
+DEPLOY_ACS_ROLLBACK_IDENTITY_BACKUP=
+DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_IDENTITY=false
+
+DEPLOY_APP_ROLLBACK_COMMITTED=false
+DEPLOY_APP_ROLLBACK_API_ACTIVE=
+DEPLOY_APP_ROLLBACK_API_IDLE=
+DEPLOY_APP_ROLLBACK_WORKER_ACTIVE=
+DEPLOY_APP_ROLLBACK_WORKER_IDLE=
+DEPLOY_APP_ROLLBACK_API_IDLE_PREVIOUS=
+DEPLOY_APP_ROLLBACK_WORKER_IDLE_PREVIOUS=
+DEPLOY_APP_ROLLBACK_API_ENV=
+DEPLOY_APP_ROLLBACK_WORKER_ENV=
+DEPLOY_APP_ROLLBACK_ROOT=
+DEPLOY_APP_ROLLBACK_HAD_API_ENV=false
+DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV=false
+DEPLOY_APP_ROLLBACK_HAD_NGINX=false
+DEPLOY_APP_ROLLBACK_NGINX_CHANGED=false
+
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
 manifest_digest="$(node -p "require(process.env.MANIFEST_PATH).digest")"
@@ -75,7 +141,6 @@ NODE
 
 deploy_acs() {
   local digest target previous main_pid identity_backup env_backup had_previous_identity candidate
-  local acs_committed=false
   digest="$(node -p "require(process.env.MANIFEST_PATH).components.acs.orchestratorArtifactDigest.slice(7)")"
   target="/opt/agent-saas/acs-releases/$digest"
   previous=""
@@ -103,33 +168,37 @@ deploy_acs() {
     node "$VERIFY_INSTALLED_SCRIPT" --action seal --root "$candidate" --component acs >/dev/null
     mv "$candidate" "$target"
   fi
-  env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id"
-  identity_backup="/etc/agent-saas/acs-release-identity.json.before-$release_id"
-  [ -e "$env_backup" ] || cp -a /etc/agent-saas/acs-orchestrator.env "$env_backup"
+  env_backup="/etc/agent-saas/acs-orchestrator.env.before-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  identity_backup="/etc/agent-saas/acs-release-identity.json.before-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  rm -f "$env_backup" "$identity_backup"
+  cp -a /etc/agent-saas/acs-orchestrator.env "$env_backup"
   had_previous_identity=false
   if [ -e /etc/agent-saas/acs-release-identity.json ]; then
     had_previous_identity=true
-    [ -e "$identity_backup" ] || cp -a /etc/agent-saas/acs-release-identity.json "$identity_backup"
+    cp -a /etc/agent-saas/acs-release-identity.json "$identity_backup"
   fi
+  DEPLOY_ACS_ROLLBACK_COMMITTED=false
+  DEPLOY_ACS_ROLLBACK_PREVIOUS="$previous"
+  DEPLOY_ACS_ROLLBACK_ENV_BACKUP="$env_backup"
+  DEPLOY_ACS_ROLLBACK_IDENTITY_BACKUP="$identity_backup"
+  DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_IDENTITY="$had_previous_identity"
   cleanup_acs_failure() {
-    if [ "$acs_committed" = false ]; then
-      mark_rollback_attempted
-      if [ -n "$previous" ]; then
-        ln -sfn "$previous" /opt/agent-saas/acs-current
+    if [ "$DEPLOY_ACS_ROLLBACK_COMMITTED" = false ]; then
+      if [ -n "$DEPLOY_ACS_ROLLBACK_PREVIOUS" ]; then
+        ln -sfn "$DEPLOY_ACS_ROLLBACK_PREVIOUS" /opt/agent-saas/acs-current || true
       else
-        rm -f /opt/agent-saas/acs-current
+        rm -f /opt/agent-saas/acs-current || true
       fi
-      cp -a "$env_backup" /etc/agent-saas/acs-orchestrator.env
-      if [ "$had_previous_identity" = true ]; then
-        cp -a "$identity_backup" /etc/agent-saas/acs-release-identity.json
+      cp -a "$DEPLOY_ACS_ROLLBACK_ENV_BACKUP" /etc/agent-saas/acs-orchestrator.env || true
+      if [ "$DEPLOY_ACS_ROLLBACK_HAD_PREVIOUS_IDENTITY" = true ]; then
+        cp -a "$DEPLOY_ACS_ROLLBACK_IDENTITY_BACKUP" /etc/agent-saas/acs-release-identity.json || true
       else
-        rm -f /etc/agent-saas/acs-release-identity.json
+        rm -f /etc/agent-saas/acs-release-identity.json || true
       fi
       systemctl restart agent-saas-acs-orchestrator.service || true
     fi
   }
-  trap cleanup_acs_failure EXIT
-  trap 'exit 130' HUP INT TERM
+  arm_deploy_rollback cleanup_acs_failure
   node - "$MANIFEST_PATH" /etc/agent-saas/acs-orchestrator.env <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
@@ -185,8 +254,8 @@ NODE
   then
     exit 20
   fi
-  acs_committed=true
-  trap - EXIT HUP INT TERM
+  DEPLOY_ACS_ROLLBACK_COMMITTED=true
+  disarm_deploy_rollback
 }
 
 other_color() { [ "$1" = blue ] && echo green || echo blue; }
@@ -195,7 +264,7 @@ port_for_color() { [ "$1" = blue ] && echo 3200 || echo 3201; }
 deploy_app() {
   local artifact_digest target api_active api_idle api_idle_port worker_active worker_idle old_api_pid old_worker_pid
   local api_idle_previous worker_idle_previous api_env worker_env rollback_root
-  local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false app_committed=false
+  local had_api_env=false had_worker_env=false had_nginx=false nginx_changed=false
   artifact_digest="$(node -p "require(process.env.MANIFEST_PATH).components.api.artifactDigest.slice(7)")"
   target="/opt/agent-saas-app/releases/$artifact_digest"
   if [ -d "$target" ]; then
@@ -224,7 +293,7 @@ deploy_app() {
   worker_idle_previous="$(readlink -f "/opt/agent-saas-app/worker/$worker_idle" 2>/dev/null || true)"
   api_env="/etc/agent-saas/server-$api_idle.release.env"
   worker_env="/etc/agent-saas/runtime-worker-$worker_idle.release.env"
-  rollback_root="/tmp/agent-saas-app-rollback-$release_id-$GITHUB_RUN_ID"
+  rollback_root="/tmp/agent-saas-app-rollback-$release_id-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   rm -rf "$rollback_root"
   mkdir -p "$rollback_root"
   if [ -e "$api_env" ]; then
@@ -235,11 +304,35 @@ deploy_app() {
     had_worker_env=true
     cp -a "$worker_env" "$rollback_root/worker.release.env"
   fi
+  DEPLOY_APP_ROLLBACK_COMMITTED=false
+  DEPLOY_APP_ROLLBACK_API_ACTIVE="$api_active"
+  DEPLOY_APP_ROLLBACK_API_IDLE="$api_idle"
+  DEPLOY_APP_ROLLBACK_WORKER_ACTIVE="$worker_active"
+  DEPLOY_APP_ROLLBACK_WORKER_IDLE="$worker_idle"
+  DEPLOY_APP_ROLLBACK_API_IDLE_PREVIOUS="$api_idle_previous"
+  DEPLOY_APP_ROLLBACK_WORKER_IDLE_PREVIOUS="$worker_idle_previous"
+  DEPLOY_APP_ROLLBACK_API_ENV="$api_env"
+  DEPLOY_APP_ROLLBACK_WORKER_ENV="$worker_env"
+  DEPLOY_APP_ROLLBACK_ROOT="$rollback_root"
+  DEPLOY_APP_ROLLBACK_HAD_API_ENV="$had_api_env"
+  DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV="$had_worker_env"
+  DEPLOY_APP_ROLLBACK_HAD_NGINX=false
+  DEPLOY_APP_ROLLBACK_NGINX_CHANGED=false
   cleanup_app_failure() {
     local api_restored=false worker_restored=false
     local rollback_pid rollback_ready
+    local app_committed="$DEPLOY_APP_ROLLBACK_COMMITTED"
+    local api_active="$DEPLOY_APP_ROLLBACK_API_ACTIVE" api_idle="$DEPLOY_APP_ROLLBACK_API_IDLE"
+    local worker_active="$DEPLOY_APP_ROLLBACK_WORKER_ACTIVE" worker_idle="$DEPLOY_APP_ROLLBACK_WORKER_IDLE"
+    local api_idle_previous="$DEPLOY_APP_ROLLBACK_API_IDLE_PREVIOUS"
+    local worker_idle_previous="$DEPLOY_APP_ROLLBACK_WORKER_IDLE_PREVIOUS"
+    local api_env="$DEPLOY_APP_ROLLBACK_API_ENV" worker_env="$DEPLOY_APP_ROLLBACK_WORKER_ENV"
+    local rollback_root="$DEPLOY_APP_ROLLBACK_ROOT"
+    local had_api_env="$DEPLOY_APP_ROLLBACK_HAD_API_ENV"
+    local had_worker_env="$DEPLOY_APP_ROLLBACK_HAD_WORKER_ENV"
+    local had_nginx="$DEPLOY_APP_ROLLBACK_HAD_NGINX"
+    local nginx_changed="$DEPLOY_APP_ROLLBACK_NGINX_CHANGED"
     if [ "$app_committed" = false ]; then
-      mark_rollback_attempted
       # 清除旧 API drain 状态并恢复 ready，再翻回 nginx；只有流量确认回旧色后才停候选与恢复其 env。
       rm -f "/run/agent-saas-server-$api_active.pid" \
         "/run/agent-saas-server-$api_active.ready" \
@@ -321,17 +414,24 @@ deploy_app() {
       fi
     fi
   }
-  trap cleanup_app_failure EXIT
-  trap 'exit 130' HUP INT TERM
+  arm_deploy_rollback cleanup_app_failure
   ln -sfn "$target" "/opt/agent-saas-app/color/$api_idle"
   ln -sfn "$target" "/opt/agent-saas-app/worker/$worker_idle"
   # TASK-318：发布前对主机实际配置计算 expected config identity（同一实现于
   # 运行期 observed identity；含受管 inline secret 的 production fail-closed）。
-  config_identity="$(node "$target/server/dist/config-identity-cli.js" \
+  # 候选 CLI 不继承 rollback receipt 元数据，stderr 也加前缀后再回放，避免普通诊断
+  # 碰巧形成 Workflow 识别的裸 sentinel。恶意 root 制品仍属于既有发布信任边界。
+  config_identity="$(env \
+    -u PHASE \
+    -u GITHUB_RUN_ID \
+    -u GITHUB_RUN_ATTEMPT \
+    -u ROLLBACK_ATTEMPTED_MARKER \
+    node "$target/server/dist/config-identity-cli.js" \
     --config /etc/agent-saas/config.json --environment production \
     --process-cwd "$target/server" \
     --runtime-data-dir /mnt/agent-saas/server-data \
-    --env-file /etc/agent-saas/server.env)"
+    --env-file /etc/agent-saas/server.env \
+    2> >(sed 's/^/[config-identity-cli] /' >&2))"
   upsert_env "$MANIFEST_PATH" "$api_env" api "$config_identity"
   upsert_env "$MANIFEST_PATH" "$worker_env" worker "$config_identity"
 
@@ -359,9 +459,11 @@ NODE
 
   if [ -e /etc/nginx/conf.d/agent-saas-upstream.conf ]; then
     had_nginx=true
+    DEPLOY_APP_ROLLBACK_HAD_NGINX=true
     cp -a /etc/nginx/conf.d/agent-saas-upstream.conf "$rollback_root/nginx-upstream.conf"
   fi
   nginx_changed=true
+  DEPLOY_APP_ROLLBACK_NGINX_CHANGED=true
   cat > /etc/nginx/conf.d/agent-saas-upstream.conf <<EOF
 # active=$api_idle release=$release_id
 upstream agent_saas_backend {
@@ -405,8 +507,8 @@ EOF
     kill -USR2 "$old_api_pid"
   fi
   systemctl disable "agent-saas-server@$api_active" "agent-saas-runtime-worker@$worker_active"
-  app_committed=true
-  trap - EXIT HUP INT TERM
+  DEPLOY_APP_ROLLBACK_COMMITTED=true
+  disarm_deploy_rollback
 }
 
 if [ "$PHASE" = acs ]; then deploy_acs; else deploy_app; fi

@@ -40,6 +40,24 @@ const relationshipContradictions = JSON.parse(
     new URL('./fixtures/config-identity-relationship-contradictions.json', import.meta.url),
   ),
 );
+const configIdentityCases = JSON.parse(
+  readFileSync(new URL('./fixtures/config-identity-summary-cases.json', import.meta.url), 'utf8'),
+).cases;
+
+for (const fixtureCase of configIdentityCases) {
+  test(`release evidence Config Identity fixture ${fixtureCase.valid.releaseEvidence ? 'accepts' : 'rejects'} ${fixtureCase.name}`, () => {
+    const value = structuredClone(createValidReleaseEvidence());
+    value.configIdentity = structuredClone(fixtureCase.summary);
+    const { evidenceDigest: _previousDigest, ...body } = value;
+    value.evidenceDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+
+    if (fixtureCase.valid.releaseEvidence) {
+      assert.deepEqual(validateReleaseEvidenceDocument(value).configIdentity, fixtureCase.summary);
+    } else {
+      assert.throws(() => validateReleaseEvidenceDocument(value), /schema is invalid/u);
+    }
+  });
+}
 
 const invalidMutations = [
   ...Object.entries(relationshipContradictions).map(([name, summary]) => [

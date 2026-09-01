@@ -27,6 +27,7 @@ import {
 } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
+import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
 import {
   finalizeSharedConfigTransaction,
   type SharedConfigCommitStep,
@@ -164,6 +165,8 @@ export function createSharedConfigRefresher(params: {
   prepareWebToolsUpdate?: (
     next: AppConfig['webTools'],
   ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
+  /** toolControls 两阶段更新：准备 RawRuntime 快照，候选确认后再同步提交。 */
+  prepareToolControlsUpdate?: (next: AppConfig['toolControls']) => ToolControlsRuntimeUpdateCommit;
   /** STT 两阶段更新：SecretVault 解析成功后返回无副作用的执行侧 commit。 */
   prepareSttUpdate?: (
     next: AppConfig['stt'],
@@ -188,6 +191,7 @@ export function createSharedConfigRefresher(params: {
     processCwd,
     target,
     prepareSystemPromptOverridesUpdate,
+    prepareToolControlsUpdate,
     prepareWebToolsUpdate,
     prepareSttUpdate,
     onModelsUpdated,
@@ -258,6 +262,7 @@ export function createSharedConfigRefresher(params: {
     if (label === 'models/title/guardrail/pricing') {
       for (const key of MODEL_CHANGE_KEYS) dirtyConfigChanges.add(key);
     } else if (label === 'system prompts') dirtyConfigChanges.add('systemPrompts');
+    else if (label === 'tool controls') dirtyConfigChanges.add('toolControls');
     else if (label === 'stt') dirtyConfigChanges.add('stt');
     else if (label === 'web tools') dirtyConfigChanges.add('webTools');
     else if (label === 'AppConfig') {
@@ -365,6 +370,8 @@ export function createSharedConfigRefresher(params: {
     rollbackModels?: ModelsHotUpdateCommit;
     candidateSystemPrompts?: () => void;
     rollbackSystemPrompts?: () => void;
+    candidateToolControls?: ToolControlsRuntimeUpdateCommit;
+    rollbackToolControls?: ToolControlsRuntimeUpdateCommit;
     candidateStt?: SttRuntimeUpdateCommit;
     rollbackStt?: SttRuntimeUpdateCommit;
     candidateWebTools?: WebToolsRuntimeUpdateCommit;
@@ -376,6 +383,7 @@ export function createSharedConfigRefresher(params: {
     };
     addStep('models/title/guardrail/pricing', params.candidateModels, params.rollbackModels);
     addStep('system prompts', params.candidateSystemPrompts, params.rollbackSystemPrompts);
+    addStep('tool controls', params.candidateToolControls, params.rollbackToolControls);
     addStep('stt', params.candidateStt, params.rollbackStt);
     addStep('web tools', params.candidateWebTools, params.rollbackWebTools);
     steps.push({
@@ -437,6 +445,8 @@ export function createSharedConfigRefresher(params: {
     let rollbackModels: ModelsHotUpdateCommit | undefined;
     let candidateSystemPrompts: (() => void) | undefined;
     let rollbackSystemPrompts: (() => void) | undefined;
+    let candidateToolControls: ToolControlsRuntimeUpdateCommit | undefined;
+    let rollbackToolControls: ToolControlsRuntimeUpdateCommit | undefined;
     try {
       nextConfig = parseAppConfig(parseJsonc(snapshot.text));
       if (config.models && !nextConfig.models) {
@@ -475,6 +485,10 @@ export function createSharedConfigRefresher(params: {
           previousConfig.systemPrompts ?? {},
         );
       }
+      if (changes.toolControls && prepareToolControlsUpdate) {
+        candidateToolControls = prepareToolControlsUpdate(nextConfig.toolControls);
+        rollbackToolControls = prepareToolControlsUpdate(previousConfig.toolControls);
+      }
     } catch (error) {
       warnConfigReload(error);
       return false;
@@ -502,6 +516,8 @@ export function createSharedConfigRefresher(params: {
         rollbackModels: resolvedRollbackModels ?? rollbackModels,
         candidateSystemPrompts,
         rollbackSystemPrompts,
+        candidateToolControls,
+        rollbackToolControls,
         candidateWebTools: resolvedCandidateWebTools,
         rollbackWebTools: resolvedRollbackWebTools,
         candidateStt: resolvedCandidateStt,

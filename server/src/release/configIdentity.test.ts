@@ -332,16 +332,23 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
   });
 
   it('signedUrl 的路径型 token 整值只进入 opaque digest', () => {
-    const withSignedUrl = (token: string) => baseConfig({
-      serverRemote: {
-        baseUrl: 'https://hand.example.com',
-        authTokenRef: 'hand-ref',
-        recipe: {
-          repo: { url: 'https://git.example.com/repo.git' },
-          files: [{ artifactId: 'a1', path: '/tmp/a', signedUrl: `https://objects.example.com/download/${token}` }],
+    const withSignedUrl = (token: string) =>
+      baseConfig({
+        serverRemote: {
+          baseUrl: 'https://hand.example.com',
+          authTokenRef: 'hand-ref',
+          recipe: {
+            repo: { url: 'https://git.example.com/repo.git' },
+            files: [
+              {
+                artifactId: 'a1',
+                path: '/tmp/a',
+                signedUrl: `https://objects.example.com/download/${token}`,
+              },
+            ],
+          },
         },
-      },
-    });
+      });
     const first = withSignedUrl('path-bearer-token-one');
     const second = withSignedUrl('path-bearer-token-two');
     const serialized = JSON.stringify(buildCanonicalConfigProjection(first).projection);
@@ -353,14 +360,25 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
   });
 
   it('数据库行为字段安全进入投影：等价默认端口稳定，port/protocol/options 变化改变 identity', () => {
-    const connection = (connectionString: string) => baseConfig({
-      runtimeEventStore: { backend: 'pg' as const, connectionString },
-    });
-    const implicitDefault = connection('postgres://user:secret@db.internal/runtime?sslmode=require&connect_timeout=5&token=query-secret-one');
-    const explicitDefault = connection('postgresql://user:other-secret@db.internal:5432/runtime?connect_timeout=5&sslmode=require&token=query-secret-two');
-    const pooler = connection('postgresql://user:secret@db.internal:6432/runtime?sslmode=require&connect_timeout=5');
-    const differentTls = connection('postgresql://user:secret@db.internal:5432/runtime?sslmode=verify-full&connect_timeout=5');
-    const differentChannelBinding = connection('postgresql://user:secret@db.internal:5432/runtime?sslmode=require&connect_timeout=5&channel_binding=require');
+    const connection = (connectionString: string) =>
+      baseConfig({
+        runtimeEventStore: { backend: 'pg' as const, connectionString },
+      });
+    const implicitDefault = connection(
+      'postgres://user:secret@db.internal/runtime?sslmode=require&connect_timeout=5&token=query-secret-one',
+    );
+    const explicitDefault = connection(
+      'postgresql://user:other-secret@db.internal:5432/runtime?connect_timeout=5&sslmode=require&token=query-secret-two',
+    );
+    const pooler = connection(
+      'postgresql://user:secret@db.internal:6432/runtime?sslmode=require&connect_timeout=5',
+    );
+    const differentTls = connection(
+      'postgresql://user:secret@db.internal:5432/runtime?sslmode=verify-full&connect_timeout=5',
+    );
+    const differentChannelBinding = connection(
+      'postgresql://user:secret@db.internal:5432/runtime?sslmode=require&connect_timeout=5&channel_binding=require',
+    );
     const serialized = JSON.stringify(buildCanonicalConfigProjection(implicitDefault).projection);
 
     expect(digestOf(implicitDefault)).toBe(digestOf(explicitDefault));

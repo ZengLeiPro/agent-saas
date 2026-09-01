@@ -380,8 +380,25 @@ jobs:
             echo 'ACS already equals the immutable target; keep without restart'
             exit 0
           fi
+          rollback_output="$RUNNER_TEMP/deploy-acs-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-acs"
+          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=acs GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+          rm -f "$rollback_output" "$rollback_local_marker"
+          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=acs RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-acs' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            2>&1 | tee "$rollback_output"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
+            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
+              echo 'WARN: failed to persist ACS runner rollback-attempted fallback marker' >&2
+            fi
+          fi
+          if [ "${pipeline_status[0]}" -ne 0 ]; then
+            exit "${pipeline_status[0]}"
+          fi
+          exit "${pipeline_status[1]}"
 
       - name: Persist ACS operation receipt
         id: receipt_acs
@@ -441,8 +458,25 @@ jobs:
             echo 'API and Runtime Worker already equal the immutable target; keep without cutover'
             exit 0
           fi
+          rollback_output="$RUNNER_TEMP/deploy-app-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          rollback_local_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-app"
+          rollback_sentinel="AGENT_SAAS_ROLLBACK_ATTEMPTED PHASE=app GITHUB_RUN_ID=$GITHUB_RUN_ID GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT"
+          rm -f "$rollback_output" "$rollback_local_marker"
+          set +e
           ssh -i ~/.ssh/production_key "$ECS_USER@$ECS_HOST" \
-            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' bash '$PROMOTION_REMOTE/deploy-production-release.sh'"
+            "sudo PHASE=app RELEASE_DIR='$PROMOTION_REMOTE/artifacts' MANIFEST_PATH='$PROMOTION_REMOTE/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' VERIFY_INSTALLED_SCRIPT='$PROMOTION_REMOTE/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' ROLLBACK_ATTEMPTED_MARKER='$PROMOTION_REMOTE/rollback-attempted-app' bash '$PROMOTION_REMOTE/deploy-production-release.sh'" \
+            2>&1 | tee "$rollback_output"
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          if grep -Fx -- "$rollback_sentinel" "$rollback_output" >/dev/null; then
+            if ! install -m 0600 /dev/null "$rollback_local_marker"; then
+              echo 'WARN: failed to persist App runner rollback-attempted fallback marker' >&2
+            fi
+          fi
+          if [ "${pipeline_status[0]}" -ne 0 ]; then
+            exit "${pipeline_status[0]}"
+          fi
+          exit "${pipeline_status[1]}"
 
       - name: Persist API and Worker operation receipts
         id: receipt_app
@@ -650,10 +684,12 @@ jobs:
             external_side_effects=unknown
           fi
           rollback_attempted=false
-          web_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-web"
-          if [ -f "$web_rollback_attempted_marker" ]; then
-            rollback_attempted=true
-          fi
+          for component in web acs app; do
+            local_rollback_attempted_marker="$RUNNER_TEMP/rollback-attempted-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$component"
+            if [ -f "$local_rollback_attempted_marker" ]; then
+              rollback_attempted=true
+            fi
+          done
           # Remote rollback evidence is best-effort: missing SSH setup, an unset remote,
           # or an unreachable host means no observed marker, never a reconciliation-step failure.
           if [ -n "${PROMOTION_REMOTE:-}" ] && [ -n "${ECS_HOST:-}" ] && \

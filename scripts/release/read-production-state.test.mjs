@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   productionObservationUrl,
+  validateConfigIdentitySummary,
   validateExpectedConfigIdentityObservers,
   validateProductionObservations,
 } from './read-production-state.mjs';
@@ -13,6 +14,9 @@ const WEB = `sha256:${'2'.repeat(64)}`;
 const ORCH = `sha256:${'3'.repeat(64)}`;
 const IMAGE = `sha256:${'4'.repeat(64)}`;
 const FINGERPRINT = `sha256:${'5'.repeat(64)}`;
+const configIdentityCases = JSON.parse(
+  readFileSync(new URL('./fixtures/config-identity-summary-cases.json', import.meta.url), 'utf8'),
+).cases;
 
 function observations() {
   const components = {
@@ -60,6 +64,16 @@ function observations() {
       configFingerprint: FINGERPRINT,
     },
   };
+}
+
+for (const fixtureCase of configIdentityCases) {
+  test(`Config Identity fixture ${fixtureCase.valid.productionState ? 'accepts' : 'rejects'} ${fixtureCase.name}`, () => {
+    if (fixtureCase.valid.productionState) {
+      assert.deepEqual(validateConfigIdentitySummary(fixtureCase.summary), fixtureCase.summary);
+    } else {
+      assert.throws(() => validateConfigIdentitySummary(fixtureCase.summary), /config identity/u);
+    }
+  });
 }
 
 test('cross-validates API, Worker topology, Web snapshot and ACS identities', () => {

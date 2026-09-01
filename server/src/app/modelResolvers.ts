@@ -16,10 +16,14 @@ import { getTenantPublicModelList, isModelAllowedForTenant, resolveModelRef } fr
 import type { TenantStore } from '../data/tenants/store.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
-import { createSharedConfigRefresher, type SharedConfigRefresher } from './sharedConfigRefresher.js';
+import {
+  createSharedConfigRefresher,
+  type SharedConfigRefresher,
+} from './sharedConfigRefresher.js';
 import { applyModelsHotUpdate, prepareModelsHotUpdate } from './modelsHotUpdate.js';
 import type { WebToolsRuntimeUpdateCommit } from './webToolsRuntimeUpdate.js';
 import type { SttRuntimeUpdateCommit } from './sttRuntimeUpdate.js';
+import type { ToolControlsRuntimeUpdateCommit } from './toolControlsRuntimeUpdate.js';
 
 export type ModelResolver = (
   ref: string,
@@ -50,13 +54,13 @@ export function createModelResolvers(params: {
   /** 模型配置跨进程刷新后，替换门禁模型链。 */
   onGuardrailModelConfigsUpdated: (next: GuardrailModelConfig[]) => void;
   /** config.json 中系统提示语先规范化，再返回无失败的注册表提交。 */
-  prepareSystemPromptOverridesUpdate: (
-    next: NonNullable<AppConfig['systemPrompts']>,
-  ) => () => void;
+  prepareSystemPromptOverridesUpdate: (next: NonNullable<AppConfig['systemPrompts']>) => () => void;
   /** webTools 变化后准备无副作用的执行侧提交；配置候选确认后再原子应用。 */
   prepareWebToolsUpdate?: (
     next: AppConfig['webTools'],
   ) => WebToolsRuntimeUpdateCommit | Promise<WebToolsRuntimeUpdateCommit>;
+  /** toolControls 变化后准备 RawRuntime 快照提交；配置候选确认后再原子应用。 */
+  prepareToolControlsUpdate?: (next: AppConfig['toolControls']) => ToolControlsRuntimeUpdateCommit;
   /** STT 变化后准备无副作用的执行侧提交；配置候选确认后再原子应用。 */
   prepareSttUpdate?: (
     next: AppConfig['stt'],
@@ -91,6 +95,9 @@ export function createModelResolvers(params: {
       updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
     },
     prepareSystemPromptOverridesUpdate: params.prepareSystemPromptOverridesUpdate,
+    ...(params.prepareToolControlsUpdate
+      ? { prepareToolControlsUpdate: params.prepareToolControlsUpdate }
+      : {}),
     ...(params.prepareWebToolsUpdate
       ? { prepareWebToolsUpdate: params.prepareWebToolsUpdate }
       : {}),

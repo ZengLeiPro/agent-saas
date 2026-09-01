@@ -17,10 +17,10 @@ const POST_MUTATION_TAIL_STATES = new Set([
 const POST_MUTATION_TRANSITIONS = new Map([
   ['approved', new Set(['promoting', 'failed_before_change', 'needs_human'])],
   ['failed_before_change', new Set(['approved', 'failed_before_change', 'needs_human'])],
-  ['promoting', new Set(['partial_failed', 'needs_human', 'rolled_back'])],
+  ['promoting', new Set(['failed_before_change', 'partial_failed', 'needs_human', 'rolled_back'])],
   ['partial_failed', new Set(['rolled_back'])],
-  // Existing controlled needs_human recovery may be re-approved directly. An authoritative
-  // operator recovery may instead append rolled_back before a new approval.
+  // Controlled needs_human recovery may be re-approved directly. An authoritative operator
+  // recovery may instead append rolled_back before a new approval.
   ['needs_human', new Set(['approved', 'needs_human', 'rolled_back'])],
   ['rolled_back', new Set(['approved'])],
 ]);

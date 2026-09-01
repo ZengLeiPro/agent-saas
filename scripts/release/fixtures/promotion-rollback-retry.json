@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "fixturePurpose": "promotion reconciliation, recovery, and reviewed retry state-machine closure",
   "manifestActions": {
     "apiAction": "deploy",
     "runtimeWorkerAction": "deploy"
@@ -94,6 +95,29 @@
     { "state": "promoting", "operationKey": "promoting:fixture-1" }
   ],
   "recoveryStates": ["partial_failed", "needs_human"],
+  "failedBeforeChangeRetry": {
+    "releaseId": "rc-20260831-01",
+    "manifestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor": "release-fixture",
+    "initialAttestations": [
+      { "state": "built", "operationKey": "build:failed-before-change" },
+      { "state": "staging_deployed", "operationKey": "staging:failed-before-change" },
+      { "state": "verified", "operationKey": "verified:failed-before-change" },
+      { "state": "approved", "operationKey": "approval:failed-before-change:1" },
+      { "state": "promoting", "operationKey": "promoting:failed-before-change:1" }
+    ],
+    "reconcile": {
+      "observationComplete": true,
+      "rollbackAttempted": false,
+      "operationKey": "reconcile:failed-before-change:1",
+      "expectedOutcome": "failed_before_change"
+    },
+    "retry": {
+      "expectedMode": "retry_after_change",
+      "approvalOperationKey": "approval:failed-before-change:2",
+      "promotingOperationKey": "promoting:failed-before-change:2"
+    }
+  },
   "illegalTails": [
     [
       { "state": "verified", "operationKey": "verified:fixture" },

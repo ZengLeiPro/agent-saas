@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadToolDescription } from '../agent/tools/descriptionLoader.js';
 import { parseAppConfig, type AppConfig } from '../app/config.js';
 import { createSharedConfigRefresher } from '../app/sharedConfigRefresher.js';
+import { createToolControlsRuntimeUpdatePreparer } from '../app/toolControlsRuntimeUpdate.js';
 import {
   createRawApprovalResumeDispatch,
   createRawInteractionResumeDispatch,
@@ -53,53 +54,74 @@ describe('runtime toolControls shared refresh', () => {
     await writeFile(configPath, JSON.stringify(rawConfig(), null, 2), 'utf-8');
 
     const appConfig = parseAppConfig(rawConfig());
-    const refresher = createSharedConfigRefresher({
-      config: appConfig,
-      processCwd,
-      target: { updateGuardrailModelConfigs: () => {} },
-      minStatIntervalMs: 0,
-    });
     const adapter = new TextOnlyAdapter('完成');
-    let dispatchConfig: RawRuntimeRunDispatchConfig;
-    dispatchConfig = {
+    const dispatchConfig: RawRuntimeRunDispatchConfig = {
       agentCwd,
       sharedDir: SHARED_DIR,
       memory: { enabled: false },
       modelAdapterFactory: () => adapter,
       toolControls: appConfig.toolControls,
-      refreshSharedConfig: () => {
-        refresher.refreshIfChanged();
-        dispatchConfig.toolControls = appConfig.toolControls;
-      },
     };
+    const refresher = createSharedConfigRefresher({
+      config: appConfig,
+      processCwd,
+      target: { updateGuardrailModelConfigs: () => {} },
+      prepareToolControlsUpdate: createToolControlsRuntimeUpdatePreparer(dispatchConfig),
+      minStatIntervalMs: 0,
+    });
+    dispatchConfig.refreshSharedConfig = () => refresher.refreshIfChanged();
     const dispatch = createRawRuntimeRunDispatch(dispatchConfig);
-    const run = (chatId: string) => consume(dispatch(
-      { channel: 'web', chatId, content: '检查工具描述' },
-      { channel: 'web', user: { id: 'admin-1', username: 'admin', role: 'admin', tenantId: 'tenant-tool-controls' } },
-      {
-        modelConnection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid' },
-        executionTarget: 'server-local',
-        skipSystemPrompt: true,
-        maxTurns: 1,
-      },
-    ));
+    const run = (chatId: string) =>
+      consume(
+        dispatch(
+          { channel: 'web', chatId, content: '检查工具描述' },
+          {
+            channel: 'web',
+            user: {
+              id: 'admin-1',
+              username: 'admin',
+              role: 'admin',
+              tenantId: 'tenant-tool-controls',
+            },
+          },
+          {
+            modelConnection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid' },
+            executionTarget: 'server-local',
+            skipSystemPrompt: true,
+            maxTurns: 1,
+          },
+        ),
+      );
 
     const replacement = {
       tools: {
         Write: { descriptionOverride: { mode: 'replace' as const, text: REPLACEMENT } },
+        Shell: { enabled: false },
       },
     } satisfies NonNullable<AppConfig['toolControls']>;
     await writeFile(configPath, JSON.stringify(rawConfig(replacement), null, 2), 'utf-8');
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    expect(dispatchConfig.toolControls).toEqual(replacement);
     await run('replace-description');
 
-    expect(adapter.requests.at(-1)?.tools.find((tool) => tool.name === 'Write')?.description)
-      .toBe(REPLACEMENT);
+    expect(adapter.requests.at(-1)?.tools.find((tool) => tool.name === 'Write')?.description).toBe(
+      REPLACEMENT,
+    );
+    expect(adapter.requests.at(-1)?.tools.some((tool) => tool.name === 'Shell')).toBe(false);
 
-    await writeFile(configPath, JSON.stringify(rawConfig(undefined, 'Asia/Shanghai'), null, 2), 'utf-8');
+    await writeFile(
+      configPath,
+      JSON.stringify(rawConfig(undefined, 'Asia/Shanghai'), null, 2),
+      'utf-8',
+    );
+    expect(await refresher.refreshIfChanged(true)).toBe(true);
+    expect(dispatchConfig.toolControls).toBeUndefined();
     await run('clear-description');
 
-    expect(adapter.requests.at(-1)?.tools.find((tool) => tool.name === 'Write')?.description)
-      .toBe(loadToolDescription('Write'));
+    expect(adapter.requests.at(-1)?.tools.find((tool) => tool.name === 'Write')?.description).toBe(
+      loadToolDescription('Write'),
+    );
+    expect(adapter.requests.at(-1)?.tools.some((tool) => tool.name === 'Shell')).toBe(true);
   });
 
   it('approval resume、interaction resume 与 scheduler wake 都先刷新共享配置', async () => {
@@ -112,12 +134,16 @@ describe('runtime toolControls shared refresh', () => {
       refreshSharedConfig,
     };
 
-    await consume(createRawApprovalResumeDispatch(config)({
-      context: { channel: 'cron' },
-    } as never));
-    await consume(createRawInteractionResumeDispatch(config)({
-      context: { channel: 'cron' },
-    } as never));
+    await consume(
+      createRawApprovalResumeDispatch(config)({
+        context: { channel: 'cron' },
+      } as never),
+    );
+    await consume(
+      createRawInteractionResumeDispatch(config)({
+        context: { channel: 'cron' },
+      } as never),
+    );
     const missingRun: RunRecord = {
       runId: 'run-missing',
       sessionId: 'session-missing',
@@ -126,7 +152,9 @@ describe('runtime toolControls shared refresh', () => {
       updatedAt: '2026-08-16T00:00:00.000Z',
       metadata: {},
     };
-    await expect(wakeRuntimeSession(config, missingRun)).rejects.toThrow('session metadata not found');
+    await expect(wakeRuntimeSession(config, missingRun)).rejects.toThrow(
+      'session metadata not found',
+    );
 
     expect(refreshSharedConfig).toHaveBeenCalledTimes(3);
   });

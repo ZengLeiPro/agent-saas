@@ -109,6 +109,14 @@ if [ "\${ROLLBACK_FAIL_MATCH:-}" = 'systemctl daemon-reload' ]; then exit 42; fi
       SNAT_ROLLBACK_DIGEST: `sha256:${'a'.repeat(64)}`,
       SNAT_ROLLBACK_PREPARED: 'false',
       SNAT_ROLLBACK_OFFLINE_RESTORE: 'false',
+      PROCESS_REPLACED: 'true',
+      PRODUCTION_CLEANUP_ARMED: 'true',
+      RELEASE_TGZ: join(root, 'unused-release.tgz'),
+      SMOKE_SESSION: '',
+      SMOKE_WORKSPACE_DIR: '',
+      SMOKE_CLEANUP_ERROR: join(root, 'smoke-cleanup.err'),
+      RUNTIME_PREFLIGHT_DIR: '',
+      IMAGE: `registry.example.com/agent-saas@sha256:${'f'.repeat(64)}`,
       ROLLBACK_HEALTH_ATTEMPTS: '1',
       ROLLBACK_HEALTH_INTERVAL_SECONDS: '0',
     },
@@ -124,7 +132,7 @@ async function runRollback(failure = '') {
   return { ...value, result, log: await readFile(value.files.log, 'utf8') };
 }
 
-test('ACS direct EXIT trap restores every boundary and preserves the original deploy status', async () => {
+test('production cleanup EXIT trap restores every boundary after an unwrapped failure', async () => {
   const value = await runRollback();
   assert.equal(value.result.status, 1, value.result.stderr);
   assert.match(value.log, /cp .*acs\.env\.bak/u);

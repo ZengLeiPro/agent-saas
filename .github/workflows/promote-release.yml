@@ -119,6 +119,25 @@ jobs:
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
+          # 上一次 runner 若在 durable promoting marker 与最终 outcome 之间中断，
+          # 生产可能未写入、部分写入或已写入；统一先形成可审计 needs_human 尾部，
+          # 再由本次受保护的 production environment 审核进入 retry_after_change。
+          latest_state="$(tail -n1 "$log" | jq -r .state)"
+          if [ "$latest_state" = promoting ]; then
+            marker_reason="$(jq -nc --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+              '{summary:"previous promotion ended after the durable promoting marker without a final outcome; production mutation may have started",runId:$runId,runAttempt:$runAttempt,recoveryMode:"retry_after_change"}')"
+            pnpm exec tsx server/src/release/releaseAttestationCli.ts \
+              --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
+              --state needs_human --operation "recover-promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
+              --actor "$GITHUB_ACTOR" --reason "$marker_reason"
+            marker_snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
+              "$log" "$RUNNER_TEMP/attestation-snapshots")"
+            marker_snapshot_path="$(printf '%s' "$marker_snapshot_json" | jq -r .path)"
+            bash scripts/release/upload-github-release-asset-immutable.sh \
+              "$RELEASE_ID" "$marker_snapshot_path"
+            bash scripts/release/upload-oss-object-immutable.sh "$marker_snapshot_path" \
+              "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$marker_snapshot_path")"
+          fi
           # 允许 verified 首次晋级、已证明未写入的重试，或人工审核后的精确前缀恢复。
           retry_evidence="$(node scripts/release/assert-promotion-retry.mjs "$log")"
           retry_mode="$(printf '%s' "$retry_evidence" | jq -r .mode)"
@@ -346,13 +365,15 @@ jobs:
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
             --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR"
+          # 该标志必须先于任一 snapshot 上传落盘；上传失败时最终 outcome 仍会
+          # 追加 needs_human，runner 硬中断则由下一次 dispatch 收敛悬空 promoting。
+          echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
           bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
           bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
             "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")"
-          echo 'PROMOTION_STARTED=true' >> "$GITHUB_ENV"
 
       - name: Create GitHub Production Deployment
         env:

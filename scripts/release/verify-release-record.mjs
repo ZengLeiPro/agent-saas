@@ -2,7 +2,13 @@
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { canonicalJson, digestBuffer, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import {
+  canonicalJson,
+  digestBuffer,
+  DIGEST_PATTERN,
+  OCI_IMAGE_REFERENCE_PATTERN,
+  SHA_PATTERN,
+} from './artifact-lib.mjs';
 
 function assertExactKeys(value, expected, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -57,6 +63,19 @@ function assertIndexEntry(entry, label) {
   assertDigest(entry.digest, `${label} digest`);
 }
 
+export function assertAcsImageIdentity(acsImage, sourceSha) {
+  const reference = String(acsImage?.reference ?? '');
+  if (
+    acsImage?.sourceSha !== sourceSha ||
+    !DIGEST_PATTERN.test(acsImage?.digest ?? '') ||
+    !OCI_IMAGE_REFERENCE_PATTERN.test(reference) ||
+    !reference.endsWith(`@${acsImage.digest}`)
+  ) {
+    throw new Error('Artifact index ACS image identity is invalid');
+  }
+  return reference.slice(0, -`@${acsImage.digest}`.length);
+}
+
 function assertFileBinding(manifestArtifact, indexArtifact, label) {
   if (
     !indexArtifact ||
@@ -102,7 +121,8 @@ export function assertManifestIndexBindings(manifest, index) {
     if (
       !index.acsImage ||
       manifest.artifacts.acsImage.digest !== index.acsImage.digest ||
-      manifest.artifacts.acsImage.repository !== String(index.acsImage.reference).split('@')[0]
+      manifest.artifacts.acsImage.repository !==
+        assertAcsImageIdentity(index.acsImage, index.sourceSha)
     ) {
       throw new Error('Release Manifest ACS image does not match the artifact index');
     }
@@ -248,15 +268,7 @@ export async function verifyReleaseRecordFiles({
       throw new Error('Artifact index Runtime Dependency Identity metadata is invalid');
     }
   }
-  if (index.acsImage) {
-    if (
-      index.acsImage.sourceSha !== index.sourceSha ||
-      !DIGEST_PATTERN.test(index.acsImage.digest ?? '') ||
-      !String(index.acsImage.reference).endsWith(`@${index.acsImage.digest}`)
-    ) {
-      throw new Error('Artifact index ACS image identity is invalid');
-    }
-  }
+  if (index.acsImage) assertAcsImageIdentity(index.acsImage, index.sourceSha);
   assertManifestIndexBindings(manifest, index);
 
   if (

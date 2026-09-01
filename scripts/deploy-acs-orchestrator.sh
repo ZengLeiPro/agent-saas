@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PRESERVE_ACS_UNIT_BAK=false
+ACS_ROLLBACK_ATTEMPTED=false
 
 cleanup_acs_unit_backup() {
   if [ "${PRESERVE_ACS_UNIT_BAK:-false}" = true ]; then
@@ -12,21 +13,9 @@ cleanup_acs_unit_backup() {
   [ -n "${ACS_UNIT_BAK:-}" ] && rm -f "$ACS_UNIT_BAK"
 }
 
-cleanup_acs_rollback_test() {
-  local deploy_status=$? rollback_status=0
-  set +e
-  rollback || rollback_status=$?
-  cleanup_acs_unit_backup
-  if [ "$rollback_status" -ne 0 ]; then
-    echo "ACS direct deployment failed with status $deploy_status; rollback status $rollback_status" >&2
-    trap - EXIT HUP INT TERM
-    exit "$rollback_status"
-  fi
-  return "$deploy_status"
-}
-
 rollback() {
   # 每个恢复边界独立累计状态；任何单点故障都不得截断后续 unit/restart 恢复。
+  ACS_ROLLBACK_ATTEMPTED=true
   local rollback_status=0 unit_restore_status=0 restart_status=0 health_ok=false
   set +e
   echo "ROLLING BACK SNAT, release link, identity, env, managed unit, and runtime config..."
@@ -119,6 +108,7 @@ rollback_and_exit() {
   exit "$deploy_status"
 }
 
+ACS_DIRECT_CLEANUP_TRAP_TEST=false
 case "${1:-}" in
   --test-acs-direct-rollback|--test-acs-direct-cleanup-trap)
     restore_acs_managed_unit() {
@@ -130,11 +120,11 @@ case "${1:-}" in
       cleanup_acs_unit_backup
       exit "$rollback_status"
     fi
-    trap cleanup_acs_rollback_test EXIT
-    false
+    ACS_DIRECT_CLEANUP_TRAP_TEST=true
     ;;
 esac
 
+if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" != true ]; then
 : "${IMAGE:?missing IMAGE}"
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
 : "${IMAGE_DIGEST:?missing IMAGE_DIGEST}"
@@ -188,11 +178,18 @@ SMOKE_WS="ws_ci_acr_${GITHUB_RUN_ID}"
 SMOKE_MOUNT="workspaces/_ci/${SMOKE_WS}"
 SMOKE_WORKSPACE_DIR="/mnt/agent-saas/${SMOKE_MOUNT}"
 SMOKE_CLEANUP_ERROR="/tmp/acs-smoke-workspace-cleanup-${GITHUB_RUN_ID}.err"
+fi
 
 cleanup() {
-  # EXIT trap 只做资源回收，不能用清理竞态覆盖真实部署结果。
-  local deploy_status=$?
+  # EXIT trap 既回收资源，也兜住进程替换后未显式包装的失败；显式 rollback_and_exit
+  # 已设置 ACS_ROLLBACK_ATTEMPTED，避免同一失败被重复回滚。
+  local deploy_status=$? rollback_status=0
   set +e
+  if [ "$deploy_status" -ne 0 ] \
+    && [ "${PROCESS_REPLACED:-false}" = "true" ] \
+    && [ "${ACS_ROLLBACK_ATTEMPTED:-false}" != "true" ]; then
+    rollback || rollback_status=$?
+  fi
   if [ "$deploy_status" -ne 0 ] \
     && [ "${ACS_UNIT_UPDATED:-false}" = "true" ] \
     && [ "${PROCESS_REPLACED:-false}" != "true" ]; then
@@ -345,9 +342,18 @@ EOF
   rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   cleanup_acs_unit_backup
+  if [ "$rollback_status" -ne 0 ]; then
+    echo "ACS direct deployment failed with status $deploy_status; rollback status $rollback_status" >&2
+    trap - EXIT HUP INT TERM
+    exit "$rollback_status"
+  fi
   return "$deploy_status"
 }
 trap cleanup EXIT
+
+if [ "$ACS_DIRECT_CLEANUP_TRAP_TEST" = true ]; then
+  false
+fi
 
 # ── 1. 安装按 artifact digest 寻址的 orchestrator release（旧进程零影响）──
 actual_archive_digest="sha256:$(sha256sum "$RELEASE_TGZ" | cut -d' ' -f1)"

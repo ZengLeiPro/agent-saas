@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { canonicalJson, digestBuffer, digestFile } from './artifact-lib.mjs';
 import { publishReleaseRecord } from './publish-release-record.mjs';
-import { verifyReleaseRecordFiles } from './verify-release-record.mjs';
+import { assertAcsImageIdentity, verifyReleaseRecordFiles } from './verify-release-record.mjs';
 import {
   createRuntimeDependencyIdentity,
   loadRuntimeDependencyContract,
@@ -16,6 +16,32 @@ const SHA = 'b'.repeat(40);
 const BASE = 'c'.repeat(40);
 const IMAGE = `sha256:${'e'.repeat(64)}`;
 const BASE_WEB = `sha256:${'f'.repeat(64)}`;
+
+test('Release Record ACS image identity accepts one canonical digest reference only', () => {
+  const digest = `sha256:${'d'.repeat(64)}`;
+  const valid = {
+    sourceSha: SHA,
+    digest,
+    reference: `registry.example.com:5000/team/acs-sandbox@${digest}`,
+  };
+  assert.equal(assertAcsImageIdentity(valid, SHA), 'registry.example.com:5000/team/acs-sandbox');
+
+  for (const reference of [
+    `@${digest}`,
+    `---@${digest}`,
+    `registry.example.com/team/acs-sandbox@@${digest}`,
+    'registry.example.com/team/acs-sandbox:latest',
+    `registry.example.com/team/acs-sandbox:latest@${digest}`,
+    'registry.example.com/team/acs-sandbox',
+    'registry.example.com/team/acs-sandbox@sha256:',
+  ]) {
+    assert.throws(
+      () => assertAcsImageIdentity({ sourceSha: SHA, digest, reference }, SHA),
+      /Artifact index ACS image identity is invalid/u,
+      reference,
+    );
+  }
+});
 
 function signManifest(content) {
   return {

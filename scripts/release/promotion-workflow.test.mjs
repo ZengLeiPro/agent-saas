@@ -45,6 +45,34 @@ function runScriptLines(text) {
   return output;
 }
 
+test('durable promoting marker interruptions always converge through needs_human', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const approvalStep = workflow.slice(
+    workflow.indexOf('- name: Fail-closed revalidate deterministic Staging evidence'),
+    workflow.indexOf('- name: Configure production SSH'),
+  );
+  ordered(approvalStep, [
+    'if [ "$latest_state" = promoting ]; then',
+    '--state needs_human --operation "recover-promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"',
+    'upload-github-release-asset-immutable.sh',
+    'upload-oss-object-immutable.sh',
+    'assert-promotion-retry.mjs',
+    '--state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"',
+  ]);
+
+  const markerStep = workflow.slice(
+    workflow.indexOf('- name: Mark and persist promotion started'),
+    workflow.indexOf('- name: Create GitHub Production Deployment'),
+  );
+  ordered(markerStep, [
+    '--state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"',
+    'echo \'PROMOTION_STARTED=true\' >> "$GITHUB_ENV"',
+    'attestation-snapshot.mjs create',
+    'upload-github-release-asset-immutable.sh',
+    'upload-oss-object-immutable.sh',
+  ]);
+});
+
 test('promotion accepts only an approved release id and serializes production mutation', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.match(workflow, /workflow_dispatch:/u);
@@ -133,6 +161,8 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /PROMOTION_RETRY_MODE/u);
   assert.match(workflow, /--arg recoveryMode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /prior post-mutation recovery remains required/u);
+  assert.match(workflow, /previous promotion ended after the durable promoting marker/u);
+  assert.match(workflow, /--state needs_human --operation "recover-promoting:/u);
   assert.match(workflow, /PRODUCTION_ALREADY_TARGET/u);
   assert.match(workflow, /--state failed_before_change/u);
   assert.match(workflow, /already equals the immutable target/u);

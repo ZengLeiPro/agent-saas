@@ -17,7 +17,7 @@ vi.mock("./api", async (importOriginal) => ({
 
 vi.mock("./hooks", () => ({
   useTaskComments: () => ({
-    comments: [], loading: false, error: null,
+    comments: [], loading: false, error: null, ready: true,
     refresh: vi.fn(async () => undefined), addComment: vi.fn(),
   }),
   useTaskExecutions: () => ({
@@ -63,7 +63,7 @@ describe("TaskDetail 恢复待推进", () => {
     const componentProps = props(current, onMove);
     render(<TaskDetail {...componentProps} />);
 
-    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     await user.click(await screen.findByRole("combobox", { name: "任务状态" }));
     await user.click(screen.getByRole("option", { name: "待推进" }));
 
@@ -78,7 +78,7 @@ describe("TaskDetail 恢复待推进", () => {
     mocks.fetchTask.mockResolvedValue(current);
     render(<TaskDetail {...props(current)} />);
 
-    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     expect((await screen.findByRole("combobox", { name: "任务状态" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

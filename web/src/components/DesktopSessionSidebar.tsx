@@ -336,7 +336,7 @@ function SessionRow({
       >
         <CompactSessionLeadingIcon selected={selected} />
         {session.hasUnreadAiReply && (
-          <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+          <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
@@ -414,7 +414,7 @@ function SessionRow({
                 className="mr-1 flex w-4 shrink-0 items-center justify-center"
                 aria-hidden="true"
               >
-                <span className="size-2 rounded-full bg-destructive" />
+                <span className="size-1.5 rounded-full bg-destructive" />
               </span>
             )}
             <span className="truncate">{session.title || "新会话"}</span>

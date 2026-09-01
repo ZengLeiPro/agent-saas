@@ -19,7 +19,7 @@ vi.mock("./api", async (importOriginal) => ({
 
 vi.mock("./hooks", () => ({
   useTaskComments: () => ({
-    comments: [], loading: false, error: null,
+    comments: [], loading: false, error: null, ready: true,
     refresh: vi.fn(async () => undefined), addComment: vi.fn(),
   }),
   useTaskExecutions: () => ({
@@ -88,7 +88,7 @@ describe("TaskDetail 终止执行", () => {
       onCommentsChanged={vi.fn(async () => undefined)}
     />);
 
-    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     await user.click(await screen.findByRole("button", { name: "终止执行" }));
 
     await waitFor(() => expect(mocks.cancelExecution).toHaveBeenCalledWith(

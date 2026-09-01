@@ -555,6 +555,7 @@ export function useTaskExecutions(taskId: string | null, active = true) {
 export function useTaskComments(taskId: string | null) {
   const [comments, setComments] = useState<TaskBoardComment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadedTaskId, setLoadedTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const taskIdRef = useRef(taskId);
   const requestRef = useRef(0);
@@ -565,6 +566,7 @@ export function useTaskComments(taskId: string | null) {
     const requestedTaskId = taskId;
     if (!requestedTaskId) {
       setComments([]);
+      setLoadedTaskId(null);
       setError(null);
       setLoading(false);
       return;
@@ -574,9 +576,11 @@ export function useTaskComments(taskId: string | null) {
       const next = await api.fetchComments(requestedTaskId);
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
       setComments(next);
+      setLoadedTaskId(requestedTaskId);
       setError(null);
     } catch (caught) {
       if (requestId !== requestRef.current || requestedTaskId !== taskIdRef.current) return;
+      setLoadedTaskId(null);
       setError(errorText(caught, "加载评论失败"));
     } finally {
       if (requestId === requestRef.current && requestedTaskId === taskIdRef.current) {
@@ -588,6 +592,7 @@ export function useTaskComments(taskId: string | null) {
   useEffect(() => {
     requestRef.current += 1;
     setComments([]);
+    setLoadedTaskId(null);
     setError(null);
     setLoading(false);
     void refresh();
@@ -607,6 +612,7 @@ export function useTaskComments(taskId: string | null) {
         requestRef.current += 1;
         setLoading(false);
         setComments((current) => [...current, comment]);
+        setLoadedTaskId(mutationTaskId);
         setError(null);
       }
       return comment;
@@ -616,7 +622,8 @@ export function useTaskComments(taskId: string | null) {
     }
   };
 
-  return { comments, loading, error, refresh, addComment };
+  const ready = Boolean(taskId && loadedTaskId === taskId && !error);
+  return { comments, loading, error, ready, refresh, addComment };
 }
 
 /**

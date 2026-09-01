@@ -231,10 +231,43 @@ export function BusinessStepStatusIcon({ todo, className }: { todo: TodoItem; cl
   );
 }
 
+export interface BusinessStepOverallStatus {
+  completed: number;
+  label: "运行中" | "已阻断" | "有失败" | "等待中" | "已完成" | "已结束" | "待处理";
+  tone: ActivityStatusTone;
+}
+
+export function businessStepOverallStatus(
+  todos: TodoItem[],
+  planClosed = false,
+): BusinessStepOverallStatus {
+  const completed = todos.filter((todo) => todo.status === "completed").length;
+  if (!planClosed && todos.some((todo) => todo.status === "in_progress")) {
+    return { completed, label: "运行中", tone: "active" };
+  }
+  if (todos.some((todo) => todo.status === "blocked")) {
+    return { completed, label: "已阻断", tone: "danger" };
+  }
+  if (todos.some((todo) => todo.status === "failed")) {
+    return { completed, label: "有失败", tone: "danger" };
+  }
+  if (todos.some((todo) => todo.status === "waiting")) {
+    return { completed, label: "等待中", tone: "pending" };
+  }
+  if (todos.length > 0 && completed === todos.length) {
+    return { completed, label: "已完成", tone: "success" };
+  }
+  if (planClosed) {
+    return { completed, label: "已结束", tone: "neutral" };
+  }
+  return { completed, label: "待处理", tone: "neutral" };
+}
+
 function PlanTodoRow({
   todo,
   index,
-  count,
+  isFirst,
+  isLast,
   planId,
   sessionId,
   runId,
@@ -246,7 +279,8 @@ function PlanTodoRow({
 }: {
   todo: TodoItem;
   index: number;
-  count: number;
+  isFirst: boolean;
+  isLast: boolean;
   planId: string;
   sessionId?: string | null;
   runId?: string | null;
@@ -269,17 +303,29 @@ function PlanTodoRow({
   const isCurrent = !planClosed && todo.status === "in_progress";
 
   return (
-    <li>
+    <li
+      className={cn(
+        "relative",
+        !isFirst
+          && "before:absolute before:left-[1.375rem] before:top-[-0.125rem] before:h-[1.375rem] before:w-px before:-translate-x-1/2 before:bg-border/70",
+        !isLast
+          && "after:absolute after:bottom-[-0.125rem] after:left-[1.375rem] after:top-5 after:w-px after:-translate-x-1/2 after:bg-border/70",
+      )}
+      data-business-step-connect-before={!isFirst ? "true" : "false"}
+      data-business-step-connect-after={!isLast ? "true" : "false"}
+    >
       <button
         type="button"
         className={cn(
-          "group flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
+          "group relative flex w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          isSelected
-            ? "bg-primary/10 text-foreground ring-1 ring-primary/25"
-            : isCurrent
-              ? "bg-primary/5 text-foreground hover:bg-primary/10"
-              : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+          "before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent",
+          isSelected && "before:bg-primary",
+          isCurrent
+            ? "bg-primary/5 hover:bg-primary/10"
+            : isSelected
+              ? "bg-primary/5 hover:bg-primary/10"
+              : "hover:bg-muted/70",
         )}
         aria-selected={isSelected}
         aria-current={isCurrent ? "step" : undefined}
@@ -288,14 +334,27 @@ function PlanTodoRow({
         data-business-step-current={isCurrent ? "true" : "false"}
         onClick={() => onSelect?.(selection)}
       >
-        {endedWithoutTerminal ? (
-          <span className="inline-flex shrink-0" title="已结束" aria-label="已结束">
-            <Circle className={activityStatusIconClass("neutral", "size-4")} />
-          </span>
-        ) : <BusinessStepStatusIcon todo={todo} />}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{todo.content}</span>
-        <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/70">
-          {index}/{count}
+        <span className={cn(
+          "relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-card",
+          isCurrent && "shadow-[0_0_0_3px_hsl(var(--primary)/0.08)]",
+        )}>
+          {endedWithoutTerminal ? (
+            <span className="inline-flex shrink-0" title="已结束" aria-label="已结束">
+              <Circle className={activityStatusIconClass("neutral", "size-4")} />
+            </span>
+          ) : <BusinessStepStatusIcon todo={todo} />}
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 break-words text-sm font-medium [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden",
+            todo.status === "pending" ? "text-muted-foreground" : "text-foreground",
+          )}
+          title={todo.content}
+        >
+          {todo.content}
+        </span>
+        <span className="w-5 shrink-0 pt-0.5 text-right text-2xs tabular-nums text-muted-foreground/60">
+          {String(index).padStart(2, "0")}
         </span>
       </button>
     </li>
@@ -317,25 +376,34 @@ export function BusinessStepFlow({
 }) {
   if (event.kind !== "plan") return null;
   const todos = event.todos ?? [];
+  const overall = businessStepOverallStatus(todos, event.isClosed);
   return (
     <section
       aria-label="业务步骤"
-      className="rounded-2xl border border-border/70 bg-card p-2 shadow-sm"
+      className="w-full min-w-0 max-w-full rounded-2xl border border-border/70 bg-card p-2 shadow-sm md:w-fit md:min-w-[min(520px,100%)] md:max-w-[min(760px,100%)]"
       data-business-step={event.id}
       data-business-step-plan
     >
-      <header className="flex items-center gap-2 px-2 pb-1 pt-0.5">
-        <ListChecks className="size-4 shrink-0 text-primary" />
+      <header className="flex items-center gap-2 border-b border-border/50 px-2 pb-2 pt-0.5">
+        <ListChecks className={activityStatusIconClass(overall.tone, "size-4 shrink-0")} />
         <h3 className="min-w-0 flex-1 text-sm font-semibold text-foreground">任务步骤</h3>
-        <span className="text-2xs tabular-nums text-muted-foreground">共 {todos.length} 步</span>
+        <span className="text-2xs tabular-nums text-muted-foreground">
+          {overall.completed}/{todos.length}
+        </span>
+        <span className={activityStatusBadgeClass(overall.tone)}>{overall.label}</span>
       </header>
-      <ol className="space-y-0.5">
+      <ol
+        className="relative mt-0.5 space-y-0.5"
+        data-business-step-list
+        data-business-step-connected={todos.length > 1 ? "true" : "false"}
+      >
         {todos.map((todo, index) => (
           <PlanTodoRow
             key={todo.id || `${index}-${todo.content}`}
             todo={todo}
             index={index + 1}
-            count={todos.length}
+            isFirst={index === 0}
+            isLast={index === todos.length - 1}
             planId={event.id}
             sessionId={sessionId}
             runId={event.runId}

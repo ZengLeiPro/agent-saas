@@ -109,7 +109,7 @@ function getSessionRow() {
   return row!;
 }
 
-describe("桌面侧边栏会话激活态", () => {
+describe("桌面侧边栏会话交互与视觉状态", () => {
   beforeEach(() => {
     groupsState.current = [];
     billingState.current = { summary: null, allowance: null };
@@ -131,6 +131,19 @@ describe("桌面侧边栏会话激活态", () => {
       expect(getSessionRow().className).not.toContain("bg-brand-accent-soft");
     },
   );
+
+  it.each(["single", "double"] as const)("%s 布局统一使用分组同款小未读红点", (sidebarLayout) => {
+    const { container } = renderSidebar(
+      "chat",
+      [{ ...session, hasUnreadAiReply: true }],
+      sidebarLayout,
+    );
+    const unreadDots = container.querySelectorAll(".rounded-full.bg-destructive");
+
+    expect(unreadDots.length).toBeGreaterThan(0);
+    expect([...unreadDots].every((dot) => dot.classList.contains("size-1.5"))).toBe(true);
+    expect(container.querySelector(".rounded-full.bg-destructive.size-2")).toBeNull();
+  });
 
   it.each([
     ["waiting_user", "待补充"],

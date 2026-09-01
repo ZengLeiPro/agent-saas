@@ -33,13 +33,11 @@ const agentPermissionModeSchema = z.enum([
   'auto',
 ]);
 const agentSettingSourceSchema = z.enum(['user', 'project', 'local']);
-
 const proxyConfigSchema = z.object({
   HTTP_PROXY: z.string().optional(),
   HTTPS_PROXY: z.string().optional(),
   NO_PROXY: z.string().optional(),
 });
-
 const agentConfigSchema = z.object({
   cwd: z.string().optional(),
   /** ���享资源目录（相对于项目根目录），默认 join(cwd, '.shared') */
@@ -69,7 +67,6 @@ const agentConfigSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
 });
-
 const serverConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   timezone: z.string().optional(),
@@ -77,12 +74,10 @@ const serverConfigSchema = z.object({
   /** Web 前端基址（前后端分域部署时配置，如 https://agent.kaiyan.net）；未配置=同源部署 */
   webBaseUrl: z.string().url().optional(),
 });
-
 const cronConfigSchema = z.object({
   enabled: z.boolean().optional(),
   store: z.string().optional(),
 });
-
 const roleKitConfigSchema = z.object({
   v2Enabled: z.boolean().optional(),
   sanitizePreviewEnabled: z.boolean().optional(),
@@ -108,7 +103,6 @@ const roleKitConfigSchema = z.object({
   libraryVersion: z.enum(["v1", "v2", "v3"]).optional(),
   fallbackToV1OnValidationError: z.boolean().optional(),
 }).optional();
-
 const dingtalkRobotConfigSchema = z.object({
   name: z.string().min(1, '机器人名称不能为空'),
   enabled: z.boolean().optional(),
@@ -332,9 +326,13 @@ const memoryMaintenanceSchema = z.object({
 
 const memoryIndexEmbeddingSchema = z.object({
   baseUrl: z.string().min(1),
-  apiKey: z.string().min(1),
+  apiKey: z.string().min(1).optional(),
+  apiKeyRef: z.string().min(1).optional(),
   model: z.string().min(1),
   dimensions: z.number().int().positive(),
+}).refine((value) => Boolean(value.apiKey || value.apiKeyRef), {
+  message: 'apiKey 或 apiKeyRef 至少配置一项',
+  path: ['apiKeyRef'],
 });
 
 const memoryIndexSchema = z.object({
@@ -539,6 +537,8 @@ const modelGroupSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   apiKey: z.string().optional(),
+  /** SecretVault ref；新写入优先使用，历史 inline apiKey 保持兼容读取。 */
+  apiKeyRef: z.string().min(1).optional(),
   baseUrl: z.string().nullable().optional(),
   /** 组级关闭 Responses 有状态接力（见 modelResponsesOptionsSchema.disable_response_chaining）。 */
   disable_response_chaining: z.boolean().optional(),

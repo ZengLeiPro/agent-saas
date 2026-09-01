@@ -17,6 +17,7 @@ import type { TenantStore } from '../data/tenants/store.js';
 import type { GuardrailModelConfig } from '../agent/guardrail.js';
 import type { TitleGeneratorConfig } from '../agent/titleGenerator.js';
 import { createSharedConfigRefresher, type SharedConfigRefresher } from './sharedConfigRefresher.js';
+import { applyModelsHotUpdate } from './modelsHotUpdate.js';
 
 export type ModelResolver = (
   ref: string,
@@ -31,6 +32,7 @@ export interface ModelResolvers {
   modelResolver: ModelResolver | undefined;
   defaultModelResolver: DefaultModelResolver | undefined;
   sharedConfigRefresher: SharedConfigRefresher;
+  updateModelsConfig: (models: NonNullable<AppConfig['models']>) => Promise<void>;
 }
 
 export function createModelResolvers(params: {
@@ -49,8 +51,20 @@ export function createModelResolvers(params: {
   onWebToolsUpdated?: (next: AppConfig['webTools']) => void;
   /** STT 变化后重新解析凭据并替换执行进程的 AudioTranscribe 配置。 */
   onSttUpdated?: (next: AppConfig['stt']) => void;
+  initialRuntimeModels?: NonNullable<AppConfig['models']>;
+  resolveRuntimeModels?: (next: NonNullable<AppConfig['models']>) => Promise<NonNullable<AppConfig['models']>>;
 }): ModelResolvers {
   const { config, processCwd, tenantStore, tenantsFilePath, logger } = params;
+
+  let runtimeModels = params.initialRuntimeModels ?? config.models;
+  const updateModelsConfig = async (models: NonNullable<AppConfig['models']>): Promise<void> => {
+    const resolved = params.resolveRuntimeModels ? await params.resolveRuntimeModels(models) : models;
+    runtimeModels = resolved;
+    applyModelsHotUpdate({ config, target: {
+      titleGeneratorConfigs: params.titleGeneratorConfigs,
+      updateGuardrailModelConfigs: params.onGuardrailModelConfigsUpdated,
+    }, models: resolved });
+  };
 
   const sharedConfigRefresher = createSharedConfigRefresher({
     config,
@@ -62,6 +76,11 @@ export function createModelResolvers(params: {
     onSystemPromptOverridesUpdated: params.onSystemPromptOverridesUpdated,
     ...(params.onWebToolsUpdated ? { onWebToolsUpdated: params.onWebToolsUpdated } : {}),
     ...(params.onSttUpdated ? { onSttUpdated: params.onSttUpdated } : {}),
+    onModelsUpdated: (next) => {
+      void updateModelsConfig(next).catch((error) => logger?.warn(
+        `[SharedConfig] 模型 SecretRef 解析失败，继续使用上一份运行时模型快照：${error instanceof Error ? error.message : String(error)}`,
+      ));
+    },
     tenantStore,
     tenantsFilePath,
     logger,
@@ -71,8 +90,8 @@ export function createModelResolvers(params: {
     ? (ref, tenantId) => {
         sharedConfigRefresher.refreshIfChanged();
         const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
-        if (!isModelAllowedForTenant(config.models!, tenantSettings, ref)) return null;
-        return resolveModelRef(config.models!, ref);
+        if (!runtimeModels || !isModelAllowedForTenant(runtimeModels, tenantSettings, ref)) return null;
+        return resolveModelRef(runtimeModels, ref);
       }
     : undefined;
 
@@ -80,12 +99,13 @@ export function createModelResolvers(params: {
     ? (tenantId) => {
         sharedConfigRefresher.refreshIfChanged();
         const tenantSettings = tenantId ? tenantStore?.getSettings(tenantId) : undefined;
-        const ref = getTenantPublicModelList(config.models!, tenantSettings).default
-          || config.models!.default;
+        if (!runtimeModels) return null;
+        const ref = getTenantPublicModelList(runtimeModels, tenantSettings).default
+          || runtimeModels.default;
         const resolved = modelResolver?.(ref, tenantId);
         return resolved ? { ref, ...resolved } : null;
       }
     : undefined;
 
-  return { modelResolver, defaultModelResolver, sharedConfigRefresher };
+  return { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig };
 }

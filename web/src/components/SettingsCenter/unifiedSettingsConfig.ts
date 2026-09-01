@@ -44,6 +44,7 @@ const PLATFORM_SETTINGS_ICONS: Record<PlatformSettingsIconKey, LucideIcon> = {
   skill: EntityIcons.skill,
   egress: EntityIcons.egress,
   "system-config": EntityIcons.systemConfig,
+  "config-status": EntityIcons.configStatus,
 };
 
 export const TENANT_SETTINGS_SECTIONS: AdminSettingsNavigationItem<TenantSettingsSectionId>[] =

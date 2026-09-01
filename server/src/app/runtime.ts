@@ -242,6 +242,8 @@ import { initializeRuntimeGovernanceConnectors } from './runtimeGovernanceConnec
 import {
   initializeRuntimeGovernanceCredentials,
   resolveImageGenToolsConfig,
+  resolveMemoryIndexConfig,
+  resolveModelsConfig,
   resolveWebToolsConfig,
 } from './runtimeGovernanceCredentials.js';
 import { initializeRuntimeGovernancePreflight } from './runtimeGovernancePreflight.js';
@@ -265,7 +267,6 @@ import type {
   CreateRuntimeOptions,
   SkillsWarmupStatus,
 } from './runtimeContracts.js';
-
 function ensureDirectory(path: string, label: string): void {
   if (!existsSync(path)) {
     mkdirSync(path, { recursive: true });
@@ -355,12 +356,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   } catch (err) {
     serverLogger.warn(`Failed to scan tenant settings dirs: ${err}`);
   }
-
   const uploadsDir = join(agentCwd, 'uploads');
   const uploadManager = new UploadManager({ agentCwd });
   if (enableHttpListeners) uploadManager.start();
   const sessionBasePath = processCwd;
-
   // Memory Index: 只保留索引服务本身；OpenAI Agents 的 MCP/function tool 接入后续单独实现。
   const memoryIndexServiceRef: { current: MemoryIndexService | null } = { current: null };
   const memoryIndexServices = new Set<MemoryIndexService>();
@@ -370,7 +369,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryIndexServiceRef.current = null;
     await Promise.allSettled(services.map((service) => service.closeAll()));
   };
-
   const agentOptionsConfig: AgentOptionsConfig = {
     proxy: config.proxy,
     agent: config.agent,
@@ -394,7 +392,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     guardrail: config.guardrail,
     logger: serverLogger,
   });
-
   // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   let userStore: UserStore | undefined;
   let tenantStore: TenantStore | undefined;
@@ -402,11 +399,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 进程对 tenants.json 的改写，所以路径需要在这个 if 块之外可见。
   let tenantsFilePath: string | undefined;
   let authMiddleware: ReturnType<typeof createAuthMiddleware> | undefined;
-
   if (config.auth?.enabled && config.auth.jwtSecret) {
     const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
     userStore = new UserStore(usersFilePath);
-
     // Tenant store 与 user store 共生命周期；tenants.json 放在 users.json 同目录。
     // 启动期保证平台根组织和开沿日常组织都始终存在。
     tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
@@ -426,7 +421,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     serverLogger.info('Auth enabled');
     serverLogger.info(`Tenant store loaded: ${tenantStore.count()} tenant(s), platform='${DEFAULT_TENANT_ID}', legacy='${LEGACY_TENANT_ID}'`);
   }
-
   // Agent profiles store
   let agentStore: AgentStore | undefined;
   if (userStore) {
@@ -435,7 +429,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const allUsernames = userStore.listAll().map(u => u.username);
     agentStore.initDefaults(allUsernames);
   }
-
   // 公司级专职 Agent store（2026-07 唯恩批次）：组织管理员定义、员工使用。
   // 仅 auth 启用时装配（org agent 依赖租户/用户身份）；文件与 agents.json 同目录。
   let orgAgentStore: OrgAgentStore | undefined;
@@ -443,7 +436,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     orgAgentStore = new OrgAgentStore(resolve(processCwd, './data/org-agents.json'));
     serverLogger.info(`Org agent store loaded: ${orgAgentStore.listAll().length} agent(s)`);
   }
-
   // ── 零停机部署（2026-07-15）：listen 后执行的后台启动任务 ──────────
   // 重 IO 的启动工作（skills 全量物化）从 createRuntime 关键路径移出，
   // index.ts 在 app.listen 之后调用 runDeferredStartupTasks() 执行。
@@ -478,7 +470,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     const poolDir = resolveAgentPath(sharedDir, 'skills-pool');
     // scanPoolSkills 已经在文件顶部静态 import 为 scanPoolSkillsForDispatch。
     const currentPoolIds = new Set(scanPoolSkillsForDispatch(poolDir).map(s => s.id));
-
     // 安全检查：pool 为空（目录不存在或内容被清空）或配置损坏时跳过全量同步
     if (currentPoolIds.size === 0) {
       serverLogger.warn('Skills pool is empty or missing, skipping startup sync');
@@ -1482,9 +1473,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     onError: (error) => serverLogger.warn(`Taskboard GitHub credential resolve failed: ${error.message}`),
   });
+  const initialMemoryIndexConfig = await resolveMemoryIndexConfig(config.memory?.index, secretVault);
   const initialMemoryIndexService = createMemoryIndexService(
     processCwd,
-    config.memory?.index,
+    initialMemoryIndexConfig,
     { beginEmbeddingBillingRun: beginMemoryEmbeddingBillingRun },
   );
   if (initialMemoryIndexService) {
@@ -1545,12 +1537,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       userId: user.id, username: user.username, userTenantId: user.tenantId }),
     resolveHand: hand => tenantRemoteHandResolver.resolveForRegister(hand) });
   const resolvedWebTools = await resolveWebToolsConfig(config.webTools, secretVault);
+  const resolvedModels = await resolveModelsConfig(config.models, secretVault);
   const resolvedImageGenTools = await resolveImageGenToolsConfig(config.imageGenTools, secretVault);
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
   // 模型解析器：如果配置了 models，绑定到 RawRuntime / WebChannel / Cron。
   // 解析前会对齐磁盘配置，让 runtime-worker 能感知 ws-only 进程的写入（见 modelResolvers.ts）。
-  const { modelResolver, defaultModelResolver, sharedConfigRefresher } = createModelResolvers({
+  const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
     tenantStore,
@@ -1562,6 +1555,11 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     // 凭据异步解析采用 fire-and-forget，并吞掉或记录 rejection，避免拖垮跨进程刷新。
     onWebToolsUpdated: (next) => { void applyWebToolsRuntimeUpdate(next).catch(() => undefined); },
     onSttUpdated: (next) => { void updateAudioTranscribeConfig(next).catch((error) => serverLogger.warn(`AudioTranscribe 运行时配置刷新失败：${error instanceof Error ? error.message : String(error)}`)); },
+    ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
+    resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
+      if (!value) throw new Error('models 未配置');
+      return value;
+    }),
   });
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
@@ -1832,9 +1830,10 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       delete config.memory.index;
     }
     const previous = memoryIndexServiceRef.current;
+    const resolvedMemoryIndex = await resolveMemoryIndexConfig(memoryIndex, secretVault);
     const next = createMemoryIndexService(
       processCwd,
-      memoryIndex,
+      resolvedMemoryIndex,
       { beginEmbeddingBillingRun: beginMemoryEmbeddingBillingRun },
     );
     if (next) memoryIndexServices.add(next);
@@ -2982,6 +2981,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     authMiddleware,
     titleGeneratorConfigs, titleModelAdapterFactory,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
+    updateModelsConfig,
     orgAgentStore,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore,

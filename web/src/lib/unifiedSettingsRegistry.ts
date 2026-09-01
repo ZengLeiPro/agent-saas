@@ -95,6 +95,7 @@ export const SETTINGS_REGISTRY = defineSettingsRegistry([
   { scope: "platform", id: "skill-pool", label: "技能池", iconKey: "skill", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.resource-center.skills" },
   { scope: "platform", id: "egress", label: "网络出口", iconKey: "egress", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.governance.network-security" },
   { scope: "platform", id: "system", label: "系统配置", iconKey: "system-config", accessAction: "settings.platform.view", dirtyPolicy: "component-owned", targetRouteId: "platform.governance.system-settings" },
+  { scope: "platform", id: "config-status", label: "配置状态", iconKey: "config-status", accessAction: "settings.platform.view", dirtyPolicy: "immediate", targetRouteId: "platform.governance.config-status" },
 ] as const satisfies readonly SettingsRegistryContract[]);
 
 export type SettingsRegistryEntry = (typeof SETTINGS_REGISTRY)[number];

@@ -28,11 +28,19 @@ export function createMemoryIndexService(
   options: ConstructorParameters<typeof MemoryIndexService>[2] = {},
 ): MemoryIndexService | null {
   if (memoryIndexConfig?.enabled !== true) return null;
+  if (!memoryIndexConfig.embedding.apiKey) {
+    throw new Error('memory.index.embedding API Key 尚未解析');
+  }
 
   const resolvedConfig: MemoryIndexConfig = {
     enabled: true,
     dbDir: resolve(processCwd, memoryIndexConfig.dbDir ?? 'data/memory-index'),
-    embedding: memoryIndexConfig.embedding,
+    embedding: {
+      baseUrl: memoryIndexConfig.embedding.baseUrl,
+      apiKey: memoryIndexConfig.embedding.apiKey,
+      model: memoryIndexConfig.embedding.model,
+      dimensions: memoryIndexConfig.embedding.dimensions,
+    },
     chunking: {
       tokens: memoryIndexConfig.chunking?.tokens ?? 400,
       overlap: memoryIndexConfig.chunking?.overlap ?? 80,

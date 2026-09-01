@@ -1,13 +1,14 @@
-import { readFileSync, writeFileSync } from 'node:fs';
-
-import { Router } from 'express';
-import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
+import { Router, type Request } from 'express';
+import { applyEdits, modify } from 'jsonc-parser';
 
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, CodexSubscriptionConfig } from '../app/config.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateCodexSubscriptionAdminRouterOptions {
   processCwd: string;
@@ -15,6 +16,7 @@ export interface CreateCodexSubscriptionAdminRouterOptions {
   credentialManager: CodexCredentialManager;
   deviceAuthService: CodexDeviceAuthService;
   closeWebSockets?: () => void;
+  configMutationService?: AdminConfigMutationService;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,27 +42,29 @@ function configWithCredentialRefs(
   };
 }
 
-function persistConfig(
+async function persistConfig(
   options: CreateCodexSubscriptionAdminRouterOptions,
+  configMutationService: AdminConfigMutationService,
+  req: Request,
   next: CodexSubscriptionConfig,
-): CodexSubscriptionConfig {
-  const configPath = getAppConfigPath(options.processCwd);
-  const configText = readFileSync(configPath, 'utf-8');
-  const raw = parseJsonc(configText);
-  if (!isRecord(raw)) throw new Error('config.json 根节点必须是对象');
-
-  const parsed = parseAppConfig({ ...raw, codexSubscription: next });
-  if (!parsed.codexSubscription) throw new Error('codexSubscription 配置无效');
-
-  const updatedText = applyEdits(
-    configText,
-    modify(configText, ['codexSubscription'], parsed.codexSubscription, {
-      formattingOptions: { insertSpaces: true, tabSize: 2 },
-    }),
-  );
-  writeFileSync(configPath, updatedText, 'utf-8');
-  options.config.codexSubscription = parsed.codexSubscription;
-  return parsed.codexSubscription;
+): Promise<CodexSubscriptionConfig> {
+  const result = await configMutationService.mutate({
+    ...mutationRequestContext(req),
+    changedPaths: ['codexSubscription'],
+    buildCandidate: (configText, raw) => {
+      const parsed = parseAppConfig({ ...raw, codexSubscription: next });
+      if (!parsed.codexSubscription) throw new Error('codexSubscription 配置无效');
+      return applyEdits(configText, modify(configText, ['codexSubscription'], parsed.codexSubscription, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }));
+    },
+    applyRuntime: (candidate) => {
+      if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
+      options.config.codexSubscription = candidate.codexSubscription;
+      options.closeWebSockets?.();
+    },
+  });
+  return result.config.codexSubscription!;
 }
 
 async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
@@ -85,6 +89,12 @@ export function createCodexSubscriptionAdminRouter(
   options: CreateCodexSubscriptionAdminRouterOptions,
 ): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
   router.use(requirePlatformAdmin);
 
   router.get('/', async (_req, res) => {
@@ -105,11 +115,10 @@ export function createCodexSubscriptionAdminRouter(
     }
 
     try {
-      persistConfig(options, configWithCredentialRefs(current, refs, {
+      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, refs, {
         enabled,
         websocketEnabled: requestedWebsocketEnabled,
       }));
-      options.closeWebSockets?.();
       res.json(await publicState(options));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
@@ -134,7 +143,7 @@ export function createCodexSubscriptionAdminRouter(
     }
 
     try {
-      persistConfig(options, configWithCredentialRefs(current, requested));
+      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, requested));
       res.json(await publicState(options));
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
@@ -186,11 +195,10 @@ export function createCodexSubscriptionAdminRouter(
         ? currentRefs
         : [...currentRefs, persisted.credentialRef];
       try {
-        persistConfig(options, configWithCredentialRefs(current, nextRefs, {
+        await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
           enabled: true,
           websocketEnabled: current.websocketEnabled,
         }));
-        options.closeWebSockets?.();
       } catch (error) {
         if (!replaceCredentialRef) {
           await options.credentialManager.revoke(persisted.credentialRef).catch(() => undefined);
@@ -214,11 +222,10 @@ export function createCodexSubscriptionAdminRouter(
     }
     const nextRefs = currentRefs.filter((item) => item !== ref);
     try {
-      persistConfig(options, configWithCredentialRefs(current, nextRefs, {
+      await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, nextRefs, {
         enabled: nextRefs.length > 0 ? current.enabled : false,
         websocketEnabled: nextRefs.length > 0 ? current.websocketEnabled : false,
       }));
-      options.closeWebSockets?.();
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       return;
@@ -240,11 +247,10 @@ export function createCodexSubscriptionAdminRouter(
     const current = options.credentialManager.getConfiguration();
     const refs = credentialRefs(options);
     try {
-      persistConfig(options, configWithCredentialRefs(current, [], {
+      await persistConfig(options, configMutationService, _req, configWithCredentialRefs(current, [], {
         enabled: false,
         websocketEnabled: false,
       }));
-      options.closeWebSockets?.();
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
       return;

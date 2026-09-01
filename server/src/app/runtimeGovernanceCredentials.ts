@@ -196,6 +196,57 @@ export async function resolveWebToolsConfig(
   return resolved;
 }
 
+/**
+ * 模型 API Key 的运行时解析边界。持久化 AppConfig 只保留 apiKeyRef；解析出的
+ * 明文只存在于本进程的模型连接快照中，不写回 config.json 或管理 API。
+ */
+export async function resolveModelsConfig(
+  models: AppConfig['models'],
+  secretVault: SecretVault,
+): Promise<AppConfig['models']> {
+  if (!models) return undefined;
+  return {
+    ...models,
+    groups: await Promise.all(models.groups.map(async (group) => {
+      if (!group.apiKeyRef) return { ...group };
+      try {
+        const apiKey = await secretVault.getSecret(group.apiKeyRef, {
+          actor: 'system',
+          userId: '__system__',
+          scopes: ['secret:models:read'],
+        });
+        return { ...group, apiKey };
+      } catch (error) {
+        throw new Error(
+          `models.${group.id}.apiKeyRef 解析失败: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })),
+  };
+}
+
+export async function resolveMemoryIndexConfig(
+  memoryIndex: NonNullable<AppConfig['memory']>['index'],
+  secretVault: SecretVault,
+): Promise<NonNullable<AppConfig['memory']>['index']> {
+  if (!memoryIndex?.embedding.apiKeyRef) return memoryIndex;
+  try {
+    const apiKey = await secretVault.getSecret(memoryIndex.embedding.apiKeyRef, {
+      actor: 'system',
+      userId: '__system__',
+      scopes: ['secret:memory_index:read'],
+    });
+    return {
+      ...memoryIndex,
+      embedding: { ...memoryIndex.embedding, apiKey },
+    };
+  } catch (error) {
+    throw new Error(
+      `memory.index.embedding.apiKeyRef 解析失败: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function resolveSearchApiKey(
   credential: { apiKey?: string; apiKeyRef?: string },
   secretVault: SecretVault,

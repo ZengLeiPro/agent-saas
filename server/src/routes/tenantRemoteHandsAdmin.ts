@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import { Router } from 'express';
-import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
+import { applyEdits, modify } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
@@ -8,6 +7,9 @@ import type { AppConfig, TenantRemoteHandsConfig } from '../app/config.js';
 import { DEFAULT_CODING_HAND_NETWORK_POLICY } from '../runtime/networkPolicy.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
 import type { SecretVault } from '../security/secretVault.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateTenantRemoteHandsAdminRouterOptions {
   processCwd: string;
@@ -16,13 +18,10 @@ export interface CreateTenantRemoteHandsAdminRouterOptions {
   fetchImpl?: typeof fetch;
   healthTimeoutMs?: number;
   onTenantRemoteHandsUpdated?: (tenantRemoteHands: TenantRemoteHandsConfig) => void;
+  configMutationService?: AdminConfigMutationService;
 }
 
 type RawObject = Record<string, unknown>;
-
-function readRawConfig(configPath: string): unknown {
-  return parseJsonc(readFileSync(configPath, 'utf-8'));
-}
 
 function isObject(value: unknown): value is RawObject {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -168,6 +167,12 @@ export function createTenantRemoteHandsAdminRouter(
   const router = Router();
   const fetchImpl = options.fetchImpl ?? fetch;
   const healthTimeoutMs = options.healthTimeoutMs ?? 5_000;
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
 
   router.use(requirePlatformAdmin);
 
@@ -177,38 +182,36 @@ export function createTenantRemoteHandsAdminRouter(
     });
   });
 
-  router.put('/', (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
-    let rawConfig: unknown;
-    let nextTenantRemoteHands: TenantRemoteHandsConfig;
-
-    try {
-      configText = readFileSync(configPath, 'utf-8');
-      rawConfig = parseJsonc(configText);
-      if (!isObject(req.body?.tenantRemoteHands)) {
-        res.status(400).json({ error: 'tenantRemoteHands object is required' });
-        return;
-      }
-      nextTenantRemoteHands = validateTenantRemoteHandsUpdate(rawConfig, req.body?.tenantRemoteHands);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  router.put('/', async (req, res) => {
+    if (!isObject(req.body?.tenantRemoteHands)) {
+      res.status(400).json({ error: 'tenantRemoteHands object is required' });
       return;
     }
-
     try {
-      const edits = modify(configText, ['tenantRemoteHands'], serializeTenantRemoteHandsConfig(nextTenantRemoteHands), {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      const result = await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        changedPaths: ['tenantRemoteHands'],
+        buildCandidate: (configText, rawConfig) => {
+          const next = validateTenantRemoteHandsUpdate(rawConfig, req.body.tenantRemoteHands);
+          return applyEdits(configText, modify(configText, ['tenantRemoteHands'], serializeTenantRemoteHandsConfig(next), {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }));
+        },
+        applyRuntime: (candidate) => {
+          const next = candidate.tenantRemoteHands ?? { hands: [] };
+          options.config.tenantRemoteHands = next;
+          options.onTenantRemoteHandsUpdated?.(next);
+        },
       });
-      const updatedText = applyEdits(configText, edits);
-      writeFileSync(configPath, updatedText, 'utf-8');
-      options.config.tenantRemoteHands = nextTenantRemoteHands;
-      options.onTenantRemoteHandsUpdated?.(nextTenantRemoteHands);
       res.json({
-        tenantRemoteHands: sanitizeTenantRemoteHands(nextTenantRemoteHands),
+        tenantRemoteHands: sanitizeTenantRemoteHands(result.config.tenantRemoteHands),
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof Error && /tenantRemoteHands|hands|baseUrl|authToken/u.test(error.message)) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      sendConfigMutationError(res, error);
     }
   });
 

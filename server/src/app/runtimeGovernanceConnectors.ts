@@ -88,7 +88,6 @@ import type { SecretVault } from '../security/secretVault.js';
 import { CodexResponsesWebSocketPool } from '../runtime/responses/codexResponsesWebSocketPool.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { shutdownRuntimeEgress } from './runtimeStagingEgressBootstrap.js';
-
 export interface RuntimeGovernanceConnectorDeps {
   processCwd: string;
   agentCwd: string;
@@ -116,7 +115,6 @@ export interface RuntimeGovernanceConnectorDeps {
   runResolutionSnapshotStore?: PgRunResolutionSnapshotStore;
   resolveLegacySkillResourceId: (user: { id: string; tenantId: string }, skillId: string) => string;
 }
-
 /**
  * Run snapshots contain native connectors and MCP-backed connectors in the same
  * resource collection. Only enabled MCP server ids are valid brokered warmup
@@ -130,7 +128,6 @@ export function resolveBrokeredMcpServerIds(
 ): ReadonlySet<string> {
   return new Set(store.getEffectiveServers(username, tenantId).map((server) => server.id));
 }
-
 /** Initializes connector credentials, governance shadow audits, MCP, and egress in strict startup order. */
 export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGovernanceConnectorDeps) {
   const {
@@ -162,7 +159,6 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
   } = deps;
   let credentialBroker: CredentialBroker | undefined;
   let googleWorkspaceOAuthService: GoogleWorkspaceOAuthService | undefined;
-
   // MCP client manager（lazy connect per user）。failOnError=false 让连不上的
   // server 不阻塞 dispatch；连接仍快速失败，单次 MCP 工具调用最长允许 10 分钟。
   const mcpConfigStore = new McpConfigStore(join(processCwd, 'data', 'mcp-config.json'));
@@ -318,7 +314,6 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
             })),
         );
         await auditor.audit('entitlement_policy', entitlementComparisons);
-
         const assignmentComparisons: Array<{
           tenantId?: string;
           resourceType: string;
@@ -482,7 +477,6 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           });
         }
         await auditor.audit('assignment', assignmentComparisons);
-
         const agentSkillComparisons = [] as Array<{
           tenantId?: string;
           resourceType: string;
@@ -580,7 +574,6 @@ export async function initializeRuntimeGovernanceConnectors(deps: RuntimeGoverna
           }
         }
         await auditor.audit('agent_skill', agentSkillComparisons);
-
         const credentialComparisons = [] as Array<{
           tenantId?: string;
           resourceType: string;

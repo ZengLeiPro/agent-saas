@@ -124,6 +124,8 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
   feishu_connector: { read: ['__system__'] },
   github_app: { read: ['__system__'] },
   image_gen_tools: { read: ['__system__'], write: ['image_gen_config_admin'] },
+  models: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
+  memory_index: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
   server_remote: { read: ['__system__'] },
   'signup-sms': {
     read: ['auth_sms_service', 'signup_sms_service'],

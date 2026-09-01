@@ -233,6 +233,8 @@ export interface AppRuntime {
   /** 标题 utility 专用 adapter factory；Codex 固定 HTTP/SSE，不复用主会话 WebSocket pool。 */
   titleModelAdapterFactory?: TitleModelAdapterFactory;
   refreshSharedConfig: () => void;
+  /** 解析模型 SecretRef 并原子替换当前进程的运行时模型连接快照。 */
+  updateModelsConfig?: (models: NonNullable<AppConfig['models']>) => Promise<void>;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。

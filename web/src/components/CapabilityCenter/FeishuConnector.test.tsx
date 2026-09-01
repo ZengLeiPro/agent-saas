@@ -40,7 +40,7 @@ describe("FeishuConnector", () => {
   it("未连接时展示同级卡片与授权入口", async () => {
     render(<Harness />);
     expect(await screen.findByText("飞书")).toBeTruthy();
-    expect(screen.getByText("未连接")).toBeTruthy();
+    expect(await screen.findByText("未连接")).toBeTruthy();
     fireEvent.click(screen.getByText("飞书"));
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByText("尚未连接飞书")).toBeTruthy();

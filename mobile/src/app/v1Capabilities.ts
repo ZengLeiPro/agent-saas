@@ -68,6 +68,7 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
  */
 export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
   'webview-spike': '§2.2 WebView Spike 入口已删除（M00-01）',
+  'chat/html-preview': '旧 workspace HTML preview 已关闭（M50-03）；正式交付仅走 Artifact viewer',
 };
 
 /**
@@ -77,7 +78,6 @@ export const V1_DELETED_ROUTES: Readonly<Record<string, string>> = {
 export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
   '(tabs)/files': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
   '(tabs)/files/browse': '§2.2 Files Tab 延期至完整文件中心（Gate A）',
-  'chat/html-preview': '§2.3 HTML/SVG 主动内容原生脚本预览延期（M50-03）',
   cron: '§2.2 Cron 导航与管理 UI 延期（Gate A）',
   'cron/[jobId]': '§2.2 Cron 导航与管理 UI 延期（Gate A）',
   'cron-form': '§2.2 Cron 导航与管理 UI 延期（Gate A）',

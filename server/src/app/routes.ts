@@ -256,10 +256,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
   app.use('/api', createAzerothProxyRouter());
-  // HTML Preview: token API 走 /api（需认证），文件服务走 /preview（自认证）
+  // Retired HTML preview: authenticated single-file grant; /preview only serves a static retirement page.
   const preview = createPreviewRoutes({
     agentCwd,
     userOverrides: config.agent.userOverrides,
+    userStore: runtime.userStore,
+    authEpochAuthority: runtime.authEpochAuthority,
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);

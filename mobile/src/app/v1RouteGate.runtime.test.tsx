@@ -4,10 +4,9 @@
  *
  * Review 阻断项复现与守卫：
  *   旧实现只在子页面挂载后的 useEffect 里重定向，延期页面会先渲染并执行副作用
- *   （OAuth handoff 消费、preview token 申请、MCP/治理请求、页面活动上报）。
+ *   （OAuth handoff 消费、治理请求、页面活动上报）。
  *
- * 本测试在 jsdom 中真实渲染 V1RouteGate + 四个被点名的延期路由组件
- * （OAuth callback / HTML preview / Connections / Cron），断言：
+ * 本测试在 jsdom 中真实渲染 V1RouteGate + 延期路由组件，断言：
  *   1. production 档位（含鉴权 loading / 已登录 / 未登录三种身份状态）下，
  *      受限组件不渲染、安全空壳呈现、副作用函数 0 调用、重定向目标正确；
  *   2. preview 档位（对照组）同一组件正常挂载且副作用被调用--
@@ -18,9 +17,7 @@ import React from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
-import HtmlPreviewScreen from '../../app/chat/html-preview';
 import CronListScreen from '../../app/cron/index';
-import * as previewTokenCacheMod from '../services/previewTokenCache';
 import * as sharedMod from '@agent/shared';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
@@ -112,10 +109,6 @@ vi.mock('../services/nativeOAuthHandoff', () => ({
   cancelNativeOAuthTransaction: vi.fn(async () => {}),
 }));
 
-vi.mock('../services/previewTokenCache', () => ({
-  getPreviewToken: vi.fn(async () => 'preview-token'),
-}));
-
 vi.mock('../services/fileCacheService', () => ({
   fileCacheService: {
     getOrDownload: vi.fn(async () => 'file:///tmp/x'),
@@ -180,10 +173,6 @@ vi.mock('expo-clipboard', () => ({
   default: { setStringAsync: vi.fn(async () => {}) },
 }));
 
-vi.mock('react-native-webview', () => ({
-  WebView: () => null,
-}));
-
 vi.mock('lucide-react-native', () => ({
   MoreHorizontal: () => null,
   Plus: () => null,
@@ -201,15 +190,8 @@ vi.mock('../components/cron/JobList', () => ({
 
 const OAUTH_HANDOFF_CODE = 'A'.repeat(48);
 
-/** 四个被 Review 点名的延期路由及其挂载期副作用 spies。 */
+/** 仍存在的延期路由及其挂载期副作用 spies。 */
 const DEFERRED_CASES = [
-  {
-    name: 'HTML preview（延期）',
-    segments: ['chat', 'html-preview'],
-    params: { filePath: 'reports/x.html' },
-    screen: <HtmlPreviewScreen />,
-    getSyncSpies: () => [vi.mocked(previewTokenCacheMod.getPreviewToken)],
-  },
   {
     name: 'Cron（延期）',
     segments: ['cron'],

@@ -748,9 +748,10 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
     return () => { cancelled = true; };
   }, [segment.filePath, segment.fileSize, ownerParam]);
 
-  // mobile 暂仅预览 md/html；text/code 预览为 web 端能力，移动端这些类型走下载
+  // Mobile only previews inert Markdown workspace files. HTML is fail-closed to Artifact delivery.
   const previewKind = getPreviewFileType(segment.fileName);
-  const isPreviewable = previewKind === 'md' || previewKind === 'html';
+  const isPreviewable = previewKind === 'md';
+  const isRetiredHtml = previewKind === 'html';
   const fileVisual = getFileTypeVisual(segment.fileName);
 
   const handleDownload = useCallback(async () => {
@@ -769,9 +770,13 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
   }, [segment.filePath, segment.fileName, segment.fileSize, segment.owner]);
 
   const handlePress = useCallback(async () => {
+    if (isRetiredHtml) {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
     if (isPreviewable && onPreviewMd) { onPreviewMd(segment.filePath); return; }
     await handleDownload();
-  }, [isPreviewable, onPreviewMd, segment.filePath, handleDownload]);
+  }, [isRetiredHtml, isPreviewable, onPreviewMd, segment.filePath, handleDownload]);
 
   return (
     <TouchableOpacity
@@ -1528,9 +1533,10 @@ function FileDownloadCard({ message, onPreviewMd }: {
     return () => { cancelled = true; };
   }, [message.filePath, message.fileSize, ownerParam, artifactId]);
 
-  // mobile 暂仅预览 md/html；text/code 预览为 web 端能力，移动端这些类型走下载
+  // Mobile only previews inert Markdown workspace files. HTML is fail-closed to Artifact delivery.
   const previewKind = getPreviewFileType(message.fileName);
-  const isPreviewable = previewKind === 'md' || previewKind === 'html';
+  const isPreviewable = previewKind === 'md';
+  const isRetiredHtml = previewKind === 'html';
   const fileVisual = getFileTypeVisual(message.fileName);
 
   const handleDownload = useCallback(async () => {
@@ -1573,13 +1579,17 @@ function FileDownloadCard({ message, onPreviewMd }: {
   }, [artifactId, message.filePath, message.fileName, message.fileSize, message.owner]);
 
   const handlePress = useCallback(async () => {
-    // Artifact 卡片不支持工作区路径预览，直接触发下载/分享
+    // Formal artifacts stay on the M50-02 artifactId/grant path. Legacy workspace HTML fails closed.
+    if (!artifactId && isRetiredHtml) {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
     if (!artifactId && isPreviewable && onPreviewMd) {
       onPreviewMd(message.filePath);
       return;
     }
     await handleDownload();
-  }, [artifactId, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
+  }, [artifactId, isRetiredHtml, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
 
   return (
     <TouchableOpacity

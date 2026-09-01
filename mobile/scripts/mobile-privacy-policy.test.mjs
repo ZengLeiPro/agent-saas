@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import test from 'node:test';
@@ -122,7 +122,9 @@ test('M10-05 runtime source has no location dependency, startup request, or acti
   ]);
   assert.equal(appConfig.ios.infoPlist.NSLocationWhenInUseUsageDescription, undefined);
   assert.equal(appConfig.ios.infoPlist.LSApplicationQueriesSchemes, undefined);
-  assert.doesNotMatch(readMobile('app/chat/html-preview.tsx'), /iosamap|uri\.amap\.com/);
+  assert.equal(existsSync(resolve(MOBILE_ROOT, 'app/chat/html-preview.tsx')), false);
+  assert.equal(existsSync(resolve(MOBILE_ROOT, 'src/services/previewTokenCache.ts')), false);
+  assert.doesNotMatch(readMobile('src/components/chat/MessageItem.tsx'), /\/chat\/html-preview|preview-token/);
 
   const runtimeFiles = [
     ...listRuntimeSource(resolve(MOBILE_ROOT, 'app')),

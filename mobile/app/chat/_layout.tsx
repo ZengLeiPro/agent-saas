@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack } from 'expo-router';
 import { useColors } from '../../src/theme';
 
+/** Mobile V1 intentionally exposes no workspace HTML preview route. */
 export default function ChatDetailLayout() {
   const colors = useColors();
 
@@ -19,11 +20,6 @@ export default function ChatDetailLayout() {
       <Stack.Screen name="[sessionId]" />
       <Stack.Screen
         name="markdown-preview"
-        // @ts-expect-error fullScreenSwipeEnabled is supported at runtime but missing from type defs
-        options={{ gestureEnabled: true, fullScreenSwipeEnabled: true }}
-      />
-      <Stack.Screen
-        name="html-preview"
         // @ts-expect-error fullScreenSwipeEnabled is supported at runtime but missing from type defs
         options={{ gestureEnabled: true, fullScreenSwipeEnabled: true }}
       />

@@ -7,11 +7,11 @@ import { resolveV1GateDecision } from "./v1Capabilities";
 import { getV1BuildProfile } from "./v1Runtime";
 
 /**
- * V1 路由门禁（M00-01）：生产构建中，路由未确认允许前不挂载任何子路由。
+ * V1 路由门禁（M00-01/M50-03）：生产构建中，路由未确认允许前不挂载任何子路由。
  *
  * fail closed 语义（Review 返工要求）：
  * - 延期/未分类路由在渲染阶段即被阻断——children（含目标 Screen 及其
- *   全部副作用：OAuth handoff 消费、preview token 申请、治理/MCP 请求等）
+ *   全部副作用：OAuth handoff 消费、治理/MCP 请求等）
  *   完全不挂载，而不是先挂载再由 useEffect 事后重定向；
  * - 鉴权仍在 loading 时同样阻断（此时无法确认去向，先渲染安全空壳）；
  * - 被拒绝时渲染安全空壳并重定向到对话 Tab / 登录页。

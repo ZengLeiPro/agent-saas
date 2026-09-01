@@ -41,6 +41,7 @@ describe('V1 capability manifest 基础不变量', () => {
   it('已删除路由（墓碑）与 allowlist / 延期清单无重叠，且生产仍拒绝', () => {
     const deleted = Object.keys(V1_DELETED_ROUTES);
     expect(deleted).toContain('webview-spike');
+    expect(deleted).toContain('chat/html-preview');
     for (const route of deleted) {
       expect(V1_ALLOWED_ROUTES.includes(route)).toBe(false);
       expect(V1_DEFERRED_ROUTES[route]).toBeUndefined();
@@ -74,7 +75,7 @@ describe('classifyV1Route', () => {
     expect(classifyV1Route('cron')).toBe('deferred');
     expect(classifyV1Route('settings/users')).toBe('deferred');
     expect(classifyV1Route('settings/all-agents')).toBe('deferred');
-    expect(classifyV1Route('chat/html-preview')).toBe('deferred');
+    expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
     expect(classifyV1Route('settings/connections')).toBe('allowed');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
   });

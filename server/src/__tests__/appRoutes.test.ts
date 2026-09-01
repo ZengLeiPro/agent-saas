@@ -278,9 +278,12 @@ describe('registerRoutes', () => {
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
     });
+    // Legacy grants are checked against live principal and auth-epoch state.
     expect(mocked.createPreviewRoutes).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
+      userStore: runtime.userStore,
+      authEpochAuthority: runtime.authEpochAuthority,
     });
     expect(mocked.createSearchRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',

@@ -5,8 +5,8 @@
  *   1. 每个真实存在的路由都被能力清单分类（allowed 或 deferred），
  *      新增路由未登记清单时测试失败（防止未分类路由混入生产）；
  *   2. 清单中没有指向不存在路由的条目（防止清单腐烂）；
- *   3. Spike 路由（webview-spike）已从代码库删除；
- *   4. 生产可见的 allowlist 路由源码中无「正在开发中」占位。
+ *   3. Spike 与旧 workspace HTML preview 路由已从代码库删除；
+ *   4. Mobile WebView 不执行 workspace HTML，生产 allowlist 无占位。
  *
  * 路由 pattern 推导与 expo-router useSegments() 约定一致：
  * 相对 app/ 的路径去掉 .tsx、去掉尾部 /index，动态段保留 [name]。
@@ -82,9 +82,29 @@ describe('M00-01 路由清单完整性', () => {
     expect(stale, `清单中存在不存在的路由：\n${stale.join('\n')}`).toEqual([]);
   });
 
-  it('Spike 路由已删除（webview-spike 不存在于 app 目录与源码引用）', () => {
+  it('已关闭的 WebView/HTML preview 路由不在 Mobile route manifest', () => {
     expect(routes).not.toContain('webview-spike');
+    expect(routes).not.toContain('chat/html-preview');
     expect(existsSync(join(APP_DIR, 'webview-spike.tsx'))).toBe(false);
+    expect(existsSync(join(APP_DIR, 'chat/html-preview.tsx'))).toBe(false);
+    expect(existsSync(join(APP_DIR, '../src/services/previewTokenCache.ts'))).toBe(false);
+  });
+
+  it('Mobile WebView 代码不执行 workspace HTML 或 preview URL', () => {
+    const srcDir = join(APP_DIR, '..', 'src');
+    const thisTest = fileURLToPath(import.meta.url);
+    const webViewSources = [...walk(APP_DIR), ...walk(srcDir)]
+      .filter((file) => file !== thisTest)
+      .filter((file) => {
+        const source = readFileSync(file, 'utf8');
+        return source.includes('react-native-webview') || source.includes('<WebView');
+      });
+    expect(webViewSources.map((file) => relative(join(APP_DIR, '..'), file))).toEqual([
+      'src/components/chat/TextSelectModal.tsx',
+    ]);
+    // The remaining local text-selection WebView must not consume file paths or remote preview URLs.
+    const remaining = readFileSync(webViewSources[0], 'utf8');
+    expect(remaining).not.toMatch(/filePath|preview-token|\/preview\/|authFetch|source=\{\{\s*uri/);
   });
 
   it('生产 allowlist 路由源码中无「正在开发中」占位文案', () => {

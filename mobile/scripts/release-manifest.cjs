@@ -12,6 +12,10 @@ const MOBILE_EAS_CONFIG_PATH = join(MOBILE_ROOT, 'eas.json');
 const ROOT_EAS_CONFIG_PATH = join(REPOSITORY_ROOT, 'eas.json');
 const RELEASE_PROFILES = Object.freeze(['development', 'preview', 'production']);
 const ANDROID_DISTRIBUTIONS = Object.freeze(['store', 'enterprise']);
+// A release candidate may deliberately produce Store AAB and Enterprise APK from
+// the same reviewed SHA. `both` is a manifest authorization target only; runtime
+// profile resolution must still select exactly one concrete distribution.
+const ANDROID_DISTRIBUTION_TARGETS = Object.freeze([...ANDROID_DISTRIBUTIONS, 'both']);
 const BUILD_PLATFORMS = Object.freeze(['android', 'ios']);
 const VERIFICATION_STATES = Object.freeze(['pending-external-verification', 'verified']);
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -242,10 +246,10 @@ function validateManifestSchema(manifest) {
   }
   if (
     manifest.target.distribution !== null &&
-    !ANDROID_DISTRIBUTIONS.includes(manifest.target.distribution)
+    !ANDROID_DISTRIBUTION_TARGETS.includes(manifest.target.distribution)
   ) {
     fail(
-      `release manifest.target.distribution must be one of ${ANDROID_DISTRIBUTIONS.join(', ')} or null`,
+      `release manifest.target.distribution must be one of ${ANDROID_DISTRIBUTION_TARGETS.join(', ')} or null`,
     );
   }
   if (manifest.target.gitSha !== null && !GIT_SHA_PATTERN.test(manifest.target.gitSha)) {
@@ -282,7 +286,11 @@ function assertProductionReady(manifest, context) {
   if (context.platform !== 'ios') {
     if (!context.distribution) blockers.push('Android distribution is not explicitly selected');
     if (manifest.target.distribution === null) blockers.push('target.distribution is missing');
-    else if (context.distribution && manifest.target.distribution !== context.distribution) {
+    else if (
+      context.distribution &&
+      manifest.target.distribution !== 'both' &&
+      manifest.target.distribution !== context.distribution
+    ) {
       blockers.push(
         `target.distribution mismatch (manifest=${manifest.target.distribution}, requested=${context.distribution})`,
       );

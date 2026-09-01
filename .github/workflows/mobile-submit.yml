@@ -1,0 +1,238 @@
+# M60-04: submission boundary. Consumes only signed build evidence and its immutable artifact.
+name: Mobile Release / Submit
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        {
+          description: 'Successful Mobile Release / Build Evidence run id',
+          required: true,
+          type: string,
+        }
+      profile:
+        {
+          description: 'ios-store, android-store, or android-enterprise',
+          required: true,
+          type: choice,
+          options: [ios-store, android-store, android-enterprise],
+        }
+      execute_submit:
+        {
+          description: 'Perform the real store submission',
+          required: true,
+          default: false,
+          type: boolean,
+        }
+  workflow_call:
+    inputs:
+      build_run_id: { required: true, type: string }
+      profile: { required: true, type: string }
+      execute_submit: { required: false, type: boolean, default: false }
+    secrets:
+      EXPO_ORG_ROBOT_TOKEN: { required: false }
+      MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
+      MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
+      APP_STORE_CONNECT_API_KEY_P8: { required: false }
+      ANDROID_PLAY_SERVICE_ACCOUNT_JSON: { required: false }
+      ENTERPRISE_MDM_ROBOT_TOKEN: { required: false }
+      MOBILE_STORE_LOOKUP_ROBOT_TOKEN: { required: false }
+permissions: { contents: read, actions: read, deployments: read }
+concurrency: { group: 'mobile-submit-${{ inputs.profile }}', cancel-in-progress: false }
+env:
+  NODE_VERSION: '22.23.1'
+  PNPM_VERSION: '10.18.3'
+  EAS_CLI_VERSION: '18.1.0'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+jobs:
+  validate-boundary:
+    name: Validate signed immutable build input
+    runs-on: ${{ inputs.profile == 'ios-store' && 'macos-15' || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    outputs:
+      commit: ${{ steps.bound.outputs.commit }}
+    steps:
+      - name: Download build evidence and selected artifact without printing URLs
+        env:
+          {
+            GH_TOKEN: '${{ github.token }}',
+            BUILD_RUN_ID: '${{ inputs.build_run_id }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail; mkdir -p "$RUNNER_TEMP/input"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts?per_page=100")"
+          evidence_id="$(jq -er '.artifacts[]|select(.name|startswith("mobile-release-evidence-"))|.id' <<<"$artifacts")"
+          build_id="$(jq -er --arg p "$PROFILE" '.artifacts[]|select(.name|startswith("mobile-build-"+$p+"-"))|.id' <<<"$artifacts")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$evidence_id/zip" > "$RUNNER_TEMP/evidence.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$build_id/zip" > "$RUNNER_TEMP/build.zip"
+          unzip -q "$RUNNER_TEMP/evidence.zip" -d "$RUNNER_TEMP/input/evidence"
+          unzip -q "$RUNNER_TEMP/build.zip" -d "$RUNNER_TEMP/input/build"
+          rm -f "$RUNNER_TEMP/evidence.zip" "$RUNNER_TEMP/build.zip"
+          commit="$(jq -er .commitOid "$RUNNER_TEMP/input/evidence/mobile-release-evidence.json")"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; echo "commit=$commit" >> "$GITHUB_OUTPUT"
+        id: bound
+      - uses: actions/checkout@v5
+        with: { ref: '${{ steps.bound.outputs.commit }}', persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+        with: { version: '10.18.3', run_install: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1', cache: pnpm, cache-dependency-path: pnpm-lock.yaml }
+      - name: Offline-validate signature and reverify exact artifact
+        env:
+          {
+            PUBLIC_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}',
+            KEY_ID: '${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail; test -n "$PUBLIC_KEY" && test -n "$KEY_ID" || { echo 'trusted evidence key is missing' >&2; exit 1; }
+          jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          evidence="$RUNNER_TEMP/input/evidence/mobile-release-evidence.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-build --input "$evidence" --public-keys "$RUNNER_TEMP/public-keys.json"
+          jq -e --arg p "$PROFILE" '.profiles|map(select(.profile==$p))|length==1' "$evidence" >/dev/null
+          jq -n --arg profile "$PROFILE" --slurpfile e "$evidence" '{profile:$profile,appId:($e[0].profiles[]|select(.profile==$profile)|.appId),version:($e[0].profiles[]|select(.profile==$profile)|.version),buildNumber:($e[0].profiles[]|select(.profile==$profile)|.buildNumber),versionCode:($e[0].profiles[]|select(.profile==$profile)|.versionCode)}' > "$RUNNER_TEMP/source.json"
+          case "$PROFILE" in ios-store) ext=ipa;; android-store) ext=aab;; android-enterprise) ext=apk;; esac
+          artifact="$(find "$RUNNER_TEMP/input/build" -type f -name "*.$ext" -print -quit)"; test -n "$artifact"
+          if [ "$PROFILE" != ios-store ]; then
+            test -n '${{ vars.MOBILE_BUNDLETOOL_1_17_2_SHA256 }}' || exit 1
+            curl -fsSL 'https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar' -o "$RUNNER_TEMP/bundletool.jar"
+            echo '${{ vars.MOBILE_BUNDLETOOL_1_17_2_SHA256 }}  '${RUNNER_TEMP}'/bundletool.jar' | sha256sum -c -
+            export BUNDLETOOL_JAR="$RUNNER_TEMP/bundletool.jar"
+          fi
+          mobile/scripts/verify-mobile-release-artifact.sh "$PROFILE" "$artifact" "$RUNNER_TEMP/source.json" "$RUNNER_TEMP/reverified.json"
+          expected="$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.artifactSha256' "$evidence")"
+          test "$(jq -er .artifactSha256 "$RUNNER_TEMP/reverified.json")" = "$expected"
+      - name: Contract-only invocation stops without creating a receipt
+        if: inputs.execute_submit != true
+        run: echo 'Immutable submit boundary validated; execute_submit=false, no external submission or receipt created.'
+
+  submit:
+    name: Approved real submit / ${{ inputs.profile }}
+    needs: validate-boundary
+    if: inputs.execute_submit == true
+    environment: mobile-submit-${{ inputs.profile }}
+    runs-on: ${{ inputs.profile == 'ios-store' && 'macos-15' || 'ubuntu-24.04' }}
+    timeout-minutes: 45
+    env: { EXPO_TOKEN: '${{ secrets.EXPO_ORG_ROBOT_TOKEN }}' }
+    steps:
+      - name: Fail closed unless store integration is configured
+        env:
+          PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
+          PUBLIC_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          PLAY_KEY: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          LOOKUP_TOKEN: ${{ secrets.MOBILE_STORE_LOOKUP_ROBOT_TOKEN }}
+          LOOKUP_ENDPOINT: ${{ vars.MOBILE_STORE_BUILD_LOOKUP_ENDPOINT }}
+          CONFIGURED: ${{ vars.MOBILE_SUBMIT_CONFIGURED }}
+        run: |
+          set -euo pipefail
+          test "$CONFIGURED" = true && test -n "$EXPO_TOKEN" && test -n "$PRIVATE_KEY" && test -n "$PUBLIC_KEY" && test -n "$LOOKUP_TOKEN" && test -n "$LOOKUP_ENDPOINT" || { echo 'organization robot submit/lookup configuration is incomplete' >&2; exit 1; }
+          [[ "$LOOKUP_ENDPOINT" =~ ^https://[^/@]+/ ]] || { echo 'store lookup endpoint must be credential-free HTTPS' >&2; exit 1; }
+          if [ '${{ inputs.profile }}' = ios-store ]; then test -n "$ASC_KEY" || { echo 'APP_STORE_CONNECT_API_KEY_P8 is missing' >&2; exit 1; }; else test -n "$PLAY_KEY" || { echo 'ANDROID_PLAY_SERVICE_ACCOUNT_JSON is missing' >&2; exit 1; }; fi
+      - uses: actions/checkout@v5
+        with: { ref: '${{ needs.validate-boundary.outputs.commit }}', persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+        with: { version: '10.18.3', run_install: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1', cache: pnpm, cache-dependency-path: pnpm-lock.yaml }
+      - name: Re-download immutable evidence/artifact and install frozen tools
+        env:
+          {
+            GH_TOKEN: '${{ github.token }}',
+            BUILD_RUN_ID: '${{ inputs.build_run_id }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail; pnpm install --frozen-lockfile; mkdir -p "$RUNNER_TEMP/input"
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID/artifacts?per_page=100")"
+          for pair in "evidence:$(jq -er '.artifacts[]|select(.name|startswith("mobile-release-evidence-"))|.id' <<<"$artifacts")" "build:$(jq -er --arg p "$PROFILE" '.artifacts[]|select(.name|startswith("mobile-build-"+$p+"-"))|.id' <<<"$artifacts")"; do
+            name="${pair%%:*}"; id="${pair#*:}"; gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip"; mkdir -p "$RUNNER_TEMP/input/$name"; unzip -q "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/input/$name"; rm "$RUNNER_TEMP/$name.zip"
+          done
+      - name: Revalidate signature, SHA, artifact digest, app/version, permissions and signer
+        env:
+          {
+            PUBLIC_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}',
+            KEY_ID: '${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/input/evidence/mobile-release-evidence.json"
+          test "$(jq -er .commitOid "$evidence")" = "$(git rev-parse HEAD)"
+          jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-build --input "$evidence" --public-keys "$RUNNER_TEMP/public-keys.json"
+          case "$PROFILE" in ios-store) ext=ipa;; android-store) ext=aab;; android-enterprise) ext=apk;; esac
+          artifact="$(find "$RUNNER_TEMP/input/build" -type f -name "*.$ext" -print -quit)"; test -n "$artifact"
+          jq -n --arg profile "$PROFILE" --slurpfile e "$evidence" '{profile:$profile,appId:($e[0].profiles[]|select(.profile==$profile)|.appId),version:($e[0].profiles[]|select(.profile==$profile)|.version),buildNumber:($e[0].profiles[]|select(.profile==$profile)|.buildNumber),versionCode:($e[0].profiles[]|select(.profile==$profile)|.versionCode)}' > "$RUNNER_TEMP/source.json"
+          if [ "$PROFILE" != ios-store ]; then
+            test -n '${{ vars.MOBILE_BUNDLETOOL_1_17_2_SHA256 }}' || exit 1; curl -fsSL 'https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar' -o "$RUNNER_TEMP/bundletool.jar"; echo '${{ vars.MOBILE_BUNDLETOOL_1_17_2_SHA256 }}  '${RUNNER_TEMP}'/bundletool.jar' | sha256sum -c -; export BUNDLETOOL_JAR="$RUNNER_TEMP/bundletool.jar"
+          fi
+          mobile/scripts/verify-mobile-release-artifact.sh "$PROFILE" "$artifact" "$RUNNER_TEMP/source.json" "$RUNNER_TEMP/reverified-submit.json"
+          expected="$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.artifactSha256' "$evidence")"
+          test "$(jq -er .artifactSha256 "$RUNNER_TEMP/reverified-submit.json")" = "$expected"
+          test "$(jq -er .signerFingerprint "$RUNNER_TEMP/reverified-submit.json")" = "$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.signerFingerprint' "$evidence")"
+          echo "SUBMIT_ARTIFACT=$artifact" >> "$GITHUB_ENV"
+      - name: Submit artifact, then reverse-query immutable store/submission record
+        id: store
+        env:
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          ASC_KEY_ID: ${{ vars.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID }}
+          PLAY_KEY: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          LOOKUP_TOKEN: ${{ secrets.MOBILE_STORE_LOOKUP_ROBOT_TOKEN }}
+          LOOKUP_ENDPOINT: ${{ vars.MOBILE_STORE_BUILD_LOOKUP_ENDPOINT }}
+          ENTERPRISE_TOKEN: ${{ secrets.ENTERPRISE_MDM_ROBOT_TOKEN }}
+          ENTERPRISE_ENDPOINT: ${{ vars.MOBILE_ENTERPRISE_SUBMIT_ENDPOINT }}
+          PROFILE: ${{ inputs.profile }}
+        working-directory: mobile
+        run: |
+          set -euo pipefail; umask 077
+          cp eas.json "$RUNNER_TEMP/eas.json.original"
+          if [ "$PROFILE" = ios-store ]; then
+            test -n "$ASC_KEY_ID" && test -n "$ASC_ISSUER_ID"; printf '%s' "$ASC_KEY" > .m60-04-asc-key.p8
+            jq --arg id "$ASC_KEY_ID" --arg issuer "$ASC_ISSUER_ID" '.submit.production.ios += {ascApiKeyPath:"./.m60-04-asc-key.p8",ascApiKeyId:$id,ascApiKeyIssuerId:$issuer}' eas.json > "$RUNNER_TEMP/eas.tmp"; mv "$RUNNER_TEMP/eas.tmp" eas.json
+            pnpm exec eas submit --platform ios --path "$SUBMIT_ARTIFACT" --profile production --non-interactive --wait > "$RUNNER_TEMP/eas-submit.log" 2>&1
+          elif [ "$PROFILE" = android-store ]; then
+            printf '%s' "$PLAY_KEY" > .m60-04-play.json
+            jq '.submit["production-store"]={android:{serviceAccountKeyPath:"./.m60-04-play.json",track:"production",releaseStatus:"draft"}}' eas.json > "$RUNNER_TEMP/eas.tmp"; mv "$RUNNER_TEMP/eas.tmp" eas.json
+            pnpm exec eas submit --platform android --path "$SUBMIT_ARTIFACT" --profile production-store --non-interactive --wait > "$RUNNER_TEMP/eas-submit.log" 2>&1
+          else
+            test -n "$ENTERPRISE_TOKEN" && test -n "$ENTERPRISE_ENDPOINT" || { echo 'enterprise organization robot endpoint is missing' >&2; exit 1; }
+            curl --fail --silent --show-error -H "Authorization: Bearer $ENTERPRISE_TOKEN" -F "artifact=@$SUBMIT_ARTIFACT" "$ENTERPRISE_ENDPOINT" > "$RUNNER_TEMP/enterprise-submit.json"
+          fi
+          mv "$RUNNER_TEMP/eas.json.original" eas.json; rm -f .m60-04-asc-key.p8 .m60-04-play.json "$RUNNER_TEMP/eas-submit.log"
+          evidence="$RUNNER_TEMP/input/evidence/mobile-release-evidence.json"
+          jq -n --arg profile "$PROFILE" --arg commitOid "$(git rev-parse HEAD)" --arg lockSha256 "$(jq -er .lockSha256 "$evidence")" --arg easBuildId "$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.easBuildId' "$evidence")" --arg artifactSha256 "$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.artifactSha256' "$evidence")" --arg signerFingerprint "$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.signerFingerprint' "$evidence")" --arg buildEvidenceDigest "$(jq -er .canonicalDigest "$evidence")" '{profile:$profile,commitOid:$commitOid,lockSha256:$lockSha256,easBuildId:$easBuildId,artifactSha256:$artifactSha256,signerFingerprint:$signerFingerprint,buildEvidenceDigest:$buildEvidenceDigest}' > "$RUNNER_TEMP/lookup-request.json"
+          curl --fail --silent --show-error -H 'Content-Type: application/json' -H "Authorization: Bearer $LOOKUP_TOKEN" --data-binary @"$RUNNER_TEMP/lookup-request.json" "$LOOKUP_ENDPOINT" > "$RUNNER_TEMP/submit.json"
+          jq -e --slurpfile expected "$RUNNER_TEMP/lookup-request.json" '.status=="verified" and .commitOid==$expected[0].commitOid and .lockSha256==$expected[0].lockSha256 and .easBuildId==$expected[0].easBuildId and .artifactSha256==$expected[0].artifactSha256 and .signerFingerprint==$expected[0].signerFingerprint' "$RUNNER_TEMP/submit.json" >/dev/null
+          submission_id="$(jq -er '.submissionId' "$RUNNER_TEMP/submit.json")"; store_build_id="$(jq -er '.storeBuildId' "$RUNNER_TEMP/submit.json")"
+          { echo "submission_id=$submission_id"; echo "store_build_id=$store_build_id"; } >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/lookup-request.json" "$RUNNER_TEMP/enterprise-submit.json"
+      - name: Seal submit receipt after protected approval
+        env:
+          PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
+          PUBLIC_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}
+          KEY_ID: ${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}
+          PROFILE: ${{ inputs.profile }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail; environment="mobile-submit-$PROFILE"
+          protection="$(gh api "repos/$GITHUB_REPOSITORY/environments/$environment")"; echo "$protection" | jq -e '.protection_rules[]|select(.type=="required_reviewers")' >/dev/null
+          rules="sha256:$(echo "$protection"|jq -S -c .protection_rules|shasum -a 256|awk '{print $1}')"
+          deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=$environment&sha=${{ needs.validate-boundary.outputs.commit }}&per_page=20"|jq -er '.[0].id|tostring')"
+          approved="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment/statuses?per_page=20"|jq -er '.[0].created_at')"
+          evidence="$RUNNER_TEMP/input/evidence/mobile-release-evidence.json"; digest="$(jq -er .canonicalDigest "$evidence")"; artifact="$(jq -er --arg p "$PROFILE" '.profiles[]|select(.profile==$p)|.artifactSha256' "$evidence")"
+          nonce="$(openssl rand -base64 24|tr '+/' '-_'|tr -d '=')"
+          jq -n --arg schema 'https://agent.kaiyan.net/schemas/mobile-submit-receipt-v1' --arg buildEvidenceDigest "$digest" --arg profile "$PROFILE" --arg commitOid '${{ needs.validate-boundary.outputs.commit }}' --arg artifactSha256 "$artifact" --arg storeBuildId '${{ steps.store.outputs.store_build_id }}' --arg submissionId '${{ steps.store.outputs.submission_id }}' --arg submittedAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --arg environment "$environment" --arg deploymentId "$deployment" --arg runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg protectionRulesSha256 "$rules" --arg approvedAt "$approved" --arg nonce "$nonce" '{schema:$schema,buildEvidenceDigest:$buildEvidenceDigest,profile:$profile,commitOid:$commitOid,artifactSha256:$artifactSha256,storeBuildId:$storeBuildId,submissionId:$submissionId,submittedAt:$submittedAt,approval:{environment:$environment,deploymentId:$deploymentId,runId:$runId,runAttempt:$runAttempt,protectionRulesSha256:$protectionRulesSha256,approvedAt:$approvedAt},nonce:$nonce}' > "$RUNNER_TEMP/unsigned-submit.json"
+          printf '%s' "$PRIVATE_KEY" > "$RUNNER_TEMP/private.pem"; jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/mobile-release-evidence.mjs seal --input "$RUNNER_TEMP/unsigned-submit.json" --private-key "$RUNNER_TEMP/private.pem" --key-id "$KEY_ID" --output "$RUNNER_TEMP/mobile-submit-receipt.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-submit --input "$RUNNER_TEMP/mobile-submit-receipt.json" --build-evidence "$evidence" --public-keys "$RUNNER_TEMP/public-keys.json"
+          rm -f "$RUNNER_TEMP/private.pem" "$RUNNER_TEMP/unsigned-submit.json" "$RUNNER_TEMP/submit.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          {
+            name: 'mobile-submit-receipt-${{ inputs.profile }}-${{ github.run_id }}-${{ github.run_attempt }}',
+            path: '${{ runner.temp }}/mobile-submit-receipt.json',
+            if-no-files-found: error,
+            retention-days: 90,
+          }

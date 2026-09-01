@@ -13,12 +13,15 @@
     "submit:ios": "./scripts/build.sh ios --submit",
     "typecheck": "tsc --noEmit",
     "check:expo": "pnpm exec expo install --check",
-    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js plugins/withMobilePrivacyControls.test.js scripts/release-manifest.test.mjs scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs scripts/mobile-privacy-policy.test.mjs scripts/incoming-share-config.test.mjs scripts/native-policy.test.mjs e2e/maestro/tests/native-e2e.test.mjs",
+    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js plugins/withMobilePrivacyControls.test.js scripts/release-manifest.test.mjs scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs scripts/mobile-privacy-policy.test.mjs scripts/incoming-share-config.test.mjs scripts/native-policy.test.mjs scripts/mobile-release-evidence.test.mjs scripts/authorize-mobile-release-source.test.mjs scripts/mobile-release-workflows.test.mjs e2e/maestro/tests/native-e2e.test.mjs",
     "test:m60-02": "node --test e2e/maestro/tests/native-e2e.test.mjs",
     "lint:maestro": "node e2e/maestro/scripts/lint-maestro.mjs",
     "test:m60-02:prebuild": "bash scripts/test-m60-02-prebuild-smoke.sh",
     "test:m60-03": "node --test scripts/native-policy.test.mjs",
     "test:m60-03:prebuild": "node scripts/run-native-prebuild-gate.mjs --profile all",
+    "test:m60-04": "node --test scripts/mobile-release-evidence.test.mjs scripts/authorize-mobile-release-source.test.mjs scripts/mobile-release-workflows.test.mjs",
+    "validate:m60-04:evidence": "node scripts/mobile-release-evidence.mjs",
+    "generate:m60-04:sbom": "node scripts/generate-mobile-release-sbom.mjs",
     "test:m10-04": "vitest run src/updates/enterpriseUpdateManifest.test.ts src/updates/enterpriseUpdaterConfig.test.ts src/updates/sha256File.test.ts && node --test scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs plugins/withAndroidSigningConfig.test.js",
     "test:m10-05": "vitest run src/platform/jitMediaPermissions.test.ts && node --test scripts/mobile-privacy-policy.test.mjs plugins/withMobilePrivacyControls.test.js",
     "test:m10-05:prebuild": "bash scripts/test-mobile-privacy-prebuild.sh",
@@ -79,8 +82,10 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "eas-cli": "18.1.0",
     "typescript": "~5.9.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "yaml": "2.9.0"
   },
   "private": true
 }

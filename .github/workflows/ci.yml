@@ -223,7 +223,7 @@ jobs:
         run: bash scripts/pr-preflight-task.sh web
 
   mobile_contract:
-    name: Preflight / Mobile + native E2E contract
+    name: Preflight / Mobile + native release contract
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -254,6 +254,9 @@ jobs:
         env:
           M60_03_ARTIFACT_DIR: .ci-artifacts/native-policy
         run: pnpm -F mobile test:m60-03 && pnpm -F mobile test:m60-03:prebuild
+
+      - name: Run M60-04 workflow, schema, mock evidence and tamper contracts
+        run: pnpm -F mobile test:m60-04
 
       - name: Upload bounded normalized M60-03 failure evidence
         if: failure()

@@ -1,0 +1,151 @@
+# M60-04: rollout boundary. It accepts a signed submit receipt, never a build/branch directly.
+name: Mobile Release / Rollout
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id: { description: 'Build evidence run id', required: true, type: string }
+      submit_run_id: { description: 'Submit receipt run id', required: true, type: string }
+      profile:
+        { required: true, type: choice, options: [ios-store, android-store, android-enterprise] }
+      command: { required: true, type: choice, options: [start, pause, resume, rollback] }
+      execute_rollout: { required: true, default: false, type: boolean }
+  workflow_call:
+    inputs:
+      build_run_id: { required: true, type: string }
+      submit_run_id: { required: true, type: string }
+      profile: { required: true, type: string }
+      command: { required: true, type: string }
+      execute_rollout: { required: false, type: boolean, default: false }
+    secrets:
+      MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
+      MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
+      MOBILE_ROLLOUT_ROBOT_TOKEN: { required: false }
+permissions: { contents: read, actions: read, deployments: read }
+concurrency: { group: 'mobile-rollout-${{ inputs.profile }}', cancel-in-progress: false }
+env: { FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true }
+jobs:
+  receipt-contract:
+    name: Offline submit-receipt boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs: { commit: '${{ steps.bound.outputs.commit }}' }
+    steps:
+      - name: Download only immutable build evidence and submit receipt
+        env:
+          {
+            GH_TOKEN: '${{ github.token }}',
+            BUILD_RUN: '${{ inputs.build_run_id }}',
+            SUBMIT_RUN: '${{ inputs.submit_run_id }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail; mkdir -p "$RUNNER_TEMP/input"
+          builds="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/artifacts?per_page=100")"; submits="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SUBMIT_RUN/artifacts?per_page=100")"
+          build_id="$(jq -er '.artifacts[]|select(.name|startswith("mobile-release-evidence-"))|.id' <<<"$builds")"
+          submit_id="$(jq -er --arg p "$PROFILE" '.artifacts[]|select(.name|startswith("mobile-submit-receipt-"+$p+"-"))|.id' <<<"$submits")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$build_id/zip" > "$RUNNER_TEMP/build.zip"; gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$submit_id/zip" > "$RUNNER_TEMP/submit.zip"
+          unzip -q "$RUNNER_TEMP/build.zip" -d "$RUNNER_TEMP/input"; unzip -q "$RUNNER_TEMP/submit.zip" -d "$RUNNER_TEMP/input"; rm "$RUNNER_TEMP"/*.zip
+      - name: Select evidence-bound source before loading validator
+        id: bound
+        run: |
+          set -euo pipefail; commit="$(jq -er .commitOid "$RUNNER_TEMP/input/mobile-release-evidence.json")"; [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with: { ref: '${{ steps.bound.outputs.commit }}', persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1' }
+      - name: Validate submit receipt signature and complete build binding
+        env:
+          {
+            PUBLIC_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}',
+            KEY_ID: '${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}',
+          }
+        run: |
+          set -euo pipefail; test -n "$PUBLIC_KEY" && test -n "$KEY_ID"
+          jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-submit --input "$RUNNER_TEMP/input/mobile-submit-receipt.json" --build-evidence "$RUNNER_TEMP/input/mobile-release-evidence.json" --public-keys "$RUNNER_TEMP/public-keys.json"
+          test "$(jq -er .profile "$RUNNER_TEMP/input/mobile-submit-receipt.json")" = '${{ inputs.profile }}'
+      - name: Contract-only invocation creates no rollout record
+        if: inputs.execute_rollout != true
+        run: echo 'Signed submit receipt accepted; execute_rollout=false, no external command or receipt created.'
+
+  rollout:
+    name: Approved ${{ inputs.command }} / ${{ inputs.profile }}
+    needs: receipt-contract
+    if: inputs.execute_rollout == true
+    environment: mobile-rollout-${{ inputs.profile }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: '${{ needs.receipt-contract.outputs.commit }}', persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1' }
+      - name: Fail closed without protected organization rollout adapter
+        env:
+          CONFIGURED: ${{ vars.MOBILE_ROLLOUT_CONFIGURED }}
+          ENDPOINT: ${{ vars.MOBILE_ROLLOUT_ENDPOINT }}
+          ROBOT_TOKEN: ${{ secrets.MOBILE_ROLLOUT_ROBOT_TOKEN }}
+          PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
+          PUBLIC_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          test "$CONFIGURED" = true && test -n "$ENDPOINT" && test -n "$ROBOT_TOKEN" && test -n "$PRIVATE_KEY" && test -n "$PUBLIC_KEY" || { echo 'rollout robot/configuration is incomplete' >&2; exit 1; }
+          [[ "$ENDPOINT" =~ ^https://[^/@]+/ ]] || { echo 'rollout endpoint must be credential-free HTTPS' >&2; exit 1; }
+      - name: Re-download and validate receipts in approved job
+        env:
+          {
+            GH_TOKEN: '${{ github.token }}',
+            BUILD_RUN: '${{ inputs.build_run_id }}',
+            SUBMIT_RUN: '${{ inputs.submit_run_id }}',
+            PROFILE: '${{ inputs.profile }}',
+            PUBLIC_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}',
+            KEY_ID: '${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}',
+          }
+        run: |
+          set -euo pipefail; mkdir -p "$RUNNER_TEMP/input"
+          builds="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/artifacts?per_page=100")"; submits="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SUBMIT_RUN/artifacts?per_page=100")"
+          for pair in "build:$(jq -er '.artifacts[]|select(.name|startswith("mobile-release-evidence-"))|.id' <<<"$builds")" "submit:$(jq -er --arg p "$PROFILE" '.artifacts[]|select(.name|startswith("mobile-submit-receipt-"+$p+"-"))|.id' <<<"$submits")"; do name="${pair%%:*}"; id="${pair#*:}"; gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip"; unzip -q "$RUNNER_TEMP/$name.zip" -d "$RUNNER_TEMP/input"; rm "$RUNNER_TEMP/$name.zip"; done
+          jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-submit --input "$RUNNER_TEMP/input/mobile-submit-receipt.json" --build-evidence "$RUNNER_TEMP/input/mobile-release-evidence.json" --public-keys "$RUNNER_TEMP/public-keys.json"
+      - name: Execute start/pause/resume/rollback command against submitted store build
+        id: adapter
+        env:
+          {
+            ENDPOINT: '${{ vars.MOBILE_ROLLOUT_ENDPOINT }}',
+            ROBOT_TOKEN: '${{ secrets.MOBILE_ROLLOUT_ROBOT_TOKEN }}',
+            COMMAND: '${{ inputs.command }}',
+            PROFILE: '${{ inputs.profile }}',
+          }
+        run: |
+          set -euo pipefail; submit="$RUNNER_TEMP/input/mobile-submit-receipt.json"; store="$(jq -er .storeBuildId "$submit")"
+          jq -n --arg command "$COMMAND" --arg profile "$PROFILE" --arg storeBuildId "$store" --arg submitReceiptDigest "$(jq -er .canonicalDigest "$submit")" '{command:$command,profile:$profile,storeBuildId:$storeBuildId,submitReceiptDigest:$submitReceiptDigest}' > "$RUNNER_TEMP/request.json"
+          curl --fail --silent --show-error -H 'Content-Type: application/json' -H "Authorization: Bearer $ROBOT_TOKEN" --data-binary @"$RUNNER_TEMP/request.json" "$ENDPOINT" > "$RUNNER_TEMP/response.json"
+          rollout_id="$(jq -er '.rolloutId // .id' "$RUNNER_TEMP/response.json")"; jq -e '.status|ascii_downcase|IN("accepted","completed","paused","rolled_back","active")' "$RUNNER_TEMP/response.json" >/dev/null
+          echo "rollout_id=$rollout_id" >> "$GITHUB_OUTPUT"; rm "$RUNNER_TEMP/request.json" "$RUNNER_TEMP/response.json"
+      - name: Seal rollout receipt with environment approval
+        env:
+          {
+            GH_TOKEN: '${{ github.token }}',
+            PRIVATE_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}',
+            PUBLIC_KEY: '${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}',
+            KEY_ID: '${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}',
+            PROFILE: '${{ inputs.profile }}',
+            COMMAND: '${{ inputs.command }}',
+          }
+        run: |
+          set -euo pipefail; environment="mobile-rollout-$PROFILE"; submit="$RUNNER_TEMP/input/mobile-submit-receipt.json"
+          protection="$(gh api "repos/$GITHUB_REPOSITORY/environments/$environment")"; echo "$protection"|jq -e '.protection_rules[]|select(.type=="required_reviewers")' >/dev/null; rules="sha256:$(echo "$protection"|jq -S -c .protection_rules|shasum -a 256|awk '{print $1}')"
+          deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=$environment&sha=${{ needs.receipt-contract.outputs.commit }}&per_page=20"|jq -er '.[0].id|tostring')"; approved="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment/statuses?per_page=20"|jq -er '.[0].created_at')"; nonce="$(openssl rand -base64 24|tr '+/' '-_'|tr -d '=')"
+          jq -n --arg schema 'https://agent.kaiyan.net/schemas/mobile-rollout-receipt-v1' --arg submitReceiptDigest "$(jq -er .canonicalDigest "$submit")" --arg profile "$PROFILE" --arg command "$COMMAND" --arg storeBuildId "$(jq -er .storeBuildId "$submit")" --arg rolloutId '${{ steps.adapter.outputs.rollout_id }}' --arg executedAt "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" --arg environment "$environment" --arg deploymentId "$deployment" --arg runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg protectionRulesSha256 "$rules" --arg approvedAt "$approved" --arg nonce "$nonce" '{schema:$schema,submitReceiptDigest:$submitReceiptDigest,profile:$profile,command:$command,storeBuildId:$storeBuildId,rolloutId:$rolloutId,executedAt:$executedAt,approval:{environment:$environment,deploymentId:$deploymentId,runId:$runId,runAttempt:$runAttempt,protectionRulesSha256:$protectionRulesSha256,approvedAt:$approvedAt},nonce:$nonce}' > "$RUNNER_TEMP/unsigned.json"
+          printf '%s' "$PRIVATE_KEY" > "$RUNNER_TEMP/private.pem"; jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/mobile-release-evidence.mjs seal --input "$RUNNER_TEMP/unsigned.json" --private-key "$RUNNER_TEMP/private.pem" --key-id "$KEY_ID" --output "$RUNNER_TEMP/mobile-rollout-receipt.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-rollout --input "$RUNNER_TEMP/mobile-rollout-receipt.json" --submit-receipt "$submit" --build-evidence "$RUNNER_TEMP/input/mobile-release-evidence.json" --public-keys "$RUNNER_TEMP/public-keys.json"
+          rm -f "$RUNNER_TEMP/private.pem" "$RUNNER_TEMP/unsigned.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          {
+            name: 'mobile-rollout-receipt-${{ inputs.profile }}-${{ inputs.command }}-${{ github.run_id }}-${{ github.run_attempt }}',
+            path: '${{ runner.temp }}/mobile-rollout-receipt.json',
+            if-no-files-found: error,
+            retention-days: 90,
+          }

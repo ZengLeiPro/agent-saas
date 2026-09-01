@@ -171,7 +171,7 @@ test('M10-03 production requires verified identity/version facts and all release
   );
 });
 
-test('M10-03 production target profile and Git SHA must match', () => {
+test('M10-03 production target profile and exact Git SHA must match', () => {
   const manifest = productionReadyManifest();
   assert.doesNotThrow(() =>
     assertProductionReady(manifest, {
@@ -205,6 +205,20 @@ test('M10-03 production target profile and Git SHA must match', () => {
       }),
     /Git SHA mismatch/,
   );
+});
+
+test('M60-04 one reviewed manifest may authorize Store and Enterprise artifacts from the same SHA', () => {
+  const manifest = productionReadyManifest();
+  manifest.target.distribution = 'both';
+  assert.equal(validateManifestSchema(manifest), manifest);
+  for (const distribution of ['store', 'enterprise']) {
+    assert.doesNotThrow(() => assertProductionReady(manifest, {
+      profile: 'production',
+      platform: 'android',
+      distribution,
+      sourceGitSha: FULL_GIT_SHA,
+    }));
+  }
 });
 
 test('M10-03 conflicting profile declarations fail closed', () => {

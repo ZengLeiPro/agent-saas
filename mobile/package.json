@@ -13,7 +13,7 @@
     "submit:ios": "./scripts/build.sh ios --submit",
     "typecheck": "tsc --noEmit",
     "check:expo": "pnpm exec expo install --check",
-    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js plugins/withMobilePrivacyControls.test.js scripts/release-manifest.test.mjs scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs scripts/mobile-privacy-policy.test.mjs scripts/incoming-share-config.test.mjs scripts/native-policy.test.mjs scripts/mobile-release-evidence.test.mjs scripts/authorize-mobile-release-source.test.mjs scripts/mobile-release-workflows.test.mjs scripts/mobile-telemetry-release-gate.test.mjs e2e/maestro/tests/native-e2e.test.mjs rc/tests/rc-contract.test.mjs rc/tests/rc-workflow-security.test.mjs rehearsal/tests/rehearsal-contract.test.mjs rehearsal/tests/rehearsal-workflow.test.mjs",
+    "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js plugins/withMobilePrivacyControls.test.js scripts/release-manifest.test.mjs scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs scripts/mobile-privacy-policy.test.mjs scripts/incoming-share-config.test.mjs scripts/native-policy.test.mjs scripts/mobile-release-evidence.test.mjs scripts/authorize-mobile-release-source.test.mjs scripts/mobile-release-workflows.test.mjs scripts/mobile-telemetry-release-gate.test.mjs e2e/maestro/tests/native-e2e.test.mjs rc/tests/rc-contract.test.mjs rc/tests/rc-workflow-security.test.mjs rehearsal/tests/rehearsal-contract.test.mjs rehearsal/tests/rehearsal-workflow.test.mjs rollout/tests/rollout-contract.test.mjs rollout/tests/rollout-workflow-security.test.mjs",
     "test:m60-02": "node --test e2e/maestro/tests/native-e2e.test.mjs",
     "lint:maestro": "node e2e/maestro/scripts/lint-maestro.mjs",
     "test:m60-02:prebuild": "bash scripts/test-m60-02-prebuild-smoke.sh",
@@ -39,7 +39,9 @@
     "validate:m70-01:evidence": "node rc/scripts/validate-rc-evidence.mjs",
     "lint:m70-02": "node rehearsal/scripts/lint-rehearsal-plan.mjs",
     "test:m70-02": "node rehearsal/scripts/lint-rehearsal-plan.mjs && node --test rehearsal/tests/rehearsal-contract.test.mjs rehearsal/tests/rehearsal-workflow.test.mjs",
-    "validate:m70-02:evidence": "node rehearsal/scripts/validate-rehearsal-evidence.mjs"
+    "validate:m70-02:evidence": "node rehearsal/scripts/validate-rehearsal-evidence.mjs",
+    "test:m70-03": "node --test rollout/tests/rollout-contract.test.mjs rollout/tests/rollout-workflow-security.test.mjs",
+    "validate:m70-03:policy": "node rollout/scripts/validate-rollout-gate.mjs --command lint-policy --policy rollout/rollout-policy.json --mode production"
   },
   "dependencies": {
     "@agent/shared": "workspace:*",

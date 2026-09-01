@@ -264,6 +264,9 @@ jobs:
       - name: Run M70-01 plan/schema/mock validator, negative, YAML and security contracts
         run: pnpm -F mobile test:m70-01
 
+      - name: Run M70-02 rehearsal and M70-03 staged rollout contract/mock/negative/YAML/security gates
+        run: pnpm -F mobile test:m70-02 && pnpm -F mobile test:m70-03
+
       - name: Upload bounded normalized M60-03 failure evidence
         if: failure()
         uses: actions/upload-artifact@v7

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0.0",
+  "policyId": "M70-03",
+  "status": "approved_test_fixture",
+  "testFixture": true,
+  "authoritativeOrder": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"],
+  "hardStops": ["crossAccountIdentityLeak", "crossTenantIdentityLeak", "wrongAgentExecution", "signatureFailure", "upgradeFailure", "duplicateRunExecution"],
+  "metrics": {
+    "crashFreeUsers": { "direction": ">=", "unit": "ratio" },
+    "androidAnrRate": { "direction": "<=", "unit": "ratio" },
+    "loginSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "wsReconnectRecoveryRate": { "direction": ">=", "unit": "ratio" },
+    "messageAckSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "duplicateRunRate": { "direction": "<=", "unit": "ratio" },
+    "uploadSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "identityTenantAgentIncidentCount": { "direction": "<=", "unit": "count" },
+    "visibleErrorRate": { "direction": "<=", "unit": "ratio" },
+    "supportTicketCount": { "direction": "<=", "unit": "count" }
+  },
+  "stages": [
+    { "id": "employee-dogfood", "cohort": { "kind": "employee", "definition": "fixture:employees" }, "traffic": { "unit": "users", "min": 10, "max": 20 }, "observationWindowSeconds": 60, "snapshotFreshnessSeconds": 120, "minimumSampleSize": 10, "metricChecks": "all", "approvedThresholdSource": "fixture://m70-03/non-production", "manualApproval": { "required": true, "environment": "mobile-rollout-gate-employee-dogfood" }, "entryEvidence": ["m60-build", "m60-submit", "m60-telemetry-provider", "m60-telemetry-test-receipt", "m70-01-rc-pass", "m70-02-upgrade-pass"], "exitReceipt": "signed-stage-receipt-v1" },
+    { "id": "closed-test", "cohort": { "kind": "closed-test", "definition": "fixture:closed" }, "traffic": { "unit": "users", "min": 20, "max": 50 }, "observationWindowSeconds": 60, "snapshotFreshnessSeconds": 120, "minimumSampleSize": 20, "metricChecks": "all", "approvedThresholdSource": "fixture://m70-03/non-production", "manualApproval": { "required": true, "environment": "mobile-rollout-gate-closed-test" }, "entryEvidence": ["previous-stage-pass-receipt"], "exitReceipt": "signed-stage-receipt-v1" },
+    { "id": "small-percentage", "cohort": { "kind": "percentage", "definition": "fixture:1-5" }, "traffic": { "unit": "percent", "min": 1, "max": 5 }, "observationWindowSeconds": 60, "snapshotFreshnessSeconds": 120, "minimumSampleSize": 30, "metricChecks": "all", "approvedThresholdSource": "fixture://m70-03/non-production", "manualApproval": { "required": true, "environment": "mobile-rollout-gate-small-percentage" }, "entryEvidence": ["previous-stage-pass-receipt"], "exitReceipt": "signed-stage-receipt-v1" },
+    { "id": "expanded", "cohort": { "kind": "percentage", "definition": "fixture:6-50" }, "traffic": { "unit": "percent", "min": 6, "max": 50 }, "observationWindowSeconds": 60, "snapshotFreshnessSeconds": 120, "minimumSampleSize": 40, "metricChecks": "all", "approvedThresholdSource": "fixture://m70-03/non-production", "manualApproval": { "required": true, "environment": "mobile-rollout-gate-expanded" }, "entryEvidence": ["previous-stage-pass-receipt"], "exitReceipt": "signed-stage-receipt-v1" },
+    { "id": "full", "cohort": { "kind": "all-eligible", "definition": "fixture:all" }, "traffic": { "unit": "percent", "min": 100, "max": 100 }, "observationWindowSeconds": 60, "snapshotFreshnessSeconds": 120, "minimumSampleSize": 50, "metricChecks": "all", "approvedThresholdSource": "fixture://m70-03/non-production", "manualApproval": { "required": true, "environment": "mobile-rollout-gate-full" }, "entryEvidence": ["previous-stage-pass-receipt"], "exitReceipt": "signed-stage-receipt-v1" }
+  ],
+  "thresholds": {
+    "employee-dogfood": { "crashFreeUsers": 0.9, "androidAnrRate": 0.1, "loginSuccessRate": 0.9, "wsReconnectRecoveryRate": 0.9, "messageAckSuccessRate": 0.9, "duplicateRunRate": 0, "uploadSuccessRate": 0.9, "identityTenantAgentIncidentCount": 0, "visibleErrorRate": 0.1, "supportTicketCount": 2 },
+    "closed-test": { "crashFreeUsers": 0.9, "androidAnrRate": 0.1, "loginSuccessRate": 0.9, "wsReconnectRecoveryRate": 0.9, "messageAckSuccessRate": 0.9, "duplicateRunRate": 0, "uploadSuccessRate": 0.9, "identityTenantAgentIncidentCount": 0, "visibleErrorRate": 0.1, "supportTicketCount": 2 },
+    "small-percentage": { "crashFreeUsers": 0.9, "androidAnrRate": 0.1, "loginSuccessRate": 0.9, "wsReconnectRecoveryRate": 0.9, "messageAckSuccessRate": 0.9, "duplicateRunRate": 0, "uploadSuccessRate": 0.9, "identityTenantAgentIncidentCount": 0, "visibleErrorRate": 0.1, "supportTicketCount": 2 },
+    "expanded": { "crashFreeUsers": 0.9, "androidAnrRate": 0.1, "loginSuccessRate": 0.9, "wsReconnectRecoveryRate": 0.9, "messageAckSuccessRate": 0.9, "duplicateRunRate": 0, "uploadSuccessRate": 0.9, "identityTenantAgentIncidentCount": 0, "visibleErrorRate": 0.1, "supportTicketCount": 2 },
+    "full": { "crashFreeUsers": 0.9, "androidAnrRate": 0.1, "loginSuccessRate": 0.9, "wsReconnectRecoveryRate": 0.9, "messageAckSuccessRate": 0.9, "duplicateRunRate": 0, "uploadSuccessRate": 0.9, "identityTenantAgentIncidentCount": 0, "visibleErrorRate": 0.1, "supportTicketCount": 2 }
+  }
+}

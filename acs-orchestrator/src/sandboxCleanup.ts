@@ -60,18 +60,23 @@ export async function cleanupManagedSandboxes(
     const deletionReason = cleanupDeletionReason(host, sandbox, nowMs);
     if (deletionReason) {
       if (deletionReason === 'broken') host.warn(`sandbox_broken_recycle name=${sandbox.name} reason=${sandbox.brokenReason}`);
-      const reclaimed = await host.deleteWhenIdle(
-        sandbox.name,
-        busySandboxNames,
-        (latest) => cleanupDeletionReason(host, mergeLatestSandbox(sandbox, latest), nowMs) === deletionReason,
-      );
-      if (!reclaimed) {
-        skippedBusy.push(sandbox.name);
-        continue;
+      try {
+        const reclaimed = await host.deleteWhenIdle(
+          sandbox.name,
+          busySandboxNames,
+          (latest) => cleanupDeletionReason(host, mergeLatestSandbox(sandbox, latest), nowMs) === deletionReason,
+        );
+        if (!reclaimed) {
+          skippedBusy.push(sandbox.name);
+          continue;
+        }
+        snatDeleted.push(...reclaimed);
+        if (deletionReason === 'broken') brokenRecycled.push(sandbox.name);
+        else deleted.push(sandbox.name);
+      } catch (error) {
+        decisionCounts['candidate-error'] = (decisionCounts['candidate-error'] ?? 0) + 1;
+        host.warn(`sandbox_cleanup_candidate_failed name=${sandbox.name} error=${error instanceof Error ? error.message : String(error)}`);
       }
-      snatDeleted.push(...reclaimed);
-      if (deletionReason === 'broken') brokenRecycled.push(sandbox.name);
-      else deleted.push(sandbox.name);
       continue;
     }
     const phase = sandbox.phase ?? 'Unknown';
@@ -79,16 +84,21 @@ export async function cleanupManagedSandboxes(
     const lastActiveAtMs = parseDateMs(sandbox.lastActiveAt) ?? createdAtMs;
     const idleMs = lastActiveAtMs === undefined ? 0 : nowMs - lastActiveAtMs;
     if (phase === 'Running' && host.sandboxIdlePauseMs > 0 && idleMs >= host.sandboxIdlePauseMs) {
-      const pausedNow = await host.pauseWhenIdle(sandbox.name, busySandboxNames, (latest) => {
-        const current = mergeLatestSandbox(sandbox, latest);
-        const currentCreatedAtMs = parseDateMs(current.createdAt);
-        const currentLastActiveAtMs = parseDateMs(current.lastActiveAt) ?? currentCreatedAtMs;
-        return current.phase === 'Running' && currentLastActiveAtMs !== undefined
-          && nowMs - currentLastActiveAtMs >= host.sandboxIdlePauseMs
-          && cleanupDeletionReason(host, current, nowMs) === undefined;
-      });
-      if (pausedNow) paused.push(sandbox.name);
-      else skippedBusy.push(sandbox.name);
+      try {
+        const pausedNow = await host.pauseWhenIdle(sandbox.name, busySandboxNames, (latest) => {
+          const current = mergeLatestSandbox(sandbox, latest);
+          const currentCreatedAtMs = parseDateMs(current.createdAt);
+          const currentLastActiveAtMs = parseDateMs(current.lastActiveAt) ?? currentCreatedAtMs;
+          return current.phase === 'Running' && currentLastActiveAtMs !== undefined
+            && nowMs - currentLastActiveAtMs >= host.sandboxIdlePauseMs
+            && cleanupDeletionReason(host, current, nowMs) === undefined;
+        });
+        if (pausedNow) paused.push(sandbox.name);
+        else skippedBusy.push(sandbox.name);
+      } catch (error) {
+        decisionCounts['candidate-error'] = (decisionCounts['candidate-error'] ?? 0) + 1;
+        host.warn(`sandbox_cleanup_candidate_failed name=${sandbox.name} error=${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

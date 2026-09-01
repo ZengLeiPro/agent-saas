@@ -79,7 +79,7 @@ describe('SandboxManager lifecycle mutations', () => {
     });
   });
 
-  it('updates terminal annotations only after exact identity verification', async () => {
+  it('updates terminal annotations only after exact identity verification and CAS fencing', async () => {
     const { manager, run } = setup();
     vi.spyOn(manager, 'getStatus').mockResolvedValue(status());
     const update = {
@@ -95,14 +95,60 @@ describe('SandboxManager lifecycle mutations', () => {
       retentionDeadline: update.retentionDeadline,
     });
     const patchArgs = run.mock.calls.at(-1)![0];
-    expect(patchArgs.slice(0, 3)).toEqual(['patch', `sandbox/${manager.ref(identity).name}`, '--type=merge']);
-    const payload = JSON.parse(patchArgs[4]!) as any;
-    expect(payload.metadata.annotations).toMatchObject({
-      'agent-saas.kaiyan.net/terminal-state': 'failed',
-      'agent-saas.kaiyan.net/terminal-at': update.terminalAt,
-      'agent-saas.kaiyan.net/terminal-outcome': JSON.stringify(update.outcome),
-      'agent-saas.kaiyan.net/retention-deadline': update.retentionDeadline,
+    expect(patchArgs.slice(0, 3)).toEqual(['patch', `sandbox/${manager.ref(identity).name}`, '--type=json']);
+    const payload = JSON.parse(patchArgs[4]!) as Array<{ op: string; path: string; value?: unknown }>;
+    expect(payload).toEqual(expect.arrayContaining([
+      { op: 'test', path: '/metadata/uid', value: 'sandbox-uid-1' },
+      { op: 'test', path: '/metadata/resourceVersion', value: 'resource-version-1' },
+      expect.objectContaining({ path: '/metadata/annotations/agent-saas.kaiyan.net~1terminal-state', value: 'failed' }),
+      expect.objectContaining({ path: '/metadata/annotations/agent-saas.kaiyan.net~1terminal-at', value: update.terminalAt }),
+      expect.objectContaining({ path: '/metadata/annotations/agent-saas.kaiyan.net~1terminal-outcome', value: JSON.stringify(update.outcome) }),
+      expect.objectContaining({ path: '/metadata/annotations/agent-saas.kaiyan.net~1retention-deadline', value: update.retentionDeadline }),
+    ]));
+  });
+
+  it('keeps terminalAt monotonic when an older terminal receipt retries after a newer one', async () => {
+    const { manager, run } = setup();
+    const newerAt = '2026-08-30T00:10:00.000Z';
+    const newerDeadline = '2026-08-30T00:25:00.000Z';
+    const newerStatus = status({
+      'agent-saas.kaiyan.net/terminal-state': 'completed',
+      'agent-saas.kaiyan.net/terminal-at': newerAt,
+      'agent-saas.kaiyan.net/retention-deadline': newerDeadline,
     });
+    vi.spyOn(manager, 'getStatus')
+      .mockResolvedValueOnce(status())
+      .mockResolvedValueOnce(newerStatus);
+
+    await manager.updateLifecycle({
+      ...identity, terminalState: 'completed', terminalAt: newerAt, retentionDeadline: newerDeadline,
+    });
+    await expect(manager.updateLifecycle({
+      ...identity,
+      terminalState: 'failed',
+      terminalAt: '2026-08-30T00:05:00.000Z',
+      retentionDeadline: '2026-08-30T00:20:00.000Z',
+    })).resolves.toEqual({ name: manager.ref(identity).name, retentionDeadline: newerDeadline });
+
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a delayed lifecycle patch after the Sandbox is deleted and recreated with the same name', async () => {
+    const { manager, run } = setup();
+    const recreated = status();
+    (recreated.raw.metadata as any).uid = 'sandbox-uid-2';
+    (recreated.raw.metadata as any).resourceVersion = 'resource-version-2';
+    vi.spyOn(manager, 'getStatus')
+      .mockResolvedValueOnce(status())
+      .mockResolvedValueOnce(recreated);
+    run.mockResolvedValueOnce({
+      stdout: '', stderr: 'jsonpatch test operation failed', exitCode: 1, signal: null,
+    });
+
+    await expect(manager.updateLifecycle({
+      ...identity, terminalState: 'failed', terminalAt: '2026-08-30T00:05:00.000Z',
+    })).rejects.toThrow(/同名重建/u);
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it('keeps legacy 30m cleanup in shadow and applies workload deadlines only in enforce', async () => {

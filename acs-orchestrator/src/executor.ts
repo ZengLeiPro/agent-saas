@@ -26,6 +26,10 @@ interface InvocationEntry {
   sandboxName?: string;
 }
 
+interface InvocationProtectionState {
+  preserveInvocationLease: boolean;
+}
+
 export class AcsExecutor {
   private readonly invocations = new Map<string, InvocationEntry>();
   private readonly persistentRunners = new Map<string, PersistentSandboxRunner>();
@@ -91,6 +95,7 @@ export class AcsExecutor {
     let leaseMonitor: InvocationLeaseMonitor | undefined;
     let finalResponse: ToolInvocationResponse | undefined;
     let runError: unknown;
+    const protectionState: InvocationProtectionState = { preserveInvocationLease: false };
     const failForLease = (error: Error) => { // Runner termination is part of the lease fence.
       this.logger.error(
         `invocation_lease_lost sandbox=${ref.name} invocation=${invocationKey}: ${error.message}`,
@@ -163,17 +168,19 @@ export class AcsExecutor {
           if (output.kind === 'chunk') {
             if (output.chunk.type === 'completed') {
               finalResponse = addRunnerMetadata(output.chunk.response, 'persistent');
-              await this.applyBackgroundShellProtection(ref.name, finalResponse);
+              await this.applyBackgroundShellProtection(ref.name, finalResponse, leaseKey, protectionState);
             } else if (!leaseMonitor?.failure) {
               yield output.chunk;
             }
           } else {
             finalResponse = addRunnerMetadata(output.response, 'persistent');
-            await this.applyBackgroundShellProtection(ref.name, finalResponse);
+            await this.applyBackgroundShellProtection(ref.name, finalResponse, leaseKey, protectionState);
           }
         }
       } else {
-        for await (const output of this.executeOneShot(ref, runnerInput, controller, invocationKey)) {
+        for await (const output of this.executeOneShot(
+          ref, runnerInput, controller, invocationKey, leaseKey, protectionState,
+        )) {
           if (output.type === 'completed') finalResponse = output.response;
           else if (!leaseMonitor?.failure) yield output;
         }
@@ -185,7 +192,7 @@ export class AcsExecutor {
       options.signal?.removeEventListener('abort', onExternalAbort);
       this.invocations.delete(invocationKey);
       releaseActive?.();
-      if (leasePersisted && !leaseFailure) {
+      if (leasePersisted && !leaseFailure && !protectionState.preserveInvocationLease) {
         try {
           await this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey);
         } catch (err) {
@@ -259,13 +266,35 @@ export class AcsExecutor {
     return { checked: sandboxes.length, failed };
   }
 
-  private async applyBackgroundShellProtection(sandboxName: string, response: ToolInvocationResponse): Promise<void> {
+  private async applyBackgroundShellProtection(
+    sandboxName: string,
+    response: ToolInvocationResponse,
+    leaseKey: string,
+    state: InvocationProtectionState,
+  ): Promise<void> {
     const raw = response.metadata?.backgroundShell;
     if (!raw || typeof raw !== 'object') return;
-    const protectedUntil = typeof (raw as { protectedUntil?: unknown }).protectedUntil === 'string'
-      ? (raw as { protectedUntil: string }).protectedUntil
-      : undefined;
-    await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
+    const background = raw as { taskId?: unknown; status?: unknown; protectedUntil?: unknown };
+    const protectedUntil = typeof background.protectedUntil === 'string' ? background.protectedUntil : undefined;
+    const runningTask = typeof background.taskId === 'string'
+      && background.status === 'running' && protectedUntil !== undefined;
+    if (runningTask) state.preserveInvocationLease = true;
+    try {
+      await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
+      if (runningTask) state.preserveInvocationLease = false;
+    } catch (protectionError) {
+      if (!runningTask) throw protectionError;
+      try {
+        await this.sandboxManager.setActiveInvocationLease(sandboxName, leaseKey, protectedUntil);
+        this.logger.warn(
+          `background_shell_protection_fallback sandbox=${sandboxName} task=${String(background.taskId)}`,
+        );
+      } catch (leaseError) {
+        throw new Error(
+          `后台 Shell 保护持久化失败，保留现有 invocation lease: protection=${errorMessage(protectionError)} lease=${errorMessage(leaseError)}`,
+        );
+      }
+    }
   }
 
   private async ensureSandboxRunning(
@@ -332,11 +361,14 @@ export class AcsExecutor {
     runnerInput: SandboxRunnerInput,
     controller: AbortController,
     invocationKey: string,
+    leaseKey: string,
+    protectionState: InvocationProtectionState,
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const child = this.spawnRunner(ref, runnerInput, controller);
     const closePromise = waitForClose(child);
     this.invocations.set(invocationKey, { controller, child, sandboxName: ref.name });
     yield { type: 'progress', message: 'acs sandbox invocation accepted' };
+    // Protection persistence shares the parent invocation lease fallback state.
     let sawCompleted = false;
     for await (const line of readLines(child)) {
       const parsed = parseRunnerLine(line);
@@ -345,7 +377,7 @@ export class AcsExecutor {
         if (parsed.chunk.type === 'completed') {
           sawCompleted = true;
           const response = addRunnerMetadata(parsed.chunk.response, 'one-shot');
-          await this.applyBackgroundShellProtection(ref.name, response);
+          await this.applyBackgroundShellProtection(ref.name, response, leaseKey, protectionState);
           yield { ...parsed.chunk, response };
           continue;
         }
@@ -353,7 +385,7 @@ export class AcsExecutor {
       } else {
         sawCompleted = true;
         const response = addRunnerMetadata(parsed.response, 'one-shot');
-        await this.applyBackgroundShellProtection(ref.name, response);
+        await this.applyBackgroundShellProtection(ref.name, response, leaseKey, protectionState);
         yield { type: 'completed', response };
       }
     }
@@ -447,6 +479,10 @@ function parseRunnerLine(line: string): SandboxRunnerOutput | SandboxRunnerFinal
       chunk: { type: 'output', channel: 'stdout', content: `${line}\n` },
     };
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function addRunnerMetadata(

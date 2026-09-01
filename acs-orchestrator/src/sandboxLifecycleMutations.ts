@@ -16,7 +16,7 @@ import {
 } from './sandboxLifecyclePolicy.js';
 import { BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION } from './sandboxState.js';
 
-/** Kubernetes resourceVersion CAS 失败统一映射为可重试冲突。 */
+/** Kubernetes UID/resourceVersion JSON Patch 前置条件失败统一映射为可重试冲突。 */
 export class SandboxMutationPreconditionError extends Error {
   readonly statusCode = 409;
 }
@@ -34,25 +34,29 @@ async function patchMetadata(
   if (result.exitCode !== 0) throw new Error(`${errorPrefix}: ${result.stderr || result.stdout}`);
 }
 
+type ResourcePatchChange = { path: string; value: unknown } | { path: string; remove: true };
+
 async function patchWithResourcePreconditions(
   config: AcsOrchestratorConfig,
   kubectl: Kubectl,
   resourceName: string,
   preconditions: SandboxDeletionPreconditions,
-  changes: Array<{ path: string; value: unknown }>,
+  changes: ResourcePatchChange[],
   errorPrefix: string,
 ): Promise<void> {
   const patch = [
     { op: 'test', path: '/metadata/uid', value: preconditions.uid },
     { op: 'test', path: '/metadata/resourceVersion', value: preconditions.resourceVersion },
-    ...changes.map(({ path, value }) => ({ op: 'add', path, value })),
+    ...changes.map((change) => 'remove' in change
+      ? { op: 'remove', path: change.path }
+      : { op: 'add', path: change.path, value: change.value }),
   ];
   const result = await kubectl.run([
     'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
   ], { timeoutMs: config.sandboxWaitTimeoutMs });
   if (result.exitCode === 0) return;
   const detail = result.stderr || result.stdout;
-  if (/conflict|test failed|object has been modified|precondition|resourceversion|uid.*immutable/i.test(detail)) {
+  if (/conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion|uid.*immutable/i.test(detail)) {
     throw new SandboxMutationPreconditionError(`${errorPrefix}: ${detail}`);
   }
   throw new Error(`${errorPrefix}: ${detail}`);
@@ -60,13 +64,22 @@ async function patchWithResourcePreconditions(
 
 export async function applyLifecycleUpdate(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string, input: SandboxLifecycleUpdate,
+  preconditions: SandboxDeletionPreconditions, currentAnnotations: Record<string, unknown>,
 ): Promise<void> {
-  await patchMetadata(config, kubectl, resourceName, { annotations: {
-    [TERMINAL_STATE_ANNOTATION]: input.terminalState,
-    [TERMINAL_AT_ANNOTATION]: input.terminalAt,
-    [TERMINAL_OUTCOME_ANNOTATION]: input.outcome === undefined ? null : JSON.stringify(input.outcome),
-    [RETENTION_DEADLINE_ANNOTATION]: input.retentionDeadline ?? null,
-  } }, '更新 Sandbox lifecycle 失败');
+  const optionalAnnotation = (key: string, value: string | undefined): ResourcePatchChange[] => {
+    const path = `/metadata/annotations/${jsonPointerSegment(key)}`;
+    if (value !== undefined) return [{ path, value }];
+    return Object.prototype.hasOwnProperty.call(currentAnnotations, key) ? [{ path, remove: true }] : [];
+  };
+  await patchWithResourcePreconditions(config, kubectl, resourceName, preconditions, [
+    { path: `/metadata/annotations/${jsonPointerSegment(TERMINAL_STATE_ANNOTATION)}`, value: input.terminalState },
+    { path: `/metadata/annotations/${jsonPointerSegment(TERMINAL_AT_ANNOTATION)}`, value: input.terminalAt },
+    ...optionalAnnotation(
+      TERMINAL_OUTCOME_ANNOTATION,
+      input.outcome === undefined ? undefined : JSON.stringify(input.outcome),
+    ),
+    ...optionalAnnotation(RETENTION_DEADLINE_ANNOTATION, input.retentionDeadline),
+  ], '更新 Sandbox lifecycle 失败');
 }
 
 export async function applyDeletionGeneration(
@@ -107,7 +120,7 @@ export async function applyInvocationLease(
   await applyProtectedAnnotation(
     config, kubectl, resourceName, activeInvocationLeaseAnnotationKey(invocationKey),
     leaseUntil ? JSON.stringify({ invocationKey, until: leaseUntil }) : undefined,
-    'invocation lease', getStatus,
+    'invocation lease', getStatus, true,
   );
 }
 
@@ -130,32 +143,59 @@ export async function applyWorkloadDescriptor(
 async function applyProtectedAnnotation(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
   key: string, value: string | undefined, description: string,
-  getStatus: () => Promise<SandboxStatus | null>,
+  getStatus: () => Promise<SandboxStatus | null>, mergeLatestProtection = false,
 ): Promise<void> {
-  const status = await getStatus();
-  if (!status) throw new SandboxMutationPreconditionError(`Sandbox 不存在，拒绝更新 ${description}`);
-  const metadata = objectValue(status.raw?.metadata);
-  const uid = stringValue(metadata.uid);
-  const resourceVersion = stringValue(metadata.resourceVersion);
-  if (!uid || !resourceVersion) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID/resourceVersion');
-  if (value && stringValue(metadata.deletionTimestamp)) {
-    throw new SandboxMutationPreconditionError(`Sandbox 已进入删除流程，拒绝新增或续租 ${description}`);
+  const maxAttempts = value ? 3 : 1;
+  let observedUid: string | undefined;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = await getStatus();
+    if (!status) throw new SandboxMutationPreconditionError(`Sandbox 不存在，拒绝更新 ${description}`);
+    const metadata = objectValue(status.raw?.metadata);
+    const uid = stringValue(metadata.uid);
+    const resourceVersion = stringValue(metadata.resourceVersion);
+    if (!uid || !resourceVersion) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID/resourceVersion');
+    if (observedUid && observedUid !== uid) {
+      throw new SandboxMutationPreconditionError(`Sandbox 已同名重建，拒绝更新 ${description}`);
+    }
+    observedUid ??= uid;
+    if (value && stringValue(metadata.deletionTimestamp)) {
+      throw new SandboxMutationPreconditionError(`Sandbox 已进入删除流程，拒绝新增或续租 ${description}`);
+    }
+    const current = stringValue(objectValue(metadata.annotations)[key]);
+    const desired = value && mergeLatestProtection ? laterProtection(current, value) : value;
+    if (desired === current || (!desired && current === undefined)) return;
+    const path = `/metadata/annotations/${jsonPointerSegment(key)}`;
+    const patch = [
+      { op: 'test', path: '/metadata/uid', value: uid },
+      { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
+      ...(!desired && current !== undefined ? [{ op: 'test', path, value: current }] : []),
+      desired ? { op: 'add', path, value: desired } : { op: 'remove', path },
+    ];
+    const result = await kubectl.run([
+      'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
+    ], { timeoutMs: config.sandboxWaitTimeoutMs });
+    if (result.exitCode === 0) return;
+    const detail = result.stderr || result.stdout;
+    const conflict = /conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion/i.test(detail);
+    if (conflict && attempt + 1 < maxAttempts) continue;
+    if (conflict) throw new SandboxMutationPreconditionError(`更新 ${description} 失败: ${detail}`);
+    throw new Error(`更新 ${description} 失败: ${detail}`);
   }
-  const current = stringValue(objectValue(metadata.annotations)[key]);
-  if (!value && current === undefined) return;
-  const path = `/metadata/annotations/${jsonPointerSegment(key)}`;
-  const patch = [
-    { op: 'test', path: '/metadata/uid', value: uid },
-    { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
-    ...(!value && current !== undefined ? [{ op: 'test', path, value: current }] : []),
-    value ? { op: 'add', path, value } : { op: 'remove', path },
-  ];
-  const result = await kubectl.run([
-    'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
-  ], { timeoutMs: config.sandboxWaitTimeoutMs });
-  if (result.exitCode !== 0) {
-    throw new SandboxMutationPreconditionError(`更新 ${description} 失败: ${result.stderr || result.stdout}`);
-  }
+}
+
+function laterProtection(current: string | undefined, requested: string): string {
+  const protectionMs = (value: string | undefined): number => {
+    if (value === undefined) return Number.NaN;
+    const direct = Date.parse(value);
+    if (Number.isFinite(direct)) return direct;
+    try {
+      const parsed = JSON.parse(value) as { until?: unknown };
+      return typeof parsed.until === 'string' ? Date.parse(parsed.until) : Number.NaN;
+    } catch {
+      return Number.NaN;
+    }
+  };
+  return protectionMs(current) > protectionMs(requested) ? current! : requested;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -176,6 +216,6 @@ export async function applyBackgroundShellProtection(
 ): Promise<void> {
   await applyProtectedAnnotation(
     config, kubectl, resourceName, BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
-    protectedUntil, '后台 Shell 生命周期保护', getStatus,
+    protectedUntil, '后台 Shell 生命周期保护', getStatus, true,
   );
 }

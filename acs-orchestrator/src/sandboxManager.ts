@@ -11,7 +11,9 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork, reconcileTerminatingSandboxDeletions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
-import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyLifecycleUpdate, applyPausedWithPreconditions, applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
+import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyPausedWithPreconditions,
+  applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
+import { updateSandboxLifecycle } from './sandboxLifecycleUpdater.js';
 import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
   NETWORK_POLICY_DENY_PRIVATE_ANNOTATION, NETWORK_POLICY_MODE_ANNOTATION, NETWORK_POLICY_MODE_LABEL,
@@ -279,7 +281,7 @@ export class SandboxManager {
         status = 'ok';
         return resourceDriftDeferred ? { ...ref, resourceDriftDeferred: true } : ref;
       }
-      // already_running 快路径：5 分钟内完整校验过 networkPolicy+SNAT 的 Running
+      // already_running 快路径：5 分钟内已完整校验 networkPolicy+SNAT 的 Running
       // Sandbox，跳过两项 reconcile（合计 ~1.1s/次 kubectl/CLI 开销）。getStatus
       // 上面已真查过 phase，Running 事实不依赖缓存。
       if (existing.phase === 'Running' && this.isEnsureFastPathFresh(ref.name)) {
@@ -653,19 +655,17 @@ export class SandboxManager {
 
   async updateLifecycle(input: SandboxLifecycleUpdate): Promise<{ name: string; retentionDeadline?: string }> {
     const ref = this.ref(input);
-    const status = await this.getStatus(ref.name);
-    if (!status) throw new SandboxNotFoundError(`ACS Sandbox ${ref.name} not found`);
-    const actual = this.refFromStatus(ref.name, status);
-    if (actual.workspaceId !== input.workspaceId
-      || actual.sessionId !== input.sessionId
-      || actual.sandboxScopeId !== input.sandboxScopeId) {
-      throw new SandboxNotFoundError('ACS Sandbox lifecycle identity not found');
-    }
-    await applyLifecycleUpdate(this.config, this.kubectl, this.resourceName(ref.name), input);
-    return { name: ref.name, ...(input.retentionDeadline ? { retentionDeadline: input.retentionDeadline } : {}) };
+    return await updateSandboxLifecycle({
+      config: this.config, kubectl: this.kubectl, name: ref.name, resourceName: this.resourceName(ref.name),
+      getStatus: () => this.getStatus(ref.name), notFound: (message) => new SandboxNotFoundError(message),
+      matchesIdentity: (status) => {
+        const actual = this.refFromStatus(ref.name, status);
+        return actual.workspaceId === input.workspaceId && actual.sessionId === input.sessionId
+          && actual.sandboxScopeId === input.sandboxScopeId;
+      },
+    }, input);
   }
-  async advanceDeletionGeneration(input: SandboxDeletionGenerationUpdate) {
-    return await this.deletionGeneration.advance(this.ref(input), input); }
+  async advanceDeletionGeneration(input: SandboxDeletionGenerationUpdate) { return await this.deletionGeneration.advance(this.ref(input), input); }
   async deleteByScope(input: SandboxScopeDeletion, options: { busySandboxNames?: Set<string> } = {}) {
     const result = await this.deletionGeneration.delete(this.ref(input), input, options.busySandboxNames);
     if (result.busy) throw new SandboxBusyError(`ACS Sandbox ${result.name} is active or deletion generation changed`);
@@ -741,7 +741,7 @@ export class SandboxManager {
 
   async setBackgroundShellProtection(name: string, protectedUntil?: string): Promise<void> {
     if (protectedUntil && !Number.isFinite(Date.parse(protectedUntil))) {
-      throw new Error('background shell protectedUntil 必须是合法 ISO 时间。');
+      throw new Error('background shell protectedUntil 必须是合法 ISO 时间');
     }
     await applyBackgroundShellProtection(this.config, this.kubectl, this.resourceName(name), protectedUntil, () => this.getStatus(name));
   }

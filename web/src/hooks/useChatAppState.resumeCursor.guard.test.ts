@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,7 +15,7 @@ function sourceBetween(start: string, end: string): string {
 
 describe("会话级 durable cursor 生命周期", () => {
   it("新 run、终态与手动压缩只重置 run 内 eventId，不清空 durable cursor", () => {
-    const sendChat = sourceBetween("const sendChatViaWs =", "// 同步 sendChatViaWs 到 ref");
+    const sendChat = sourceBetween("const sendChatViaWs =", "// ---- 压缩当前会话上下文");
     const terminal = sourceBetween("const finalizeTerminalRuntime =", "const reconcileLastRunState =");
     const compact = sourceBetween("const compactSession =", "const sendMessage =");
 

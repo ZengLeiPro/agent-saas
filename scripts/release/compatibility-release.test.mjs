@@ -287,9 +287,20 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(acsWorkflow, /group: production-runtime/u);
   assert.match(appWorkflow, /format\('agent-saas-\{0\}', github\.run_id\)/u);
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
+  assert.match(acsWorkflow, /Stale ACS deploy dispatch/u);
+  assert.match(acsWorkflow, /before Production mutation/u);
   assert.match(acsWorkflow, /acs-release-identity\.json/u);
-  assert.match(acsWorkflow, /后续 main 推进不影响本次代码与镜像/u);
-  assert.match(releaseDocs, /记录进入 `PENDING`\/`BUILDING`\s+后锁定 exact SHA 与镜像/u);
+  assert.doesNotMatch(acsWorkflow, /后续 main 推进不影响本次代码与镜像/u);
+  const acsDeployStart = acsWorkflow.indexOf(
+    '      - name: Deploy orchestrator with drain and smoke',
+  );
+  const acsIdentityStart = acsWorkflow.indexOf('      - name: Refresh trusted Production identity');
+  const acsDeployStep = acsWorkflow.slice(acsDeployStart, acsIdentityStart);
+  assert.match(acsDeployStep, /git fetch --no-tags origin main/u);
+  assert.match(acsDeployStep, /latest_main_sha="\$\(git rev-parse origin\/main\)"/u);
+  assert.match(acsDeployStep, /if \[ "\$latest_main_sha" != "\$GITHUB_SHA" \]/u);
+  assert.ok(acsDeployStep.indexOf('latest_main_sha=') < acsDeployStep.indexOf('bash -s'));
+  assert.match(releaseDocs, /实际生产\s+部署 mutation 前都会校验 latest main/u);
   assert.match(acsDeploy, /acs-releases\/\$\{ORCHESTRATOR_ARTIFACT_DIGEST#sha256:\}/u);
   assert.match(acsDeploy, /ln -sfn "\$APP_DIR" "\$CURRENT_LINK"/u);
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);

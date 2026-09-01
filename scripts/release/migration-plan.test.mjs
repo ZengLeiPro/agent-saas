@@ -167,17 +167,26 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
-test('tracks imported callbacks through aliases and barrel re-exports', () => {
+test('tracks imported callbacks through unknown registrars, aliases, and barrels', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const barrel = 'server/src/data/governance-schema/providers/index.ts';
   const provider = 'server/src/data/governance-schema/providers/run.ts';
-  const baselineProvider =
-    "export async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
+  const baselineProvider = 'export async function run(_db) {}';
   const targetProvider = "export async function run(db) { await db.query('DROP TABLE users'); }";
   for (const callbackCase of [
     {
       label: 'array map callback',
       rootSource: "import { run } from './providers/run.js';\n[db].map(run);",
+      extraTree: {},
+    },
+    {
+      label: 'custom higher-order registrar callback from an empty baseline',
+      rootSource: "import { run } from './providers/run.js';\nregisterMigration(run);",
+      extraTree: {},
+    },
+    {
+      label: 'custom constructor callback from an empty baseline',
+      rootSource: "import { run } from './providers/run.js';\nnew MigrationRegistrar(run);",
       extraTree: {},
     },
     {
@@ -710,6 +719,19 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
     const validSource = sqlSource(valid);
     const validResult = plan(validSource, addedSourceDiff(validSource));
     assert.equal(validResult.ok, true, valid);
+  }
+});
+
+test('rejects unknown function calls inside otherwise allowed CREATE statements', () => {
+  for (const statement of [
+    'CREATE INDEX unsafe_idx ON users (custom_migration(id));',
+    'CREATE TABLE unsafe_default(id bigint DEFAULT custom_migration());',
+    'CREATE TABLE unsafe_generated(id text, derived text GENERATED ALWAYS AS (custom_migration(id)) STORED);',
+  ]) {
+    const source = sqlSource(statement);
+    const result = plan(source, addedSourceDiff(source));
+    assert.equal(result.ok, false, statement);
+    assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
   }
 });
 

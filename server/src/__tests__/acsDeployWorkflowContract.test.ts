@@ -87,15 +87,21 @@ describe('ACS deploy workflow contract', () => {
     expect(workflow).toContain(
       'main advanced to $latest_main_sha before an ACR build record appeared',
     );
+    expect(workflow).toContain('main advanced to $latest_main_sha before Production mutation');
   });
 
-  it('发现 exact SHA 构建记录后不因 main 推进中断等待', () => {
+  it('发现 exact SHA 构建记录后继续等待，但在实际部署前再次拒绝 main 漂移', () => {
     expect(workflow).toContain('build_record_found=false');
     expect(workflow).toContain('if [ "$build_record_found" = "true" ]; then');
     expect(workflow).toContain('ACR build record disappeared');
     expect(workflow).toContain('build_record_found=true');
-    expect(workflow).toContain('后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA');
-    expect(workflow).not.toContain('while this run was waiting for image');
+    expect(workflow).toContain('实际部署前的独立门禁会拒绝这个旧 dispatch');
+    const deployStart = workflow.indexOf('- name: Deploy orchestrator with drain and smoke');
+    const identityStart = workflow.indexOf('- name: Refresh trusted Production identity');
+    const deployStep = workflow.slice(deployStart, identityStart);
+    expect(deployStep).toContain('git fetch --no-tags origin main');
+    expect(deployStep).toContain('if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then');
+    expect(deployStep.indexOf('latest_main_sha=')).toBeLessThan(deployStep.indexOf('bash -s'));
   });
 
   it('与其他生产写入口全局串行且不取消正在进行的发布', () => {

@@ -32,6 +32,28 @@ const ALLOWED_EXPAND_ALTER_PATTERN =
   /^ALTER\s+TABLE\s+\S+\s+(?:ADD\s+(?:COLUMN\s+)?|ADD\s+CONSTRAINT\b|VALIDATE\s+CONSTRAINT\b)/iu;
 const ALLOWED_EXPAND_CREATE_PATTERN =
   /^CREATE\s+(?:(?:UNIQUE\s+)?INDEX(?:\s+CONCURRENTLY)?|TABLE|SEQUENCE)\b/iu;
+const ALLOWED_CREATE_PAREN_KEYWORDS = new Set([
+  'as',
+  'bit',
+  'char',
+  'character',
+  'check',
+  'decimal',
+  'exclude',
+  'hash',
+  'include',
+  'interval',
+  'key',
+  'lower',
+  'numeric',
+  'range',
+  'time',
+  'timestamp',
+  'unique',
+  'varbit',
+  'varchar',
+  'with',
+]);
 
 export function isMigrationPath(path) {
   if (typeof path !== 'string') return false;
@@ -303,7 +325,8 @@ function isAllowedExpandSqlStatement(statement) {
     UNKNOWN_SQL_PATTERN.test(statement) ||
     /\\[A-Za-z!?]/u.test(statement) ||
     hasRiskyAddColumn(statement) ||
-    hasUnprovenAlterFunction(statement)
+    hasUnprovenAlterFunction(statement) ||
+    hasUnprovenCreateFunction(statement)
   )
     return false;
   if (ALLOWED_EXPAND_CREATE_PATTERN.test(statement)) {
@@ -373,6 +396,23 @@ function hasUnknownCreate(value) {
   return operationSlices(value, 'CREATE').some(
     (statement) => !ALLOWED_EXPAND_CREATE_PATTERN.test(statement),
   );
+}
+
+function hasUnprovenCreateFunction(value) {
+  if (!ALLOWED_EXPAND_CREATE_PATTERN.test(value)) return false;
+  const structuralOpen = value.indexOf('(');
+  const functionPattern =
+    /((?:[A-Za-z_]|[^\x00-\x7F])(?:[A-Za-z0-9_$]|[^\x00-\x7F])*|"(?:""|[^"])+")\s*\(/gu;
+  for (const match of value.matchAll(functionPattern)) {
+    const open = (match.index ?? 0) + match[0].lastIndexOf('(');
+    if (open === structuralOpen) continue;
+    const name = match[1];
+    const allowedKeyword =
+      !name.startsWith('"') && ALLOWED_CREATE_PAREN_KEYWORDS.has(name.toLowerCase());
+    if (allowedKeyword) continue;
+    return true;
+  }
+  return false;
 }
 
 function hasUnprovenAlterFunction(value) {
@@ -586,25 +626,33 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     ['setImmediate', [0]],
     ['queueMicrotask', [0]],
   ]);
+  // Unknown higher-order APIs are fail-closed: imported callable arguments stay in the closure.
   const callbackArgumentIndexes = (node) => {
-    if (
-      ts.isNewExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'Promise'
-    )
-      return [0];
+    if (ts.isNewExpression(node)) {
+      if (ts.isIdentifier(node.expression) && node.expression.text === 'Promise') return [0];
+      return node.arguments?.map((_, index) => index) ?? [];
+    }
     if (!ts.isCallExpression(node)) return [];
     if (ts.isIdentifier(node.expression))
-      return callbackFunctionArguments.get(node.expression.text) ?? [];
+      return (
+        callbackFunctionArguments.get(node.expression.text) ??
+        node.arguments.map((_, index) => index)
+      );
     if (ts.isPropertyAccessExpression(node.expression))
-      return callbackMethodArguments.get(node.expression.name.text) ?? [];
+      return (
+        callbackMethodArguments.get(node.expression.name.text) ??
+        node.arguments.map((_, index) => index)
+      );
     if (
       ts.isElementAccessExpression(node.expression) &&
       node.expression.argumentExpression &&
       ts.isStringLiteral(node.expression.argumentExpression)
     )
-      return callbackMethodArguments.get(node.expression.argumentExpression.text) ?? [];
-    return [];
+      return (
+        callbackMethodArguments.get(node.expression.argumentExpression.text) ??
+        node.arguments.map((_, index) => index)
+      );
+    return node.arguments.map((_, index) => index);
   };
   const collectCallableReference = (node) => {
     if (ts.isIdentifier(node)) {

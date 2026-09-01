@@ -69,7 +69,7 @@ jobs:
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
           sudo install "$RUNNER_TEMP/aliyun" /usr/local/bin/aliyun
 
-      - name: Download and verify immutable RC evidence
+      - name: Download and verify immutable RC evidence and confirmation window
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -105,38 +105,13 @@ jobs:
               > "$RUNNER_TEMP/migration-confirmation.json"
             echo 'CONFIRMATION_REPAIR=true' >> "$GITHUB_ENV"
           elif [ "$latest_state" = awaiting_expand_confirmation ]; then
-            refresh_window="$(node -e 'const fs=require("node:fs"); const lines=fs.readFileSync(process.argv[1],"utf8").trim().split(/\r?\n/); const latest=JSON.parse(lines.at(-1)); process.stdout.write(Date.now()-Date.parse(latest.recordedAt)>2*60*60*1000?"true":"false")' \
-              "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl")"
-            echo "REFRESH_CONFIRMATION_WINDOW=$refresh_window" >> "$GITHUB_ENV"
+            # 同一次人工确认不得自动续期；过期后必须从当前生产基线重新创建 RC。
+            node -e 'const fs=require("node:fs"); const lines=fs.readFileSync(process.argv[1],"utf8").trim().split(/\r?\n/); const latest=JSON.parse(lines.at(-1)); const awaitingAt=Date.parse(latest.recordedAt); const age=Date.now()-awaitingAt; if (!Number.isFinite(awaitingAt) || age<0 || age>2*60*60*1000) { console.error("Expand confirmation request is invalid or expired after two hours; dispatch a new Promotion instead of refreshing this request"); process.exit(1); }' \
+              "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl"
           else
             echo "Release cannot be confirmed from $latest_state" >&2
             exit 1
           fi
-
-      - name: Refresh expired confirmation window with an immutable attestation
-        if: env.REFRESH_CONFIRMATION_WINDOW == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          promoting_reason="$(jq -rs 'map(select(.state=="promoting")) | last | .reason | fromjson' \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl")"
-          refresh_reason="$(printf '%s' "$promoting_reason" | \
-            jq -c '. + {status:"confirmation_window_refreshed"}')"
-          pnpm exec tsx server/src/release/releaseAttestationCli.ts \
-            --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" \
-            --digest "$MANIFEST_DIGEST" --state awaiting_expand_confirmation \
-            --operation "expand-reobservation:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
-            --actor "$GITHUB_ACTOR" --reason "$refresh_reason"
-          snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
-            "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
-          snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"
-          bash scripts/release/upload-github-release-asset-immutable.sh "$RELEASE_ID" "$snapshot_path"
-          bash scripts/release/upload-oss-object-immutable.sh "$snapshot_path" \
-            "$RELEASE_RECORD_OSS_URI/records/$RELEASE_ID/attestations/$(basename "$snapshot_path")" \
-            || echo "::warning title=OSS attestation mirror::GitHub Release contains the auditable confirmation-window refresh"
-          echo 'Refreshed an expired expand confirmation window before a new Production readback' \
-            >> "$GITHUB_STEP_SUMMARY"
 
       - name: Configure pinned production SSH
         if: env.CONFIRMATION_REPAIR != 'true'

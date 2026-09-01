@@ -37,19 +37,6 @@ function confirmationReason(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
-function refreshReason(overrides: Record<string, unknown> = {}) {
-  return JSON.stringify({
-    status: 'confirmation_window_refreshed',
-    releaseId: 'rc-20260825-01',
-    releaseSha: RELEASE_SHA,
-    manifestDigest: DIGEST,
-    migrationPhase: 'expand',
-    migrationPlanDigest: MIGRATION_PLAN_DIGEST,
-    productionBeforeDigest: PRODUCTION_BEFORE_DIGEST,
-    productionTargetDigest: PRODUCTION_TARGET_DIGEST,
-    ...overrides,
-  });
-}
 function log(digest = DIGEST) {
   return new ReleaseAttestationLog('rc-20260825-01', digest, { now: () => NOW });
 }
@@ -256,35 +243,10 @@ describe('ReleaseAttestationLog', () => {
         operationKey: 'expand-reobservation:456:1',
         actor: 'release-bot',
         manifestDigest: DIGEST,
-        reason: refreshReason({ releaseSha: '2'.repeat(40) }),
+        reason: promotingReason('expand'),
       }),
     ).toThrow(/Illegal or late/u);
-    delayed.append({
-      state: 'awaiting_expand_confirmation',
-      operationKey: 'expand-reobservation:456:1',
-      actor: 'release-bot',
-      manifestDigest: DIGEST,
-      reason: refreshReason(),
-    });
     expect(delayed.currentState()).toBe('awaiting_expand_confirmation');
-    appendConfirmation(
-      delayed,
-      confirmationReason({
-        liveObservedAt: '2026-08-25T14:00:00.001Z',
-        confirmedAt: '2026-08-25T14:00:00.001Z',
-      }),
-    );
-    expect(delayed.currentState()).toBe('completed');
-
-    expect(() =>
-      awaitingLog().append({
-        state: 'awaiting_expand_confirmation',
-        operationKey: 'expand-reobservation:789:1',
-        actor: 'release-bot',
-        manifestDigest: DIGEST,
-        reason: refreshReason(),
-      }),
-    ).toThrow(/Illegal or late/u);
 
     for (const overrides of [
       { liveObservedAt: undefined },

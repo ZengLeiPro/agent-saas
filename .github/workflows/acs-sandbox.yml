@@ -578,7 +578,7 @@ jobs:
                 ;;
               PENDING)
                 # 真实记录已出现后，锁定 exact SHA 构建继续等待；
-                # 后续 main 推进不影响本次代码与镜像仍使用同一个 GITHUB_SHA。
+                # main 若继续推进，实际部署前的独立门禁会拒绝这个旧 dispatch。
                 build_record_found=true
                 missing_polls=0
                 query_errors=0
@@ -698,6 +698,13 @@ jobs:
       - name: Deploy orchestrator with drain and smoke
         if: steps.necessity.outputs.deploy_needed == 'true'
         run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          latest_main_sha="$(git rev-parse origin/main)"
+          if [ "$latest_main_sha" != "$GITHUB_SHA" ]; then
+            echo "::error title=Stale ACS deploy dispatch::main advanced to $latest_main_sha before Production mutation. Dispatch again from latest main."
+            exit 1
+          fi
           ssh -i ~/.ssh/ecs_deploy_key \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
             "$ECS_USER@$ECS_HOST" \

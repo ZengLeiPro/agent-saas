@@ -107,7 +107,7 @@ CI/check 已成功。Taskboard Delivery、Review 和 Integration 链仍可用于
 
 ## Migration plan 的闭包边界
 
-Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-export 图。除了路径、命名和独立 metadata 外，权威入口真实 import 的 export binding 会跨 re-export、local alias、default export 与普通 barrel 传播到最终静态声明；其中出现 DDL/DML 就会自动进入分类，不能通过任意文件名、任意变量名或省略 `release-migration` metadata 脱离门禁。所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider时纳入闭包，实际调用 binding 会反向穿透赋值 alias、对象/数组解构与 namespace import，`import()`、`require()`、`createRequire` 等无法静态证明的动态加载一律 fail closed。纯 type-only edge、普通静态 logger/store 与未调用的延迟函数声明不误判；普通 logger/runtime store 的只读查询不会仅因具名 import 自动归为 migration。Expand metadata 只识别真实注释，单引号、双引号、模板字符串及 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文中的伪注释均无效，未闭合 dollar quote 直接 fail closed。Expand SQL 只允许纯 schema CREATE/单一 ALTER 白名单，`DEFAULT`、`CHECK` 等 ALTER 表达式中的不可证明函数调用（含 Unicode 与双引号函数名）与所有 INSERT 均 fail closed；需要数据回填时必须拆到单独受审计流程。
+Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-export 图。除了路径、命名和独立 metadata 外，权威入口真实 import 的 export binding 会跨 re-export、local alias、default export 与普通 barrel 传播到最终静态声明；其中出现 DDL/DML 就会自动进入分类，不能通过任意文件名、任意变量名或省略 `release-migration` metadata 脱离门禁。所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider时纳入闭包，实际调用 binding 会反向穿透赋值 alias、对象/数组解构与 namespace import。作为任意函数/方法参数传入的 imported callable 也按潜在高阶 callback 保守传播，因此自定义 `registerMigration(provider)` 不能绕过闭包；`import()`、`require()`、`createRequire` 等无法静态证明的动态加载一律 fail closed。纯 type-only edge、普通静态 logger/store 与未调用的延迟函数声明不误判；普通 logger/runtime store 的只读查询不会仅因具名 import 自动归为 migration。Expand metadata 只识别真实注释，单引号、双引号、模板字符串及 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文中的伪注释均无效，未闭合 dollar quote 直接 fail closed。Expand SQL 只允许纯 schema CREATE/单一 ALTER 白名单，CREATE expression 中除结构语法、类型参数及明确允许的内置函数外的函数调用，以及 `DEFAULT`、`CHECK` 等 ALTER 表达式中的不可证明函数调用（含 Unicode 与双引号函数名）和所有 INSERT 均 fail closed；需要数据回填时必须拆到单独受审计流程。
 
 ## 不可变发布记录
 
@@ -119,9 +119,8 @@ Release 与 OSS 三份绑定。`promoting` attestation 必须不可变绑定 rel
 digest 与生产 before/target digest：`none` 才能直接完成，`expand` 只能先进入
 `awaiting_expand_confirmation`。最终 append 会再次验证 confirmation evidence 的完整 schema、API
 ready release ID/SHA、2 小时确认窗口及 5 分钟 live/evidence 新鲜度；通用 operation key 或陈旧证据
-都不能绕过。窗口过期时，独立确认 Workflow 只能在 `production-runtime` 锁内追加一条完整绑定原
-release SHA/Manifest/plan/before/target 的 `expand-reobservation` 自迁移，并先把新快照不可变写入
-GitHub Release，再重新读取生产现场；未过期或错绑定刷新均拒绝。任何分叉 attestation、同路径
+都不能绕过。确认窗口一旦过期，独立确认 Workflow 立即 fail closed，不允许同一次确认自动续期或
+追加自迁移；需要基于当前 main 和当前生产基线重新创建 RC。任何分叉 attestation、同路径
 不同内容或 receipt 缺失都 fail closed。OSS bucket 还必须启用版本控制/保留策略或 WORM，并把 Workflow RAM 身份限制为不可删除、不可覆盖；
 仓库 helper 能阻止正常流程覆盖，但不能替代云端对高权限凭据失陷的保留保护。升级前已存在、尚未携带 migration binding 的旧 `promoting` 记录只允许原样 hydrate 供审计读取；兼容读取不会补写或推断 digest，也不会放宽任何新的 `promoting` append，停在旧 `promoting` 的历史不能由新代码直接补成 `completed`。
 
@@ -149,9 +148,9 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
   因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会预存原 OSS 入口与 trusted identity；
   最终现场读回、identity 写入或确认读回失败时，必须恢复 OSS/recovery Web 与原 identity，并完成
-  权威 Production 读回后才以失败结束，补偿不完整则进入人工处置。ACS 通道仍会在部署前校验 latest main，并在
-  exact-SHA ACR build record 尚未出现时拒绝已落后 main 的 dispatch；记录进入 `PENDING`/`BUILDING`
-  后锁定 exact SHA 与镜像。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
+  权威 Production 读回后才以失败结束，补偿不完整则进入人工处置。ACS 通道在初始检查和实际生产
+  部署 mutation 前都会校验 latest main；即使 exact-SHA ACR build record 已进入 `PENDING`/`BUILDING`，
+  main 前进也会让旧 dispatch 在部署前 fail closed。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
   Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。push/PR 仍只执行 CI，不自动部署生产。
 - Production Promotion 的硬门禁仅包含不可变制品、确定性 Staging 部署证据、物理组件收敛、
   runtime identity 和逐组件 durable receipts。完整浏览器、Agent 与业务验收由独立的

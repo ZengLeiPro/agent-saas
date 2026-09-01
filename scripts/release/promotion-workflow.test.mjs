@@ -361,13 +361,13 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(workflow, /release_id:/u);
   assert.match(workflow, /attestation-snapshot\.mjs select/u);
   assert.match(workflow, /confirm-expand-migration\.mjs/u);
-  assert.match(workflow, /REFRESH_CONFIRMATION_WINDOW/u);
-  assert.match(workflow, /expand-reobservation:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
-  assert.match(workflow, /status:"confirmation_window_refreshed"/u);
-  assert.match(workflow, /Refresh expired confirmation window with an immutable attestation/u);
+  assert.match(workflow, /Expand confirmation request is invalid or expired after two hours/u);
+  assert.match(workflow, /dispatch a new Promotion instead of refreshing this request/u);
+  assert.doesNotMatch(workflow, /REFRESH_CONFIRMATION_WINDOW/u);
+  assert.doesNotMatch(workflow, /expand-reobservation:/u);
+  assert.doesNotMatch(workflow, /confirmation_window_refreshed/u);
   ordered(workflow, [
-    'expand-reobservation:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT',
-    'upload-github-release-asset-immutable.sh',
+    'Expand confirmation request is invalid or expired after two hours',
     'Read production components and verify migration confirmation binding',
   ]);
   assert.match(workflow, /read-live-production-components\.mjs/u);
@@ -396,7 +396,8 @@ test('expand confirmation is a separate release-bound and production-serialized 
   assert.match(releaseDocs, /psql 反斜杠元命令均拒绝/u);
   assert.match(releaseDocs, /全部 INSERT/u);
   assert.match(releaseDocs, /未自愿标 metadata 也会先进入闭包/u);
-  assert.match(releaseDocs, /expand-reobservation/u);
+  assert.match(releaseDocs, /确认窗口一旦过期即 fail closed/u);
+  assert.doesNotMatch(releaseDocs, /expand-reobservation/u);
   assert.match(releaseConfigDocs, /target_match=true/u);
   assert.match(releaseConfigDocs, /identity 写入或 `production-confirmed\.json` 回读失败/u);
   assert.match(releaseConfigDocs, /producer 仅用写 Token/u);

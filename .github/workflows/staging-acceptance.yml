@@ -148,14 +148,31 @@ jobs:
             "$STAGING_SSH_HOST_KEY_SHA256"
           cat "$scan_path" >> ~/.ssh/known_hosts
 
-      - name: Run browser and Agent acceptance suite
-        timeout-minutes: 80
+      - name: Prepare browser and Agent acceptance suite
         run: |
           set -euo pipefail
           touch "$RUNNER_TEMP/staging-acceptance-fixtures-touched"
           node scripts/staging/reset-fixtures.mjs "$STAGING_API_URL" "$STAGING_RELEASE_ID" \
             > "$RUNNER_TEMP/staging-fixture-reset-before.json"
           pnpm exec playwright install --with-deps chromium
+
+      - name: Re-verify exact RC immediately before acceptance execution
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 10 "$STAGING_WEB_URL/release-identity.json?critical=$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/staging-web-identity-critical.json"
+          curl -fsS --retry 10 "$STAGING_API_URL/api/healthz/ready" \
+            > "$RUNNER_TEMP/staging-api-ready-critical.json"
+          node scripts/release/verify-staging-release-binding.mjs \
+            --manifest "$RUNNER_TEMP/release/manifest.json" \
+            --web-identity "$RUNNER_TEMP/staging-web-identity-critical.json" \
+            --api-ready "$RUNNER_TEMP/staging-api-ready-critical.json" \
+            --expected-manifest-digest "$MANIFEST_DIGEST"
+
+      - name: Run browser and Agent acceptance suite
+        timeout-minutes: 80
+        run: |
+          set -euo pipefail
           pnpm exec playwright test -c e2e/playwright.config.ts
           node scripts/staging/summarize-e2e.mjs test-results/staging-results.json \
             "$RUNNER_TEMP/staging-acceptance-summary.json"
@@ -221,6 +238,8 @@ jobs:
             playwright-report/
             ${{ runner.temp }}/staging-web-identity.json
             ${{ runner.temp }}/staging-api-ready.json
+            ${{ runner.temp }}/staging-web-identity-critical.json
+            ${{ runner.temp }}/staging-api-ready-critical.json
             ${{ runner.temp }}/staging-web-identity-final.json
             ${{ runner.temp }}/staging-api-ready-final.json
             ${{ runner.temp }}/release-final/manifest.json

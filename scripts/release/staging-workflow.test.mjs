@@ -156,11 +156,26 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.match(workflow, /Verify exact RC is still active on Staging/u);
   assert.match(workflow, /staging-web-identity\.json/u);
   assert.match(workflow, /staging-api-ready\.json/u);
-  assert.match(workflow, /Run browser and Agent acceptance suite/u);
+  assert.match(workflow, /Prepare browser and Agent acceptance suite/u);
+  assert.match(workflow, /Re-verify exact RC immediately before acceptance execution/u);
+  assert.match(workflow, /staging-web-identity-critical\.json/u);
+  assert.match(workflow, /staging-api-ready-critical\.json/u);
+  const criticalRecheck = workflow.indexOf(
+    '      - name: Re-verify exact RC immediately before acceptance execution',
+  );
+  const acceptanceExecution = workflow.indexOf(
+    '      - name: Run browser and Agent acceptance suite',
+  );
+  assert.ok(criticalRecheck > 0 && acceptanceExecution > criticalRecheck);
+  assert.match(
+    workflow.slice(criticalRecheck, acceptanceExecution),
+    /verify-staging-release-binding\.mjs[\s\S]*--expected-manifest-digest "\$MANIFEST_DIGEST"/u,
+  );
   assert.match(workflow, /playwright test -c e2e\/playwright\.config\.ts/u);
   assert.match(workflow, /summarize-e2e\.mjs/u);
   assert.match(workflow, /Clean and read back Staging acceptance fixtures\s+if: always\(\)/u);
   assert.match(workflow, /Verify Staging Manifest and component identities remained unchanged/u);
+  assert.match(workflow, /staging-web-identity-critical\.json/u);
   assert.match(workflow, /staging-web-identity-final\.json/u);
   assert.match(workflow, /staging-api-ready-final\.json/u);
   assert.match(workflow, /release-final\/manifest\.json/u);

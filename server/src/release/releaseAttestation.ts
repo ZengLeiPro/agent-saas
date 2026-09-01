@@ -148,39 +148,6 @@ function promotionContext(
   }
 }
 
-function isExpandConfirmationWindowRefresh(
-  input: Pick<ReleaseAttestation, 'state' | 'operationKey' | 'reason' | 'manifestDigest'>,
-  releaseId: string,
-  promotion: PromotionContext | null,
-  recordedAtMs: number,
-  awaitingAtMs: number,
-): boolean {
-  if (
-    input.state !== 'awaiting_expand_confirmation' ||
-    !/^expand-reobservation:[1-9][0-9]*:[1-9][0-9]*$/u.test(input.operationKey) ||
-    !input.reason ||
-    promotion?.migrationPhase !== 'expand' ||
-    recordedAtMs - awaitingAtMs <= MAX_EXPAND_CONFIRMATION_DELAY_MS
-  ) {
-    return false;
-  }
-  try {
-    const evidence = JSON.parse(input.reason) as Record<string, unknown>;
-    return (
-      evidence.status === 'confirmation_window_refreshed' &&
-      evidence.releaseId === releaseId &&
-      evidence.releaseSha === promotion.releaseSha &&
-      evidence.manifestDigest === input.manifestDigest &&
-      evidence.migrationPhase === 'expand' &&
-      evidence.migrationPlanDigest === promotion.migrationPlanDigest &&
-      evidence.productionBeforeDigest === promotion.productionBeforeDigest &&
-      evidence.productionTargetDigest === promotion.productionTargetDigest
-    );
-  } catch {
-    return false;
-  }
-}
-
 function isExpandConfirmation(
   input: Pick<ReleaseAttestation, 'state' | 'operationKey' | 'reason' | 'manifestDigest'>,
   releaseId: string,
@@ -381,15 +348,6 @@ export class ReleaseAttestationLog {
       current === 'awaiting_expand_confirmation' && latest !== undefined
         ? timestamp(latest.recordedAt, 'Awaiting confirmation recordedAt')
         : null;
-    const expandReobservation =
-      awaitingAtMs !== null &&
-      isExpandConfirmationWindowRefresh(
-        input,
-        this.releaseId,
-        boundPromotionContext,
-        recordedAtMs,
-        awaitingAtMs,
-      );
     const expandConfirmation =
       awaitingAtMs !== null &&
       isExpandConfirmation(
@@ -407,7 +365,6 @@ export class ReleaseAttestationLog {
       !retryAfterFailureBeforeChange &&
       !promotionOutcome &&
       !replayingLegacyCompletion &&
-      !expandReobservation &&
       !expandConfirmation &&
       !revocation &&
       !failure

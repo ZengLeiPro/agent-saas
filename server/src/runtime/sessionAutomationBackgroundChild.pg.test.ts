@@ -11,11 +11,12 @@ import { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import { SessionAutomationRuntimeGuard } from './sessionAutomationRuntimeGuard.js';
 import { deriveChildAutomationFence, type SubagentOutcome } from './subagent/subagentRunner.js';
 import { createTenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
+import { PgToolInvocationStore } from './toolInvocationStore.js';
 import type { RunContext } from './types.js';
 
 const { Pool } = pg;
 const url = process.env.TEST_DATABASE_URL;
-const describePg = url ? describe : describe.skip;
+const describePg = url ? describe : describe.skip; // real PostgreSQL recovery coverage
 
 describePg('automation background child recovery on PostgreSQL', () => {
   const prefix = `automation_background_child_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
@@ -30,11 +31,12 @@ describePg('automation background child recovery on PostgreSQL', () => {
     pool = new Pool({ connectionString: url!, max: 8 });
     events = new PgEventStore({ connectionString: url!, tablePrefix: prefix, poolMax: 4 });
     await events.init();
-    runs = new PgRunStore({ pool, tablePrefix: prefix });
+    runs = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await runs.init();
+    await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
     store = new PgSessionAutomationStore(pool, prefix, runs.runsTable);
     await store.init();
-    guard = new SessionAutomationRuntimeGuard(pool, prefix, runs.runsTable);
+    guard = new SessionAutomationRuntimeGuard(pool, () => true, prefix, runs.runsTable);
   }, 30_000);
 
   afterAll(async () => {
@@ -93,6 +95,44 @@ describePg('automation background child recovery on PostgreSQL', () => {
       },
     } as RunContext;
     return { automationId, incarnationId, sessionId, dispatch, context };
+  }
+
+  async function preparedInterruptedChild(childStatus: 'pending' | 'running' = 'running') {
+    const setup = await activeExecution();
+    const parentRunId = `bg-${randomUUID()}`;
+    const parentSessionId = `bg-session-${randomUUID()}`;
+    const childRunId = `child-${randomUUID()}`;
+    const childSessionId = `child-session-${randomUUID()}`;
+    const rootFence = {
+      ...setup.context.automationFence!, runId: parentRunId,
+      rootSessionId: setup.sessionId, rootRunId: setup.dispatch.targetRunId,
+    };
+    await runs.createPending({
+      runId: parentRunId, tenantId, sessionId: parentSessionId, userId: 'user-a',
+      metadata: {
+        backgroundTask: true, automationFence: rootFence,
+        executionChildSessionId: childSessionId, executionChildRunId: childRunId,
+      },
+    });
+    await runs.createPending({
+      runId: childRunId, tenantId, sessionId: childSessionId, userId: 'user-a',
+      metadata: {
+        subagent: true, parentRunId, parentSessionId,
+        automationFence: { ...rootFence, runId: childRunId },
+      },
+    });
+    const context = {
+      tenantId, sessionId: parentSessionId, runId: parentRunId, automationFence: rootFence,
+    } as RunContext;
+    await guard.recordBackgroundResource(context, parentRunId, { childSessionId, childRunId }, 'prepared');
+    await pool.query(
+      `UPDATE ${runs.runsTable}
+          SET status=CASE WHEN run_id=$1 THEN 'running' ELSE $3 END,
+              worker_id='dead-worker',lease_expires_at=now()-interval '1 minute'
+        WHERE run_id=ANY($2::text[])`,
+      [parentRunId, [parentRunId, childRunId], childStatus],
+    );
+    return { setup, context, parentRunId, parentSessionId, childRunId, childSessionId };
   }
 
   it('persists and restores background-agent lineage through resource lifecycle and first child admission', async () => {
@@ -186,8 +226,28 @@ describePg('automation background child recovery on PostgreSQL', () => {
             runId: persisted!.runId,
           },
         });
-        const childRunId = `child-${randomUUID()}`;
-        const childSessionId = `child-session-${randomUUID()}`;
+        const { childRunId, childSessionId } = params.preparedChildIdentity!;
+        await params.beforeChildSideEffects?.({ childSessionId, childRunId });
+        await guard.recordBackgroundResource(
+          {
+            tenantId,
+            sessionId: params.parentContext.sessionId!,
+            runId: params.parentContext.runId!,
+            automationFence: params.parentContext.automationFence,
+          },
+          persisted!.runId,
+          { childSessionId, childRunId },
+          'prepared',
+        );
+        await params.beforeChildSideEffects?.({ childSessionId, childRunId });
+        const preparedResource = await pool.query(
+          `SELECT state,provider_resource_id,metadata FROM ${store.tables.backgroundResources}
+            WHERE tenant_id=$1 AND resource_key=$2`,
+          [tenantId, persisted!.runId],
+        );
+        expect(preparedResource.rows[0]).toMatchObject({
+          state: 'prepared', provider_resource_id: childRunId, metadata: { childSessionId, childRunId },
+        });
         await runs.createPending({
           runId: childRunId,
           tenantId,
@@ -200,6 +260,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
           },
         });
         await params.onChildRunCreated?.({ childSessionId, childRunId, model: 'test-model' });
+        await params.beforeChildSideEffects?.({ childSessionId, childRunId });
         const active = await pool.query(
           `SELECT state,session_id,run_id,provider_resource_id,metadata FROM ${store.tables.backgroundResources}
             WHERE tenant_id=$1 AND resource_key=$2`,
@@ -243,6 +304,11 @@ describePg('automation background child recovery on PostgreSQL', () => {
           invoking_session_id: childSessionId,
           invoking_run_id: childRunId,
         });
+        const replay = await guard.beforeModel(childContext, 'turn:background-child:first', {
+          model: 'test-model', inputTokens: 10, maxOutputTokens: 20,
+        });
+        expect(replay?.providerAttemptId).toBe(attempt!.providerAttemptId);
+        expect(replay?.sourceKey).toBe(attempt!.sourceKey);
         await guard.finishModel(childContext, attempt, { inputTokens: 10, outputTokens: 5 });
         return {
           status: 'completed', text: 'done', totalTokens: 15, toolUseCount: 0, turnCount: 1,
@@ -270,6 +336,110 @@ describePg('automation background child recovery on PostgreSQL', () => {
     await expect(guard.beforeModel({ ...childContext, runId: `invoking-${randomUUID()}` },
       'turn:spoof-invoking-run', { model: 'test-model', inputTokens: 1, maxOutputTokens: 1 }))
       .rejects.toMatchObject({ reason: 'context_run_mismatch' });
+  });
+
+  it('atomically requeues a running prepared child and clears both run leases', async () => {
+    const prepared = await preparedInterruptedChild();
+    await expect(guard.recoverInterruptedBackgroundChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('requeued');
+    const rows = await pool.query(
+      `SELECT run_id,status,worker_id,lease_expires_at,metadata FROM ${runs.runsTable}
+        WHERE run_id=ANY($1::text[]) ORDER BY run_id`,
+      [[prepared.parentRunId, prepared.childRunId]],
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.every(row => row.status === 'pending'
+      && row.worker_id === null && row.lease_expires_at === null)).toBe(true);
+    expect(rows.rows.find(row => row.run_id === prepared.parentRunId)?.metadata)
+      .toMatchObject({ executionChildRunId: prepared.childRunId });
+  });
+
+  it('recovers a prepared checkpoint with a pending child and clears both run leases', async () => {
+    const prepared = await preparedInterruptedChild('pending');
+    const before = await pool.query(
+      `SELECT run_id,status,worker_id,lease_expires_at FROM ${runs.runsTable}
+        WHERE run_id=ANY($1::text[]) ORDER BY run_id`,
+      [[prepared.parentRunId, prepared.childRunId]],
+    );
+    expect(before.rows.find(row => row.run_id === prepared.parentRunId))
+      .toMatchObject({ status: 'running', worker_id: 'dead-worker' });
+    expect(before.rows.find(row => row.run_id === prepared.childRunId))
+      .toMatchObject({ status: 'pending', worker_id: 'dead-worker' });
+
+    await expect(guard.recoverInterruptedBackgroundChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('requeued');
+
+    const recovered = await pool.query(
+      `SELECT run_id,status,worker_id,lease_expires_at FROM ${runs.runsTable}
+        WHERE run_id=ANY($1::text[]) ORDER BY run_id`,
+      [[prepared.parentRunId, prepared.childRunId]],
+    );
+    expect(recovered.rows).toHaveLength(2);
+    expect(recovered.rows.every(row => row.status === 'pending'
+      && row.worker_id === null && row.lease_expires_at === null)).toBe(true);
+  });
+
+  it('does not requeue active resources and retains cancellation authority', async () => {
+    const prepared = await preparedInterruptedChild();
+    await guard.recordBackgroundResource(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
+    );
+    await expect(guard.recoverInterruptedBackgroundChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('reconcile_required');
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
+      [prepared.parentRunId],
+    )).rows[0]?.state).toBe('active');
+    expect(await store.get(tenantId, prepared.setup.sessionId, prepared.setup.automationId))
+      .toMatchObject({ status: 'reconcile_required' });
+  });
+
+  it.each(['provider', 'interaction', 'tool'] as const)(
+    'does not requeue a prepared child after a %s side effect', async sideEffect => {
+      const prepared = await preparedInterruptedChild();
+      const childContext = {
+        ...prepared.context, sessionId: prepared.childSessionId, runId: prepared.childRunId,
+        model: 'test-model',
+        automationFence: { ...prepared.context.automationFence!, runId: prepared.childRunId },
+      } as RunContext;
+      if (sideEffect === 'provider') {
+        await guard.beforeModel(childContext, `recovery:${randomUUID()}`, {
+          model: 'test-model', inputTokens: 1, maxOutputTokens: 1,
+        });
+      } else if (sideEffect === 'interaction') {
+        await guard.recordInteraction(childContext, `interaction:${randomUUID()}`, 'approval', 'active', {});
+      } else {
+        await pool.query(
+          `INSERT INTO ${prefix}_tool_invocations
+            (invocation_id,tenant_id,run_id,session_id,tool_call_id,tool_name,execution_target,status,started_at,updated_at)
+           VALUES($1,$2,$3,$4,'call-1','Shell','server-container','running',now(),now())`,
+          [randomUUID(), tenantId, prepared.childRunId, prepared.childSessionId],
+        );
+      }
+      await expect(guard.recoverInterruptedBackgroundChild(
+        prepared.context, prepared.parentRunId,
+        { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+      )).resolves.toBe('reconcile_required');
+      expect((await runs.get(prepared.parentRunId))?.status).toBe('running');
+    },
+  );
+
+  it('preserves a concurrent cancellation and never revives either identity', async () => {
+    const prepared = await preparedInterruptedChild();
+    await runs.markStatus(prepared.parentRunId, 'cancelled', 'user_cancelled');
+    await expect(guard.recoverInterruptedBackgroundChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('terminal_preserved');
+    expect(await runs.get(prepared.parentRunId)).toMatchObject({ status: 'cancelled' });
+    expect((await runs.get(prepared.childRunId))?.status).toBe('running');
   });
 
 });

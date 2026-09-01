@@ -1006,9 +1006,9 @@ const runtimeEventStoreConfigSchema = z.discriminatedUnion('backend', [
     tablePrefix: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/).transform((value) => value.toLowerCase()).optional(),
     /** 共享查询池上限；默认 6，为并发事件写入保留短连接余量。 */
     poolMax: z.number().int().min(1).max(50).optional(),
+    writerCapability: z.discriminatedUnion('capability', [z.object({ capability: z.literal('tenant-native-v1') }), z.object({ capability: z.literal('legacy-single-tenant'), tenantId: z.string().min(1) })]).optional(),
   }),
 ]);
-
 
 const clientDaemonConfigSchema = z.object({
   /** Reverse WebSocket endpoint path for customer-side daemon connections. */

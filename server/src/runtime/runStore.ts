@@ -10,7 +10,7 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
-import { contractPgRunStoreTenantSchema, initializePgRunStore, type PgRunStoreContractGate } from './runStoreSchema.js';
+import { contractPgRunStoreTenantSchema, disablePgRunStoreLegacyWriterCapability, initializePgRunStore, recordPgRunStoreDrainEvidence, registerPgRunStoreLegacyWriterCapability, registerPgRunStoreTenantNativeWriterCapability, type PgRunStoreContractGate, type PgRunStoreDrainEvidence, type PgRunStoreLegacyWriterCapability } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
 import { lockRawTenantKey, readSameTenantSubmissionRun, upsertSteeringStopAuthority } from './runStoreTenantRolling.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
@@ -29,7 +29,7 @@ export class PgRunStore implements RunStore {
   readonly eventCursorsTable: string;
   readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
-  private readonly ownsPool: boolean;
+  private readonly ownsPool: boolean; readonly writerCapability: PgRunStoreOptions['writerCapability'];
   private readonly queries: PgRunStoreQueries;
 
   constructor(options: PgRunStoreOptions) {
@@ -46,18 +46,16 @@ export class PgRunStore implements RunStore {
     this.toolInvocationsTable = `${prefix}_tool_invocations`;
     this.eventNotifyChannel = `${prefix}_events_notify`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
-    this.ownsPool = !options.pool;
+    this.ownsPool = !options.pool; this.writerCapability = options.writerCapability;
     this.queries = new PgRunStoreQueries(this.pool, this.runsTable, this.messageSubmissionsTable, this.steeringInputsTable);
   }
 
-  async init(): Promise<void> {
-    await initializePgRunStore(this);
-  }
-
-  /** Explicit release-management entry; ordinary init is expand-only. */
+  async init(): Promise<void> { await initializePgRunStore(this); }
+  async registerTenantNativeWriterCapability(dbRole: string): Promise<void> { await registerPgRunStoreTenantNativeWriterCapability(this, dbRole); } async registerLegacyWriterCapability(capability: PgRunStoreLegacyWriterCapability): Promise<void> { await registerPgRunStoreLegacyWriterCapability(this, capability); }
+  async disableLegacyWriterCapability(dbRole: string): Promise<void> { await disablePgRunStoreLegacyWriterCapability(this, dbRole); }
+  async recordTenantDrainEvidence(evidence: PgRunStoreDrainEvidence): Promise<void> { await recordPgRunStoreDrainEvidence(this, evidence); }
   async contractTenantSchema(gate: PgRunStoreContractGate): Promise<void> { await contractPgRunStoreTenantSchema(this, gate); }
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
-
   async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
     const now = new Date().toISOString();
     const result = await this.pool.query<{ row_json: RunRecord }>(`
@@ -120,7 +118,7 @@ export class PgRunStore implements RunStore {
       ]);
       const now = new Date().toISOString();
       const userScope = input.submitterUserId ?? input.userId ?? '__anonymous__';
-      // Expand's global raw key is serialized so conflicts become business errors, not 23505.
+      // Serialize expand's global raw key so conflicts become business errors rather than 23505.
       await lockRawTenantKey(client, `${this.messageSubmissionsTable}:raw-key`,
         `${userScope}\u001f${input.idempotencyKey}`);
       const submission = await client.query<{ run_id: string }>(`

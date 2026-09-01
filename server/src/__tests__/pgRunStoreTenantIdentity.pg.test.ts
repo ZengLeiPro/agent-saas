@@ -10,7 +10,7 @@ import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 const { Pool } = pg;
 const makePrefix = (label: string) => `${label}_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 
-describePg('PgRunStore tenant/session identity and legacy migration', () => {
+describePg('PgRunStore tenant/session identity and durable legacy migration', () => {
   let pool: InstanceType<typeof Pool>;
   const prefixes: string[] = [];
 
@@ -18,7 +18,7 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
   });
 
-  afterAll(async () => {
+  afterAll(async () => { // cleanup isolated schema objects
     for (const prefix of prefixes) {
       const tables = (await pool.query<{ tablename: string }>(
         `SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename LIKE $1`,
@@ -26,7 +26,8 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
       )).rows.map((row) => row.tablename);
       for (const table of tables) await pool.query(`DROP TABLE IF EXISTS ${table} CASCADE`);
       for (const fn of ['message_submissions_tenant_expand_fn', 'steering_inputs_tenant_expand_fn',
-        'steering_sessions_tenant_expand_fn', 'runs_tenant_aux_catchup_fn']) {
+        'steering_sessions_tenant_expand_fn', 'runs_writer_capability_fn',
+        'runs_tenant_aux_catchup_fn']) {
         await pool.query(`DROP FUNCTION IF EXISTS ${prefix}_${fn}()`);
       }
     }
@@ -36,7 +37,9 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
   it('同名 session 在双租户可并行 lease，Responses find/update/clear 严格隔离', async () => {
     const prefix = makePrefix('tenant_identity');
     prefixes.push(prefix);
-    const store = new PgRunStore({ pool, tablePrefix: prefix });
+    const store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: {
+      capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true,
+    } });
     await store.init();
     await store.createPending({ runId: 'run-a', tenantId: 'tenant-a', sessionId: 'shared-session', channel: 'web' });
     await store.createPending({ runId: 'run-b', tenantId: 'tenant-b', sessionId: 'shared-session', channel: 'web' });
@@ -168,7 +171,11 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
       VALUES ('ambiguous-session'), ('orphan-session'), ('unique-session');
     `);
 
-    const stores = [new PgRunStore({ pool, tablePrefix: prefix }), new PgRunStore({ pool, tablePrefix: prefix })];
+    const stores = [new PgRunStore({ pool, tablePrefix: prefix, writerCapability: {
+      capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true,
+    } }), new PgRunStore({ pool, tablePrefix: prefix, writerCapability: {
+      capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true,
+    } })];
     await Promise.all(stores.map((store) => store.init()));
     await stores[0]!.init(); // full migration is idempotent after validation
 
@@ -210,11 +217,15 @@ describePg('PgRunStore tenant/session identity and legacy migration', () => {
       ON CONFLICT (source_run_id) DO NOTHING
     `)).resolves.toMatchObject({ rowCount: 1 });
 
-    await expect(stores[0]!.contractTenantSchema({ expectedExpandVersion: 0, oldWritersDrained: true } as never))
+    await expect(stores[0]!.contractTenantSchema({ expectedExpandVersion: 0, drainEvidenceId: 'missing' } as never))
       .rejects.toThrow('contract gate rejected');
+    await stores[0]!.recordTenantDrainEvidence({
+      evidenceId: 'identity-drain', capability: 'tenant-native-v1',
+      observer: 'identity-pg-test',
+    });
     await stores[0]!.contractTenantSchema({
       expectedExpandVersion: RUN_STORE_TENANT_SCHEMA_VERSION,
-      oldWritersDrained: true,
+      drainEvidenceId: 'identity-drain',
     });
 
     const submissionQuarantine = await pool.query(`SELECT reason, payload->>'run_id' AS id FROM ${prefix}_message_submissions_tenant_quarantine`);

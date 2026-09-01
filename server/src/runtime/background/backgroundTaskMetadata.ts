@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ChannelContext } from '../../types/index.js';
 import { automationFenceFromMetadata } from '../automationFence.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
@@ -62,6 +63,9 @@ interface CommonBackgroundTaskMetadata {
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   /** Root authority plus this durable background task's invoking run identity. */
   automationFence?: RunContext['automationFence'];
+  /** Durable identity reserved for the agent execution child before it creates resources. */
+  executionChildSessionId?: string;
+  executionChildRunId?: string;
 }
 
 export interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
@@ -80,6 +84,20 @@ export interface BackgroundCommandTaskMetadata extends CommonBackgroundTaskMetad
 }
 
 export type BackgroundTaskMetadata = BackgroundAgentTaskMetadata | BackgroundCommandTaskMetadata;
+
+
+export function resolvePreparedChildIdentity(
+  record: RunRecord, metadata: BackgroundTaskMetadata,
+): { childSessionId: string; childRunId: string } {
+  if (metadata.executionChildSessionId && metadata.executionChildRunId) {
+    return { childSessionId: metadata.executionChildSessionId, childRunId: metadata.executionChildRunId };
+  }
+  const fence = metadata.automationFence;
+  const digest = createHash('sha256')
+    .update([record.runId, fence?.automationId, fence?.incarnationId, fence?.generation, fence?.executionId].join(':'))
+    .digest('hex');
+  return { childSessionId: `sub-${digest.slice(0, 32)}`, childRunId: `bg-child-${digest.slice(0, 32)}` };
+}
 
 export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMetadata | null {
   const value = record.metadata;
@@ -139,6 +157,12 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
     ...(automationFence ? { automationFence } : {}),
+    ...(metadataString(value, 'executionChildSessionId')
+      ? { executionChildSessionId: metadataString(value, 'executionChildSessionId') }
+      : {}),
+    ...(metadataString(value, 'executionChildRunId')
+      ? { executionChildRunId: metadataString(value, 'executionChildRunId') }
+      : {}),
   };
 
   if (value.backgroundTaskType === 'command') {

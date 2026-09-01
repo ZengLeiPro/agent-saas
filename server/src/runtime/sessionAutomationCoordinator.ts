@@ -55,7 +55,7 @@ export class SessionAutomationCoordinator {
   constructor(
     readonly store: PgSessionAutomationStore,
     readonly dispatcher: AutomationRunDispatcher,
-    readonly options: { executionEnabled: () => boolean; cancelRun?: (runId:string,reason:string)=>Promise<void>; lifecycleAdapters?:SessionAutomationLifecycleAdapters; pollMs?: number; batchSize?: number; onError?: (error: unknown) => void } = { executionEnabled: () => false },
+    readonly options: { executionEnabled: () => boolean; cancelRun?: (runId:string,reason:string)=>Promise<void>; lifecycleAdapters?:SessionAutomationLifecycleAdapters; pollMs?: number; batchSize?: number; onError?: (error: unknown) => void },
   ) {}
   start(): void { if (this.timer) return; void this.tick(); this.timer = setInterval(() => void this.tick(), this.options.pollMs ?? 1_000); this.timer.unref(); }
   async stop(): Promise<void> { if (this.timer) clearInterval(this.timer); this.timer = undefined; while (this.running) await new Promise(r => setTimeout(r, 10)); }

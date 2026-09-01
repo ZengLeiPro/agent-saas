@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto'; // recipe and stable provision-key assertions
 import { describe, expect, it, vi } from 'vitest';
+
+// Fixed child identities must make hand provisioning safely repeatable after a crash.
 
 import type {
   HandRecord,
@@ -199,12 +201,12 @@ describe('runtime Hand normal provision generation CAS', () => {
     let markFirstStarted!: () => void;
     const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const firstProvision = vi.fn(async () => {
+    const firstProvision = vi.fn(async (_recipe: { provisionKey?: string }) => {
       markFirstStarted();
       await firstGate;
       return { status: 'error' as const, error: 'older failure' };
     });
-    const secondProvision = vi.fn(async () => ({ status: 'ok' as const }));
+    const secondProvision = vi.fn(async (_recipe: { provisionKey?: string }) => ({ status: 'ok' as const }));
     const base = {
       handStore,
       eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
@@ -229,7 +231,35 @@ describe('runtime Hand normal provision generation CAS', () => {
 
     expect(handStore.record).toMatchObject({
       status: 'ready',
-      metadata: { provisionFailure: null, provision: { lastStatus: 'ok' } },
+      metadata: {
+        provisionKey: expect.any(String),
+        provisionFailure: null,
+        provision: { lastStatus: 'ok' },
+      },
+    });
+    expect(firstProvision.mock.calls[0]![0].provisionKey)
+      .toBe(secondProvision.mock.calls[0]![0].provisionKey);
+  });
+
+  it('skips provisioning when the fixed identity already has the same ready hand', async () => {
+    const handStore = new CasMemoryHandStore();
+    const provision = vi.fn(async () => ({ status: 'ok' as const }));
+    const params = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: {
+        has: () => true,
+        get: () => ({ listInternalTools: () => [], provision }),
+      } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'fixed-child-session', workspaceId: 'workspace-1', runId: 'fixed-child-run',
+      tenantId: 'tenant-runtime-hand-ready',
+    };
+    await ensureRuntimeHandRegistered(params);
+    await ensureRuntimeHandRegistered(params);
+    expect(provision).toHaveBeenCalledOnce();
+    expect(handStore.record).toMatchObject({
+      status: 'ready', metadata: { provisionKey: expect.any(String), provisionFailure: null },
     });
   });
 });

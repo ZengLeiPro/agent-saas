@@ -9,6 +9,10 @@ import { creditsToMicrocredits } from './sessionAutomationBudgetProgress.js';
 import { costUsdMicroToCreditsMicro } from '../data/billing/pgBillingStore.js';
 import { DEFAULT_CREDIT_VALUE_YUAN_MICRO, DEFAULT_FX_RATE_TO_CNY, DEFAULT_TARGET_MARGIN_BPS } from '../data/billing/types.js';
 import type { SessionAutomationSpec } from '@agent/shared';
+import {
+  recoverInterruptedAutomationBackground,
+  type InterruptedAutomationBackgroundRecovery,
+} from './sessionAutomationInterruptedRecovery.js';
 
 /** PostgreSQL NUMERIC parser for budget ledger values: scale is allowed only when fractional digits are all zero. */
 export function parseWholeNumeric(value: string, field = 'amount'): bigint {
@@ -66,13 +70,14 @@ export class SessionAutomationRuntimeGuard {
 
   constructor(
     private readonly pool: pg.Pool,
+    private readonly executionEnabled: () => boolean,
     private readonly tablePrefix = 'runtime',
     private readonly runsTable = `${tablePrefix}_runs`,
-    private readonly executionEnabled: () => boolean = () => true,
   ) {
     this.tables = sessionAutomationTables(tablePrefix);
   }
 
+  /** Reads the live execution switch; exceptions fail closed. */
   private isExecutionEnabled(): boolean {
     try {
       return this.executionEnabled() === true;
@@ -528,31 +533,78 @@ export class SessionAutomationRuntimeGuard {
     if(state==='completed'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='interaction' AND object_id IN (SELECT interaction_id::text FROM ${this.tables.interactions} WHERE tenant_id=$1 AND interaction_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,key]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
   }
 
+  async recoverInterruptedBackgroundChild(
+    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
+    resourceKey: string,
+    identity: { childSessionId: string; childRunId: string },
+  ): Promise<InterruptedAutomationBackgroundRecovery> {
+    const lineage = this.lineage(context as RunContext);
+    if (!lineage) return 'reconcile_required';
+    return recoverInterruptedAutomationBackground(
+      this.pool, this.runsTable, this.tablePrefix, this.tables, lineage, resourceKey, identity,
+    );
+  }
+
   async recordBackgroundResource(
     context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
-    childRunId: string,
-    state: 'active' | 'released',
+    identity: { childSessionId: string; childRunId: string },
+    state: 'prepared' | 'active' | 'released',
   ): Promise<void> {
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return;
-    await this.pool.query(
-      `INSERT INTO ${this.tables.backgroundResources}
-        (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,$11,$12)
-       ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
-         SET provider_resource_id=EXCLUDED.provider_resource_id,state=EXCLUDED.state,metadata=EXCLUDED.metadata,
-             version=${this.tables.backgroundResources}.version+1,updated_at=now()`,
-      [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-        lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, childRunId, state,
-        JSON.stringify({
-          childRunId,
-          invokingSessionId: lineage.invokingSessionId,
-          invokingRunId: lineage.invokingRunId,
-          rootSessionId: lineage.sessionId,
-          rootRunId: lineage.executionRunId,
-        })],
-    );
+    const metadata = JSON.stringify({
+      ...identity,
+      invokingSessionId: lineage.invokingSessionId,
+      invokingRunId: lineage.invokingRunId,
+      rootSessionId: lineage.sessionId,
+      rootRunId: lineage.executionRunId,
+    });
+    const values = [lineage.tenantId, resourceKey, identity.childRunId, identity.childSessionId];
+    const result = state === 'prepared'
+      ? await this.pool.query(
+        `INSERT INTO ${this.tables.backgroundResources}
+          (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,'prepared',$11)
+         ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
+           SET version=${this.tables.backgroundResources}.version+1,updated_at=now()
+           WHERE ${this.tables.backgroundResources}.provider_resource_id=EXCLUDED.provider_resource_id
+             AND ${this.tables.backgroundResources}.metadata->>'childSessionId'=EXCLUDED.metadata->>'childSessionId'
+             AND ${this.tables.backgroundResources}.automation_id=EXCLUDED.automation_id
+             AND ${this.tables.backgroundResources}.incarnation_id=EXCLUDED.incarnation_id
+             AND ${this.tables.backgroundResources}.generation=EXCLUDED.generation
+         RETURNING state`,
+        [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+          lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, metadata],
+      )
+      : await this.pool.query(
+        `UPDATE ${this.tables.backgroundResources}
+            SET state=$5,version=version+1,updated_at=now()
+          WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$2
+            AND provider_resource_id=$3 AND metadata->>'childSessionId'=$4
+            AND state = ANY($6::text[]) RETURNING state`,
+        [...values, state, state === 'active' ? ['prepared', 'active'] : ['prepared', 'active', 'released']],
+      );
+    if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
     if(state==='released'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource' AND object_id IN (SELECT background_resource_id::text FROM ${this.tables.backgroundResources} WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,resourceKey]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
+  }
+
+  async assertBackgroundResourcePrepared(
+    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
+    resourceKey: string,
+    identity: { childSessionId: string; childRunId: string },
+  ): Promise<void> {
+    this.assertExecutionEnabled();
+    const lineage = this.lineage(context as RunContext);
+    if (!lineage) return;
+    const result = await this.pool.query(
+      `SELECT 1 FROM ${this.tables.backgroundResources}
+        WHERE tenant_id=$1 AND automation_id=$2 AND incarnation_id=$3 AND generation=$4
+          AND resource_kind='child_run' AND resource_key=$5 AND provider_resource_id=$6
+          AND metadata->>'childSessionId'=$7 AND state IN ('prepared','active')`,
+      [lineage.tenantId, lineage.automationId, lineage.incarnationId, lineage.generation,
+        resourceKey, identity.childRunId, identity.childSessionId],
+    );
+    if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_not_prepared');
   }
 }

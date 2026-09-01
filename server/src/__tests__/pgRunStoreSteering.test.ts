@@ -411,7 +411,7 @@ describe('PgRunStore steering inbox', () => {
     expect(run.metadata?.queuedBehindRunId).toBeUndefined();
   });
 
-  it('recovers pending and reserved sources after their steering target becomes terminal', async () => {
+  it('recovers non-subagent pending and reserved sources after their steering target becomes terminal', async () => {
     // pending/reserved 都只在目标仍活跃时阻止 source recovery；目标失败后 source
     // 回到可恢复集合，并用 durable user_message 作为独立 run 执行。
     const pool = {
@@ -420,6 +420,7 @@ describe('PgRunStore steering inbox', () => {
         expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
+        expect(sql).toContain("run.metadata->>'subagent' IS DISTINCT FROM 'true'");
         return { rows: [] };
       }),
     };

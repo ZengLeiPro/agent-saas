@@ -446,7 +446,8 @@
   // "runtimeEventStore": {
   //   "backend": "pg",
   //   "connectionString": "postgresql://agent_runtime_app:<PG_PWD>@<RDS 域名>:5432/agent_runtime?sslmode=disable",
-  //   "tablePrefix": "runtime"
+  //   "tablePrefix": "runtime",
+  //   "writerCapability": { "capability": "tenant-native-v1" } // 新部署显式登记；省略仅允许 URL role 已预登记
   // },
   // Runtime retention 默认关闭；即使 enabled=true，缺省仍为只读 dry-run。
   // execute 必须同时填写法务授权水位（十进制 global_sequence）和审批/变更单号。

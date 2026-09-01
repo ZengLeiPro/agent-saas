@@ -10,7 +10,7 @@ const describePg=url?describe:describe.skip;
 describePg('session automation creation receipt saga on real PostgreSQL',()=>{
  const prefix=`automation_saga_${randomUUID().replaceAll('-','').slice(0,10)}`;
  let pool:InstanceType<typeof Pool>;let store:PgSessionAutomationStore;
- beforeAll(async()=>{pool=new Pool({connectionString:url!,max:4});const runs=new PgRunStore({pool,tablePrefix:prefix});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();},30000);
+ beforeAll(async()=>{pool=new Pool({connectionString:url!,max:4});const runs=new PgRunStore({pool,tablePrefix:prefix,writerCapability:{capability:'tenant-native-v1',allowPrivilegedRoleForTests:true}});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();},30000);
  afterAll(async()=>{if(!pool)return;const tables=Object.values(store.tables).map(name=>`DROP TABLE IF EXISTS ${name} CASCADE`).join(';');await pool.query(tables);await pool.query(`DROP TABLE IF EXISTS ${prefix}_runs CASCADE`);await pool.end();},30000);
  it('recovers prepared/file_ready with one stable session and rejects a different digest',async()=>{
   const request={command:'/loop adaptive -- continue',sessionId:null,attachments:[]};const digest=commandDigest(request);const sessionId=randomUUID();
@@ -22,7 +22,7 @@ describePg('session automation creation receipt saga on real PostgreSQL',()=>{
   await expect(restarted.prepareCommandSession({tenantId:'tenant-a',ownerUserId:'user-a',clientMessageId:'msg-crash',commandDigest:commandDigest({...request,command:'different'}),canonicalRequest:{...request,command:'different'},sessionId:randomUUID()})).rejects.toMatchObject({code:'CONFLICT'});
  });
  it('upgrades the legacy commands table with every saga column and constraint idempotently',async()=>{
-  const legacyPrefix=`${prefix}_legacy`;const runs=new PgRunStore({pool,tablePrefix:legacyPrefix});await runs.init();
+  const legacyPrefix=`${prefix}_legacy`;const runs=new PgRunStore({pool,tablePrefix:legacyPrefix,writerCapability:{capability:'tenant-native-v1',allowPrivilegedRoleForTests:true}});await runs.init();
   const legacyStore=new PgSessionAutomationStore(pool,legacyPrefix,runs.runsTable);
   await pool.query(`CREATE TABLE ${legacyStore.tables.commands}(tenant_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,client_message_id TEXT NOT NULL,session_id TEXT NOT NULL,command_digest TEXT NOT NULL,automation_id UUID,response JSONB,created_at TIMESTAMPTZ NOT NULL DEFAULT now(),PRIMARY KEY(tenant_id,owner_user_id,client_message_id))`);
   await pool.query(`INSERT INTO ${legacyStore.tables.commands}(tenant_id,owner_user_id,client_message_id,session_id,command_digest) VALUES('t','u','m',$1,'d')`,[randomUUID()]);

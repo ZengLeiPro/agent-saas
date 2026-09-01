@@ -211,7 +211,20 @@ export async function ensureRuntimeHandRegistered(params: {
     }
     recipe.runtimeIsolationRequirement = params.runtimeIsolationRequirement;
   }
+  // Fixed run identity gives transport retries one stable provisioning key.
+  const provisionKey = createHash('sha256').update(JSON.stringify({
+    handId: defaultHandId,
+    runId: params.runId ?? params.sessionId,
+    recipe,
+  })).digest('hex');
+  recipe.provisionKey = provisionKey;
   const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
+  const existingDefaultHand = typeof params.handStore.get === 'function'
+    ? await params.handStore.get(defaultHandId)
+    : null;
+  const reuseReadyDefaultHand = existingDefaultHand?.status === 'ready'
+    && existingDefaultHand.recipeDigest === recipeDigest
+    && existingDefaultHand.metadata.provisionKey === provisionKey;
   const defaultHandRegistration = {
     handId: defaultHandId,
     sessionId: params.sessionId,
@@ -231,21 +244,26 @@ export async function ensureRuntimeHandRegistered(params: {
   let defaultProvisionAttempted = false;
   let defaultProvisionFailure: string | undefined;
   let defaultProvisionMetadata: Record<string, unknown> | undefined;
-  const defaultProvisionGeneration = randomUUID();
+  const defaultProvisionGeneration = provisionKey;
   const initialProvisionMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
+    provisionKey,
     provisionFailure: null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,
     provisionGeneration: defaultProvisionGeneration,
     provision: { attempts: 0, lastStatus: 'provisioning', lastAttemptAt: new Date().toISOString() },
   };
-  await manager.provision({
-    ...defaultHandRegistration,
-    status: 'provisioning',
-    metadata: initialProvisionMetadata,
-  });
-  if (transport && typeof (transport as { provision?: unknown }).provision === 'function') {
+  if (!reuseReadyDefaultHand) {
+    await manager.provision({
+      ...defaultHandRegistration,
+      status: 'provisioning',
+      metadata: initialProvisionMetadata,
+    });
+  } else {
+    defaultProvisionMetadata = existingDefaultHand.metadata;
+  }
+  if (!reuseReadyDefaultHand && transport && typeof (transport as { provision?: unknown }).provision === 'function') {
     defaultProvisionAttempted = true;
     try {
       const result = await (transport as unknown as { provision(recipe: { workspaceId: string }): Promise<{ status: 'ok' | 'error'; error?: string; metadata?: Record<string, unknown> }> }).provision(recipe);
@@ -289,6 +307,7 @@ export async function ensureRuntimeHandRegistered(params: {
   const defaultFinalMetadata = {
     registeredBy: 'rawRuntimeRunDispatch',
     provisionGeneration: defaultProvisionGeneration,
+    provisionKey,
     provisionFailure: defaultProvisionFailure ?? null,
     provisionRecoveryToken: null,
     provisionRecoveryClaimedAtMs: null,
@@ -308,12 +327,14 @@ export async function ensureRuntimeHandRegistered(params: {
       sandboxScopeId: verifiedRuntimeIsolationEvidence.sandboxScopeId,
     } : {}),
   };
-  const completedDefaultHand = await params.handStore.completeProvisionAttempt(
-    defaultHandId,
-    defaultProvisionGeneration,
-    defaultFinalStatus,
-    defaultFinalMetadata,
-  );
+  const completedDefaultHand = reuseReadyDefaultHand
+    ? existingDefaultHand
+    : await params.handStore.completeProvisionAttempt(
+      defaultHandId,
+      defaultProvisionGeneration,
+      defaultFinalStatus,
+      defaultFinalMetadata,
+    );
   if (!completedDefaultHand) return;
   if (defaultProvisionFailure) {
     try {

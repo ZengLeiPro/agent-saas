@@ -25,6 +25,7 @@ import type { SessionAutomationCoordinator } from '../runtime/sessionAutomationC
 import type { SessionAutomationTerminalProjector } from '../runtime/sessionAutomationTerminalProjector.js';
 import type { SessionAutomationEvaluator } from '../runtime/sessionAutomationEvaluator.js';
 import { createSessionAutomationCancelRun, createSessionAutomationPersistence, createSessionAutomationWorkers, RuntimeSchedulerAutomationDispatcher, SessionAutomationRuntimeGuard } from './sessionAutomationRuntime.js';
+import { createSessionAutomationFlagSource } from './sessionAutomationFlagSource.js';
 import { appendTenantPlatformEvent, createRuntimeEventStoreFactory } from './runtimeEventStore.js';
 import { RuntimeEventRetention } from '../runtime/runtimeEventRetention.js';
 import { PgRuntimeAuditQuery } from '../runtime/pgAuditQuery.js';
@@ -281,7 +282,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const enableSchedulerWorker = processRole !== 'ws-only';
   const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
   const enableSingletonWorkers = processRole === 'all' || processRole === 'runtime-worker';
-  const config = loadAppConfig(processCwd);
+  const config = loadAppConfig(processCwd); const sessionAutomationFlagSource = createSessionAutomationFlagSource(config);
   const sessionLockMode = config.runtimeScheduler?.sessionLockMode ?? 'dual';
   // 非 production 进程禁止连远程 PG（2026-07-26 本地 dev 接管生产库事故）
   assertDevDatabaseSafety(config);
@@ -853,12 +854,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       }
     }
     pgRunStore = new PgTerminalEventOutboxRunStore({
-      pool: pgEventStore.pool,
-      tablePrefix: config.runtimeEventStore.tablePrefix,
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix,
+      ...(config.runtimeEventStore.writerCapability ? { writerCapability: config.runtimeEventStore.writerCapability } : {}),
     });
     await pgRunStore.init();
     ({ store: sessionAutomationStore, commandService: sessionAutomationCommandService } = await createSessionAutomationPersistence({
-      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime', runsTable: pgRunStore.runsTable, flags: config.sessionAutomation,
+      pool: pgEventStore.pool, tablePrefix: config.runtimeEventStore.tablePrefix ?? 'runtime', runsTable: pgRunStore.runsTable, flagSource: sessionAutomationFlagSource,
       cancelRun: cancelSessionAutomationRun = createSessionAutomationCancelRun({ runStore: pgRunStore, eventStore: pgEventStore!, logger: serverLogger.child('SessionAutomationCancel'), abort: (runId, reason) => runtimeRunController.abort(runId, reason) }),
     }));
     const defaultMaxConcurrentRuns = config.runtimeScheduler?.maxConcurrentRuns ?? 500;
@@ -1568,7 +1569,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       if (!value) throw new Error('models 未配置');
       return value;
     }),
-  });
+  }); sessionAutomationFlagSource.attachRefresh(sharedConfigRefresher.refreshIfChanged);
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
     userStore,
@@ -1657,7 +1658,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       enabled: memoryEnabled && config.memory?.injectContext?.enabled !== false,
       maxLines: config.memory?.injectContext?.maxLines,
     },
-    memoryIndexService: memoryIndexServiceRef.current, ...(sessionAutomationStore&&pgEventStore&&pgRunStore?{sessionAutomationRuntimeGuard:new SessionAutomationRuntimeGuard(pgEventStore.pool,sessionAutomationStore.tablePrefix,pgRunStore.runsTable,()=>config.sessionAutomation?.executionEnabled===true)}:{}),
+    memoryIndexService: memoryIndexServiceRef.current, ...(sessionAutomationStore&&pgEventStore&&pgRunStore?{sessionAutomationRuntimeGuard:new SessionAutomationRuntimeGuard(pgEventStore.pool,sessionAutomationFlagSource.executionEnabled,sessionAutomationStore.tablePrefix,pgRunStore.runsTable)}:{}),
     // 记忆写入职责剥离（2026-07-29）：租户开关决定新会话是否 pin v2。
     // 平台级 memory.consolidation.enabled 未开时全量 v1（后台没人接管写入，
     // 绝不能先剥离主 Agent 的写入能力）。
@@ -2014,7 +2015,6 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         ...createTaskboardRuntimeOptions({ modelResolver, userStore, timezone: config.server.timezone, logger: serverLogger, eventStore: pgEventStore, groupTaskboardSession: (input) => groupStore.addTaskboardSession(input), onSessionsChanged: clearSessionsListCache }),
         logger: serverLogger.child('TaskboardExecution') });
     }
-    // Session automation is assembled against the same production scheduler and model stack.
     // Candidate v3 control-plane is retired. Existing Candidate rows are lazily
     // migrated into integration_agents; no Candidate worker is started here.
     runtimeSchedulerCapacity = createRuntimeSchedulerCapacityController({
@@ -2025,7 +2025,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
         resolveModel: (tenantId) => defaultModelResolver(tenantId), createAdapter: (connection, providerOptions) => rawRuntimeConfig.modelAdapterFactory!(connection ?? {}, providerOptions), billing: () => billingService,
         resolveIdentity: (userId) => { const user = userStore?.findById(userId); return user ? { username: user.username } : undefined; },
       }, dispatcher: new RuntimeSchedulerAutomationDispatcher(runtimeScheduler, sessionCatalog),
-        executionEnabled: () => config.sessionAutomation?.executionEnabled === true, cancelRun: cancelSessionAutomationRun, onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
+        flagSource: sessionAutomationFlagSource, cancelRun: cancelSessionAutomationRun, onError: (error) => serverLogger.error(`Session automation coordinator failed: ${error instanceof Error ? error.message : String(error)}`),
       });
       ({ evaluator: sessionAutomationEvaluator, coordinator: sessionAutomationCoordinator, terminalProjector: sessionAutomationTerminalProjector } = workers); rawRuntimeConfig.sessionAutomationProvider = workers.provider;
     }

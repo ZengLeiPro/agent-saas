@@ -7,7 +7,7 @@
  *
  * 同类补丁在 skill/user store（runtime.ts ensureReady）与 memory polling
  * （runtime.ts isExecutionEnabled 直接 loadAppConfig）里已各自存在，本模块把
- * 「模型配置 + 组织白名单」这条同样需要跨进程新鲜度的路径补齐。
+ * 「模型配置 + 组织白名单 + Session Automation flags」这条同样需要跨进程新鲜度的路径补齐。
  *
  * 设计取舍：
  *   - 用 statSync 的 mtimeMs+size 做变更判据，未变化时零解析开销；
@@ -155,6 +155,16 @@ export function createSharedConfigRefresher(params: {
       if (nextConfig.toolControls) config.toolControls = nextConfig.toolControls;
       else delete config.toolControls;
       logger?.info('[SharedConfig] 已从磁盘热更新工具开关与描述覆盖配置');
+    }
+
+    const sessionAutomationChanged = JSON.stringify(config.sessionAutomation ?? null)
+      !== JSON.stringify(nextConfig.sessionAutomation ?? null);
+    if (sessionAutomationChanged) {
+      if (nextConfig.sessionAutomation) config.sessionAutomation = nextConfig.sessionAutomation;
+      else delete config.sessionAutomation;
+      logger?.info(
+        `[SharedConfig] 已从磁盘热更新 Session Automation 配置：executionEnabled=${nextConfig.sessionAutomation?.executionEnabled === true}`,
+      );
     }
 
     /**

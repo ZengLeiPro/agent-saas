@@ -1,8 +1,7 @@
 import type pg from 'pg';
-
 import { RunCreateConflictError, type RunRecord } from './runStoreTypes.js';
 
-interface TenantRollingTables {
+interface TenantRollingTables { // auxiliary authority during expand/contract
   runsTable: string;
   messageSubmissionsTable: string;
   steeringSessionsTable: string;
@@ -39,7 +38,7 @@ export async function readSameTenantSubmissionRun(
   const owner = authority.rows[0];
   if (!owner || owner.owner_tenant_id !== tenantId) {
     throw new RunCreateConflictError(
-      'Message submission key conflicts with another tenant during run-store expand phase',
+      'Cross-tenant shared authority is closed until durable legacy-writer drain evidence is contracted',
     );
   }
   const run = await client.query<{ row_json: RunRecord }>(`
@@ -75,7 +74,7 @@ export async function upsertSteeringStopAuthority(
   `, [sessionId]);
   if (!authority.rows[0] || authority.rows[0].owner_tenant_id !== tenantId) {
     throw new RunCreateConflictError(
-      'Steering session key conflicts with another tenant during run-store expand phase',
+      'Cross-tenant steering authority is closed until durable legacy-writer drain evidence is contracted',
     );
   }
   await client.query(`UPDATE ${tables.steeringSessionsTable}

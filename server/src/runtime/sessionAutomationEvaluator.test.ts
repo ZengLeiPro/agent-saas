@@ -95,7 +95,7 @@ describe('automation evaluator reducers, hashes, and evidence gates', () => {
 
 describe('SessionAutomationEvaluator execution and evidence gating', () => {
   it('does not promote model-authored shell substrings or compound commands to test attestations', () => {
-    const evaluator = new SessionAutomationEvaluator({ tablePrefix: 'runtime' } as never, { evaluate: vi.fn() } as never);
+    const evaluator = new SessionAutomationEvaluator({ tablePrefix: 'runtime' } as never, { evaluate: vi.fn() } as never, () => true);
     const classify = (command: string) => (evaluator as any).classifyEvidenceEvent(
       { type: 'tool_result', toolCallId: 'call', toolName: 'Shell', metadata: { exitCode: 0 } },
       new Map([['call', { name: 'Shell', command }]]),

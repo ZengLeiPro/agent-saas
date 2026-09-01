@@ -9,11 +9,13 @@ import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
 const { Pool } = pg;
 
-describePg('PgRunStore tenant contract boundary', () => {
-  it('原始幂等键在 expand 跨 tenant fail-closed，contract 后按 tenant 独立', async () => {
+describePg('PgRunStore durable tenant contract boundary', () => {
+  it('原始幂等键在 expand 被 rollout 门禁，contract 后按 tenant 独立', async () => {
     const prefix = `tenant_contract_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
     const pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 8 });
-    const store = new PgRunStore({ pool, tablePrefix: prefix });
+    const store = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: {
+      capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true,
+    } });
     const enqueue = (
       tenantId: string, runId: string, sessionId: string, idempotencyKey: string,
     ) => store.enqueueUserMessage({
@@ -30,7 +32,7 @@ describePg('PgRunStore tenant contract boundary', () => {
         ).catch((error: unknown) => error);
         expect(conflict).toBeInstanceOf(RunCreateConflictError);
         expect(conflict).toMatchObject({
-          message: expect.stringContaining('conflicts with another tenant during run-store expand phase'),
+          message: expect.stringContaining('shared authority is closed until durable legacy-writer drain evidence'),
         });
         expect((conflict as { code?: string }).code).not.toBe('23505');
       }
@@ -47,9 +49,13 @@ describePg('PgRunStore tenant contract boundary', () => {
         rows: [{ tenant_id: 'tenant-expand-a', run_id: 'expand-owner-run' }],
       });
 
+      await store.recordTenantDrainEvidence({
+        evidenceId: 'contract-boundary-drain', capability: 'tenant-native-v1',
+        observer: 'pg-contract-test',
+      });
       await store.contractTenantSchema({
         expectedExpandVersion: RUN_STORE_TENANT_SCHEMA_VERSION,
-        oldWritersDrained: true,
+        drainEvidenceId: 'contract-boundary-drain',
       });
       await Promise.all([
         enqueue('tenant-contract-a', 'contract-run-a', 'contract-session-a', 'contract-shared-key'),
@@ -70,7 +76,7 @@ describePg('PgRunStore tenant contract boundary', () => {
           tenantId: 'tenant-contract-b', runId: 'contract-stop-b', sessionId: 'contract-stop',
         }),
       ]);
-      await Promise.all([
+      await Promise.all([ // tenant-native stop authority rows coexist
         store.cancelSteeringBeforeDispatchBySession(
           'contract-stop', 'stop-a', undefined, 'tenant-contract-a',
         ),
@@ -85,15 +91,16 @@ describePg('PgRunStore tenant contract boundary', () => {
         { tenant_id: 'tenant-contract-a', tenant_session_id: 'contract-stop' },
         { tenant_id: 'tenant-contract-b', tenant_session_id: 'contract-stop' },
       ] });
-    } finally {
+    } finally { // cleanup isolated schema objects and dependent capability functions
       for (const suffix of [
         'steering_sessions_tenant_quarantine', 'steering_inputs_tenant_quarantine',
         'message_submissions_tenant_quarantine', 'steering_sessions', 'steering_inputs',
-        'message_submissions', 'runs_schema_migrations', 'runs',
-      ]) await pool.query(`DROP TABLE IF EXISTS ${prefix}_${suffix}`);
+        'message_submissions', 'runs_writer_capabilities', 'runs_schema_migrations', 'runs',
+      ]) await pool.query(`DROP TABLE IF EXISTS ${prefix}_${suffix} CASCADE`);
       for (const fn of [
         'message_submissions_tenant_expand_fn', 'steering_inputs_tenant_expand_fn',
-        'steering_sessions_tenant_expand_fn', 'runs_tenant_aux_catchup_fn',
+        'steering_sessions_tenant_expand_fn', 'runs_writer_capability_fn',
+        'runs_tenant_aux_catchup_fn',
       ]) await pool.query(`DROP FUNCTION IF EXISTS ${prefix}_${fn}()`);
       await pool.end();
     }

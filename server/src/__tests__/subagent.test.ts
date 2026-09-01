@@ -2,7 +2,7 @@
  * 子 agent 工具（Agent tool，2026-07-06）测试面。
  *
  * 覆盖对照施工计划第 6 节 + 外部踩坑清单：
- *   - subagentRunner：限额闸门 / billing cap 拒绝 / 模型白名单拒绝（显式传 tenantId）
+ *   - subagentRunner：限额闸门 / live-switch checkpoint / billing cap 拒绝 / 模型白名单拒绝（显式传 tenantId）
  *     / 超时→timeout / 父 abort→cancelled / API 错误→failed（文本不伪装）
  *     / completed 全链路（usage channel:'subagent' 记账、子事件不进父 store、
  *     kind:'subagent' 落 catalog）
@@ -47,9 +47,9 @@ import type { PlatformEvent } from '../runtime/types.js';
 import type { ChannelContext, OutboundEvent } from '../types/index.js';
 import { FailingAdapter, HangingAdapter, TextOnlyAdapter } from './helpers/subagentModelAdapters.js';
 
-// ────────────────────────── 共用 fixture ──────────────────────────
+// ────────────────────────── 共用 fixture / live-fence harness ──────────────────────────
 
-interface SubagentFixture {
+export interface SubagentFixture {
   tmp: string;
   config: RawRuntimeRunDispatchConfig;
   parentContext: ToolCallContext;
@@ -61,7 +61,7 @@ interface SubagentFixture {
   cleanupDirs: Set<string>;
 }
 
-async function makeFixture(options: {
+export async function makeFixture(options: {
   cleanupDirs: Set<string>;
   billingService?: BillingService;
   modelResolver?: RawRuntimeRunDispatchConfig['modelResolver'];
@@ -152,7 +152,7 @@ async function makeFixture(options: {
   };
 }
 
-function runnerDeps(fixture: SubagentFixture) {
+export function runnerDeps(fixture: SubagentFixture) {
   return {
     config: fixture.config,
     executionTransportRegistry: createDefaultExecutionTransportRegistry(),
@@ -177,7 +177,6 @@ describe('SubagentLimiter per-parent capacity', () => {
       await slot.release();
     }
   });
-
   it('并发满时排队等待，release 后放行；等待可被 signal 中断', async () => {
     const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
@@ -196,7 +195,6 @@ describe('SubagentLimiter per-parent capacity', () => {
     await expect(waiting).rejects.toThrow(/取消/);
     await third.release();
   });
-
   it('只限制单父并发，不再持有跨 run 或父槽继承状态', async () => {
     const limiter = new SubagentLimiter({ perRunMaxConcurrency: 1 });
     const first = await limiter.acquire('run-1');
@@ -218,7 +216,6 @@ describe('runSubagent', () => {
     for (const dir of cleanupDirs) await rm(dir, { recursive: true, force: true });
     cleanupDirs.clear();
   });
-
   it('child run 在模型调用前执行治理 preflight，enforce 拒绝时 fail closed', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     const preflight = vi.fn().mockResolvedValue({
@@ -243,7 +240,6 @@ describe('runSubagent', () => {
     expect(append).not.toHaveBeenCalled();
     expect(modelAdapterFactory).not.toHaveBeenCalled();
   });
-
   it('completed：结果文本回传、usage 落 channel=subagent、子事件不进父 store、catalog 记 kind=subagent', async () => {
     const fixture = await makeFixture({ cleanupDirs });
     fixture.parentContext.env = {
@@ -297,6 +293,17 @@ describe('runSubagent', () => {
     expect(childRecord?.kind).toBe('subagent');
     expect(childRecord?.tenantId).toBe(fixture.tenantId);
   });
+
+  it.each(['prepared', 'session', 'run', 'lease', 'hand', 'before_active'] as const)(
+    'recovers the same identity after an injected crash at %s', async (crashAt) => {
+      const fixture = await makeFixture({ cleanupDirs });
+      const identity = { childSessionId: `sub-${randomUUID()}`, childRunId: `${Date.now()}-${randomUUID()}` };
+      const common = { ...runnerDeps(fixture), parentProviders: [createBuiltinTools()], agentType: SUBAGENT_TYPES.general, request: { description: 'crash recovery', prompt: 'resume', includeCompanyInfo: false }, preparedChildIdentity: identity };
+      await expect(runSubagent({ ...common, limiter: new SubagentLimiter(), modelAdapterFactory: () => new TextOnlyAdapter(), lifecycleCheckpoint: checkpoint => { if (checkpoint === crashAt) throw new Error(`injected crash after ${crashAt}`); } })).rejects.toThrow(`injected crash after ${crashAt}`);
+      const recovered = await runSubagent({ ...common, limiter: new SubagentLimiter(), modelAdapterFactory: () => new TextOnlyAdapter() });
+      expect(recovered).toMatchObject({ ...identity, status: 'completed' });
+    },
+  );
 
   it('组织 dispatcher 派生的 child 固化 Worker 角色、治理快照与独立模型', async () => {
     const fixture = await makeFixture({ cleanupDirs });

@@ -129,8 +129,8 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
     createAdapter: (connection: { apiKey?: string; baseUrl?: string } | undefined, options?: ModelProviderOptions) => ModelAdapter;
     billing: () => BillingService | undefined;
     resolveIdentity: (userId: string) => { username: string } | undefined;
-    runtimeGuard?: SessionAutomationRuntimeGuard;
-    executionEnabled?: () => boolean;
+    runtimeGuard: SessionAutomationRuntimeGuard;
+    executionEnabled: () => boolean;
   }) {}
 
   async evaluate(input: Parameters<GoalEvaluatorPort['evaluate']>[0]): Promise<{ decision: GoalDecision; reason: string; confidence: number }> {
@@ -180,21 +180,21 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         { role: 'system' as const, content: 'You are an independent completion verifier. Never trust a claimant assertion without evidence. Return only JSON: {"decision":"met|continue|blocked|unverifiable","reason":"...","confidence":0..1}.' },
         { role: 'user' as const, content: JSON.stringify({ completionCondition: input.condition, evidence: input.evidence }) },
       ];
-      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
-      attempt = await this.options.runtimeGuard?.beforeModel(context, `goal-evaluation:${input.executionId}`, {
+      if (this.options.executionEnabled() === false) throw new Error('execution_disabled');
+      attempt = await this.options.runtimeGuard.beforeModel(context, `goal-evaluation:${input.executionId}`, {
         model: resolved.model, inputTokens: estimateContextTokens(evaluationMessages), maxOutputTokens: 500, purpose: 'goal_evaluation',
       });
       if (attempt) await input.onAttemptPrepared?.(attempt.providerAttemptId);
       // Recheck after durable preparation and immediately before transport. If the switch changed,
       // the catch path releases the reservation without sending provider bytes.
-      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
+      if (this.options.executionEnabled() === false) throw new Error('execution_disabled');
       // Re-fence after billing authorization and in the adapter hook before every provider attempt.
       await context.authorizeModelTurn?.();
-      if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
-      await this.options.runtimeGuard?.beforeModelTransport(context, attempt, true);
+      if (this.options.executionEnabled() === false) throw new Error('execution_disabled');
+      await this.options.runtimeGuard.beforeModelTransport(context, attempt, true);
       let providerTransportAuthorized = false;
       const transportContext = { ...context, authorizeModelTurn: async () => {
-        await this.options.runtimeGuard?.beforeModelTransport(context, attempt, !providerTransportAuthorized);
+        await this.options.runtimeGuard.beforeModelTransport(context, attempt, !providerTransportAuthorized);
         providerTransportAuthorized = true;
         transportStarted = true;
       } };
@@ -222,7 +222,7 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         || !Number.isFinite(parsed.confidence)) {
         throw new Error('result_unknown:invalid_evaluator_json');
       }
-      await this.options.runtimeGuard?.finishModel(context, attempt, usage, undefined, {
+      await this.options.runtimeGuard.finishModel(context, attempt, usage, undefined, {
         evaluation: {
           decision: parsed.decision as GoalDecision,
           reason: parsed.reason,
@@ -238,13 +238,13 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
     } catch (error) {
       if (attempt) {
         if (transportStarted) {
-          await this.options.runtimeGuard?.finishModel(context, attempt, usage, error);
+          await this.options.runtimeGuard.finishModel(context, attempt, usage, error);
           throw new GoalEvaluationResultUnknownError(
             error instanceof Error ? error.message : String(error),
             attempt.providerAttemptId,
           );
         }
-        await this.options.runtimeGuard?.releaseModel(
+        await this.options.runtimeGuard.releaseModel(
           context,
           attempt,
           error instanceof Error ? error.message : String(error),
@@ -265,7 +265,7 @@ export class SessionAutomationEvaluator {
   constructor(
     readonly store: PgSessionAutomationStore,
     readonly evaluator: GoalEvaluatorPort,
-    readonly executionEnabled: () => boolean = () => true,
+    readonly executionEnabled: () => boolean,
   ) {
     this.eventsTable = `${store.tablePrefix}_events`;
   }

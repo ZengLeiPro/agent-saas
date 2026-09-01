@@ -62,6 +62,8 @@ export interface WorkspaceRecipe {
   packages?: string[];
   envKeys?: string[];
   setupCommands?: string[];
+  /** Stable transport idempotency key for crash-safe provisioning retries. */
+  provisionKey?: string;
   resources?: { cpu?: string; memoryMb?: number; diskMb?: number; timeoutMs?: number };
 }
 
@@ -423,7 +425,7 @@ export class PgHandStore implements HandStore {
       UPDATE ${this.handsTable}
       SET status = $3, metadata = metadata || $4::jsonb, updated_at = now()
       WHERE hand_id = $1
-        AND status <> 'destroyed'
+        AND status = 'provisioning'
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
         AND metadata->>'provisionGeneration' = $2
       RETURNING row_to_json(${this.handsTable}.*) AS row_json

@@ -372,8 +372,18 @@ export interface RunStore {
   clearResponseSessionStateBySession?(tenantId: string, sessionId: string): Promise<number>;
 }
 
+export type PgRunStoreWriterCapability =
+  | { capability: 'tenant-native-v1'; tenantId?: never; allowPrivilegedRoleForTests?: boolean }
+  | { capability: 'legacy-single-tenant'; tenantId: string; allowPrivilegedRoleForTests?: boolean };
+
 export interface PgRunStoreOptions {
   pool?: PgPool;
   connectionString?: string;
   tablePrefix?: string;
+  /**
+   * Explicit bootstrap declaration for the immutable session_user. Omit only when an administrator
+   * has already registered the connection URL's LOGIN role; init then validates it fail-closed.
+   * allowPrivilegedRoleForTests is intentionally unavailable through application config.
+   */
+  writerCapability?: PgRunStoreWriterCapability;
 }

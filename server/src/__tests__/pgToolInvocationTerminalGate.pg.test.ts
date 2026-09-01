@@ -26,7 +26,7 @@ describePg('PgToolInvocationStore terminal run gate', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 4 });
     await eventStore.init();
-    runStore = new PgRunStore({ pool, tablePrefix: prefix });
+    runStore = new PgRunStore({ pool, tablePrefix: prefix, writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true } });
     await runStore.init();
     toolInvocationStore = new PgToolInvocationStore({ pool, tablePrefix: prefix });
     await toolInvocationStore.init();

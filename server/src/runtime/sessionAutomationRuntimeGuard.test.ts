@@ -18,7 +18,7 @@ const context = {
   },
 } as RunContext;
 
-class FakePool { // SQL-aware transaction test double for RuntimeGuard
+class FakePool { // SQL-aware transaction and live-switch test double for RuntimeGuard
   readonly statements: string[] = [];
   automation: {
     status: string; incarnation_id: string; generation: number; spec_version: number; active_run_id: string | null;
@@ -100,7 +100,7 @@ describe('strict whole PostgreSQL NUMERIC parsing', () => {
 describe('SessionAutomationRuntimeGuard', () => {
   it('在同一事务内校验 fence、预算并提交 reservation 与 provider attempt', async () => {
     const pool = new FakePool();
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     const handle = await guard.beforeModel(context, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20});
 
     expect(handle).toBeDefined();
@@ -116,13 +116,13 @@ describe('SessionAutomationRuntimeGuard', () => {
   it('旧 generation 或非 active 状态不能创建模型与工具副作用 admission', async () => {
     const stale = new FakePool();
     stale.automation.generation = 3;
-    const staleGuard = new SessionAutomationRuntimeGuard(stale as unknown as pg.Pool);
+    const staleGuard = new SessionAutomationRuntimeGuard(stale as unknown as pg.Pool, () => true);
     await expect(staleGuard.beforeModel(context, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationFenceRejectedError);
     expect(stale.statements.some((sql) => sql.startsWith('INSERT INTO'))).toBe(false);
 
     const cancelling = new FakePool();
     cancelling.automation.status = 'cancelling';
-    const cancellingGuard = new SessionAutomationRuntimeGuard(cancelling as unknown as pg.Pool);
+    const cancellingGuard = new SessionAutomationRuntimeGuard(cancelling as unknown as pg.Pool, () => true);
     await expect(cancellingGuard.barrier(context)).rejects.toBeInstanceOf(AutomationFenceRejectedError);
   });
 
@@ -130,7 +130,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     const pool = new FakePool();
     pool.budget = { maxTurns: 1 };
     pool.reserved.turns = '1';
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await expect(guard.beforeModel(context, 'turn:last', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).rejects.toBeInstanceOf(AutomationBudgetExceededError);
     expect(pool.statements.join('\n')).toContain("desired_terminal_status='expired'");
     expect(pool.statements.join('\n')).toContain("phase='draining'");
@@ -141,7 +141,7 @@ describe('SessionAutomationRuntimeGuard', () => {
   it('模型结果未知时即使 active_run_id 已清空仍以完整 fence 封锁 automation', async () => {
     const pool = new FakePool();
     pool.automation.active_run_id = null;
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await guard.finishModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model, purpose: 'work', sourceKey: 'model:run-a:turn:1',
@@ -157,7 +157,7 @@ describe('SessionAutomationRuntimeGuard', () => {
 
   it('未配置 credit 上限时未知模型价格允许执行且 credit reservation 为 0', async () => {
     const pool = new FakePool();
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await expect(guard.beforeModel(context, 'turn:unpriced', { model: 'unknown-model', inputTokens: 10, maxOutputTokens: 20 }))
       .resolves.toBeDefined();
     expect(pool.creditReservationAmounts).toEqual([0]);
@@ -166,7 +166,7 @@ describe('SessionAutomationRuntimeGuard', () => {
   it('配置 credit 上限时未知模型价格 fail-closed', async () => {
     const pool = new FakePool();
     pool.budget = { maxCredits: 1 };
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await expect(guard.beforeModel(context, 'turn:priced', { model: 'unknown-model', inputTokens: 10, maxOutputTokens: 20 }))
       .rejects.toMatchObject({ reason: 'unknown_model_price' });
     expect(pool.statements.some((sql) => sql.includes('INSERT INTO runtime_session_automation_provider_attempts'))).toBe(false);
@@ -174,25 +174,25 @@ describe('SessionAutomationRuntimeGuard', () => {
 
   it('runs/tokens/credits 使用 current+reserved+prospective 的 inclusive 上界', async () => {
     const exactTokens = new FakePool(); exactTokens.budget = { maxTokens: 47 };
-    await expect(new SessionAutomationRuntimeGuard(exactTokens as unknown as pg.Pool).beforeModel(context, 'tokens:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
+    await expect(new SessionAutomationRuntimeGuard(exactTokens as unknown as pg.Pool, () => true).beforeModel(context, 'tokens:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
     const overTokens = new FakePool(); overTokens.budget = { maxTokens: 46 };
-    await expect(new SessionAutomationRuntimeGuard(overTokens as unknown as pg.Pool).beforeModel(context, 'tokens:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_tokens' });
+    await expect(new SessionAutomationRuntimeGuard(overTokens as unknown as pg.Pool, () => true).beforeModel(context, 'tokens:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_tokens' });
 
     const exactCredits = new FakePool(); exactCredits.budget = { maxCredits: 0.69 };
-    await expect(new SessionAutomationRuntimeGuard(exactCredits as unknown as pg.Pool).beforeModel(context, 'credits:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
+    await expect(new SessionAutomationRuntimeGuard(exactCredits as unknown as pg.Pool, () => true).beforeModel(context, 'credits:exact', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).resolves.toBeDefined();
     const overCredits = new FakePool(); overCredits.budget = { maxCredits: 0.689999 };
-    await expect(new SessionAutomationRuntimeGuard(overCredits as unknown as pg.Pool).beforeModel(context, 'credits:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_credits' });
+    await expect(new SessionAutomationRuntimeGuard(overCredits as unknown as pg.Pool, () => true).beforeModel(context, 'credits:over', { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 20 })).rejects.toMatchObject({ reason: 'max_credits' });
 
     const exactRuns = new FakePool(); exactRuns.budget = { maxRuns: 1 }; exactRuns.runCount = 1;
-    await expect(new SessionAutomationRuntimeGuard(exactRuns as unknown as pg.Pool).beforeModel(context, 'runs:exact', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).resolves.toBeDefined();
+    await expect(new SessionAutomationRuntimeGuard(exactRuns as unknown as pg.Pool, () => true).beforeModel(context, 'runs:exact', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).resolves.toBeDefined();
     const overRuns = new FakePool(); overRuns.budget = { maxRuns: 1 }; overRuns.runCount = 2;
-    await expect(new SessionAutomationRuntimeGuard(overRuns as unknown as pg.Pool).beforeModel(context, 'runs:over', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).rejects.toMatchObject({ reason: 'max_runs' });
+    await expect(new SessionAutomationRuntimeGuard(overRuns as unknown as pg.Pool, () => true).beforeModel(context, 'runs:over', { model: 'claude-sonnet-4-5', inputTokens: 1, maxOutputTokens: 1 })).rejects.toMatchObject({ reason: 'max_runs' });
   });
 
   it('completion allowance 只供 evaluator、固定 500 output 且最多两次', async () => {
     const pool = new FakePool();
     pool.budget = { maxTurns: 0 };
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     const evalAdmission = { model: 'claude-sonnet-4-5', inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation' as const };
     await expect(guard.beforeModel(context, 'goal:1', evalAdmission)).resolves.toBeDefined();
     await expect(guard.beforeModel(context, 'goal:2', evalAdmission)).resolves.toBeDefined();
@@ -204,20 +204,20 @@ describe('SessionAutomationRuntimeGuard', () => {
 
   it('已 admitted 的第 N 个 run 在 maxRuns 边界通过工具 barrier', async () => {
     const pool = new FakePool(); pool.budget = { maxRuns: 1 }; pool.runCount = 1;
-    await expect(new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool).barrier(context)).resolves.toBeUndefined();
+    await expect(new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true).barrier(context)).resolves.toBeUndefined();
     expect(pool.statements.join('\n')).not.toContain("desired_terminal_status='expired'");
   });
 
   it('prospective 越限时 evaluator 可使用平台外 allowance，普通 work 不可消费', async () => {
     const evaluator = new FakePool(); evaluator.budget = { maxTokens: 46 };
-    const guard = new SessionAutomationRuntimeGuard(evaluator as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(evaluator as unknown as pg.Pool, () => true);
     await expect(guard.beforeModel(context, 'goal:prospective', {
       model: context.model, inputTokens: 10, maxOutputTokens: 500, purpose: 'goal_evaluation',
     })).resolves.toMatchObject({ allowanceUsed: true, purpose: 'goal_evaluation' });
     expect(evaluator.allowanceRemaining).toBe(1);
 
     const work = new FakePool(); work.budget = { maxTokens: 46 };
-    await expect(new SessionAutomationRuntimeGuard(work as unknown as pg.Pool).beforeModel(
+    await expect(new SessionAutomationRuntimeGuard(work as unknown as pg.Pool, () => true).beforeModel(
       context, 'work:prospective', { model: context.model, inputTokens: 10, maxOutputTokens: 20 },
     )).rejects.toMatchObject({ reason: 'max_tokens' });
     expect(work.allowanceRemaining).toBe(2);
@@ -228,9 +228,9 @@ describe('SessionAutomationRuntimeGuard', () => {
       ...context,
       automationFence: { ...context.automationFence!, rootSessionId: undefined },
     } as RunContext;
-    const first = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+    const first = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool, () => true)
       .beforeModel(rootWithoutRootSession, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
-    const retry = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+    const retry = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool, () => true)
       .beforeModel(rootWithoutRootSession, 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
     expect(first?.sourceKey).toBe(`model:${context.automationFence!.executionId}:${context.runId}:turn:stable`);
     expect(retry?.sourceKey).toBe(first?.sourceKey);
@@ -244,9 +244,9 @@ describe('SessionAutomationRuntimeGuard', () => {
         runId: 'shared-child-run',
       },
     } as RunContext);
-    const childA = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+    const childA = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool, () => true)
       .beforeModel(child('child-session-a'), 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
-    const childB = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool)
+    const childB = await new SessionAutomationRuntimeGuard(new FakePool() as unknown as pg.Pool, () => true)
       .beforeModel(child('child-session-b'), 'turn:stable', { model: context.model, inputTokens: 1, maxOutputTokens: 1 });
     expect(childA?.sourceKey).toContain(':15:child-session-a:shared-child-run:turn:stable');
     expect(childB?.sourceKey).toContain(':15:child-session-b:shared-child-run:turn:stable');
@@ -259,7 +259,7 @@ describe('SessionAutomationRuntimeGuard', () => {
       { budget_kind: 'runs', amount: '0' }, { budget_kind: 'turns', amount: '1' },
       { budget_kind: 'tokens', amount: '1' }, { budget_kind: 'credits', amount: '1' },
     ];
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await guard.finishModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
@@ -270,7 +270,7 @@ describe('SessionAutomationRuntimeGuard', () => {
 
   it('transport 前授权失败可释放 reservation 并返还 evaluator allowance', async () => {
     const pool = new FakePool();
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await guard.releaseModel(context, {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'], model: context.model,
@@ -287,7 +287,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     const pool = new FakePool();
     let enabled = false;
     const guard = new SessionAutomationRuntimeGuard(
-      pool as unknown as pg.Pool, 'runtime', 'runtime_runs', () => enabled,
+      pool as unknown as pg.Pool, () => enabled, 'runtime', 'runtime_runs',
     );
     await expect(guard.beforeModel(context, 'turn:disabled', {
       model: context.model, inputTokens: 10, maxOutputTokens: 20,
@@ -302,9 +302,25 @@ describe('SessionAutomationRuntimeGuard', () => {
     await expect(guard.barrier(normal)).resolves.toBeUndefined();
   });
 
+  it('background resource checkpoint reads the live gate before querying durable intent', async () => {
+    const pool = new FakePool();
+    let enabled = false;
+    const guard = new SessionAutomationRuntimeGuard(
+      pool as unknown as pg.Pool, () => enabled, 'runtime', 'runtime_runs',
+    );
+    const identity = { childSessionId: 'child-session', childRunId: 'child-run' };
+    await expect(guard.assertBackgroundResourcePrepared(context, 'background-run', identity))
+      .rejects.toMatchObject({ reason: 'execution_disabled' });
+    expect(pool.statements).toEqual([]);
+
+    enabled = true;
+    await expect(guard.assertBackgroundResourcePrepared(context, 'background-run', identity)).resolves.toBeUndefined();
+    expect(pool.statements.at(-1)).toContain('runtime_session_automation_background_resources');
+  });
+
   it('pre-transport release 幂等恢复 allowance，已释放 attempt 不会被误标 result_unknown', async () => {
     const pool = new FakePool();
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     const handle = {
       providerAttemptId: '55555555-5555-4555-8555-555555555555',
       reservationIds: ['66666666-6666-4666-8666-666666666666'],
@@ -329,7 +345,7 @@ describe('SessionAutomationRuntimeGuard', () => {
       if (commitCount === 1) enabled = false;
     };
     const guard = new SessionAutomationRuntimeGuard(
-      pool as unknown as pg.Pool, 'runtime', 'runtime_runs', () => enabled,
+      pool as unknown as pg.Pool, () => enabled, 'runtime', 'runtime_runs',
     );
     await expect(guard.beforeModel(context, 'turn:flip', {
       model: context.model, inputTokens: 10, maxOutputTokens: 20,
@@ -347,7 +363,7 @@ describe('SessionAutomationRuntimeGuard', () => {
 
   it('普通会话没有 automation fence 时不访问账本', async () => {
     const pool = new FakePool();
-    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
     await expect(guard.beforeModel({ ...context, automationFence: undefined }, 'turn:1', {model: context.model, inputTokens: 10, maxOutputTokens: 20})).resolves.toBeUndefined();
     expect(pool.statements).toEqual([]);
   });

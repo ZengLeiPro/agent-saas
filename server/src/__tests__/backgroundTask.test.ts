@@ -446,17 +446,19 @@ describe('DurableBackgroundTaskService', () => {
       runSubagentImpl: async (params) => {
         seenConnectorEnv = params.parentContext.env;
         seenParentTools = params.parentProviders.flatMap(provider => provider.list(params.parentContext).map(tool => tool.name));
-        await params.onChildRunCreated?.({
-          childSessionId: outcome.childSessionId,
-          childRunId: outcome.childRunId,
-          model: outcome.model,
-        });
-        return outcome;
+        const identity = params.preparedChildIdentity ?? {
+          childSessionId: outcome.childSessionId, childRunId: outcome.childRunId,
+        };
+        await params.beforeChildSideEffects?.(identity);
+        await params.onChildRunCreated?.({ ...identity, model: outcome.model });
+        return { ...outcome, ...identity };
       },
     });
     const task = completedTask('');
     task.status = 'running';
     task.metadata.wakeState = 'none';
+    task.metadata.executionChildSessionId = outcome.childSessionId;
+    task.metadata.executionChildRunId = outcome.childRunId;
     base.runStore.records.set(task.runId, task);
     base.sessionCatalog.records.set(task.sessionId, {
       ...session(task.sessionId),
@@ -464,9 +466,7 @@ describe('DurableBackgroundTaskService', () => {
       modelRef: 'group/model',
       status: 'running',
     });
-
     await service.execute(task);
-
     expect(connectorEnvRequests).toEqual([{ userId: 'user-1', username: 'alice', tenantId: 'tenant-1' }]);
     expect(seenConnectorEnv).toMatchObject({
       GH_TOKEN: 'connector-token-alice',

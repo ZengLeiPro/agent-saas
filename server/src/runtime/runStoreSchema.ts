@@ -1,5 +1,6 @@
-import type { PgPool } from './runStoreTypes.js';
+import type pg from 'pg';
 import { LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import type { PgPool, PgRunStoreWriterCapability } from './runStoreTypes.js';
 
 export interface PgRunStoreSchemaTarget {
   pool: PgPool;
@@ -7,18 +8,75 @@ export interface PgRunStoreSchemaTarget {
   messageSubmissionsTable: string;
   steeringInputsTable: string;
   steeringSessionsTable: string;
+  writerCapability?: PgRunStoreWriterCapability;
 }
 
 export const RUN_STORE_TENANT_SCHEMA_VERSION = 1;
 
+/** Capability assigned to every writer allowed after tenant authority contract. */
+export const RUN_STORE_TENANT_WRITER_CAPABILITY = 'tenant-native-v1' as const;
+
+export interface PgRunStoreDrainEvidence {
+  evidenceId: string;
+  capability: typeof RUN_STORE_TENANT_WRITER_CAPABILITY;
+  observer: string;
+}
+
+export interface PgRunStoreLegacyWriterCapability {
+  dbRole: string;
+  tenantId: string;
+}
+
 export interface PgRunStoreContractGate {
   expectedExpandVersion: typeof RUN_STORE_TENANT_SCHEMA_VERSION;
-  /** Operator assertion: deployment telemetry has reached zero pre-v1 writers. */
-  oldWritersDrained: true;
+  /** References evidence durably recorded under the schema migration lock. */
+  drainEvidenceId: string;
+}
+
+async function bootstrapAndValidateWriter(
+  client: pg.PoolClient,
+  store: PgRunStoreSchemaTarget,
+): Promise<void> {
+  const identity = await client.query<{
+    db_role: string; rolcanlogin: boolean; rolsuper: boolean; rolbypassrls: boolean;
+  }>(`SELECT session_user db_role,rolcanlogin,rolsuper,rolbypassrls
+      FROM pg_roles WHERE rolname=session_user`);
+  const role = identity.rows[0];
+  if (!role?.rolcanlogin) throw new Error('run-store writer session_user must be a LOGIN role');
+  const declaration = store.writerCapability;
+  if ((role.rolsuper || role.rolbypassrls) && !declaration?.allowPrivilegedRoleForTests) {
+    throw new Error('run-store production writer must not be SUPERUSER or BYPASSRLS');
+  }
+  if (declaration) {
+    const tenantId = declaration.capability === 'legacy-single-tenant' ? declaration.tenantId.trim() : null;
+    if (declaration.capability === 'legacy-single-tenant' && !tenantId) {
+      throw new Error('legacy run-store writer requires an explicit tenant binding');
+    }
+    await client.query(`INSERT INTO ${store.runsTable}_writer_capabilities
+      (db_role,capability,tenant_id,enabled,disabled_at)
+      VALUES (session_user,$1,$2,true,NULL) ON CONFLICT (db_role) DO NOTHING`,
+    [declaration.capability, tenantId]);
+  }
+  const registered = await client.query<{
+    capability: string; tenant_id: string | null; enabled: boolean; phase: string;
+  }>(`SELECT registry.capability,registry.tenant_id,registry.enabled,migration.phase
+      FROM ${store.runsTable}_writer_capabilities registry
+      CROSS JOIN ${store.runsTable}_schema_migrations migration
+      WHERE registry.db_role=session_user AND migration.module='tenant_auxiliary_identity'`);
+  const writer = registered.rows[0];
+  if (!writer?.enabled) throw new Error('run-store writer session_user is not explicitly registered or is disabled');
+  if (declaration && (writer.capability !== declaration.capability
+    || writer.tenant_id !== (declaration.capability === 'legacy-single-tenant' ? declaration.tenantId.trim() : null))) {
+    throw new Error('run-store writer registration conflicts with the explicit immutable capability declaration');
+  }
+  if (writer.capability === 'legacy-single-tenant' && writer.phase === 'contract') {
+    throw new Error('legacy run-store writer capability rejected after contract');
+  }
 }
 
 export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promise<void> {
-    // 门禁加固（2026-06-22）：用 PG advisory lock 串行化并发 init。多进程（many-brains
+  // One migration lock protects expand, durable evidence, and contract transitions.
+  // 门禁加固（2026-06-22）：用 PG advisory lock 串行化并发 init。多进程（many-brains
     // 多实例同时启动 / chaos 多 worker 同时 init）会并发跑 `CREATE INDEX IF NOT EXISTS`，
     // 而 IF NOT EXISTS 对并发不原子——两端都判定"不存在"→ 都建 → 撞 pg_class 唯一约束
     // (23505)。锁绑定单条 dedicated 连接，覆盖全部 DDL 后释放；后到者阻塞到先到者建完，
@@ -110,7 +168,20 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           module TEXT PRIMARY KEY,
           version INTEGER NOT NULL,
           phase TEXT NOT NULL CHECK (phase IN ('expand','contract')),
+          evidence JSONB NOT NULL DEFAULT '{}',
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`ALTER TABLE ${store.runsTable}_schema_migrations ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '{}'`);
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${store.runsTable}_writer_capabilities (
+          db_role TEXT PRIMARY KEY,
+          capability TEXT NOT NULL CHECK (capability IN ('legacy-single-tenant','${RUN_STORE_TENANT_WRITER_CAPABILITY}')),
+          tenant_id TEXT,
+          enabled BOOLEAN NOT NULL DEFAULT true,
+          registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          disabled_at TIMESTAMPTZ,
+          CHECK ((capability='legacy-single-tenant')=(tenant_id IS NOT NULL))
         )
       `);
       await client.query(`
@@ -121,6 +192,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           phase=CASE WHEN ${store.runsTable}_schema_migrations.phase='contract' THEN 'contract' ELSE EXCLUDED.phase END,
           updated_at=now()
       `);
+      await bootstrapAndValidateWriter(client, store);
       // Expand is the only phase executed by ordinary startup. The legacy raw-key PKs are the
       // schema-phase constraint that forbids cross-tenant reuse while old writers remain. Contract
       // removes them only after the operator explicitly confirms that every old writer drained.
@@ -130,8 +202,48 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`ALTER TABLE ${store.steeringInputsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD COLUMN IF NOT EXISTS tenant_session_id TEXT`);
-      // Continuous legacy catch-up: old writers omit tenant columns. Resolve only identities proven
-      // by authoritative runs; ambiguity stays NULL and therefore fail-closed to tenant-aware reads.
+      // session_user is fixed at authentication and cannot be changed with SET ROLE.
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.runsTable}_writer_capability_fn()
+        RETURNS TABLE(capability TEXT, tenant_id TEXT, enabled BOOLEAN) AS $$
+          SELECT registry.capability,registry.tenant_id,registry.enabled
+          FROM ${store.runsTable}_writer_capabilities registry
+          WHERE registry.db_role=session_user
+        $$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public
+      `);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.runsTable}_writer_tenant_guard_fn(row_tenant TEXT)
+        RETURNS TEXT AS $$
+        DECLARE writer RECORD;
+        BEGIN
+          SELECT * INTO writer FROM ${store.runsTable}_writer_capability_fn();
+          IF writer.capability IS NULL OR NOT writer.enabled THEN
+            RAISE EXCEPTION 'run-store writer capability is absent or disabled' USING ERRCODE='42501';
+          END IF;
+          IF writer.capability='legacy-single-tenant' THEN
+            IF (SELECT phase FROM ${store.runsTable}_schema_migrations
+                WHERE module='tenant_auxiliary_identity')='contract' THEN
+              RAISE EXCEPTION 'legacy run-store writer capability rejected after contract' USING ERRCODE='42501';
+            END IF;
+            IF row_tenant IS NOT NULL AND row_tenant<>writer.tenant_id THEN
+              RAISE EXCEPTION 'legacy run-store writer crossed its tenant fence' USING ERRCODE='42501';
+            END IF;
+            RETURN writer.tenant_id;
+          END IF;
+          RETURN row_tenant;
+        END $$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public
+      `);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.runsTable}_tenant_writer_guard_fn() RETURNS trigger AS $$
+        BEGIN
+          NEW.tenant_id := ${store.runsTable}_writer_tenant_guard_fn(NEW.tenant_id);
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public
+      `);
+      await client.query(`DROP TRIGGER IF EXISTS tenant_writer_fence ON ${store.runsTable}`);
+      await client.query(`CREATE TRIGGER tenant_writer_fence BEFORE INSERT OR UPDATE OF tenant_id ON ${store.runsTable} FOR EACH ROW EXECUTE FUNCTION ${store.runsTable}_tenant_writer_guard_fn()`);
+      // Continuous legacy catch-up: old writers omit tenant columns. Their registered DB role supplies
+      // the single allowed tenant; tenant-native writers carry explicit tenant columns.
       await client.query(`
         CREATE OR REPLACE FUNCTION ${store.messageSubmissionsTable}_tenant_expand_fn() RETURNS trigger AS $$
         BEGIN
@@ -139,6 +251,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
             SELECT tenant_id INTO NEW.tenant_id FROM ${store.runsTable}
             WHERE run_id=NEW.run_id AND session_id=NEW.session_id;
           END IF;
+          NEW.tenant_id := ${store.runsTable}_writer_tenant_guard_fn(NEW.tenant_id);
           IF NEW.tenant_id IS NOT NULL THEN
             NEW.tenant_user_scope := COALESCE(NEW.tenant_user_scope, NEW.user_scope);
             NEW.tenant_client_message_id := COALESCE(NEW.tenant_client_message_id, NEW.client_message_id);
@@ -158,6 +271,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
              AND target.session_id=source.session_id
             WHERE source.run_id=NEW.source_run_id AND source.session_id=NEW.session_id;
           END IF;
+          NEW.tenant_id := ${store.runsTable}_writer_tenant_guard_fn(NEW.tenant_id);
           RETURN NEW;
         END $$ LANGUAGE plpgsql
       `);
@@ -170,6 +284,7 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
             SELECT MIN(tenant_id) INTO NEW.tenant_id FROM ${store.runsTable}
             WHERE session_id=NEW.session_id HAVING COUNT(DISTINCT tenant_id)=1;
           END IF;
+          NEW.tenant_id := ${store.runsTable}_writer_tenant_guard_fn(NEW.tenant_id);
           IF NEW.tenant_id IS NOT NULL THEN
             NEW.tenant_session_id := COALESCE(NEW.tenant_session_id, NEW.session_id);
           END IF;
@@ -178,6 +293,35 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       `);
       await client.query(`DROP TRIGGER IF EXISTS tenant_expand ON ${store.steeringSessionsTable}`);
       await client.query(`CREATE TRIGGER tenant_expand BEFORE INSERT ON ${store.steeringSessionsTable} FOR EACH ROW EXECUTE FUNCTION ${store.steeringSessionsTable}_tenant_expand_fn()`);
+      await client.query(`
+        CREATE OR REPLACE FUNCTION ${store.runsTable}_writer_row_visible_fn(row_tenant TEXT)
+        RETURNS boolean AS $$
+        DECLARE writer RECORD;
+        BEGIN
+          SELECT * INTO writer FROM ${store.runsTable}_writer_capability_fn();
+          IF writer.capability IS NULL OR NOT writer.enabled THEN
+            RAISE EXCEPTION 'run-store reader capability is absent or disabled' USING ERRCODE='42501';
+          END IF;
+          IF writer.capability='${RUN_STORE_TENANT_WRITER_CAPABILITY}' THEN RETURN true; END IF;
+          IF (SELECT phase FROM ${store.runsTable}_schema_migrations
+              WHERE module='tenant_auxiliary_identity')='contract' THEN
+            RAISE EXCEPTION 'legacy run-store reader capability rejected after contract' USING ERRCODE='42501';
+          END IF;
+          RETURN writer.tenant_id=row_tenant;
+        END $$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog,public
+      `);
+      // The authority fence covers the parent as well as every auxiliary table. The policy
+      // predicate only reads the capability registry/migration state (never runs), so runs reads
+      // performed by SECURITY DEFINER triggers cannot recurse through the runs policy.
+      for (const table of [store.runsTable, store.messageSubmissionsTable,
+        store.steeringInputsTable, store.steeringSessionsTable]) {
+        await client.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+        await client.query(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
+        await client.query(`DROP POLICY IF EXISTS tenant_writer_capability ON ${table}`);
+        await client.query(`CREATE POLICY tenant_writer_capability ON ${table}
+          USING (${store.runsTable}_writer_row_visible_fn(tenant_id))
+          WITH CHECK (${store.runsTable}_writer_row_visible_fn(tenant_id))`);
+      }
       await client.query(`
         CREATE OR REPLACE FUNCTION ${store.runsTable}_tenant_aux_catchup_fn() RETURNS trigger AS $$
         BEGIN
@@ -321,21 +465,158 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       await client.query(`DROP INDEX IF EXISTS ${store.runsTable}_idempotency_lookup_v2_idx`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.runsTable}_idempotency_lookup_v3_idx ON ${store.runsTable} (tenant_id, (COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key, updated_at DESC) WHERE idempotency_key IS NOT NULL`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${store.messageSubmissionsTable}_session_idx ON ${store.messageSubmissionsTable} (tenant_id, session_id, accepted_at)`);
+      const tenantContract = await client.query<{ phase: string }>(`
+        SELECT phase FROM ${store.runsTable}_schema_migrations
+        WHERE module='tenant_auxiliary_identity'
+      `);
+      if (tenantContract.rows[0]?.phase === 'contract') {
+        await client.query(`DROP TRIGGER IF EXISTS tenant_aux_catchup ON ${store.runsTable}`);
+      }
     } finally {
       await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
       client.release();
     }
   }
 
-/**
- * Destructive tenant-key contract. Never called by PgRunStore.init(); release automation must
- * invoke it with the version/drain gate after observing zero legacy writers.
- */
+async function registerPgRunStoreWriterCapability(
+  store: PgRunStoreSchemaTarget,
+  dbRole: string,
+  capability: 'tenant-native-v1' | 'legacy-single-tenant',
+  tenantId: string | null,
+): Promise<void> {
+  if (!dbRole.trim() || (capability === 'legacy-single-tenant' && !tenantId?.trim())) {
+    throw new Error('writer capability requires dbRole and a legacy tenant binding');
+  }
+  const client = await store.pool.connect();
+  const lockKey = `${store.runsTable}:init`;
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    const role = await client.query<{ rolcanlogin: boolean; rolsuper: boolean; rolbypassrls: boolean }>(
+      `SELECT rolcanlogin,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=$1`, [dbRole]);
+    if (!role.rows[0]?.rolcanlogin) throw new Error('writer capability requires an existing LOGIN role');
+    if (role.rows[0].rolsuper || role.rows[0].rolbypassrls) {
+      throw new Error('production writer role must not be SUPERUSER or BYPASSRLS');
+    }
+    if (capability === 'legacy-single-tenant') {
+      const migration = await client.query<{ phase: string }>(`SELECT phase
+        FROM ${store.runsTable}_schema_migrations WHERE module='tenant_auxiliary_identity'`);
+      if (migration.rows[0]?.phase !== 'expand') {
+        throw new Error('legacy writer capability requires expand phase');
+      }
+    }
+    await client.query(`INSERT INTO ${store.runsTable}_writer_capabilities
+      (db_role,capability,tenant_id,enabled,disabled_at) VALUES ($1,$2,$3,true,NULL)
+      ON CONFLICT (db_role) DO NOTHING`, [dbRole, capability, tenantId]);
+    const registered = await client.query<{ capability: string; tenant_id: string | null; enabled: boolean }>(
+      `SELECT capability,tenant_id,enabled FROM ${store.runsTable}_writer_capabilities WHERE db_role=$1`, [dbRole]);
+    const row = registered.rows[0];
+    if (!row?.enabled || row.capability !== capability || row.tenant_id !== tenantId) {
+      throw new Error('writer role has a conflicting, disabled, or immutable capability registration');
+    }
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}
+
+export async function registerPgRunStoreTenantNativeWriterCapability(
+  store: PgRunStoreSchemaTarget,
+  dbRole: string,
+): Promise<void> {
+  await registerPgRunStoreWriterCapability(store, dbRole, RUN_STORE_TENANT_WRITER_CAPABILITY, null);
+}
+
+export async function registerPgRunStoreLegacyWriterCapability(
+  store: PgRunStoreSchemaTarget,
+  capability: PgRunStoreLegacyWriterCapability,
+): Promise<void> {
+  await registerPgRunStoreWriterCapability(
+    store, capability.dbRole, 'legacy-single-tenant', capability.tenantId.trim());
+}
+
+export async function disablePgRunStoreLegacyWriterCapability(
+  store: PgRunStoreSchemaTarget,
+  dbRole: string,
+): Promise<void> {
+  if (!dbRole.trim()) throw new Error('legacy writer disable requires dbRole');
+  const client = await store.pool.connect();
+  const lockKey = `${store.runsTable}:init`;
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    await client.query('BEGIN');
+    const registry = await client.query(`SELECT 1 FROM ${store.runsTable}_writer_capabilities
+      WHERE db_role=$1 AND capability='legacy-single-tenant' AND enabled FOR UPDATE`, [dbRole]);
+    if (registry.rowCount !== 1) throw new Error('enabled legacy writer capability was not registered');
+    const ddl = await client.query<{ sql: string }>(`SELECT format('ALTER ROLE %I NOLOGIN',$1) sql`, [dbRole]);
+    await client.query(ddl.rows[0]!.sql);
+    await client.query(`UPDATE ${store.runsTable}_writer_capabilities
+      SET enabled=false,disabled_at=clock_timestamp() WHERE db_role=$1`, [dbRole]);
+    await client.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+      WHERE usename=$1 AND pid<>pg_backend_pid()`, [dbRole]);
+    const active = await client.query<{ count: number }>(
+      `SELECT COUNT(*)::int count FROM pg_stat_activity WHERE usename=$1`, [dbRole]);
+    if (active.rows[0]?.count !== 0) {
+      throw new Error('legacy writer drain could not terminate every session_user activity');
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}
+
+export async function recordPgRunStoreDrainEvidence(
+  store: PgRunStoreSchemaTarget,
+  evidence: PgRunStoreDrainEvidence,
+): Promise<void> {
+  if (!evidence.evidenceId.trim() || !evidence.observer.trim()
+    || evidence.capability !== RUN_STORE_TENANT_WRITER_CAPABILITY) {
+    throw new Error('run-store tenant drain evidence rejected');
+  }
+  const client = await store.pool.connect();
+  const lockKey = `${store.runsTable}:init`;
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    const observation = await client.query<{
+      enabled_count: number; active_count: number; login_count: number;
+      roles: string[]; observed_at: string;
+    }>(`SELECT COUNT(*) FILTER (WHERE registry.enabled)::int enabled_count,
+             COUNT(activity.pid)::int active_count,
+             COUNT(*) FILTER (WHERE role.rolcanlogin)::int login_count,
+             COALESCE(array_agg(DISTINCT registry.db_role)
+               FILTER (WHERE registry.db_role IS NOT NULL),ARRAY[]::text[]) roles,
+             clock_timestamp()::text observed_at
+      FROM ${store.runsTable}_writer_capabilities registry
+      LEFT JOIN pg_roles role ON role.rolname=registry.db_role
+      LEFT JOIN pg_stat_activity activity ON activity.usename=registry.db_role
+      WHERE registry.capability='legacy-single-tenant'`);
+    const observed = observation.rows[0]!;
+    if (observed.enabled_count !== 0 || observed.active_count !== 0 || observed.login_count !== 0) {
+      throw new Error('run-store tenant drain requires legacy roles NOLOGIN, disabled, and inactive');
+    }
+    const durableEvidence = { ...evidence, observedAt: observed.observed_at,
+      oldWriterCount: observed.enabled_count, activeLegacySessionCount: observed.active_count,
+      legacyRoles: observed.roles };
+    const updated = await client.query(`UPDATE ${store.runsTable}_schema_migrations
+      SET evidence=$1::jsonb,updated_at=clock_timestamp()
+      WHERE module='tenant_auxiliary_identity' AND version=$2 AND phase='expand'`,
+    [JSON.stringify(durableEvidence), RUN_STORE_TENANT_SCHEMA_VERSION]);
+    if (updated.rowCount !== 1) throw new Error('run-store tenant drain evidence requires expand phase');
+  } finally {
+    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}
+
+/** Destructive tenant-key contract, opened only by database-observed drain evidence. */
 export async function contractPgRunStoreTenantSchema(
   store: PgRunStoreSchemaTarget,
   gate: PgRunStoreContractGate,
 ): Promise<void> {
-  if (gate.expectedExpandVersion !== RUN_STORE_TENANT_SCHEMA_VERSION || gate.oldWritersDrained !== true) {
+  if (gate.expectedExpandVersion !== RUN_STORE_TENANT_SCHEMA_VERSION || !gate.drainEvidenceId?.trim()) {
     throw new Error('run-store tenant contract gate rejected');
   }
   const client = await store.pool.connect();
@@ -343,8 +624,8 @@ export async function contractPgRunStoreTenantSchema(
   try {
     await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
     await client.query('BEGIN');
-    const migration = await client.query<{ version: number; phase: string }>(`
-      SELECT version, phase FROM ${store.runsTable}_schema_migrations
+    const migration = await client.query<{ version: number; phase: string; evidence: unknown }>(`
+      SELECT version, phase, evidence FROM ${store.runsTable}_schema_migrations
       WHERE module='tenant_auxiliary_identity' FOR UPDATE
     `);
     const state = migration.rows[0];
@@ -354,6 +635,29 @@ export async function contractPgRunStoreTenantSchema(
     }
     if (state?.version !== gate.expectedExpandVersion || state.phase !== 'expand') {
       throw new Error('run-store tenant contract requires matching expand phase');
+    }
+    const evidence = state.evidence as (Partial<PgRunStoreDrainEvidence> & {
+      observedAt?: string; oldWriterCount?: number; activeLegacySessionCount?: number;
+    }) | null;
+    if (!evidence || evidence.evidenceId !== gate.drainEvidenceId
+      || evidence.capability !== RUN_STORE_TENANT_WRITER_CAPABILITY
+      || evidence.oldWriterCount !== 0 || evidence.activeLegacySessionCount !== 0
+      || !evidence.observer?.trim() || !Number.isFinite(Date.parse(evidence.observedAt ?? ''))) {
+      throw new Error('run-store tenant contract requires matching durable drain evidence');
+    }
+    await client.query(`LOCK TABLE ${store.runsTable}_writer_capabilities IN SHARE ROW EXCLUSIVE MODE`);
+    const liveLegacy = await client.query<{ unsafe_count: number }>(`
+      SELECT ((SELECT COUNT(*) FROM ${store.runsTable}_writer_capabilities registry
+                LEFT JOIN pg_roles role ON role.rolname=registry.db_role
+               WHERE registry.capability='legacy-single-tenant'
+                 AND (registry.enabled OR COALESCE(role.rolcanlogin,false)))
+             +(SELECT COUNT(*) FROM pg_stat_activity activity
+               WHERE activity.usename IN (SELECT db_role
+                 FROM ${store.runsTable}_writer_capabilities
+                 WHERE capability='legacy-single-tenant')))::int unsafe_count
+    `);
+    if (liveLegacy.rows[0]?.unsafe_count !== 0) {
+      throw new Error('run-store tenant contract requires legacy capabilities disabled and drained');
     }
     // One final backfill after the old-writer drain observation, then quarantine only identities
     // that still cannot be proven from authoritative run rows.
@@ -404,6 +708,7 @@ export async function contractPgRunStoreTenantSchema(
     await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD CONSTRAINT ${store.messageSubmissionsTable}_pkey PRIMARY KEY (tenant_id, tenant_user_scope, tenant_client_message_id)`);
     await client.query(`ALTER TABLE ${store.steeringSessionsTable} DROP CONSTRAINT IF EXISTS ${store.steeringSessionsTable}_pkey`);
     await client.query(`ALTER TABLE ${store.steeringSessionsTable} ADD CONSTRAINT ${store.steeringSessionsTable}_pkey PRIMARY KEY (tenant_id, tenant_session_id)`);
+    await client.query(`DROP TRIGGER IF EXISTS tenant_aux_catchup ON ${store.runsTable}`);
     await client.query(`
       UPDATE ${store.runsTable}_schema_migrations SET phase='contract', updated_at=now()
       WHERE module='tenant_auxiliary_identity' AND version=${RUN_STORE_TENANT_SCHEMA_VERSION}

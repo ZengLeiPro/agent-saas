@@ -475,6 +475,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
     }
   }
 
+  // Subagent child runs are parent-owned and must never enter scheduler recovery.
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
@@ -483,6 +484,7 @@ export class PgRunStoreQueries { // all steering joins preserve tenant/session i
         run.status = 'pending'
         OR (run.status = 'running' AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1))
       )
+        AND run.metadata->>'subagent' IS DISTINCT FROM 'true'
         AND NOT (
           run.status = 'pending'
           AND COALESCE(run.metadata->>'schedulerState', '') = 'staged'

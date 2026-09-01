@@ -66,7 +66,7 @@ describe('ConfigIdentity 机器路径投影', () => {
     });
 
     it(`${fixture.name} 规范化运行期等价的相对路径`, () => {
-      const aliases = ['./data/source', 'data/source', 'data/cache/../source'];
+      const aliases = ['./data/source', 'data/source', 'data/cache/../source', 'data/source/'];
       expect(new Set(aliases.map((path) => digest(fixture.config(path))))).toHaveLength(1);
     });
 

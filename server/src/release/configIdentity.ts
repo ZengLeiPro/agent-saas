@@ -17,7 +17,7 @@
  *   时，`credentialVersionDigest` 参与一致性判定。
  */
 import { createHash } from 'node:crypto';
-import { isAbsolute, normalize, win32 } from 'node:path';
+import { isAbsolute, normalize, sep, win32 } from 'node:path';
 import type { AppConfig } from '../types/index.js';
 import {
   CONFIG_IDENTITY_DIGEST_PATTERN,
@@ -456,8 +456,10 @@ function projectValue(
     if (typeof value !== 'string' || value.length === 0) return undefined;
     if (isAbsolute(value) || win32.isAbsolute(value)) return undefined;
     // 运行期以 resolve(processCwd, value) 解析这些字段；normalize 消除 ./、重复分隔符
-    // 与 parent segments 等纯词法别名，同时避免把 processCwd 或相对路径原文写入投影。
-    return opaqueProjectionIdentity(normalize(value), path);
+    // 与 parent segments，移除保留的尾随分隔符后可获得不含 processCwd 的等价 canonical form。
+    const normalized = normalize(value);
+    const canonical = normalized.endsWith(sep) ? normalized.slice(0, -1) : normalized;
+    return opaqueProjectionIdentity(canonical, path);
   }
   if (pathsMatchAny(path, ENV_VALUE_FIELDS)) {
     // Env/proxy 值可能含凭据，不能原样进入投影；同时它们也会改变运行行为，

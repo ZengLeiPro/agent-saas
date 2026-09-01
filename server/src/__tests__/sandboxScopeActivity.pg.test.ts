@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PgEventStore } from '../runtime/pgEventStore.js';
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgSandboxLifecycleStore } from '../runtime/sandboxLifecycleService.js';
 import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
@@ -16,9 +17,12 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let runStore: PgRunStore;
+  let eventStore: PgEventStore;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
+    eventStore = new PgEventStore({ connectionString: testPgUrl!, tablePrefix: prefix, poolMax: 2 });
+    await eventStore.init();
     runStore = new PgRunStore({ pool, tablePrefix: prefix });
     await runStore.init();
     await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
@@ -32,7 +36,10 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_steering_sessions`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_message_submissions`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_runs`);
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_events`);
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_event_cursors`);
     } finally {
+      await eventStore.close();
       await pool.end();
     }
   }, 30_000);

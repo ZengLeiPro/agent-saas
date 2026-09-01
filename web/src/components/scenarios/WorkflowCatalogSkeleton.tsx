@@ -15,15 +15,15 @@ export function WorkflowCatalogSkeleton() {
           aria-hidden="true"
         >
           <div className="flex items-center justify-between gap-4">
-            <div className="cap-skeleton h-3.5 w-20 rounded-full" />
-            <div className="cap-skeleton h-3 w-14 rounded-full" />
+            <div className="h-3.5 w-20 animate-pulse rounded-full bg-muted" />
+            <div className="h-3 w-14 animate-pulse rounded-full bg-muted" />
           </div>
-          <div className="cap-skeleton mt-5 h-5 w-4/5 rounded" />
-          <div className="cap-skeleton mt-3 h-3.5 w-full rounded" />
-          <div className="cap-skeleton mt-2 h-3.5 w-2/3 rounded" />
+          <div className="mt-5 h-5 w-4/5 animate-pulse rounded bg-muted" />
+          <div className="mt-3 h-3.5 w-full animate-pulse rounded bg-muted" />
+          <div className="mt-2 h-3.5 w-2/3 animate-pulse rounded bg-muted" />
           <div className="mt-auto flex items-end justify-between gap-4 border-t border-border/50 pt-4">
-            <div className="cap-skeleton h-3 w-24 rounded" />
-            <div className="cap-skeleton h-8 w-20 rounded-md" />
+            <div className="h-3 w-24 animate-pulse rounded bg-muted" />
+            <div className="h-8 w-20 animate-pulse rounded-md bg-muted" />
           </div>
         </div>
       ))}

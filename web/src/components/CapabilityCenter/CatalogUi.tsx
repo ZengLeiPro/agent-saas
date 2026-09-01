@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
  */
 export const CAPABILITY_SURFACE = "rounded-xl bg-card ring-1 ring-border/60";
 export const CAPABILITY_SURFACE_HOVER =
-  "transition-[transform,box-shadow,--tw-ring-color] [transition-duration:var(--dur-base)] [transition-timing-function:var(--ease-out-expo)] hover:-translate-y-0.5 hover:ring-brand-200 hover:shadow-[0_8px_24px_-10px_rgba(15,23,42,0.20)] active:translate-y-0 active:duration-75 motion-reduce:transform-none motion-reduce:transition-none";
+  "transition-[transform,box-shadow,--tw-ring-color] duration-200 ease-out hover:-translate-y-0.5 hover:ring-brand-200 hover:shadow-[0_8px_24px_-10px_rgba(15,23,42,0.20)] active:translate-y-0 active:duration-75 motion-reduce:transform-none motion-reduce:transition-none";
 /** 空态 / 提示位：不承载操作，用虚线描边而非实线，底色比白框略深一档 */
 export const CAPABILITY_EMPTY_SURFACE = "rounded-xl border border-dashed border-border/70 bg-muted/20";
 /** 框内次级容器（说明块、分组底）：无描边，仅靠底色与白框区分 */

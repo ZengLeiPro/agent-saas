@@ -371,7 +371,7 @@ export function SkillSelector({
                 <button
                   type="button"
                   className={cn(
-                    "flex size-7 shrink-0 items-center justify-center rounded-full border transition-all duration-200 [transition-timing-function:var(--ease-spring)] active:scale-95 motion-reduce:transition-none",
+                    "flex size-7 shrink-0 items-center justify-center rounded-full border transition-all duration-200 ease-out active:scale-95 motion-reduce:transition-none",
                     selected
                       ? "border-success/25 bg-success/10 text-success-ink hover:bg-success/20"
                       : "border-border/70 bg-transparent text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success-ink",

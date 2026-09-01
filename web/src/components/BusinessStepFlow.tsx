@@ -301,7 +301,7 @@ function PlanTodoRow({
   const isSelected = selected?.planId === planId && selected.todoKey === selection.todoKey;
   const endedWithoutTerminal = planClosed && todo.status === "in_progress";
   const isCurrent = !planClosed && todo.status === "in_progress";
-  const accessibleStatus = endedWithoutTerminal ? '已结束' : statusMeta(todo).label;
+  const accessibleStatus = endedWithoutTerminal ? "已结束" : statusMeta(todo).label;
 
   return (
     <li
@@ -318,11 +318,7 @@ function PlanTodoRow({
       <button
         type="button"
         className={cn(
-<<<<<<< HEAD
-          "group relative flex w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
-=======
-          "group flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
->>>>>>> 3fd02d9e6 (feat: complete M40-04 safe presentation rendering)
+          "group relative flex min-h-11 w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left outline-none transition-colors",
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           "before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-transparent",
           isSelected && "before:bg-primary",
@@ -332,7 +328,7 @@ function PlanTodoRow({
               ? "bg-primary/5 hover:bg-primary/10"
               : "hover:bg-muted/70",
         )}
-        aria-label={[todo.content, accessibleStatus, todo.outcome?.text].filter(Boolean).join('，')}
+        aria-label={[todo.content, accessibleStatus, todo.outcome?.text].filter(Boolean).join("，")}
         aria-selected={isSelected}
         aria-current={isCurrent ? "step" : undefined}
         aria-controls={detailPanelId}
@@ -340,16 +336,19 @@ function PlanTodoRow({
         data-business-step-current={isCurrent ? "true" : "false"}
         onClick={() => onSelect?.(selection)}
       >
-<<<<<<< HEAD
-        <span className={cn(
-          "relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-card",
-          isCurrent && "shadow-[0_0_0_3px_hsl(var(--primary)/0.08)]",
-        )}>
+        <span
+          className={cn(
+            "relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-card",
+            isCurrent && "shadow-[0_0_0_3px_hsl(var(--primary)/0.08)]",
+          )}
+        >
           {endedWithoutTerminal ? (
             <span className="inline-flex shrink-0" title="已结束" aria-label="已结束">
-              <Circle className={activityStatusIconClass("neutral", "size-4")} />
+              <Circle aria-hidden="true" className={activityStatusIconClass("neutral", "size-4")} />
             </span>
-          ) : <BusinessStepStatusIcon todo={todo} />}
+          ) : (
+            <BusinessStepStatusIcon todo={todo} />
+          )}
         </span>
         <span
           className={cn(
@@ -362,16 +361,6 @@ function PlanTodoRow({
         </span>
         <span className="w-5 shrink-0 pt-0.5 text-right text-2xs tabular-nums text-muted-foreground/60">
           {String(index).padStart(2, "0")}
-=======
-        {endedWithoutTerminal ? (
-          <span className="inline-flex shrink-0" aria-label="已结束">
-            <Circle aria-hidden="true" className={activityStatusIconClass("neutral", "size-4")} />
-          </span>
-        ) : <BusinessStepStatusIcon todo={todo} />}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{todo.content}</span>
-        <span className="shrink-0 text-2xs tabular-nums text-muted-foreground/70">
-          {index}/{count}
->>>>>>> 3fd02d9e6 (feat: complete M40-04 safe presentation rendering)
         </span>
       </button>
     </li>
@@ -401,13 +390,11 @@ export function BusinessStepFlow({
       data-business-step={event.id}
       data-business-step-plan
     >
-<<<<<<< HEAD
       <header className="flex items-center gap-2 border-b border-border/50 px-2 pb-2 pt-0.5">
-        <ListChecks className={activityStatusIconClass(overall.tone, "size-4 shrink-0")} />
-=======
-      <header className="flex items-center gap-2 px-2 pb-1 pt-0.5">
-        <ListChecks aria-hidden="true" className="size-4 shrink-0 text-primary" />
->>>>>>> 3fd02d9e6 (feat: complete M40-04 safe presentation rendering)
+        <ListChecks
+          aria-hidden="true"
+          className={activityStatusIconClass(overall.tone, "size-4 shrink-0")}
+        />
         <h3 className="min-w-0 flex-1 text-sm font-semibold text-foreground">任务步骤</h3>
         <span className="text-2xs tabular-nums text-muted-foreground">
           {overall.completed}/{todos.length}

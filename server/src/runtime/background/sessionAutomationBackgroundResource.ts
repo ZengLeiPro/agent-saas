@@ -6,7 +6,7 @@ export class SessionAutomationBackgroundResource {
 
   constructor(
     private readonly guard: SessionAutomationRuntimeGuard | undefined,
-    private readonly context: Pick<RunContext, 'tenantId' | 'sessionId' | 'automationFence'> | undefined,
+    private readonly context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'> | undefined,
     private readonly resourceKey: string,
   ) {}
 

@@ -1,18 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  InteractionEvent,
-  InteractionResponse,
-} from '../agent/types.js';
+import type { InteractionEvent, InteractionResponse } from '../agent/types.js';
 import {
   INTERNAL_MODEL_DIAGNOSTIC_EVENT_TYPES,
-  type ModelRequestDiagnostic,
-  type AgentLoop,
-  type ApprovalStore,
-  type ApprovalRecord,
-  type EventStore,
-  type ModelAdapter,
-  type ModelChatMessage,
-  type ModelEvent,
+  type ModelRequestDiagnostic, type AgentLoop, type ApprovalStore, type ApprovalRecord,
+  type EventStore, type ModelAdapter, type ModelChatMessage, type ModelEvent,
   type ModelToolCall,
   type ModelUsage,
   type RunContext,
@@ -305,9 +296,9 @@ export class RawAgentLoop implements AgentLoop {
     });
   }
 
-  private withModelRequestDiagnostics(context: RunContext): RunContext {
-    return {
-      ...context,
+  private withModelRequestDiagnostics(context: RunContext, automationAttempt?: import('./sessionAutomationRuntimeGuard.js').AutomationAttemptHandle): RunContext {
+    const authorizeModelTurn=context.authorizeModelTurn;let transportAuthorized=false;const authorize=authorizeModelTurn||(this.automationGuard&&automationAttempt)?async()=>{await authorizeModelTurn?.();if(this.automationGuard&&automationAttempt){await this.automationGuard.beforeModelTransport(context,automationAttempt,!transportAuthorized);transportAuthorized=true;}}:undefined;
+    return {...context,...(authorize?{authorizeModelTurn:authorize}:{}),
       recordModelRequestDiagnostic: async (diagnostic: ModelRequestDiagnostic) => {
         try {
           if (diagnostic.type === 'started') {
@@ -1294,7 +1285,7 @@ export class RawAgentLoop implements AgentLoop {
             signal: context.signal,
             ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
             ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-          }, this.withModelRequestDiagnostics(context)),
+          }, this.withModelRequestDiagnostics(context, automationAttempt)),
           (error) => { modelStreamError = error; },
         );
         for await (const event of modelEvents) {
@@ -2031,7 +2022,7 @@ export class RawAgentLoop implements AgentLoop {
         toolChoice: 'none',
         maxOutputTokens: plan.summaryBudgetTokens,
         signal: context.signal,
-      }, this.withModelRequestDiagnostics(context)),error=>{compactionStreamError=error;})) {
+      }, this.withModelRequestDiagnostics(context, automationAttempt)),error=>{compactionStreamError=error;})) {
         if (event.type === 'text_delta') {
           summaryText += event.content;
         } else if (event.type === 'draft_reset') {
@@ -3031,7 +3022,7 @@ export class RawAgentLoop implements AgentLoop {
             : 'invocation is already terminal';
         throw new Error(`tool invocation blocked because ${reason}: ${invocationId}`);
       }
-      const invokeTool = async () => { await this.automationGuard?.barrier(args.context);
+      const invokeTool = async () => {
         const parallelGate = this.parallelInvocationGates.get(args.context);
         if (parallelGate) {
           parallelGate.onClaimed();
@@ -3047,6 +3038,7 @@ export class RawAgentLoop implements AgentLoop {
           toolName: args.descriptor.name,
           executionTarget: args.baseToolContext.workspace.executionTarget, attemptId: attemptCorrelation.attemptId,
         });
+        await this.automationGuard?.barrier(args.context); // last await before the side-effecting implementation
         return runWithInvocationCorrelation(attemptCorrelation, () => this.toolRuntime.invoke(
           { toolId: args.descriptor.id, input: args.input, authorization: args.authorization },
           { ...toolContext, correlation: attemptCorrelation },
@@ -3447,7 +3439,7 @@ export class RawAgentLoop implements AgentLoop {
             signal: args.context.signal,
             ...(forceSynthesis && !allowSessionRecovery ? { toolChoice: 'none' as const } : {}),
             ...(currentResponseId ? { previousResponseId: currentResponseId } : {}),
-          }, this.withModelRequestDiagnostics(args.context)),
+          }, this.withModelRequestDiagnostics(args.context, automationAttempt)),
           (error) => { modelStreamError = error; },
         );
         for await (const event of modelEvents) {

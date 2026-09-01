@@ -240,6 +240,15 @@ describe('SessionAutomationCoordinator execution gating and staged recovery', ()
     await coordinator.tick();
 
     expect(dispatcher.stage).toHaveBeenCalledOnce();
+    expect(dispatcher.stage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: item.sessionId,
+      runId: item.targetRunId,
+      metadata: expect.objectContaining({
+        runId: item.targetRunId,
+        rootSessionId: item.sessionId,
+        rootRunId: item.targetRunId,
+      }),
+    }));
     expect(store.markDispatched).toHaveBeenCalledWith(item);
     expect(dispatcher.activate).not.toHaveBeenCalled();
     expect(store.transitionPreparedDispatch).not.toHaveBeenCalledWith('outbox-1', 'dispatched', 'completed');

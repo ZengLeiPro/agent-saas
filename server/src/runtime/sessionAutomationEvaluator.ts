@@ -188,11 +188,16 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
       // Recheck after durable preparation and immediately before transport. If the switch changed,
       // the catch path releases the reservation without sending provider bytes.
       if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
-      // Evaluator owns this transport boundary: authorize before any provider bytes are sent.
+      // Re-fence after billing authorization and in the adapter hook before every provider attempt.
       await context.authorizeModelTurn?.();
       if (this.options.executionEnabled?.() === false) throw new Error('execution_disabled');
-      transportStarted = true;
-      const transportContext = { ...context, authorizeModelTurn: undefined };
+      await this.options.runtimeGuard?.beforeModelTransport(context, attempt, true);
+      let providerTransportAuthorized = false;
+      const transportContext = { ...context, authorizeModelTurn: async () => {
+        await this.options.runtimeGuard?.beforeModelTransport(context, attempt, !providerTransportAuthorized);
+        providerTransportAuthorized = true;
+        transportStarted = true;
+      } };
       for await (const event of adapter.stream({
         model: resolved.model,
         messages: evaluationMessages,

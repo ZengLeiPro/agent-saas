@@ -131,13 +131,16 @@ export interface SubagentOutcome {
 export function deriveChildAutomationFence(
   parentFence: ToolCallContext['automationFence'],
   childRunId: string,
-  parentSessionId: string,
+  parent: { sessionId: string; runId: string },
 ): ToolCallContext['automationFence'] {
   if (!parentFence) return undefined;
+  if (parentFence.runId !== parent.runId) {
+    throw new Error('automation parent fence runId does not match the invoking parent run');
+  }
   return {
     ...parentFence,
-    rootSessionId: parentFence.rootSessionId ?? parentSessionId,
-    rootRunId: parentFence.rootRunId ?? parentFence.runId,
+    rootSessionId: parentFence.rootSessionId ?? parent.sessionId,
+    rootRunId: parentFence.rootRunId ?? parent.runId,
     runId: childRunId,
   };
 }
@@ -278,7 +281,10 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const startedAt = Date.now();
   const childSessionId = `sub-${randomUUID()}`;
   const childRunId = `${Date.now()}-${randomUUID()}`;
-  const childAutomationFence = deriveChildAutomationFence(parentContext.automationFence, childRunId, parentSessionId);
+  const childAutomationFence = deriveChildAutomationFence(parentContext.automationFence, childRunId, {
+    sessionId: parentSessionId,
+    runId: parentRunId,
+  });
   const parentWorkspace = parentContext.workspace;
   const childRuntimeIsolationRequirement = deriveRuntimeIsolationRequirement(
     parentContext.runtimeIsolationRequirement,

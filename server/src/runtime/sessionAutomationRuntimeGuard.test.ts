@@ -32,6 +32,8 @@ class FakePool { // SQL-aware transaction test double for RuntimeGuard
   allowanceRemaining = 2;
   settlementReservations: Array<{ budget_kind: string; amount: string }> = [];
   creditReservationAmounts: unknown[] = [];
+  onCommit?: () => void;
+  providerAttemptState: 'dispatched' | 'cancelled' | 'result_unknown' = 'dispatched';
 
   async connect(): Promise<pg.PoolClient> {
     return { query: this.query.bind(this), release() {} } as unknown as pg.PoolClient;
@@ -40,6 +42,7 @@ class FakePool { // SQL-aware transaction test double for RuntimeGuard
   async query<T>(sql: string, values?: readonly unknown[]): Promise<{ rows: T[]; rowCount: number }> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
     this.statements.push(normalized);
+    if (normalized === 'COMMIT') this.onCommit?.();
     if (normalized.startsWith('INSERT INTO runtime_session_automation_budget_reservations') && values?.[8] === 'credits') {
       this.creditReservationAmounts.push(values[10]);
     }
@@ -65,6 +68,16 @@ class FakePool { // SQL-aware transaction test double for RuntimeGuard
     }
     if (normalized.startsWith('SELECT budget_kind,amount::text FROM runtime_session_automation_budget_reservations')) {
       return { rows: this.settlementReservations as T[], rowCount: this.settlementReservations.length };
+    }
+    if (normalized.startsWith("UPDATE runtime_session_automation_provider_attempts SET state='cancelled'")) {
+      if (this.providerAttemptState !== 'dispatched') return { rows: [] as T[], rowCount: 0 };
+      this.providerAttemptState = 'cancelled';
+      return { rows: [] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith("UPDATE runtime_session_automation_provider_attempts SET state='result_unknown'")) {
+      if (this.providerAttemptState !== 'dispatched') return { rows: [] as T[], rowCount: 0 };
+      this.providerAttemptState = 'result_unknown';
+      return { rows: [] as T[], rowCount: 1 };
     }
     if (normalized.includes('FROM runtime_session_automation_provider_attempts') && normalized.includes('FOR UPDATE')) {
       return { rows: [] as T[], rowCount: 0 };
@@ -268,6 +281,68 @@ describe('SessionAutomationRuntimeGuard', () => {
     expect(joined).toContain("state='cancelled'");
     expect(joined).toContain("state='released'");
     expect(joined).toContain('remaining_attempts=LEAST(2,remaining_attempts+1)');
+  });
+
+  it('live execution gate 在关闭时阻止模型/工具 admission，普通会话不受影响', async () => {
+    const pool = new FakePool();
+    let enabled = false;
+    const guard = new SessionAutomationRuntimeGuard(
+      pool as unknown as pg.Pool, 'runtime', 'runtime_runs', () => enabled,
+    );
+    await expect(guard.beforeModel(context, 'turn:disabled', {
+      model: context.model, inputTokens: 10, maxOutputTokens: 20,
+    })).rejects.toMatchObject({ reason: 'execution_disabled' });
+    await expect(guard.barrier(context)).rejects.toMatchObject({ reason: 'execution_disabled' });
+    expect(pool.statements).toEqual([]);
+
+    const normal = { ...context, automationFence: undefined } as RunContext;
+    await expect(guard.beforeModel(normal, 'turn:normal', {
+      model: context.model, inputTokens: 10, maxOutputTokens: 20,
+    })).resolves.toBeUndefined();
+    await expect(guard.barrier(normal)).resolves.toBeUndefined();
+  });
+
+  it('pre-transport release 幂等恢复 allowance，已释放 attempt 不会被误标 result_unknown', async () => {
+    const pool = new FakePool();
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool);
+    const handle = {
+      providerAttemptId: '55555555-5555-4555-8555-555555555555',
+      reservationIds: ['66666666-6666-4666-8666-666666666666'],
+      sourceKey: 'model:run-a:turn:release', model: context.model, purpose: 'goal_evaluation' as const,
+      allowanceUsed: true,
+    };
+
+    await guard.releaseModel(context, handle, 'disabled');
+    await guard.releaseModel(context, handle, 'disabled-again');
+    await guard.finishModel(context, handle, undefined, new Error('pre-transport rejection'));
+
+    expect(pool.statements.filter(sql => sql.includes('remaining_attempts=LEAST(2,remaining_attempts+1)'))).toHaveLength(1);
+    expect(pool.statements.join('\n')).not.toContain("status='reconcile_required'");
+  });
+
+  it('预算 admission 提交时 gate 翻转会释放 claim，重新开启后可恢复', async () => {
+    const pool = new FakePool();
+    let enabled = true;
+    let commitCount = 0;
+    pool.onCommit = () => {
+      commitCount += 1;
+      if (commitCount === 1) enabled = false;
+    };
+    const guard = new SessionAutomationRuntimeGuard(
+      pool as unknown as pg.Pool, 'runtime', 'runtime_runs', () => enabled,
+    );
+    await expect(guard.beforeModel(context, 'turn:flip', {
+      model: context.model, inputTokens: 10, maxOutputTokens: 20,
+    })).rejects.toMatchObject({ reason: 'execution_disabled' });
+    const joined = pool.statements.join('\n');
+    expect(joined).toContain("SET state='cancelled'");
+    expect(joined).toContain("SET state='released'");
+
+    enabled = true;
+    pool.onCommit = undefined;
+    await expect(guard.beforeModel(context, 'turn:reopened', {
+      model: context.model, inputTokens: 10, maxOutputTokens: 20,
+    })).resolves.toBeDefined();
   });
 
   it('普通会话没有 automation fence 时不访问账本', async () => {

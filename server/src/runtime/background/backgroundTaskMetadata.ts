@@ -1,6 +1,8 @@
 import type { ChannelContext } from '../../types/index.js';
+import { automationFenceFromMetadata } from '../automationFence.js';
 import { isModelOutputTransactionMode, resolveModelOutputTransactionMode } from '../modelOutputTransaction.js';
 import type { RunRecord } from '../runStore.js';
+import type { RunContext } from '../types.js';
 import { deriveRuntimeIsolationRequirement, type RuntimeIsolationRequirement } from '../runtimeIsolationEvidence.js';
 import { parseSandboxResources, type SandboxResources } from '../sandboxProfile.js';
 
@@ -58,6 +60,8 @@ interface CommonBackgroundTaskMetadata {
   parentChannel: ChannelContext['channel'];
   parentOutputTransactionMode: NonNullable<ChannelContext['outputTransactionMode']>;
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
+  /** Root authority plus this durable background task's invoking run identity. */
+  automationFence?: RunContext['automationFence'];
 }
 
 export interface BackgroundAgentTaskMetadata extends CommonBackgroundTaskMetadata {
@@ -99,6 +103,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
   const sandboxPolicy = isSandboxPolicy(value.sandboxPolicy) ? value.sandboxPolicy : undefined;
   const sandboxResources = parseSandboxResources(value.sandboxResources);
   const runtimeIsolationRequirement = parseRuntimeIsolationRequirement(value.runtimeIsolationRequirement);
+  const automationFence = automationFenceFromMetadata(value);
   const dwsCompletionRoute = parseDwsCompletionRoute(value.dwsCompletionRoute);
   const dwsCompletionRouteVersion = dwsCompletionRoute?.version
     ?? (value.dwsCompletionRouteVersion === 'invalid' ? 'invalid' as const : undefined);
@@ -133,6 +138,7 @@ export function parseBackgroundTaskMetadata(record: RunRecord): BackgroundTaskMe
     ...(metadataString(value, 'timezone') ? { timezone: metadataString(value, 'timezone') } : {}),
     ...(sandboxPolicy ? { sandboxPolicy } : {}),
     ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
+    ...(automationFence ? { automationFence } : {}),
   };
 
   if (value.backgroundTaskType === 'command') {

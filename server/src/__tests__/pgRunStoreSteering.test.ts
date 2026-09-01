@@ -151,14 +151,16 @@ describe('PgRunStore steering inbox', () => {
     expect(queries.some((sql) => sql.includes('INSERT INTO runtime_steering_inputs'))).toBe(false);
   });
 
-  it('returns the original run when the same clientMessageId is submitted concurrently', async () => {
+  it('returns the same-tenant authority when clientMessageId is submitted concurrently', async () => {
     const now = new Date().toISOString();
     const queries: string[] = [];
     const client = {
       query: async (sql: string) => {
         queries.push(sql.trim());
         if (sql.includes('INSERT INTO runtime_message_submissions')) return { rows: [] };
-        if (sql.includes('SELECT run_id') && sql.includes('runtime_message_submissions')) return { rows: [{ run_id: 'original-run' }] };
+        if (sql.includes('COALESCE(submission.tenant_id')) {
+          return { rows: [{ run_id: 'original-run', owner_tenant_id: 'pantheon' }] };
+        }
         if (sql.includes('SELECT row_to_json(runtime_runs.*)')) {
           return { rows: [{ row_json: {
             run_id: 'original-run', session_id: 'session-1', status: 'completed',
@@ -650,6 +652,7 @@ describe('PgRunStore steering inbox', () => {
       query: async (sql: string, params: unknown[] = []) => {
         queries.push(sql.trim());
         queryCalls.push({ sql: sql.trim(), params });
+        if (sql.includes('UPDATE runtime_steering_sessions')) return { rows: [], rowCount: 1 };
         if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
           return { rows: [{ run_id: 'waiting-run' }], rowCount: 1 };
         }
@@ -711,6 +714,7 @@ describe('PgRunStore steering inbox', () => {
     const client = {
       query: async (sql: string) => {
         queries.push(sql.trim());
+        if (sql.includes('UPDATE runtime_steering_sessions')) return { rows: [], rowCount: 1 };
         if (sql.includes("worker_id = NULL") && sql.includes("RETURNING run_id")) {
           return { rows: [], rowCount: 0 };
         }

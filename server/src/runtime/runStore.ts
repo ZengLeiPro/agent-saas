@@ -10,8 +10,9 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
-import { contractPgRunStoreTenantSchema, initializePgRunStore, tenantScopedCompatibilityKey, type PgRunStoreContractGate } from './runStoreSchema.js';
+import { contractPgRunStoreTenantSchema, initializePgRunStore, type PgRunStoreContractGate } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
+import { lockRawTenantKey, readSameTenantSubmissionRun, upsertSteeringStopAuthority } from './runStoreTenantRolling.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
 const { Pool } = pg;
 type PgPoolClient = pg.PoolClient;
@@ -119,33 +120,23 @@ export class PgRunStore implements RunStore {
       ]);
       const now = new Date().toISOString();
       const userScope = input.submitterUserId ?? input.userId ?? '__anonymous__';
+      // Expand's global raw key is serialized so conflicts become business errors, not 23505.
+      await lockRawTenantKey(client, `${this.messageSubmissionsTable}:raw-key`,
+        `${userScope}\u001f${input.idempotencyKey}`);
       const submission = await client.query<{ run_id: string }>(`
         INSERT INTO ${this.messageSubmissionsTable}
           (tenant_id, user_scope, client_message_id, run_id, session_id, delivery_mode, accepted_at,
            tenant_user_scope, tenant_client_message_id)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (tenant_id, tenant_user_scope, tenant_client_message_id) WHERE tenant_id IS NOT NULL DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING run_id
-      `, [tenantId, tenantScopedCompatibilityKey(tenantId, userScope),
-        tenantScopedCompatibilityKey(tenantId, input.idempotencyKey), input.runId, input.sessionId,
+      `, [tenantId, userScope, input.idempotencyKey, input.runId, input.sessionId,
         deliveryMode, now, userScope, input.idempotencyKey]);
       if (!submission.rows[0]) {
-        const existingSubmission = await client.query<{ run_id: string }>(`
-          SELECT run_id
-          FROM ${this.messageSubmissionsTable}
-          WHERE tenant_id = $1 AND tenant_user_scope = $2 AND tenant_client_message_id = $3
-        `, [tenantId, userScope, input.idempotencyKey]);
-        const existingRunId = existingSubmission.rows[0]?.run_id;
-        const existing = existingRunId
-          ? await client.query<{ row_json: RunRecord }>(`
-            SELECT row_to_json(${this.runsTable}.*) AS row_json
-            FROM ${this.runsTable}
-            WHERE tenant_id = $1 AND run_id = $2
-          `, [tenantId, existingRunId])
-          : { rows: [] };
-        if (!existing.rows[0]) throw new Error('Message submission exists without run');
+        const existing = await readSameTenantSubmissionRun(client, this, tenantId,
+          userScope, input.idempotencyKey);
         await client.query('COMMIT');
-        return normalizeRunRecord(existing.rows[0].row_json);
+        return normalizeRunRecord(existing);
       }
       const acceptedAt = typeof input.metadata?.steeringAcceptedAt === 'string'
         ? input.metadata.steeringAcceptedAt
@@ -768,7 +759,7 @@ export class PgRunStore implements RunStore {
         `${this.runsTable}:message:${sessionId}`,
       ]);
       const now = new Date().toISOString();
-      // 固定锁序：advisory(tenant/session) → target → source(run_id) → input(sequence)。
+      // 固定锁序：advisory(tenant/session/raw key) → target → source(run_id) → input(sequence)。
       // 必须先锁定并核验 target，再写 session stopped_at 或撤销排队项；否则状态预读后
       // target 并发终态化时，stop 会错误影响后续普通队列/steering。
       if (targetRunId) {
@@ -784,12 +775,7 @@ export class PgRunStore implements RunStore {
           return { cancelled: [], targetCancelled: false, eventCreated: false };
         }
       }
-      await client.query(`
-        INSERT INTO ${this.steeringSessionsTable} (tenant_id, session_id, stopped_at, tenant_session_id)
-        VALUES ($1, $2, $3::timestamptz, $4)
-        ON CONFLICT (tenant_id, tenant_session_id) WHERE tenant_id IS NOT NULL DO UPDATE
-        SET stopped_at = GREATEST(${this.steeringSessionsTable}.stopped_at, EXCLUDED.stopped_at)
-      `, [tenantId, tenantScopedCompatibilityKey(tenantId, sessionId), now, sessionId]);
+      await upsertSteeringStopAuthority(client, this, tenantId, sessionId, now);
       const candidateIds = await client.query<{ source_run_id: string }>(`
         SELECT input.source_run_id
         FROM ${this.steeringInputsTable} input

@@ -115,6 +115,7 @@ describe('SessionAutomationEvaluator execution and evidence gating', () => {
         providerAttemptId: 'attempt', reservationIds: ['reservation'], sourceKey: 'source',
         model: 'model', purpose: 'goal_evaluation',
       }),
+      beforeModelTransport: vi.fn().mockResolvedValue(undefined),
       releaseModel: vi.fn().mockResolvedValue(undefined),
       finishModel: vi.fn(),
     };
@@ -144,6 +145,7 @@ describe('SessionAutomationEvaluator execution and evidence gating', () => {
       },
     })).rejects.toThrow('execution_disabled');
     expect(runtimeGuard.releaseModel).toHaveBeenCalledTimes(1);
+    expect(runtimeGuard.beforeModelTransport).not.toHaveBeenCalled();
     expect(stream).not.toHaveBeenCalled();
   });
 

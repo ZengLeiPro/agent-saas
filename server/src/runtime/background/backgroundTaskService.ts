@@ -30,6 +30,11 @@ import {
   SUBAGENT_RESULT_MAX_CHARS,
 } from '../subagent/subagentLimits.js';
 import { runSubagent, type SubagentOutcome } from '../subagent/subagentRunner.js';
+import {
+  buildBackgroundTaskAutomationContext,
+  buildBackgroundTaskParentContext,
+  deriveBackgroundTaskAutomationFence,
+} from './backgroundTaskAutomationContext.js';
 import { BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON } from './backgroundTaskRuntime.js';
 import {
   deriveBackgroundRuntimeIsolationRequirement, metadataString,
@@ -148,6 +153,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const shortTaskId = `T-${taskUuid.replaceAll('-', '').slice(0, 24).toUpperCase()}`;
     const taskSessionId = `sub-${randomUUID()}`;
     const toolCallId = context.toolCallId ?? `agent-${randomUUID()}`;
+    const automationFence = deriveBackgroundTaskAutomationFence(
+      context.automationFence, taskId, { sessionId: parentSessionId, runId: parentRunId },
+    );
     let taskSession = createRuntimeSessionRecord({
       sessionId: taskSessionId,
       userId,
@@ -190,7 +198,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         backgroundTaskVersion: 1,
         outputTransactionMode: 'terminal_buffered',
         parentRunId,
-        parentSessionId, ...(context.automationFence ? { automationFence: context.automationFence } : {}),
+        parentSessionId,
+        ...(automationFence ? { automationFence } : {}),
         topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
         parentToolCallId: toolCallId,
         shortTaskId,
@@ -257,6 +266,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const taskId = `shell-bg-${Date.now()}-${randomUUID()}`;
     const taskSessionId = `sub-${randomUUID()}`;
     const toolCallId = context.toolCallId ?? `shell-${randomUUID()}`;
+    const automationFence = deriveBackgroundTaskAutomationFence(
+      context.automationFence, taskId, { sessionId: parentSessionId, runId: parentRunId },
+    );
     const executionTarget = context.workspace.executionTarget;
     const commandPreview = compactCommandPreview(request.command);
     const taskSession = createRuntimeSessionRecord({
@@ -294,6 +306,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           backgroundTaskVersion: 2,
           parentRunId,
           parentSessionId,
+          ...(automationFence ? { automationFence } : {}),
           topLevelSessionId: context.workspace.topLevelSessionId ?? parentSessionId,
           parentToolCallId: toolCallId,
           description: `后台命令：${commandPreview}`,
@@ -410,7 +423,12 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       }).catch(() => undefined);
     }, CANCEL_POLL_MS);
     cancelTimer.unref?.();
-    const automationResource = new SessionAutomationBackgroundResource(this.config.sessionAutomationRuntimeGuard, record.metadata?.automationFence ? { tenantId: record.tenantId, sessionId: metadata.parentSessionId, automationFence: record.metadata.automationFence as ToolCallContext['automationFence'] } : undefined, record.runId);
+    const automationContext = buildBackgroundTaskAutomationContext(record, metadata);
+    const automationResource = new SessionAutomationBackgroundResource(
+      this.config.sessionAutomationRuntimeGuard,
+      automationContext,
+      record.runId,
+    );
 
     try {
       await sessionCatalog.markStatus(record.sessionId, 'running');
@@ -439,32 +457,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       const runtimeIsolationRequirement = deriveBackgroundRuntimeIsolationRequirement(
         metadata, { runId: record.runId, sessionId: record.sessionId, workspaceId: metadata.workspaceId },
       );
-      const parentContext: ToolCallContext = {
-        channelContext,
-        env: connectorRunEnv,
-        workspace: {
-          id: metadata.workspaceId,
-          root: metadata.cwd,
-          userId: taskSession.userId,
-          username: taskSession.username,
-          tenantId: taskSession.tenantId,
-          sessionId: record.sessionId,
-          // ⚠️ 三层套娃的关键修正：此处 record.sessionId 是 bg task 自己的 `sub-` 会话，
-          // 下游 runSubagent 会用 `parentWorkspace.topLevelSessionId ?? parentSessionId`，
-          // 若不显式带上顶层组键就会取到中间层，导致后台任务另开一个 pod。
-          topLevelSessionId: metadata.topLevelSessionId ?? metadata.parentSessionId,
-          executionTarget: record.executionTarget ?? taskSession.executionTarget ?? 'server-container',
-          ...(metadata.mountSubPath ? { mountSubPath: metadata.mountSubPath } : {}),
-          ...(metadata.sandboxScopeId ? { sandboxScopeId: metadata.sandboxScopeId } : {}),
-          ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
-          ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
-        },
-        sessionId: record.sessionId,
-        runId: record.runId,
-        toolCallId: metadata.parentToolCallId, ...(runtimeIsolationRequirement ? { runtimeIsolationRequirement } : {}),
-        ...(record.metadata?.automationFence ? { automationFence: record.metadata.automationFence as ToolCallContext['automationFence'] } : {}),
-        signal: abortController.signal,
-      };
+      const parentContext = buildBackgroundTaskParentContext({
+        record, metadata, taskSession, channelContext, env: connectorRunEnv,
+        runtimeIsolationRequirement, signal: abortController.signal,
+      });
       const agentType = getSubagentType(metadata.agentType);
       if (!agentType) throw new Error(`未知后台 agent_type：${metadata.agentType}`);
       const outcome = await this.runSubagentImpl({
@@ -852,7 +848,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         ...(metadata.sandboxResources ? { sandboxResources: metadata.sandboxResources } : {}),
         ...(metadata.sandboxPolicy ? { sandboxPolicy: metadata.sandboxPolicy } : {}),
       },
-      sessionId: metadata.parentSessionId, runId: record.runId,
+      // Command control must resolve the durable parent hand for legacy/non-automation tasks.
+      // Its task-scoped fence remains persisted for later automation-aware recovery.
+      sessionId: metadata.parentSessionId,
+      runId: record.runId,
       toolCallId: `${toolId}-${record.runId}`,
       signal,
     });

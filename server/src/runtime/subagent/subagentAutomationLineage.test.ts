@@ -11,7 +11,7 @@ describe('subagent automation lineage', () => {
       specVersion: 4,
       executionId: 'execution-root',
       runId: 'run-root',
-    }, 'run-child', 'session-root');
+    }, 'run-child', { sessionId: 'session-root', runId: 'run-root' });
     expect(fence).toMatchObject({
       automationId: 'automation-a',
       executionId: 'execution-root',
@@ -19,11 +19,29 @@ describe('subagent automation lineage', () => {
       rootRunId: 'run-root',
       runId: 'run-child',
     });
-    expect(deriveChildAutomationFence(fence, 'run-grandchild', 'session-child')).toMatchObject({
+    expect(deriveChildAutomationFence(
+      fence,
+      'run-grandchild',
+      { sessionId: 'session-child', runId: 'run-child' },
+    )).toMatchObject({
       rootSessionId: 'session-root',
       rootRunId: 'run-root',
       runId: 'run-grandchild',
     });
     expect(automationFenceFromMetadata(JSON.parse(JSON.stringify({ automationFence: fence })))).toEqual(fence);
+  });
+
+  it('rejects a fence that does not belong to the actual invoking parent run', () => {
+    expect(() => deriveChildAutomationFence({
+      automationId: 'automation-a',
+      incarnationId: 'incarnation-a',
+      generation: 1,
+      specVersion: 1,
+      executionId: 'execution-root',
+      runId: 'stale-parent-run',
+      rootSessionId: 'session-root',
+      rootRunId: 'run-root',
+    }, 'run-child', { sessionId: 'session-parent', runId: 'actual-parent-run' }))
+      .toThrow(/does not match the invoking parent run/);
   });
 });

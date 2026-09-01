@@ -145,7 +145,20 @@ export class SessionAutomationCoordinator {
       const snapshot = await this.store.get(item.tenantId, item.sessionId, item.automationId);
       if (!snapshot || snapshot.status !== 'active' || snapshot.activeRunId || snapshot.generation !== item.generation || snapshot.incarnationId !== item.incarnationId){await this.store.supersedeDispatch(item);return;}
       const prompt = snapshot.spec.kind === 'goal' ? `Continue working toward this completion condition:\n${snapshot.spec.condition}` : snapshot.spec.prompt!;
-      const fence = { rootAutomationId: item.automationId, automationId: item.automationId, automationGeneration: item.generation, generation: item.generation, automationSpecVersion: item.specVersion, specVersion: item.specVersion, incarnationId: item.incarnationId, automationTriggerKey: item.triggerKey, executionId: item.outboxId, runId: item.targetRunId };
+      const fence = {
+        rootAutomationId: item.automationId,
+        automationId: item.automationId,
+        automationGeneration: item.generation,
+        generation: item.generation,
+        automationSpecVersion: item.specVersion,
+        specVersion: item.specVersion,
+        incarnationId: item.incarnationId,
+        automationTriggerKey: item.triggerKey,
+        executionId: item.outboxId,
+        runId: item.targetRunId,
+        rootSessionId: item.sessionId,
+        rootRunId: item.targetRunId,
+      };
       const stageInput = { tenantId: item.tenantId, sessionId: item.sessionId, runId: item.targetRunId, prompt, metadata: fence };
       if (!this.options.executionEnabled()) return;
       await this.store.prepareDispatch(item,{stage:stageInput});

@@ -121,8 +121,9 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
           phase=CASE WHEN ${store.runsTable}_schema_migrations.phase='contract' THEN 'contract' ELSE EXCLUDED.phase END,
           updated_at=now()
       `);
-      // Expand is the only phase executed by ordinary startup. Keep the legacy conflict
-      // arbiters intact until an operator explicitly contracts after all old writers drain.
+      // Expand is the only phase executed by ordinary startup. The legacy raw-key PKs are the
+      // schema-phase constraint that forbids cross-tenant reuse while old writers remain. Contract
+      // removes them only after the operator explicitly confirms that every old writer drained.
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_user_scope TEXT`);
       await client.query(`ALTER TABLE ${store.messageSubmissionsTable} ADD COLUMN IF NOT EXISTS tenant_client_message_id TEXT`);
@@ -185,6 +186,11 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
               tenant_user_scope=COALESCE(tenant_user_scope,user_scope),
               tenant_client_message_id=COALESCE(tenant_client_message_id,client_message_id)
           WHERE run_id=NEW.run_id AND session_id=NEW.session_id AND tenant_id IS NULL;
+          UPDATE ${store.steeringSessionsTable} stop
+          SET tenant_id=NEW.tenant_id, tenant_session_id=stop.session_id
+          WHERE stop.session_id=NEW.session_id AND stop.tenant_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM ${store.runsTable} other
+              WHERE other.session_id=NEW.session_id AND other.tenant_id<>NEW.tenant_id);
           RETURN NEW;
         END $$ LANGUAGE plpgsql
       `);
@@ -320,11 +326,6 @@ export async function initializePgRunStore(store: PgRunStoreSchemaTarget): Promi
       client.release();
     }
   }
-
-/** Physical key used only while legacy global UNIQUE arbiters must remain inferable. */
-export function tenantScopedCompatibilityKey(tenantId: string, value: string): string {
-  return `${tenantId.length}:${tenantId}:${value}`;
-}
 
 /**
  * Destructive tenant-key contract. Never called by PgRunStore.init(); release automation must

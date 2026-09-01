@@ -68,8 +68,21 @@ export class SessionAutomationRuntimeGuard {
     private readonly pool: pg.Pool,
     private readonly tablePrefix = 'runtime',
     private readonly runsTable = `${tablePrefix}_runs`,
+    private readonly executionEnabled: () => boolean = () => true,
   ) {
     this.tables = sessionAutomationTables(tablePrefix);
+  }
+
+  private isExecutionEnabled(): boolean {
+    try {
+      return this.executionEnabled() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private assertExecutionEnabled(): void {
+    if (!this.isExecutionEnabled()) throw new AutomationFenceRejectedError('execution_disabled');
   }
 
   private lineage(context: RunContext): AutomationLineage | undefined {
@@ -210,6 +223,7 @@ export class SessionAutomationRuntimeGuard {
   async barrier(context: RunContext): Promise<void> {
     const lineage = this.lineage(context);
     if (!lineage) return;
+    this.assertExecutionEnabled();
     const client = await this.pool.connect();
     let committed = false;
     try {
@@ -221,6 +235,7 @@ export class SessionAutomationRuntimeGuard {
       await client.query('COMMIT');
       committed = true;
       if (budgetReason) throw new AutomationBudgetExceededError(budgetReason);
+      this.assertExecutionEnabled();
     } catch (error) {
       if (!committed) await client.query('ROLLBACK').catch(() => undefined);
       throw error;
@@ -236,6 +251,7 @@ export class SessionAutomationRuntimeGuard {
   ): Promise<AutomationAttemptHandle | undefined> {
     const lineage = this.lineage(context);
     if (!lineage) return undefined;
+    this.assertExecutionEnabled();
     const estimatedInputTokens = Math.max(0, Math.ceil(admission.inputTokens));
     const maxOutputTokens = Math.max(0, Math.ceil(admission.maxOutputTokens));
     if (!admission.model || !Number.isSafeInteger(estimatedInputTokens) || !Number.isSafeInteger(maxOutputTokens)) {
@@ -289,8 +305,10 @@ export class SessionAutomationRuntimeGuard {
           [lineage.tenantId,`${sourceKey}:%`],
         );
         if (row.state === 'dispatched') {
+          const handle: AutomationAttemptHandle = { providerAttemptId: row.provider_attempt_id, reservationIds: reservations.rows.map(item => item.reservation_id), sourceKey, model: admission.model, purpose, allowanceUsed: reservations.rows[0]?.purpose === 'goal_evaluation' };
           await client.query('COMMIT'); committed=true;
-          return { providerAttemptId: row.provider_attempt_id, reservationIds: reservations.rows.map(item => item.reservation_id), sourceKey, model: admission.model, purpose, allowanceUsed: reservations.rows[0]?.purpose === 'goal_evaluation' };
+          await this.rejectDisabledAdmission(client,lineage,handle);
+          return handle;
         }
         replayReservations=reservations.rows;
       }
@@ -335,8 +353,10 @@ export class SessionAutomationRuntimeGuard {
       if (replayReservations) {
         await client.query(`UPDATE ${this.tables.budgetReservations} SET state='reserved',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='released'`,[replayReservations.map(item=>item.reservation_id)]);
         await client.query(`UPDATE ${this.tables.providerAttempts} SET state='dispatched',version=version+1,last_error=NULL,dispatched_at=now(),updated_at=now() WHERE tenant_id=$1 AND provider='model' AND idempotency_key=$2 AND state='cancelled'`,[lineage.tenantId,sourceKey]);
+        const handle: AutomationAttemptHandle = {providerAttemptId:existing.rows[0]!.provider_attempt_id,reservationIds:replayReservations.map(item=>item.reservation_id),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
         await client.query('COMMIT'); committed=true;
-        return {providerAttemptId:existing.rows[0]!.provider_attempt_id,reservationIds:replayReservations.map(item=>item.reservation_id),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
+        await this.rejectDisabledAdmission(client,lineage,handle);
+        return handle;
       }
 
       const unresolved = await client.query<{provider_attempt_id:string;state:string}>(
@@ -361,10 +381,61 @@ export class SessionAutomationRuntimeGuard {
         `INSERT INTO ${this.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,invoking_session_id,invoking_run_id,provider,operation,idempotency_key,request_payload,state,dispatched_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'model',$12,$13,$14,'dispatched',now())`,
         [providerAttemptId,prepared.rows[0].prepared_dispatch_attempt_id,lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId,lineage.invokingSessionId,lineage.invokingRunId,operation,sourceKey,JSON.stringify({model:admission.model,inputTokens,maxOutputTokens,purpose,incarnationId:lineage.incarnationId,generation:lineage.generation,specVersion:lineage.specVersion,executionId:lineage.executionId,rootSessionId:lineage.sessionId,rootRunId:lineage.executionRunId,invokingSessionId:lineage.invokingSessionId,invokingRunId:lineage.invokingRunId})],
       );
+      const handle: AutomationAttemptHandle = {providerAttemptId,reservationIds:reservations.map(x=>x[0]),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
       await client.query('COMMIT'); committed=true;
-      return {providerAttemptId,reservationIds:reservations.map(x=>x[0]),sourceKey,model:admission.model,purpose,allowanceUsed:usingAllowance};
+      await this.rejectDisabledAdmission(client,lineage,handle);
+      return handle;
     } catch(error) { if(!committed) await client.query('ROLLBACK').catch(()=>undefined); throw error; }
     finally { client.release(); }
+  }
+
+  private async rejectDisabledAdmission(
+    client: pg.PoolClient,
+    lineage: AutomationLineage,
+    handle: AutomationAttemptHandle,
+  ): Promise<void> {
+    if (this.isExecutionEnabled()) return;
+    await client.query('BEGIN');
+    try {
+      await this.releaseModelLocked(client, lineage, handle, 'session_automation_execution_disabled');
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
+    throw new AutomationFenceRejectedError('execution_disabled');
+  }
+
+  private async releaseModelLocked(
+    client: pg.PoolClient,
+    lineage: AutomationLineage,
+    handle: AutomationAttemptHandle,
+    reason: string,
+  ): Promise<boolean> {
+    const released = await client.query(
+      `UPDATE ${this.tables.providerAttempts} SET state='cancelled',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,
+      [handle.providerAttemptId, reason],
+    );
+    if (released.rowCount !== 1) return false;
+    await client.query(`UPDATE ${this.tables.budgetReservations} SET state='released',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
+    if(handle.allowanceUsed) await client.query(`UPDATE ${this.tables.completionAllowances} SET remaining_attempts=LEAST(2,remaining_attempts+1),updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[lineage.tenantId,lineage.sessionId,lineage.automationId]);
+    return true;
+  }
+
+  /** Re-check immediately before a real provider attempt; release only a never-sent admission. */
+  async beforeModelTransport(
+    context: RunContext,
+    handle: AutomationAttemptHandle | undefined,
+    releaseIfRejected: boolean,
+  ): Promise<void> {
+    try {
+      await this.barrier(context);
+    } catch (error) {
+      if (releaseIfRejected && handle && error instanceof AutomationFenceRejectedError) {
+        await this.releaseModel(context, handle, `pre_transport_${error.reason}`);
+      }
+      throw error;
+    }
   }
 
   /** Release a prepared evaluator attempt if platform authorization fails before transport. */
@@ -374,9 +445,7 @@ export class SessionAutomationRuntimeGuard {
     const client=await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`UPDATE ${this.tables.providerAttempts} SET state='cancelled',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,reason]);
-      await client.query(`UPDATE ${this.tables.budgetReservations} SET state='released',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
-      if(handle.allowanceUsed) await client.query(`UPDATE ${this.tables.completionAllowances} SET remaining_attempts=LEAST(2,remaining_attempts+1),updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3`,[lineage.tenantId,lineage.sessionId,lineage.automationId]);
+      await this.releaseModelLocked(client, lineage, handle, reason);
       await client.query('COMMIT');
     }catch(e){await client.query('ROLLBACK').catch(()=>undefined);throw e}finally{client.release()}
   }
@@ -413,11 +482,13 @@ export class SessionAutomationRuntimeGuard {
         }
       }
       if(unknown){
-        await client.query(`UPDATE ${this.tables.providerAttempts} SET state='result_unknown',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,error instanceof Error?error.message:error?String(error):'usage_unavailable']);
-        await client.query(`UPDATE ${this.tables.budgetReservations} SET state='result_unknown',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
-        // The terminal projector clears active_run_id before goal evaluation. Fence the
-        // authoritative automation incarnation instead of relying on the cleared run slot.
-        await client.query(`UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,[lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.specVersion]);
+        const markedUnknown = await client.query(`UPDATE ${this.tables.providerAttempts} SET state='result_unknown',version=version+1,last_error=$2,updated_at=now() WHERE provider_attempt_id=$1 AND state='dispatched'`,[handle.providerAttemptId,error instanceof Error?error.message:error?String(error):'usage_unavailable']);
+        if (markedUnknown.rowCount === 1) {
+          await client.query(`UPDATE ${this.tables.budgetReservations} SET state='result_unknown',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
+          // The terminal projector clears active_run_id before goal evaluation. Fence the
+          // authoritative automation incarnation instead of relying on the cleared run slot.
+          await client.query(`UPDATE ${this.tables.automations} SET status='reconcile_required',phase='waiting',next_wakeup_at=NULL,projection_version=projection_version+1,updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4 AND generation=$5 AND spec_version=$6 AND status='active'`,[lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.specVersion]);
+        }
       }else{
         await client.query(`UPDATE ${this.tables.providerAttempts} SET state='completed',version=version+1,result_payload=$2,completed_at=now(),updated_at=now() WHERE provider_attempt_id=$1 AND tenant_id=$3 AND session_id=$4 AND automation_id=$5 AND incarnation_id=$6 AND generation=$7 AND execution_id=$8 AND run_id=$9 AND state='dispatched'`,[handle.providerAttemptId,JSON.stringify({usage,...resultPayload}),lineage.tenantId,lineage.sessionId,lineage.automationId,lineage.incarnationId,lineage.generation,lineage.executionId,lineage.executionRunId]);
         await client.query(`UPDATE ${this.tables.budgetReservations} SET state='settled',version=version+1,updated_at=now() WHERE reservation_id=ANY($1::uuid[]) AND state='reserved'`,[handle.reservationIds]);
@@ -458,7 +529,7 @@ export class SessionAutomationRuntimeGuard {
   }
 
   async recordBackgroundResource(
-    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'automationFence'>,
+    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
     childRunId: string,
     state: 'active' | 'released',
@@ -474,7 +545,13 @@ export class SessionAutomationRuntimeGuard {
              version=${this.tables.backgroundResources}.version+1,updated_at=now()`,
       [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
         lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, childRunId, state,
-        JSON.stringify({ childRunId, parentRunId: lineage.executionRunId })],
+        JSON.stringify({
+          childRunId,
+          invokingSessionId: lineage.invokingSessionId,
+          invokingRunId: lineage.invokingRunId,
+          rootSessionId: lineage.sessionId,
+          rootRunId: lineage.executionRunId,
+        })],
     );
     if(state==='released'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource' AND object_id IN (SELECT background_resource_id::text FROM ${this.tables.backgroundResources} WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,resourceKey]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
   }

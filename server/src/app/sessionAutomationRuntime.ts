@@ -64,6 +64,7 @@ export function createSessionAutomationWorkers(options: {
     options.store.pool,
     options.store.tablePrefix,
     options.store.runsTable,
+    options.executionEnabled,
   );
   const evaluator = new SessionAutomationEvaluator(options.store, new ModelGoalEvaluator({
     ...options.evaluator,

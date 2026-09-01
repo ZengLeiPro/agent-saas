@@ -245,7 +245,7 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       automationFence: deriveChildAutomationFence(
         setup.context.automationFence,
         childRunId,
-        setup.sessionId,
+        { sessionId: setup.sessionId, runId: setup.dispatch.targetRunId },
       ),
     } as RunContext;
 

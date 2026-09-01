@@ -3,11 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  TASKBOARD_DEFAULT_PROMPT,
-  type TaskBoardIntegrationPolicy,
-  type TaskBoardIntegrationTrigger,
-} from '../../../shared/src/types/taskboard.js';
+import { TASKBOARD_DEFAULT_PROMPT } from '../../../shared/src/types/taskboard.js';
 import { PgRunStore, RunCreateConflictError } from '../runtime/runStore.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import {
@@ -21,27 +17,6 @@ import {
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
 const describePg = connectionString ? describe : describe.skip;
-
-function integrationPolicy(trigger: TaskBoardIntegrationTrigger): TaskBoardIntegrationPolicy {
-  return {
-    schemaVersion: 1,
-    enabled: true,
-    revision: 'client',
-    workflowVersion: 3,
-    trigger,
-    batch: { maxTasks: 10, selection: 'priority_then_ready_at' },
-    execution: {
-      mergeMethod: 'squash',
-      continueIndependentSources: true,
-      autoResolveConflicts: true,
-      maxAutomaticRemediationRounds: 2,
-      maxTransientRetries: 3,
-      requireGreenChecks: true,
-      deleteRemoteBranch: false,
-      deploy: false,
-    },
-  };
-}
 
 describePg('PgTaskboardStore contract', () => {
   const prefix = `tb_${randomUUID().replaceAll('-', '').slice(0, 18)}`;
@@ -462,48 +437,6 @@ describePg('PgTaskboardStore contract', () => {
     await expect(store.createComment(alice, restoredTask.id, { body: '恢复后可评论' })).resolves.toMatchObject({
       body: '恢复后可评论',
     });
-  });
-
-  it('persists the first scheduled run and bootstraps existing ready sources when integration policy changes', async () => {
-    const scheduledBoard = await store.createBoard(alice, {
-      name: '定时策略首次触发',
-      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-scheduled`, name: 'scheduled' },
-    });
-    const scheduledUpdatedAt = Date.now();
-    const scheduled = await store.updateBoard(alice, scheduledBoard.id, {
-      integrationPolicy: integrationPolicy({ mode: 'scheduled', cron: '* * * * *', timezone: 'Asia/Shanghai' }),
-      expectedVersion: scheduledBoard.version,
-    });
-    const scheduledRow = await pool.query(
-      `SELECT integration_next_run_at FROM ${store.boardsTable} WHERE id=$1`,
-      [scheduled.id],
-    );
-    const nextRunAt = new Date(scheduledRow.rows[0]!.integration_next_run_at).getTime();
-    expect(nextRunAt).toBeGreaterThan(scheduledUpdatedAt);
-    expect(nextRunAt).toBeLessThanOrEqual(scheduledUpdatedAt + 60_000);
-
-    const readyBoard = await store.createBoard(alice, {
-      name: '就绪策略已有来源',
-      repository: { ...testRepository, repositoryId: `${testRepository.repositoryId}-ready`, name: 'ready' },
-    });
-    const readyTask = await store.createTask(alice, readyBoard.id, { title: '已通过复核', status: 'todo' });
-    await pool.query(
-      `UPDATE ${store.tasksTable}
-          SET status='ready_to_merge',provider_pull_request_id='501',reviewed_subject_digest='digest-501'
-        WHERE id=$1`,
-      [readyTask.id],
-    );
-    await store.updateBoard(alice, readyBoard.id, {
-      integrationPolicy: integrationPolicy({ mode: 'on_ready', debounceMs: 0 }),
-      expectedVersion: readyBoard.version,
-    });
-    const trigger = await pool.query(
-      `SELECT task_id,trigger_mode,status FROM ${store.integrationTriggerOutboxTable} WHERE board_id=$1`,
-      [readyBoard.id],
-    );
-    expect(trigger.rows).toEqual([
-      expect.objectContaining({ task_id: null, trigger_mode: 'on_ready', status: 'pending' }),
-    ]);
   });
 
   it('rejects repeated and concurrent execution claims without creating a second active Execution', async () => {

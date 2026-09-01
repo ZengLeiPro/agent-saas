@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TaskBoardIntegrationPolicy } from '../../../shared/src/types/taskboard.js';
-import { integrationPolicyNextRunAt } from './store.js';
+import { integrationPolicyNextRunAt } from './integrationPolicySchedule.js';
 
 function policy(cron: string, timezone = 'Asia/Shanghai'): TaskBoardIntegrationPolicy {
   return {
@@ -24,11 +24,10 @@ function policy(cron: string, timezone = 'Asia/Shanghai'): TaskBoardIntegrationP
   };
 }
 
-describe('integration policy scheduling', () => {
+describe('integration policy schedule initialization', () => {
   it('anchors the first scheduled occurrence when the policy is saved', () => {
     const now = Date.parse('2026-09-02T01:49:58+08:00');
     expect(integrationPolicyNextRunAt(policy('50 1 * * *'), now)?.toISOString())
       .toBe('2026-09-01T17:50:00.000Z');
   });
-
 });

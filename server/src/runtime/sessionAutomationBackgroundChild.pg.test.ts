@@ -330,7 +330,10 @@ describePg('automation background child recovery on PostgreSQL', () => {
       `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,
       [tenantId, persisted!.runId],
     );
-    expect(released.rows[0]?.state).toBe('released');
+    if (released.rows[0]?.state !== 'released') {
+      const failed = await runs.get(persisted!.runId);
+      throw new Error(`background child resource did not release: ${JSON.stringify(failed?.metadata.backgroundResult)}`);
+    }
 
     await expect(guard.beforeModel({
       ...childContext,

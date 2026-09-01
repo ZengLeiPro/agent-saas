@@ -174,35 +174,48 @@ export function CapabilityFilterTabs<T extends string>({
   value,
   onValueChange,
   className,
+  wrap = false,
 }: {
   ariaLabel: string;
   options: CatalogFilterOption<T>[];
   value: T;
   onValueChange: (value: T) => void;
   className?: string;
+  /**
+   * 换行排列而非横向滚动。放在弹层/面板里时必须开启：
+   * 容器宽度固定、横向滚动条又被隐藏，溢出的选项会变成看不见也发现不了的死选项。
+   */
+  wrap?: boolean;
 }) {
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
       className={cn(
-        "flex gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "flex gap-1.5",
+        wrap
+          ? "flex-wrap"
+          : "overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         className,
       )}
     >
       {options.map((option) => {
         const selected = value === option.value;
+        // 选不出任何结果的档位不值得占用点击面积，但当前选中的那档要留着好切走
+        const empty = option.count === 0 && !selected;
         return (
           <button
             key={option.value}
             type="button"
             role="tab"
             aria-selected={selected}
+            disabled={empty}
             className={cn(
               "group/chip relative shrink-0 rounded-full border px-3 py-1.5 text-sm transition-[color,background-color,border-color,box-shadow] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
               selected
                 ? "border-brand-200 bg-brand-50 font-medium text-brand-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-brand-800 dark:bg-brand-900/40 dark:text-brand-200"
                 : "border-transparent bg-muted/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+              empty && "cursor-not-allowed opacity-45 hover:border-transparent hover:bg-muted/50 hover:text-muted-foreground",
             )}
             onClick={() => onValueChange(option.value)}
           >
@@ -250,6 +263,7 @@ export function CatalogToolbar<T extends string>({
   activeFilter,
   onFilterChange,
   actions,
+  sticky = false,
 }: {
   query: string;
   onQueryChange: (query: string) => void;
@@ -258,6 +272,8 @@ export function CatalogToolbar<T extends string>({
   activeFilter?: T;
   onFilterChange?: (filter: T) => void;
   actions?: ReactNode;
+  /** 长列表页开启：滚到底部仍能改搜索与筛选，与工作流页的粘性工具条保持一致。 */
+  sticky?: boolean;
 }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -280,7 +296,14 @@ export function CatalogToolbar<T extends string>({
   }, []);
 
   return (
-    <div className="mb-5 space-y-3">
+    <div
+      className={cn(
+        "space-y-3",
+        sticky
+          ? "sticky top-0 z-10 -mx-4 mb-5 border-b border-border/50 bg-card/85 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6"
+          : "mb-5",
+      )}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1 sm:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -293,14 +316,16 @@ export function CatalogToolbar<T extends string>({
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="h-10 rounded-xl border-transparent bg-muted/50 pl-9 pr-20 shadow-none focus-visible:bg-card"
+            // type=search 让 WebKit/Blink 自带一个清除按钮，与下面的自定义按钮重复出现。
+            // 语义保留 search，外观由我们自己画。
+            className="h-10 rounded-xl border-transparent bg-muted/50 pl-9 pr-10 shadow-none focus-visible:bg-card [&::-webkit-search-cancel-button]:appearance-none"
           />
           {query ? (
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-9 top-1/2 size-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
+              className="absolute right-2 top-1/2 size-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
               onClick={() => {
                 onQueryChange("");
                 searchInputRef.current?.focus();
@@ -309,10 +334,12 @@ export function CatalogToolbar<T extends string>({
             >
               <X className="size-3.5" />
             </Button>
-          ) : null}
-          <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-border/70 bg-card px-1.5 py-0.5 font-sans text-2xs text-muted-foreground sm:block">
-            /
-          </kbd>
+          ) : (
+            /* 快捷键提示只在空态有意义：有内容时这一格让给清除按钮 */
+            <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-border/70 bg-card px-1.5 py-0.5 font-sans text-2xs text-muted-foreground sm:block">
+              /
+            </kbd>
+          )}
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>

@@ -232,4 +232,40 @@ describe("SkillSelector 能力目录", () => {
     fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
     expect(screen.getByText("组织 CRM")).toBeTruthy();
   });
+
+  it("来源筛选的计数跟随搜索结果，且选不出东西的档位不可点", () => {
+    render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
+    const sourceTabs = () =>
+      within(screen.getByRole("tablist", { name: "能力来源筛选" }))
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent?.replace(/\s+/g, ""));
+
+    expect(sourceTabs()).toEqual(["全部3", "已启用1", "平台提供1", "组织提供1", "我创建的1"]);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索技能名称或描述" }), {
+      target: { value: "周报" },
+    });
+
+    // 计数必须落到搜索后的集合上，否则 chip 显示 3 而列表只有 1 条，同屏自相矛盾
+    expect(sourceTabs()).toEqual(["全部1", "已启用1", "平台提供0", "组织提供0", "我创建的1"]);
+    const emptyTab = within(screen.getByRole("tablist", { name: "能力来源筛选" })).getByRole("tab", {
+      name: /平台提供/,
+    });
+    expect(emptyTab).toHaveProperty("disabled", true);
+  });
+
+  it("组内来源单一时不再逐卡重复标注来源", async () => {
+    render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
+    await screen.findByText("平台分析");
+
+    // 分区标题已经说明了这组的来源，卡片上不必再挂一遍「平台提供」徽标与「平台内置」脚注
+    expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
+      "已启用",
+      "平台提供",
+      "组织提供",
+    ]);
+    expect(screen.queryByText("平台内置")).toBeNull();
+    expect(screen.queryByText("组织技能")).toBeNull();
+    expect(screen.queryByText("个人技能")).toBeNull();
+  });
 });

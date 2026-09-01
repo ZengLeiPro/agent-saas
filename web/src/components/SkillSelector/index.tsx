@@ -48,6 +48,26 @@ function skillSource(skill: UserSkillInfo): CapabilitySource {
   return "platform";
 }
 
+/**
+ * 一组卡片内的启用状态是否混杂。
+ *
+ * 状态标记的强度应与它的稀有度成正比：组内 100% 同态时这个标记不携带信息，
+ * 分区标题（「已启用 19」）已经说清楚了，每张卡再用底色+竖条+图标色+文字复述一遍，
+ * 只会让整页泛绿。只有混杂时，卡片才需要自己标状态。
+ */
+function hasMixedSelection(list: UserSkillInfo[], selections: Record<string, boolean>): boolean {
+  if (list.length < 2) return false;
+  const first = selections[list[0].id] === true;
+  return list.some((skill) => (selections[skill.id] === true) !== first);
+}
+
+/** 同理：组内来源单一时，每张卡都挂一个「平台提供」是零信息重复。 */
+function hasMixedSource(list: UserSkillInfo[]): boolean {
+  if (list.length < 2) return false;
+  const first = skillSource(list[0]);
+  return list.some((skill) => skillSource(skill) !== first);
+}
+
 function sourceDescription(source: CapabilitySource): string {
   if (source === "organization") return "由当前组织提供，并按组织规则开放给成员使用。";
   if (source === "personal") return "由你创建，仅你本人可以管理和使用。";
@@ -104,20 +124,30 @@ export function SkillSelector({
     [data],
   );
 
-  const filteredSkills = useMemo(() => {
+  /**
+   * 只按搜索词过滤、不含来源过滤的集合。
+   * 来源 chip 的计数必须基于它——否则搜索后 chip 还显示全量数字，
+   * 会和分区标题上的实际条数互相矛盾。
+   */
+  const querySkills = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    return skills.filter((skill) => {
-      const source = skillSource(skill);
-      const matchesSource =
-        activeFilter === "all" ||
-        (activeFilter === "enabled" ? localSelections[skill.id] === true : source === activeFilter);
-      const matchesQuery =
-        !normalizedQuery ||
+    if (!normalizedQuery) return skills;
+    return skills.filter(
+      (skill) =>
         skill.name.toLocaleLowerCase().includes(normalizedQuery) ||
-        skill.description.toLocaleLowerCase().includes(normalizedQuery);
-      return matchesSource && matchesQuery;
-    });
-  }, [activeFilter, localSelections, query, skills]);
+        skill.description.toLocaleLowerCase().includes(normalizedQuery),
+    );
+  }, [query, skills]);
+
+  const filteredSkills = useMemo(
+    () =>
+      querySkills.filter((skill) => {
+        if (activeFilter === "all") return true;
+        if (activeFilter === "enabled") return localSelections[skill.id] === true;
+        return skillSource(skill) === activeFilter;
+      }),
+    [activeFilter, localSelections, querySkills],
+  );
 
   const groupedSkills = useMemo(() => {
     if (activeFilter !== "all") return null;
@@ -142,25 +172,29 @@ export function SkillSelector({
   const enabledCount = Object.values(localSelections).filter(Boolean).length;
   const filters = useMemo(
     () => [
-      { value: "all" as const, label: "全部", count: skills.length },
-      { value: "enabled" as const, label: "已启用", count: enabledCount },
+      { value: "all" as const, label: "全部", count: querySkills.length },
+      {
+        value: "enabled" as const,
+        label: "已启用",
+        count: querySkills.filter((skill) => localSelections[skill.id] === true).length,
+      },
       {
         value: "platform" as const,
         label: "平台提供",
-        count: skills.filter((skill) => skillSource(skill) === "platform").length,
+        count: querySkills.filter((skill) => skillSource(skill) === "platform").length,
       },
       {
         value: "organization" as const,
         label: "组织提供",
-        count: skills.filter((skill) => skillSource(skill) === "organization").length,
+        count: querySkills.filter((skill) => skillSource(skill) === "organization").length,
       },
       {
         value: "personal" as const,
         label: "我创建的",
-        count: skills.filter((skill) => skillSource(skill) === "personal").length,
+        count: querySkills.filter((skill) => skillSource(skill) === "personal").length,
       },
     ],
-    [enabledCount, skills],
+    [localSelections, querySkills],
   );
 
   const toggle = useCallback(
@@ -317,17 +351,27 @@ export function SkillSelector({
     </>
   );
 
-  const renderSkillCard = (skill: UserSkillInfo, index: number) => {
+  const renderSkillCard = (
+    skill: UserSkillInfo,
+    index: number,
+    { showState, showSource }: { showState: boolean; showSource: boolean },
+  ) => {
     const source = skillSource(skill);
     const selected = localSelections[skill.id] === true;
+    // 状态既由卡片自己标，也由分区标题标时，只保留一处
+    const markSelected = selected && showState;
     const SkillGlyph = skillIcon(skill.id);
+    // 有版本号就显示版本号；没有时才回落到来源名，
+    // 且仅在组内来源混杂时才有意义——否则这行会在每张卡上重复同一个词
     const versionLabel = skill.governance?.version
       ? `v${skill.governance.version}`
-      : source === "platform"
-        ? "平台内置"
-        : source === "organization"
-          ? "组织技能"
-          : "个人技能";
+      : showSource
+        ? source === "platform"
+          ? "平台内置"
+          : source === "organization"
+            ? "组织技能"
+            : "个人技能"
+        : "";
     return (
       <Card
         key={skill.id}
@@ -336,7 +380,7 @@ export function SkillSelector({
           "cap-grid-item group relative cursor-pointer overflow-hidden border-0 shadow-none",
           CAPABILITY_SURFACE,
           CAPABILITY_SURFACE_HOVER,
-          selected &&
+          markSelected &&
             "ring-success/30 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-success/60",
         )}
         onClick={() => setDetailSkill(skill)}
@@ -354,7 +398,7 @@ export function SkillSelector({
           <div className="flex items-start gap-3">
             <CapabilityLogo
               label={skill.name}
-              tone={selected ? "bg-success/10 text-success-ink ring-success/20" : skillCategoryClass(skill.id)}
+              tone={markSelected ? "bg-success/10 text-success-ink ring-success/20" : skillCategoryClass(skill.id)}
             >
               <SkillGlyph className="size-5" />
             </CapabilityLogo>
@@ -364,9 +408,11 @@ export function SkillSelector({
                   <div className="truncate text-sm font-semibold">
                     <HighlightedText text={skill.name} query={query} />
                   </div>
-                  <div className="mt-1">
-                    <CapabilitySourceBadge source={source} className="px-1.5 text-2xs" />
-                  </div>
+                  {showSource ? (
+                    <div className="mt-1">
+                      <CapabilitySourceBadge source={source} className="px-1.5 text-2xs" />
+                    </div>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -400,7 +446,7 @@ export function SkillSelector({
           <div className="mt-auto flex items-center justify-between gap-2 pt-3 text-2xs text-muted-foreground">
             <span className="truncate">
               {versionLabel}
-              {selected ? " · 已启用" : ""}
+              {markSelected ? " · 已启用" : ""}
             </span>
             <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
               详情
@@ -427,6 +473,7 @@ export function SkillSelector({
         activeFilter={activeFilter}
         onFilterChange={setActiveFilter}
         actions={!headerTitle ? actionControls : undefined}
+        sticky={embedded}
       />
 
       <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
@@ -462,32 +509,48 @@ export function SkillSelector({
           </div>
         ) : groupedSkills ? (
           <div key={`${query}-${activeFilter}-${enabledCount}`}>
-            {groupedSkills.map((group, groupIndex) => (
-              <section
-                key={group.id}
-                className={groupIndex === 0 ? "" : "mt-6"}
-                aria-labelledby={`skill-group-${group.id}`}
-              >
-                <div className="sticky top-[3.25rem] z-[5] -mx-1 mb-2 flex items-center gap-2 bg-card/85 px-1 py-1.5 backdrop-blur-sm">
-                  <h3 id={`skill-group-${group.id}`} className="text-xs font-medium text-foreground">
-                    {group.label}
-                  </h3>
-                  <span className="rounded-full bg-muted px-1.5 text-2xs tabular-nums text-muted-foreground">
-                    {group.skills.length}
-                  </span>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-                  {group.skills.map((skill, index) => renderSkillCard(skill, index))}
-                </div>
-              </section>
-            ))}
+            {groupedSkills.map((group, groupIndex) => {
+              // 组内同态时把状态/来源交给分区标题表达，卡片不再重复
+              const showState = hasMixedSelection(group.skills, localSelections);
+              const showSource = hasMixedSource(group.skills);
+              return (
+                <section
+                  key={group.id}
+                  className={groupIndex === 0 ? "" : "mt-6"}
+                  aria-labelledby={`skill-group-${group.id}`}
+                >
+                  {/* 不做 sticky：组只有 2–4 个，粘住的收益抵不上它压在卡片上的穿帮感；
+                      改用一条延伸到右边的细线划出分组边界，不额外占高度 */}
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <h3
+                      id={`skill-group-${group.id}`}
+                      className="shrink-0 text-xs font-medium tracking-wide text-foreground"
+                    >
+                      {group.label}
+                    </h3>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-2xs tabular-nums text-muted-foreground">
+                      {group.skills.length}
+                    </span>
+                    <span className="h-px flex-1 bg-border/60" aria-hidden="true" />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                    {group.skills.map((skill, index) => renderSkillCard(skill, index, { showState, showSource }))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         ) : (
           <div
             key={`${query}-${activeFilter}-${enabledCount}`}
             className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
           >
-            {filteredSkills.map((skill, index) => renderSkillCard(skill, index))}
+            {filteredSkills.map((skill, index) =>
+              renderSkillCard(skill, index, {
+                showState: hasMixedSelection(filteredSkills, localSelections),
+                showSource: hasMixedSource(filteredSkills),
+              }),
+            )}
           </div>
         )}
       </div>

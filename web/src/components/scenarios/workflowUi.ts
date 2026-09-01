@@ -163,18 +163,21 @@ export interface WorkflowCta {
 }
 
 /**
- * 有预定义剧本时优先展示纯回放；没有剧本时按服务端成熟度进入真实接入路径。
+ * 有预定义剧本时补一个「看演示」入口；没有剧本时按服务端成熟度进入真实接入路径。
  * 展示能力与执行能力只共享 UI 契约，不共享 Runtime。
+ *
+ * 槽位按语义固定，不随是否有剧本而互换：
+ *   次槽（左）= 了解类（看演示 / 查看工作流），主槽（右）= 行动类（接入我的系统 / 立即试一试）。
+ * 卡片按 secondary → primary 顺序渲染，所以这样能保证整屏卡片的右侧末位永远是同一类动作；
+ * 否则同一个位置一半卡是轻浏览、一半卡是接生产系统的重承诺，用户没法形成肌肉记忆。
  */
 export function workflowCta(scenario: CatalogScenarioPublic): WorkflowCta {
   const operational = workflowOperationalCta(scenario);
-  // 手写剧本与 Workflow V3 presentation 同权：能看演示的场景，主按钮就是看演示
   if (hasReplayScript(scenario)) {
     return {
-      action: "presentation",
-      label: "看演示",
-      secondaryLabel: operational.label,
-      secondaryAction: operational.action,
+      ...operational,
+      secondaryLabel: "看演示",
+      secondaryAction: "presentation",
     };
   }
   return operational;

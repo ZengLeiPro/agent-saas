@@ -227,9 +227,12 @@ describe('TASK-359 ordinary Delivery finish transitions', () => {
     expect(provider.inspectPullRequest).not.toHaveBeenCalled();
   });
 
-  it('moves Review to ready_to_merge without review subject, inspection, or Provider CI', async () => {
-    const client = deliveryClient('in_review', 'review');
-    const provider = { getPullRequest: vi.fn(), inspectPullRequest: vi.fn() };
+  it('moves Review to ready_to_merge with an attached PR even when Provider is unavailable', async () => {
+    const client = deliveryClient('in_review', 'review', '400');
+    const provider = {
+      getPullRequest: vi.fn(async () => { throw new Error('github unavailable'); }),
+      inspectPullRequest: vi.fn(),
+    };
 
     await expect(finishExecutionV2(options(client, provider), identity, 'run-359', {
       targetStatus: 'ready_to_merge', body: 'Independent review approved the delivery.',

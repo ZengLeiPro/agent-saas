@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  attachExecutionPullRequest,
   inspectExecutionPullRequest,
   readExecutionPullRequestJobLog,
   type DeliveryPullRequestHost,
@@ -101,5 +102,70 @@ describe('execution pull request observations', () => {
     await expect(readExecutionPullRequestJobLog(value, identity, 'run-review-1', '9999'))
       .rejects.toMatchObject({ code: 'TASKBOARD_CI_LOG_SCOPE_INVALID' });
     expect(getWorkflowJobLog).not.toHaveBeenCalled();
+  });
+});
+
+describe('Integration Agent pull request attachment', () => {
+  it('updates only columns that exist in the Integration Agent schema', async () => {
+    const integrationSnapshot = {
+      ...snapshot,
+      providerPullRequestId: '400',
+      number: 400,
+      headRef: 'integration/task-400',
+      headOid: 'head-400',
+      baseOid: 'base-400',
+      observedChecks: [],
+      workflowRuns: [],
+    };
+    const context = {
+      query: vi.fn(async () => ({ rows: [{
+        task_id: 'integration-1', kind: 'integration', task_branch: null,
+        provider_pull_request_id: null, execution_id: 'execution-400', purpose: 'work',
+        execution_status: 'running', transitioned_at: null, superseded_at: null,
+        repository: {
+          provider: 'github', repositoryId: 'github:acme/repo', owner: 'acme', name: 'repo',
+          baseBranch: 'main', allowForkPullRequest: false,
+        },
+        owner_user_id: identity.ownerUserId, agent_task_id: 'integration-1',
+        agent_provider_pull_request_id: null, integration_branch: 'integration/task-400',
+      }] })),
+      release: vi.fn(),
+    };
+    const now = new Date('2026-09-01T12:00:00.000Z');
+    const transaction = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT id FROM tasks')) return { rows: [{ id: 'integration-1' }] };
+        if (sql.includes('SELECT id FROM executions')) return { rows: [{ id: 'execution-400' }] };
+        if (sql.includes('UPDATE integration_agents')) {
+          if (sql.includes('admission_receipt')) throw new Error('column "admission_receipt" does not exist');
+          return { rows: [{ integration_task_id: 'integration-1' }] };
+        }
+        if (sql.includes('SELECT t.*')) return { rows: [{
+          id: 'integration-1', board_id: 'board-1', identifier: 'TASK-400', kind: 'integration',
+          title: 'Integration', description: '', attachments: [], status: 'in_progress',
+          priority: 'high', labels: [], sort_order: 1, stage_models: {}, workflow_version: 3,
+          workflow_epoch: 1, next_action: 'none', next_action_revision: 0,
+          comment_count: 0, version: 1, created_at: now, updated_at: now,
+        }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const clients = [context, transaction];
+    const value = {
+      ...host({ getPullRequest: vi.fn(async () => integrationSnapshot), mergePullRequest: vi.fn() }),
+      pool: { connect: vi.fn(async () => clients.shift()!) },
+    } as unknown as DeliveryPullRequestHost;
+
+    await expect(attachExecutionPullRequest(value, identity, 'run-integration-400', '400'))
+      .resolves.toMatchObject({ id: 'integration-1', kind: 'integration' });
+
+    const updateSql = transaction.query.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('UPDATE integration_agents')) ?? '';
+    expect(updateSql).toContain('provider_pull_request_id');
+    expect(updateSql).toContain('review_head_oid=NULL');
+    expect(updateSql).toContain('review_execution_id=NULL');
+    expect(updateSql).not.toContain('admission_receipt');
   });
 });

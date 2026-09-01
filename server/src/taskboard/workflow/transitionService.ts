@@ -6,7 +6,6 @@ import type {
   TaskBoardExecutionFinishInput,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
-import { reconcileExecutionPullRequestMerge } from '../deliveryPullRequests.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
@@ -30,10 +29,6 @@ export async function finishExecutionV2(
   runId: string,
   input: TaskBoardExecutionFinishInput,
 ): Promise<TaskBoardTask> {
-  if (input.targetStatus === 'ready_to_merge') {
-    const reconciled = await reconcileExecutionPullRequestMerge(options, identity, runId);
-    if (reconciled) return reconciled;
-  }
   return withTransaction(options, async (client) => {
     const ownership = await client.query(
       `SELECT e.task_id FROM ${options.executionsTable} e

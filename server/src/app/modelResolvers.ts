@@ -11,6 +11,7 @@
  * 刷新点挂在解析器上而不是定时器上——这里是所有模型解析的唯一入口；异步候选提交
  * 期间同步解析器 fail closed，完成后的下一次解析使用新配置。未变化时只有节流 statSync。
  */
+import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
 import type { AppConfig } from './config.js';
 import { getTenantPublicModelList, isModelAllowedForTenant, resolveModelRef } from './models.js';
 import type { TenantStore } from '../data/tenants/store.js';
@@ -69,6 +70,7 @@ export function createModelResolvers(params: {
   resolveRuntimeModels?: (
     next: NonNullable<AppConfig['models']>,
   ) => Promise<NonNullable<AppConfig['models']>>;
+  recoveryGate?: ConfigRuntimeRecoveryGate;
   /** config 文件重载成功后的回调（TASK-318：observed config identity 重算）。 */
   onConfigReloaded?: () => void;
   /** config 文件应用前的安全门禁（Production inline secret / ref version fail closed）。 */
@@ -89,6 +91,7 @@ export function createModelResolvers(params: {
   const sharedConfigRefresher = createSharedConfigRefresher({
     config,
     processCwd,
+    ...(params.recoveryGate ? { recoveryGate: params.recoveryGate } : {}),
     target: {
       titleGeneratorConfigs: params.titleGeneratorConfigs,
       ...(params.defaultTitleModel ? { defaultTitleModel: params.defaultTitleModel } : {}),

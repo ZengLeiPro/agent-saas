@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { parse as parseJsonc } from 'jsonc-parser';
+import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
 import type { AppConfig } from './config.js';
 import { getAppConfigPath, parseAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
@@ -175,6 +176,8 @@ export function createSharedConfigRefresher(params: {
   onModelsUpdated?: (
     nextConfig: AppConfig,
   ) => ModelsHotUpdateCommit | Promise<ModelsHotUpdateCommit>;
+  /** 共享恢复门 dirty 时所有 config 推进与发布 fail closed。 */
+  recoveryGate?: ConfigRuntimeRecoveryGate;
   /** config 文件解析成功并应用后的回调（TASK-318：重算 observed identity）。 */
   onConfigReloaded?: () => void;
   /** 应用新配置前的门禁；支持异步校验，失败时保留旧内存配置。 */
@@ -195,6 +198,7 @@ export function createSharedConfigRefresher(params: {
     prepareWebToolsUpdate,
     prepareSttUpdate,
     onModelsUpdated,
+    recoveryGate,
     onConfigReloaded,
     validateConfigReload,
     tenantStore,
@@ -502,6 +506,10 @@ export function createSharedConfigRefresher(params: {
       resolvedCandidateStt?: SttRuntimeUpdateCommit,
       resolvedRollbackStt?: SttRuntimeUpdateCommit,
     ): boolean => {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
       // prepare/SecretVault 期间已被覆盖时，候选尚无副作用，直接丢弃。
       if (!sameStamp(readStamp(configPath), stamp)) {
         configRefreshNeedsRetry = true;
@@ -622,6 +630,10 @@ export function createSharedConfigRefresher(params: {
 
   return {
     refreshIfChanged(force = false): boolean | Promise<boolean> {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
       if (pendingConfigRefresh) {
         const tenantsFresh = refreshTenantsFile();
         return pendingConfigRefresh.then((configFresh) => configFresh && tenantsFresh);
@@ -642,6 +654,10 @@ export function createSharedConfigRefresher(params: {
         : configFresh && tenantsFresh;
     },
     acknowledgeConfigApplied(expectedConfigText) {
+      if (recoveryGate?.isDirty()) {
+        configRefreshNeedsRetry = true;
+        return false;
+      }
       const snapshot = readSnapshot(configPath);
       if (dirtyConfigChanges.size > 0) {
         configRefreshNeedsRetry = true;

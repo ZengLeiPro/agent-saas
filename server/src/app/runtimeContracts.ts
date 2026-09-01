@@ -1,4 +1,5 @@
 import type { AppConfig } from '../types/index.js';
+import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
@@ -149,6 +150,8 @@ export interface AppRuntime {
    * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
    */
   getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
+  /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门。 */
+  configRuntimeRecoveryGate: ConfigRuntimeRecoveryGate;
   memoryIndexShutdown?: () => Promise<void>;
   /** Runtime audit DuckDB 句柄关闭（仅 audit.projection='duckdb' 时定义） */
   auditProjectionShutdown?: () => Promise<void>;

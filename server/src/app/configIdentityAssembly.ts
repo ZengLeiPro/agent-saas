@@ -2,6 +2,7 @@ import type { ConfigIdentitySummary } from '@agent/shared';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
+import { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
@@ -31,6 +32,7 @@ export function createPrivateSummaryPublisher(
 }
 
 export interface RuntimeConfigIdentityAssembly {
+  recoveryGate: ConfigRuntimeRecoveryGate;
   modelResolverHooks: {
     validateConfigReload?: (next: AppConfig) => Promise<void>;
     onConfigReloaded: () => void;
@@ -49,6 +51,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
   processCwd: string;
   logger: { info: (message: string) => void; warn: (message: string) => void };
 }): Promise<RuntimeConfigIdentityAssembly> {
+  const recoveryGate = new ConfigRuntimeRecoveryGate();
   const runtimeIdentity = readRuntimeIdentity(process.env);
   const snapshotPath = process.env.AGENT_SAAS_CONFIG_IDENTITY_PATH?.trim();
   const runtime = createConfigIdentityRuntime({
@@ -67,11 +70,15 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
   });
   await runtime.initialize();
   return {
+    recoveryGate,
     modelResolverHooks: {
       ...(runtimeIdentity.environment === 'production'
         ? { validateConfigReload: (next: AppConfig) => runtime.validateConfigReload(next) }
         : {}),
-      onConfigReloaded: () => runtime.notifyConfigChanged('config_file_hot_reload'),
+      onConfigReloaded: () => {
+        if (recoveryGate.isDirty()) runtime.invalidateObservation();
+        else runtime.notifyConfigChanged('config_file_hot_reload');
+      },
     },
     invalidate: () => runtime.invalidateObservation(),
     getSummary: () => runtime.getSummary(),

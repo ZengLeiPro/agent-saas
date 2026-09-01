@@ -15,6 +15,7 @@ import { basename, dirname, join } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 
 import { parseAppConfig, type AppConfig } from '../app/config.js';
+import type { ConfigRuntimeRecoveryGate } from './runtimeRecoveryGate.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
 const LOCK_STALE_MS = 120_000;
@@ -134,6 +135,7 @@ export class AdminConfigMutationService {
       processCwd: string;
       environment: RuntimeEnvironment;
       processRole: string;
+      recoveryGate?: ConfigRuntimeRecoveryGate;
       now?: () => Date;
       /** durable commit 完成后发布实际落盘文本对应的运行时配置身份。 */
       onCommitted?: (candidateText: string) => void | Promise<void>;
@@ -218,7 +220,6 @@ export class AdminConfigMutationService {
         if (!diskRestored && recoveryError === undefined) {
           recoveryError = new Error('回滚后的磁盘配置未恢复到原版本');
         }
-
         let rollbackError: unknown;
         try {
           await input.applyRuntime(previousConfig, config);
@@ -253,7 +254,7 @@ export class AdminConfigMutationService {
             candidateStillOwned,
             diskRestored,
           };
-          this.invalidateRuntimeIdentity();
+          this.markRuntimeDirty();
         }
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
@@ -305,17 +306,13 @@ export class AdminConfigMutationService {
     if (diskText !== recovery.targetText && recoveryError === undefined) {
       recoveryError = new Error('恢复前磁盘配置已变化');
     }
-    if (recoveryError === undefined) {
-      try {
-        await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
-        await this.options.onCommitted?.(recovery.targetText);
-      } catch (error) {
-        recoveryError = error;
-      }
-    }
 
     if (recoveryError === undefined) {
       try {
+        // 必须复用失败 mutation 原有 recipe，先恢复执行切面，再开放发布路径。
+        await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
+        this.options.recoveryGate?.clearDirty();
+        await this.options.onCommitted?.(recovery.targetText);
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: triggerActor,
@@ -340,7 +337,8 @@ export class AdminConfigMutationService {
       }
     }
 
-    this.invalidateRuntimeIdentity();
+    // applyRuntime 失败时 gate 本就 dirty；发布或 audit 后续失败时必须立即重新关闭。
+    this.markRuntimeDirty();
     await this.appendAudit({
       at: (this.options.now?.() ?? new Date()).toISOString(),
       actor: triggerActor,
@@ -368,11 +366,12 @@ export class AdminConfigMutationService {
     );
   }
 
-  private invalidateRuntimeIdentity(): void {
+  private markRuntimeDirty(): void {
+    this.options.recoveryGate?.markDirty();
     try {
       this.options.onRuntimeDirty?.();
     } catch {
-      // dirty latch remains authoritative even if an observer cannot be invalidated.
+      // gate remains authoritative even if an observer cannot be invalidated.
     }
   }
 

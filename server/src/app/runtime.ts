@@ -1546,7 +1546,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>; let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>; let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
-    processCwd,
+    processCwd, recoveryGate: configIdentityAssembly.recoveryGate,
     tenantStore,
     tenantsFilePath,
     logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
@@ -2923,7 +2923,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,
-    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary,
+    cronRuntime, getConfigIdentitySummary: configIdentityAssembly.getSummary, configRuntimeRecoveryGate: configIdentityAssembly.recoveryGate,
     getMemoryIndexService: () => memoryIndexServiceRef.current,
     getMemoryConsolidationScannerStatus: memoryConsolidationStore ? () => memoryConsolidationStore!.getScannerStatus('memory-consolidation-v1') : undefined,
     memoryIndexShutdown,

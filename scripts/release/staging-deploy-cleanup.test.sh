@@ -121,10 +121,10 @@ run_case signal HUP 0 129
 run_case signal INT 0 130
 run_case signal TERM 0 143
 
-# Executable fixture: an already-migrated mutable config remains authoritative when the
-# legacy file is absent, receives the deploy-time mutation, and is the exact file read by
-# config-identity-cli. The fixture mirrors the absolute path declared by the systemd unit
-# under its temporary root so no host path is touched.
+# Executable fixtures: an already-migrated mutable config remains authoritative, and a
+# first deployment exercises the real legacy-to-mutable migration branch. Both receive the
+# deploy-time mutation and are read by config-identity-cli from the path declared by systemd.
+# Each case uses an isolated temporary root, so no host path is touched.
 config_selection="$tmp/staging-config-selection.sh"
 sed -n \
   '/^install -d -o agent-saas-staging .*"\$config_root"$/,/^chmod 0600 "\$server_config"$/p' \
@@ -157,15 +157,29 @@ server_env="$FIXTURE_ROOT/etc/agent-saas-staging/server.env"
 
 mkdir -p "$(dirname "$server_config")" "$(dirname "$server_env")" \
   "$target/server/dist" "$(dirname "$current")"
-test ! -e "$legacy_server_config"
-cat > "$server_config" <<'JSON'
+case "$FIXTURE_CASE" in
+  already-migrated)
+    test ! -e "$legacy_server_config"
+    config_seed="$server_config"
+    ;;
+  first-migration)
+    test ! -e "$server_config"
+    mkdir -p "$(dirname "$legacy_server_config")"
+    config_seed="$legacy_server_config"
+    ;;
+  *)
+    echo "unknown config identity fixture case: $FIXTURE_CASE" >&2
+    exit 2
+    ;;
+esac
+cat > "$config_seed" <<JSON
 {
-  "fixtureStage": "first-migration",
+  "fixtureStage": "$FIXTURE_CASE",
   "agent": { "sharedDir": "/legacy/shared" },
   "auth": { "jwtSecret": "fixture-jwt-secret" }
 }
 JSON
-cp "$server_config" "$FIXTURE_INITIAL_CONFIG"
+cp "$config_seed" "$FIXTURE_INITIAL_CONFIG"
 : > "$server_env"
 
 cat > "$target/server/dist/config-identity-cli.js" <<'NODE'
@@ -183,8 +197,11 @@ process.stdout.write(JSON.stringify({ schemaVersion: 1, digest: `sha256:${'a'.re
 NODE
 
 install() {
-  test "$1" = -d
-  mkdir -p "${@: -1}"
+  if [ "$1" = -d ]; then
+    mkdir -p "${@: -1}"
+  else
+    command install -m 0600 "${@: -2:1}" "${@: -1}"
+  fi
 }
 chown() { :; }
 chmod() { command chmod "$@"; }
@@ -192,6 +209,12 @@ chmod() { command chmod "$@"; }
 # Execute the deployment's real selection and final mutation/CLI slices.
 source "$CONFIG_SELECTION"
 cmp -s "$FIXTURE_INITIAL_CONFIG" "$server_config"
+if [ "$FIXTURE_CASE" = first-migration ]; then
+  # The deployment copies legacy into a same-directory candidate and atomically renames it.
+  # Its current compatibility semantics retain the unchanged legacy source.
+  cmp -s "$FIXTURE_INITIAL_CONFIG" "$legacy_server_config"
+  test ! -e "$config_root/.config.json.migrate-$deployment_attempt_id"
+fi
 source "$CONFIG_FINALIZE"
 printf '%s\n' "$config_identity" > "$FIXTURE_IDENTITY"
 cp "$server_config" "$FIXTURE_FINAL_CONFIG"
@@ -199,37 +222,43 @@ FIXTURE
 chmod +x "$config_identity_fixture"
 test -x "$config_identity_fixture"
 
-config_fixture_root="$tmp/config-identity-root"
-config_cli_log="$tmp/config-identity-cli.log"
-initial_config="$tmp/config-identity-initial.json"
-final_config="$tmp/config-identity-final.json"
-identity_json="$tmp/config-identity.json"
-FIXTURE_ROOT="$config_fixture_root" SYSTEMD_CONFIG_PATH="$systemd_config_path" \
-  CONFIG_SELECTION="$config_selection" CONFIG_FINALIZE="$config_finalize" \
-  CONFIG_IDENTITY_CLI_LOG="$config_cli_log" FIXTURE_INITIAL_CONFIG="$initial_config" \
-  FIXTURE_FINAL_CONFIG="$final_config" FIXTURE_IDENTITY="$identity_json" \
-  "$config_identity_fixture"
+run_config_identity_case() {
+  fixture_case="$1"
+  config_fixture_root="$tmp/config-identity-$fixture_case-root"
+  config_cli_log="$tmp/config-identity-$fixture_case-cli.log"
+  initial_config="$tmp/config-identity-$fixture_case-initial.json"
+  final_config="$tmp/config-identity-$fixture_case-final.json"
+  identity_json="$tmp/config-identity-$fixture_case.json"
+  FIXTURE_CASE="$fixture_case" FIXTURE_ROOT="$config_fixture_root" \
+    SYSTEMD_CONFIG_PATH="$systemd_config_path" CONFIG_SELECTION="$config_selection" \
+    CONFIG_FINALIZE="$config_finalize" CONFIG_IDENTITY_CLI_LOG="$config_cli_log" \
+    FIXTURE_INITIAL_CONFIG="$initial_config" FIXTURE_FINAL_CONFIG="$final_config" \
+    FIXTURE_IDENTITY="$identity_json" "$config_identity_fixture"
 
-node - "$config_cli_log" "$initial_config" "$final_config" \
-  "$config_fixture_root$systemd_config_path" <<'NODE'
+  node - "$config_cli_log" "$initial_config" "$final_config" \
+    "$config_fixture_root$systemd_config_path" "$fixture_case" <<'NODE'
 const fs = require('node:fs');
-const [logPath, initialPath, finalPath, systemdConfigPath] = process.argv.slice(2);
+const [logPath, initialPath, finalPath, systemdConfigPath, fixtureCase] = process.argv.slice(2);
 const invocation = JSON.parse(fs.readFileSync(logPath, 'utf8'));
 const initial = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
 const final = JSON.parse(fs.readFileSync(finalPath, 'utf8'));
-if (initial.fixtureStage !== 'first-migration' || initial.agent.sharedDir !== '/legacy/shared') {
-  throw new Error('fixture did not preserve the first migrated mutable config');
+if (initial.fixtureStage !== fixtureCase || initial.agent.sharedDir !== '/legacy/shared') {
+  throw new Error(`${fixtureCase} fixture did not preserve its source config`);
 }
 if (final.agent.sharedDir !== '/opt/agent-saas-staging/current/server/workspace-shared') {
-  throw new Error('deploy-time mutable config modification was not applied');
+  throw new Error(`${fixtureCase} deploy-time mutable config modification was not applied`);
 }
 if (invocation.configPath !== systemdConfigPath) {
   throw new Error(`CLI --config ${invocation.configPath} differs from systemd ${systemdConfigPath}`);
 }
 if (JSON.stringify(invocation.content) !== JSON.stringify(final)) {
-  throw new Error('config-identity-cli did not read the post-modification mutable config');
+  throw new Error(`${fixtureCase} config-identity-cli did not read the post-modification mutable config`);
 }
 NODE
+}
+
+run_config_identity_case already-migrated
+run_config_identity_case first-migration
 
 # Static/run-time fixture: the same run's attempts produce disjoint deploy paths.
 paths_for_attempt() {

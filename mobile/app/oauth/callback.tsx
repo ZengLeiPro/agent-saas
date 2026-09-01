@@ -37,7 +37,7 @@ export default function NativeOAuthCallback() {
     {!result ? <><ActivityIndicator /><Text style={styles.message}>正在校验一次性安全回跳…</Text></> : <>
       <Text style={[styles.title, result.ok ? styles.success : styles.error]}>{result.ok ? '授权已校验' : '授权未完成'}</Text>
       <Text style={styles.message}>{result.message}</Text>
-      <Pressable style={styles.button} onPress={() => router.replace('/settings/connections')}><Text style={styles.buttonText}>返回连接与授权</Text></Pressable>
+      <Pressable style={styles.button} onPress={() => router.replace('/(tabs)/settings')}><Text style={styles.buttonText}>返回设置</Text></Pressable>
     </>}
   </View>;
 }

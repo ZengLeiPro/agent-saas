@@ -35,8 +35,8 @@ import {
 import type { AgentProfile } from "@agent/shared";
 import { fetchMyGovernanceSummary, type MyGovernanceSummary } from "@agent/shared/lib/governanceApi";
 import { showTextPrompt } from "../../../src/lib/prompt";
-import { isV1RouteAllowed } from "../../../src/app/v1Capabilities";
-import { getV1BuildProfile } from "../../../src/app/v1Runtime";
+import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
+import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 

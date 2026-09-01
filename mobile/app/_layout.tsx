@@ -24,7 +24,7 @@ import {
   type EnterpriseUpdaterRuntimeConfig,
 } from '../src/updates/enterpriseUpdaterConfig';
 import { AppErrorBoundary } from '../src/components/ErrorBoundary';
-import { V1RouteGate } from '../src/app/V1RouteGate';
+import { V1RouteGate } from '../src/v1/V1RouteGate';
 import { useMobileTelemetry } from '../src/telemetry/capture';
 
 import { KeyboardProvider } from 'react-native-keyboard-controller';

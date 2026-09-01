@@ -76,7 +76,7 @@ describe('classifyV1Route', () => {
     expect(classifyV1Route('settings/users')).toBe('deferred');
     expect(classifyV1Route('settings/all-agents')).toBe('deferred');
     expect(classifyV1Route('chat/html-preview')).toBe('unclassified');
-    expect(classifyV1Route('settings/connections')).toBe('allowed');
+    expect(classifyV1Route('settings/connections')).toBe('deferred');
     expect(classifyV1Route('oauth/callback')).toBe('allowed');
   });
 
@@ -124,6 +124,7 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     }
     expect(isV1RouteAllowed('unknown-route', 'production')).toBe(false);
     expect(isV1RouteAllowed('settings/users', 'production')).toBe(false);
+    expect(isV1RouteAllowed('settings/connections', 'production')).toBe(false);
     expect(isV1RouteAllowed('cron-form', 'production')).toBe(false);
   });
 
@@ -141,6 +142,7 @@ describe('isV1RouteAllowed / isV1SegmentsAllowed（深链 allowlist）', () => {
     expect(isV1SegmentsAllowed(['chat', '[sessionId]'], 'production')).toBe(true);
     expect(isV1SegmentsAllowed([], 'production')).toBe(true); // app/index.tsx
     expect(isV1SegmentsAllowed(['settings', 'users'], 'production')).toBe(false);
+    expect(isV1SegmentsAllowed(['settings', 'connections'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['cron'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['webview-spike'], 'production')).toBe(false);
     expect(isV1SegmentsAllowed(['settings', 'users'], 'preview')).toBe(true);

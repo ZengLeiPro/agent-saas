@@ -40,7 +40,7 @@ const PRODUCTION_REACHABLE_UI: readonly string[] = [
   'src/components/settings/AgentProfileEditor.tsx',
   // 路由门禁本身也是生产可达代码（其 replace 目标为动态值，不受字符串扫描影响，
   // 行为由 v1RouteGate.runtime.test.tsx 运行时守卫覆盖）
-  'src/app/V1RouteGate.tsx',
+  'src/v1/V1RouteGate.tsx',
 ];
 
 /** 提取 push/replace/href 的字符串字面量目标（含模板字面量）。 */

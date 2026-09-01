@@ -55,7 +55,7 @@ export const V1_ALLOWED_ROUTES: readonly string[] = [
   'settings/agent-profile',
   'settings/user-detail/[userId]',
   'change-password',
-  'settings/connections',
+  // OAuth callback 保留最小安全回跳；Connections 管理页本身延期。
   'oauth/callback',
   // 系统分享附件入口（§2.1 #8）
   'share-target',
@@ -93,6 +93,7 @@ export const V1_DEFERRED_ROUTES: Readonly<Record<string, string>> = {
   'settings/skills-admin': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
   'settings/skills-tenant-admin': '§2.2 技能管理移动页延期（平台/租户管理走 Web）',
   'settings/my-permissions': '§1.3 V1 设置信息架构不含个人治理 UI（§2.2）',
+  'settings/connections': '§2.2 Connections/OAuth 原生管理入口延期；仅保留最小 OAuth callback（Gate A）',
 };
 
 /** 路由分类结果。 */

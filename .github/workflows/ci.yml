@@ -247,6 +247,9 @@ jobs:
       - name: Install frozen workspace dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Export real iOS and Android Router bundles
+        run: pnpm -F mobile check:router-export
+
       - name: Lint native Maestro flows and test M60-02 receipt contracts
         run: pnpm -F mobile lint:maestro && pnpm -F mobile test:m60-02
 

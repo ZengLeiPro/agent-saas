@@ -20,8 +20,8 @@ import type { UserInfo } from '@agent/shared';
 import { useAuth } from '../../../src/contexts/AuthContext';
 import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
-import { isV1RouteAllowed } from '../../../src/app/v1Capabilities';
-import { getV1BuildProfile } from '../../../src/app/v1Runtime';
+import { isV1RouteAllowed } from '../../../src/v1/v1Capabilities';
+import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {

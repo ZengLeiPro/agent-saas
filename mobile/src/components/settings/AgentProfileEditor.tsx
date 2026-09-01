@@ -49,8 +49,8 @@ import {
   DEFAULT_TENANT_SETTINGS,
 } from "@agent/shared";
 import { getServerUrl } from "../../platform/mobileConfig";
-import { isV1RouteAllowed } from "../../app/v1Capabilities";
-import { getV1BuildProfile } from "../../app/v1Runtime";
+import { isV1RouteAllowed } from "../../v1/v1Capabilities";
+import { getV1BuildProfile } from "../../v1/v1Runtime";
 
 interface AgentProfileEditorProps {
   username?: string;

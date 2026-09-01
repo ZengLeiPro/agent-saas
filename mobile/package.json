@@ -13,6 +13,7 @@
     "submit:ios": "./scripts/build.sh ios --submit",
     "typecheck": "tsc --noEmit",
     "check:expo": "pnpm exec expo install --check",
+    "check:router-export": "rm -rf .expo-export-ios .expo-export-android && EXPO_NO_TELEMETRY=1 EXPO_PUBLIC_V1_PROFILE=preview EAS_BUILD_PROFILE=preview expo export --platform ios --output-dir .expo-export-ios && EXPO_NO_TELEMETRY=1 EXPO_PUBLIC_V1_PROFILE=preview EAS_BUILD_PROFILE=preview expo export --platform android --output-dir .expo-export-android && node scripts/verify-router-export.mjs .expo-export-ios .expo-export-android",
     "test": "vitest run && node --test plugins/withAndroidSigningConfig.test.js plugins/withMobilePrivacyControls.test.js scripts/release-manifest.test.mjs scripts/android-distribution.test.mjs scripts/enterprise-update-manifest.test.mjs scripts/mobile-privacy-policy.test.mjs scripts/incoming-share-config.test.mjs scripts/native-policy.test.mjs scripts/mobile-release-evidence.test.mjs scripts/authorize-mobile-release-source.test.mjs scripts/mobile-release-workflows.test.mjs scripts/mobile-telemetry-release-gate.test.mjs e2e/maestro/tests/native-e2e.test.mjs rc/tests/rc-contract.test.mjs rc/tests/rc-workflow-security.test.mjs rehearsal/tests/rehearsal-contract.test.mjs rehearsal/tests/rehearsal-workflow.test.mjs rollout/tests/rollout-contract.test.mjs rollout/tests/rollout-workflow-security.test.mjs",
     "test:m60-02": "node --test e2e/maestro/tests/native-e2e.test.mjs",
     "lint:maestro": "node e2e/maestro/scripts/lint-maestro.mjs",

@@ -18,6 +18,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V1RouteGate } from './V1RouteGate';
 import CronListScreen from '../../app/cron/index';
+import ConnectionsScreen from '../../app/settings/connections';
 import * as sharedMod from '@agent/shared';
 
 // ── 可控运行时状态（vi.hoisted 保证先于 mock 工厂执行） ──────────────
@@ -198,6 +199,13 @@ const DEFERRED_CASES = [
     params: {},
     screen: <CronListScreen />,
     getSyncSpies: () => [vi.mocked(sharedMod.reportActivity), h.cronRefresh],
+  },
+  {
+    name: 'Connections 管理（延期）',
+    segments: ['settings', 'connections'],
+    params: {},
+    screen: <ConnectionsScreen />,
+    getSyncSpies: () => [vi.mocked(sharedMod.fetchMyMcp)],
   },
 ] as const;
 

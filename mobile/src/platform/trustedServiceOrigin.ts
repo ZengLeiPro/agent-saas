@@ -1,4 +1,4 @@
-import { resolveV1BuildProfile, type V1BuildProfile } from '../app/v1Capabilities';
+import { resolveV1BuildProfile, type V1BuildProfile } from '../v1/v1Capabilities';
 
 export type TrustedTransportKind = 'http' | 'websocket';
 

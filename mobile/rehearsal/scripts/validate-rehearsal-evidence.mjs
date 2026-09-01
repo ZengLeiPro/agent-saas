@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+import { readFile } from 'node:fs/promises';import { validateRehearsalEvidence } from './rehearsal-contract.mjs';import { loadPublicKeys } from '../../scripts/mobile-release-evidence.mjs';
+const args=Object.fromEntries(process.argv.slice(2).reduce((all,item,index,array)=>index%2===0?[...all,[item.replace(/^--/,''),array[index+1]]]:all,[]));if(!args.bundle)throw new Error('--bundle required');
+const plan=JSON.parse(await readFile(new URL('../rehearsal-plan.json',import.meta.url),'utf8'));const bundle=JSON.parse(await readFile(args.bundle,'utf8'));const releasePublicKeys=bundle.mode==='production'&&args.publicKeys?loadPublicKeys(args.publicKeys):undefined;process.stdout.write(`${JSON.stringify(await validateRehearsalEvidence(bundle,{plan,evidenceRoot:args.evidenceRoot,releasePublicKeys}))}\n`);

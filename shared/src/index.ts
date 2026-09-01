@@ -1490,3 +1490,7 @@ export type {
   OAuthCallbackTransaction,
   OAuthCallbackValidation,
 } from './lib/oauthCallbackBridge';
+
+// M70-02 signed mobile compatibility / N-1 contract
+export * from './mobileCompatibility/policy';
+export * from './mobileCompatibility/contracts';

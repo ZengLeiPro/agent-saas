@@ -552,7 +552,7 @@ export async function disablePgRunStoreLegacyWriterCapability(
     const registry = await client.query(`SELECT 1 FROM ${store.runsTable}_writer_capabilities
       WHERE db_role=$1 AND capability='legacy-single-tenant' AND enabled FOR UPDATE`, [dbRole]);
     if (registry.rowCount !== 1) throw new Error('enabled legacy writer capability was not registered');
-    const ddl = await client.query<{ sql: string }>(`SELECT format('ALTER ROLE %I NOLOGIN',$1) sql`, [dbRole]);
+    const ddl = await client.query<{ sql: string }>(`SELECT format('ALTER ROLE %I NOLOGIN',$1::text) sql`, [dbRole]);
     await client.query(ddl.rows[0]!.sql);
     await client.query(`UPDATE ${store.runsTable}_writer_capabilities
       SET enabled=false,disabled_at=clock_timestamp() WHERE db_role=$1`, [dbRole]);

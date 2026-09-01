@@ -9,6 +9,13 @@ import { describePg, testPgUrl } from './pgRunStoreSteering.pg.testHelpers.js';
 
 const { Pool } = pg;
 
+function roleConnectionString(connectionString: string, role: string, password: string): string {
+  const url = new URL(connectionString);
+  url.username = role;
+  url.password = password;
+  return url.toString();
+}
+
 describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
   const prefix = `rolling_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
@@ -43,7 +50,11 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
         ${prefix}_steering_inputs_sequence_seq TO ${role}`);
       await store.registerLegacyWriterCapability({ dbRole: role, tenantId });
       legacyRoles.set(tenantId, role);
-      legacyPools.set(tenantId, new Pool({ connectionString: testPgUrl!, user: role, password, max: 4 }));
+      const rolePool = new Pool({ connectionString: roleConnectionString(testPgUrl!, role, password), max: 4 });
+      await expect(rolePool.query<{ session_user: string }>('SELECT session_user')).resolves.toMatchObject({
+        rows: [{ session_user: role }],
+      });
+      legacyPools.set(tenantId, rolePool);
     }
     nativeRole = `${prefix}_tenant_native`;
     const nativePassword = randomUUID();
@@ -55,7 +66,12 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     await pool.query(`GRANT USAGE,SELECT ON SEQUENCE ${prefix}_runs_enqueue_seq_seq,
       ${prefix}_steering_inputs_sequence_seq TO ${nativeRole}`);
     await store.registerTenantNativeWriterCapability(nativeRole);
-    nativePool = new Pool({ connectionString: testPgUrl!, user: nativeRole, password: nativePassword, max: 8 });
+    nativePool = new Pool({
+      connectionString: roleConnectionString(testPgUrl!, nativeRole, nativePassword), max: 8,
+    });
+    await expect(nativePool.query<{ session_user: string }>('SELECT session_user')).resolves.toMatchObject({
+      rows: [{ session_user: nativeRole }],
+    });
     nativeStore = new PgRunStore({ pool: nativePool, tablePrefix: prefix });
   }, 30_000);
 
@@ -394,8 +410,13 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
       await pool.query(create.rows[0]!.sql);
       await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
         ${prefix}_steering_sessions TO ${legacyRole}`);
-      const legacyPool = new Pool({ connectionString: testPgUrl!, user: legacyRole, password, max: 1 });
+      const legacyPool = new Pool({
+        connectionString: roleConnectionString(testPgUrl!, legacyRole, password), max: 1,
+      });
       try {
+        await expect(legacyPool.query<{ session_user: string }>('SELECT session_user')).resolves.toMatchObject({
+          rows: [{ session_user: legacyRole }],
+        });
         await expect(legacyPool.query(`SELECT run_id FROM ${prefix}_runs
           WHERE run_id='contract-a'`)).rejects.toMatchObject({ code: '42501' });
         await expect(legacyPool.query(`UPDATE ${prefix}_runs SET status='running'

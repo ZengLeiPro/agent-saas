@@ -9,13 +9,13 @@ const BASE = {
   server: { port: 3001, timezone: 'Asia/Shanghai' },
 };
 
-function projection(overrides: Record<string, unknown>) {
+function projection(overrides: Record<string, unknown>, processCwd = '/srv/server') {
   const config = parseAppConfig({ ...BASE, ...overrides }) as AppConfig;
-  return buildCanonicalConfigProjection(config).projection;
+  return buildCanonicalConfigProjection(config, processCwd).projection;
 }
 
-function digest(overrides: Record<string, unknown>): string {
-  return calculateConfigIdentityDigest(projection(overrides));
+function digest(overrides: Record<string, unknown>, processCwd = '/srv/server'): string {
+  return calculateConfigIdentityDigest(projection(overrides, processCwd));
 }
 
 const cases = [
@@ -57,6 +57,31 @@ describe('ConfigIdentity 机器路径投影', () => {
     expect(serialized).not.toContain('./private/artifacts');
     expect(serialized).not.toContain('private/artifacts');
     expect(serialized).toContain('__opaqueDigest__');
+  });
+
+  it('以真实 processCwd 解析根截断、点路径与尾分隔符，且不泄漏 cwd/路径原文', () => {
+    const fixture = cases[1];
+    const aliases = ['../../private-target', '../../../private-target', '../../private-target/'];
+    const identities = aliases.map((path) => digest(fixture.config(path), '/a'));
+    expect(new Set(identities)).toHaveLength(1);
+    expect(digest(fixture.config('./'), '/a')).toBe(digest(fixture.config('.'), '/a'));
+    expect(digest(fixture.config('../../private-target'), '/a')).not.toBe(
+      digest(fixture.config('../../other-target'), '/a'),
+    );
+
+    const serialized = JSON.stringify(projection(fixture.config('../../private-target'), '/a'));
+    expect(serialized).not.toContain('/a');
+    expect(serialized).not.toContain('../../private-target');
+    expect(serialized).not.toContain('/private-target');
+  });
+
+  it('agent.sharedDir 按真实 projectRoot=resolve(processCwd, "..") 解析并应用根截断', () => {
+    const aliases = ['shared-target', '../shared-target', '../../shared-target/'];
+    expect(
+      new Set(
+        aliases.map((sharedDir) => digest({ agent: { ...BASE.agent, sharedDir } }, '/a')),
+      ),
+    ).toHaveLength(1);
   });
 
   for (const fixture of cases) {

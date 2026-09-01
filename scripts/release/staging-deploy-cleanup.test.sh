@@ -121,6 +121,116 @@ run_case signal HUP 0 129
 run_case signal INT 0 130
 run_case signal TERM 0 143
 
+# Executable fixture: an already-migrated mutable config remains authoritative when the
+# legacy file is absent, receives the deploy-time mutation, and is the exact file read by
+# config-identity-cli. The fixture mirrors the absolute path declared by the systemd unit
+# under its temporary root so no host path is touched.
+config_selection="$tmp/staging-config-selection.sh"
+sed -n \
+  '/^install -d -o agent-saas-staging .*"\$config_root"$/,/^chmod 0600 "\$server_config"$/p' \
+  "$deploy" > "$config_selection"
+test -s "$config_selection"
+bash -n "$config_selection"
+
+config_finalize="$tmp/staging-config-finalize.sh"
+sed -n '/^runtime_mutated=true$/,/^  --env-file "\$server_env")"$/p' \
+  "$deploy" > "$config_finalize"
+test -s "$config_finalize"
+bash -n "$config_finalize"
+
+systemd_server_unit="$script_dir/../../daemon-packaging/systemd/agent-saas-server-staging.service.template"
+systemd_config_path="$(sed -n 's/^Environment=AGENT_SAAS_CONFIG_PATH=//p' "$systemd_server_unit")"
+test "$systemd_config_path" = /var/lib/agent-saas-staging/config/config.json
+
+config_identity_fixture="$tmp/config-identity-fixture.sh"
+cat > "$config_identity_fixture" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_root="$FIXTURE_ROOT$(dirname "$SYSTEMD_CONFIG_PATH")"
+server_config="$FIXTURE_ROOT$SYSTEMD_CONFIG_PATH"
+legacy_server_config="$FIXTURE_ROOT/etc/agent-saas-staging/config.json"
+deployment_attempt_id=4242-1
+target="$FIXTURE_ROOT/opt/agent-saas-staging/releases/rc-20260901-318"
+current="$FIXTURE_ROOT/opt/agent-saas-staging/current"
+server_env="$FIXTURE_ROOT/etc/agent-saas-staging/server.env"
+
+mkdir -p "$(dirname "$server_config")" "$(dirname "$server_env")" \
+  "$target/server/dist" "$(dirname "$current")"
+test ! -e "$legacy_server_config"
+cat > "$server_config" <<'JSON'
+{
+  "fixtureStage": "first-migration",
+  "agent": { "sharedDir": "/legacy/shared" },
+  "auth": { "jwtSecret": "fixture-jwt-secret" }
+}
+JSON
+cp "$server_config" "$FIXTURE_INITIAL_CONFIG"
+: > "$server_env"
+
+cat > "$target/server/dist/config-identity-cli.js" <<'NODE'
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const configIndex = args.indexOf('--config');
+if (configIndex < 0 || !args[configIndex + 1]) throw new Error('missing --config');
+const configPath = args[configIndex + 1];
+const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+fs.writeFileSync(
+  process.env.CONFIG_IDENTITY_CLI_LOG,
+  `${JSON.stringify({ args, configPath, content })}\n`,
+);
+process.stdout.write(JSON.stringify({ schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` }));
+NODE
+
+install() {
+  test "$1" = -d
+  mkdir -p "${@: -1}"
+}
+chown() { :; }
+chmod() { command chmod "$@"; }
+
+# Execute the deployment's real selection and final mutation/CLI slices.
+source "$CONFIG_SELECTION"
+cmp -s "$FIXTURE_INITIAL_CONFIG" "$server_config"
+source "$CONFIG_FINALIZE"
+printf '%s\n' "$config_identity" > "$FIXTURE_IDENTITY"
+cp "$server_config" "$FIXTURE_FINAL_CONFIG"
+FIXTURE
+chmod +x "$config_identity_fixture"
+test -x "$config_identity_fixture"
+
+config_fixture_root="$tmp/config-identity-root"
+config_cli_log="$tmp/config-identity-cli.log"
+initial_config="$tmp/config-identity-initial.json"
+final_config="$tmp/config-identity-final.json"
+identity_json="$tmp/config-identity.json"
+FIXTURE_ROOT="$config_fixture_root" SYSTEMD_CONFIG_PATH="$systemd_config_path" \
+  CONFIG_SELECTION="$config_selection" CONFIG_FINALIZE="$config_finalize" \
+  CONFIG_IDENTITY_CLI_LOG="$config_cli_log" FIXTURE_INITIAL_CONFIG="$initial_config" \
+  FIXTURE_FINAL_CONFIG="$final_config" FIXTURE_IDENTITY="$identity_json" \
+  "$config_identity_fixture"
+
+node - "$config_cli_log" "$initial_config" "$final_config" \
+  "$config_fixture_root$systemd_config_path" <<'NODE'
+const fs = require('node:fs');
+const [logPath, initialPath, finalPath, systemdConfigPath] = process.argv.slice(2);
+const invocation = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+const initial = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
+const final = JSON.parse(fs.readFileSync(finalPath, 'utf8'));
+if (initial.fixtureStage !== 'first-migration' || initial.agent.sharedDir !== '/legacy/shared') {
+  throw new Error('fixture did not preserve the first migrated mutable config');
+}
+if (final.agent.sharedDir !== '/opt/agent-saas-staging/current/server/workspace-shared') {
+  throw new Error('deploy-time mutable config modification was not applied');
+}
+if (invocation.configPath !== systemdConfigPath) {
+  throw new Error(`CLI --config ${invocation.configPath} differs from systemd ${systemdConfigPath}`);
+}
+if (JSON.stringify(invocation.content) !== JSON.stringify(final)) {
+  throw new Error('config-identity-cli did not read the post-modification mutable config');
+}
+NODE
+
 # Static/run-time fixture: the same run's attempts produce disjoint deploy paths.
 paths_for_attempt() {
   local attempt="$1"
@@ -148,4 +258,4 @@ grep -F -- '-4242-1' "$tmp/attempt-1" >/dev/null
 grep -F -- '-4242-2' "$tmp/attempt-2" >/dev/null
 
 bash "$script_dir/staging-unit-preflight-rollback.test.sh"
-printf '%s\n' 'staging cleanup fault injection and run-attempt isolation: ok'
+printf '%s\n' 'staging cleanup fault injection, config identity, and run-attempt isolation: ok'

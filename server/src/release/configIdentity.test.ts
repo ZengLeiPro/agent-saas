@@ -52,12 +52,12 @@ function baseConfig(overrides: Record<string, unknown> = {}): AppConfig {
   return parseRawConfig({ ...BASE_RAW, ...overrides });
 }
 
-function digestOf(config: AppConfig): string {
-  const { projection } = buildCanonicalConfigProjection(config);
+function digestOf(config: AppConfig, processCwd = '/srv/server'): string {
+  const { projection } = buildCanonicalConfigProjection(config, processCwd);
   return calculateConfigIdentityDigest(projection);
 }
 
-describe('canonical projection：注释 / 键顺序 / 等价默认值不影响 identity', () => {
+describe('canonical projection：注释、键顺序与等价默认值不影响 identity', () => {
   it('JSONC 注释与原始文本排版不进入 identity', () => {
     const withComments = parseRawConfig(`{
       // 部署注释：这些注释不应影响配置身份

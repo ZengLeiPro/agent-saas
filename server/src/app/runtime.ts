@@ -274,7 +274,7 @@ function ensureDirectory(path: string, label: string): void {
   }
 }
 export async function createRuntime(options: CreateRuntimeOptions = {}): Promise<AppRuntime> {
-  const processCwd = options.processCwd ?? process.cwd();
+  const processCwd = options.processCwd ?? process.cwd(); // ConfigIdentity 也必须复用这个真实 cwd。
   const processRole = options.processRole ?? 'all';
   const enableSchedulerWorker = processRole !== 'ws-only';
   const enableHttpListeners = processRole === 'all' || processRole === 'ws-only';
@@ -691,7 +691,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedClientDaemonAuthToken,
     resolvedFeishuConnector,
     feishuConnectorScopes,
-  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const webChannelSttRuntime = resolvedSttRuntimeConfig.sttConfig ? { sttConfig: resolvedSttRuntimeConfig.sttConfig } : {}; const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({ config, secretVault, logger: serverLogger.child('ConfigIdentity') });
+  } = await initializeRuntimeGovernanceCredentials(config, processCwd); const webChannelSttRuntime = resolvedSttRuntimeConfig.sttConfig ? { sttConfig: resolvedSttRuntimeConfig.sttConfig } : {}; const configIdentityAssembly = await initializeRuntimeConfigIdentityAssembly({ config, secretVault, processCwd, logger: serverLogger.child('ConfigIdentity') });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主

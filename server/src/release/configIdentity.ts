@@ -17,7 +17,7 @@
  *   时，`credentialVersionDigest` 参与一致性判定。
  */
 import { createHash } from 'node:crypto';
-import { isAbsolute, normalize, sep, win32 } from 'node:path';
+import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import type { AppConfig } from '../types/index.js';
 import {
   CONFIG_IDENTITY_DIGEST_PATTERN,
@@ -205,6 +205,8 @@ const OPAQUE_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
   ['serverRemote', 'recipe', 'files', '*', 'path'],
   ['tenantRemoteHands', 'hands', '*', 'recipe', 'mountSubPath'],
   ['tenantRemoteHands', 'hands', '*', 'recipe', 'files', '*', 'path'],
+  ['systemPrompts', '*'],
+  ['toolControls', 'tools', '*', 'descriptionOverride', 'text'],
 ];
 
 /** signedUrl 的 path/query/userinfo 都可能承载 token，只保留明确安全的 origin。 */
@@ -381,6 +383,7 @@ export interface ManagedSecretRefEntry {
 
 interface ProjectionContext {
   managedRefs: ManagedSecretRefEntry[];
+  processCwd: string;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -455,10 +458,14 @@ function projectValue(
   if (pathsMatchAny(path, ABSOLUTE_PATH_FIELDS)) {
     if (typeof value !== 'string' || value.length === 0) return undefined;
     if (isAbsolute(value) || win32.isAbsolute(value)) return undefined;
-    // 运行期以 resolve(processCwd, value) 解析这些字段；normalize 消除 ./、重复分隔符
-    // 与 parent segments，移除保留的尾随分隔符后可获得不含 processCwd 的等价 canonical form。
-    const normalized = normalize(value);
-    const canonical = normalized.endsWith(sep) ? normalized.slice(0, -1) : normalized;
+    // 必须复刻运行期真实解析基准，才能覆盖文件系统根截断等仅靠 normalize(value)
+    // 无法表达的等价关系。agent.sharedDir 的运行期基准是 projectRoot，其余机器
+    // 路径以 processCwd 为基准。投影只保留相对 canonical form 的 opaque digest，
+    // 绝不写入绝对 cwd 或 resolved target；相同目录规范为稳定的「.」。
+    const basePath = pathMatches(path, ['agent', 'sharedDir'])
+      ? resolve(context.processCwd, '..')
+      : context.processCwd;
+    const canonical = relative(basePath, resolve(basePath, value)) || '.';
     return opaqueProjectionIdentity(canonical, path);
   }
   if (pathsMatchAny(path, ENV_VALUE_FIELDS)) {
@@ -508,15 +515,21 @@ export interface CanonicalConfigProjectionResult {
  * 从已校验 AppConfig 构造非敏感 canonical projection。
  * 输入必须是 `parseAppConfig` 的产物（默认值已物化）；本函数不再做校验。
  */
-export function buildCanonicalConfigProjection(config: AppConfig): CanonicalConfigProjectionResult {
-  const context: ProjectionContext = { managedRefs: [] };
+export function buildCanonicalConfigProjection(
+  config: AppConfig,
+  processCwd: string = process.cwd(),
+): CanonicalConfigProjectionResult {
+  const context: ProjectionContext = { managedRefs: [], processCwd: resolve(processCwd) };
   const projection = projectValue(config, [], context) as Record<string, unknown>;
   return { projection, managedRefs: context.managedRefs };
 }
 
 /** 收集配置中的受管 ref（不构造完整投影时的轻量入口）。 */
-export function collectManagedSecretRefs(config: AppConfig): ManagedSecretRefEntry[] {
-  return buildCanonicalConfigProjection(config).managedRefs;
+export function collectManagedSecretRefs(
+  config: AppConfig,
+  processCwd: string = process.cwd(),
+): ManagedSecretRefEntry[] {
+  return buildCanonicalConfigProjection(config, processCwd).managedRefs;
 }
 
 // ── Secret ref 版本解析（opaque version / rotation identity） ────────────────
@@ -596,9 +609,10 @@ export interface ConfigIdentityObservation {
 export async function computeObservedConfigIdentity(
   config: AppConfig,
   vault: Pick<SecretVault, 'inspectRef'> | undefined,
+  processCwd: string = process.cwd(),
   now: () => Date = () => new Date(),
 ): Promise<ConfigIdentityObservation> {
-  const { projection, managedRefs } = buildCanonicalConfigProjection(config);
+  const { projection, managedRefs } = buildCanonicalConfigProjection(config, processCwd);
   const digest = calculateConfigIdentityDigest(projection);
   const versions = await resolveSecretRefVersions(managedRefs, vault);
   const versionEntries = managedRefs.map((entry) => ({

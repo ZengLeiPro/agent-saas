@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { applyEdits, modify } from 'jsonc-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { AppConfig } from '../app/config.js';
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  ConfigRuntimeRecoveryError,
   configFingerprint,
 } from '../config/adminConfigMutationService.js';
 
@@ -17,7 +19,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture() {
+async function fixture(callbacks: {
+  onCommitted?: (candidateText: string) => void | Promise<void>;
+  onRuntimeDirty?: () => void;
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'admin-config-mutation-'));
   roots.push(root);
   await mkdir(join(root, 'data'));
@@ -27,12 +32,14 @@ async function fixture() {
     server: { port: 3000 },
   };
   await writeFile(configPath, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o640 });
+  let nowOffsetMs = 0;
   const service = new AdminConfigMutationService({
     configPath,
     processCwd: root,
     environment: 'staging',
     processRole: 'ws-only',
-    now: () => new Date('2026-09-01T00:00:00.000Z'),
+    now: () => new Date(Date.parse('2026-09-01T00:00:00.000Z') + nowOffsetMs++),
+    ...callbacks,
   });
   return { root, configPath, raw, service };
 }
@@ -89,5 +96,133 @@ describe('AdminConfigMutationService', () => {
     expect(applyRuntime).toHaveBeenCalledTimes(2);
     const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
     expect(audit).toContain('"result":"rolled_back"');
+  });
+
+  it('does not swallow a runtime rollback rejection or publish the restored disk identity', async () => {
+    const onCommitted = vi.fn();
+    const onRuntimeDirty = vi.fn();
+    const test = await fixture({ onCommitted, onRuntimeDirty });
+    const originalApplyError = new Error('runtime rejected candidate');
+    const rollbackError = new Error('runtime rejected rollback');
+    const applyRuntime = vi
+      .fn()
+      .mockRejectedValueOnce(originalApplyError)
+      .mockRejectedValueOnce(rollbackError);
+
+    const error = await test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 40, {})),
+      applyRuntime,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConfigRuntimeRecoveryError);
+    expect(error).toMatchObject({
+      originalApplyError,
+      rollbackError,
+      candidateStillOwned: true,
+      diskRestored: true,
+    });
+    expect((error as ConfigRuntimeRecoveryError).errors).toEqual([
+      originalApplyError,
+      rollbackError,
+    ]);
+    expect(JSON.parse(await readFile(test.configPath, 'utf8')).agent.maxTurns).toBe(20);
+    expect(onCommitted).not.toHaveBeenCalled();
+    expect(onRuntimeDirty).toHaveBeenCalledOnce();
+
+    const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
+    expect(audit).toContain('"result":"rollback_failed"');
+    expect(audit).toContain('runtime rejected candidate');
+    expect(audit).toContain('runtime rejected rollback');
+    expect(audit).toContain('"candidateStillOwned":true');
+    expect(audit).toContain('"diskRestored":true');
+    expect(audit).not.toContain('/tmp/workspace');
+  });
+
+  it('blocks later mutations until the original applyRuntime recovers old disk, then commits the candidate', async () => {
+    const publishedMaxTurns: number[] = [];
+    const onCommitted = vi.fn((text: string) => {
+      publishedMaxTurns.push(JSON.parse(text).agent.maxTurns);
+    });
+    const onRuntimeDirty = vi.fn();
+    const test = await fixture({ onCommitted, onRuntimeDirty });
+    let runtimeMaxTurns = 20;
+    let originalApplyCall = 0;
+    const originalApplyError = new Error('candidate partially applied');
+    const rollbackError = new Error('rollback partially applied');
+    const recoveryError = new Error('forced recovery still rejected');
+    const originalApplyRuntime = vi.fn(async (next: AppConfig) => {
+      originalApplyCall += 1;
+      if (originalApplyCall === 1) {
+        runtimeMaxTurns = 40;
+        throw originalApplyError;
+      }
+      if (originalApplyCall === 2) {
+        runtimeMaxTurns = 25;
+        throw rollbackError;
+      }
+      if (originalApplyCall === 3) {
+        runtimeMaxTurns = 26;
+        throw recoveryError;
+      }
+      runtimeMaxTurns = next.agent.maxTurns!;
+    });
+
+    await expect(test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 40, {})),
+      applyRuntime: originalApplyRuntime,
+    })).rejects.toBeInstanceOf(ConfigRuntimeRecoveryError);
+    expect(runtimeMaxTurns).toBe(25);
+
+    const blockedBuildCandidate = vi.fn((text: string) => text);
+    const blockedApplyRuntime = vi.fn();
+    const blockedError = await test.service.mutate({
+      actor: 'admin-2',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: blockedBuildCandidate,
+      applyRuntime: blockedApplyRuntime,
+    }).catch((caught: unknown) => caught);
+
+    expect(blockedError).toBeInstanceOf(ConfigRuntimeRecoveryError);
+    expect(blockedError).toMatchObject({
+      originalApplyError,
+      rollbackError,
+      recoveryError,
+      candidateStillOwned: true,
+      diskRestored: true,
+    });
+    expect(runtimeMaxTurns).toBe(26);
+    expect(blockedBuildCandidate).not.toHaveBeenCalled();
+    expect(blockedApplyRuntime).not.toHaveBeenCalled();
+    expect(publishedMaxTurns).toEqual([]);
+    expect(JSON.parse(await readFile(test.configPath, 'utf8')).agent.maxTurns).toBe(20);
+
+    const nextApplyRuntime = vi.fn(async (next: AppConfig) => {
+      runtimeMaxTurns = next.agent.maxTurns!;
+    });
+    const result = await test.service.mutate({
+      actor: 'admin-3',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 30, {})),
+      applyRuntime: nextApplyRuntime,
+    });
+
+    expect(result.config.agent.maxTurns).toBe(30);
+    expect(originalApplyRuntime).toHaveBeenCalledTimes(4);
+    expect(originalApplyRuntime.mock.calls[3]?.[0].agent.maxTurns).toBe(20);
+    expect(nextApplyRuntime).toHaveBeenCalledOnce();
+    expect(runtimeMaxTurns).toBe(30);
+    expect(publishedMaxTurns).toEqual([20, 30]);
+    expect(onRuntimeDirty).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await readFile(test.configPath, 'utf8')).agent.maxTurns).toBe(30);
+
+    const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
+    expect(audit).toContain('"result":"recovery_failed"');
+    expect(audit).toContain('forced recovery still rejected');
+    expect(audit).toContain('"result":"recovered"');
+    expect(audit).toContain('"result":"applied"');
   });
 });

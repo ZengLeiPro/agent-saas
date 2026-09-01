@@ -17,8 +17,8 @@ function baseConfig(overrides: Record<string, unknown> = {}): AppConfig {
   });
 }
 
-function digestOf(config: AppConfig): string {
-  const { projection } = buildCanonicalConfigProjection(config);
+function digestOf(config: AppConfig, processCwd = '/srv/server'): string {
+  const { projection } = buildCanonicalConfigProjection(config, processCwd);
   return calculateConfigIdentityDigest(projection);
 }
 
@@ -29,15 +29,38 @@ const PG = {
   },
 };
 
-async function observe(config: AppConfig, vault?: InMemorySecretVault) {
+async function observe(
+  config: AppConfig,
+  vault?: InMemorySecretVault,
+  processCwd = '/srv/server',
+) {
   const { computeObservedConfigIdentity } = await import('../release/configIdentity.js');
-  return computeObservedConfigIdentity(config, vault);
+  return computeObservedConfigIdentity(config, vault, processCwd);
 }
 
 describe('createConfigIdentityRuntime', () => {
   it('未初始化时 getSummary 返回 not_collected（不抛错、不显示成一致）', () => {
     const runtime = createConfigIdentityRuntime({ config: baseConfig(), environment: 'test' });
     expect(runtime.getSummary().status).toBe('not_collected');
+  });
+
+  it('initialize 将真实 processCwd 透传给机器路径 canonicalization', async () => {
+    const processCwd = '/a';
+    const expectedConfig = baseConfig({
+      artifact: { backend: 'local', rootDir: '../../private-target' },
+    });
+    const observedConfig = baseConfig({
+      artifact: { backend: 'local', rootDir: '../../../private-target' },
+    });
+    const runtime = createConfigIdentityRuntime({
+      config: observedConfig,
+      environment: 'test',
+      processCwd,
+      expected: { schemaVersion: 1, digest: digestOf(expectedConfig, processCwd) },
+    });
+
+    await runtime.initialize();
+    expect(runtime.getSummary().status).toBe('consistent');
   });
 
   it('initialize 后计算 observed identity 并给出四态判定', async () => {

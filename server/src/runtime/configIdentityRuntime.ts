@@ -30,6 +30,8 @@ export interface ConfigIdentityRuntimeOptions {
   secretVault?: SecretVault;
   expected?: ExpectedConfigIdentity;
   environment: 'staging' | 'production' | 'development' | 'test';
+  /** 运行进程的真实 cwd；机器相对路径 canonicalization 必须复刻运行期解析。 */
+  processCwd?: string;
   releaseId?: string;
   logger?: {
     info: (message: string) => void;
@@ -63,6 +65,7 @@ export function createConfigIdentityRuntime(
   options: ConfigIdentityRuntimeOptions,
 ): ConfigIdentityRuntime {
   const { config, secretVault, expected, environment, releaseId, logger, onSummaryUpdated } = options;
+  const processCwd = options.processCwd ?? process.cwd();
   const now = options.now ?? (() => new Date());
 
   let observation: ConfigIdentityObservation | undefined;
@@ -99,7 +102,7 @@ export function createConfigIdentityRuntime(
   }
 
   async function compute(): Promise<ConfigIdentityObservation> {
-    const next = await computeObservedConfigIdentity(config, secretVault, now);
+    const next = await computeObservedConfigIdentity(config, secretVault, processCwd, now);
     if (next.unresolvedRefPaths.length > 0) {
       logger?.warn(
         `[ConfigIdentity] managed secret ref versions unresolved: ${next.unresolvedRefPaths.join(', ')}`,
@@ -125,7 +128,7 @@ export function createConfigIdentityRuntime(
   async function validateConfigReload(nextConfig: AppConfig): Promise<void> {
     if (environment !== 'production') return;
     assertProductionManagedCredentialSafety(nextConfig);
-    const next = await computeObservedConfigIdentity(nextConfig, secretVault, now);
+    const next = await computeObservedConfigIdentity(nextConfig, secretVault, processCwd, now);
     assertProductionObservation(next);
   }
 

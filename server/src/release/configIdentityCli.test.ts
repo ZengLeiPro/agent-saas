@@ -10,7 +10,12 @@ import {
   type VaultCaller,
 } from '../security/secretVault.js';
 import {
+  buildCanonicalConfigProjection,
+  calculateConfigIdentityDigest,
+} from './configIdentity.js';
+import {
   buildConfigIdentityVault,
+  computeConfigIdentityForCli,
   readEnvironmentFile,
   resolveVaultFile,
 } from './configIdentityCli.js';
@@ -33,6 +38,27 @@ function tempRoot(): string {
 }
 
 describe('config-identity-cli vault 定位（TASK-318）', () => {
+  it('--process-cwd 透传到 expected identity 的机器路径 canonicalization', async () => {
+    const processCwd = '/a';
+    const reference = parseAppConfig({
+      agent: {},
+      server: {},
+      artifact: { backend: 'local', rootDir: '../../private-target' },
+    });
+    const candidate = parseAppConfig({
+      agent: {},
+      server: {},
+      artifact: { backend: 'local', rootDir: '../../../private-target' },
+    });
+    const expected = calculateConfigIdentityDigest(
+      buildCanonicalConfigProjection(reference, processCwd).projection,
+    );
+
+    await expect(
+      computeConfigIdentityForCli({ 'process-cwd': processCwd }, candidate, undefined),
+    ).resolves.toMatchObject({ digest: expected });
+  });
+
   it('systemd BindPaths 下 data/* 映射到主机 runtime-data-dir，不误读 release artifact', () => {
     expect(
       resolveVaultFile(

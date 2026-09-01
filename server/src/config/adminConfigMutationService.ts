@@ -27,6 +27,23 @@ export class ConfigConflictError extends Error {
   }
 }
 
+export class ConfigRuntimeRecoveryError extends AggregateError {
+  readonly code = 'CONFIG_RUNTIME_RECOVERY_REQUIRED';
+
+  constructor(
+    readonly originalApplyError: unknown,
+    readonly rollbackError: unknown,
+    readonly recoveryError: unknown,
+    readonly candidateStillOwned: boolean,
+    readonly diskRestored: boolean,
+  ) {
+    super(
+      [originalApplyError, rollbackError, recoveryError].filter((error) => error !== undefined),
+      '运行时配置尚未恢复，后续配置变更已阻断',
+    );
+  }
+}
+
 export interface AdminConfigMutationResult {
   config: AppConfig;
   previousConfig: AppConfig;
@@ -52,6 +69,28 @@ interface MutationInput {
   applyRuntime: (next: AppConfig, previous: AppConfig) => void | Promise<void>;
   /** durable/runtime commit 后发布调用方观察面；失败不回滚 durable commit。 */
   onCommitted?: (candidateText: string) => void | Promise<void>;
+}
+
+interface RuntimeRecoveryState {
+  actor: string;
+  changedPaths: string[];
+  beforeFingerprint: string;
+  afterFingerprint: string;
+  backup: string;
+  targetText: string;
+  targetConfig: AppConfig;
+  failedConfig: AppConfig;
+  applyRuntime: MutationInput['applyRuntime'];
+  originalApplyError: unknown;
+  rollbackError: unknown;
+  recoveryError: unknown;
+  candidateStillOwned: boolean;
+  diskRestored: boolean;
+}
+
+function auditError(error: unknown): string | undefined {
+  if (error === undefined) return undefined;
+  return (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(0, 500);
 }
 
 function canonicalJson(value: unknown): string {
@@ -87,6 +126,7 @@ export class AdminConfigMutationService {
   private readonly lockPath: string;
   private readonly backupDir: string;
   private readonly auditPath: string;
+  private runtimeRecovery?: RuntimeRecoveryState;
 
   constructor(
     private readonly options: {
@@ -97,6 +137,8 @@ export class AdminConfigMutationService {
       now?: () => Date;
       /** durable commit 完成后发布实际落盘文本对应的运行时配置身份。 */
       onCommitted?: (candidateText: string) => void | Promise<void>;
+      /** runtime 与磁盘身份不再可信时，同步撤销当前身份 observation。 */
+      onRuntimeDirty?: () => void;
     },
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
@@ -108,6 +150,7 @@ export class AdminConfigMutationService {
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
     const releaseLock = await this.acquireLock();
     try {
+      await this.recoverRuntimeIfDirty(input.actor);
       const currentText = await readFile(this.options.configPath, 'utf8');
       const currentRaw = parseRaw(currentText);
       const previousConfig = parseAppConfig(currentRaw);
@@ -161,23 +204,83 @@ export class AdminConfigMutationService {
       } catch (error) {
         const currentDiskText = await readFile(this.options.configPath, 'utf8').catch(() => undefined);
         const candidateStillOwned = currentDiskText === candidateText;
-        if (candidateStillOwned) await this.replaceConfig(currentText);
-        await Promise.resolve(input.applyRuntime(previousConfig, config)).catch(() => undefined);
+        let recoveryError: unknown;
         if (candidateStillOwned) {
-          await Promise.resolve(this.options.onCommitted?.(currentText)).catch(() => undefined);
+          try {
+            await this.replaceConfig(currentText);
+          } catch (restoreError) {
+            recoveryError = restoreError;
+          }
+        }
+        const diskRestored = await readFile(this.options.configPath, 'utf8')
+          .then((text) => text === currentText)
+          .catch(() => false);
+        if (!diskRestored && recoveryError === undefined) {
+          recoveryError = new Error('回滚后的磁盘配置未恢复到原版本');
+        }
+
+        let rollbackError: unknown;
+        try {
+          await input.applyRuntime(previousConfig, config);
+        } catch (runtimeRollbackError) {
+          rollbackError = runtimeRollbackError;
+        }
+
+        if (diskRestored && rollbackError === undefined) {
+          try {
+            await this.options.onCommitted?.(currentText);
+          } catch (publishError) {
+            recoveryError = publishError;
+          }
+        }
+
+        const changedPaths = [...new Set(input.changedPaths)].sort();
+        const rollbackFailed = rollbackError !== undefined || recoveryError !== undefined;
+        if (rollbackFailed) {
+          this.runtimeRecovery = {
+            actor: input.actor,
+            changedPaths,
+            beforeFingerprint,
+            afterFingerprint: effectiveConfigFingerprint,
+            backup: basename(backupPath),
+            targetText: currentText,
+            targetConfig: previousConfig,
+            failedConfig: config,
+            applyRuntime: input.applyRuntime,
+            originalApplyError: error,
+            rollbackError,
+            recoveryError,
+            candidateStillOwned,
+            diskRestored,
+          };
+          this.invalidateRuntimeIdentity();
         }
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: input.actor,
           environment: this.options.environment,
           processRole: this.options.processRole,
-          changedPaths: [...new Set(input.changedPaths)].sort(),
+          changedPaths,
           beforeFingerprint,
           afterFingerprint: effectiveConfigFingerprint,
-          result: 'rolled_back',
+          result: rollbackFailed ? 'rollback_failed' : 'rolled_back',
           backup: basename(backupPath),
-          error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+          error: auditError(error),
+          originalApplyError: auditError(error),
+          rollbackError: auditError(rollbackError),
+          recoveryError: auditError(recoveryError),
+          candidateStillOwned,
+          diskRestored,
         }).catch(() => undefined);
+        if (rollbackFailed) {
+          throw new ConfigRuntimeRecoveryError(
+            error,
+            rollbackError,
+            recoveryError,
+            candidateStillOwned,
+            diskRestored,
+          );
+        }
         throw error;
       }
       // 身份/观察面发布失败时响应 fail closed，但 durable/runtime commit 保持，供后续强制刷新收敛。
@@ -187,6 +290,89 @@ export class AdminConfigMutationService {
       return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, revision: configRevision(candidateText), appliedAt };
     } finally {
       await releaseLock();
+    }
+  }
+
+  private async recoverRuntimeIfDirty(triggerActor: string): Promise<void> {
+    const recovery = this.runtimeRecovery;
+    if (!recovery) return;
+
+    let recoveryError: unknown;
+    const diskText = await readFile(this.options.configPath, 'utf8').catch((error: unknown) => {
+      recoveryError = error;
+      return undefined;
+    });
+    if (diskText !== recovery.targetText && recoveryError === undefined) {
+      recoveryError = new Error('恢复前磁盘配置已变化');
+    }
+    if (recoveryError === undefined) {
+      try {
+        await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
+        await this.options.onCommitted?.(recovery.targetText);
+      } catch (error) {
+        recoveryError = error;
+      }
+    }
+
+    if (recoveryError === undefined) {
+      try {
+        await this.appendAudit({
+          at: (this.options.now?.() ?? new Date()).toISOString(),
+          actor: triggerActor,
+          recoveryForActor: recovery.actor,
+          environment: this.options.environment,
+          processRole: this.options.processRole,
+          changedPaths: recovery.changedPaths,
+          beforeFingerprint: recovery.beforeFingerprint,
+          afterFingerprint: recovery.afterFingerprint,
+          result: 'recovered',
+          backup: recovery.backup,
+          originalApplyError: auditError(recovery.originalApplyError),
+          rollbackError: auditError(recovery.rollbackError),
+          previousRecoveryError: auditError(recovery.recoveryError),
+          candidateStillOwned: recovery.candidateStillOwned,
+          diskRestored: recovery.diskRestored,
+        });
+        this.runtimeRecovery = undefined;
+        return;
+      } catch (error) {
+        recoveryError = error;
+      }
+    }
+
+    this.invalidateRuntimeIdentity();
+    await this.appendAudit({
+      at: (this.options.now?.() ?? new Date()).toISOString(),
+      actor: triggerActor,
+      recoveryForActor: recovery.actor,
+      environment: this.options.environment,
+      processRole: this.options.processRole,
+      changedPaths: recovery.changedPaths,
+      beforeFingerprint: recovery.beforeFingerprint,
+      afterFingerprint: recovery.afterFingerprint,
+      result: 'recovery_failed',
+      backup: recovery.backup,
+      originalApplyError: auditError(recovery.originalApplyError),
+      rollbackError: auditError(recovery.rollbackError),
+      previousRecoveryError: auditError(recovery.recoveryError),
+      recoveryError: auditError(recoveryError),
+      candidateStillOwned: recovery.candidateStillOwned,
+      diskRestored: recovery.diskRestored,
+    }).catch(() => undefined);
+    throw new ConfigRuntimeRecoveryError(
+      recovery.originalApplyError,
+      recovery.rollbackError,
+      recoveryError,
+      recovery.candidateStillOwned,
+      recovery.diskRestored,
+    );
+  }
+
+  private invalidateRuntimeIdentity(): void {
+    try {
+      this.options.onRuntimeDirty?.();
+    } catch {
+      // dirty latch remains authoritative even if an observer cannot be invalidated.
     }
   }
 

@@ -492,10 +492,10 @@ fs.renameSync(candidatePath, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
-# TASK-318：发布前对可写状态路径中的 Staging 实际配置计算 expected config identity
+# TASK-318：发布前对 $server_config 中的 Staging 实际配置计算 expected config identity
 #（与运行期 observed identity 同一实现；Staging 启动断言要求该 digest 必须存在）。
 config_identity="$(node "$target/server/dist/config-identity-cli.js" \
-  --config /etc/agent-saas-staging/config.json --environment staging \
+  --config "$server_config" --environment staging \
   --process-cwd /mnt/agent-saas-staging/runtime/server \
   --runtime-data-dir /mnt/agent-saas-staging/runtime/server/data \
   --env-file "$server_env")"

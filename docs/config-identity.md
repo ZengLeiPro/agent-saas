@@ -35,12 +35,14 @@
 | URL（webhook/代理/signed URL 等）                                                   | 保留无凭据 endpoint；userinfo/query/hash 剥除                                                                                                                                                                                   |
 | DB 连接串                                                                           | 只保留 host/database                                                                                                                                                                                                            |
 | 绝对机器存储路径（agent.cwd、vault file、artifact root 等）                         | 不进投影（同语义配置在不同主机目录得到相同 digest）                                                                                                                                                                             |
-| 相对机器存储路径                                                                    | 按运行期 `path.resolve` 的词法等价语义 canonicalize（`path.normalize` 后移除保留的尾随分隔符），再投影为 `{__opaqueDigest__: sha256(...)}`；`./x`、`x`、`x/../x`、`x/` 等解析后等价路径 identity 相同，目标变化可见且原值不可见 |
+| 相对机器存储路径                                                                    | 以真实 `processCwd` 执行 `resolve(base,value)` 后再 `relative(base,resolved)`；空串规范为 `.`，`agent.sharedDir` 的 base 为真实 `projectRoot=resolve(processCwd,'..')`，其余字段 base 为 `processCwd`。canonical form 再投影为 `{__opaqueDigest__: sha256(...)}`，因此根截断、`./`、尾分隔符等运行期等价路径 identity 相同，目标变化可见且绝对 cwd/目标/路径原文不可见 |
+| systemPrompts.* / tool descriptionOverride.text                                    | `{__opaqueDigest__: sha256(...)}`，prompt/description 原文、token 与其中路径不可见，文本变化仍改变 identity                                                                                                                     |
 | 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见                                                                                                                                                                         |
 | env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见）                                                                                                                                                               |
 
 已发布投影语义的任何变化都必须递增 `CONFIG_IDENTITY_SCHEMA_VERSION` 并显式迁移，
-**不允许静默改变 digest 语义**。
+**不允许静默改变 digest 语义**。本次修正发生在首版 PR 合并发布前，属于未发布 v1
+缺陷修正，因此 schemaVersion 仍为 1。
 
 ### 2.2 digest
 
@@ -75,7 +77,7 @@ overview snapshot 在 wire 层再校验一次，不合法载荷降级为 `null` 
 | wire 契约                     | `shared/src/schemas/configIdentity.ts`                                              | 四态词汇、摘要 schema、`parseConfigIdentitySummary`                                      |
 | observed runtime              | `server/src/runtime/configIdentityRuntime.ts`                                       | 启动计算、热更新重算、5s 节流摘要                                                        |
 | expected 绑定                 | deploy 脚本 → release env → `readExpectedConfigIdentity`                            | `AGENT_SAAS_CONFIG_IDENTITY_DIGEST`（+ 可选 SCHEMA_VERSION / CREDENTIAL_VERSION_DIGEST） |
-| 部署期 CLI                    | `server/src/release/configIdentityCli.ts`（构建产物 `dist/config-identity-cli.js`） | 在部署主机上对实际 config.json 计算 expected identity                                    |
+| 部署期 CLI                    | `server/src/release/configIdentityCli.ts`（构建产物 `dist/config-identity-cli.js`） | 在部署主机上对实际 config.json 计算 expected identity，并用 `--process-cwd` 复刻路径基准  |
 | 前端                          | `web/src/components/PlatformAdmin/pages/ConfigIdentityCard.tsx`                     | 平台概览只读区块（四态 + 摘要）                                                          |
 
 ### 受管凭据注册表
@@ -134,7 +136,8 @@ Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注�
 1. `deploy-production-release.sh` / `deploy-staging-release.sh` 在部署时调用
    `dist/config-identity-cli.js` 对部署主机上的实际 config.json 计算
    `{schemaVersion, digest, credentialVersionDigest}`（production 额外执行
-   inline-secret fail-closed；CLI 通过 `--process-cwd`、`--runtime-data-dir` 与
+   inline-secret fail-closed；`createRuntime → configIdentityAssembly → runtime → compute`
+   与 CLI 都显式透传真实 `processCwd`；CLI 通过 `--process-cwd`、`--runtime-data-dir` 与
    `--env-file` 读取和运行期相同的 encrypted-file / HTTP vault 元数据）。显式
    vault 覆盖只接受 `--vault-key-env <ENV_NAME>`，禁止密钥值进入 argv / `/proc`。
 2. digest 写入 release env（`AGENT_SAAS_CONFIG_IDENTITY_DIGEST` 等），随蓝绿

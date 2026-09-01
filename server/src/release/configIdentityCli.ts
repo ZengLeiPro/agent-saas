@@ -32,6 +32,7 @@ import {
   assertProductionManagedCredentialSafety,
   computeObservedConfigIdentity,
   CONFIG_IDENTITY_SCHEMA_VERSION,
+  type ConfigIdentityObservation,
 } from './configIdentity.js';
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -163,6 +164,15 @@ export function buildConfigIdentityVault(
   return new EncryptedFileSecretVault(filePath, `agent-saas/secret-vault/v1:${jwtSecret}`);
 }
 
+export function computeConfigIdentityForCli(
+  options: Record<string, string>,
+  config: AppConfig,
+  vault: Pick<SecretVault, 'inspectRef'> | undefined,
+): Promise<ConfigIdentityObservation> {
+  const processCwd = options['process-cwd'] ?? process.cwd();
+  return computeObservedConfigIdentity(config, vault, processCwd);
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const configPath = options.config;
@@ -173,7 +183,7 @@ async function main(): Promise<void> {
     assertProductionManagedCredentialSafety(config);
   }
   const vault = buildConfigIdentityVault(options, config);
-  const observation = await computeObservedConfigIdentity(config, vault);
+  const observation = await computeConfigIdentityForCli(options, config, vault);
   if (
     options.environment === 'production' &&
     observation.secretRefCount > 0 &&

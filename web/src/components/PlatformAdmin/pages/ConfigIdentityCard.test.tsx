@@ -47,6 +47,21 @@ const identity = (overrides: Record<string, unknown>) => ({
   ...overrides,
 });
 
+function identityWithObserved(overrides: Record<string, unknown>) {
+  const fixture = identity({});
+  return {
+    ...fixture,
+    observed: { ...fixture.observed, ...overrides },
+  };
+}
+
+function identityWithoutObservedField(field: string) {
+  const fixture = identity({});
+  const observed = { ...fixture.observed } as Record<string, unknown>;
+  delete observed[field];
+  return { ...fixture, observed };
+}
+
 function setup(snapshotResponse: unknown) {
   overviewSnapshot.mockResolvedValue(snapshotResponse);
   billingTrend.mockResolvedValue({ audit: { days: 14, daily: [] } });
@@ -142,6 +157,27 @@ describe('平台概览「配置身份」区块（TASK-318）', () => {
       ...baseSnapshot,
       configIdentity: identity({ schemaVersion: 0 }),
     });
+    render(<OverviewPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('config-identity-status').textContent).toBe('未采集');
+    });
+    expect(screen.getByTestId('config-identity-expected').textContent?.trim()).toBe('—');
+    expect(screen.getByTestId('config-identity-observed').textContent?.trim()).toBe('—');
+  });
+
+  it.each([
+    ['partial consistent', identityWithObserved({
+      credentialVersionDigest: `sha256:${'c'.repeat(64)}`,
+      versionResolution: 'partial',
+      secretRefCount: 1,
+    })],
+    ['关系矛盾', identityWithObserved({ digest: `sha256:${'b'.repeat(64)}` })],
+    ['缺 digest', identityWithoutObservedField('digest')],
+    ['缺 versionResolution', identityWithoutObservedField('versionResolution')],
+    ['缺 secretRefCount', identityWithoutObservedField('secretRefCount')],
+  ])('组件防御式降级畸形身份为未采集且隐藏摘要（%s）', async (_label, configIdentity) => {
+    setup({ ...baseSnapshot, configIdentity });
     render(<OverviewPage />);
 
     await waitFor(() => {

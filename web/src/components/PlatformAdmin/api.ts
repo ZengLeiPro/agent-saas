@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseConfigIdentitySummary } from "@agent/shared/schemas/configIdentity";
 
 import { authFetch } from "@/lib/authFetch";
 import type {
@@ -270,8 +271,12 @@ export const platformAdminApi = {
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));
   },
-  overviewSnapshot(): Promise<OverviewSnapshot> {
-    return getJson(buildAdminApiPath("/overview/snapshot"));
+  async overviewSnapshot(): Promise<OverviewSnapshot> {
+    const snapshot = await getJson<OverviewSnapshot>(buildAdminApiPath("/overview/snapshot"));
+    return {
+      ...snapshot,
+      configIdentity: parseConfigIdentitySummary(snapshot.configIdentity),
+    };
   },
   overviewTrends(days = 14): Promise<PlatformTrendResponse> {
     return getJson(buildAdminApiPath("/overview/trends", { days }));

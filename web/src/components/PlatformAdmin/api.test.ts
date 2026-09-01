@@ -6,6 +6,40 @@ vi.mock("@/lib/authFetch", () => ({ authFetch: authFetchMock }));
 import { buildAdminApiPath, platformAdminApi } from "./api";
 import type { EventStoreStatusResponse } from "./types";
 
+const configDigest = (character: string) => `sha256:${character.repeat(64)}`;
+
+function configIdentityFixture(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    status: "consistent",
+    expected: { schemaVersion: 1, digest: configDigest("a") },
+    observed: {
+      schemaVersion: 1,
+      digest: configDigest("a"),
+      credentialVersionDigest: null,
+      versionResolution: "resolved",
+      secretRefCount: 0,
+    },
+    releaseId: "rc-20260901-01",
+    lastObservedAt: "2026-09-01T12:00:00.000Z",
+  };
+}
+
+function configIdentityWithObserved(overrides: Record<string, unknown>): Record<string, unknown> {
+  const fixture = configIdentityFixture();
+  return {
+    ...fixture,
+    observed: { ...(fixture.observed as Record<string, unknown>), ...overrides },
+  };
+}
+
+function configIdentityWithoutObservedField(field: string): Record<string, unknown> {
+  const fixture = configIdentityFixture();
+  const observed = { ...(fixture.observed as Record<string, unknown>) };
+  delete observed[field];
+  return { ...fixture, observed };
+}
+
 function eventStoreFixture(): EventStoreStatusResponse {
   return {
     schemaVersion: 1,
@@ -71,6 +105,35 @@ describe("platform admin api", () => {
     expect(buildAdminApiPath("/system/event-store", { hours: 24 })).toBe("/api/admin/system/event-store?hours=24");
     expect(buildAdminApiPath("/system/storage/scan")).toBe("/api/admin/system/storage/scan");
     expect(buildAdminApiPath("/system/storage/delete")).toBe("/api/admin/system/storage/delete");
+  });
+
+  it("keeps a valid config identity at the overview snapshot API boundary", async () => {
+    const configIdentity = configIdentityFixture();
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      generatedAt: "2026-09-01T12:00:00.000Z",
+      configIdentity,
+    }), { status: 200 }));
+
+    await expect(platformAdminApi.overviewSnapshot()).resolves.toMatchObject({ configIdentity });
+  });
+
+  it.each([
+    ["partial consistent", configIdentityWithObserved({
+      credentialVersionDigest: configDigest("c"),
+      versionResolution: "partial",
+      secretRefCount: 1,
+    })],
+    ["关系矛盾", configIdentityWithObserved({ digest: configDigest("b") })],
+    ["缺 digest", configIdentityWithoutObservedField("digest")],
+    ["缺 versionResolution", configIdentityWithoutObservedField("versionResolution")],
+    ["缺 secretRefCount", configIdentityWithoutObservedField("secretRefCount")],
+  ])("degrades malformed config identity to null at the overview snapshot API boundary (%s)", async (_label, configIdentity) => {
+    authFetchMock.mockResolvedValue(new Response(JSON.stringify({
+      generatedAt: "2026-09-01T12:00:00.000Z",
+      configIdentity,
+    }), { status: 200 }));
+
+    await expect(platformAdminApi.overviewSnapshot()).resolves.toMatchObject({ configIdentity: null });
   });
 
   it("accepts a complete EventStore status response", async () => {

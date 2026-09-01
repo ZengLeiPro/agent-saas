@@ -46,6 +46,7 @@ export interface RuntimeConfigIdentityAssembly {
 export async function initializeRuntimeConfigIdentityAssembly(options: {
   config: AppConfig;
   secretVault: SecretVault;
+  processCwd: string;
   logger: { info: (message: string) => void; warn: (message: string) => void };
 }): Promise<RuntimeConfigIdentityAssembly> {
   const runtimeIdentity = readRuntimeIdentity(process.env);
@@ -57,6 +58,7 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
       ? { expected: runtimeIdentity.expectedConfigIdentity }
       : {}),
     environment: runtimeIdentity.environment,
+    processCwd: options.processCwd,
     ...(runtimeIdentity.releaseId ? { releaseId: runtimeIdentity.releaseId } : {}),
     logger: options.logger,
     ...(snapshotPath

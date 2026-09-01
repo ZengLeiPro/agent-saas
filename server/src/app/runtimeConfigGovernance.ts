@@ -10,6 +10,7 @@ export function createRuntimeConfigGovernance(options: {
   processCwd: string;
   processRole: AppRuntimeProcessRole;
   onConfigCommitted?: (candidateText: string) => void | Promise<void>;
+  onConfigInvalidated?: () => void;
 }) {
   const runtimeIdentity = readRuntimeIdentity();
   const appliedAt = new Date().toISOString();
@@ -20,6 +21,7 @@ export function createRuntimeConfigGovernance(options: {
       environment: runtimeIdentity.environment,
       processRole: options.processRole,
       ...(options.onConfigCommitted ? { onCommitted: options.onConfigCommitted } : {}),
+      ...(options.onConfigInvalidated ? { onRuntimeDirty: options.onConfigInvalidated } : {}),
     }),
     getEffectiveConfigStatus: () =>
       buildEffectiveConfigStatus({

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import { wsClient } from "@agent/shared";
 import { CANONICAL_REACHABILITY_EVENT, webReachability } from "@/lib/lifecycleAdapter";
+import { apiUrl } from "@/lib/apiBase";
 
 export interface AppLifecycleCallbacks {
   onResume: () => void;
@@ -45,7 +46,7 @@ export function useAppLifecycle(callbacks: AppLifecycleCallbacks) {
     if (document.visibilityState !== 'visible' || webReachability(navigator.onLine, null) === false) return;
     try {
       // navigator.onLine=true is only a hint; a successful HTTP exchange is the reachability probe.
-      await fetch('/api/health', { method: 'HEAD', cache: 'no-store' });
+      await fetch(apiUrl('/api/health'), { method: 'HEAD', cache: 'no-store' });
       window.dispatchEvent(new CustomEvent<boolean>(CANONICAL_REACHABILITY_EVENT, { detail: true }));
     } catch {
       window.dispatchEvent(new CustomEvent<boolean>(CANONICAL_REACHABILITY_EVENT, { detail: false }));

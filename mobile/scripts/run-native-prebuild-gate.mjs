@@ -76,6 +76,10 @@ function environmentFor(profile) {
     MOBILE_ANDROID_DISTRIBUTION: distribution,
     MOBILE_SOURCE_GIT_SHA: '0000000000000000000000000000000000000000',
   };
+  // The fixture SHA is authoritative inside this isolated generation. Ambient
+  // CI/build identities belong to the checked-out repository, not this fixture.
+  delete environment.GITHUB_SHA;
+  delete environment.EAS_BUILD_GIT_COMMIT_HASH;
   // Explicit, unmistakable fixture identities permit native generation without
   // guessing a real Apple team, app group, provisioning profile, or signer.
   if (profile === 'ios') {

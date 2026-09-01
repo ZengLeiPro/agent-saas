@@ -33,6 +33,7 @@ import { getTranscriptPath } from '../data/transcripts/store.js';
 import type { MemoryIndexService } from '../memory/index/service.js';
 import type { UserOverrides } from '../security/extraDirs.js';
 import type { DispatchConfig } from '../app/config.js';
+import { buildRuntimeRunContextHooks } from './rawRuntimeRunContextHooks.js';
 import type { ArtifactService } from './artifactService.js';
 import type { ChannelContext, InboundMessage, ModelProviderOptions, OutboundEvent } from '../types/index.js';
 import { loadMemoryContext, loadPersona } from '../agent/memory.js';
@@ -731,25 +732,6 @@ async function authorizeBillingRunStart(
   if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
 }
 
-function billingRunContextHooks(
-  config: RawRuntimeRunDispatchConfig,
-  tenantId: string | undefined,
-  userId: string | undefined,
-  runId: string,
-): Pick<RunContext, 'authorizeModelTurn'> {
-  const billing = config.billingService?.();
-  if (!billing || !tenantId) return {};
-  return {
-    authorizeModelTurn: async () => {
-      const decision = await billing.authorizeRun({
-        tenantId,
-        ...(userId ? { userId } : {}),
-        runId,
-      });
-      if (!decision.ok) throw new Error(`[${decision.code}] ${decision.reason}`);
-    },
-  };
-}
 function resolveSessionOwnerRole(
   config: RawRuntimeRunDispatchConfig,
   session: RuntimeSessionRecord,
@@ -1548,7 +1530,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
         hooks,
         signal: abortController.signal,
         drainHandoff: options.runtimeDrainHandoff,
-        ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, runId),
+        ...buildRuntimeRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, runId),
         ...(config.runStore?.listPendingSteeringInputs ? {
           loadQueuedInterjections: async () => {
             const queued = await config.runStore!.listPendingSteeringInputs!(runId);
@@ -2190,7 +2172,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
-          ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
+          ...buildRuntimeRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'approval resume failed';
@@ -2674,7 +2656,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           hooks: request.hooks,
           signal: abortController.signal,
           drainHandoff: request.runtimeDrainHandoff,
-          ...billingRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
+          ...buildRuntimeRunContextHooks(config, sessionRecord.tenantId, sessionRecord.userId, resumeRunId),
         },
       )) {
         if (event.type === 'error') loopError = event.error ?? 'interaction resume failed';

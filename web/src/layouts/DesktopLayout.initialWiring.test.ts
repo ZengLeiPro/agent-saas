@@ -27,17 +27,16 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
 
-  it("任务详情复用外层分栏，并保留任务详情与业务步骤各自默认宽度", () => {
+  it("任务详情复用外层分栏，并与正式会话统一响应式默认宽度", () => {
     expect(source).toContain("const showDockedPanel = showRightPanel || showTaskDetailPanel");
-    expect(source).toContain("style={showDockedPanel");
+    expect(source).toContain("style={{ flex: 1 }}");
     expect(source).toContain("detailPanelTarget={taskDetailPanelTarget}");
     expect(source).toContain("onTaskDetailOpenChange={setTaskDetailOpen}");
     expect(source).toContain('label="调整任务详情宽度"');
-    expect(source).toContain("const dockedPanelInitialRatio = showTaskDetailPanel");
-    expect(source).toContain("? 0.46");
-    expect(source).toContain('rightPanelKind === "business-step" ? 0.42 : 0.5');
-    expect(source).toContain("useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey)");
-    expect(source).toContain('minWidth: "min(26rem, 75%)"');
+    expect(source).toContain("useResizePanel(0.35, 0.25, 0.75, dockedPanelKey)");
+    expect(source).toContain('const dockedPanelWidth = `clamp(26rem, ${splitRatio * 100}%, 46rem)`');
+    expect(source.match(/style=\{\{ width: dockedPanelWidth, flexShrink: 0 \}\}/g)).toHaveLength(2);
+    expect(source).not.toContain("dockedPanelInitialRatio");
     expect(taskBoardSource).toContain("portalTarget={detailPanelTarget}");
     expect(taskBoardSource).toContain("onDetailOpenChange?.(detailVisible)");
     expect(taskDetailSource).toContain("portalTarget ? createPortal(panel, portalTarget) : panel");

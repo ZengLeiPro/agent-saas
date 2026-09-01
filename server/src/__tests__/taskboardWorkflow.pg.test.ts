@@ -9,6 +9,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgTaskboardStore } from '../taskboard/store.js';
+import { UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR } from '../taskboard/storeExecutionLifecycle.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
 import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
@@ -103,7 +104,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
   });
 
-  it('V2 Run 未 finish 时保持任务阶段且不写评论或创建续跑 Execution', async () => {
+  it('V2 Run 未 finish 时将假成功兜底为明确失败且不写交接评论', async () => {
     const board = await store.createBoard(identity, { name: 'Unfinished stage board' });
     const advisory = await store.createTask(identity, board.id, {
       title: 'Continue until finished', kind: 'advisory', status: 'in_progress',
@@ -123,12 +124,16 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
 
     expect(completed).toMatchObject({
-      task: { status: 'in_progress' },
-      execution: { status: 'succeeded' },
+      task: { status: 'todo' },
+      execution: { status: 'failed', error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR },
     });
     expect(await store.listComments(identity, advisory.id)).toHaveLength(0);
     expect(await store.listExecutions(identity, advisory.id)).toEqual([
-      expect.objectContaining({ id: executionId, status: 'succeeded' }),
+      expect.objectContaining({
+        id: executionId,
+        status: 'failed',
+        error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR,
+      }),
     ]);
   });
 

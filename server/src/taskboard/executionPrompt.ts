@@ -26,7 +26,9 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
   const instructions = [
     '- 读取任务看板返回的最新事实和结构化职责约束；可按当前用户权限只读查询其他看板、任务、评论与 Execution。',
     '- 自主完成当前职责；工作过程中不要写 Agent 进度评论。',
-    '- 当前职责完成或确实阻塞时，只调用一次 execution.finish({targetStatus, body})，原子写入明确、真实且可验证的交接评论并指定下一状态；不得使用旧 status 字段。',
+    '- 普通文本回复不会结束当前职责；只有 execution.finish 成功后，当前 Execution 才会正常结束。',
+    '- 外部结果 pending 时继续使用工具等待或检查，不得仅说明“等待中”后退出。',
+    '- 当前职责完成或确实阻塞时，只调用一次 execution.finish({targetStatus, body})，原子写入明确、真实且可验证的交接评论并指定下一状态；不得使用旧 status 字段。返回最终文本前自检是否已成功调用 execution.finish。',
   ];
   if (context.execution.purpose === 'work' && context.task.kind !== 'integration') {
     instructions.splice(2, 0,

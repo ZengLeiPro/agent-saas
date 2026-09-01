@@ -4,12 +4,12 @@ import controllerSource from "./useChatRightPanelController.ts?raw";
 
 
 describe("DesktopLayout 业务步骤与显式右栏接线", () => {
-  it("与任务详情共享 dock 时仍保留独立 kind、稳定 key 与约 42% 默认宽度", () => {
+  it("与任务详情共享 dock 时保留独立 kind、稳定 key 与统一默认宽度", () => {
     expect(controllerSource).toContain("rightPanelKind === 'business-step'");
     expect(controllerSource).toContain("? 'business-step'");
-    expect(source).toContain('rightPanelKind === "business-step" ? 0.42 : 0.5');
     expect(source).toContain('showTaskDetailPanel ? "task-detail" : rightPanelKey');
-    expect(source).toContain("useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey)");
+    expect(source).toContain("useResizePanel(0.35, 0.25, 0.75, dockedPanelKey)");
+    expect(source).toContain('clamp(26rem, ${splitRatio * 100}%, 46rem)');
     expect(source).toContain("data-business-step-detail-host");
   });
 

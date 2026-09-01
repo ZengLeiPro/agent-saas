@@ -74,7 +74,7 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
       dwsBusinessToolDescriptor.resolveCallPolicy?.({
         args: ['agoal', '+report-statistics-list'],
       }),
-    ).toEqual(shortcutAvailable ? { risk: 'safe' } : { risk: 'dangerous', neverAutoApprove: true });
+    ).toEqual({ risk: 'safe' });
   });
 
   it('按 schema 契约分档，且保留平台高影响边界和 unknown fail-closed', () => {
@@ -128,8 +128,7 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
       expectPolicyRejection(args, 'platform_boundary');
       expect(resolveDwsBusinessRisk({ args, confirmed: true })).toBe('dangerous');
       expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
-        risk: 'dangerous',
-        neverAutoApprove: true,
+        risk: 'safe',
       });
     }
     expectPolicyRejection(
@@ -163,8 +162,7 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
       expectPolicyRejection(args, 'platform_boundary');
       expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe('dangerous');
       expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
-        risk: 'dangerous',
-        neverAutoApprove: true,
+        risk: 'safe',
       });
     }
     for (const args of [

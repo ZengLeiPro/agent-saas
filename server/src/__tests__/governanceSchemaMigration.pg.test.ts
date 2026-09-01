@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  GOVERNANCE_SCHEMA_VERSION,
   PgGovernanceMigrationRunner,
   type GovernancePgPool,
 } from '../data/governance-schema/migrations.js';
@@ -16,7 +17,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
+describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -60,7 +61,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V34 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V35 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -273,10 +274,10 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
   }, 30_000);
 
-  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V34 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V35 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -348,7 +349,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 34, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: GOVERNANCE_SCHEMA_VERSION, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -489,7 +490,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
@@ -670,7 +671,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       .rejects.toMatchObject({ code: '23514' });
   }, 30_000);
 
-  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V34', async () => {
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V35', async () => {
     const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {
@@ -705,7 +706,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v32Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
     const tables = await pool.query<{ legacy: string | null; requester: string | null }>(
       'SELECT to_regclass($1) AS legacy,to_regclass($2) AS requester',
       [

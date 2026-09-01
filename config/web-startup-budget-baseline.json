@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 311678,
-    "startupCssGzipBytes": 34811,
-    "startupJsBrotliBytes": 248526,
-    "startupCssBrotliBytes": 27583,
-    "largestJsGzipBytes": 311678,
-    "largestCssGzipBytes": 34811,
-    "largestJsBrotliBytes": 248526,
-    "largestCssBrotliBytes": 27583,
-    "largestJs": "assets/index-CSQIWtm-.js",
-    "largestCss": "assets/index-k9nK9zrW.css"
+    "startupJsGzipBytes": 350424,
+    "startupCssGzipBytes": 34610,
+    "startupJsBrotliBytes": 278378,
+    "startupCssBrotliBytes": 27411,
+    "largestJsGzipBytes": 350424,
+    "largestCssGzipBytes": 34610,
+    "largestJsBrotliBytes": 278378,
+    "largestCssBrotliBytes": 27411,
+    "largestJs": "assets/index-DsvQ-PDd.js",
+    "largestCss": "assets/index-np34A9jF.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-357 集成业务步骤卡视觉、任务详情标签布局、未读红点与 CI fallback 清理，Tailwind 生成样式组合带来约 1.2 KB gzip CSS 增量，仍远低于绝对上限",
+  "reason": "TASK-331 移动端 V1 共用 RenderModel、错误呈现、生命周期与治理适配进入 Web 启动图，增加约 38KB gzip JS；仍低于 600KB 绝对上限",
   "updatedAt": "2026-09-01"
 }

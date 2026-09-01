@@ -370,10 +370,11 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
     );
     await expect(store.pinTerminalTargetHand('terminal-run-1', 'acs-old')).resolves.toBe('acs-old');
 
+    // Earlier cases intentionally leave more than one default page of durable candidates.
     const rebuilt = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
-    await expect(rebuilt.listTerminalCandidates()).resolves.toEqual(expect.arrayContaining([
+    await expect(rebuilt.listTerminalCandidates(500)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ runId: 'terminal-run-1', targetHandId: 'acs-old' }),
     ]));
   });

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import manifestModule from './release-manifest.cjs';
 
@@ -10,6 +10,7 @@ const { validateManifestSchema } = manifestModule;
 const OID = /^[0-9a-f]{40}$/u;
 const RC_TAG = /^mobile-v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$/u;
 const PROFILE = new Set(['ios-store', 'android-store', 'android-enterprise']);
+const HMAC_SIGNATURE = /^sha256:[0-9a-f]{64}$/u;
 function fail(message) {
   throw new Error(`[M60-04] source authorization failed: ${message}`);
 }
@@ -22,6 +23,31 @@ function git(args, cwd) {
 }
 function digest(path) {
   return `sha256:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
+}
+function readAuthorizedManifest(root, options) {
+  const manifestPath = resolve(text(options.manifestPath, 'manifestPath'));
+  const signaturePath = resolve(text(options.manifestSignaturePath, 'manifestSignaturePath'));
+  for (const path of [manifestPath, signaturePath]) {
+    const fromRoot = relative(root, path);
+    if (fromRoot !== '..' && !fromRoot.startsWith(`..${sep}`)) {
+      fail('release metadata and signature must be independent files outside the source checkout');
+    }
+  }
+  const key = text(options.manifestHmacKey, 'manifestHmacKey');
+  if (Buffer.byteLength(key, 'utf8') < 32) fail('manifest HMAC key must be at least 32 bytes');
+  const raw = readFileSync(manifestPath);
+  const signature = readFileSync(signaturePath, 'utf8').trim().toLowerCase();
+  if (!HMAC_SIGNATURE.test(signature)) fail('manifest signature must be sha256:<64 lowercase hex>');
+  const expected = createHmac('sha256', key).update(raw).digest();
+  const actual = Buffer.from(signature.slice('sha256:'.length), 'hex');
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    fail('release manifest signature is invalid');
+  }
+  return {
+    manifestPath,
+    manifest: validateManifestSchema(JSON.parse(raw.toString('utf8'))),
+    manifestSha256: `sha256:${createHash('sha256').update(raw).digest('hex')}`,
+  };
 }
 function args(argv) {
   const result = {};
@@ -67,8 +93,7 @@ export function authorizeReleaseSource(options) {
   const dirty = git(['status', '--porcelain=v1', '--untracked-files=all'], root);
   if (dirty) fail('working tree is not clean');
   const lockPath = resolve(root, 'pnpm-lock.yaml');
-  const manifestPath = resolve(root, 'mobile/release-manifest.json');
-  const manifest = validateManifestSchema(readJson(manifestPath, 'release manifest'));
+  const { manifest, manifestSha256 } = readAuthorizedManifest(root, options);
   const profile = text(options.profile, 'profile');
   if (!PROFILE.has(profile)) fail(`unsupported profile ${profile}`);
   if (manifest.target.profile !== 'production')
@@ -146,7 +171,7 @@ export function authorizeReleaseSource(options) {
     commitOid,
     reviewedHeadOid,
     lockSha256: digest(lockPath),
-    manifestSha256: digest(manifestPath),
+    manifestSha256,
     profile,
     appId:
       profile === 'ios-store'
@@ -170,6 +195,9 @@ async function main() {
     mainRef: input['main-ref'] ?? 'origin/main',
     pull: input['pull-json'] ? readJson(input['pull-json'], 'PR record') : null,
     reviews: input['reviews-json'] ? readJson(input['reviews-json'], 'reviews record') : null,
+    manifestPath: input.manifest,
+    manifestSignaturePath: input['manifest-signature'],
+    manifestHmacKey: process.env.MOBILE_RELEASE_MANIFEST_HMAC_KEY,
   });
   writeFileSync(resolve(text(input.output, 'output')), `${JSON.stringify(result, null, 2)}\n`, {
     mode: 0o600,

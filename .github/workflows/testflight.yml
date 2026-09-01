@@ -38,6 +38,8 @@ on:
       MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
       MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
       MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: { required: false }
+      MOBILE_RELEASE_MANIFEST_JSON: { required: false }
+      MOBILE_RELEASE_MANIFEST_HMAC_KEY: { required: false }
 
 permissions:
   contents: read
@@ -95,6 +97,7 @@ jobs:
   source-contract:
     name: Static source authorization / ${{ matrix.profile }}
     needs: configuration-gate
+    environment: mobile-build-production
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -131,12 +134,21 @@ jobs:
           TAG: ${{ needs.configuration-gate.outputs.tag }}
           REVIEWED_HEAD: ${{ inputs.reviewed_head_oid }}
           PR_NUMBER: ${{ inputs.pull_request_number }}
+          MOBILE_RELEASE_MANIFEST_JSON: ${{ secrets.MOBILE_RELEASE_MANIFEST_JSON }}
+          MOBILE_RELEASE_MANIFEST_HMAC_KEY: ${{ secrets.MOBILE_RELEASE_MANIFEST_HMAC_KEY }}
         run: |
           set -euo pipefail
-          args=(--root . --repo "$GITHUB_REPOSITORY" --commit '${{ inputs.commit_oid }}' --profile "$PROFILE" --main-ref refs/remotes/origin/main --output "$RUNNER_TEMP/source.json")
+          test -n "$MOBILE_RELEASE_MANIFEST_JSON"
+          test -n "$MOBILE_RELEASE_MANIFEST_HMAC_KEY"
+          manifest="$RUNNER_TEMP/release-manifest.json"
+          signature="$RUNNER_TEMP/release-manifest.hmac"
+          printf '%s' "$MOBILE_RELEASE_MANIFEST_JSON" > "$manifest"
+          node -e "const{createHmac}=require('node:crypto'),{readFileSync}=require('node:fs');process.stdout.write('sha256:'+createHmac('sha256',process.env.MOBILE_RELEASE_MANIFEST_HMAC_KEY).update(readFileSync(process.argv[1])).digest('hex')+'\n')" "$manifest" > "$signature"
+          args=(--root . --repo "$GITHUB_REPOSITORY" --commit '${{ inputs.commit_oid }}' --profile "$PROFILE" --main-ref refs/remotes/origin/main --manifest "$manifest" --manifest-signature "$signature" --output "$RUNNER_TEMP/source.json")
           if [ -n "$TAG" ]; then args+=(--tag "$TAG"); else args+=(--reviewed-head "$REVIEWED_HEAD"); fi
           if [ "$PR_NUMBER" != 0 ]; then args+=(--pull-json "$RUNNER_TEMP/pull.json" --reviews-json "$RUNNER_TEMP/reviews.json"); fi
           node mobile/scripts/authorize-mobile-release-source.mjs "${args[@]}"
+          rm -f "$manifest" "$signature"
       - name: Verify frozen dependency installation and EAS CLI pin
         run: |
           set -euo pipefail

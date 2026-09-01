@@ -44,6 +44,9 @@ test('M60-04 build pins complete toolchain, frozen lock and never submits', () =
   assert.doesNotMatch(source, /--auto-submit|eas submit/u);
   assert.match(source, /environment: mobile-build-production/u);
   assert.match(source, /EXPO_ORG_ROBOT_TOKEN/u);
+  assert.match(source, /MOBILE_RELEASE_MANIFEST_JSON/u);
+  assert.match(source, /MOBILE_RELEASE_MANIFEST_HMAC_KEY/u);
+  assert.match(source, /--manifest "\$manifest" --manifest-signature "\$signature"/u);
   assert.doesNotMatch(source, /EXPO_TOKEN:\s*\$\{\{\s*secrets\.EXPO_TOKEN/u);
 });
 

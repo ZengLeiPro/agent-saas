@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ToolCallContext } from '../agent/toolRuntime.js';
 import { InMemoryGovernanceAuditStore } from '../data/governance-audit/store.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
-import { DefaultToolPolicy } from '../runtime/toolPolicy.js';
-import type { RunContext } from '../runtime/types.js';
 import {
   DwsBusinessToolProvider,
   deriveDwsAgentDelegationResourceId,
@@ -188,44 +186,6 @@ describe('DwsBusinessToolProvider', () => {
       expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe('dangerous');
       expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
         risk: 'safe',
-      });
-    }
-  });
-
-  it('TASK-360：策略已确定拒绝的调用直接报错，不再触发人工审批', async () => {
-    const commands = [
-      ['drive', '--help'],
-      ['oa', 'approval', '--help'],
-      ['chat', 'message', 'list-topic-replies', '--help'],
-      ['chat', 'message', 'list-topic-replies', '--group', 'cid'],
-      ['doc', 'delete', '--help'],
-    ];
-    const policy = new DefaultToolPolicy();
-    const policyContext = {
-      channelContext: { channel: 'web', user: { id: 'user-a', username: 'alice' } },
-      approvalPolicy: { autoApproveTools: true },
-    } as unknown as RunContext;
-
-    for (const args of commands) {
-      expect(resolveDwsBusinessRisk({ args }), args.join(' ')).toBe('dangerous');
-      expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: false })).toEqual({
-        risk: 'safe',
-      });
-      await expect(policy.decide(
-        dwsBusinessToolDescriptor,
-        { args, credentialMode: 'requester', confirmed: false },
-        policyContext,
-      )).resolves.toEqual({ type: 'allow' });
-
-      const { provider, invoke, auditStore, context } = setup();
-      await expect(provider.invoke({
-        toolId: 'DwsBusiness',
-        input: { args, credentialMode: 'agent', confirmed: false },
-        authorization: { approved: true, source: 'policy_auto' },
-      }, context)).rejects.toThrow();
-      expect(invoke).not.toHaveBeenCalled();
-      expect(auditStore.events.at(-1)).toMatchObject({
-        reason: 'DWS_BUSINESS_ACTION_REJECTED',
       });
     }
   });

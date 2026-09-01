@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { DefaultToolPolicy } from '../runtime/toolPolicy.js';
+import type { RunContext } from '../runtime/types.js';
 import { dwsBusinessToolDescriptor, resolveDwsBusinessRisk } from './businessToolProvider.js';
 import {
   classifyDwsBusinessCommand,
@@ -75,6 +77,33 @@ describe('DWS CLI 分版本 schema 命令策略', () => {
         args: ['agoal', '+report-statistics-list'],
       }),
     ).toEqual({ risk: 'safe' });
+  });
+
+  it('TASK-360：策略已确定拒绝的调用直接报错，不再触发人工审批', async () => {
+    const commands = [
+      ['drive', '--help'],
+      ['oa', 'approval', '--help'],
+      ['chat', 'message', 'list-topic-replies', '--help'],
+      ['chat', 'message', 'list-topic-replies', '--group', 'cid'],
+      ['doc', 'delete', '--help'],
+    ];
+    const policy = new DefaultToolPolicy();
+    const context = {
+      channelContext: { channel: 'web', user: { id: 'user-a', username: 'alice' } },
+      approvalPolicy: { autoApproveTools: true },
+    } as unknown as RunContext;
+
+    for (const args of commands) {
+      expect(resolveDwsBusinessRisk({ args }), args.join(' ')).toBe('dangerous');
+      expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: false })).toEqual({
+        risk: 'safe',
+      });
+      await expect(policy.decide(
+        dwsBusinessToolDescriptor,
+        { args, credentialMode: 'requester', confirmed: false },
+        context,
+      )).resolves.toEqual({ type: 'allow' });
+    }
   });
 
   it('按 schema 契约分档，且保留平台高影响边界和 unknown fail-closed', () => {

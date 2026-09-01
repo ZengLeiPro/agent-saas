@@ -107,7 +107,7 @@ CI/check 已成功。Taskboard Delivery、Review 和 Integration 链仍可用于
 
 ## Migration plan 的闭包边界
 
-Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-export 图。除了路径、命名和独立 metadata 外，权威入口真实 import 的 export binding 会跨 re-export、local alias、default export 与普通 barrel 传播到最终静态声明；其中出现 DDL/DML 就会自动进入分类，不能通过任意文件名、任意变量名或省略 `release-migration` metadata 脱离门禁。所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider时纳入闭包，实际调用 binding 会反向穿透赋值 alias、对象/数组解构与 namespace import。作为任意函数/方法参数传入的 imported callable 也按潜在高阶 callback 保守传播，因此自定义 `registerMigration(provider)` 不能绕过闭包；`import()`、`require()`、`createRequire` 等无法静态证明的动态加载一律 fail closed。纯 type-only edge、普通静态 logger/store 与未调用的延迟函数声明不误判；普通 logger/runtime store 的只读查询不会仅因具名 import 自动归为 migration。Expand metadata 只识别真实注释，单引号、双引号、模板字符串及 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文中的伪注释均无效，未闭合 dollar quote 直接 fail closed。Expand SQL 只允许纯 schema CREATE/单一 ALTER 白名单，CREATE expression 中除结构语法、类型参数及明确允许的内置函数外的函数调用，以及 `DEFAULT`、`CHECK` 等 ALTER 表达式中的不可证明函数调用（含 Unicode 与双引号函数名）和所有 INSERT 均 fail closed；需要数据回填时必须拆到单独受审计流程。
+Migration plan 从权威 runner 同时构建 baseline/target 相对 import/re-export 图。除了路径、命名和独立 metadata 外，权威入口真实 import 的 export binding 会跨 re-export、local alias、default export 与普通 barrel 传播到最终静态声明；其中出现 DDL/DML 就会自动进入分类，不能通过任意文件名、任意变量名或省略 `release-migration` metadata 脱离门禁。所有非 type-only 静态 import/re-export 都进入 runtime execution 图（含具名、default、namespace、`import {} from` / `export {} from`）；其中出现顶层可执行代码、runtime namespace、class 求值副作用或静态 SQL provider时纳入闭包，实际调用 binding 会反向穿透赋值 alias、对象/数组解构与 namespace import。作为任意函数/方法参数直接传入或嵌在对象字面量、数组、spread、条件表达式中的 imported callable 也按潜在高阶 callback 保守传播，因此自定义 `registerMigration({ callback: provider })` 不能绕过闭包；`import()`、`require()`、`createRequire` 等无法静态证明的动态加载一律 fail closed。纯 type-only edge、普通静态 logger/store 与未调用的延迟函数声明不误判；普通 logger/runtime store 的只读查询不会仅因具名 import 自动归为 migration。Expand metadata 只识别真实注释，单引号、双引号、模板字符串及 PostgreSQL `$$...$$`/`$tag$...$tag$`（tag 支持 PostgreSQL Unicode identifier） 正文中的伪注释均无效，未闭合 dollar quote 直接 fail closed。Expand SQL 只允许纯 schema CREATE/单一 ALTER 白名单；CREATE expression 不只检查函数名：CREATE INDEX 仅接受内建 `btree`/`hash` access method、裸列（可带排序/NULLS）或显式 `pg_catalog.lower(列)`，拒绝 operator、cast、opclass、partial predicate 与自定义 access method；CREATE TABLE 拒绝 DEFAULT、CHECK、EXCLUDE、partition expression 等不可证明表达式。`HASH`、`INCLUDE`、`KEY`、`RANGE` 等只在对应 CREATE 结构位置放行；`numeric(10,2)`、`varchar(255)` 等 type modifier 也只接受直接列声明中的纯数字参数，不能作为依赖 `search_path` 的同名函数；schema-qualified 自定义函数、多段 schema 链、quoted identifier 与其他未限定函数均拒绝。除可证明的结构语法、直接列类型参数及该内置函数外的函数调用，以及 `DEFAULT`、`CHECK` 等 ALTER 表达式中的不可证明函数调用（含 Unicode 与双引号函数名）和所有 INSERT 均 fail closed；需要数据回填时必须拆到单独受审计流程。
 
 ## 不可变发布记录
 
@@ -146,9 +146,12 @@ seal bootstrap，不能仅根据旧目录名补写摘要。
   `refs/heads/main`。App 入口已收窄为显式确认的 Web-only publish：计划必须证明生产 active ECS SHA
   到目标 SHA 不含 Server/API/Runtime Worker 影响；只要需要 ECS 变更或分类无法证明，就会在任何
   生产 mutation 前 fail closed，并要求走 RC + `promote-release.yml`。旧 `deploy-ecs` job 不再可达，
-  因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会预存原 OSS 入口与 trusted identity；
-  最终现场读回、identity 写入或确认读回失败时，必须恢复 OSS/recovery Web 与原 identity，并完成
-  权威 Production 读回后才以失败结束，补偿不完整则进入人工处置。ACS 通道在初始检查和实际生产
+  因为 ECS + Web 跨 job 失败没有同一事务式补偿。Web-only job 会在 OSS mutation 前枚举四个入口、
+  `icons/`、`kaikai-presets/`、favicon/avatar 与 Workbox 等全部可覆盖键，用事务 manifest 记录每个键
+  原先是 present 还是 missing；present 内容和对象 headers/metadata 同时进入事务镜像，内容还要与 recovery Web 基线按字节核对。最终现场读回、identity
+  写入或确认读回失败时，必须恢复 present 键、删除事务新增的 missing 键，并恢复 recovery Web 与原
+  identity；随后逐键证明 OSS/recovery 的内容、对象 metadata 或 404 状态，再完成权威 Production 读回。hash assets
+  先生成最终传输字节，再由独立 helper 只创建或精确复用；上传使用 `x-oss-forbid-overwrite:true` 原子 create-only 且不使用 `-f`；只有 OSS 精确 `FileAlreadyExists` 才进入复用证明，并发同名创建或既有对象的字节/headers 漂移会在固定键 mutation 前 fail closed；补偿或证明不完整则进入人工处置。ACS 通道在初始检查和实际生产
   部署 mutation 前都会校验 latest main；即使 exact-SHA ACR build record 已进入 `PENDING`/`BUILDING`，
   main 前进也会让旧 dispatch 在部署前 fail closed。两个入口都不能 dispatch 任意旧 commit/tag，也不生成不可变 RC、
   Staging E2E、完整 Promotion receipt 或跨组件物理收敛证据。push/PR 仍只执行 CI，不自动部署生产。

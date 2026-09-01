@@ -32,27 +32,18 @@ const ALLOWED_EXPAND_ALTER_PATTERN =
   /^ALTER\s+TABLE\s+\S+\s+(?:ADD\s+(?:COLUMN\s+)?|ADD\s+CONSTRAINT\b|VALIDATE\s+CONSTRAINT\b)/iu;
 const ALLOWED_EXPAND_CREATE_PATTERN =
   /^CREATE\s+(?:(?:UNIQUE\s+)?INDEX(?:\s+CONCURRENTLY)?|TABLE|SEQUENCE)\b/iu;
-const ALLOWED_CREATE_PAREN_KEYWORDS = new Set([
-  'as',
+const ALLOWED_CREATE_PAREN_KEYWORDS = new Set(['as', 'check', 'unique', 'with']);
+const ALLOWED_CREATE_TYPE_MODIFIERS = new Set([
   'bit',
   'char',
   'character',
-  'check',
   'decimal',
-  'exclude',
-  'hash',
-  'include',
   'interval',
-  'key',
-  'lower',
   'numeric',
-  'range',
   'time',
   'timestamp',
-  'unique',
   'varbit',
   'varchar',
-  'with',
 ]);
 
 export function isMigrationPath(path) {
@@ -326,7 +317,8 @@ function isAllowedExpandSqlStatement(statement) {
     /\\[A-Za-z!?]/u.test(statement) ||
     hasRiskyAddColumn(statement) ||
     hasUnprovenAlterFunction(statement) ||
-    hasUnprovenCreateFunction(statement)
+    hasUnprovenCreateFunction(statement) ||
+    hasUnprovenCreateExpression(statement)
   )
     return false;
   if (ALLOWED_EXPAND_CREATE_PATTERN.test(statement)) {
@@ -407,10 +399,138 @@ function hasUnprovenCreateFunction(value) {
     const open = (match.index ?? 0) + match[0].lastIndexOf('(');
     if (open === structuralOpen) continue;
     const name = match[1];
+    const prefix = value.slice(0, match.index);
+    const qualifierMatch = prefix.match(
+      /((?:[A-Za-z_]|[^\x00-\x7F])(?:[A-Za-z0-9_$]|[^\x00-\x7F])*|"(?:""|[^"])+")\s*\.\s*$/u,
+    );
+    const qualifier = qualifierMatch?.[1];
+    // Only a single explicit pg_catalog binding avoids search_path ambiguity.
+    if (qualifier !== undefined) {
+      const qualifierPrefix = prefix.slice(0, qualifierMatch.index).trimEnd();
+      if (!qualifierPrefix.endsWith('.') && qualifier === 'pg_catalog' && name === 'lower')
+        continue;
+      return true;
+    }
+    const normalizedName = name.toLowerCase();
+    const keywordContext = prefix.trimEnd();
+    const allowedContextualKeyword =
+      !name.startsWith('"') &&
+      ((normalizedName === 'hash' && /\b(?:USING|PARTITION\s+BY)\s*$/iu.test(keywordContext)) ||
+        (normalizedName === 'range' && /\bPARTITION\s+BY\s*$/iu.test(keywordContext)) ||
+        (normalizedName === 'key' && /\b(?:PRIMARY|FOREIGN)\s*$/iu.test(keywordContext)) ||
+        (normalizedName === 'include' && /\)\s*$/u.test(keywordContext)));
+    if (allowedContextualKeyword) continue;
     const allowedKeyword =
-      !name.startsWith('"') && ALLOWED_CREATE_PAREN_KEYWORDS.has(name.toLowerCase());
+      !name.startsWith('"') && ALLOWED_CREATE_PAREN_KEYWORDS.has(normalizedName);
     if (allowedKeyword) continue;
+    // Type-like calls are safe only as direct CREATE TABLE column modifiers with numeric arity.
+    if (!name.startsWith('"') && ALLOWED_CREATE_TYPE_MODIFIERS.has(normalizedName)) {
+      let depth = 1;
+      let segmentStart = structuralOpen + 1;
+      for (let index = structuralOpen + 1; index < match.index; index += 1) {
+        if (value[index] === '(') depth += 1;
+        else if (value[index] === ')') depth -= 1;
+        else if (value[index] === ',' && depth === 1) segmentStart = index + 1;
+      }
+      const columnPrefix = value.slice(segmentStart, match.index);
+      const modifierClose = value.indexOf(')', open + 1);
+      const modifierArguments = modifierClose === -1 ? '' : value.slice(open + 1, modifierClose);
+      const directColumnType =
+        /^CREATE\s+TABLE\b/iu.test(value) &&
+        depth === 1 &&
+        /^\s*(?:(?:[A-Za-z_]|[^\x00-\x7F])(?:[A-Za-z0-9_$]|[^\x00-\x7F])*|"(?:""|[^"])+")\s+$/u.test(
+          columnPrefix,
+        ) &&
+        /^\s*\d+(?:\s*,\s*\d+)?\s*$/u.test(modifierArguments);
+      if (directColumnType) continue;
+    }
     return true;
+  }
+  return false;
+}
+
+function matchingParenthesis(value, open) {
+  let depth = 0;
+  for (let index = open; index < value.length; index += 1) {
+    if (value[index] === '(') depth += 1;
+    else if (value[index] === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function splitSqlList(value) {
+  const items = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === '(') depth += 1;
+    else if (value[index] === ')') depth -= 1;
+    else if (value[index] === ',' && depth === 0) {
+      items.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  items.push(value.slice(start));
+  return items;
+}
+
+function hasUnprovenCreateExpression(value) {
+  const identifier =
+    '(?:(?:[A-Za-z_]|[^\\x00-\\x7F])(?:[A-Za-z0-9_$]|[^\\x00-\\x7F])*|"(?:""|[^"])+")';
+  const plainIndexKey = new RegExp(
+    `^\\s*${identifier}(?:\\s+(?:ASC|DESC))?(?:\\s+NULLS\\s+(?:FIRST|LAST))?\\s*$`,
+    'iu',
+  );
+  const builtinLowerIndexKey = new RegExp(
+    `^\\s*pg_catalog\\.lower\\(\\s*${identifier}\\s*\\)(?:\\s+(?:ASC|DESC))?(?:\\s+NULLS\\s+(?:FIRST|LAST))?\\s*$`,
+    'iu',
+  );
+  if (/^CREATE\s+(?:(?:UNIQUE\s+)?INDEX)/iu.test(value)) {
+    const method = value.match(/\bUSING\s+([^\s(]+)/iu)?.[1]?.toLowerCase();
+    if (method !== undefined && !['btree', 'hash'].includes(method)) return true;
+    const open = value.indexOf('(');
+    const close = matchingParenthesis(value, open);
+    if (open === -1 || close === -1) return true;
+    const keys = splitSqlList(value.slice(open + 1, close));
+    if (
+      keys.length === 0 ||
+      keys.some((key) => !plainIndexKey.test(key) && !builtinLowerIndexKey.test(key))
+    )
+      return true;
+    const tail = value.slice(close + 1);
+    if (/\bWHERE\b/iu.test(tail) || /::/u.test(tail)) return true;
+    const include = tail.match(/\bINCLUDE\s*\(/iu);
+    if (include) {
+      const includeOpen = close + 1 + (include.index ?? 0) + include[0].lastIndexOf('(');
+      const includeClose = matchingParenthesis(value, includeOpen);
+      if (
+        includeClose === -1 ||
+        splitSqlList(value.slice(includeOpen + 1, includeClose)).some(
+          (key) => !plainIndexKey.test(key),
+        )
+      )
+        return true;
+    }
+    return false;
+  }
+  if (/^CREATE\s+TABLE\b/iu.test(value)) {
+    if (/\b(?:DEFAULT|CHECK|EXCLUDE)\b|\bPARTITION\s+BY\b|::/iu.test(value)) return true;
+    // Generated expressions are executable for future writes; keep the whitelist explicit.
+    for (const generated of value.matchAll(/\bGENERATED\s+ALWAYS\s+AS\s*\(/giu)) {
+      const open = (generated.index ?? 0) + generated[0].lastIndexOf('(');
+      const close = matchingParenthesis(value, open);
+      if (close === -1) return true;
+      const expression = value.slice(open + 1, close);
+      if (
+        !new RegExp(`^\\s*pg_catalog\\.lower\\(\\s*${identifier}\\s*\\)\\s*$`, 'iu').test(
+          expression,
+        )
+      )
+        return true;
+    }
   }
   return false;
 }
@@ -626,7 +746,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     ['setImmediate', [0]],
     ['queueMicrotask', [0]],
   ]);
-  // Unknown higher-order APIs are fail-closed: imported callable arguments stay in the closure.
+  // Unknown higher-order APIs are fail-closed, including callable arguments nested in containers.
   const callbackArgumentIndexes = (node) => {
     if (ts.isNewExpression(node)) {
       if (ts.isIdentifier(node.expression) && node.expression.text === 'Promise') return [0];
@@ -665,6 +785,25 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     }
     if (ts.isArrayLiteralExpression(node)) {
       for (const element of node.elements) collectCallableReference(element);
+      return;
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      // Recurse through values while avoiding ordinary non-callable data imports.
+      for (const property of node.properties) {
+        if (property.name && ts.isComputedPropertyName(property.name))
+          collectCallableReference(property.name.expression);
+        if (ts.isPropertyAssignment(property)) collectCallableReference(property.initializer);
+        else if (ts.isShorthandPropertyAssignment(property)) {
+          collectCallableReference(property.name);
+          if (property.objectAssignmentInitializer)
+            collectCallableReference(property.objectAssignmentInitializer);
+        } else if (ts.isSpreadAssignment(property)) collectCallableReference(property.expression);
+        else collectCallTargetIdentifiers(property);
+      }
+      return;
+    }
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      collectCallTargetIdentifiers(node.body);
       return;
     }
     if (ts.isParenthesizedExpression(node)) {

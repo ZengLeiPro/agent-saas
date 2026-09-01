@@ -2375,60 +2375,96 @@ jobs:
              printf '%s\\n' \"\$target\"" \
             > "$RUNNER_TEMP/recovery-web-target.before"
 
-      - name: Snapshot current Web entry files
+      - name: Snapshot all mutable Web keys before transaction
         run: |
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/$f" \
-              "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" -f \
-              --region "$OSS_REGION" --copy-props default
-          done
+          set -euo pipefail
+          keys="$RUNNER_TEMP/web-mutable-keys.txt"
+          states="$RUNNER_TEMP/web-mutable-before.tsv"
+          (
+            cd web/dist
+            for f in manifest.webmanifest release-identity.json index.html sw.js \
+              apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico \
+              kaikai-avatar.png workbox-*.js; do
+              [ -f "$f" ] && printf '%s\n' "$f"
+            done
+            for d in icons kaikai-presets; do
+              [ -d "$d" ] && find "$d" -type f -print
+            done
+          ) | LC_ALL=C sort -u > "$keys"
+          test -s "$keys"
+          ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
+          : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
+          # Compare serving metadata while excluding mutation timestamps and transaction paths.
+          normalize_oss_metadata() {
+            grep -Ei '^[[:space:]]*(ACL|Cache-?Control|Content-?(Disposition|Encoding|Language|Length|MD5|Type)|ETag|Expires|Metadata|Storage-?Class|X-Oss-(Meta-|Object-Acl|Storage-Class|Server-Side-Encryption))' "$1" \
+              | sed -E 's/\r$//; s/^[[:space:]]+//; s/[[:space:]]*:[[:space:]]*/:/' \
+              | LC_ALL=C sort
+          }
+          : > "$states"
+          while IFS= read -r key; do
+            printf '%s' "$key" | grep -Eq '^[A-Za-z0-9._/-]+$'
+            stat_log="$RUNNER_TEMP/web-mutable-stat.log"
+            if ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" \
+              > "$stat_log" 2>&1; then
+              state=present
+            elif grep -Eiq 'ErrorCode[=: ]+NoSuchKey([[:space:],}]|$)' "$stat_log"; then
+              state=missing
+            else
+              cat "$stat_log" >&2
+              exit 1
+            fi
+            case "$key:$state" in
+              manifest.webmanifest:missing|release-identity.json:missing|index.html:missing|sw.js:missing)
+                echo "required Production Web key is missing before transaction: $key" >&2
+                exit 1
+                ;;
+            esac
+            before="$RUNNER_TEMP/web-before/$key"
+            recovery="$RUNNER_TEMP/web-recovery-before/$key"
+            mkdir -p "$(dirname "$before")" "$(dirname "$recovery")"
+            http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+              -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+              "https://agent.kaiyan.net/$key?before_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+            if [ "$state" = present ]; then
+              ossutil cp "oss://$OSS_BUCKET/$key" \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" -f \
+                --region "$OSS_REGION" --copy-props default
+              ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                "$before" -f --region "$OSS_REGION"
+              before_metadata="$RUNNER_TEMP/web-before-metadata/$key"
+              backup_stat="$RUNNER_TEMP/web-backup-stat/$key"
+              backup_metadata="$RUNNER_TEMP/web-backup-metadata/$key"
+              mkdir -p "$(dirname "$before_metadata")" "$(dirname "$backup_stat")" \
+                "$(dirname "$backup_metadata")"
+              normalize_oss_metadata "$stat_log" > "$before_metadata"
+              test -s "$before_metadata"
+              ossutil stat \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                --region "$OSS_REGION" > "$backup_stat"
+              normalize_oss_metadata "$backup_stat" > "$backup_metadata"
+              cmp "$before_metadata" "$backup_metadata"
+              test "$http_code" = 200
+              cmp "$before" "$recovery"
+            else
+              test "$http_code" = 404
+            fi
+            printf '%s\t%s\n' "$state" "$key" >> "$states"
+          done < "$keys"
+          ossutil cp "$states" \
+            "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/mutable-keys.tsv" -f \
+            --region "$OSS_REGION" --cache-control "no-store" \
+            --content-type "text/tab-separated-values; charset=utf-8"
           touch "$RUNNER_TEMP/web-entry-snapshot-complete"
 
       - name: Upload to OSS
         run: |
+          set -euo pipefail
           : "${OSS_ACCESS_KEY_ID:?Missing secret OSS_WEB_DEPLOY_AK_ID}"
           : "${OSS_ACCESS_KEY_SECRET:?Missing secret OSS_WEB_DEPLOY_AK_SECRET}"
           cd web/dist
-          # 1) hash 静态资源：不可变长缓存（只增量新增，不删除旧 hash 文件）
-          ossutil cp assets "oss://$OSS_BUCKET/assets" -r -f --region "$OSS_REGION" \
-            --cache-control "public, max-age=31536000, immutable"
-          # JS/CSS 预压缩后覆盖同一对象键，并显式写入 Content-Encoding。
-          # 浏览器按原 URL 获取，OSS 直接返回 gzip，避免约 1MB 主脚本冷加载。
-          compressed_js_assets=0
-          compressed_css_assets=0
-          while IFS= read -r -d '' asset_file; do
-            relative_file="${asset_file#assets/}"
-            case "$asset_file" in
-              *.js|*.mjs)
-                compressed_file="$RUNNER_TEMP/oss-gzip-js/assets/$relative_file"
-                compressed_js_assets=$((compressed_js_assets + 1))
-                ;;
-              *.css)
-                compressed_file="$RUNNER_TEMP/oss-gzip-css/assets/$relative_file"
-                compressed_css_assets=$((compressed_css_assets + 1))
-                ;;
-              *) continue ;;
-            esac
-            mkdir -p "$(dirname "$compressed_file")"
-            gzip -n -9 -c "$asset_file" > "$compressed_file"
-          done < <(find assets -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.css' \) -print0)
-          if [ "$compressed_js_assets" -gt 0 ]; then
-            ossutil cp "$RUNNER_TEMP/oss-gzip-js/assets" "oss://$OSS_BUCKET/assets" \
-              -r -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --content-type "text/javascript; charset=utf-8" --content-encoding gzip
-          fi
-          if [ "$compressed_css_assets" -gt 0 ]; then
-            ossutil cp "$RUNNER_TEMP/oss-gzip-css/assets" "oss://$OSS_BUCKET/assets" \
-              -r -f --region "$OSS_REGION" \
-              --cache-control "public, max-age=31536000, immutable" \
-              --content-type "text/css; charset=utf-8" --content-encoding gzip
-          fi
-          if [ "$compressed_js_assets" -eq 0 ] || [ "$compressed_css_assets" -eq 0 ]; then
-            echo "No JS/CSS assets found for OSS compression"
-            exit 1
-          fi
-          echo "uploaded $compressed_js_assets JS and $compressed_css_assets CSS precompressed assets"
+          # 1) hash 静态资源：最终字节只允许创建或复用，禁止覆盖既有对象键。
+          bash ../../scripts/release/upload-web-assets-immutable.sh \
+            assets "oss://$OSS_BUCKET/assets"
           # 2) 图标与预置资源：短缓存
           for d in icons kaikai-presets; do
             [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \
@@ -2502,11 +2538,11 @@ jobs:
 
       - name: Snapshot successful Web release
         run: |
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/$f" \
-              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$f" -f \
+          while IFS=$'\t' read -r _state key; do
+            ossutil cp "oss://$OSS_BUCKET/$key" \
+              "oss://$OSS_BUCKET/_releases/$GITHUB_SHA/current/$key" -f \
               --region "$OSS_REGION" --copy-props default
-          done
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
 
       - name: Commit trusted Production identity after all compatibility targets converge
         id: commit_trusted_identity
@@ -2547,9 +2583,13 @@ jobs:
                '$remote/confirmed.json' >/dev/null"
           echo "Production identity committed once after Web/API/Worker/ACS live readback"
       - name: Restore previous recovery Web on failure
-        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/recovery-web-target.before" ]; then
+            echo "recovery Web baseline was not captured and no recovery mutation started"
+            exit 0
+          fi
           printf -v recovery_web_before_q '%q' "$(cat "$RUNNER_TEMP/recovery-web-target.before")"
           ssh -i ~/.ssh/ecs_recovery_key \
             -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
@@ -2559,25 +2599,34 @@ jobs:
              RUN_ID='${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}' bash -s" \
             < scripts/rollback-recovery-web.sh
 
-      - name: Restore previous Web entry files on failure
-        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+      - name: Restore all previous mutable Web keys on failure
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
+          set -euo pipefail
           if ! command -v ossutil >/dev/null 2>&1; then
             echo "ossutil unavailable; no Web upload could have completed"
             exit 0
           fi
           if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
-            echo "Web entry snapshot did not complete; production Web mutation never started"
+            echo "Web key snapshot did not complete; production Web mutation never started"
             exit 0
           fi
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" \
-              "oss://$OSS_BUCKET/$f" -f --region "$OSS_REGION" --copy-props default
-          done
-          echo "previous Web entry files restored after failed deployment"
+          while IFS=$'\t' read -r state key; do
+            case "$state" in
+              present)
+                ossutil cp "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                  "oss://$OSS_BUCKET/$key" -f --region "$OSS_REGION" --copy-props default
+                ;;
+              missing)
+                ossutil rm "oss://$OSS_BUCKET/$key" -f --region "$OSS_REGION" || true
+                ;;
+              *) echo "invalid Web snapshot state for $key: $state" >&2; exit 1 ;;
+            esac
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
+          echo "all previous mutable Web keys restored after failed deployment"
 
       - name: Restore trusted Production identity on failure
-        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
           if [ ! -s "$RUNNER_TEMP/runtime-identity.before.json" ]; then
@@ -2598,7 +2647,7 @@ jobs:
              rm -f '$remote_candidate'"
 
       - name: Prove previous Web and trusted identity after compensation
-        if: failure() || steps.commit_trusted_identity.outcome == 'failure'
+        if: failure() || cancelled() || steps.commit_trusted_identity.outcome == 'failure'
         run: |
           set -euo pipefail
           if [ ! -f "$RUNNER_TEMP/web-entry-snapshot-complete" ]; then
@@ -2629,23 +2678,55 @@ jobs:
           mkdir -p "$RUNNER_TEMP/web-before" "$RUNNER_TEMP/web-oss-restored" "$RUNNER_TEMP/web-recovery-restored"
           ECS_IP=$(getent ahostsv4 "$ECS_HOST" | awk 'NR == 1 { print $1 }')
           : "${ECS_IP:?Cannot resolve ECS_HOST to IPv4}"
-          for f in manifest.webmanifest release-identity.json index.html sw.js; do
-            ossutil cp \
-              "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/$f" \
-              "$RUNNER_TEMP/web-before/$f" -f --region "$OSS_REGION"
-            ossutil cp "oss://$OSS_BUCKET/$f" "$RUNNER_TEMP/web-oss-restored/$f" \
-              -f --region "$OSS_REGION"
-            cmp "$RUNNER_TEMP/web-before/$f" "$RUNNER_TEMP/web-oss-restored/$f"
-            curl -fsS --resolve "agent.kaiyan.net:443:$ECS_IP" \
-              -H 'cache-control: no-cache' \
-              "https://agent.kaiyan.net/$f?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" \
-              > "$RUNNER_TEMP/web-recovery-restored/$f"
-            cmp "$RUNNER_TEMP/web-before/$f" "$RUNNER_TEMP/web-recovery-restored/$f"
-          done
+          # Compare serving metadata while excluding mutation timestamps and transaction paths.
+          normalize_oss_metadata() {
+            grep -Ei '^[[:space:]]*(ACL|Cache-?Control|Content-?(Disposition|Encoding|Language|Length|MD5|Type)|ETag|Expires|Metadata|Storage-?Class|X-Oss-(Meta-|Object-Acl|Storage-Class|Server-Side-Encryption))' "$1" \
+              | sed -E 's/\r$//; s/^[[:space:]]+//; s/[[:space:]]*:[[:space:]]*/:/' \
+              | LC_ALL=C sort
+          }
+          while IFS=$'\t' read -r state key; do
+            before="$RUNNER_TEMP/web-before/$key"
+            restored="$RUNNER_TEMP/web-oss-restored/$key"
+            recovery="$RUNNER_TEMP/web-recovery-restored/$key"
+            mkdir -p "$(dirname "$before")" "$(dirname "$restored")" "$(dirname "$recovery")"
+            if [ "$state" = present ]; then
+              ossutil cp \
+                "oss://$OSS_BUCKET/$WEB_TRANSACTION_PREFIX/before/objects/$key" \
+                "$before" -f --region "$OSS_REGION"
+              ossutil cp "oss://$OSS_BUCKET/$key" "$restored" -f --region "$OSS_REGION"
+              cmp "$before" "$restored"
+              restored_stat="$RUNNER_TEMP/web-restored-stat/$key"
+              restored_metadata="$RUNNER_TEMP/web-restored-metadata/$key"
+              mkdir -p "$(dirname "$restored_stat")" "$(dirname "$restored_metadata")"
+              ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" > "$restored_stat"
+              normalize_oss_metadata "$restored_stat" > "$restored_metadata"
+              cmp "$RUNNER_TEMP/web-before-metadata/$key" "$restored_metadata"
+              http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+                -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+                "https://agent.kaiyan.net/$key?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+              test "$http_code" = 200
+              cmp "$before" "$recovery"
+            elif [ "$state" = missing ]; then
+              stat_log="$RUNNER_TEMP/web-restored-stat.log"
+              if ossutil stat "oss://$OSS_BUCKET/$key" --region "$OSS_REGION" \
+                > "$stat_log" 2>&1; then
+                echo "Web key introduced by failed transaction remains after compensation: $key" >&2
+                exit 1
+              fi
+              grep -Eiq 'ErrorCode[=: ]+NoSuchKey([[:space:],}]|$)' "$stat_log"
+              http_code="$(curl -sS --resolve "agent.kaiyan.net:443:$ECS_IP" \
+                -H 'cache-control: no-cache' -o "$recovery" -w '%{http_code}' \
+                "https://agent.kaiyan.net/$key?rollback_probe=${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" || true)"
+              test "$http_code" = 404
+            else
+              echo "invalid Web snapshot state for $key: $state" >&2
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/web-mutable-before.tsv"
           jq -e --slurpfile before "$RUNNER_TEMP/web-before/release-identity.json" \
             '.releaseSha == $before[0].releaseSha and .webDigest == $before[0].webDigest' \
             "$RUNNER_TEMP/web-recovery-restored/release-identity.json" >/dev/null
-          echo "previous OSS/recovery Web and trusted Production identity authoritatively restored"
+          echo "all previous OSS/recovery Web mutable keys and trusted Production identity authoritatively restored"
 
       - name: Fail compatibility transaction after compensated identity error
         if: steps.commit_trusted_identity.outcome == 'failure'

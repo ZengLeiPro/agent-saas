@@ -167,7 +167,7 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
-test('tracks imported callbacks through unknown registrars, aliases, and barrels', () => {
+test('tracks imported callbacks through unknown registrars, aliases, containers, and barrels', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const barrel = 'server/src/data/governance-schema/providers/index.ts';
   const provider = 'server/src/data/governance-schema/providers/run.ts';
@@ -187,6 +187,48 @@ test('tracks imported callbacks through unknown registrars, aliases, and barrels
     {
       label: 'custom constructor callback from an empty baseline',
       rootSource: "import { run } from './providers/run.js';\nnew MigrationRegistrar(run);",
+      extraTree: {},
+    },
+    {
+      label: 'object property callback from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ callback: run });",
+      extraTree: {},
+    },
+    {
+      label: 'object arrow callback wrapper from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ callback: () => run });",
+      extraTree: {},
+    },
+    {
+      label: 'object function callback wrapper from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ callback: function callback() { return run; } });",
+      extraTree: {},
+    },
+    {
+      label: 'object shorthand and spread callbacks from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ run, ...{ callback: run } });",
+      extraTree: {},
+    },
+    {
+      label: 'computed object property callback from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ ['callback']: run });",
+      extraTree: {},
+    },
+    {
+      label: 'object method callback from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ callback() { return run; } });",
+      extraTree: {},
+    },
+    {
+      label: 'object accessor callback from an empty baseline',
+      rootSource:
+        "import { run } from './providers/run.js';\nregisterMigration({ get callback() { return run; } });",
       extraTree: {},
     },
     {
@@ -704,9 +746,14 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
 
   for (const valid of [
     'CREATE UNIQUE INDEX CONCURRENTLY safe_idx ON safe_addition(id);',
+    'CREATE INDEX safe_hash_idx ON safe_addition USING hash (id);',
+    'CREATE INDEX safe_include_idx ON safe_addition(id DESC NULLS LAST) INCLUDE (note);',
+    'CREATE INDEX safe_lower_idx ON safe_addition(pg_catalog.lower(note));',
+    'CREATE TABLE safe_primary(id text PRIMARY KEY);',
     'CREATE SEQUENCE IF NOT EXISTS safe_sequence;',
     'CREATE TABLE safe_identity(id bigint GENERATED ALWAYS AS IDENTITY);',
-    'CREATE TABLE safe_generated(first text, lowered text GENERATED ALWAYS AS (lower(first)) STORED);',
+    'CREATE TABLE safe_types(amount numeric(10, 2), label varchar(255), created_at timestamp(6));',
+    'CREATE TABLE safe_generated(first text, lowered text GENERATED ALWAYS AS (pg_catalog.lower(first)) STORED);',
     'ALTER TABLE safe_addition ADD COLUMN note numeric(10, 2);',
     "ALTER TABLE safe_addition ADD COLUMN escaped text DEFAULT E'foo\\\',bar; -- DROP';",
     "ALTER TABLE safe_addition ADD COLUMN quoted text DEFAULT 'DROP, SELECT;';",
@@ -722,9 +769,33 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
   }
 });
 
-test('rejects unknown function calls inside otherwise allowed CREATE statements', () => {
+test('rejects unknown and context-confused function calls inside allowed CREATE statements', () => {
   for (const statement of [
     'CREATE INDEX unsafe_idx ON users (custom_migration(id));',
+    'CREATE INDEX unsafe_idx ON users ((id !@! id));',
+    'CREATE INDEX unsafe_idx ON users ((id)::evil_type);',
+    'CREATE INDEX unsafe_idx ON users USING btree (id evil_ops);',
+    'CREATE INDEX unsafe_idx ON users (id) WHERE id !@! id;',
+    'CREATE INDEX unsafe_idx ON users USING evil_access_method (id);',
+    'CREATE INDEX unsafe_idx ON users (hash(id));',
+    'CREATE INDEX unsafe_idx ON users (include(id));',
+    'CREATE INDEX unsafe_idx ON users (key(id));',
+    'CREATE INDEX unsafe_idx ON users (range(id));',
+    'CREATE INDEX unsafe_idx ON users (exclude(id));',
+    'CREATE INDEX unsafe_idx ON users (numeric(id));',
+    'CREATE INDEX unsafe_idx ON users (varchar(id));',
+    'CREATE INDEX unsafe_idx ON users (timestamp(id));',
+    'CREATE TABLE unsafe_default(id integer DEFAULT numeric(1));',
+    'CREATE TABLE unsafe_literal_default(id integer DEFAULT 1);',
+    'CREATE TABLE unsafe_literal_check(id integer CHECK (id > 0));',
+    'CREATE TABLE unsafe_partition(id integer) PARTITION BY RANGE (id);',
+    "CREATE TABLE unsafe_check(id integer CHECK (varchar(id) <> ''));",
+    'CREATE INDEX unsafe_idx ON users (evil.lower(name));',
+    'CREATE INDEX unsafe_idx ON users (evil.pg_catalog.lower(name));',
+    'CREATE INDEX unsafe_idx ON users ("evil".pg_catalog.lower(name));',
+    'CREATE INDEX unsafe_idx ON users (lower(name));',
+    'CREATE INDEX unsafe_idx ON users (pg_catalog."lower"(name));',
+    'CREATE INDEX unsafe_idx ON users ("pg_catalog".lower(name));',
     'CREATE TABLE unsafe_default(id bigint DEFAULT custom_migration());',
     'CREATE TABLE unsafe_generated(id text, derived text GENERATED ALWAYS AS (custom_migration(id)) STORED);',
   ]) {

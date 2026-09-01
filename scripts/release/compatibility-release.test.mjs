@@ -228,7 +228,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     );
     assert.match(
       rollback,
-      /if: failure\(\) \|\| steps\.commit_trusted_identity\.outcome == 'failure'/u,
+      /if: failure\(\) \|\| cancelled\(\) \|\| steps\.commit_trusted_identity\.outcome == 'failure'/u,
     );
   }
   assert.match(
@@ -236,14 +236,14 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     /WEB_TRANSACTION_PREFIX: _transactions\/\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/u,
   );
   assert.match(appWorkflow, /web-entry-snapshot-complete/u);
-  assert.match(appWorkflow, /\$WEB_TRANSACTION_PREFIX\/before\/\$f/u);
+  assert.match(appWorkflow, /\$WEB_TRANSACTION_PREFIX\/before\/objects\/\$key/u);
   assert.doesNotMatch(appWorkflow, /_releases\/\$GITHUB_SHA\/previous\/\$f/u);
   assert.match(appWorkflow, /recovery-web-target\.before/u);
   const recoverySnapshotStart = appWorkflow.indexOf(
     '      - name: Snapshot trusted Production identity before Web transaction',
   );
   const webEntrySnapshotStart = appWorkflow.indexOf(
-    '      - name: Snapshot current Web entry files',
+    '      - name: Snapshot all mutable Web keys before transaction',
   );
   const recoverySnapshot = appWorkflow.slice(recoverySnapshotStart, webEntrySnapshotStart);
   assert.match(
@@ -262,18 +262,11 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(rollback, /web-oss-restored/u);
   assert.match(rollback, /state=\(rolled_back\|not_started\)/u);
   assert.match(rollback, /web-recovery-restored/u);
-  assert.match(
-    rollback,
-    /for f in manifest\.webmanifest release-identity\.json index\.html sw\.js/u,
-  );
-  assert.match(
-    rollback,
-    /cmp "\$RUNNER_TEMP\/web-before\/\$f" "\$RUNNER_TEMP\/web-oss-restored\/\$f"/u,
-  );
-  assert.match(
-    rollback,
-    /cmp "\$RUNNER_TEMP\/web-before\/\$f" "\$RUNNER_TEMP\/web-recovery-restored\/\$f"/u,
-  );
+  assert.match(rollback, /while IFS=\$'\\t' read -r state key/u);
+  assert.match(rollback, /before\/objects\/\$key/u);
+  assert.match(rollback, /ossutil rm "oss:\/\/\$OSS_BUCKET\/\$key"/u);
+  assert.match(rollback, /cmp "\$before" "\$restored"/u);
+  assert.match(rollback, /cmp "\$before" "\$recovery"/u);
   assert.match(appWorkflow.slice(finalFailureStart), /exit 1/u);
   assert.match(appWorkflow, /trusted identity remains unchanged until Web converges/u);
   assert.match(
@@ -306,6 +299,58 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
 
+test('snapshots, restores, and proves every mutable Web key class and metadata', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  const snapshotStart = workflow.indexOf(
+    '      - name: Snapshot all mutable Web keys before transaction',
+  );
+  const uploadStart = workflow.indexOf('      - name: Upload to OSS', snapshotStart);
+  const identityStart = workflow.indexOf(
+    '      - name: Commit trusted Production identity after all compatibility targets converge',
+    uploadStart,
+  );
+  const restoreStart = workflow.indexOf(
+    '      - name: Restore all previous mutable Web keys on failure',
+  );
+  const proofStart = workflow.indexOf(
+    '      - name: Prove previous Web and trusted identity after compensation',
+  );
+  assert.ok(snapshotStart > 0 && uploadStart > snapshotStart && identityStart > uploadStart);
+  const snapshot = workflow.slice(snapshotStart, uploadStart);
+  for (const keyClass of [
+    'icons kaikai-presets',
+    'apple-touch-icon.png favicon-16x16.png favicon-32x32.png favicon.ico',
+    'kaikai-avatar.png workbox-*.js',
+    'manifest.webmanifest release-identity.json index.html sw.js',
+  ]) {
+    assert.ok(snapshot.includes(keyClass), keyClass);
+  }
+  assert.match(snapshot, /state=present[\s\S]*ErrorCode\[=:\s\]\+NoSuchKey[\s\S]*state=missing/u);
+  assert.match(snapshot, /before\/objects\/\$key/u);
+  assert.match(snapshot, /normalize_oss_metadata[\s\S]*web-before-metadata/u);
+  assert.match(snapshot, /test "\$http_code" = 404/u);
+  const upload = workflow.slice(uploadStart, identityStart);
+  assert.match(upload, /upload-web-assets-immutable\.sh/u);
+  assert.doesNotMatch(upload, /ossutil cp assets[\s\S]*-r -f/u);
+  assert.match(upload, /oss:\/\/\$OSS_BUCKET\/\$d/u);
+  assert.match(upload, /oss:\/\/\$OSS_BUCKET\/\$f/u);
+  assert.match(
+    upload,
+    /manifest\.webmanifest[\s\S]*release-identity\.json[\s\S]*index\.html[\s\S]*sw\.js/u,
+  );
+  const restore = workflow.slice(restoreStart, proofStart);
+  assert.match(restore, /while IFS=\$'\\t' read -r state key/u);
+  assert.match(restore, /present\)[\s\S]*before\/objects\/\$key/u);
+  assert.match(restore, /missing\)[\s\S]*ossutil rm "oss:\/\/\$OSS_BUCKET\/\$key"/u);
+  const proof = workflow.slice(proofStart);
+  assert.match(proof, /Web key introduced by failed transaction remains after compensation/u);
+  assert.match(proof, /test "\$http_code" = 404/u);
+  assert.match(
+    proof,
+    /cmp "\$before" "\$restored"[\s\S]*web-before-metadata[\s\S]*cmp "\$before" "\$recovery"/u,
+  );
+});
+
 for (const [label, failurePoint] of [
   ['final live component readback', 'read-live-production-components.mjs'],
   ['trusted identity write', 'write-live-production-identity.mjs'],
@@ -328,7 +373,7 @@ for (const [label, failurePoint] of [
     assert.ok(workflow.slice(commitStart, rollbackStart).includes(failurePoint));
     assert.match(
       workflow.slice(rollbackStart, proofStart),
-      /steps\.commit_trusted_identity\.outcome == 'failure'/u,
+      /cancelled\(\)[\s\S]*steps\.commit_trusted_identity\.outcome == 'failure'/u,
     );
     assert.match(
       workflow.slice(proofStart, failStart),

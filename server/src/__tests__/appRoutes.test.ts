@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => {
   const healthRouter = { id: 'health-router' };
@@ -188,6 +188,8 @@ import { activeOffboardingWriteFence, registerRoutes } from '../app/routes.js';
 
 describe('registerRoutes', () => {
   beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
     mocked.createHealthRouter.mockClear();
     mocked.createAppUpdateRouter.mockClear();
     mocked.createUploadRouter.mockClear();
@@ -218,6 +220,8 @@ describe('registerRoutes', () => {
     mocked.createSystemPromptsAdminRouter.mockClear();
     mocked.createPreviewRoutes.mockClear();
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('registers base routes and skips cron route when cron service is absent', () => {
     const app = {

@@ -145,6 +145,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
   });
 
   async function projectUsage(providerUsage?: { turns: number; tokens: number; credits: number }) {
+    // Normalize the fixed-scale NUMERIC column to whole microcredits for semantic assertions.
     const adaptive = await createAutomation({
       kind: 'loop', mode: 'adaptive',
       spec: { kind: 'loop', mode: 'adaptive', prompt: 'continue', budget: { maxTurns: 4, maxTokens: 31, maxCredits: 4 } },
@@ -163,7 +164,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       modelUsage: { model: { inputTokens: 20, outputTokens: 10, reasoningTokens: 0, costUSD: 3 } },
     });
     const usage = await pool.query(
-      `SELECT source_kind,turns,tokens,credits::text FROM ${store.tables.usage}
+      `SELECT source_kind,turns,tokens,credits::numeric(20,0)::text AS credits FROM ${store.tables.usage}
         WHERE tenant_id=$1 AND automation_id=$2 ORDER BY source_kind`,
       [tenantId, adaptive.automationId],
     );

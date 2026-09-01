@@ -251,17 +251,17 @@ export class SessionAutomationTerminalProjector {
                 row.current_incarnation, row.current_generation, row.spec_version],
             );
             const frozen = candidate.rows[0];
+            // Wakeup lineage is encoded in trigger_key; payload belongs to the later outbox row.
             const existingContinuation = await client.query(
               `SELECT 1 FROM ${this.store.tables.wakeups}
                 WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
                   AND incarnation_id=$4 AND generation=$5 AND spec_version=$6
                   AND state IN ('pending','claimed')
-                  AND (trigger_key LIKE $7 OR payload->>'sourceRunId'=$8)
+                  AND trigger_key LIKE $7
                 LIMIT 1`,
               [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
                 row.current_generation, row.spec_version,
-                `goal:${row.automation_id}:g${row.current_generation}:e%:from:${event.runId}`,
-                event.runId],
+                `goal:${row.automation_id}:g${row.current_generation}:e%:from:${event.runId}`],
             );
             if (!frozen && !existingContinuation.rowCount && !noProgress.pause) {
               const continuationEpoch = nextContinuationEpoch(row.wakeup_continuation_epoch);

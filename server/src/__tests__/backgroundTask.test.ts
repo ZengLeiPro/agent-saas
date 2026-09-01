@@ -570,7 +570,7 @@ describe('DurableBackgroundTaskService', () => {
     };
     base.config.executionTransportRegistry!.register('server-remote', transport);
     const parentHand = {
-      handId: 'parent-session-1:agent-saas-acs',
+      handId: 'parent-session-1:agent-saas-acs', tenantId: 'tenant-1',
       sessionId: 'parent-session-1',
       workspaceId: 'parent-session-1',
       type: 'server-remote' as const,
@@ -580,11 +580,11 @@ describe('DurableBackgroundTaskService', () => {
       updatedAt: new Date(0).toISOString(),
       metadata: { tenantRemoteHandId: 'agent-saas-acs' },
     };
-    const listBySession = vi.fn(async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : []);
+    const listBySession = vi.fn(async (sessionId: string, tenantId: string) => sessionId === parentHand.sessionId && tenantId === parentHand.tenantId ? [parentHand] : []);
     base.config.handStore = {
-      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
+      get: async (handId: string, tenantId: string) => handId === parentHand.handId && tenantId === parentHand.tenantId ? parentHand : null,
       listBySession,
-      listByWorkspace: async () => [parentHand],
+      listByWorkspace: async (_workspaceId: string, tenantId: string) => tenantId === parentHand.tenantId ? [parentHand] : [],
     } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, {
@@ -608,8 +608,8 @@ describe('DurableBackgroundTaskService', () => {
       toolName: 'BashOutput',
       sessionId: 'parent-session-1',
     })]);
-    expect(listBySession).toHaveBeenCalledWith('parent-session-1');
-    expect(listBySession).not.toHaveBeenCalledWith(reserved.sessionId);
+    expect(listBySession).toHaveBeenCalledWith('parent-session-1', 'tenant-1');
+    expect(listBySession).not.toHaveBeenCalledWith(reserved.sessionId, 'tenant-1');
     expect(base.runStore.records.get(reservation.taskId)).toMatchObject({
       status: 'completed',
       statusReason: undefined,
@@ -641,7 +641,7 @@ describe('DurableBackgroundTaskService', () => {
       },
     });
     const parentHand = {
-      handId: 'parent-session-1:agent-saas-acs',
+      handId: 'parent-session-1:agent-saas-acs', tenantId: 'tenant-1',
       sessionId: 'parent-session-1',
       workspaceId: 'parent-session-1',
       type: 'server-remote' as const,
@@ -652,9 +652,9 @@ describe('DurableBackgroundTaskService', () => {
       metadata: { tenantRemoteHandId: 'agent-saas-acs' },
     };
     base.config.handStore = {
-      get: async (handId: string) => handId === parentHand.handId ? parentHand : null,
-      listBySession: async (sessionId: string) => sessionId === parentHand.sessionId ? [parentHand] : [],
-      listByWorkspace: async () => [parentHand],
+      get: async (handId: string, tenantId: string) => handId === parentHand.handId && tenantId === parentHand.tenantId ? parentHand : null,
+      listBySession: async (sessionId: string, tenantId: string) => sessionId === parentHand.sessionId && tenantId === parentHand.tenantId ? [parentHand] : [],
+      listByWorkspace: async (_workspaceId: string, tenantId: string) => tenantId === parentHand.tenantId ? [parentHand] : [],
     } as never;
     const context = commandContext();
     const reservation = await base.service.reserveCommand(context, { command: 'sleep 60', timeoutMs: 60_000 });

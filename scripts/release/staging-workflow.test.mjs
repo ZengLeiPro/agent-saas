@@ -196,7 +196,7 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.doesNotMatch(
     deploy,
-    /install -d -o agent-saas-staging -g agent-saas-staging[\s\S]*\/mnt\/agent-saas-staging\/runtime\/server/u,
+    /install -d[^\n]*"\$runtime_dir"/u,
   );
   assert.match(deploy, /Artifact directory owner does not match the persistent runtime owner/u);
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
@@ -241,8 +241,15 @@ test('target deployment consumes bundles without source install/build and uses o
     /AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
   );
   assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
-  assert.match(deploy, /AGENT_SAAS_CONFIG_PATH=\/etc\/agent-saas-staging\/config\.json/u);
+  assert.match(
+    deploy,
+    /AGENT_SAAS_CONFIG_PATH=\/var\/lib\/agent-saas-staging\/config\/config\.json/u,
+  );
   assert.match(deploy, /API and Runtime Worker must use the shared Staging config/u);
+  assert.match(deploy, /config_root="\$state_root\/config"/u);
+  assert.match(deploy, /legacy_server_config=\/etc\/agent-saas-staging\/config\.json/u);
+  assert.match(deploy, /install -d -o agent-saas-staging -g agent-saas-staging -m 0700/u);
+  assert.match(deploy, /Staging mutable config must be a regular non-symlink file/u);
   assert.match(deploy, /artifact\.backend must be local/u);
   assert.match(deploy, /artifact\.rootDir must use the shared NAS Artifact directory/u);
   assert.match(deploy, /artifact\.signedUrlSecret must be independent from auth\.jwtSecret/u);
@@ -274,7 +281,8 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /cp -a "\$server_config" "\$rollback_root\/config\.json"/u);
   assert.match(deploy, /cp -a "\$rollback_root\/config\.json" "\$server_config"/u);
-  assert.match(deploy, /chmod 0640 "\$server_config"/u);
+  assert.match(deploy, /chown agent-saas-staging:agent-saas-staging "\$server_config"/u);
+  assert.match(deploy, /chmod 0600 "\$server_config"/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
   assert.match(
     deploy,

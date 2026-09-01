@@ -147,7 +147,7 @@ export async function runCli(argv = process.argv, env = process.env) {
   const resolvedServerRoot = resolve(serverRoot);
   if (!resolvedServerRoot.startsWith('/opt/agent-saas-staging/'))
     throw new Error('Server root is outside the Staging release root');
-  const configPath = '/etc/agent-saas-staging/config.json';
+  const configPath = '/var/lib/agent-saas-staging/config/config.json';
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const store = config.runtimeEventStore;
   if (store?.backend !== 'pg' || store.tablePrefix !== 'staging_runtime')

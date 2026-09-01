@@ -519,13 +519,19 @@ export function SkillSelector({
                   className={groupIndex === 0 ? "" : "mt-6"}
                   aria-labelledby={`skill-group-${group.id}`}
                 >
-                  <div className="mb-2 flex items-center gap-2">
-                    <h3 id={`skill-group-${group.id}`} className="text-xs font-medium text-foreground">
+                  {/* 不做 sticky：组只有 2–4 个，粘住的收益抵不上它压在卡片上的穿帮感；
+                      改用一条延伸到右边的细线划出分组边界，不额外占高度 */}
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <h3
+                      id={`skill-group-${group.id}`}
+                      className="shrink-0 text-xs font-medium tracking-wide text-foreground"
+                    >
                       {group.label}
                     </h3>
-                    <span className="rounded-full bg-muted px-1.5 text-2xs tabular-nums text-muted-foreground">
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-2xs tabular-nums text-muted-foreground">
                       {group.skills.length}
                     </span>
+                    <span className="h-px flex-1 bg-border/60" aria-hidden="true" />
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {group.skills.map((skill, index) => renderSkillCard(skill, index, { showState, showSource }))}

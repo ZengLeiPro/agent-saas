@@ -256,9 +256,15 @@ export function WorkflowScenarioCard({
       )}
     >
       <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        {/* 形态（4 选 1 的短词）挪到这里，用掉标签行原本的空白，
+            把底部整行让给逐条不同的人审说明——否则两者挤一行会把人审说明截到只剩七八个字 */}
         <span className="flex min-w-0 items-center gap-1.5">
           <OutcomeIcon className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="truncate">{outcome}</span>
+          <span className="shrink-0 text-muted-foreground/40" aria-hidden="true">
+            ·
+          </span>
+          <span className="shrink-0 text-muted-foreground/80">{friendlyPrimaryType[scenario.primaryType]}</span>
           {scenario.featured ? <span className="sr-only">重点工作流</span> : null}
         </span>
         {/* 目录里 22/28 都是「标准接入」，这一格几乎没有区分度；
@@ -288,12 +294,12 @@ export function WorkflowScenarioCard({
           {scenario.triggerBadge}
         </span>
       </div>
-      <div className="mt-auto flex items-end justify-between gap-3 border-t border-border/50 pt-4">
-        <div className="min-w-0 text-2xs leading-4 text-muted-foreground">
-          <div className="truncate" title={scenario.humanApprovalSummary}>
-            {scenario.humanApprovalSummary}
-          </div>
-          <div className="mt-0.5 text-muted-foreground/70">{friendlyPrimaryType[scenario.primaryType]}</div>
+      <div className="mt-auto flex items-center justify-between gap-3 border-t border-border/50 pt-4">
+        <div
+          className="min-w-0 truncate text-2xs leading-4 text-muted-foreground"
+          title={scenario.humanApprovalSummary}
+        >
+          {scenario.humanApprovalSummary}
         </div>
         <div className="flex shrink-0 items-center justify-end gap-2">
           {cta.secondaryLabel ? (

@@ -320,6 +320,10 @@ describePg('automation background child recovery on PostgreSQL', () => {
     });
     await runs.markStatus(persisted!.runId, 'running', 'background_worker_started');
     await restored.execute(persisted!);
+    if (!childContext) {
+      const failed = await runs.get(persisted!.runId);
+      throw new Error(`background child did not start: ${JSON.stringify(failed?.metadata.backgroundResult)}`);
+    }
     const released = await pool.query(
       `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,
       [tenantId, persisted!.runId],

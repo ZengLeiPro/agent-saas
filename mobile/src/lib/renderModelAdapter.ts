@@ -1,6 +1,10 @@
 import type { MessageItem, RawPresentationGate, RenderModel, RenderTimelineItem } from '@agent/shared';
 import { renderSemanticSignature } from '@agent/shared';
-import { adaptToolPresentationForMobile, type MobilePresentationSurface } from './presentationAdapter';
+import {
+  adaptErrorPresentationForMobile,
+  adaptToolPresentationForMobile,
+  type MobilePresentationSurface,
+} from './presentationAdapter';
 
 export interface MobileRenderTimelineRow {
   key: string;
@@ -20,16 +24,29 @@ export function adaptRenderModelForMobile(
   model: RenderModel,
   presentationGate?: RawPresentationGate,
 ): readonly MobileRenderTimelineRow[] {
-  return model.items.map((item) => ({
-    key: item.id,
-    item,
-    ...(item.source.type === 'message' || item.source.type === 'activity' ? { message: item.source.message } : {}),
-    semantic: renderSemanticSignature(item),
-    ...(item.kind === 'tool_activity' ? { presentation: adaptToolPresentationForMobile(item, presentationGate) } : {}),
-    accessibility: {
-      role: item.accessibility.role === 'alert' ? 'alert' : item.accessibility.role === 'status' ? 'summary' : 'text',
-      label: item.accessibility.label,
-      ...(item.accessibility.live ? { live: item.accessibility.live } : {}),
-    },
-  }));
+  return model.items.map((item) => {
+    const presentation = item.kind === 'tool_activity'
+      ? adaptToolPresentationForMobile(item, presentationGate)
+      : item.kind === 'error'
+        ? adaptErrorPresentationForMobile(item, presentationGate)
+        : undefined;
+    return {
+      key: item.id,
+      item,
+      ...(item.source.type === 'message' || item.source.type === 'activity' ? { message: item.source.message } : {}),
+      semantic: presentation?.semantic ?? renderSemanticSignature(item),
+      ...(presentation ? { presentation } : {}),
+      accessibility: presentation
+        ? {
+            role: presentation.accessibility.role,
+            label: presentation.accessibility.label,
+            live: presentation.accessibility.live,
+          }
+        : {
+            role: item.accessibility.role === 'alert' ? 'alert' : item.accessibility.role === 'status' ? 'summary' : 'text',
+            label: item.accessibility.label,
+            ...(item.accessibility.live ? { live: item.accessibility.live } : {}),
+          },
+    };
+  });
 }

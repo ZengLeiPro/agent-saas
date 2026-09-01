@@ -7,6 +7,7 @@ import {
   listSharedPresentationKinds,
   presentationSemanticSignature,
   selectBusinessStepPresentation,
+  selectErrorPresentation,
   selectPresentationCardViewModel,
   selectSharedPresentation,
   selectToolPresentation,
@@ -37,16 +38,19 @@ function toolItem(
 describe('shared presentation registry', () => {
   it('is frozen and exhaustively lists Tool and BusinessStep presenters', () => {
     expect(Object.isFrozen(SHARED_PRESENTATION_PRESENTERS)).toBe(true);
-    expect(listSharedPresentationKinds().sort()).toEqual(['business_step', 'tool']);
+    expect(listSharedPresentationKinds().sort()).toEqual(['business_step', 'error', 'tool']);
   });
 
   it('unknown and malformed inputs degrade without throwing or exposing raw data', () => {
     expect(selectSharedPresentation({ kind: 'future', source: { token: 'secret' } })).toEqual({
       title: '内容不可用',
+      status: 'unknown',
+      statusLabel: '内容不可用',
       tone: 'neutral',
       detail: [],
       display: [],
       evidence: [],
+      busy: false,
       showRaw: false,
     });
     expect(() => selectSharedPresentation(null)).not.toThrow();
@@ -76,13 +80,16 @@ describe('Tool presenter', () => {
   });
 
   it.each([
-    ['failed', 'danger'],
-    ['timeout', 'danger'],
-    ['cancelled', 'muted'],
-  ] as const)('keeps authoritative execution status %s as %s', (status, tone) => {
-    expect(selectToolPresentation(toolItem(status, { title: '执行动作', status: 'ok' })).tone).toBe(
+    ['running', 'running', 'info', true],
+    ['completed', 'succeeded', 'success', false],
+    ['failed', 'failed', 'danger', false],
+    ['cancelled', 'cancelled', 'muted', false],
+  ] as const)('keeps authoritative execution status %s', (status, canonicalStatus, tone, busy) => {
+    expect(selectToolPresentation(toolItem(status, { title: '执行动作', status: 'ok' }))).toMatchObject({
+      status: canonicalStatus,
       tone,
-    );
+      busy,
+    });
   });
 
   it('drops malformed receipts and unsafe semantic strings', () => {
@@ -93,7 +100,8 @@ describe('Tool presenter', () => {
         detail: [
           '{"token":"abc"}',
           { k: 'Authorization', v: 'Bearer: abc' },
-          { k: 'token', v: 'plain-secret-value' },
+          { k: 'clientToken', v: 'plain-secret-value' },
+          { k: '业务字段', v: 'VALUE_SECRET_SENTINEL' },
           { fields: [{ k: 'path', v: 'secrets/customer.txt' }] },
           { quote: 'https://evil.example/x' },
           { original: '/workspace/customer/private.txt' },
@@ -153,6 +161,37 @@ describe('Tool presenter', () => {
   });
 });
 
+describe('Error presenter', () => {
+  it('safe-falls back before classification and exposes at most one recovery action', () => {
+    const item = selectRenderModel({
+      runtime: [{
+        id: 'runtime-error',
+        type: 'error',
+        status: 'failed',
+        content: 'token=RUNTIME_SECRET /workspace/private/error.log',
+        domain: 'transport',
+        retryability: 'retryable',
+      }],
+    }).items[0];
+    const model = selectErrorPresentation(item);
+    expect(model).toMatchObject({
+      title: '运行出现问题',
+      status: 'failed',
+      statusLabel: '执行失败',
+      busy: false,
+      recoveryAction: { kind: 'retry', label: '重试' },
+    });
+    expect(JSON.stringify(model)).not.toContain('RUNTIME_SECRET');
+    expect(JSON.stringify(model)).not.toContain('/workspace');
+  });
+
+  it('treats cancellation as a terminal non-busy state without recovery', () => {
+    const model = selectErrorPresentation({ status: 'cancelled', content: [] });
+    expect(model).toMatchObject({ status: 'cancelled', statusLabel: '已取消', busy: false });
+    expect(model.recoveryAction).toBeUndefined();
+  });
+});
+
 describe('BusinessStep presenter', () => {
   it.each([
     ['pending', 'muted'],
@@ -162,7 +201,11 @@ describe('BusinessStep presenter', () => {
     ['completed', 'success'],
     ['failed', 'danger'],
   ] as const)('covers authoritative status %s', (status, tone) => {
-    expect(selectBusinessStepPresentation({ content: '核对合同', status }).tone).toBe(tone);
+    expect(selectBusinessStepPresentation({ content: '核对合同', status })).toMatchObject({
+      status,
+      tone,
+      busy: status === 'in_progress',
+    });
   });
 
   it.each([
@@ -244,8 +287,9 @@ describe('raw disclosure policy and hostile structures', () => {
     }
   }
 
-  it('does not invoke getters and survives cycles/depth/oversized arrays', () => {
+  it('does not invoke getters/toJSON and survives cycles/depth/oversized arrays', () => {
     let getterCalls = 0;
+    let toJsonCalls = 0;
     const hostile: Record<string, unknown> = { kind: 'tool' };
     Object.defineProperty(hostile, 'source', {
       enumerable: true,
@@ -255,9 +299,14 @@ describe('raw disclosure policy and hostile structures', () => {
       },
     });
     hostile.loop = hostile;
+    hostile.toJSON = () => {
+      toJsonCalls += 1;
+      return { token: 'TO_JSON_SECRET' };
+    };
     hostile.deep = { a: { b: { c: { d: { e: { f: { g: { h: { i: 'too deep' } } } } } } } } };
     hostile.items = Array.from({ length: 10_000 }, (_, index) => index);
     expect(() => selectSharedPresentation(hostile)).not.toThrow();
     expect(getterCalls).toBe(0);
+    expect(toJsonCalls).toBe(0);
   });
 });

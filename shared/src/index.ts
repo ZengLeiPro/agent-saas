@@ -1176,7 +1176,7 @@ export {
   selectRenderModel,
 } from './lib/renderModel';
 
-// M20-05 authoritative renderer-neutral Tool/BusinessStep presentation presenters
+// M40-04 authoritative renderer-neutral Tool/Error/BusinessStep presentation presenters
 export {
   PRESENTATION_STRUCTURE_BUDGET,
   SHARED_PRESENTATION_PRESENTERS,
@@ -1184,6 +1184,7 @@ export {
   listSharedPresentationKinds,
   presentationSemanticSignature,
   selectBusinessStepPresentation,
+  selectErrorPresentation,
   selectPresentationCardViewModel,
   selectPresentationViewModel,
   selectSharedPresentation,
@@ -1204,7 +1205,10 @@ export type {
   RawPresentationGate,
   SharedPresentation,
   SharedPresentationKind,
+  SharedPresentationOutcome,
   SharedPresentationPresenterInput,
+  SharedPresentationRecoveryAction,
+  SharedPresentationStatus,
 } from './lib/presentationPresenter';
 export type {
   ApprovalSurface,

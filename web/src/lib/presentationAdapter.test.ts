@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { selectRenderModel, type BusinessStepEventItem, type TodoItem } from '@agent/shared';
 import {
   adaptBusinessStepPresentationForMobile,
+  adaptErrorPresentationForMobile,
   adaptToolPresentationForMobile,
   adaptUnknownPresentationForMobile,
 } from '../../../mobile/src/lib/presentationAdapter';
 import {
   adaptBusinessStepPresentationForWeb,
+  adaptErrorPresentationForWeb,
   adaptToolPresentationForWeb,
   adaptUnknownPresentationForWeb,
 } from './presentationAdapter';
@@ -54,6 +56,24 @@ describe('M20-05 Web/Mobile shared presentation parity', () => {
     expect(web.card).toEqual(mobile.card);
     expect(web.semantic).toBe(mobile.semantic);
     expect(web.accessibility.label).toBe(mobile.accessibility.label);
+  });
+
+  it('keeps failed/cancelled Error semantics terminal and raw-free on both platforms', () => {
+    for (const severity of [undefined, 'cancelled'] as const) {
+      const item = selectRenderModel({ messages: [{
+        id: `error-${severity ?? 'failed'}`,
+        type: 'system-error',
+        content: 'token=ERROR_SECRET /workspace/private/error.log',
+        ...(severity ? { severity } : {}),
+      }] }).items[0];
+      const web = adaptErrorPresentationForWeb(item);
+      const mobile = adaptErrorPresentationForMobile(item);
+      expect(mobile.presentation).toEqual(web.presentation);
+      expect(web.presentation.busy).toBe(false);
+      expect(web.semantic).toBe(mobile.semantic);
+      expect(JSON.stringify({ web, mobile })).not.toContain('ERROR_SECRET');
+      expect(JSON.stringify({ web, mobile })).not.toContain('/workspace');
+    }
   });
 
   it.each([

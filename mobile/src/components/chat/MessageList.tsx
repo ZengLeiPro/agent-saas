@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RenderModel } from '@agent/shared';
+import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RawPresentationGate, RenderModel } from '@agent/shared';
 import { groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
 import { CompactionDivider } from './CompactionDivider';
@@ -237,6 +237,7 @@ interface AiBubbleViewProps {
   agentAvatar?: string;
   agentUsername?: string;
   agentAvatarVersion?: number;
+  presentationGate?: RawPresentationGate;
 }
 
 const AiBubbleView = React.memo(function AiBubbleView({
@@ -253,6 +254,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
   agentAvatar,
   agentUsername,
   agentAvatarVersion,
+  presentationGate,
 }: AiBubbleViewProps) {
   const colors = useColors();
   const fadeAnim = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current;
@@ -302,6 +304,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
             onPreviewMd={onPreviewMd}
             onTtsPlay={onTtsPlay}
             isLoading={loading}
+            presentationGate={presentationGate}
           />
         ))}
       </Animated.View>
@@ -530,6 +533,7 @@ export function MessageList({
           agentAvatar={agent?.avatar}
           agentUsername={agent?.username}
           agentAvatarVersion={agent?.avatarVersion}
+          presentationGate={presentationGate}
         />
       );
     }
@@ -555,10 +559,11 @@ export function MessageList({
           onForkMessage={onForkMessage}
           isFirstUser={item.type === 'user' && item.id === firstUserMsgId}
           isLoading={loading}
+          presentationGate={presentationGate}
         />
       </>
     );
-  }, [headerItemIds, lastActivityGroupId, onPermissionResponse, onAskUserResponse, onRetryMessage, onForkMessage, firstUserMsgId, loading, onPreviewMd, onTtsPlay]);
+  }, [headerItemIds, lastActivityGroupId, onPermissionResponse, onAskUserResponse, onRetryMessage, onForkMessage, firstUserMsgId, loading, onPreviewMd, onTtsPlay, presentationGate]);
 
   const getItemType = useCallback((item: BubbleRenderItem) => item.type, []);
   const keyExtractor = useCallback((item: BubbleRenderItem) => item.id, []);

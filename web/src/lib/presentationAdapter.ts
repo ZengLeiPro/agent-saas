@@ -1,6 +1,7 @@
 import {
   presentationSemanticSignature,
   selectBusinessStepPresentation,
+  selectErrorPresentation,
   selectPresentationCardViewModel,
   selectSharedPresentation,
   selectToolPresentation,
@@ -14,7 +15,7 @@ import {
 
 export interface WebPresentationSurface {
   key: string;
-  kind: 'tool' | 'business_step' | 'unknown';
+  kind: 'tool' | 'error' | 'business_step' | 'unknown';
   presentation: SharedPresentation;
   card?: CardViewModel;
   semantic: string;
@@ -40,7 +41,12 @@ function surface(
     semantic: presentationSemanticSignature(presentation),
     accessibility: {
       role: danger ? 'alert' : 'status',
-      label: presentation.title,
+      label: [
+        presentation.title,
+        presentation.statusLabel,
+        presentation.summary,
+        presentation.recoveryAction?.label,
+      ].filter(Boolean).join('，'),
       live: danger ? 'assertive' : 'polite',
     },
   };
@@ -58,6 +64,14 @@ export function adaptToolPresentationForWeb(
     presentation,
     selectPresentationCardViewModel(item, presentation),
   );
+}
+
+/** Runtime errors use the safe fallback before renderer- or domain-specific classification. */
+export function adaptErrorPresentationForWeb(
+  item: RenderTimelineItem,
+  gate?: RawPresentationGate,
+): WebPresentationSurface {
+  return surface(item.id, 'error', selectErrorPresentation(item, gate));
 }
 
 /** Existing BusinessStep components receive this Shared-owned semantic projection. */

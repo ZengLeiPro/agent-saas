@@ -22,7 +22,7 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { captureHistoryAnchor, isDebugModeAvailable, restoreHistoryAnchor, selectRenderModel, type AgentProfile, type AskUserAnswers, type HistoryAnchor, type RenderModel, type SessionParticipants } from '@agent/shared';
+import { canShowRawPresentation, captureHistoryAnchor, isDebugModeAvailable, restoreHistoryAnchor, selectRenderModel, type AgentProfile, type AskUserAnswers, type HistoryAnchor, type RenderModel, type SessionParticipants } from '@agent/shared';
 import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
@@ -290,13 +290,15 @@ export const MessageList = memo(function MessageList({
 
   const voicePlayer = useVoicePlayer();
   const { user } = useAuth();
-  const debugMode = debugModeOverride
+  const debugModeRequested = debugModeOverride
     ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
   const presentationGate = useMemo(() => ({
     debugBuild: import.meta.env.DEV,
     authenticatedAdmin: user?.role === 'admin',
-    explicitSessionToggle: debugMode,
-  }), [debugMode, user?.role]);
+    explicitSessionToggle: debugModeRequested,
+  }), [debugModeRequested, user?.role]);
+  const debugMode = debugModeRequested;
+  const rawPresentationMode = canShowRawPresentation(presentationGate);
   const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
   const renderModel = useMemo(() => {
     const next = selectRenderModel({ messages }, previousRenderModelRef.current);
@@ -706,6 +708,7 @@ export const MessageList = memo(function MessageList({
             isActive={item.isActive}
             isLast={item.id === lastActivityGroupId}
             debugMode={debugMode}
+            rawPresentationMode={rawPresentationMode}
             onSwitchModel={onSwitchModel}
           />
         </ErrorBoundary>
@@ -738,11 +741,13 @@ export const MessageList = memo(function MessageList({
           voicePlayer={voicePlayer}
           voicePlayState={voicePlayState}
           debugMode={debugMode}
+          rawPresentationMode={rawPresentationMode}
         />
       </ErrorBoundary>
     );
   }, [
     debugMode,
+    rawPresentationMode,
     lastActivityGroupId,
     loading,
     msgIndexMap,
@@ -896,7 +901,7 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className={cn(showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   <ErrorBoundary inline>
-                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} onSwitchModel={onSwitchModel} />
+                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} rawPresentationMode={rawPresentationMode} onSwitchModel={onSwitchModel} />
                   </ErrorBoundary>
                 </div>
               </div>
@@ -958,6 +963,7 @@ export const MessageList = memo(function MessageList({
                     voicePlayer={voicePlayer}
                     voicePlayState={undefined}
                     debugMode={debugMode}
+                    rawPresentationMode={rawPresentationMode}
                   />
                 </ErrorBoundary>
               </div>
@@ -991,6 +997,7 @@ export const MessageList = memo(function MessageList({
                     voicePlayer={voicePlayer}
                     voicePlayState={undefined}
                     debugMode={debugMode}
+                    rawPresentationMode={rawPresentationMode}
                   />
                 </ErrorBoundary>
               </div>
@@ -1035,6 +1042,7 @@ export const MessageList = memo(function MessageList({
                 voicePlayer={voicePlayer}
                 voicePlayState={voicePlayState}
                 debugMode={debugMode}
+                rawPresentationMode={rawPresentationMode}
               />
               </ErrorBoundary>
             </div>

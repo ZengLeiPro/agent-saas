@@ -48,8 +48,32 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import type { AskUserAnswers, MessageItem, RenderItem, ActivityGroup } from '@agent/shared';
-import { truncateContent, formatJson, formatFileSize, formatTokenCount, authFetch, parseToolResult, getPreviewFileType, getToolDisplayLabel, getToolDisplayInfo, getFileTypeVisual } from '@agent/shared';
+import type {
+  ActivityGroup,
+  AskUserAnswers,
+  BusinessStepEventItem,
+  MessageItem,
+  PresentationBlock,
+  RawPresentationGate,
+  RenderItem,
+  SharedPresentation,
+} from '@agent/shared';
+import {
+  authFetch,
+  formatFileSize,
+  formatJson,
+  formatTokenCount,
+  getFileTypeVisual,
+  getPreviewFileType,
+  getToolDisplayInfo,
+  getToolDisplayLabel,
+  parseToolResult,
+  selectBusinessStepPresentation,
+  selectErrorPresentation,
+  selectRenderModel,
+  selectToolPresentation,
+  truncateContent,
+} from '@agent/shared';
 import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
 import Markdown from 'react-native-markdown-display';
@@ -376,6 +400,7 @@ interface MessageItemViewProps {
   isLoading?: boolean;
   onPreviewMd?: (filePath: string) => void;
   onTtsPlay?: (key: string, text: string) => void;
+  presentationGate?: RawPresentationGate;
 }
 
 export const MessageItemView = React.memo(function MessageItemView({
@@ -390,6 +415,7 @@ export const MessageItemView = React.memo(function MessageItemView({
   isLoading,
   onPreviewMd,
   onTtsPlay,
+  presentationGate,
 }: MessageItemViewProps) {
   // Skip fade animation for initial batch to avoid blocking JS thread
   const fadeAnim = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current;
@@ -403,7 +429,7 @@ export const MessageItemView = React.memo(function MessageItemView({
   let content: React.ReactNode;
 
   if (item.type === 'activity_group') {
-    content = <ActivityGroupView group={item} isLast={isLast} />;
+    content = <ActivityGroupView group={item} isLast={isLast} gate={presentationGate} onRetry={onRetryMessage} />;
   } else {
     switch (item.type) {
       case 'user':
@@ -418,7 +444,7 @@ export const MessageItemView = React.memo(function MessageItemView({
         content = <ThinkingBlock message={item} />;
         break;
       case 'tool_use':
-        content = <ToolUseBlock message={item} />;
+        content = <ToolUseBlock message={item} gate={presentationGate} onRecovery={onRetryMessage ? () => onRetryMessage(item) : undefined} />;
         break;
       case 'tool_result':
         content = <ToolResultBlock message={item} />;
@@ -441,10 +467,13 @@ export const MessageItemView = React.memo(function MessageItemView({
       case 'user-voice':
         content = <UserVoiceBlock message={item} />;
         break;
+      case 'business_step':
+        content = <BusinessStepCard event={item} gate={presentationGate} />;
+        break;
       case 'runtime_status':
       case 'system_event':
       case 'system-error':
-        content = <SystemTimelineMessage message={item} />;
+        content = <SystemTimelineMessage message={item} gate={presentationGate} onRetry={onRetryMessage} />;
         break;
       default:
         content = null;
@@ -460,22 +489,52 @@ export const MessageItemView = React.memo(function MessageItemView({
   );
 });
 
-function SystemTimelineMessage({ message }: {
+function SystemTimelineMessage({ message, gate, onRetry }: {
   message: Extract<MessageItem, { type: 'runtime_status' | 'system_event' | 'system-error' }>;
+  gate?: RawPresentationGate;
+  onRetry?: (message: MessageItem) => void;
 }) {
   const colors = useColors();
-  const isError = message.type === 'system-error';
+  if (message.type === 'system-error') {
+    const item = selectRenderModel({ messages: [message] }).items[0];
+    const presentation = selectErrorPresentation(item, gate);
+    const recovery = presentation.recoveryAction;
+    return (
+      <View
+        accessibilityRole={presentation.tone === 'danger' ? 'alert' : 'summary'}
+        accessibilityLabel={[presentation.title, presentation.statusLabel, presentation.summary, recovery?.label].filter(Boolean).join('，')}
+        accessibilityLiveRegion={presentation.tone === 'danger' ? 'assertive' : 'polite'}
+        style={{ paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: presentation.tone === 'danger' ? colors.destructive : colors.border }}
+      >
+        <Text style={{ ...typography.bodySmall, fontWeight: '600', color: presentation.tone === 'danger' ? colors.destructive : colors.foreground }}>{presentation.title}</Text>
+        <Text style={{ ...typography.bodySmall, color: colors.mutedForeground }}>{presentation.summary ?? presentation.statusLabel}</Text>
+        {presentation.showRaw && presentation.summary !== message.content ? (
+          <Text style={{ ...typography.caption, color: colors.mutedForeground }}>{message.content}</Text>
+        ) : null}
+        {recovery?.kind === 'retry' && onRetry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${presentation.title}，${recovery.label}`}
+            onPress={() => onRetry(message)}
+            style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: spacing.sm }}
+          >
+            <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{recovery.label}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
   const text = message.type === 'runtime_status'
     ? (message.content ?? message.status)
-    : message.type === 'system_event' ? `${message.title}：${message.content}` : message.content;
+    : `${message.title}：${message.content}`;
   return (
     <View
-      accessibilityRole={isError ? 'alert' : 'summary'}
-      accessibilityLabel={isError ? `错误：${text}` : `运行状态：${text}`}
-      accessibilityLiveRegion={isError ? 'assertive' : 'polite'}
-      style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: isError ? colors.destructive : colors.border }}
+      accessibilityRole="summary"
+      accessibilityLabel={`运行状态：${text}`}
+      accessibilityLiveRegion="polite"
+      style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: colors.border }}
     >
-      <Text style={{ ...typography.bodySmall, color: isError ? colors.destructive : colors.mutedForeground }}>{text}</Text>
+      <Text style={{ ...typography.bodySmall, color: colors.mutedForeground }}>{text}</Text>
     </View>
   );
 }
@@ -915,8 +974,73 @@ function ThinkingBlock({ message }: { message: MessageItem & { type: 'thinking' 
   );
 }
 
-// --- Tool Use Block (unified: tool_use + result) ---
-function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' } }) {
+function detailLineText(line: SharedPresentation['detail'][number]): string {
+  if (typeof line === 'string') return line;
+  if ('k' in line) return `${line.k}：${line.v}`;
+  if ('no' in line) return `${line.no}. ${line.text}`;
+  if ('indent' in line) return line.text;
+  if ('section' in line) return line.section;
+  if ('warn' in line) return line.warn;
+  if ('insight' in line) return `${line.label ? `${line.label}：` : ''}${line.insight}`;
+  if ('risk' in line) return `${line.text}${line.action ? `；${line.action}` : ''}`;
+  if ('verdict' in line) return `${line.text}${line.note ? `；${line.note}` : ''}`;
+  if ('quote' in line) return `${line.quote}${line.source ? ` — ${line.source}` : ''}`;
+  if ('original' in line) return `${line.original}${line.translation ? `；${line.translation}` : ''}`;
+  return line.fields.map((field) => `${field.k}：${field.v}`).join('；');
+}
+
+function displayBlockLines(block: PresentationBlock): string[] {
+  if (block.kind === 'callout') return [block.title, ...block.body, ...(block.detail?.map(detailLineText) ?? [])].filter((value): value is string => !!value);
+  if (block.kind === 'records') return [
+    block.title,
+    ...block.items.map((item) => [
+      item.label,
+      item.value,
+      item.baseline,
+      item.current,
+      item.delta,
+      item.note,
+    ].filter(Boolean).join(' · ')),
+    block.footer,
+  ].filter((value): value is string => !!value);
+  return [block.title, ...(block.body ?? [])];
+}
+
+function CanonicalPresentationBody({ presentation }: { presentation: SharedPresentation }) {
+  const colors = useColors();
+  const lines = [
+    ...presentation.detail.map(detailLineText),
+    ...presentation.display.flatMap(displayBlockLines),
+    ...presentation.evidence.map((item) => `依据：${item}`),
+  ];
+  return (
+    <View style={{ gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }}>
+      {presentation.summary ? <Text style={{ ...typography.bodySmall, color: colors.foreground }}>{presentation.summary}</Text> : null}
+      {lines.map((line, index) => <Text key={`${index}-${line}`} style={{ ...typography.caption, color: colors.mutedForeground }}>{line}</Text>)}
+      {presentation.receipt ? <Text style={{ ...typography.caption, color: colors.mutedForeground }}>{presentation.receipt.system} · {presentation.receipt.id}</Text> : null}
+    </View>
+  );
+}
+
+function BusinessStepCard({ event, gate }: { event: BusinessStepEventItem; gate?: RawPresentationGate }) {
+  const colors = useColors();
+  const presentation = useMemo(() => selectBusinessStepPresentation(event, gate), [event, gate]);
+  return (
+    <View
+      accessibilityRole={presentation.tone === 'danger' ? 'alert' : 'summary'}
+      accessibilityLabel={[presentation.title, presentation.statusLabel, presentation.summary].filter(Boolean).join('，')}
+      accessibilityLiveRegion={presentation.tone === 'danger' ? 'assertive' : 'polite'}
+      style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, gap: spacing.xs }}
+    >
+      <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{presentation.title}</Text>
+      <Text style={{ ...typography.caption, color: presentation.tone === 'danger' ? colors.destructive : colors.mutedForeground }}>{presentation.statusLabel}</Text>
+      <CanonicalPresentationBody presentation={presentation} />
+    </View>
+  );
+}
+
+// --- Tool Use Block (canonical summary + debug-authorized raw payload) ---
+function ToolUseBlock({ message, gate, onRecovery }: { message: MessageItem & { type: 'tool_use' }; gate?: RawPresentationGate; onRecovery?: () => void }) {
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
@@ -924,67 +1048,64 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
   const hasResult = message.resultReady === true;
-  const hasIssue = message.executionStatus === 'failed';
-  const isCancelled = message.executionStatus === 'cancelled';
+  const item = useMemo(() => selectRenderModel({ messages: [message] }).items[0], [message]);
+  const canonical = useMemo(() => selectToolPresentation(item, gate), [gate, item]);
+  const hasIssue = canonical.status === 'failed';
+  const isCancelled = canonical.status === 'cancelled';
 
   // 延迟解析结果中的图片
   const parsed = useMemo(
-    () => (expanded && hasResult) ? parseToolResult(message.result || "") : null,
-    [expanded, hasResult, message.result],
+    () => (expanded && hasResult && canonical.showRaw) ? parseToolResult(message.result || "") : null,
+    [canonical.showRaw, expanded, hasResult, message.result],
   );
   const hasImages = parsed !== null && parsed.images.length > 0;
 
-  const displayInfo = useMemo(
-    () => getToolDisplayInfo(message.toolName, message.toolInput),
-    [message.toolName, message.toolInput],
-  );
-
-  const icon = message.streaming || message.executionStatus === 'running'
-    ? <Wrench size={16} color={colors.mutedForeground} strokeWidth={2} />
+  const icon = canonical.busy
+    ? <ActivityIndicator size={16} color={colors.primary} />
     : hasIssue
       ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
       : isCancelled
         ? <CircleSlash2 size={16} color={colors.mutedForeground} strokeWidth={2} />
-    : hasResult
-      ? <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
-      : <ActivityIndicator size={16} color={colors.primary} />;
+        : <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />;
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
-        {icon}
-        {displayInfo.detail ? (
-          <View style={{ flexDirection: 'row', flexShrink: 1, minWidth: 0, alignItems: 'baseline' }}>
-            <Text style={[styles.toolLabel, { flexShrink: 0 }]}>
-              {displayInfo.name}:{' '}
-            </Text>
-            <Text
-              style={[styles.toolLabel, { maxWidth: 384, minWidth: 0 }]}
-              numberOfLines={1}
-              ellipsizeMode={displayInfo.detailTruncate === 'start' ? 'head' : 'tail'}
-            >
-              {displayInfo.detail}
-            </Text>
-            {message.streaming && (
-              <Text style={[styles.toolLabel, { flexShrink: 0 }]}>...</Text>
-            )}
-          </View>
-        ) : (
-          <Text style={styles.toolLabel} numberOfLines={1}>
-            {displayInfo.name}{message.streaming ? '...' : ''}
-          </Text>
-        )}
-        {hasIssue && <Text style={{ color: colors.warning, fontSize: 11 }}>有异常</Text>}
-        <ChevronRight
-          size={16}
-          color={colors.mutedForeground}
-          strokeWidth={2}
-          style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
-        />
+      <Pressable
+        onPress={() => setExpanded(!expanded)}
+        style={[styles.toolRow, { minHeight: 44 }]}
+        accessibilityRole="button"
+        accessibilityLabel={[canonical.title, canonical.statusLabel, canonical.summary, expanded ? '收起详情' : '展开详情'].filter(Boolean).join('，')}
+        accessibilityState={{ expanded, busy: canonical.busy }}
+      >
+        <View accessible={false}>{icon}</View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.toolLabel} numberOfLines={1}>{canonical.title}{canonical.busy ? '...' : ''}</Text>
+          {canonical.summary ? <Text style={{ ...typography.caption, color: colors.mutedForeground }} numberOfLines={1}>{canonical.summary}</Text> : null}
+        </View>
+        <Text style={{ color: hasIssue ? colors.warning : colors.mutedForeground, fontSize: 11 }}>{canonical.statusLabel}</Text>
+        <View accessible={false}>
+          <ChevronRight
+            size={16}
+            color={colors.mutedForeground}
+            strokeWidth={2}
+            style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
+          />
+        </View>
       </Pressable>
+      {canonical.recoveryAction && onRecovery ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${canonical.title}，${canonical.recoveryAction.label}`}
+          onPress={onRecovery}
+          style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: spacing.sm }}
+        >
+          <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{canonical.recoveryAction.label}</Text>
+        </Pressable>
+      ) : null}
       {expanded && (
         <View>
-          <ScrollView style={styles.codePreviewScrollable} nestedScrollEnabled>
+          <CanonicalPresentationBody presentation={canonical} />
+          {canonical.showRaw ? <ScrollView style={styles.codePreviewScrollable} nestedScrollEnabled>
             <Text style={styles.codePreviewText}>
               {formatJson(message.toolInput)}
             </Text>
@@ -996,8 +1117,8 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
                 </View>
               </>
             )}
-          </ScrollView>
-          {hasResult && hasImages && (
+          </ScrollView> : null}
+          {canonical.showRaw && hasResult && hasImages && (
             <>
               <Text style={{ ...typo.caption, fontWeight: '600', color: colors.mutedForeground, marginVertical: 6 }}>Result:</Text>
               <View style={styles.imageGrid}>
@@ -1564,7 +1685,7 @@ function renderActivityItem(item: MessageItem) {
   }
 }
 
-function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }) {
+function ActivityGroupView({ group, gate, onRetry }: { group: ActivityGroup; isLast?: boolean; gate?: RawPresentationGate; onRetry?: (message: MessageItem) => void }) {
   const [expanded, setExpanded] = useState(false);
   const lastItem = group.items[group.items.length - 1];
   const summary = getSummary(lastItem);
@@ -1584,7 +1705,9 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
       onToggle={() => setExpanded((value) => !value)}
     >
       <View style={{ gap: spacing.xs }}>
-        {group.items.map(item => renderActivityItem(item))}
+        {group.items.map(item => item.type === 'tool_use'
+          ? <ToolUseBlock key={item.id} message={item} gate={gate} onRecovery={onRetry ? () => onRetry(item) : undefined} />
+          : renderActivityItem(item))}
       </View>
     </AgentActivityShell>
   );

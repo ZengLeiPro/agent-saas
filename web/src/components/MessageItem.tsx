@@ -16,14 +16,13 @@ import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
 import { extractTextFromChildren, getTableCellStyle } from '@/lib/tableCellWidth';
-import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
+import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, selectErrorPresentation, selectRenderModel, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { MessageCitationCard } from './MessageCitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { GuardrailAppealButton } from './GuardrailAppealButton';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
-import { EntityIcons } from '@/lib/icons';
 import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
 import { ImageLightbox } from './ImageLightbox';
@@ -685,7 +684,10 @@ interface MessageItemProps {
   /** user-voice 消息的播放状态（从外部注入以支持 memo） */
   voicePlayState?: import('@/hooks/useVoicePlayer').VoicePlayState;
   /** 是否显示思考、工具、技能/子任务等执行细节。 */
-  debugMode?: boolean; sessionId?: string | null;
+  debugMode?: boolean;
+  /** 仅表示共享三重门已授权 raw tool/error payload。 */
+  rawPresentationMode?: boolean;
+  sessionId?: string | null;
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -703,7 +705,9 @@ export const MessageItem = memo(function MessageItem({
   ttsIsActive: ttsIsActiveProp,
   voicePlayer,
   voicePlayState,
-  debugMode = true, sessionId,
+  debugMode = true,
+  rawPresentationMode = debugMode,
+  sessionId,
 }: MessageItemProps) {
   const filePreview = useFilePreview();
   const msgKey = `msg-${index}`;
@@ -1000,9 +1004,6 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "tool_use") {
-    // 有「给人看」摘要时，非 debug 视图也呈现——摘要正是为业务观众准备的。
-    // 无摘要则维持原行为（占位符），不把原始 payload 推给全量客户。
-    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || (!message.resultReady && message.executionStatus !== "failed" && message.executionStatus !== "cancelled")} durationMs={message.durationMs} hasIssue={message.executionStatus === "failed"} />;
     return (
       <ToolBlock
         toolName={message.toolName}
@@ -1017,19 +1018,19 @@ export const MessageItem = memo(function MessageItem({
         {...(message.presentation ? { presentation: message.presentation } : {})}
         {...(message.toolMetadata ? { toolMetadata: message.toolMetadata } : {})}
         {...(message.defaultExpanded ? { defaultExpanded: true } : {})}
-        debugMode={debugMode}
+        debugMode={rawPresentationMode}
+        onRecovery={onRetry ? () => onRetry(message) : undefined}
       />
     );
   }
 
   if (message.type === "tool_result") {
-    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder />;
     return (
       <ToolResultBlock
         toolName={message.toolName}
         result={message.result}
         {...(message.presentation ? { presentation: message.presentation } : {})}
-        debugMode={debugMode}
+        debugMode={rawPresentationMode}
       />
     );
   }
@@ -1083,52 +1084,52 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
+  // Tool/error raw payloads are rendered only after the shared three-gate presenter authorizes them.
   if (message.type === "system-error") {
-    // 积分门禁是账户状态，不按运行异常展示：独立暖橙卡片 + 明确下一步。
-    if (message.severity === 'billing') {
-      return (
-        <div
-          className="rounded-xl border border-brand-accent/30 bg-brand-accent-soft px-4 py-3 text-brand-accent-ink shadow-sm dark:border-brand-accent/35 dark:bg-brand-accent/10 dark:text-brand-accent"
-          role="status"
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/70 ring-1 ring-brand-accent/25 dark:bg-brand-accent/10 dark:ring-brand-accent/25">
-              <EntityIcons.credits aria-hidden="true" className="size-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold">积分余额不足</div>
-              <div className="mt-1 text-sm leading-5 opacity-85">{message.content}</div>
+    const item = selectRenderModel({ messages: [message] }).items[0];
+    const presentation = selectErrorPresentation(item, rawPresentationMode ? {
+      debugBuild: true,
+      authenticatedAdmin: true,
+      explicitSessionToggle: true,
+    } : undefined);
+    const recovery = presentation.recoveryAction;
+    const recoveryHandler = recovery?.kind === 'view_billing'
+      ? requestOpenBillingBadge
+      : recovery?.kind === 'switch_model'
+        ? onSwitchModel
+        : onRetry
+          ? () => onRetry(message)
+          : undefined;
+    return (
+      <div
+        className={cn(
+          "rounded-xl border px-4 py-3 text-sm shadow-sm",
+          presentation.tone === 'danger'
+            ? "border-destructive/25 bg-destructive/5 text-foreground"
+            : "border-border bg-muted/30 text-muted-foreground",
+        )}
+        role={presentation.tone === 'danger' ? 'alert' : 'status'}
+        aria-label={[presentation.title, presentation.statusLabel, presentation.summary, recovery?.label].filter(Boolean).join('，')}
+      >
+        <div className="flex items-start gap-3">
+          <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{presentation.title}</div>
+            <div className="mt-1 whitespace-pre-wrap break-words">{presentation.summary ?? presentation.statusLabel}</div>
+            {presentation.showRaw && presentation.summary !== message.content && (
+              <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs">{message.content}</pre>
+            )}
+            {!isLoading && recovery && recoveryHandler && (
               <button
                 type="button"
-                onClick={requestOpenBillingBadge}
-                className="mt-2 rounded-md bg-white/75 px-2.5 py-1 text-xs font-medium ring-1 ring-brand-accent/25 transition-colors hover:bg-white dark:bg-brand-accent/10 dark:ring-brand-accent/25 dark:hover:bg-brand-accent/15"
+                onClick={recoveryHandler}
+                className="mt-2 min-h-11 rounded-md px-3 text-xs font-medium ring-1 ring-border transition-colors hover:bg-muted"
+                aria-label={`${presentation.title}，${recovery.label}`}
               >
-                查看积分
+                {recovery.label}
               </button>
-            </div>
+            )}
           </div>
-        </div>
-      );
-    }
-
-    const isCancelled = message.severity === 'cancelled';
-    if (!isCancelled) {
-      return (
-        <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
-          <span className="whitespace-pre-wrap break-words">{message.content}</span>
-          {!isLoading && (message.recoveryAction === 'switch_model' ? onSwitchModel : onRetry) && (
-            <button type="button" onClick={message.recoveryAction === 'switch_model' ? onSwitchModel : () => onRetry?.(message)} className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground">{message.recoveryAction === 'switch_model' ? '切换模型' : '继续生成'}</button>
-          )}
-        </div>
-      );
-    }
-
-    // 用户主动停止是正常终态，保留中性提示且不提供续跑入口。
-    return (
-      <div className="rounded-r border-l-4 border-zinc-400 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-500 dark:bg-zinc-800/40 dark:text-zinc-300" role="status">
-        <div className="flex items-start gap-2">
-          <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <div className="flex-1 whitespace-pre-wrap break-words">{message.content}</div>
         </div>
       </div>
     );
@@ -1148,5 +1149,7 @@ export const MessageItem = memo(function MessageItem({
   prev.ttsState === next.ttsState &&
   prev.ttsIsActive === next.ttsIsActive &&
   prev.voicePlayState === next.voicePlayState &&
-  prev.debugMode === next.debugMode && prev.sessionId === next.sessionId
+  prev.debugMode === next.debugMode &&
+  prev.rawPresentationMode === next.rawPresentationMode &&
+  prev.sessionId === next.sessionId
 ));

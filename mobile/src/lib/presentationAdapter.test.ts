@@ -6,7 +6,7 @@ import {
   adaptUnknownPresentationForMobile,
 } from './presentationAdapter';
 
-describe('M20-05 Mobile shared presentation adapter', () => {
+describe('M40-04 Mobile shared presentation adapter', () => {
   it('consumes RenderModel + card contracts without exposing raw data to non-debug semantics', () => {
     const item = selectRenderModel({
       messages: [
@@ -25,7 +25,9 @@ describe('M20-05 Mobile shared presentation adapter', () => {
     }).items[0];
     const surface = adaptToolPresentationForMobile(item);
     expect(surface.card?.kind).toBe('tool');
-    expect(surface.accessibility).toMatchObject({ role: 'summary', label: '读取完成' });
+    expect(surface.accessibility).toMatchObject({ role: 'summary' });
+    expect(surface.accessibility.label).toContain('读取完成');
+    expect(surface.accessibility.label).toContain('已完成');
     expect(JSON.stringify(surface)).not.toContain('MOBILE_RAW_INPUT');
     expect(JSON.stringify(surface)).not.toContain('MOBILE_RAW_RESULT');
   });

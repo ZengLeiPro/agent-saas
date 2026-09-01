@@ -14,14 +14,45 @@ import {
   type ToolReceipt,
 } from './toolPresentation';
 
-/** Renderer-neutral presentation contract shared by Tool and BusinessStep surfaces. */
+export type SharedPresentationStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'in_progress'
+  | 'waiting'
+  | 'blocked'
+  | 'completed'
+  | 'unknown';
+
+export interface SharedPresentationRecoveryAction {
+  kind: 'retry' | 'switch_model' | 'view_billing';
+  label: string;
+}
+
+export interface SharedPresentationOutcome {
+  text: string;
+  tone: 'ok' | 'warn' | 'fail';
+}
+
+/** Renderer-neutral presentation contract shared by Tool, Error and BusinessStep surfaces. */
 export interface SharedPresentation {
   title: string;
+  status: SharedPresentationStatus;
+  statusLabel: string;
   tone: PresentationTone;
+  /** Safe business summary. It is never synthesized from raw input/result/error objects. */
+  summary?: string;
+  outcome?: SharedPresentationOutcome;
   receipt?: ToolReceipt;
   detail: readonly DetailLine[];
   display: readonly PresentationBlock[];
   evidence: readonly string[];
+  /** Exactly one canonical recovery action may be offered by a failed surface. */
+  recoveryAction?: SharedPresentationRecoveryAction;
+  /** Renderers derive spinner state only from this field. Terminal states are always false. */
+  busy: boolean;
   /** Raw payloads live in the existing card model; this flag is their only disclosure authority. */
   showRaw: boolean;
 }
@@ -35,7 +66,7 @@ export interface RawPresentationGate {
   sessionRawEnabled?: boolean;
 }
 
-export type SharedPresentationKind = 'tool' | 'business_step';
+export type SharedPresentationKind = 'tool' | 'error' | 'business_step';
 
 export interface SharedPresentationPresenterInput {
   kind: SharedPresentationKind | string;
@@ -165,8 +196,23 @@ const RELATIVE_PATH =
   /(?:^|[\s"'(])(?=[^\s]*(?:[A-Za-z_.]|[\u4e00-\u9fff]))(?:[A-Za-z0-9_.\-\u4e00-\u9fff]+[\\/])+[A-Za-z0-9_.\-\u4e00-\u9fff]+/;
 const SECRET =
   /(?:authorization|bearer|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|id[ _-]?token|client[ _-]?secret|private[ _-]?key|password|passwd|secret|token)\s*[:=]/i;
+const SECRET_VALUE =
+  /(?:\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\bsk-[A-Za-z0-9_-]{8,}|\b(?:gh[opusr]|github_pat)_[A-Za-z0-9_]{8,}|(?:^|[-_])(?:secret|token|password|passwd)(?:[-_]|$)|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/i;
 const SENSITIVE_LABEL =
   /^(?:authorization|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|id[ _-]?token|client[ _-]?secret|private[ _-]?key|password|passwd|secret|token|path|file[ _-]?path|relative[ _-]?path|absolute[ _-]?path)$/i;
+
+function isSensitiveLabel(value: string): boolean {
+  const normalized = value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return SENSITIVE_LABEL.test(value)
+    || normalized.endsWith('token')
+    || normalized.endsWith('secret')
+    || normalized.endsWith('password')
+    || normalized.endsWith('passwd')
+    || normalized.endsWith('path')
+    || normalized === 'authorization'
+    || normalized === 'apikey'
+    || normalized === 'privatekey';
+}
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/;
 
 function safeText(value: unknown, maxLength = 500): string | undefined {
@@ -179,6 +225,7 @@ function safeText(value: unknown, maxLength = 500): string | undefined {
     PATH.test(text) ||
     RELATIVE_PATH.test(text) ||
     SECRET.test(text) ||
+    SECRET_VALUE.test(text) ||
     JWT.test(text)
   )
     return undefined;
@@ -196,11 +243,7 @@ function safeText(value: unknown, maxLength = 500): string | undefined {
 function sanitizeReceipt(receipt: ToolReceipt | undefined): ToolReceipt | undefined {
   if (!receipt) return undefined;
   const system = safeText(receipt.system, 40);
-  const id = receipt.id.includes('://')
-    ? !/[?#]/.test(receipt.id) && !SECRET.test(receipt.id) && !JWT.test(receipt.id)
-      ? receipt.id
-      : undefined
-    : safeText(receipt.id, 120);
+  const id = safeText(receipt.id, 120);
   if (!system || !id) return undefined;
   return { id, system, ...(receipt.readBack !== undefined ? { readBack: receipt.readBack } : {}) };
 }
@@ -219,7 +262,7 @@ function sanitizeDetail(raw: unknown): DetailLine[] {
     if ('k' in line) {
       const k = safeText(line.k);
       const v = safeText(line.v);
-      if (k && !SENSITIVE_LABEL.test(k) && v !== undefined)
+      if (k && !isSensitiveLabel(k) && v !== undefined)
         output.push('tree' in line ? { tree: line.tree, k, v } : { k, v });
     } else if ('no' in line) {
       const text = safeText(line.text);
@@ -258,7 +301,7 @@ function sanitizeDetail(raw: unknown): DetailLine[] {
       const fields = line.fields.flatMap((field) => {
         const k = safeText(field.k);
         const v = safeText(field.v);
-        return k && !SENSITIVE_LABEL.test(k) && v !== undefined ? [{ k, v }] : [];
+        return k && !isSensitiveLabel(k) && v !== undefined ? [{ k, v }] : [];
       });
       if (fields.length) output.push({ fields });
     }
@@ -266,9 +309,26 @@ function sanitizeDetail(raw: unknown): DetailLine[] {
   return output;
 }
 
+function detailSummary(detail: readonly DetailLine[]): string | undefined {
+  const first = detail[0];
+  if (typeof first === 'string') return safeText(first, 120);
+  if (!first) return undefined;
+  if ('insight' in first) return safeText(first.insight, 120);
+  if ('warn' in first) return safeText(first.warn, 120);
+  if ('verdict' in first) return safeText(first.text, 120);
+  if ('risk' in first) return safeText(first.text, 120);
+  if ('quote' in first) return safeText(first.quote, 120);
+  if ('original' in first) return safeText(first.translation ?? first.original, 120);
+  if ('text' in first) return safeText(first.text, 120);
+  if ('k' in first) return safeText(`${first.k}：${first.v}`, 120);
+  if ('section' in first) return safeText(first.section, 120);
+  if ('fields' in first && first.fields[0]) return safeText(`${first.fields[0].k}：${first.fields[0].v}`, 120);
+  return undefined;
+}
+
 function sanitizeRecordItem(item: RecordItem): RecordItem | null {
   const label = safeText(item.label);
-  if (!label || SENSITIVE_LABEL.test(label)) return null;
+  if (!label || isSensitiveLabel(label)) return null;
   const value = safeText(item.value);
   const baseline = safeText(item.baseline);
   const current = safeText(item.current);
@@ -355,6 +415,22 @@ function toolTone(status: RenderTimelineStatus, businessStatus: unknown): Presen
   return status === 'completed' ? 'success' : 'neutral';
 }
 
+function toolPresentationStatus(status: RenderTimelineStatus): {
+  status: SharedPresentationStatus;
+  statusLabel: string;
+  busy: boolean;
+} {
+  if (status === 'running' || status === 'pending' || status === 'queued' || status === 'waiting')
+    return { status: 'running', statusLabel: '执行中', busy: true };
+  if (status === 'failed' || status === 'timeout' || status === 'blocked')
+    return { status: 'failed', statusLabel: '执行失败', busy: false };
+  if (status === 'cancelled')
+    return { status: 'cancelled', statusLabel: '已取消', busy: false };
+  if (status === 'completed')
+    return { status: 'succeeded', statusLabel: '已完成', busy: false };
+  return { status: 'failed', statusLabel: '内容不可用', busy: false };
+}
+
 function minimalToolItem(
   source: Record<string, unknown>,
   toolName: string,
@@ -398,13 +474,62 @@ export function selectToolPresentation(
   const title = safeText(normalized?.title, 500) ?? safeText(card.title, 500) ?? '工具';
   const detail = sanitizeDetail(normalized?.detail);
   const receipt = sanitizeReceipt(normalized?.receipt);
+  const summary = detailSummary(detail);
+  const lifecycle = toolPresentationStatus(status);
   return {
     title,
+    ...lifecycle,
     tone: toolTone(status, normalized?.status),
+    ...(summary ? { summary } : {}),
     ...(receipt ? { receipt } : {}),
     detail,
     display: [],
     evidence: [],
+    ...(lifecycle.status === 'failed'
+      ? { recoveryAction: { kind: 'retry' as const, label: '重试' } }
+      : {}),
+    showRaw: canShowRawPresentation(gate),
+  };
+}
+
+/** Safe fallback used before any runtime error classifier or renderer-specific wording. */
+export function selectErrorPresentation(
+  item: unknown,
+  gate?: RawPresentationGate,
+): SharedPresentation {
+  const source = record(boundedSnapshot(item));
+  const sourceMessage = record(record(source?.source)?.message);
+  const rawStatus = source?.status;
+  const cancelled = rawStatus === 'cancelled' || sourceMessage?.severity === 'cancelled';
+  const error = record(source?.error);
+  const retryability = error?.retryability;
+  const requestedRecovery = sourceMessage?.recoveryAction;
+  const summary = (() => {
+    const content = Array.isArray(source?.content)
+      ? source.content.map(record).find((entry) => entry?.type === 'plain_text')?.text
+      : undefined;
+    return safeText(content, 500);
+  })();
+  const recoveryAction = cancelled
+    ? undefined
+    : requestedRecovery === 'switch_model'
+      ? { kind: 'switch_model' as const, label: '切换模型' }
+      : sourceMessage?.severity === 'billing'
+        ? { kind: 'view_billing' as const, label: '查看积分' }
+        : retryability === 'retryable' || record(source?.actions)?.retry === true
+          ? { kind: 'retry' as const, label: '重试' }
+          : undefined;
+  return {
+    title: cancelled ? '运行已取消' : '运行出现问题',
+    status: cancelled ? 'cancelled' : 'failed',
+    statusLabel: cancelled ? '已取消' : '执行失败',
+    tone: cancelled ? 'muted' : 'danger',
+    ...(summary ? { summary } : {}),
+    detail: [],
+    display: [],
+    evidence: [],
+    ...(recoveryAction ? { recoveryAction } : {}),
+    busy: false,
     showRaw: canShowRawPresentation(gate),
   };
 }
@@ -498,12 +623,28 @@ export function selectBusinessStepPresentation(
         },
       ]
     : sanitizeDisplay(todo?.display);
+  const canonicalStatus = status ?? 'unknown';
+  const statusLabels: Record<TodoStatus, string> = {
+    pending: '待开始',
+    in_progress: '进行中',
+    waiting: '等待中',
+    blocked: '已阻断',
+    completed: '已完成',
+    failed: '失败',
+  };
+  const outcomeTone = outcome?.tone === 'warn' || outcome?.tone === 'fail' || outcome?.tone === 'ok'
+    ? outcome.tone
+    : 'ok';
   return {
     title,
+    status: canonicalStatus,
+    statusLabel: status ? statusLabels[status] : '内容不可用',
     tone: eventKind === 'plan' ? 'info' : businessTone(status, outcome?.tone),
+    ...(outcomeText ? { summary: outcomeText, outcome: { text: outcomeText, tone: outcomeTone } } : {}),
     detail,
     display,
     evidence,
+    busy: status === 'in_progress',
     showRaw: canShowRawPresentation(gate),
   };
 }
@@ -513,6 +654,7 @@ type PresentationNormalizer = (source: unknown, gate?: RawPresentationGate) => S
 /** Frozen declarative registry: adding a presentation kind without a presenter is a type error. */
 export const SHARED_PRESENTATION_PRESENTERS = Object.freeze({
   tool: selectToolPresentation,
+  error: selectErrorPresentation,
   business_step: selectBusinessStepPresentation,
 }) satisfies { [K in SharedPresentationKind]: PresentationNormalizer };
 
@@ -535,24 +677,33 @@ export function selectSharedPresentation(
   }
   return {
     title: '内容不可用',
+    status: 'unknown',
+    statusLabel: '内容不可用',
     tone: 'neutral',
     detail: [],
     display: [],
     evidence: [],
+    busy: false,
     showRaw: false,
   };
 }
 
 /** Alias matching the selector naming used by RenderModel and CardViewModel. */
-/** Stable semantic projection for Web/Mobile parity and accessibility scans. */
+/** Stable raw-free semantic projection for Web/Mobile parity, analytics and a11y scans. */
 export function presentationSemanticSignature(presentation: SharedPresentation): string {
   return JSON.stringify({
     title: presentation.title,
+    status: presentation.status,
+    statusLabel: presentation.statusLabel,
     tone: presentation.tone,
+    summary: presentation.summary,
+    outcome: presentation.outcome,
     receipt: presentation.receipt,
     detail: presentation.detail,
     display: presentation.display,
     evidence: presentation.evidence,
+    recoveryAction: presentation.recoveryAction,
+    busy: presentation.busy,
     showRaw: presentation.showRaw,
   });
 }
@@ -583,7 +734,10 @@ export function selectPresentationCardViewModel(
     ...(rawError ? { error: { domain: rawError.domain } } : {}),
     accessibility: {
       ...card.accessibility,
-      heading: presentation.title,
+      heading: [presentation.title, presentation.statusLabel, presentation.summary]
+        .filter(Boolean)
+        .join('，'),
+      busy: presentation.busy,
       ...(card.outcome
         ? { outcomeLiveAnnouncement: `${presentation.title}${card.outcome.label}` }
         : {}),

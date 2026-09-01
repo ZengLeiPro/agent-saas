@@ -143,6 +143,16 @@ function actions(patch: Partial<RenderActionCapabilities>): RenderActionCapabili
   return { ...NO_ACTIONS, ...patch };
 }
 
+const UNSAFE_SEMANTIC_TEXT =
+  /(?:<\/?[a-z][^>]*>|(?:[a-z][a-z0-9+.-]*:\/\/|www\.)|(?:^|\s)(?:\.{0,2}[\\/]|[a-z]:[\\/])|[\\/][^\s/\\]+[\\/]|authorization|bearer\s+[A-Za-z0-9._~+/=-]{8,}|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|password|passwd|secret\s*[:=]|token\s*[:=]|\bsk-[A-Za-z0-9_-]{8,}|\beyJ[A-Za-z0-9_-]{8,}\.)/i;
+
+function safeRuntimeSummary(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const text = value.replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  if (!text || UNSAFE_SEMANTIC_TEXT.test(text)) return fallback;
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
+}
+
 const MESSAGE_TYPES = new Set([
   'user', 'text', 'system_event', 'thinking', 'tool_use', 'tool_result', 'runtime_status',
   'permission_request', 'ask_user', 'subagent', 'file_download', 'voice', 'user-voice', 'system-error',
@@ -317,9 +327,10 @@ function messageSemantics(message: MessageItem): {
       };
     case 'system-error': {
       const retryability: RenderRetryability = message.recoveryAction ? 'user_action' : 'unknown';
+      const summary = safeRuntimeSummary(message.content, '运行出现问题');
       return {
-        kind: 'error', role: 'system', content: [{ type: 'plain_text', text: message.content }],
-        accessibility: { role: 'alert', label: `错误：${message.content}`, live: 'assertive' },
+        kind: 'error', role: 'system', content: [{ type: 'plain_text', text: summary }],
+        accessibility: { role: 'alert', label: `错误：${summary}`, live: 'assertive' },
         actions: actions({}), error: { domain: 'runtime', retryability },
       };
     }
@@ -457,16 +468,19 @@ export function selectRenderModel(input: RenderModelInput, previous?: RenderMode
     if (candidates.has(id) || result.some((item) => item.id === id)) continue;
     const isError = runtime.type === 'error';
     const status = runtime.status ?? (isError ? 'failed' : 'running');
+    const safeContent = isError
+      ? safeRuntimeSummary(runtime.content, '运行出现问题')
+      : runtime.content ?? status;
     const revision = revisionOf(runtime);
     result.push({
       id,
       kind: isError ? 'error' : 'system_status',
       role: 'system',
-      content: [{ type: 'plain_text', text: runtime.content ?? status }],
+      content: [{ type: 'plain_text', text: safeContent }],
       status,
       ...(runtime.timestamp !== undefined ? { timestamp: runtime.timestamp } : {}),
       order: previousOrder.get(id) ?? nextOrder++,
-      accessibility: { role: isError ? 'alert' : 'status', label: `${isError ? '错误' : '运行状态'}：${runtime.content ?? status}`, live: isError ? 'assertive' : 'polite' },
+      accessibility: { role: isError ? 'alert' : 'status', label: `${isError ? '错误' : '运行状态'}：${safeContent}`, live: isError ? 'assertive' : 'polite' },
       actions: actions({ retry: runtime.retryability === 'retryable' }),
       ...(isError ? { error: { domain: runtime.domain ?? 'unknown', retryability: runtime.retryability ?? 'unknown' } } : {}),
       source: { type: 'runtime', runtime },
@@ -495,7 +509,12 @@ export function selectRenderModel(input: RenderModelInput, previous?: RenderMode
   };
 }
 
-/** Cross-platform adapter tests compare this instead of component implementation details. */
+/** Cross-platform adapter tests compare this raw-free signature instead of component details. */
 export function renderSemanticSignature(item: RenderTimelineItem): string {
-  return `${item.id}|${item.kind}|${item.role}|${item.status}|${item.accessibility.role}|${item.accessibility.label}`;
+  let hash = 2166136261;
+  for (let index = 0; index < item.id.length; index += 1) {
+    hash ^= item.id.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `opaque-${(hash >>> 0).toString(36)}|${item.kind}|${item.role}|${item.status}|${item.accessibility.role}`;
 }

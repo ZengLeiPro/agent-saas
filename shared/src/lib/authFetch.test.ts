@@ -205,6 +205,34 @@ describe('authFetch', () => {
     expect(store.get(TOKEN_KEY)).toBe('old-token');
   });
 
+  it('M30-01 rejects an A response after logout and B login before any credential side effect', async () => {
+    store.set(TOKEN_KEY, 'token-a');
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 1 }));
+    let releaseResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => { releaseResponse = resolve; });
+    const fetchMock = vi.fn(() => response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const staleRequest = authFetch('/api/auth/me');
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    setSensitiveTransportAllowed(false);
+    store.set(TOKEN_KEY, 'token-b');
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 2, generation: 2 }));
+    setSensitiveTransportAllowed(true);
+    releaseResponse(makeResponse({
+      status: 200,
+      headers: {
+        'X-Refresh-Token': 'stale-token-a',
+        'X-Auth-Epoch': '1',
+        'X-Auth-Generation': '2',
+      },
+    }));
+
+    await expect(staleRequest).rejects.toThrow('AUTH_IDENTITY_CHANGED');
+    expect(store.get(TOKEN_KEY)).toBe('token-b');
+    expect(JSON.parse(store.get(AUTH_SESSION_KEY)!)).toEqual({ authEpoch: 2, generation: 2 });
+  });
+
   it('网络错误（fetch reject）向上抛出', async () => {
     vi.stubGlobal(
       'fetch',

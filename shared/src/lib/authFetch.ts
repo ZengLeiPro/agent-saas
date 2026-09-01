@@ -4,10 +4,14 @@ import { AUTH_SESSION_KEY } from './authLifecycle';
 
 let onUnauthorized: (() => void) | null = null;
 let sensitiveTransportAllowed = true;
+let sensitiveTransportGeneration = 0;
 
 /** Mobile M30-02 gate. Locked/offline-shell modes fail closed before reading tokens. */
 export function setSensitiveTransportAllowed(allowed: boolean): void {
-  sensitiveTransportAllowed = allowed;
+  if (sensitiveTransportAllowed !== allowed) {
+    sensitiveTransportAllowed = allowed;
+    sensitiveTransportGeneration += 1;
+  }
 }
 
 export function isSensitiveTransportAllowed(): boolean {
@@ -45,13 +49,31 @@ async function guardedAuthFetch(
   }
   platform.platformConfig.assertTrustedUrl?.(requestUrl(url), 'http');
 
-  const token = await platform.secureStorage.getItem(TOKEN_KEY);
+  const requestTransportGeneration = sensitiveTransportGeneration;
+  const [token, authBinding] = await Promise.all([
+    platform.secureStorage.getItem(TOKEN_KEY),
+    platform.secureStorage.getItem(AUTH_SESSION_KEY),
+  ]);
+  if (requestTransportGeneration !== sensitiveTransportGeneration) {
+    throw new Error('AUTH_IDENTITY_CHANGED');
+  }
   const headers = new Headers(init?.headers);
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
   const response = await fetch(url, { ...init, headers });
+  const [currentToken, currentAuthBinding] = await Promise.all([
+    platform.secureStorage.getItem(TOKEN_KEY),
+    platform.secureStorage.getItem(AUTH_SESSION_KEY),
+  ]);
+  if (
+    requestTransportGeneration !== sensitiveTransportGeneration
+    || currentToken !== token
+    || currentAuthBinding !== authBinding
+  ) {
+    throw new Error('AUTH_IDENTITY_CHANGED');
+  }
   if (response.status === 401) {
     onUnauthorized?.();
   } else if (response.status === 403) {

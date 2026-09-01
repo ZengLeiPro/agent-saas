@@ -110,6 +110,8 @@ export interface WsResumeMessage {
     sessionId: string;
     /** Correlates the active_stream response with this exact resume attempt. */
     requestId?: string;
+    /** M50-05 fence: old network requests are rejected after a network switch. */
+    networkGeneration?: number;
     lastEventId: number;
     lastEventCursor?: string | null;
     skipReplay?: boolean;
@@ -120,6 +122,17 @@ export interface WsRunStatusMessage {
     runId: string;
 }
 
+export interface WsQueueSnapshotMessage {
+    action: 'queue_snapshot';
+    sessionId: string;
+    requestId: string;
+    networkGeneration: number;
+}
+
+export interface WsAttachActiveStreamMessage extends Omit<WsResumeMessage, 'action'> {
+    action: 'attach_active_stream';
+}
+
 export interface WsDetachMessage {
     action: 'detach';
 }
@@ -127,6 +140,10 @@ export interface WsDetachMessage {
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    /** Stable idempotency key for lifecycle recovery. */
+    requestId?: string;
+    /** M50-05 fence: old connect/ping/ACK work cannot cross a network switch. */
+    networkGeneration?: number;
     /** 上次见到的服务端用户日志代际；旧服务端会忽略。 */
     epoch?: string;
     /** 当前会话；新服务端可在 overflow 中内联其权威快照。 */
@@ -146,6 +163,8 @@ export type WsOutboundMessage =
     | WsApprovalPolicyMessage
     | WsRunStatusMessage
     | WsResumeMessage
+    | WsQueueSnapshotMessage
+    | WsAttachActiveStreamMessage
     | WsDetachMessage
     | WsSyncMessage
     | WsCancelQueuedMessage;
@@ -154,6 +173,7 @@ export type WsOutboundMessage =
 export interface WsEnvelope {
     authEpoch?: number;
     generation?: number;
+    networkGeneration?: number;
     eventId?: number;
     eventCursor?: string;
     /** 用户级事件序号（per-user，user/dual/admin scope），用于 gap 检测和主动 sync */
@@ -180,6 +200,7 @@ class WsClient {
     // M20-04 boundary fence. Every disconnect/boundary invalidates old socket callbacks.
     private boundaryGeneration = 0;
     private sendingFrozen = false;
+    private lifecycleSuspended = false;
     private activeAuthBinding: AuthSessionBinding | null = null;
 
     // Reference counting (for mobile multi-screen)
@@ -279,6 +300,7 @@ class WsClient {
     /** Establish connection */
     async connect(): Promise<void> {
         if (this.sendingFrozen) throw new Error('Identity boundary in progress');
+        if (this.lifecycleSuspended) throw new Error('Lifecycle transport suspended');
         // Already connected
         if (this.ws?.readyState === WebSocket.OPEN && this.state === 'connected') {
             return;
@@ -337,7 +359,7 @@ class WsClient {
         });
     }
 
-    /** Returns the one normalized envelope adapters may project, or null for rejected/control frames. */
+    /** Returns one generation-fenced normalized envelope, or null for rejected/control frames. */
     private reduceInboundRecovery(envelope: WsEnvelope): WsEnvelope | null {
         const data = envelope.data as WsEvent | undefined;
         if (!data?.type) return envelope;
@@ -360,6 +382,8 @@ class WsClient {
                 seq: this.recovery.lastSeq,
                 ...(this.recovery.serverEpoch ? { epoch: this.recovery.serverEpoch } : {}),
                 events: accepted.map(({ seq, event }) => ({ seq, event })),
+                ...('requestId' in data && typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
+                ...('networkGeneration' in data && typeof data.networkGeneration === 'number' ? { networkGeneration: data.networkGeneration } : {}),
             };
             this.sendRecoveryRequestIfNeeded();
             return { ...envelope, data: normalized };
@@ -522,7 +546,7 @@ class WsClient {
 
         this.retryTimer = setTimeout(async () => { // reload token + binding after backoff
             this.retryTimer = null;
-            if (!this.intentionalClose && !this.sendingFrozen) {
+            if (!this.intentionalClose && !this.sendingFrozen && !this.lifecycleSuspended) {
                 try {
                     const { url, token, binding } = await this.getConnectionParams();
                     this.doConnect(url, token, binding);
@@ -641,6 +665,20 @@ class WsClient {
     }
 
     get isSendingFrozen(): boolean { return this.sendingFrozen; }
+
+    /** Pause heartbeat/retry/new connections without cancelling an authoritative run. */
+    suspendNonEssentialTransport(): void {
+        this.lifecycleSuspended = true;
+        this.stopHeartbeat();
+        if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    }
+
+    /** Called only after foreground reachability is explicitly true. */
+    resumeNonEssentialTransport(): void {
+        this.lifecycleSuspended = false;
+    }
+
+    get isLifecycleSuspended(): boolean { return this.lifecycleSuspended; }
 
     /** Disconnect */
     disconnect(): void {

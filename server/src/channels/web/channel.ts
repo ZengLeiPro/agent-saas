@@ -73,7 +73,7 @@ import type { GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEven
 import { WsServer, type WsClient } from './wsServer.js';
 import { sensitiveActionAccessError, type SensitiveActionTarget } from './wsAuthorization.js';
 import { EventBus, type SessionContext } from './eventBus.js';
-import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
+import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsQueueSnapshotMessage, WsAttachActiveStreamMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
 import { buildSyncOverflowFrame, type SyncPendingInteractionSnapshot, type SyncSessionSnapshot } from './syncProtocol.js';
 import { appendLoginLog, detectLoginChannel } from '../../data/login-logs/index.js';
 import { getUserExtraDirs, isPathWithinAnyDirectory, isPathWithinDirectory } from '../../security/extraDirs.js';
@@ -135,6 +135,7 @@ import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from '
 import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
+import { LifecycleRecoveryRequestLedger } from './lifecycleRecoveryProtocol.js';
 export type { ModelResolver } from './channelConfig.js';
 
 /**
@@ -443,6 +444,26 @@ export class WebChannel implements BaseChannel {
    * 用户切去别的会话后，退化 run 的接管不应劫持新会话视图的流绑定。
    */
   private wsSessionAffinity = new WeakMap<WebSocket, string>();
+  /** Per-connection network fence; auth generation is independently enforced by WsServer. */
+  private lifecycleRecoveryLedgers = new WeakMap<WebSocket, LifecycleRecoveryRequestLedger>();
+
+  private admitLifecycleRecoveryRequest(client: WsClient, msg: WsResumeMessage | WsSyncMessage | WsQueueSnapshotMessage | WsAttachActiveStreamMessage): boolean {
+    if (!msg.requestId || msg.networkGeneration === undefined) return true; // N-1 compatibility
+    let ledger = this.lifecycleRecoveryLedgers.get(client.ws);
+    if (!ledger) {
+      ledger = new LifecycleRecoveryRequestLedger();
+      this.lifecycleRecoveryLedgers.set(client.ws, ledger);
+    }
+    const admission = ledger.admit({ requestId: msg.requestId, networkGeneration: msg.networkGeneration });
+    if (admission.status !== 'stale_generation') return true; // duplicate reads are safe and converge
+    this.wsSend(client.ws, {
+      type: 'recovery_rejected',
+      requestId: msg.requestId,
+      reason: 'stale_network_generation',
+      latestNetworkGeneration: admission.latestNetworkGeneration,
+    });
+    return false;
+  }
 
   private handleActiveStreamSocketClose(
     streamId: string,
@@ -561,12 +582,22 @@ export class WebChannel implements BaseChannel {
           void this.handleRunStatus(client, msg);
           break;
         case 'resume':
-          this.handleResume(client, msg);
+          if (this.admitLifecycleRecoveryRequest(client, msg)) this.handleResume(client, msg);
+          break;
+        case 'queue_snapshot':
+          if (!this.admitLifecycleRecoveryRequest(client, msg)) break;
+          void this.sendQueueSnapshot(client, msg.sessionId, msg).catch((err) => {
+            chatLogger.warn(`[queue_snapshot] recovery failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          break;
+        case 'attach_active_stream':
+          if (this.admitLifecycleRecoveryRequest(client, msg)) this.handleResume(client, msg, true);
           break;
         case 'detach':
           this.handleDetach(client);
           break;
         case 'sync':
+          if (!this.admitLifecycleRecoveryRequest(client, msg)) break;
           void this.handleSync(client, msg).catch((err) => {
             chatLogger.warn(`[sync] authoritative recovery failed: ${err instanceof Error ? err.message : String(err)}`);
           });
@@ -1813,7 +1844,11 @@ export class WebChannel implements BaseChannel {
     }
   }
 
-  private async sendQueueSnapshot(client: WsClient, sessionId: string): Promise<void> {
+  private async sendQueueSnapshot(
+    client: WsClient,
+    sessionId: string,
+    recovery?: { requestId?: string; networkGeneration?: number },
+  ): Promise<void> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore?.listUserMessagesBySession) return;
     const runs = await runStore.listUserMessagesBySession(sessionId);
@@ -1822,7 +1857,12 @@ export class WebChannel implements BaseChannel {
       tenantId: first.tenantId,
       ownerUserId: first.userId,
     })) return;
-    this.wsSend(client.ws, { type: 'queue_snapshot', snapshot: buildChatQueueSnapshot(sessionId, runs) });
+    this.wsSend(client.ws, {
+      type: 'queue_snapshot',
+      snapshot: buildChatQueueSnapshot(sessionId, runs),
+      ...(recovery?.requestId ? { requestId: recovery.requestId } : {}),
+      ...(recovery?.networkGeneration !== undefined ? { networkGeneration: recovery.networkGeneration } : {}),
+    });
   }
 
   /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
@@ -2084,11 +2124,11 @@ export class WebChannel implements BaseChannel {
   }
 
   /** 处理 resume 消息（替代 GET /api/chat/stream/:sessionId） */
-  private handleResume(client: WsClient, msg: WsResumeMessage): void {
+  private handleResume(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot = false): void {
     // 串行化同一 ws 上的 resume，避免并发 handleResumeAsync 在 await 处交错导致
     // 双 EventBuffer listener 泄漏、每个流式事件被投递两次（详见 resumeChains 注释）。
     const ws = client.ws;
-    const run = () => this.handleResumeAsync(client, msg);
+    const run = () => this.handleResumeAsync(client, msg, skipQueueSnapshot);
     const pending = this.resumeChains.get(ws);
     // 无在途 resume → 同步启动，保持单条 resume 的同步语义（回放/订阅在本 tick 生效）；
     // 有在途 resume → 串到其后执行，后一条一定能读到前一条已注册的订阅并先退订。
@@ -2098,12 +2138,14 @@ export class WebChannel implements BaseChannel {
     void next.catch(() => { /* noop */ });
   }
 
-  private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {
-    const { sessionId: sid, requestId, lastEventId, lastEventCursor, skipReplay } = msg;
+  private async handleResumeAsync(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot: boolean): Promise<void> {
+    const { sessionId: sid, requestId, networkGeneration, lastEventId, lastEventCursor, skipReplay } = msg;
     this.wsSessionAffinity.set(client.ws, sid);
-    await this.sendQueueSnapshot(client, sid).catch((error) => {
-      chatLogger.warn(`[resume] queue snapshot failed session=${sid}: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    if (!skipQueueSnapshot) {
+      await this.sendQueueSnapshot(client, sid, { requestId, networkGeneration }).catch((error) => {
+        chatLogger.warn(`[resume] queue snapshot failed session=${sid}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
 
     const prevUnsub = this.resumeSubscriptions.get(client.ws);
     if (prevUnsub) {
@@ -2136,11 +2178,12 @@ export class WebChannel implements BaseChannel {
     }
     if (!bufferEntry || !bufferActive) {
       const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
-        requestId, lastEventId, lastEventCursor, skipReplay: skipReplay === true,
+        requestId, networkGeneration, lastEventId, lastEventCursor, skipReplay: skipReplay === true,
       });
       if (!durableActive) this.wsSend(client.ws, {
         type: 'active_stream', sessionId: sid, active: false,
         ...(requestId ? { requestId } : {}),
+        ...(networkGeneration !== undefined ? { networkGeneration } : {}),
       });
       const pendingAccessError = bufferEntry?.userId
         ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
@@ -2156,6 +2199,7 @@ export class WebChannel implements BaseChannel {
       this.wsSend(client.ws, {
         type: 'active_stream', sessionId: sid, active: false,
         ...(requestId ? { requestId } : {}),
+        ...(networkGeneration !== undefined ? { networkGeneration } : {}),
       });
       return;
     }
@@ -2174,6 +2218,7 @@ export class WebChannel implements BaseChannel {
       status: durableBinding?.status ?? 'running',
       ...(durableBinding?.liveness ? { liveness: durableBinding.liveness } : {}),
       ...(requestId ? { requestId } : {}),
+      ...(networkGeneration !== undefined ? { networkGeneration } : {}),
     });
 
     const alreadyDirectBound = Boolean(
@@ -2264,7 +2309,7 @@ export class WebChannel implements BaseChannel {
   private async tryReplayDurableRuntimeEvents(
     client: WsClient,
     sessionId: string,
-    options: { requestId?: string; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
+    options: { requestId?: string; networkGeneration?: number; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
   ): Promise<boolean> {
     const runStore = this.config.enqueueRuntime?.runStore;
     if (!runStore) return false;
@@ -2289,6 +2334,7 @@ export class WebChannel implements BaseChannel {
       status: activeRun.status,
       liveness: projectRunLiveness(activeRun),
       ...(options.requestId ? { requestId: options.requestId } : {}),
+      ...(options.networkGeneration !== undefined ? { networkGeneration: options.networkGeneration } : {}),
     });
     // Capture before durable awaits so subscribeFrom recovers the replay window.
     const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
@@ -2404,7 +2450,7 @@ export class WebChannel implements BaseChannel {
     return replayedCursor;
   }
 
-  /** 处理 detach 消息：客户端切换会话时立即取消 EventBuffer 订阅，防止旧会话事件串流 */
+  /** 处理 detach 消息：后台/切换会话时仅解绑传输，不取消已有 run。 */
   private handleDetach(client: WsClient): void {
     // 清除 WS 活跃流绑定，阻止旧会话的 handleEvents/hooks send 继续向此 WS 直接推送
     this.wsActiveStream.delete(client.ws);
@@ -2424,28 +2470,39 @@ export class WebChannel implements BaseChannel {
     const eventLog = this.wsServer.userEventLog;
     const epoch = eventLog.getEpoch(userId);
     const currentSeq = eventLog.getCurrentSeq(userId);
+    const correlation = {
+      ...(msg.requestId ? { requestId: msg.requestId } : {}),
+      ...(msg.networkGeneration !== undefined ? { networkGeneration: msg.networkGeneration } : {}),
+    };
     if (this.wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
-      this.wsSend(client.ws, buildSyncOverflowFrame(
-        currentSeq,
-        epoch,
-        await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
-      ));
+      this.wsSend(client.ws, {
+        ...buildSyncOverflowFrame(
+          currentSeq,
+          epoch,
+          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+        ),
+        ...correlation,
+      });
       return;
     }
 
     const result = eventLog.getEventsAfter(userId, msg.lastSeq);
     if (result.gapDetected) {
-      this.wsSend(client.ws, buildSyncOverflowFrame(
-        currentSeq,
-        epoch,
-        await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
-      ));
+      this.wsSend(client.ws, {
+        ...buildSyncOverflowFrame(
+          currentSeq,
+          epoch,
+          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
+        ),
+        ...correlation,
+      });
     } else {
       this.wsSend(client.ws, {
         type: 'sync_ok',
         seq: currentSeq,
         epoch,
         events: result.events,
+        ...correlation,
       });
     }
   }

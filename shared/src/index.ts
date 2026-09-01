@@ -764,6 +764,50 @@ export type {
   ChatSubmissionResult,
 } from './lib/chatSubmission';
 
+// M50-05 canonical foreground/background, weak-network, effect and pending recovery contracts
+export {
+  DEFAULT_LIFECYCLE_POLICY,
+  createCanonicalLifecycleState,
+  lifecycleAllowsDispatch,
+  lifecycleBudgetUsage,
+  presentCanonicalLifecycle,
+  reduceCanonicalLifecycle,
+} from './lib/appLifecycle';
+export type {
+  CanonicalAppState,
+  CanonicalLifecycleEffect,
+  CanonicalLifecycleEffectKind,
+  CanonicalLifecycleEvent,
+  CanonicalLifecycleInput,
+  CanonicalLifecyclePhase,
+  CanonicalLifecyclePolicy,
+  CanonicalLifecycleState,
+  CanonicalRecoveryStep,
+  CanonicalWsLifecycleState,
+  InternetReachability,
+  LifecycleFence,
+  LifecyclePresentation,
+} from './lib/appLifecycle';
+export { executeCanonicalLifecycleEffect } from './lib/appLifecycleEffects';
+export type {
+  CanonicalLifecycleEffectDependencies,
+  CanonicalLifecycleEffectResult,
+} from './lib/appLifecycleEffects';
+export {
+  PENDING_SUBMISSION_VERSION,
+  authoritativeQueueOnly,
+  recoverDurablePending,
+  settlePendingAck,
+} from './lib/pendingSubmissionRecovery';
+export type {
+  AuthoritativePendingAck,
+  DurablePendingAttachmentSelection,
+  DurablePendingStatus,
+  DurablePendingSubmission,
+  PendingRecoveryDecision,
+  PendingRecoveryVersion,
+} from './lib/pendingSubmissionRecovery';
+
 // Lib - server-authoritative durable chat queue state machine (M20-02)
 export {
   CHAT_QUEUE_SNAPSHOT_VERSION,
@@ -898,7 +942,7 @@ export type {
   SyncSessionProjection,
 } from './lib/syncRecovery';
 
-// Lib - WebSocket client
+// Lib - shared WebSocket connection and recovery truth
 export { wsClient } from './lib/wsClient';
 export type {
   WsState,
@@ -911,6 +955,8 @@ export type {
   WsRespondMessage,
   WsAbortMessage,
   WsResumeMessage,
+  WsQueueSnapshotMessage,
+  WsAttachActiveStreamMessage,
   WsOutboundMessage,
   WsEnvelope,
   WsSyncMessage,

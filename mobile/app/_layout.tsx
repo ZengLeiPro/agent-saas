@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { View } from 'react-native';
 import { ShareIntentProvider } from 'expo-share-intent';
-import { AuthProvider } from '../src/contexts/AuthContext';
+import { AuthProvider, useAuth } from '../src/contexts/AuthContext';
 import { LocalAppLockProvider } from '../src/contexts/LocalAppLockContext';
 import { LocalAppLockGate } from '../src/components/LocalAppLockGate';
 import { ChatAppStateProvider } from '../src/contexts/ChatAppStateContext';
@@ -18,6 +18,7 @@ import { useForegroundRefresh } from '../src/hooks/useForegroundRefresh';
 import { useEnterpriseUpdateChecker } from '../src/hooks/useUpdateChecker';
 import { useShareIntentBridge } from '../src/hooks/useShareIntentBridge';
 import { useNativeOAuthCallbackBridge } from '../src/hooks/useNativeOAuthCallbackBridge';
+import { useWsLifecycle } from '../src/hooks/useWsLifecycle';
 import {
   readEnterpriseUpdaterRuntimeConfig,
   type EnterpriseUpdaterRuntimeConfig,
@@ -36,11 +37,13 @@ function EnterpriseUpdaterBootstrap({ config }: { config: EnterpriseUpdaterRunti
 
 function AuthGate() {
   const colors = useColors();
+  const { user } = useAuth();
   const enterpriseUpdaterConfig = readEnterpriseUpdaterRuntimeConfig();
   useActivityReporter();
   useForegroundRefresh();
   useShareIntentBridge();
   useNativeOAuthCallbackBridge();
+  useWsLifecycle(Boolean(user));
 
   return (
     <>

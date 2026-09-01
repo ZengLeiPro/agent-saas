@@ -129,11 +129,23 @@ export interface WsResumeMessage {
     sessionId: string;
     /** Optional correlation id echoed by the active_stream response. */
     requestId?: string;
+    networkGeneration?: number;
     /** Legacy per-process EventBuffer id. */
     lastEventId: number;
     /** Durable runtime EventStore cursor (PG session_sequence as opaque string). */
     lastEventCursor?: string;
     skipReplay?: boolean;
+}
+
+export interface WsQueueSnapshotMessage {
+    action: 'queue_snapshot';
+    sessionId: string;
+    requestId: string;
+    networkGeneration: number;
+}
+
+export interface WsAttachActiveStreamMessage extends Omit<WsResumeMessage, 'action'> {
+    action: 'attach_active_stream';
 }
 
 export interface WsDetachMessage {
@@ -158,6 +170,8 @@ export interface WsPingMessage {
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    requestId?: string;
+    networkGeneration?: number;
     /** 客户端上次见到的用户日志代际；旧客户端可省略。 */
     epoch?: string;
     /** 可选的当前会话，用于 overflow 时内联返回 queue/runtime/interaction 权威快照。 */
@@ -172,6 +186,8 @@ export type WsInboundMessage =
     | WsApprovalPolicyMessage
     | WsRunStatusMessage
     | WsResumeMessage
+    | WsQueueSnapshotMessage
+    | WsAttachActiveStreamMessage
     | WsDetachMessage
     | WsPingMessage
     | WsSyncMessage
@@ -207,7 +223,7 @@ export type WsDownstreamEvent =
     | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; sourceRunId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
-    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot }
+    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot; requestId?: string; networkGeneration?: number }
     | { type: 'queue_item_updated'; item: ChatQueueItem }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; sessionId?: string; clientMsgId?: string; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
@@ -239,7 +255,7 @@ export type WsDownstreamEvent =
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string; networkGeneration?: number }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
@@ -251,6 +267,7 @@ export type WsDownstreamEvent =
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
-    | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number }
+    | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }>; requestId?: string; networkGeneration?: number }
+    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number; requestId?: string; networkGeneration?: number }
+    | { type: 'recovery_rejected'; requestId: string; reason: 'stale_network_generation'; latestNetworkGeneration: number }
     | { type: 'pong'; seq?: number; epoch: string; probe?: boolean };

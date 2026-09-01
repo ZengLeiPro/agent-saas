@@ -91,7 +91,7 @@ type WsEventPayload =
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
     | { type: 'interjection_applied'; sourceRunIds: string[]; clientMsgIds: string[]; sessionId?: string }
     // 统一排队区：普通 queue 与显式 steer 都由服务端 durable 快照恢复。
-    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot }
+    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot; requestId?: string; networkGeneration?: number }
     | { type: 'queue_item_updated'; item: ChatQueueItem }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     // 旧 steering 广播保留兼容。
@@ -130,7 +130,7 @@ type WsEventPayload =
     | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
     | { type: 'pending_interactions'; sessionId?: string; interactions: WsSyncPendingInteractionSnapshot[] }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string; networkGeneration?: number }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; version?: number; order?: number; status?: 'resolved' | 'rejected' | 'failed' | 'cancelled' | 'expired'; response?: Record<string, unknown>; reason?: string; retryable?: boolean; receipt?: CanonicalInteractionReceipt }
     | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
@@ -145,8 +145,9 @@ type WsEventPayload =
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
     // epoch/recovery are optional for N-1 servers; current servers always include them.
-    | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: WsEvent }> }
-    | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number }
+    | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: WsEvent }>; requestId?: string; networkGeneration?: number }
+    | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number; requestId?: string; networkGeneration?: number }
+    | { type: 'recovery_rejected'; requestId: string; reason: 'stale_network_generation'; latestNetworkGeneration: number }
     | { type: 'pong'; seq?: number; epoch?: string; probe?: boolean };
 
 

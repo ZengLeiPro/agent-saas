@@ -1,27 +1,15 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import NetInfo from '@react-native-community/netinfo';
-import { wsClient } from '@agent/shared';
+import { mobileReachability } from '../platform/lifecycleAdapter';
 
+/** Presentation-only reachability. Canonical lifecycle owns reconnect effects. */
 export function useOnlineStatus(): boolean {
-  const [isOnline, setIsOnline] = useState(true);
-  const prevOnline = useRef(true);
+  // Unknown/null is fail-closed and must not flash as online before NetInfo resolves.
+  const [isOnline, setIsOnline] = useState(false);
 
-  useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      const online = state.isConnected !== false;
-      setIsOnline(online);
-      // offline -> online: reconnect only a committed, non-fenced generation
-      if (online && !prevOnline.current && !wsClient.isConnected) {
-        setTimeout(() => {
-          if (!wsClient.isConnected && !wsClient.isSendingFrozen) {
-            wsClient.forceReconnect().catch(() => {});
-          }
-        }, 1000);
-      }
-      prevOnline.current = online;
-    });
-    return unsubscribe;
-  }, []);
+  useEffect(() => NetInfo.addEventListener((state) => {
+    setIsOnline(mobileReachability(state) === true);
+  }), []);
 
   return isOnline;
 }

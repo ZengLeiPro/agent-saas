@@ -710,6 +710,38 @@ test('tracks imported callbacks through aliases, descriptor factories, class fie
       },
     },
     {
+      label: 'descriptor factory array owner alias preserves a spread index binding',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst source = [descriptor]; const factories = source; const aliases = [...factories];\naliases[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory array owner alias preserves a destructured spread binding',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst source = [descriptor]; const factories = source; const aliases = [...factories]; const [alias] = aliases;\nalias().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory array owner alias preserves an array rest binding',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst source = [descriptor]; const factories = source; const aliases = [...factories]; const [...rest] = aliases;\nrest[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory array assignment alias preserves a spread binding',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst source = [descriptor]; let factories; factories = source; const aliases = [...factories];\naliases[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'descriptor factory dynamic computed direct call fails closed',
       closureOnly: true,
       rootSource:
@@ -728,6 +760,78 @@ test('tracks imported callbacks through aliases, descriptor factories, class fie
       },
     },
     {
+      label: 'descriptor factory dynamic computed write follows an owner alias',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const aliases = stores; aliases[key] = descriptor;\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic computed read follows an owner alias',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const aliases = stores; stores[key] = descriptor;\naliases[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Reflect.set fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; Reflect.set(stores, key, descriptor);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Object.assign fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; Object.assign(stores, { [key]: descriptor });\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Object.assign follows a source alias',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const source = { [key]: descriptor }; const stores = {}; Object.assign(stores, source);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Object.defineProperty fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; Object.defineProperty(stores, key, { value: descriptor });\nconst alias = stores[key]; alias().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Reflect.defineProperty fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; Reflect.defineProperty(stores, key, { value: descriptor });\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory dynamic Object.defineProperties fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; Object.defineProperties(stores, { [key]: { value: descriptor } });\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'descriptor factory callable through a single static factory return',
       rootSource:
         "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } const alias = select();\nalias().value(db);",
@@ -739,6 +843,30 @@ test('tracks imported callbacks through aliases, descriptor factories, class fie
       label: 'descriptor factory callable through chained static factory returns',
       rootSource:
         "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select1() { return descriptor; } function select2() { return select1; }\nselect2()()().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory return callable through a declaration alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } const choose = select;\nchoose()().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory return callable through an assignment alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } let choose; choose = select;\nchoose()().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory return callable through a multi-hop alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } const choose1 = select; const choose2 = choose1;\nchoose2()().value(db);",
       extraTree: {
         [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
       },

@@ -519,7 +519,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       generateTaskTitle: createRuntimeTaskboardTitleGenerator(agentCwd, runtime),
     }),
   );
-
   // Token 用量统计（admin-only），数据由 b4187f00 引入的 business.sqlite 提供
   if (runtime.tokenUsageStore) {
     const usageBillingStore = runtime.billingService?.store;

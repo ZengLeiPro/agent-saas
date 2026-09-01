@@ -39,8 +39,8 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
       await pool.query(ddl.rows[0]!.sql);
       await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
         ${prefix}_message_submissions,${prefix}_steering_inputs,${prefix}_steering_sessions TO ${role}`);
-      await pool.query(`GRANT USAGE,SELECT ON SEQUENCE ${prefix}_runs_enqueue_seq,
-        ${prefix}_steering_inputs_sequence TO ${role}`);
+      await pool.query(`GRANT USAGE,SELECT ON SEQUENCE ${prefix}_runs_enqueue_seq_seq,
+        ${prefix}_steering_inputs_sequence_seq TO ${role}`);
       await store.registerLegacyWriterCapability({ dbRole: role, tenantId });
       legacyRoles.set(tenantId, role);
       legacyPools.set(tenantId, new Pool({ connectionString: testPgUrl!, user: role, password, max: 4 }));
@@ -52,8 +52,8 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     await pool.query(nativeDdl.rows[0]!.sql);
     await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
       ${prefix}_message_submissions,${prefix}_steering_inputs,${prefix}_steering_sessions TO ${nativeRole}`);
-    await pool.query(`GRANT USAGE,SELECT ON SEQUENCE ${prefix}_runs_enqueue_seq,
-      ${prefix}_steering_inputs_sequence TO ${nativeRole}`);
+    await pool.query(`GRANT USAGE,SELECT ON SEQUENCE ${prefix}_runs_enqueue_seq_seq,
+      ${prefix}_steering_inputs_sequence_seq TO ${nativeRole}`);
     await store.registerTenantNativeWriterCapability(nativeRole);
     nativePool = new Pool({ connectionString: testPgUrl!, user: nativeRole, password: nativePassword, max: 8 });
     nativeStore = new PgRunStore({ pool: nativePool, tablePrefix: prefix });

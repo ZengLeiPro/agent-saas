@@ -1,8 +1,7 @@
 import type { PoolClient } from 'pg';
 
-import type { TaskBoardIntegrationPolicy, TaskBoardTask } from '../../../../shared/src/types/taskboard.js';
+import type { TaskBoardTask } from '../../../../shared/src/types/taskboard.js';
 import { assertPullRequestGate } from '../deliveryPullRequests.js';
-import { repositoryWithBoardCiPolicy } from '../ciPolicy.js';
 import type { RepositoryPullRequestSnapshot } from '../repositoryProvider.js';
 import type { TaskboardV2StoreOptions } from '../v2Store.js';
 import { TaskboardValidationError } from '../types.js';
@@ -55,10 +54,6 @@ export async function assertCurrentPullRequestGate(
     );
   }
   const repository = jsonObject(board.repository);
-  const configuredRepository = repository && repositoryWithBoardCiPolicy(
-    repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false },
-    jsonObject(board.integration_policy) as TaskBoardIntegrationPolicy | undefined,
-  );
   const provider = options.repositoryProvider;
   if (!repository || repository.provider !== 'github' || !provider) {
     throw new TaskboardValidationError('Repository provider is unavailable', 'TASKBOARD_CI_UNAVAILABLE');
@@ -66,7 +61,7 @@ export async function assertCurrentPullRequestGate(
   let current: RepositoryPullRequestSnapshot;
   try {
     current = await provider.getPullRequest(
-      configuredRepository!,
+      repository as { provider: 'github'; repositoryId: string; owner: string; name: string; baseBranch: string; allowForkPullRequest: false },
       providerPullRequestId,
       String(board.owner_user_id),
     );

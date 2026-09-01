@@ -5,7 +5,7 @@ import type {
   TaskBoardExecutionPurpose,
   TaskBoardTask,
 } from "@agent/shared";
-import { ChevronDown, ExternalLink, Send } from "lucide-react";
+import { ExternalLink, Send } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -47,8 +47,6 @@ type TaskDetailCommentsProps = {
   commentsLoading: boolean;
   commentsError: string | null;
   currentTask: TaskBoardTask;
-  detailsExpanded: boolean;
-  onToggleDetails: () => void;
   taskDescription?: string | null;
   taskAttachments?: TaskBoardTask["attachments"];
   latestExecution?: TaskBoardExecution;
@@ -71,8 +69,6 @@ export function TaskDetailComments({
   commentsLoading,
   commentsError,
   currentTask,
-  detailsExpanded,
-  onToggleDetails,
   taskDescription,
   taskAttachments = [],
   latestExecution,
@@ -138,9 +134,10 @@ export function TaskDetailComments({
 
     setSelectedNavigationId(id);
     container.style.paddingBottom = "";
-    const targetTop = target.getBoundingClientRect().top
-      - container.getBoundingClientRect().top
-      + container.scrollTop;
+    const targetTop = Math.max(
+      0,
+      target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12,
+    );
     const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
     if (targetTop > maxScrollTop) {
       const basePadding = Number.parseFloat(window.getComputedStyle(container).paddingBottom) || 0;
@@ -158,23 +155,9 @@ export function TaskDetailComments({
     textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
   }, [commentBody]);
 
-  const detailsToggle = (
-    <header data-testid="task-discussion-toggle" className={`border-b bg-background px-4 py-2 sm:px-6 ${detailsExpanded ? "animate-in fade-in-0 slide-in-from-bottom-1" : "animate-in fade-in-0 slide-in-from-top-1"}`}>
-      <button type="button" className="relative flex h-8 w-full items-center justify-center rounded-md text-sm font-semibold transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-expanded={detailsExpanded} aria-controls="task-detail-information"
-        aria-label={detailsExpanded ? "收起任务详情" : "展开任务详情"} onClick={onToggleDetails}>
-        <span className="relative inline-flex items-center">
-          <span>讨论（{comments.length}）</span>
-          <ChevronDown className={`absolute left-full ml-1 size-4 transition-transform duration-300 ${detailsExpanded ? "rotate-180" : ""}`} />
-        </span>
-      </button>
-    </header>
-  );
-
   return (
-    <section aria-label="任务讨论" className={`flex flex-col bg-muted/10 ${detailsExpanded ? "shrink-0" : "min-h-0 flex-1"}`}>
-      {!detailsExpanded ? detailsToggle : null}
-      <div ref={commentsScrollRef} data-testid="task-comments-scroll" className={detailsExpanded ? "hidden" : "min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"}>
+    <section aria-label="任务讨论" className="flex min-h-0 flex-1 flex-col bg-muted/10">
+      <div ref={commentsScrollRef} data-testid="task-comments-scroll" className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         {commentsError ? <p role="alert" className="mb-4 text-sm text-destructive">{commentsError}</p> : null}
         {commentsLoading ? <p className="text-sm text-muted-foreground">正在加载讨论...</p> : null}
         <div className="space-y-0">
@@ -188,7 +171,7 @@ export function TaskDetailComments({
               data-navigation-selected={selectedNavigationId === "task-description" ? "true" : undefined}
               className="pb-6"
             >
-              <div className={`min-w-0 rounded-2xl rounded-tr-md border border-transparent bg-user-bubble p-3 text-foreground shadow-sm ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)] transition-[outline-color,box-shadow] ${selectedNavigationId === "task-description" ? "outline outline-2 outline-primary/70 outline-offset-2" : ""}`}>
+              <div className="min-w-0 rounded-2xl rounded-tr-md border border-transparent bg-user-bubble p-3 text-foreground shadow-sm ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)]">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                   <span className="text-xs font-medium text-foreground">任务正文</span>
                   <time className="text-xs text-muted-foreground">{new Date(currentTask.createdAt).toLocaleString("zh-CN")}</time>
@@ -214,7 +197,7 @@ export function TaskDetailComments({
                 data-navigation-selected={selectedNavigationId === comment.id ? "true" : undefined}
                 className="pb-6 last:pb-0"
               >
-                <div className={`min-w-0 rounded-lg border p-3 shadow-sm transition-[outline-color,box-shadow] ${comment.authorType === "user" ? "rounded-2xl rounded-tr-md border-orange-200/80 bg-user-bubble text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)] dark:border-orange-800/80" : "bg-card"} ${selectedNavigationId === comment.id ? "outline outline-2 outline-primary/70 outline-offset-2" : ""}`}>
+                <div className={`min-w-0 rounded-lg border p-3 shadow-sm ${comment.authorType === "user" ? "rounded-2xl rounded-tr-md border-orange-200/80 bg-user-bubble text-foreground ring-1 ring-[rgba(232,132,58,0.22)] shadow-[0_1px_2px_rgba(232,132,58,0.10),0_4px_12px_-4px_rgba(232,132,58,0.20)] dark:border-orange-800/80" : "bg-card"}`}>
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-medium text-foreground">
                       {comment.authorType === "agent" ? (
@@ -250,17 +233,17 @@ export function TaskDetailComments({
           </div>
         ) : null}
       </div>
-      {!detailsExpanded && navigationItems.length > 0 ? (
-        <nav aria-label="评论阶段导航" className="shrink-0 overflow-x-auto border-t bg-background px-4 py-2 sm:px-6">
-          <div className="relative inline-flex min-w-full items-center justify-around gap-3">
-            <span aria-hidden className="pointer-events-none absolute inset-x-3 top-1/2 h-px -translate-y-1/2 bg-border" />
+      {navigationItems.length > 0 ? (
+        <nav aria-label="评论阶段导航" className="shrink-0 overflow-x-auto border-t bg-background px-6 py-1.5 sm:px-10">
+          <div className="relative mx-auto flex w-[88%] min-w-max items-center justify-around gap-3 py-1">
+            <span aria-hidden className="pointer-events-none absolute inset-x-2 top-1/2 h-px -translate-y-1/2 bg-border" />
             {navigationItems.map((item, index) => {
               const selected = selectedNavigationId === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  className={`relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,box-shadow,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "scale-110 bg-primary/10 ring-2 ring-primary ring-offset-2 ring-offset-background" : "bg-background hover:bg-muted/60"}`}
+                  className={`relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full bg-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${selected ? "" : "hover:bg-muted/60"}`}
                   aria-label={`跳转到第 ${index + 1} 条：${item.label}`}
                   aria-current={selected ? "true" : undefined}
                   title={item.label}
@@ -268,14 +251,13 @@ export function TaskDetailComments({
                   data-purpose={item.purpose ?? "general"}
                   onClick={() => scrollToNavigationTarget(item.id)}
                 >
-                  <span className={`${selected ? "size-4" : "size-3"} rounded-full ring-2 ring-background transition-[width,height] ${navigationDotClass(item.kind, item.purpose)}`} />
+                  <span className={`size-3 rounded-full ring-1 ${selected ? "ring-primary" : "ring-background"} ${navigationDotClass(item.kind, item.purpose)}`} />
                 </button>
               );
             })}
           </div>
         </nav>
       ) : null}
-      {detailsExpanded ? detailsToggle : null}
       <form className="space-y-2 border-t bg-background p-3 sm:px-4" onSubmit={onSubmit}>
         <Textarea
           ref={commentBodyRef}

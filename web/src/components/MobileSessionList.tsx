@@ -342,7 +342,7 @@ export function MobileSessionList({
             <div className="flex min-w-0 flex-1 items-center text-sm font-medium leading-snug">
               {s.hasUnreadAiReply && (
                 <span className="mr-1 flex w-4 shrink-0 items-center justify-center" aria-hidden="true">
-                  <span className="size-2 rounded-full bg-destructive" />
+                  <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
                 </span>
               )}
               <span className="truncate">{s.title || "新会话"}</span>

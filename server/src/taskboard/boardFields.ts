@@ -177,9 +177,9 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
   const ownerUserId = String(row.owner_user_id);
   const role = resolveBoardRole(row, currentUserId);
   const repository = parseJsonObject<TaskBoardRepositoryConfig>(row.repository);
-  const storedIntegrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy & { featureFlags?: unknown }>(row.integration_policy);
+  const storedIntegrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy & { featureFlags?: unknown; ciPolicy?: unknown }>(row.integration_policy);
   const integrationPolicy = storedIntegrationPolicy ? (() => {
-    const { featureFlags: _ignored, ...policy } = storedIntegrationPolicy;
+    const { featureFlags: _ignored, ciPolicy: _legacyCiPolicy, ...policy } = storedIntegrationPolicy;
     return { ...policy, workflowVersion: 3 as const };
   })() : undefined;
   const stageModels = parseStageModels(row.stage_models);

@@ -3,16 +3,16 @@
   "metrics": {
     "startupJsRequests": 1,
     "startupCssRequests": 1,
-    "startupJsGzipBytes": 310871,
-    "startupCssGzipBytes": 33571,
-    "startupJsBrotliBytes": 247789,
-    "startupCssBrotliBytes": 26720,
-    "largestJsGzipBytes": 310871,
-    "largestCssGzipBytes": 33571,
-    "largestJsBrotliBytes": 247789,
-    "largestCssBrotliBytes": 26720,
-    "largestJs": "assets/index-CDv7FLzm.js",
-    "largestCss": "assets/index-OtKg9-zM.css"
+    "startupJsGzipBytes": 311678,
+    "startupCssGzipBytes": 34811,
+    "startupJsBrotliBytes": 248526,
+    "startupCssBrotliBytes": 27583,
+    "largestJsGzipBytes": 311678,
+    "largestCssGzipBytes": 34811,
+    "largestJsBrotliBytes": 248526,
+    "largestCssBrotliBytes": 27583,
+    "largestJs": "assets/index-CSQIWtm-.js",
+    "largestCss": "assets/index-k9nK9zrW.css"
   },
   "tolerance": {
     "requests": 0,
@@ -26,6 +26,6 @@
     "largestJsGzipBytes": 450000,
     "largestCssGzipBytes": 120000
   },
-  "reason": "TASK-345 集成业务步骤右栏、任务详情与 Artifact 贴靠，统一桌面右栏入口带来约 1 KB Brotli 启动体积增量，仍远低于绝对上限",
-  "updatedAt": "2026-08-30"
+  "reason": "TASK-357 集成业务步骤卡视觉、任务详情标签布局、未读红点与 CI fallback 清理，Tailwind 生成样式组合带来约 1.2 KB gzip CSS 增量，仍远低于绝对上限",
+  "updatedAt": "2026-09-01"
 }

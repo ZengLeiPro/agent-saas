@@ -64,10 +64,10 @@ export interface RepositoryPullRequestSnapshot {
   observedChecks?: TaskBoardCiObservedCheck[];
   /** False means the provider could not authoritatively determine the required gate set. */
   requiredChecksKnown?: boolean;
-  /** False means neither GitHub nor this board's explicit fallback configured required checks. */
+  /** False means GitHub does not declare required checks for the base branch. */
   requiredChecksConfigured?: boolean;
-  /** The selected required-check policy source, when the provider can determine it. */
-  requiredChecksSource?: 'github' | 'board' | 'unconfigured';
+  /** The required-check policy source, when the provider can determine it. */
+  requiredChecksSource?: 'github' | 'unconfigured';
   subjectDigest: string;
 }
 
@@ -243,14 +243,8 @@ export class GithubRepositoryProvider implements RepositoryProvider {
       this.getRequiredGateCapabilities(repository, baseRef, credentialOwnerId),
     ]);
     const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : undefined;
-    const githubRequiredChecks = capabilities?.requiredChecks ?? [];
-    const boardRequiredChecks = repository.ciPolicy?.requiredChecks ?? [];
-    const selectedRequiredChecks = githubRequiredChecks.length > 0
-      ? githubRequiredChecks
-      : boardRequiredChecks;
-    const requiredChecksSource = githubRequiredChecks.length > 0
-      ? 'github'
-      : boardRequiredChecks.length > 0 ? 'board' : 'unconfigured';
+    const selectedRequiredChecks = capabilities?.requiredChecks ?? [];
+    const requiredChecksSource = selectedRequiredChecks.length > 0 ? 'github' : 'unconfigured';
     const observedChecks = normalizeObservedChecks(
       checksResult.status === 'fulfilled' ? checksResult.value : undefined,
       statusesResult.status === 'fulfilled' ? statusesResult.value : undefined,

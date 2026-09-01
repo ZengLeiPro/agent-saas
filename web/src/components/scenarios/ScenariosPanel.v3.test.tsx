@@ -260,7 +260,7 @@ describe("ScenariosPanel V3", () => {
     expect(within(catalog).getByRole("button", { name: "查看工作流" })).toBeTruthy();
   });
 
-  it("目录卡以场景标题为主，并展示价值、链路和人审说明", () => {
+  it("目录卡以场景标题为主，并展示价值、触发时机和人审说明", () => {
     const scenario = makeWorkflowScenario("compact-card", {
       goalTags: ["保交付"],
       value: "提前发现风险并同步处理结果",
@@ -275,10 +275,12 @@ describe("ScenariosPanel V3", () => {
     expect(within(catalog).getByRole("heading", { name: scenario.title })).toBeTruthy();
     expect(within(catalog).getByText("保交付")).toBeTruthy();
     expect(catalog.textContent).toContain(scenario.value);
-    expect(catalog.textContent).toContain("读取状态");
-    expect(catalog.textContent).toContain("判断异常");
-    expect(catalog.textContent).toContain("执行动作");
-    expect(catalog.textContent).not.toContain(scenario.triggerBadge);
+    // 触发时机上卡：这是目录里逐条唯一的字段
+    expect(catalog.textContent).toContain(scenario.triggerBadge);
+    // shortChain 不上卡：整个目录只有 4 种取值，与底部的 primaryType 一一对应，属于同一信息的重复表达
+    expect(catalog.textContent).not.toContain("读取状态");
+    expect(catalog.textContent).not.toContain("判断异常");
+    expect(catalog.textContent).not.toContain("执行动作");
     expect(catalog.textContent).toContain(scenario.humanApprovalSummary);
   });
 
@@ -402,7 +404,8 @@ describe("ScenariosPanel V3", () => {
     fireEvent.click(screen.getByRole("tab", { name: "机械装备/自动化" }));
     fireEvent.click(screen.getByRole("tab", { name: "生产制造" }));
     fireEvent.click(screen.getByRole("tab", { name: "已有单体系统" }));
-    fireEvent.click(screen.getByRole("button", { name: scenario.title }));
+    // 整卡可点，不再是标题上单独挂一个按钮
+    fireEvent.click(screen.getByRole("button", { name: `查看 ${scenario.title} 详情` }));
     expect(await screen.findByText("行业业务版本 · 生产制造版本", {}, { timeout: 5_000 })).toBeTruthy();
     expect(screen.getByText("生产订单与交期承诺")).toBeTruthy();
     expect(screen.getByText("岗位视图 · 财务")).toBeTruthy();

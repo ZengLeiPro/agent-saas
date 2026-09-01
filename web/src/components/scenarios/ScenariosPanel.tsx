@@ -441,6 +441,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
                     options={[{ value: INDUSTRY_ALL, label: "全部行业" }, ...INDUSTRY_CHIPS]}
                     value={filters.activeIndustry}
                     onValueChange={(value) => filters.setActiveIndustry(value as IndustryFilterValue)}
+                    wrap
                   />
                 </SecondaryFilterGroup>
                 <SecondaryFilterGroup label="垂直行业">
@@ -452,6 +453,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
                     ]}
                     value={filters.activeVertical}
                     onValueChange={(value) => filters.setActiveVertical(value as VerticalFilterValue)}
+                    wrap
                   />
                 </SecondaryFilterGroup>
                 <SecondaryFilterGroup label="经营模式">
@@ -463,6 +465,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
                     ]}
                     value={filters.activeBusinessModel}
                     onValueChange={(value) => filters.setActiveBusinessModel(value as BusinessModelFilterValue)}
+                    wrap
                   />
                 </SecondaryFilterGroup>
                 <SecondaryFilterGroup label="数字化基础">
@@ -474,6 +477,7 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
                     ]}
                     value={filters.activeMaturity}
                     onValueChange={(value) => filters.setActiveMaturity(value as MaturityFilterValue)}
+                    wrap
                   />
                 </SecondaryFilterGroup>
               </PopoverContent>

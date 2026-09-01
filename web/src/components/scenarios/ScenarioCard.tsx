@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState, type CSSProperties } from "react";
-import { ChevronRight, Globe, MessageSquareShare, Repeat, ShieldAlert, Target, Upload, Zap } from "lucide-react";
+import { Globe, MessageSquareShare, Repeat, ShieldAlert, Target, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -233,8 +233,21 @@ export function WorkflowScenarioCard({
   return (
     <article
       style={style}
+      // 整卡可点，与技能、连接器、专家目录的卡片保持同一套交互模型
+      role="button"
+      tabIndex={0}
+      aria-label={`查看 ${scenario.title} 详情`}
+      onClick={() => onOpenDetail(scenario)}
+      onKeyDown={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetail(scenario);
+        }
+      }}
       className={cn(
-        "group relative flex min-h-[13.5rem] flex-col overflow-hidden p-4 text-left text-card-foreground",
+        "group relative flex min-h-[13.5rem] cursor-pointer flex-col overflow-hidden p-4 text-left text-card-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
         CAPABILITY_SURFACE,
         CAPABILITY_SURFACE_HOVER,
         scenario.featured &&
@@ -248,27 +261,32 @@ export function WorkflowScenarioCard({
           <span className="truncate">{outcome}</span>
           {scenario.featured ? <span className="sr-only">重点工作流</span> : null}
         </span>
-        <span className="shrink-0 text-2xs" title={`接入就绪度：${friendlyReadiness[scenario.readiness]}`}>
+        {/* 目录里 22/28 都是「标准接入」，这一格几乎没有区分度；
+            把颜色只留给「当前即用」——那是能立刻上手、值得被看见的那一档 */}
+        <span
+          className={cn(
+            "shrink-0 text-2xs",
+            scenario.readiness === "D0_CURRENT" && "font-medium text-success-ink",
+          )}
+          title={`接入就绪度：${friendlyReadiness[scenario.readiness]}`}
+        >
           {friendlyReadiness[scenario.readiness]}
         </span>
       </div>
-      <h3 className="mt-4 text-base font-semibold leading-snug">
-        <button
-          type="button"
-          className="text-left transition-colors hover:text-brand-600 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => onOpenDetail(scenario)}
-        >
-          {scenario.title}
-        </button>
+      <h3 className="mt-4 text-base font-semibold leading-snug transition-colors group-hover:text-brand-600">
+        {scenario.title}
       </h3>
       <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
-      <div className="mt-3 flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/80">
-        {scenario.shortChain.slice(0, 3).map((step, index) => (
-          <span key={`${step}-${index}`} className="contents">
-            {index > 0 ? <ChevronRight className="size-3 shrink-0 opacity-50" aria-hidden="true" /> : null}
-            <span className="min-w-0 truncate">{step}</span>
-          </span>
-        ))}
+      {/*
+        这里刻意不用 shortChain：目录里 28 条工作流的 shortChain 只有 4 种取值，
+        且与 primaryType 一一对应（15/4/3/6），等于把底部那个词换行重排了一遍。
+        triggerBadge 是 28 条各不相同的字段，补上卡片缺的「什么时候会触发」。
+      */}
+      <div className="mt-3 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground/80">
+        <Zap className="size-3 shrink-0 opacity-60" aria-hidden="true" />
+        <span className="min-w-0 truncate" title={scenario.triggerBadge}>
+          {scenario.triggerBadge}
+        </span>
       </div>
       <div className="mt-auto flex items-end justify-between gap-3 border-t border-border/50 pt-4">
         <div className="min-w-0 text-2xs leading-4 text-muted-foreground">
@@ -281,9 +299,9 @@ export function WorkflowScenarioCard({
           {cta.secondaryLabel ? (
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
-              className="h-8 px-3 text-xs"
+              className="h-8 px-3 text-xs text-muted-foreground hover:text-foreground"
               onClick={(event) => {
                 event.stopPropagation();
                 if (cta.secondaryAction) onPrimaryAction(cta.secondaryAction, scenario);
@@ -301,7 +319,9 @@ export function WorkflowScenarioCard({
               "h-8 px-3 text-xs transition-colors duration-200",
               emphasizePrimary
                 ? "border-brand-600 bg-brand-600 text-white hover:border-brand-700 hover:bg-brand-700 hover:text-white"
-                : "group-hover:border-brand-600 group-hover:bg-brand-600 group-hover:text-white group-focus-within:border-brand-600 group-focus-within:bg-brand-600 group-focus-within:text-white",
+                : // 静态就带一层弱品牌底：扫视阶段（还没 hover）也要能看出哪个是主动作，
+                  // 否则「看演示」和「接入我的系统」长得一样，后者却是接生产系统的重承诺
+                  "border-brand-200 bg-brand-50 text-brand-700 group-hover:border-brand-600 group-hover:bg-brand-600 group-hover:text-white group-focus-within:border-brand-600 group-focus-within:bg-brand-600 group-focus-within:text-white",
             )}
             onClick={(event) => {
               event.stopPropagation();

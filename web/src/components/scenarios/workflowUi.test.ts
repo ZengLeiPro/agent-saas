@@ -61,11 +61,13 @@ describe("Workflow V3 UI 纯契约", () => {
         })),
       },
     });
+    // 槽位按语义固定：主槽恒为行动类，演示入口进次槽。
+    // 否则同一屏卡片的右侧末位一半是「看演示」、一半是「接入我的系统」，位置失去含义。
     expect(workflowCta(scenario)).toEqual({
-      action: "presentation",
-      label: "看演示",
-      secondaryLabel: "接入我的系统",
-      secondaryAction: "connector",
+      action: "connector",
+      label: "接入我的系统",
+      secondaryLabel: "看演示",
+      secondaryAction: "presentation",
     });
   });
   it("手写 ReplayScript 与 presentation 都显示演示入口，无剧本场景不显示", () => {
@@ -74,13 +76,19 @@ describe("Workflow V3 UI 纯契约", () => {
       launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     });
-    expect(workflowCta(handwritten).action).toBe("presentation");
+    expect(workflowCta(handwritten).secondaryAction).toBe("presentation");
+    expect(workflowCta(handwritten).secondaryLabel).toBe("看演示");
 
     const noReplay = makeWorkflowScenario("no-replay", {
       readiness: "D1_CONNECTOR",
       launch: { sampleAvailable: false, startMode: "connector", entry: { kind: "business_event", content: "业务系统出现一条待处理事件。" }, starterMessage: "业务系统出现一条待处理事件。" },
       cta: { primary: "接入我的系统", secondary: "查看工作流" },
     });
+    expect(workflowCta(noReplay).secondaryAction).toBeUndefined();
+    expect(workflowCta(noReplay).secondaryLabel).toBe("查看工作流");
+
+    // 两种场景的主槽都是行动类，位置含义不随剧本有无而漂移
+    expect(workflowCta(handwritten).action).toBe("connector");
     expect(workflowCta(noReplay).action).toBe("connector");
   });
 

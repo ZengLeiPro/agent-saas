@@ -49,4 +49,22 @@ describe("CatalogToolbar", () => {
     fireEvent.keyDown(window, { key: "/" });
     expect(document.activeElement).toBe(input);
   });
+
+  it("只保留一个清除按钮：原生 search 清除键被关掉，快捷键提示让位", () => {
+    const { rerender } = render(
+      <CatalogToolbar query="" onQueryChange={vi.fn()} searchPlaceholder="搜索能力" />,
+    );
+    // 空态：显示快捷键提示，没有清除按钮
+    expect(screen.getByText("/")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "清空搜索" })).toBeNull();
+
+    rerender(<CatalogToolbar query="报表" onQueryChange={vi.fn()} searchPlaceholder="搜索能力" />);
+    // 有内容：只剩自定义清除按钮，且浏览器自带的 ::-webkit-search-cancel-button 已被关掉，
+    // 否则输入框右侧会并排出现两个 ✕
+    expect(screen.getByRole("button", { name: "清空搜索" })).toBeTruthy();
+    expect(screen.queryByText("/")).toBeNull();
+    expect(screen.getByRole("searchbox", { name: "搜索能力" }).className).toContain(
+      "[&::-webkit-search-cancel-button]:appearance-none",
+    );
+  });
 });

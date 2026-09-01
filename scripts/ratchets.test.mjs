@@ -243,8 +243,20 @@ test('formal taskboard integration spec is Agent-first and contains no retired p
     'Merge Gateway receipt',
     '独立 Review Agent',
   ];
-  for (const term of retiredTerms) assert.equal(spec.includes(term), false, `retired term remains: ${term}`);
-  for (const contract of ['durable **Integration Agent**', 'purpose=work', 'GitHub 原生保护', 'done` 与 `blocked']) {
+  for (const term of [
+    ...retiredTerms,
+    '普通 Delivery Work/Review 的既有 PR inspection 和独立复核契约不受影响',
+    '不删除历史表或列',
+  ]) assert.equal(spec.includes(term), false, `retired term remains: ${term}`);
+  for (const contract of [
+    'durable **Integration Agent**',
+    'purpose=work',
+    'GitHub 原生保护',
+    'done` 与 `blocked',
+    'inspect` 只提供当前 PR、head、check 与 workflow 观测',
+    '质量结论由 Work/Review Agent',
+    '权限、事务与事实一致性约束',
+  ]) {
     assert.equal(spec.includes(contract), true, `required contract is missing: ${contract}`);
   }
 });

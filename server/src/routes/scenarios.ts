@@ -32,6 +32,14 @@ import {
 import type { CronService } from "../cron/service.js";
 import type { CronJobCreate, NotifyConfig } from "../cron/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
+import type { UserStore } from "../data/users/store.js";
+import {
+  normalizeWorkflowPosition,
+  WorkflowDisplayPolicyConflictError,
+  WorkflowDisplayPolicyStore,
+} from "../data/workflowDisplay/index.js";
+import { isPlatformAdmin } from "../auth/middleware.js";
+import { auditLog } from "../data/login-logs/index.js";
 import {
   createRetryableWorkflowLibraryLoader,
   findLegacyCompatibility,
@@ -70,8 +78,37 @@ export interface ScenariosRouterOptions {
   v3Loader?: () => Promise<LoadedWorkflowLibraryV3>;
   cronService?: CronService;
   roleKit?: RoleKitPublicConfig;
-  tenantStore?: Pick<TenantStore, "getSettings">;
+  tenantStore?: Pick<TenantStore, "getSettings"> & Partial<Pick<TenantStore, "findById">>;
+  userStore?: Pick<UserStore, "listAll" | "findById">;
+  workflowDisplayPolicyStore?: WorkflowDisplayPolicyStore;
+  workflowDisplayPoliciesPath?: string;
 }
+
+const workflowDisplayPolicyBodySchema = z.object({
+  tenantId: z.string().min(1).max(64).optional(),
+  scope: z.enum(["tenant", "position", "user"]),
+  subjectId: z.string().trim().min(1).max(100).optional(),
+  subjectLabel: z.string().trim().min(1).max(100).optional(),
+  displayCount: z.number().int().min(0).max(6),
+  workflowIds: z.array(z.string().trim().min(1).max(200)).max(100)
+    .refine((ids) => new Set(ids).size === ids.length, "workflowIds must be unique"),
+  expectedRevision: z.number().int().min(0),
+}).superRefine((value, ctx) => {
+  if (value.displayCount > value.workflowIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["displayCount"],
+      message: "显示数量不能超过已选工作流数量",
+    });
+  }
+});
+
+const workflowDisplayDeleteSchema = z.object({
+  tenantId: z.string().min(1).max(64).optional(),
+  scope: z.enum(["tenant", "position", "user"]),
+  subjectId: z.string().trim().min(1).max(100),
+  expectedRevision: z.coerce.number().int().positive(),
+});
 
 async function loadScenarioLibraryFile(dataPath: string): Promise<ScenarioLibraryFile> {
   const raw = JSON.parse(await readFile(dataPath, "utf-8")) as unknown;
@@ -181,6 +218,10 @@ export function createScenariosRouter(
     ? options.v3DataPath
     : DEFAULT_V3_DATA_PATH;
   const router = Router();
+  const workflowDisplayPolicyStore = options.workflowDisplayPolicyStore
+    ?? (options.workflowDisplayPoliciesPath
+      ? new WorkflowDisplayPolicyStore(options.workflowDisplayPoliciesPath)
+      : undefined);
 
   // 进程内缓存：场景库是随代码发布的静态数据，进程生命周期内加载一次即可
   let cache: ScenarioLibraryResponse | null = null;
@@ -210,6 +251,216 @@ export function createScenariosRouter(
     }
     return cache;
   }
+
+  function resolveAdminTenantId(req: Request, requestedTenantId?: string): string | null {
+    if (!req.user || req.user.role !== "admin") return null;
+    if (!isPlatformAdmin(req.user)) return req.user.tenantId;
+    return requestedTenantId?.trim() || null;
+  }
+
+  function workflowDisplayUnavailable(res: Response): boolean {
+    if (!workflowDisplayPolicyStore || !options.userStore || !options.tenantStore?.findById) {
+      res.status(503).json({ error: "workflow_display_unavailable" });
+      return true;
+    }
+    return false;
+  }
+
+  router.get("/display-config", async (req: Request, res: Response) => {
+    if (!req.user) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    if (!workflowDisplayPolicyStore || !options.userStore || !getV3Library) {
+      res.json({ source: "platform", displayCount: 3, workflowIds: [], revision: 0 });
+      return;
+    }
+    const user = options.userStore.findById(req.user.sub);
+    if (!user || user.tenantId !== req.user.tenantId) {
+      res.status(403).json({ error: "user_scope_invalid" });
+      return;
+    }
+    try {
+      const resolved = workflowDisplayPolicyStore.resolve({
+        tenantId: user.tenantId,
+        userId: user.id,
+        position: user.position,
+      });
+      if (resolved.source === "platform") {
+        res.json(resolved);
+        return;
+      }
+      const validIds = new Set((await getV3Library()).public.scenarios.map((scenario) => scenario.id));
+      res.json({
+        ...resolved,
+        workflowIds: resolved.workflowIds.filter((id) => validIds.has(id)),
+      });
+    } catch (error) {
+      logger.error("工作流推荐配置解析失败", error);
+      res.status(500).json({ error: "workflow_display_unavailable" });
+    }
+  });
+
+  router.get("/display-policies", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") {
+      res.status(403).json({ error: "admin_required" });
+      return;
+    }
+    if (workflowDisplayUnavailable(res)) return;
+    const tenantId = resolveAdminTenantId(
+      req,
+      typeof req.query.tenantId === "string" ? req.query.tenantId : undefined,
+    );
+    if (!tenantId || !options.tenantStore!.findById!(tenantId)) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    const members = options.userStore!.listAll()
+      .filter((user) => user.tenantId === tenantId)
+      .map((user) => ({
+        id: user.id,
+        username: user.username,
+        displayName: user.realName || user.username,
+        ...(user.position ? { position: user.position } : {}),
+        disabled: user.disabled === true,
+      }))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN"));
+    const policies = workflowDisplayPolicyStore!.listByTenant(tenantId);
+    const positionsById = new Map<string, { id: string; label: string; memberCount: number }>();
+    for (const member of members) {
+      if (member.disabled || !member.position) continue;
+      const id = normalizeWorkflowPosition(member.position);
+      if (!id) continue;
+      const current = positionsById.get(id);
+      if (current) current.memberCount += 1;
+      else positionsById.set(id, { id, label: member.position.trim(), memberCount: 1 });
+    }
+    for (const policy of policies) {
+      if (policy.scope === "position" && !positionsById.has(policy.subjectId)) {
+        positionsById.set(policy.subjectId, {
+          id: policy.subjectId,
+          label: policy.subjectLabel,
+          memberCount: 0,
+        });
+      }
+    }
+    res.json({
+      tenantId,
+      policies,
+      positions: [...positionsById.values()].sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
+      members,
+    });
+  });
+
+  router.put("/display-policies", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") {
+      res.status(403).json({ error: "admin_required" });
+      return;
+    }
+    if (workflowDisplayUnavailable(res) || !getV3Library) return;
+    const parsed = workflowDisplayPolicyBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid_body" });
+      return;
+    }
+    const body = parsed.data;
+    const tenantId = resolveAdminTenantId(req, body.tenantId);
+    const tenant = tenantId ? options.tenantStore!.findById!(tenantId) : undefined;
+    if (!tenantId || !tenant) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    let subjectId: string;
+    let subjectLabel: string;
+    if (body.scope === "tenant") {
+      subjectId = tenantId;
+      subjectLabel = tenant.name;
+    } else if (body.scope === "position") {
+      subjectLabel = body.subjectLabel?.trim() ?? "";
+      subjectId = normalizeWorkflowPosition(subjectLabel);
+      const exists = options.userStore!.listAll().some((user) =>
+        user.tenantId === tenantId
+        && !user.disabled
+        && normalizeWorkflowPosition(user.position) === subjectId);
+      if (!subjectId || !exists) {
+        res.status(400).json({ error: "position_not_found" });
+        return;
+      }
+    } else {
+      const member = body.subjectId ? options.userStore!.findById(body.subjectId) : undefined;
+      if (!member || member.tenantId !== tenantId) {
+        res.status(400).json({ error: "member_not_found" });
+        return;
+      }
+      subjectId = member.id;
+      subjectLabel = member.realName || member.username;
+    }
+    try {
+      const validIds = new Set((await getV3Library()).public.scenarios.map((scenario) => scenario.id));
+      if (body.workflowIds.some((id) => !validIds.has(id))) {
+        res.status(400).json({ error: "workflow_not_found" });
+        return;
+      }
+      const policy = await workflowDisplayPolicyStore!.upsert({
+        tenantId,
+        scope: body.scope,
+        subjectId,
+        subjectLabel,
+        displayCount: body.displayCount,
+        workflowIds: body.workflowIds,
+        expectedRevision: body.expectedRevision,
+        actorId: req.user.sub,
+      });
+      auditLog(req, "workflow_display_policy_updated", `${tenantId}:${body.scope}:${subjectId} → ${body.displayCount}/${body.workflowIds.length}`);
+      res.json(policy);
+    } catch (error) {
+      if (error instanceof WorkflowDisplayPolicyConflictError) {
+        res.status(409).json({ error: "revision_conflict", currentRevision: error.currentRevision });
+        return;
+      }
+      logger.error("工作流展示策略保存失败", error);
+      res.status(500).json({ error: "workflow_display_update_failed" });
+    }
+  });
+
+  router.delete("/display-policies", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") {
+      res.status(403).json({ error: "admin_required" });
+      return;
+    }
+    if (workflowDisplayUnavailable(res)) return;
+    const parsed = workflowDisplayDeleteSchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "invalid_query" });
+      return;
+    }
+    const tenantId = resolveAdminTenantId(req, parsed.data.tenantId);
+    if (!tenantId || !options.tenantStore!.findById!(tenantId)) {
+      res.status(404).json({ error: "tenant_not_found" });
+      return;
+    }
+    try {
+      const removed = await workflowDisplayPolicyStore!.remove({
+        tenantId,
+        scope: parsed.data.scope,
+        subjectId: parsed.data.subjectId,
+        expectedRevision: parsed.data.expectedRevision,
+      });
+      if (!removed) {
+        res.status(404).json({ error: "policy_not_found" });
+        return;
+      }
+      auditLog(req, "workflow_display_policy_deleted", `${tenantId}:${parsed.data.scope}:${parsed.data.subjectId}`);
+      res.json({ ok: true });
+    } catch (error) {
+      if (error instanceof WorkflowDisplayPolicyConflictError) {
+        res.status(409).json({ error: "revision_conflict", currentRevision: error.currentRevision });
+        return;
+      }
+      logger.error("工作流展示策略删除失败", error);
+      res.status(500).json({ error: "workflow_display_delete_failed" });
+    }
+  });
 
   router.get("/config", async (req: Request, res: Response) => {
     const roleKit = options.roleKit ?? {};

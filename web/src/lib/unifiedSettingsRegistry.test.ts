@@ -28,6 +28,7 @@ const EXPECTED_KEYS = [
   "tenant:users",
   "tenant:skills",
   "tenant:org-agents",
+  "tenant:workflows",
   "tenant:mcp",
   "tenant:connector-dictionary",
   "tenant:billing",
@@ -66,11 +67,11 @@ function expectUnique(values: readonly string[]) {
 }
 
 describe("unified settings registry", () => {
-  it("穷举唯一的 36 个叶子，scope 数量固定为 8/10/18", () => {
+  it("穷举唯一的 37 个叶子，scope 数量固定为 8/11/18", () => {
     expect(SETTINGS_REGISTRY.map((entry) => entry.key)).toEqual(EXPECTED_KEYS);
     expectUnique(SETTINGS_REGISTRY.map((entry) => entry.key));
     expect(settingsSectionsForScope("personal")).toHaveLength(8);
-    expect(settingsSectionsForScope("tenant")).toHaveLength(10);
+    expect(settingsSectionsForScope("tenant")).toHaveLength(11);
     expect(settingsSectionsForScope("platform")).toHaveLength(18);
   });
 

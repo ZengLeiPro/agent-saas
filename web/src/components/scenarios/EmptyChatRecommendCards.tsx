@@ -18,6 +18,7 @@ import {
 import { matchIndustry, useIndustryFilter } from "./useIndustryFilter";
 import { hasReplayScript } from "./replay/availability";
 import { isHookScenario } from "./workflowUi";
+import { useWorkflowDisplayConfig } from "./useWorkflowDisplayConfig";
 
 interface EmptyChatRecommendCardsProps {
   onTryScenario: (prompt: string, scenario: ScenarioItem) => void;
@@ -138,10 +139,47 @@ export function EmptyChatRecommendCards({
   const { library, workflowLibrary, loading, error } = useScenarioLibrary();
   const { user } = useAuth();
   const { activeIndustry } = useIndustryFilter();
+  const displayConfig = useWorkflowDisplayConfig();
 
-  if (loading || error) return null;
+  if (loading || error || displayConfig.loading) return null;
 
   if (workflowLibrary) {
+    const configuredCount = displayConfig.config?.displayCount ?? 0;
+    if (displayConfig.config?.source !== "platform") {
+      const byId = new Map(workflowLibrary.scenarios.map((scenario) => [scenario.id, scenario]));
+      const cards = (displayConfig.config?.workflowIds ?? [])
+        .map((id) => byId.get(id))
+        .filter((scenario): scenario is CatalogScenarioPublic => Boolean(scenario))
+        .slice(0, configuredCount);
+      return (
+        <SuggestionGrid onViewAll={onViewAll}>
+          {cards.map((scenario) => {
+            const canReplay = hasReplayScript(scenario);
+            const meta = workflowActionMeta(scenario, canReplay);
+            const handleClick = () => {
+              if (canReplay) {
+                onViewAll();
+                const params = new URLSearchParams(window.location.search);
+                params.delete("scenario");
+                params.set("workflow", scenario.id);
+                params.set("intent", "presentation");
+                window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+              } else if (scenario.launch.startMode === "chat" && onStartWorkflow) {
+                onStartWorkflow(scenario.launch.starterMessage, scenario);
+              } else {
+                onViewAll();
+                const params = new URLSearchParams(window.location.search);
+                params.delete("scenario");
+                params.set("workflow", scenario.id);
+                params.set("intent", scenario.launch.startMode === "connector" ? "connect" : "view");
+                window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+              }
+            };
+            return <SuggestionCard key={scenario.id} title={scenario.title} action={meta.label} tone={meta.tone} onClick={handleClick} />;
+          })}
+        </SuggestionGrid>
+      );
+    }
     const matchedRoleId = user?.preferences?.activeRoleId && workflowLibrary.roles.some((role) => role.id === user?.preferences?.activeRoleId)
       ? user.preferences.activeRoleId
       : matchRoleIdByPosition(workflowLibrary.roles, user?.position);
@@ -163,12 +201,12 @@ export function EmptyChatRecommendCards({
       ? workflowLibrary.scenarios
       : workflowLibrary.scenarios.filter((scenario) => scenario.industryTags.includes(activeIndustry));
     const primaryPool = industryFiltered.length > 0 ? industryFiltered : workflowLibrary.scenarios;
-    const primaryCards = pickCards(primaryPool, RECOMMENDATION_COUNT);
+    const primaryCards = pickCards(primaryPool, configuredCount);
     const primaryIds = new Set(primaryCards.map((scenario) => scenario.id));
-    const fallbackCards = primaryCards.length < RECOMMENDATION_COUNT
+    const fallbackCards = primaryCards.length < configuredCount
       ? pickCards(
         workflowLibrary.scenarios.filter((scenario) => !primaryIds.has(scenario.id)),
-        RECOMMENDATION_COUNT - primaryCards.length,
+        configuredCount - primaryCards.length,
       )
       : [];
     const cards = [...primaryCards, ...fallbackCards];
@@ -210,6 +248,10 @@ export function EmptyChatRecommendCards({
         })}
       </SuggestionGrid>
     );
+  }
+
+  if (displayConfig.config?.source !== "platform") {
+    return <SuggestionGrid onViewAll={onViewAll}>{null}</SuggestionGrid>;
   }
 
   if (!library || library.scenarios.length === 0) return null;

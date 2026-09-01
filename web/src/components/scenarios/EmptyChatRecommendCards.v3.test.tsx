@@ -41,6 +41,9 @@ const demo = makeWorkflowScenario("demo-with-script", {
   },
 });
 const library = makeWorkflowLibrary([d0, d1, demo]);
+const display = vi.hoisted(() => ({
+  config: { source: "platform", displayCount: 3, workflowIds: [] as string[], revision: 0 },
+}));
 
 vi.mock("./useScenarioLibrary", () => ({
   useScenarioLibrary: () => ({ library: null, workflowLibrary: library, loading: false, error: null }),
@@ -48,10 +51,14 @@ vi.mock("./useScenarioLibrary", () => ({
   pickRecommendedWorkflowScenarios: (items: typeof library.scenarios) => items,
 }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null }) }));
+vi.mock("./useWorkflowDisplayConfig", () => ({
+  useWorkflowDisplayConfig: () => ({ config: display.config, loading: false, error: false }),
+}));
 
 beforeEach(() => {
   localStorage.clear();
   window.history.replaceState({}, "", "/");
+  display.config = { source: "platform", displayCount: 3, workflowIds: [], revision: 0 };
 });
 
 describe("EmptyChatRecommendCards V3", () => {
@@ -96,5 +103,21 @@ describe("EmptyChatRecommendCards V3", () => {
     expect(screen.getByText("当前可运行工作流")).toBeTruthy();
     expect(screen.getByText("需要标准接入工作流")).toBeTruthy();
     expect(screen.getByText("有剧本的工作流")).toBeTruthy();
+  });
+
+  it("组织覆盖按配置顺序和数量显示，0 个时仍保留全部能力入口", () => {
+    display.config = { source: "position", displayCount: 2, workflowIds: [demo.id, d0.id, d1.id], revision: 4 };
+    const view = render(<EmptyChatRecommendCards onTryScenario={vi.fn()} onViewAll={vi.fn()} />);
+    const cards = screen.getAllByRole("button").filter((button) => button.textContent?.includes("工作流"));
+    expect(cards.slice(0, 2).map((button) => button.textContent)).toEqual([
+      expect.stringContaining("有剧本的工作流"),
+      expect.stringContaining("当前可运行工作流"),
+    ]);
+    expect(screen.queryByText("需要标准接入工作流")).toBeNull();
+
+    display.config = { source: "user", displayCount: 0, workflowIds: [], revision: 5 };
+    view.rerender(<EmptyChatRecommendCards onTryScenario={vi.fn()} onViewAll={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /查看全部能力/ })).toBeTruthy();
+    expect(screen.queryByText("当前可运行工作流")).toBeNull();
   });
 });

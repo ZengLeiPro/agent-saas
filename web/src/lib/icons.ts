@@ -48,6 +48,7 @@ import {
   Users,
   WalletCards,
   Waypoints,
+  Workflow,
   Wrench,
 } from "lucide-react";
 
@@ -107,6 +108,8 @@ export const EntityIcons = {
   egress: Waypoints,
   /** 系统提示语 */
   systemPrompts: MessageSquareText,
+  /** 工作流推荐与编排 */
+  workflow: Workflow,
   /** 环境配置指纹与一致性状态 */
   configStatus: Fingerprint,
 } as const;

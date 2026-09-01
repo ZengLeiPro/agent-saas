@@ -28,6 +28,14 @@ vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({ user: mocked.user }),
 }));
 
+vi.mock("./useWorkflowDisplayConfig", () => ({
+  useWorkflowDisplayConfig: () => ({
+    config: { source: "platform", displayCount: 3, workflowIds: [], revision: 0 },
+    loading: false,
+    error: false,
+  }),
+}));
+
 vi.mock("./useIndustryFilter", () => ({
   useIndustryFilter: () => ({ activeIndustry: "all", setActiveIndustry: vi.fn() }),
   matchIndustry: () => true,

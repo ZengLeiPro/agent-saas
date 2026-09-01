@@ -444,11 +444,18 @@ export async function ensureRuntimeHandRegistered(params: {
 
     const tenantRecipe = buildWorkspaceRecipe(
       remoteWorkspaceId,
-      hand.recipe,
+      {
+        ...hand.recipe,
+        // Runtime classification belongs to this session/run. A tenant hand may
+        // provide static repo/resources/setup/mount defaults, but its configured
+        // workload must never override the persisted dispatch descriptor.
+        workload: toAcsSandboxWorkloadDescriptor(params.sandboxWorkloadDescriptor),
+      },
       params.sessionId,
       params.workspaceMountSubPath,
       params.topLevelSessionId,
     );
+    // Digest the effective recipe, including the per-dispatch workload override.
     const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
     const tenantProvisionGeneration = randomUUID();
     await manager.provision({

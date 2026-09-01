@@ -32,7 +32,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
@@ -88,7 +88,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const startup = new Promise<void>((resolve) => { finishStartup = resolve; });
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => { await startup; return ref; }),
     } as unknown as SandboxManager;
@@ -138,7 +138,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     child.stdin.on('data', (chunk) => { runnerInput += String(chunk); });
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
@@ -195,7 +195,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const activeRegistry = new ActiveSandboxRegistry();
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => {
         throw new Error('startup failed');
@@ -237,7 +237,7 @@ describe('AcsExecutor active sandbox tracking', () => {
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
@@ -291,7 +291,7 @@ describe('AcsExecutor active sandbox tracking', () => {
         mountSubPath: 'workspaces/kaiyan/u-1',
       };
       const child = fakeChild();
-      const setActiveInvocationLease = vi.fn(async () => undefined);
+      const setActiveInvocationLease = vi.fn(async () => 'uid-1');
       const sandboxManager = {
         ref: () => ref,
         ensureRunning: vi.fn(async () => ref),
@@ -325,7 +325,7 @@ describe('AcsExecutor active sandbox tracking', () => {
       child.emit('close', 0, null);
       await vi.advanceTimersByTimeAsync(0);
       await expect(result).resolves.toMatchObject({ status: 'success' });
-      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(ref.name, leaseKey);
+      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(ref.name, leaseKey, undefined, 'uid-1');
     } finally {
       vi.useRealTimers();
     }
@@ -340,7 +340,7 @@ describe('AcsExecutor active sandbox tracking', () => {
       mountSubPath: 'workspaces/kaiyan/u-1',
     };
     const child = fakeChild();
-    const setActiveInvocationLease = vi.fn(async () => undefined);
+    const setActiveInvocationLease = vi.fn(async () => 'uid-1');
     const touch = vi.fn(async () => undefined);
     const sandboxManager = {
       ref: () => ref,
@@ -370,7 +370,7 @@ describe('AcsExecutor active sandbox tracking', () => {
 
     const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]?.[1] as string;
     expect(leaseKey).toMatch(/^inv-finally:/u);
-    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(2, ref.name, leaseKey);
+    expect(setActiveInvocationLease).toHaveBeenNthCalledWith(2, ref.name, leaseKey, undefined, 'uid-1');
     expect(touch).toHaveBeenCalledWith(ref.name);
     expect(setActiveInvocationLease.mock.invocationCallOrder[1]).toBeLessThan(touch.mock.invocationCallOrder[0]!);
   });
@@ -384,7 +384,7 @@ describe('AcsExecutor active sandbox tracking', () => {
       mountSubPath: 'workspaces/kaiyan/u-1',
     };
     const setActiveInvocationLease = vi.fn()
-      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce('uid-1')
       .mockRejectedValueOnce(new Error('lease clear failed'));
     const touch = vi.fn(async () => undefined);
     const warn = vi.fn();
@@ -514,7 +514,7 @@ describe('spawnRunner 命令构造（A 方案批次 3：预编译 sandboxRunner�
     const child = fakeChild();
     const sandboxManager = {
       ref: () => ref,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => ref),
     } as unknown as SandboxManager;
@@ -571,7 +571,7 @@ describe('AcsExecutor sandbox resource override', () => {
       {
         ref: refFn,
         ensureRunning,
-        setActiveInvocationLease: vi.fn(async () => undefined),
+        setActiveInvocationLease: vi.fn(async () => 'uid-1'),
         touch: vi.fn(async () => undefined),
       } as unknown as SandboxManager,
       noopLogger,
@@ -640,7 +640,7 @@ describe('persistent sandbox runner', () => {
     const sandboxManager = {
       ref: () => ref,
       ensureRunning,
-      setActiveInvocationLease: vi.fn(async () => undefined),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
     } as unknown as SandboxManager;
     const executor = new AcsExecutor(baseConfig(), { spawn } as unknown as Kubectl, sandboxManager, noopLogger);

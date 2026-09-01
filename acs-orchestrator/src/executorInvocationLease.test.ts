@@ -50,7 +50,7 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
       const child = fakeChild();
       const registry = new ActiveSandboxRegistry();
       const setActiveInvocationLease = vi.fn()
-        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce('uid-lease')
         .mockImplementationOnce(renewal);
       const manager = {
         ref: () => ref,
@@ -99,8 +99,8 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
   it('uses an execution-unique lease key when the same invocationId runs on two instances', async () => {
     const childA = fakeChild();
     const childB = fakeChild();
-    const setLeaseA = vi.fn(async () => undefined);
-    const setLeaseB = vi.fn(async () => undefined);
+    const setLeaseA = vi.fn(async () => 'uid-lease');
+    const setLeaseB = vi.fn(async () => 'uid-lease');
     const manager = (setActiveInvocationLease: typeof setLeaseA) => ({
       ref: () => ref,
       ensureRunning: vi.fn(async () => ref),
@@ -125,13 +125,13 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     childA.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'a' } })}\n`);
     childA.emit('close', 0, null);
     await expect(first).resolves.toMatchObject({ status: 'success' });
-    expect(setLeaseA).toHaveBeenLastCalledWith(ref.name, leaseA);
+    expect(setLeaseA).toHaveBeenLastCalledWith(ref.name, leaseA, undefined, 'uid-lease');
     expect(setLeaseB).toHaveBeenCalledOnce();
 
     childB.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'b' } })}\n`);
     childB.emit('close', 0, null);
     await expect(second).resolves.toMatchObject({ status: 'success' });
-    expect(setLeaseB).toHaveBeenLastCalledWith(ref.name, leaseB);
+    expect(setLeaseB).toHaveBeenLastCalledWith(ref.name, leaseB, undefined, 'uid-lease');
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   AcsSandboxLifecycleClient,
+  PgSandboxLifecycleStore,
   SandboxLifecycleService,
   type SandboxLifecycleIdentity,
 } from '../runtime/sandboxLifecycleService.js';
@@ -9,7 +10,9 @@ import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemote
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 
 const identity: SandboxLifecycleIdentity = {
-  workspaceId: 'ws-1', sessionId: 'session-1', sandboxScopeId: 'scope-1',
+  workspaceId: 'ws-1',
+  sessionId: 'session-1',
+  sandboxScopeId: 'scope-1',
 };
 
 function session(): RuntimeSessionRecord {
@@ -32,6 +35,24 @@ function cleanup(generation = 'generation-1') {
     targetHandId: 'agent-saas-acs', deletionGeneration: generation,
   };
 }
+
+describe('PgSandboxLifecycleStore terminal candidate contract', () => {
+  it('ranks all terminal rows before delivered/due filtering and binds the fixed scan clock', async () => {
+    const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+    const fixed = new Date('2026-09-01T00:00:00.000Z');
+    const store = new PgSandboxLifecycleStore(
+      { query } as never, 'runtime_runs', 'runtime_steering_inputs', () => fixed,
+    );
+
+    await expect(store.listTerminalCandidates()).resolves.toEqual([]);
+    const [sql, params] = query.mock.calls[0] as unknown[];
+    const text = String(sql);
+    expect(text.indexOf('ROW_NUMBER() OVER')).toBeLessThan(text.indexOf("<> 'delivered'"));
+    expect(text.indexOf('scope_rank = 1')).toBeLessThan(text.indexOf("<> 'deferred'"));
+    expect(text).toContain('PARTITION BY tenant_id, workspace_id, sandbox_scope_id');
+    expect(params).toEqual([100, fixed.toISOString()]);
+  });
+});
 
 describe('AcsSandboxLifecycleClient exact-scope contract', () => {
   it('arms a generation before deleting the exact three-field scope', async () => {
@@ -122,6 +143,34 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     expect((recoveredFetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
       .toBe('http://acs-old.test/sandboxes/lifecycle');
     expect(markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
+  });
+
+  it('deletion result distinguishes verified not_required from unresolved blocked and can retry after target recovery', async () => {
+    const enqueueCleanup = vi.fn(async (candidate: object) => ({ ...cleanup(), ...candidate }));
+    let current: RuntimeSessionRecord | null = null;
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data',
+      store: {
+        listPreparedCleanupCandidates: vi.fn(async () => []),
+        listCleanupCandidates: vi.fn(async () => []),
+        enqueueCleanup,
+      } as never,
+      runStore: {} as never,
+      sessionCatalog: { get: async () => current },
+      tenantRemoteHands: () => [remote()],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [remote()] }),
+    });
+
+    await expect(service.prepareSessionDeletion('session-1')).resolves.toBe('blocked');
+    current = { ...session(), kind: 'subagent' };
+    await expect(service.prepareSessionDeletion('session-1')).resolves.toBe('not_required');
+    expect(enqueueCleanup).not.toHaveBeenCalled();
+
+    current = session();
+    await expect(service.prepareSessionDeletionIntent('session-1')).resolves.toBe('queued');
+    expect(enqueueCleanup).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-1', targetHandId: 'agent-saas-acs',
+    }), { prepared: true });
   });
 
   it('cancels active descendants under the durable claim lock and keeps cleanup queued when ACS is busy', async () => {

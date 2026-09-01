@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { SandboxWorkloadDescriptor } from '@agent/shared';
+import { SandboxTerminalOutboxStore, type TerminalDeferredState, type TerminalLifecycleCandidate } from './sandboxTerminalOutboxStore.js';
+export type { TerminalDeferredState } from './sandboxTerminalOutboxStore.js';
 import type { PlatformEvent } from './types.js';
 import type { HandStore } from './handStore.js';
 import type { RunStore } from './runStore.js';
@@ -27,15 +28,11 @@ interface SandboxScopeDeletion extends SandboxLifecycleIdentity {
   deletionGeneration: string;
 }
 
-interface LifecycleCandidate extends SandboxLifecycleIdentity {
-  runId: string;
-  tenantId?: string;
-  targetHandId?: string;
-  status: 'completed' | 'failed' | 'cancelled' | 'orphaned';
-  statusReason?: string;
-  terminalAt: string;
-  workload: SandboxWorkloadDescriptor;
-}
+export type SandboxDeletionResult =
+  | 'not_required'
+  | 'blocked'
+  | 'queued'
+  | 'deleted';
 
 interface CleanupCandidate extends SandboxLifecycleIdentity {
   runId: string;
@@ -69,54 +66,22 @@ export interface SandboxLifecycleLogger {
 }
 
 export class PgSandboxLifecycleStore {
+  private readonly terminalOutbox: SandboxTerminalOutboxStore;
+
   constructor(
     private readonly pool: PgPool,
     private readonly runsTable: string,
     private readonly steeringInputsTable: string,
-  ) {}
-
-  async listTerminalCandidates(limit = 100): Promise<LifecycleCandidate[]> {
-    const result = await this.pool.query<Record<string, unknown>>(`
-      SELECT run_id, session_id, tenant_id, workspace_id, sandbox_scope_id, status,
-             status_reason, completed_at, failed_at, cancelled_at, updated_at, metadata
-      FROM ${this.runsTable}
-      WHERE status IN ('completed','failed','cancelled','orphaned')
-        AND metadata->>'sandboxWorkloadTopLevel' = 'true'
-        AND metadata->'sandboxWorkloadDescriptor'->>'kind' IN ('taskboard','cron','memory')
-        AND COALESCE(metadata->'sandboxLifecycleOutbox'->>'state', 'pending') <> 'delivered'
-        AND workspace_id IS NOT NULL AND sandbox_scope_id IS NOT NULL
-      ORDER BY COALESCE(
-        metadata->>'sandboxLifecycleTerminalAt',
-        completed_at::text,
-        failed_at::text,
-        cancelled_at::text,
-        updated_at::text
-      )::timestamptz ASC
-      LIMIT $1
-    `, [limit]);
-    return result.rows.flatMap((row) => {
-      const metadata = asRecord(row.metadata);
-      const workload = parseWorkload(metadata.sandboxWorkloadDescriptor);
-      const status = row.status;
-      if (!workload || workload.kind === 'interactive'
-        || !['completed', 'failed', 'cancelled', 'orphaned'].includes(String(status))) return [];
-      return [{
-        runId: String(row.run_id), sessionId: String(row.session_id),
-        ...(typeof row.tenant_id === 'string' ? { tenantId: row.tenant_id } : {}),
-        workspaceId: String(row.workspace_id), sandboxScopeId: String(row.sandbox_scope_id),
-        status: status as LifecycleCandidate['status'],
-        ...(typeof row.status_reason === 'string' ? { statusReason: row.status_reason } : {}),
-        terminalAt: stringValue(metadata.sandboxLifecycleTerminalAt)
-          ?? String(row.completed_at ?? row.failed_at ?? row.cancelled_at ?? row.updated_at),
-        ...(stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId) ? {
-          targetHandId: stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId),
-        } : {}),
-        workload,
-      }];
-    });
+    private readonly now: () => Date = () => new Date(),
+  ) {
+    this.terminalOutbox = new SandboxTerminalOutboxStore(pool, runsTable, now);
   }
 
-  hasActivity(candidate: Pick<LifecycleCandidate, 'sandboxScopeId' | 'sessionId' | 'tenantId'>): Promise<boolean> {
+  listTerminalCandidates(limit = 100): Promise<TerminalLifecycleCandidate[]> {
+    return this.terminalOutbox.listCandidates(limit);
+  }
+
+  hasActivity(candidate: Pick<TerminalLifecycleCandidate, 'sandboxScopeId' | 'sessionId' | 'tenantId'>): Promise<boolean> {
     return hasSandboxScopeActivity({ pool: this.pool, runsTable: this.runsTable, steeringInputsTable: this.steeringInputsTable }, {
       sandboxScopeId: candidate.sandboxScopeId,
       topLevelSessionId: candidate.sessionId,
@@ -124,33 +89,16 @@ export class PgSandboxLifecycleStore {
     });
   }
 
-  async pinTerminalTargetHand(runId: string, targetHandId: string): Promise<string | undefined> {
-    const result = await this.pool.query<{ target_hand_id: string }>(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxLifecycleOutbox}',
-        COALESCE(metadata->'sandboxLifecycleOutbox', '{}'::jsonb)
-          || jsonb_build_object('state','pending','targetHandId',$2::text,'pinnedAt',NOW()::text)),
-          updated_at=NOW()
-      WHERE run_id=$1
-        AND COALESCE(metadata->'sandboxLifecycleOutbox'->>'state','pending') <> 'delivered'
-        AND NULLIF(metadata->'sandboxLifecycleOutbox'->>'targetHandId','') IS NULL
-      RETURNING metadata->'sandboxLifecycleOutbox'->>'targetHandId' AS target_hand_id
-    `, [runId, targetHandId]);
-    if (result.rows[0]?.target_hand_id) return result.rows[0].target_hand_id;
-    const existing = await this.pool.query<{ target_hand_id: string }>(`
-      SELECT metadata->'sandboxLifecycleOutbox'->>'targetHandId' AS target_hand_id
-      FROM ${this.runsTable} WHERE run_id=$1
-    `, [runId]);
-    return stringValue(existing.rows[0]?.target_hand_id);
+  pinTerminalTargetHand(runId: string, targetHandId: string): Promise<string | undefined> {
+    return this.terminalOutbox.pinTargetHand(runId, targetHandId);
   }
 
-  async markTerminalDelivered(runId: string, deliveredAt: string): Promise<void> {
-    await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET metadata = metadata || jsonb_build_object('sandboxLifecycleOutbox',
-        jsonb_build_object('state','delivered','deliveredAt',$2::text)), updated_at=NOW()
-      WHERE run_id=$1
-    `, [runId, deliveredAt]);
+  markTerminalDelivered(runId: string, deliveredAt: string): Promise<void> {
+    return this.terminalOutbox.markDelivered(runId, deliveredAt);
+  }
+
+  deferTerminalCandidate(runId: string, error: unknown, deferredAt?: string): Promise<TerminalDeferredState | undefined> {
+    return this.terminalOutbox.defer(runId, error, deferredAt);
   }
 
   async enqueueCleanup(
@@ -584,6 +532,7 @@ export class SandboxLifecycleService {
     logger?: SandboxLifecycleLogger;
     fetchImpl?: typeof fetch;
     scanIntervalMs?: number;
+    now?: () => Date;
   }) {}
 
   start(): void {
@@ -629,25 +578,35 @@ export class SandboxLifecycleService {
     await Promise.all(inFlight.map((delivery) => delivery.promise.catch(() => undefined)));
   }
 
-  async prepareSessionDeletionIntent(sessionId: string): Promise<'skipped' | 'queued'> {
-    const resolved = await this.resolveSessionTarget(sessionId);
-    if (!resolved) return 'skipped';
-    const { identity, tenantId, userId, username, targetHandId } = resolved;
-    const enqueued = await this.options.store.enqueueCleanup({
-      ...identity, targetHandId, deletionGeneration: newDeletionGeneration(),
-      ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
-    }, { prepared: true }); // prepared 不可投递，先避免 tombstone 前产生外部删除。
-    if (!enqueued) throw new Error(`Sandbox cleanup intent 无法持久化: ${sessionId}`);
-    return 'queued';
+  async prepareSessionDeletionIntent(sessionId: string): Promise<Exclude<SandboxDeletionResult, 'deleted'>> {
+    try {
+      const record = await this.options.sessionCatalog.get(sessionId);
+      // Hidden subagents share their parent's scope and are the only catalog shape that proves
+      // this session never independently owned an ACS Sandbox.
+      if (record?.kind === 'subagent') return 'not_required';
+      if (!record) return 'blocked';
+      const resolved = await this.resolveSessionTarget(sessionId);
+      if (!resolved) return 'blocked';
+      const { identity, tenantId, userId, username, targetHandId } = resolved;
+      const enqueued = await this.options.store.enqueueCleanup({
+        ...identity, targetHandId, deletionGeneration: newDeletionGeneration(),
+        ...(tenantId ? { tenantId } : {}), ...(userId ? { userId } : {}), ...(username ? { username } : {}),
+      }, { prepared: true }); // prepared 不可投递，先避免 tombstone 前产生外部删除。
+      if (!enqueued) return 'blocked';
+      return 'queued';
+    } catch (error) {
+      this.options.logger?.warn(`sandbox_cleanup_intent_blocked session=${sessionId} error=${error instanceof Error ? error.message : String(error)}`);
+      return 'blocked';
+    }
   }
 
-  async commitPreparedSessionDeletion(sessionId: string): Promise<'skipped' | 'deleted' | 'queued'> {
+  async commitPreparedSessionDeletion(sessionId: string): Promise<SandboxDeletionResult> {
     let prepared = (await this.options.store.listPreparedCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     let pending = (await this.options.store.listCleanupCandidates()).filter((item) => item.sessionId === sessionId);
-    const intent = prepared.length > 0 || pending.length > 0
-      ? 'queued' as const
+    const intent: Exclude<SandboxDeletionResult, 'deleted'> = prepared.length > 0 || pending.length > 0
+      ? 'queued'
       : await this.prepareSessionDeletionIntent(sessionId);
-    if (prepared.length === 0 && pending.length === 0 && intent !== 'skipped') {
+    if (prepared.length === 0 && pending.length === 0 && intent === 'queued') {
       prepared = (await this.options.store.listPreparedCleanupCandidates()).filter((item) => item.sessionId === sessionId);
     }
     for (const candidate of prepared) await this.processPreparedCleanup(candidate);
@@ -660,10 +619,11 @@ export class SandboxLifecycleService {
         this.wake();
       }
     }
-    return intent === 'skipped' && prepared.length === 0 && pending.length === 0 ? 'skipped' : 'queued';
+    if (intent === 'not_required' || intent === 'blocked') return intent;
+    return 'queued';
   }
 
-  async prepareSessionDeletion(sessionId: string): Promise<'skipped' | 'deleted' | 'queued'> {
+  async prepareSessionDeletion(sessionId: string): Promise<SandboxDeletionResult> {
     return this.commitPreparedSessionDeletion(sessionId);
   }
 
@@ -718,16 +678,28 @@ export class SandboxLifecycleService {
     );
     for (const candidate of terminalCandidates) {
       try {
-        if (await this.options.store.hasActivity(candidate)) continue;
+        if (await this.options.store.hasActivity(candidate)) {
+          await this.deferTerminalCandidate(candidate.runId, new Error('sandbox scope still has activity'));
+          continue;
+        }
         let targetHandId = candidate.targetHandId;
         if (!targetHandId) {
           const original = await this.resolveSessionTarget(candidate.sessionId);
-          if (!original) continue;
+          if (!original) {
+            await this.deferTerminalCandidate(candidate.runId, new Error('sandbox lifecycle target is unresolved'));
+            continue;
+          }
           targetHandId = await this.options.store.pinTerminalTargetHand(candidate.runId, original.targetHandId);
         }
-        if (!targetHandId) continue;
+        if (!targetHandId) {
+          await this.deferTerminalCandidate(candidate.runId, new Error('sandbox lifecycle target hand is missing'));
+          continue;
+        }
         const target = await this.resolveClient(candidate.sessionId, candidate.tenantId, undefined, { targetHandId });
-        if (!target) continue;
+        if (!target) {
+          await this.deferTerminalCandidate(candidate.runId, new Error(`sandbox lifecycle target unavailable: ${targetHandId}`));
+          continue;
+        }
         const timedOut = candidate.status === 'failed' && /timed?\s*out|timeout/i.test(candidate.statusReason ?? '');
         await target.client.notifyTerminal({
           workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
@@ -736,8 +708,9 @@ export class SandboxLifecycleService {
           terminalAt: candidate.terminalAt,
           outcome: { runId: candidate.runId, status: candidate.status, ...(candidate.statusReason ? { reason: candidate.statusReason } : {}) },
         });
-        await this.options.store.markTerminalDelivered(candidate.runId, new Date().toISOString());
+        await this.options.store.markTerminalDelivered(candidate.runId, this.currentTime().toISOString());
       } catch (error) {
+        await this.deferTerminalCandidate(candidate.runId, error);
         this.warnCandidate('sandbox_terminal_notify_failed', candidate.runId, error);
       }
     }
@@ -785,6 +758,18 @@ export class SandboxLifecycleService {
       return await this.deliverClaimedCleanup(cleanup, target.client);
     } finally {
       await this.options.store.releaseCleanupClaim(cleanup.runId, claimId);
+    }
+  }
+
+  private currentTime(): Date {
+    return this.options.now?.() ?? new Date();
+  }
+
+  private async deferTerminalCandidate(runId: string, error: unknown): Promise<void> {
+    try {
+      await this.options.store.deferTerminalCandidate?.(runId, error, this.currentTime().toISOString());
+    } catch (deferError) {
+      this.warnCandidate('sandbox_terminal_defer_failed', runId, deferError);
     }
   }
 
@@ -953,15 +938,4 @@ function newDeletionGeneration(nowMs = Date.now()): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function parseWorkload(value: unknown): SandboxWorkloadDescriptor | undefined {
-  const raw = asRecord(value);
-  if (raw.kind === 'interactive' || raw.kind === 'cron' || raw.kind === 'memory') return { kind: raw.kind };
-  if (raw.kind !== 'taskboard') return undefined;
-  return {
-    kind: 'taskboard',
-    ...(typeof raw.taskKind === 'string' ? { taskKind: raw.taskKind as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['taskKind'] } : {}),
-    ...(typeof raw.purpose === 'string' ? { purpose: raw.purpose as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['purpose'] } : {}),
-  };
 }

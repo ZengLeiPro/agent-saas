@@ -185,6 +185,7 @@ export class PgRunStore implements RunStore {
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_terminal_scope_idx ON ${this.runsTable} (tenant_id, workspace_id, sandbox_scope_id, updated_at DESC) WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata->>'sandboxWorkloadTopLevel' = 'true'`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_status_idx ON ${this.runsTable} (status, updated_at)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_idx ON ${this.runsTable} (session_id, updated_at DESC)`);
       await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_enqueue_idx ON ${this.runsTable} (session_id, enqueue_seq)`);
@@ -205,7 +206,6 @@ export class PgRunStore implements RunStore {
       client.release();
     }
   }
-
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async upsertPending(input: UpsertRunInput): Promise<RunRecord> {

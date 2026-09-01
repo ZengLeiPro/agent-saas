@@ -74,6 +74,7 @@ import { isAssignedToOrgAgent, type OrgAgentStore } from "../data/orgAgents/stor
 import { DEFAULT_TENANT_ID } from "../data/tenants/types.js";
 import { isShareExpired, type SessionShareSnapshot, type SessionShareStore } from "../data/sessionShares/store.js";
 import { permanentlyDeleteSession, type SessionArtifactLifecycle } from './sessionPermanentDeletion.js';
+import { requireSandboxPhysicalDeletion, type SandboxSessionDeletionResult } from './sandboxSessionDeletion.js'; export type { SandboxSessionDeletionResult } from './sandboxSessionDeletion.js';
 import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
@@ -390,7 +391,6 @@ async function getDurableSubagentUsage(
   return usage;
 }
 
-
 export interface SessionsRouterOptions {
   /** Agent 工作目录（用于推导 transcript projectKey） */
   agentCwd: string;
@@ -454,8 +454,8 @@ export interface SessionsRouterOptions {
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
-  sandboxWarmup?: (sessionId: string) => void; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'skipped' | 'queued'>;
-  sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
+  sandboxWarmup?: (sessionId: string) => void; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<Exclude<SandboxSessionDeletionResult, 'deleted'>>;
+  sandboxSessionDeletion?: (sessionId: string) => Promise<SandboxSessionDeletionResult>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
    * 消费）的插话消息，前端刷新/切会话时据此重建队列区。失败降级为空数组。
@@ -1826,7 +1826,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             sessionId: item.sessionId,
             ownerUserId: meta.userId,
             hasTranscript: item.hasTranscript,
-            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { if (await options.sandboxSessionDeletion?.(item.sessionId) === 'queued') throw new Error('Sandbox cleanup 仍在排队，拒绝物理删除 Session 元数据'); },
+            artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(item.metaPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: () => requireSandboxPhysicalDeletion(options, item.sessionId),
             deleteTranscriptPreservingMeta: async () => !item.hasTranscript || (await deleteSession(item.sessionId, { preserveMeta: true })).deleted,
             deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(item.sessionId, { deleteSidecarDir: true })).deleted,
           });
@@ -3170,7 +3170,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           sessionId,
           ownerUserId: req.user.sub,
           hasTranscript,
-          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: async () => { if (await options.sandboxSessionDeletion?.(sessionId) === 'queued') throw new Error('Sandbox cleanup 仍在排队，拒绝物理删除 Session 元数据'); },
+          artifactLifecycle: options.artifactLifecycle, isStillDeleted: async () => readSessionMeta(transcriptPath).then(meta => !!meta?.deletedAt && meta.userId === req.user!.sub), beforePhysicalDelete: () => requireSandboxPhysicalDeletion(options, sessionId),
           deleteTranscriptPreservingMeta: async () => !hasTranscript || (await deleteSession(sessionId, { preserveMeta: true })).deleted,
           deleteMetaAndSidecar: async () => (await deleteSessionMetaOnly(sessionId, { deleteSidecarDir: true })).deleted,
         });

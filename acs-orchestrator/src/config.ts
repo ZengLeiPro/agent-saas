@@ -111,6 +111,12 @@ export interface AcsReleaseIdentity {
   configFingerprint: string;
 }
 
+export function lifecyclePolicyHealth(
+  config: Pick<AcsOrchestratorConfig, 'lifecyclePolicyMode'>,
+) {
+  return { lifecyclePolicyMode: config.lifecyclePolicyMode ?? 'shadow' };
+}
+
 export function releaseIdentityHealth(identity: AcsReleaseIdentity | undefined) {
   return {
     environment: identity?.environment ?? null,

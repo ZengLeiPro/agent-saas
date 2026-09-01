@@ -260,7 +260,7 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
     30_000,
   );
 
-  it('A 的迟到同终态重写不会越过同 scope 较新的 B 终态', async () => {
+  it('A旧+B新只投B，且B delivered 后 A 永久不复活', async () => {
     const scope = 'scope-terminal-order';
     await runStore.upsertPending({
       runId: 'terminal-a', sessionId: 'terminal-a-session', tenantId: 'tenant-1',
@@ -287,14 +287,73 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
 
     await pool.query('SELECT pg_sleep(0.01)');
     await runStore.markStatus('terminal-b', 'completed', 'newer-terminal');
-    const terminalB = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === 'terminal-b');
+    const afterB = await store.listTerminalCandidates();
+    const terminalB = afterB.find((candidate) => candidate.runId === 'terminal-b');
     expect(terminalB).toBeDefined();
+    expect(afterB).not.toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-a' })]));
     await pool.query('SELECT pg_sleep(0.01)');
     await runStore.markStatus('terminal-a', 'completed', 'late-rewrite');
-    const rewrittenA = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === 'terminal-a');
+    const afterRewrite = await store.listTerminalCandidates();
 
-    expect(rewrittenA?.terminalAt).toBe(firstA?.terminalAt);
-    expect(Date.parse(rewrittenA!.terminalAt)).toBeLessThan(Date.parse(terminalB!.terminalAt));
+    expect(afterRewrite).toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-b' })]));
+    expect(afterRewrite).not.toEqual(expect.arrayContaining([expect.objectContaining({ runId: 'terminal-a' })]));
+    await store.markTerminalDelivered('terminal-b', new Date().toISOString());
+    const afterDelivery = await store.listTerminalCandidates();
+    expect(afterDelivery).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: 'terminal-a' }),
+      expect.objectContaining({ runId: 'terminal-b' }),
+    ]));
+  });
+
+  it('100 个 deferred poison 不会长期挡住第 101 个健康候选，固定时钟退避可验证', async () => {
+    const fixedNow = new Date('2026-09-01T00:00:00.000Z');
+    const bulkPrefix = `poison-${randomUUID().slice(0, 8)}`;
+    await pool.query(`
+      INSERT INTO ${prefix}_runs (
+        run_id, session_id, tenant_id, status, requested_at, updated_at, completed_at,
+        workspace_id, sandbox_scope_id, metadata
+      )
+      SELECT
+        $1 || '-' || n::text, $1 || '-session-' || n::text, 'tenant-poison', 'completed',
+        $2::timestamptz + n * interval '1 second', $2::timestamptz + n * interval '1 second',
+        $2::timestamptz + n * interval '1 second', 'workspace-poison', $1 || '-scope-' || n::text,
+        jsonb_build_object(
+          'sandboxWorkloadTopLevel', true,
+          'sandboxWorkloadDescriptor', jsonb_build_object('kind', 'cron'),
+          'sandboxLifecycleTerminalAt', ($2::timestamptz + n * interval '1 second')::text
+        )
+      FROM generate_series(1, 101) AS n
+    `, [bulkPrefix, '2026-08-31T00:00:00.000Z']);
+    let clock = fixedNow;
+    const store = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`, () => clock,
+    );
+    const firstPage = (await store.listTerminalCandidates(100))
+      .filter((candidate) => candidate.runId.startsWith(bulkPrefix));
+    expect(firstPage).toHaveLength(100);
+    await Promise.all(firstPage.map((candidate) => store.deferTerminalCandidate(
+      candidate.runId, new Error(`poison:${candidate.runId}`), fixedNow.toISOString(),
+    )));
+
+    const nextPage = await store.listTerminalCandidates(100);
+    expect(nextPage).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: `${bulkPrefix}-101` }),
+    ]));
+    const poison = firstPage[0]!;
+    const firstDeferred = await pool.query<{ outbox: Record<string, unknown> }>(`
+      SELECT metadata->'sandboxLifecycleOutbox' AS outbox FROM ${prefix}_runs WHERE run_id=$1
+    `, [poison.runId]);
+    expect(firstDeferred.rows[0]?.outbox).toMatchObject({
+      state: 'deferred', attempts: 1, lastError: `poison:${poison.runId}`,
+      nextAttemptAt: '2026-09-01 00:00:01+00',
+    });
+    clock = new Date('2026-09-01T00:00:01.000Z');
+    await expect(store.listTerminalCandidates(200)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: poison.runId }),
+    ]));
+    const second = await store.deferTerminalCandidate(poison.runId, 'still poison', clock.toISOString());
+    expect(second).toMatchObject({ attempts: 2, lastError: 'still poison' });
+    expect(Date.parse(second!.nextAttemptAt)).toBe(Date.parse('2026-09-01T00:00:03.000Z'));
   });
 
   it('候选集合中的 terminal outbox target hand 经 PostgreSQL 持久化后不随 rollout 漂移', async () => {

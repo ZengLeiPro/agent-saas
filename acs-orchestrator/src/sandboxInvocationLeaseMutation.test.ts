@@ -69,7 +69,70 @@ describe('Sandbox invocation and background protection mutation fence', () => {
 
     await expect(manager.setActiveInvocationLease(
       'as-protected', invocationKey, requested,
-    )).resolves.toBeUndefined();
+    )).resolves.toBe('uid-1');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('batch-sweeps expired invocation leases with UID/resourceVersion conflict retry', async () => {
+    const expiredA = activeInvocationLeaseAnnotationKey('expired-a');
+    const expiredB = activeInvocationLeaseAnnotationKey('expired-b');
+    const active = activeInvocationLeaseAnnotationKey('active');
+    const annotations = {
+      [expiredA]: JSON.stringify({ invocationKey: 'expired-a', until: '2026-08-30T00:00:00.000Z' }),
+      [expiredB]: '{malformed',
+      [active]: JSON.stringify({ invocationKey: 'active', until: '2026-08-30T00:10:00.000Z' }),
+    };
+    const run = vi.fn()
+      .mockResolvedValueOnce({
+        stdout: '', stderr: 'Operation cannot be fulfilled: object has been modified', exitCode: 1, signal: null,
+      } satisfies KubectlResult)
+      .mockResolvedValueOnce(ok());
+    const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
+    const getStatus = vi.spyOn(manager, 'getStatus')
+      .mockResolvedValueOnce({ phase: 'Running', raw: { metadata: {
+        uid: 'uid-1', resourceVersion: 'rv-1', annotations,
+      } } })
+      .mockResolvedValueOnce({ phase: 'Running', raw: { metadata: {
+        uid: 'uid-1', resourceVersion: 'rv-2', annotations,
+      } } })
+      .mockResolvedValueOnce({ phase: 'Running', raw: { metadata: {
+        uid: 'uid-1', resourceVersion: 'rv-3', annotations: { [active]: annotations[active] },
+      } } });
+
+    await expect(manager.clearExpiredInvocationLeases(
+      'as-sweep', new Date('2026-08-30T00:05:00.000Z'),
+    )).resolves.toEqual({ active: true, removed: 2 });
+    expect(run).toHaveBeenCalledTimes(2);
+    const retryPatch = JSON.parse(run.mock.calls[1]![0][4]!) as Array<{ op: string; path: string; value?: unknown }>;
+    expect(retryPatch).toEqual(expect.arrayContaining([
+      { op: 'test', path: '/metadata/uid', value: 'uid-1' },
+      { op: 'test', path: '/metadata/resourceVersion', value: 'rv-2' },
+      { op: 'remove', path: expect.stringContaining(expiredA.replaceAll('/', '~1')) },
+      { op: 'remove', path: expect.stringContaining(expiredB.replaceAll('/', '~1')) },
+    ]));
+    expect(retryPatch.some((entry) => entry.op === 'add')).toBe(false);
+
+    await expect(manager.clearExpiredInvocationLeases(
+      'as-sweep', new Date('2026-08-30T00:05:00.000Z'),
+    )).resolves.toEqual({ active: true, removed: 0 });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(getStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects writes and clears when the expected Sandbox UID was replaced', async () => {
+    const run = vi.fn(async () => ok());
+    const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
+    vi.spyOn(manager, 'getStatus').mockResolvedValue({
+      phase: 'Running',
+      raw: { metadata: { uid: 'uid-new', resourceVersion: 'rv-new', annotations: {} } },
+    });
+
+    await expect(manager.setBackgroundShellProtection(
+      'as-recreated', '2026-08-30T00:10:00.000Z', 'uid-old',
+    )).rejects.toThrow(/同名重建/u);
+    await expect(manager.setActiveInvocationLease(
+      'as-recreated', 'inv-old', undefined, 'uid-old',
+    )).rejects.toThrow(/同名重建/u);
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -95,7 +158,7 @@ describe('Sandbox invocation and background protection mutation fence', () => {
         },
       });
 
-    await expect(manager.setBackgroundShellProtection('as-protected', requested)).resolves.toBeUndefined();
+    await expect(manager.setBackgroundShellProtection('as-protected', requested)).resolves.toBe('uid-1');
     expect(getStatus).toHaveBeenCalledTimes(2);
     expect(run).toHaveBeenCalledOnce();
     const patch = JSON.parse(run.mock.calls[0]![0][4]!) as Array<{ op: string; path: string; value?: unknown }>;

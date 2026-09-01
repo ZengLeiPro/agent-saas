@@ -11,8 +11,9 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork, reconcileTerminatingSandboxDeletions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
-import { applyBackgroundShellProtection, applyDeletionGeneration, applyInvocationLease, applyPausedWithPreconditions,
-  applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
+import {
+  applyDeletionGeneration, applyPausedWithPreconditions, applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
+import { SandboxInvocationMutationFacade } from './sandboxInvocationMutationFacade.js';
 import { updateSandboxLifecycle } from './sandboxLifecycleUpdater.js';
 import {
   APP_LABEL, CREATED_AT_ANNOTATION, LAST_ACTIVE_AT_ANNOTATION, MANAGED_BY_LABEL, MOUNT_SUBPATH_ANNOTATION,
@@ -114,7 +115,7 @@ export class SandboxManager {
   private readonly ensureInFlight = new Map<string, { ref: SandboxRef; promise: Promise<SandboxRef>; mutationToken: symbol }>();
   /** Serializes deletion against ensureRunning; new invocations wait and recreate safely. */
   private readonly deleteInFlight = new Map<string, Promise<string[] | null>>();
-  /** Scope delete generation/UID CAS fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator;
+  /** Scope delete generation/UID CAS fence. */ private readonly deletionGeneration: SandboxDeletionGenerationCoordinator; private readonly invocationMutations: SandboxInvocationMutationFacade;
   /** Attestation 超时后服务端仍会继续；整段 probe 合流，避免重试持续创建临时 Sandbox。 */
   private readonly networkPolicyProbe = new SingleflightCleanup<NetworkPolicyStatus & { probe: NetworkPolicyProbeDetails }>();
   private readonly capacityReservations = new CapacityReservations();
@@ -129,6 +130,7 @@ export class SandboxManager {
   ) {
     this.networkPolicyManager = new AcsNetworkPolicyManager(config, kubectl, logger);
     this.snatManager = new SnatManager(config, kubectl, logger, kubeApi);
+    this.invocationMutations = new SandboxInvocationMutationFacade({ config, kubectl, resourceName: (name) => this.resourceName(name), getStatus: (name) => this.getStatus(name) });
     this.deletionGeneration = new SandboxDeletionGenerationCoordinator({
       getStatus: (name) => this.getStatus(name), refFromStatus: (name, status) => this.refFromStatus(name, status),
       patchGeneration: (name, generation, preconditions) => applyDeletionGeneration(config, kubectl, this.resourceName(name), generation, preconditions),
@@ -695,10 +697,10 @@ export class SandboxManager {
     }
   }
 
-  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string): Promise<void> {
-    if (leaseUntil && !Number.isFinite(Date.parse(leaseUntil))) throw new Error('invocation leaseUntil 必须是合法 ISO 时间');
-    await applyInvocationLease(this.config, this.kubectl, this.resourceName(name), invocationKey, leaseUntil, () => this.getStatus(name));
+  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string): Promise<string> {
+    return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid);
   }
+  async clearExpiredInvocationLeases(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now); }
 
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
     await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload);
@@ -739,12 +741,10 @@ export class SandboxManager {
     this.ensureFastPath.delete(name);
   }
 
-  async setBackgroundShellProtection(name: string, protectedUntil?: string): Promise<void> {
-    if (protectedUntil && !Number.isFinite(Date.parse(protectedUntil))) {
-      throw new Error('background shell protectedUntil 必须是合法 ISO 时间');
-    }
-    await applyBackgroundShellProtection(this.config, this.kubectl, this.resourceName(name), protectedUntil, () => this.getStatus(name));
+  async setBackgroundShellProtection(name: string, protectedUntil?: string, expectedUid?: string): Promise<string> {
+    return await this.invocationMutations.setBackgroundProtection(name, protectedUntil, expectedUid);
   }
+  async getSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getUid(name); }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {
     const result = await this.kubectl.run(['get', this.resourceName(name), '-o', 'json'], { timeoutMs: 15_000 });

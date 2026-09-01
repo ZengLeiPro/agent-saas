@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   applyRuntimeConfigPatch,
+  lifecyclePolicyHealth,
   loadConfigFromEnv,
   parseRuntimeConfigPatch,
   releaseIdentityHealth,
@@ -70,6 +71,7 @@ const STREAM_HEARTBEAT_MS = 25_000;
 // 报告 draining + inflight 供 CI 脚本轮询。SIGTERM 沿用原短路径 (5s 硬退)。
 let inflightRequests = 0;
 let draining = false;
+const effectiveInflightRequests = () => inflightRequests + executor.backgroundRecoveryCount();
 async function withInflight<T>(fn: () => Promise<T>): Promise<T> {
   inflightRequests++;
   try {
@@ -85,7 +87,7 @@ const snatOperations = new SnatOperations({
   emitAlert,
   logger,
   drainDeadlineMs: config.drainDeadlineMs,
-  inflightRequests: () => inflightRequests,
+  inflightRequests: effectiveInflightRequests,
   lifecycleRunning: () => lifecycleController.isLifecycleRunning(),
   backgroundMutationRunning: () => lifecycleController.isBackgroundMutationRunning(),
   ...(config.runtimeConfigPath
@@ -350,10 +352,11 @@ async function handleHealth(res: ServerResponse): Promise<void> {
     status: ok ? 'ok' : 'unhealthy',
     // drain 期间 CI 脚本轮询 inflight,为 0 时才 SIGTERM
     draining,
-    inflight: inflightRequests,
+    inflight: effectiveInflightRequests(),
     ...snatOperations.healthState(),
     backend: 'acs-agent-sandbox',
     ...releaseIdentityHealth(config.releaseIdentity),
+    ...lifecyclePolicyHealth(config),
     namespace: config.namespace,
     sandboxKind: config.sandboxKind,
     image: config.sandboxImage,
@@ -938,7 +941,7 @@ process.on('SIGINT', shutdown);
 process.on('SIGUSR2', () => {
   if (draining) return;
   draining = true;
-  logger.info(`SIGUSR2 received — entering drain mode (inflight=${inflightRequests})`);
+  logger.info(`SIGUSR2 received — entering drain mode (inflight=${effectiveInflightRequests()})`);
   lifecycleController.stop();
   // 停接新连接; 已建立连接 keep-alive 上的新请求会拿到 draining=true 状态或
   // 长运行路径的 503。已在跑的 handler 通过 withInflight 计数,进度不受影响。
@@ -947,7 +950,7 @@ process.on('SIGUSR2', () => {
   });
   const startedAt = Date.now();
   const poll = setInterval(() => {
-    if (inflightRequests === 0) {
+    if (effectiveInflightRequests() === 0) {
       clearInterval(poll);
       logger.info('drain complete, exiting cleanly');
       process.exit(0);
@@ -955,11 +958,11 @@ process.on('SIGUSR2', () => {
     if (Date.now() - startedAt >= config.drainDeadlineMs) {
       clearInterval(poll);
       logger.warn(
-        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${inflightRequests})`,
+        `drain deadline reached (${config.drainDeadlineMs}ms), forcing exit (inflight=${effectiveInflightRequests()})`,
       );
       process.exit(1);
     }
-    logger.info(`draining... inflight=${inflightRequests}`);
+    logger.info(`draining... inflight=${effectiveInflightRequests()}`);
   }, 2_000);
   poll.unref();
 });

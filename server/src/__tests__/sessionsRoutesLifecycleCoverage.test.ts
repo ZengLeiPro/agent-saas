@@ -15,7 +15,7 @@
  */
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -51,8 +51,8 @@ async function startServer(
       markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
       listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
     };
-    sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'skipped' | 'queued'>;
-    sandboxSessionDeletion?: (sessionId: string) => Promise<'skipped' | 'deleted' | 'queued'>;
+    sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'not_required' | 'blocked' | 'queued'>;
+    sandboxSessionDeletion?: ((sessionId: string) => Promise<'not_required' | 'blocked' | 'deleted' | 'queued'>) | null;
     sandboxSessionRestore?: (sessionId: string) => Promise<void>;
     sessionProjectionStore?: {
       get?(sessionId: string, options?: { tenantId?: string; includeDeleted?: boolean }): Promise<{
@@ -73,6 +73,9 @@ async function startServer(
     req.user = { sub: user.id, username: user.username, role: user.role, tenantId: user.tenantId ?? 'kaiyan' };
     next();
   });
+  const sandboxSessionDeletion = opts.sandboxSessionDeletion === undefined
+    ? async () => 'not_required' as const
+    : opts.sandboxSessionDeletion;
   app.use('/api', createSessionsRouter({
     agentCwd,
     ...(opts.withShareStore ? { sessionShareStore: opts.shareStore ?? new InMemorySessionShareStore() } : {}),
@@ -80,7 +83,7 @@ async function startServer(
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
     ...(opts.sandboxSessionDeletionIntent ? { sandboxSessionDeletionIntent: opts.sandboxSessionDeletionIntent } : {}),
-    ...(opts.sandboxSessionDeletion ? { sandboxSessionDeletion: opts.sandboxSessionDeletion } : {}),
+    ...(sandboxSessionDeletion ? { sandboxSessionDeletion } : {}),
     ...(opts.sandboxSessionRestore ? { sandboxSessionRestore: opts.sandboxSessionRestore } : {}),
   }));
 
@@ -463,6 +466,70 @@ describe('sessions routes lifecycle coverage', () => {
     expect(response.status).toBe(500);
     expect((await response.json() as { error: string }).error).toContain('Sandbox cleanup 仍在排队');
     expect(await readSessionMeta(transcriptPath)).toMatchObject({ deletedAt });
+  });
+
+  it.each([
+    ['callback 缺失', null, 'callback 缺失'],
+    ['目标无法解析', vi.fn(async () => 'blocked' as const), '被阻塞'],
+  ] as const)('永久删除在 Sandbox %s 时保留 transcript/meta/sidecar', async (_label, callback, message) => {
+    const deletedAt = new Date().toISOString();
+    const { sessionId, transcriptPath } = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const sidecarPath = join(dirname(transcriptPath), sessionId);
+    await mkdir(sidecarPath, { recursive: true });
+    await writeFile(join(sidecarPath, 'proof.txt'), 'keep', 'utf8');
+    const deleteArtifactsForSessions = vi.fn(async () => ({ scanned: 1, deleted: 1 }));
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletion: callback,
+      artifactService: { deleteArtifactsForSessions },
+    });
+    servers.push(server);
+
+    const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/permanent`, { method: 'DELETE' });
+    expect(response.status).toBe(500);
+    expect((await response.json() as { error: string }).error).toContain(message);
+    await expect(readSessionMeta(transcriptPath)).resolves.toMatchObject({ deletedAt });
+    await expect(readFile(transcriptPath, 'utf8')).resolves.toContain('hello world');
+    await expect(readFile(join(sidecarPath, 'proof.txt'), 'utf8')).resolves.toBe('keep');
+    expect(deleteArtifactsForSessions).not.toHaveBeenCalled();
+  });
+
+  it('not_required 允许永久删除；blocked 在目标恢复后可由同一端点重试', async () => {
+    const deletedAt = new Date().toISOString();
+    const notRequired = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const retryable = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const callback = vi.fn(async (sessionId: string) => sessionId === notRequired.sessionId
+      ? 'not_required' as const
+      : callback.mock.calls.filter(([id]) => id === retryable.sessionId).length === 1
+        ? 'blocked' as const
+        : 'deleted' as const);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, { sandboxSessionDeletion: callback });
+    servers.push(server);
+
+    const allowed = await fetch(`${baseUrl}/api/sessions/${notRequired.sessionId}/permanent`, { method: 'DELETE' });
+    expect(allowed.status).toBe(200);
+    await expect(readSessionMeta(notRequired.transcriptPath)).resolves.toBeNull();
+
+    const blocked = await fetch(`${baseUrl}/api/sessions/${retryable.sessionId}/permanent`, { method: 'DELETE' });
+    expect(blocked.status).toBe(500);
+    await expect(readSessionMeta(retryable.transcriptPath)).resolves.toMatchObject({ deletedAt });
+    const recovered = await fetch(`${baseUrl}/api/sessions/${retryable.sessionId}/permanent`, { method: 'DELETE' });
+    expect(recovered.status).toBe(200);
+    await expect(readSessionMeta(retryable.transcriptPath)).resolves.toBeNull();
+  });
+
+  it('清空回收站遇到 queued 时保留对应 transcript/meta，并报告部分失败', async () => {
+    const deletedAt = new Date().toISOString();
+    const queued = await writeSession(OWNER, { deletedAt, deletedBy: OWNER.username });
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletion: async () => 'queued',
+    });
+    servers.push(server);
+
+    const response = await fetch(`${baseUrl}/api/sessions/trash`, { method: 'DELETE' });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ deletedCount: 0, failedCount: 1 });
+    await expect(readSessionMeta(queued.transcriptPath)).resolves.toMatchObject({ deletedAt });
+    await expect(readFile(queued.transcriptPath, 'utf8')).resolves.toContain('hello world');
   });
 
   it('永久删除在 Artifact 清理失败时保留 meta tombstone，并可由同一端点重试', async () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+
 export { sandboxLifecycleMetrics } from './sandboxLifecycleMetrics.js';
 
 export const WORKLOAD_CLASSES = [
@@ -165,16 +166,39 @@ export function activeInvocationLeaseUntil(annotations: Record<string, unknown>)
   let latest: string | undefined;
   for (const [key, raw] of Object.entries(annotations)) {
     if (!key.startsWith(ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX) || typeof raw !== 'string') continue;
-    try {
-      const value = JSON.parse(raw) as { until?: unknown };
-      if (typeof value.until !== 'string') continue;
-      const at = Date.parse(value.until);
-      if (!Number.isFinite(at) || (latestMs !== undefined && at <= latestMs)) continue;
-      latestMs = at;
-      latest = value.until;
-    } catch { /* fail closed for malformed values is not useful without a parseable deadline */ }
+    const until = invocationLeaseUntil(raw);
+    if (!until) continue;
+    const at = Date.parse(until);
+    if (!Number.isFinite(at) || (latestMs !== undefined && at <= latestMs)) continue;
+    latestMs = at;
+    latest = until;
   }
   return latest;
+}
+
+/** Returns invocation annotations that cannot protect work at `nowMs`. */
+export function expiredActiveInvocationLeaseAnnotationKeys(
+  annotations: Record<string, unknown>,
+  nowMs: number,
+): string[] {
+  return Object.entries(annotations)
+    .filter(([key, raw]) => {
+      if (!key.startsWith(ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX)) return false;
+      if (typeof raw !== 'string') return true;
+      const until = invocationLeaseUntil(raw);
+      const untilMs = until ? Date.parse(until) : Number.NaN;
+      return !Number.isFinite(untilMs) || untilMs <= nowMs;
+    })
+    .map(([key]) => key);
+}
+
+function invocationLeaseUntil(raw: string): string | undefined {
+  try {
+    const value = JSON.parse(raw) as { until?: unknown };
+    return typeof value.until === 'string' ? value.until : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function lifecycleStateFromMetadata(

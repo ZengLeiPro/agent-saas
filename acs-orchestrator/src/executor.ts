@@ -28,12 +28,22 @@ interface InvocationEntry {
 
 interface InvocationProtectionState {
   preserveInvocationLease: boolean;
+  originalSandboxGone?: boolean;
+  recovery?: {
+    expectedUid: string;
+    protectedUntil?: string;
+    taskIds: string[];
+    reason: string;
+  };
 }
 
 interface AcsExecutorOptions {
   persistentRunner?: boolean;
   terminateBackgroundTasks?: (ref: SandboxRef, taskIds: string[]) => Promise<void>;
+  backgroundRecoveryRetryMs?: number;
 }
+
+const BACKGROUND_PROTECTION_CONFIRM_MARGIN_MS = 5_000;
 
 export class AcsExecutor {
   private readonly invocations = new Map<string, InvocationEntry>();
@@ -42,6 +52,7 @@ export class AcsExecutor {
   private readonly ensureRunningAt = new Map<string, number>();
   private readonly ensureRunningPromises = new Map<string, Promise<void>>();
   private readonly persistentRunnerBackoffUntil = new Map<string, number>();
+  private readonly backgroundProtectionRecoveries = new Set<Promise<void>>();
   private invocationSeq = 0;
 
   constructor(
@@ -97,7 +108,9 @@ export class AcsExecutor {
     this.invocations.set(invocationKey, { controller, sandboxName: ref.name });
     const releaseActive = this.activeRegistry?.acquire(ref.name, invocationKey);
     let leasePersisted = false;
+    let sandboxUid: string | undefined;
     let leaseMonitor: InvocationLeaseMonitor | undefined;
+    let recoveryOwnsLease = false;
     let finalResponse: ToolInvocationResponse | undefined;
     let runError: unknown;
     const protectionState: InvocationProtectionState = { preserveInvocationLease: false };
@@ -105,6 +118,7 @@ export class AcsExecutor {
       this.logger.error(
         `invocation_lease_lost sandbox=${ref.name} invocation=${invocationKey}: ${error.message}`,
       );
+      if (recoveryOwnsLease) return;
       controller.abort();
       this.invocations.get(invocationKey)?.child?.kill('SIGTERM');
       const persistent = this.persistentRunners.get(ref.name);
@@ -116,14 +130,19 @@ export class AcsExecutor {
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
       const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
-      await this.sandboxManager.setActiveInvocationLease(
+      sandboxUid = await this.sandboxManager.setActiveInvocationLease(
         ref.name,
         leaseKey,
         new Date(leaseUntilMs).toISOString(),
       );
+      if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
       leasePersisted = true;
       leaseMonitor = new InvocationLeaseMonitor(
-        (leaseUntil) => this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey, leaseUntil),
+        async (leaseUntil) => {
+          await this.sandboxManager.setActiveInvocationLease(
+            ref.name, leaseKey, leaseUntil, sandboxUid,
+          );
+        },
         failForLease,
       );
       leaseMonitor.start(leaseUntilMs);
@@ -173,18 +192,22 @@ export class AcsExecutor {
           if (output.kind === 'chunk') {
             if (output.chunk.type === 'completed') {
               finalResponse = addRunnerMetadata(output.chunk.response, 'persistent');
-              await this.applyBackgroundShellProtection(ref, finalResponse, leaseKey, protectionState);
+              await this.applyBackgroundShellProtection(
+                ref, finalResponse, leaseKey, sandboxUid, protectionState,
+              );
             } else if (!leaseMonitor?.failure) {
               yield output.chunk;
             }
           } else {
             finalResponse = addRunnerMetadata(output.response, 'persistent');
-            await this.applyBackgroundShellProtection(ref, finalResponse, leaseKey, protectionState);
+            await this.applyBackgroundShellProtection(
+              ref, finalResponse, leaseKey, sandboxUid, protectionState,
+            );
           }
         }
       } else {
         for await (const output of this.executeOneShot(
-          ref, runnerInput, controller, invocationKey, leaseKey, protectionState,
+          ref, runnerInput, controller, invocationKey, leaseKey, sandboxUid, protectionState,
         )) {
           if (output.type === 'completed') finalResponse = output.response;
           else if (!leaseMonitor?.failure) yield output;
@@ -193,13 +216,22 @@ export class AcsExecutor {
     } catch (err) {
       runError = err;
     } finally {
-      const leaseFailure = await leaseMonitor?.finish();
+      let leaseFailure: Error | undefined;
+      if (leasePersisted && protectionState.recovery && leaseMonitor) {
+        recoveryOwnsLease = true;
+        this.startBackgroundProtectionRecovery(
+          ref, leaseKey, invocationKey, protectionState.recovery, leaseMonitor,
+        );
+      } else {
+        leaseFailure = await leaseMonitor?.finish();
+      }
       options.signal?.removeEventListener('abort', onExternalAbort);
       this.invocations.delete(invocationKey);
       releaseActive?.();
-      if (leasePersisted && !leaseFailure && !protectionState.preserveInvocationLease) {
+      if (leasePersisted && sandboxUid && !leaseFailure
+        && !protectionState.preserveInvocationLease && !protectionState.originalSandboxGone) {
         try {
-          await this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey);
+          await this.sandboxManager.setActiveInvocationLease(ref.name, leaseKey, undefined, sandboxUid);
         } catch (err) {
           this.logger.warn(`invocation_lease_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -231,6 +263,10 @@ export class AcsExecutor {
     return true;
   }
 
+  backgroundRecoveryCount(): number {
+    return this.backgroundProtectionRecoveries.size;
+  }
+
   busySandboxNames(): Set<string> {
     return new Set(
       [...this.invocations.values()]
@@ -240,12 +276,22 @@ export class AcsExecutor {
   }
 
   async reconcileBackgroundShellProtections(): Promise<{ checked: number; failed: number }> {
-    const sandboxes = (await this.sandboxManager.listManagedSandboxes())
-      .filter((sandbox) => Boolean(
-        sandbox.backgroundShellProtectedUntil || sandbox.activeInvocationLeaseUntil,
-      ));
+    const sandboxes = await this.sandboxManager.listManagedSandboxes();
     let failed = 0;
     for (const sandbox of sandboxes) {
+      let activeInvocationLease = false;
+      try {
+        ({ active: activeInvocationLease } = await this.sandboxManager.clearExpiredInvocationLeases(
+          sandbox.name,
+        ));
+      } catch (err) {
+        failed += 1;
+        this.logger.warn(`invocation_lease_sweep_failed sandbox=${sandbox.name}: ${errorMessage(err)}`);
+        continue;
+      }
+      // An expired invocation-only residue must not execute a runner (and therefore
+      // must not touch last-active or create another invocation annotation).
+      if (!sandbox.backgroundShellProtectedUntil && !activeInvocationLease) continue;
       if (!sandbox.workspaceId || !sandbox.sessionId) {
         failed += 1;
         continue;
@@ -278,6 +324,7 @@ export class AcsExecutor {
     ref: SandboxRef,
     response: ToolInvocationResponse,
     leaseKey: string,
+    expectedUid: string,
     state: InvocationProtectionState,
   ): Promise<void> {
     const raw = response.metadata?.backgroundShell;
@@ -301,52 +348,228 @@ export class AcsExecutor {
       ? [...new Set(activeTaskIds)]
       : currentTaskActive ? [background.taskId as string] : [];
     const aggregateProtectionActive = protectedTaskIds.length > 0
-      || (Number.isFinite(protectedUntilMs) && protectedUntilMs > Date.now());
+      || this.hasSafeBackgroundProtection(protectedUntilMs);
     if (aggregateProtectionActive) state.preserveInvocationLease = true;
-    if (protectedTaskIds.length > 0 && !(Number.isFinite(protectedUntilMs) && protectedUntilMs > Date.now())) {
-      await this.failClosedBackgroundTasks(ref, protectedTaskIds, state, 'missing aggregate protection deadline');
+    if (protectedTaskIds.length > 0 && !this.hasSafeBackgroundProtection(protectedUntilMs)) {
+      await this.failClosedBackgroundTasks(
+        ref, protectedTaskIds, expectedUid, state,
+        'missing aggregate protection deadline', protectedUntil,
+      );
     }
+    let protectionError: unknown;
     try {
-      await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
-      if (aggregateProtectionActive) state.preserveInvocationLease = false;
-    } catch (protectionError) {
-      if (!aggregateProtectionActive) throw protectionError;
-      try {
-        await this.sandboxManager.setActiveInvocationLease(sandboxName, leaseKey, protectedUntil);
-        this.logger.warn(
-          `background_shell_protection_fallback sandbox=${sandboxName} task=${String(background.taskId ?? protectedTaskIds[0])}`,
-        );
-      } catch (leaseError) {
+      await this.sandboxManager.setBackgroundShellProtection(
+        sandboxName, protectedUntil, expectedUid,
+      );
+    } catch (err) {
+      protectionError = err;
+    }
+    if (!protectionError) {
+      // A CAS can block until the runner-provided deadline is no longer useful.
+      // Success is a safety proof only while the exact deadline still has margin.
+      if (aggregateProtectionActive && !this.hasSafeBackgroundProtection(protectedUntilMs)) {
         await this.failClosedBackgroundTasks(
-          ref,
-          protectedTaskIds,
-          state,
-          `protection=${errorMessage(protectionError)} lease=${errorMessage(leaseError)}`,
+          ref, protectedTaskIds, expectedUid, state,
+          'aggregate protection deadline expired before persistence confirmation', protectedUntil,
         );
       }
+      if (aggregateProtectionActive) state.preserveInvocationLease = false;
+      return;
     }
+    if (!aggregateProtectionActive) throw protectionError;
+    let leaseError: unknown;
+    try {
+      await this.sandboxManager.setActiveInvocationLease(
+        sandboxName, leaseKey, protectedUntil, expectedUid,
+      );
+    } catch (err) {
+      leaseError = err;
+    }
+    if (!leaseError) {
+      if (!this.hasSafeBackgroundProtection(protectedUntilMs)) {
+        await this.failClosedBackgroundTasks(
+          ref, protectedTaskIds, expectedUid, state,
+          'aggregate protection deadline expired before fallback confirmation', protectedUntil,
+        );
+      }
+      this.logger.warn(
+        `background_shell_protection_fallback sandbox=${sandboxName} task=${String(background.taskId ?? protectedTaskIds[0])}`,
+      );
+      return;
+    }
+    await this.failClosedBackgroundTasks(
+      ref,
+      protectedTaskIds,
+      expectedUid,
+      state,
+      `protection=${errorMessage(protectionError)} lease=${errorMessage(leaseError)}`,
+      protectedUntil,
+    );
   }
 
   private async failClosedBackgroundTasks(
     ref: SandboxRef,
     taskIds: string[],
+    expectedUid: string,
     state: InvocationProtectionState,
     reason: string,
+    protectedUntil?: string,
   ): Promise<never> {
     const terminate = this.options.terminateBackgroundTasks
       ?? ((targetRef: SandboxRef, ids: string[]) => this.terminateBackgroundTasks(targetRef, ids));
     try {
+      if (!await this.originalSandboxExists(ref.name, expectedUid)) {
+        state.originalSandboxGone = true;
+        state.preserveInvocationLease = false;
+        throw new OriginalSandboxGoneError();
+      }
       // The runner reconciles the whole workspace even when an older response did
       // not include activeTaskIds, then proves that no background process remains.
       await terminate(ref, taskIds);
     } catch (terminationError) {
+      if (terminationError instanceof OriginalSandboxGoneError) {
+        throw new Error(`后台 Shell 原 Sandbox 已消失，拒绝操作同名新实例: ${reason}`);
+      }
+      state.recovery = {
+        expectedUid,
+        ...(protectedUntil ? { protectedUntil } : {}),
+        taskIds: [...new Set(taskIds)],
+        reason: `${reason} termination=${errorMessage(terminationError)}`,
+      };
       throw new Error(
-        `后台 Shell 保护持久化失败且终止任务失败，保留现有 invocation lease: ${reason} termination=${errorMessage(terminationError)}`,
+        `后台 Shell 保护持久化失败且终止任务失败，保留现有 invocation lease: ${state.recovery.reason}`,
       );
     }
     // No background process remains, so the short invocation lease can be cleared.
     state.preserveInvocationLease = false;
     throw new Error(`后台 Shell 保护持久化失败，已终止活跃任务: ${reason}`);
+  }
+
+  /** The persisted deadline must remain useful after a potentially slow CAS. */
+  private hasSafeBackgroundProtection(protectedUntilMs: number): boolean {
+    return Number.isFinite(protectedUntilMs)
+      && protectedUntilMs - BACKGROUND_PROTECTION_CONFIRM_MARGIN_MS > Date.now();
+  }
+
+  private async originalSandboxExists(name: string, expectedUid: string): Promise<boolean> {
+    return await this.sandboxManager.getSandboxUid(name) === expectedUid;
+  }
+
+  private startBackgroundProtectionRecovery(
+    ref: SandboxRef,
+    leaseKey: string,
+    invocationKey: string,
+    recovery: NonNullable<InvocationProtectionState['recovery']>,
+    leaseMonitor: InvocationLeaseMonitor,
+  ): void {
+    const promise = this.recoverBackgroundProtection(ref, leaseKey, recovery, leaseMonitor)
+      .catch((err) => {
+        this.logger.error(
+          `background_shell_recovery_failed sandbox=${ref.name} invocation=${invocationKey}: ${errorMessage(err)}`,
+        );
+      })
+      .finally(() => this.backgroundProtectionRecoveries.delete(promise));
+    this.backgroundProtectionRecoveries.add(promise);
+  }
+
+  private async recoverBackgroundProtection(
+    ref: SandboxRef,
+    leaseKey: string,
+    recovery: NonNullable<InvocationProtectionState['recovery']>,
+    leaseMonitor: InvocationLeaseMonitor,
+  ): Promise<void> {
+    const retryMs = Math.max(1, this.options.backgroundRecoveryRetryMs ?? 5_000);
+    const terminate = this.options.terminateBackgroundTasks
+      ?? ((targetRef: SandboxRef, ids: string[]) => this.terminateBackgroundTasks(targetRef, ids));
+    let monitorFailureLogged = false;
+    // No initial sleep: under total write failure the original short lease is the
+    // only provable marker, so renew it immediately while retrying a safety proof.
+    for (;;) {
+      try {
+        if (!await this.originalSandboxExists(ref.name, recovery.expectedUid)) {
+          await leaseMonitor.finish();
+          this.logger.info(`background_shell_recovery_original_gone sandbox=${ref.name}`);
+          return;
+        }
+      } catch (err) {
+        this.logger.warn(`background_shell_recovery_uid_check_failed sandbox=${ref.name}: ${errorMessage(err)}`);
+        await unrefDelay(retryMs);
+        continue;
+      }
+      if (leaseMonitor.failure && !monitorFailureLogged) {
+        monitorFailureLogged = true;
+        this.logger.warn(
+          `background_shell_recovery_lease_monitor_failed sandbox=${ref.name}: ${leaseMonitor.failure.message}`,
+        );
+      }
+      try {
+        await this.sandboxManager.setActiveInvocationLease(
+          ref.name,
+          leaseKey,
+          new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
+          recovery.expectedUid,
+        );
+      } catch (err) {
+        this.logger.warn(`background_shell_recovery_lease_renew_failed sandbox=${ref.name}: ${errorMessage(err)}`);
+      }
+
+      let safe = false;
+      const protectedUntilMs = recovery.protectedUntil ? Date.parse(recovery.protectedUntil) : Number.NaN;
+      if (recovery.protectedUntil && this.hasSafeBackgroundProtection(protectedUntilMs)) {
+        try {
+          await this.sandboxManager.setBackgroundShellProtection(
+            ref.name, recovery.protectedUntil, recovery.expectedUid,
+          );
+          // Re-check after CAS completion; an expired marker is not durable safety.
+          safe = this.hasSafeBackgroundProtection(protectedUntilMs);
+        } catch (err) {
+          this.logger.warn(`background_shell_recovery_protection_failed sandbox=${ref.name}: ${errorMessage(err)}`);
+        }
+      }
+      if (!safe) {
+        try {
+          if (!await this.originalSandboxExists(ref.name, recovery.expectedUid)) {
+            await leaseMonitor.finish();
+            this.logger.info(`background_shell_recovery_original_gone sandbox=${ref.name}`);
+            return;
+          }
+          await terminate(ref, recovery.taskIds);
+          safe = true;
+        } catch (err) {
+          this.logger.warn(`background_shell_recovery_termination_failed sandbox=${ref.name}: ${errorMessage(err)}`);
+        }
+      }
+      if (!safe) {
+        await unrefDelay(retryMs);
+        continue;
+      }
+
+      // Stop renewal before clearing, otherwise an in-flight monitor tick could
+      // recreate the annotation after the successful clear.
+      await leaseMonitor.finish();
+      for (;;) {
+        try {
+          await this.sandboxManager.setActiveInvocationLease(
+            ref.name, leaseKey, undefined, recovery.expectedUid,
+          );
+          this.logger.info(
+            `background_shell_recovery_completed sandbox=${ref.name} reason=${recovery.reason}`,
+          );
+          return;
+        } catch (err) {
+          try {
+            if (!await this.originalSandboxExists(ref.name, recovery.expectedUid)) {
+              this.logger.info(`background_shell_recovery_original_gone sandbox=${ref.name}`);
+              return;
+            }
+          } catch (uidError) {
+            this.logger.warn(`background_shell_recovery_uid_check_failed sandbox=${ref.name}: ${errorMessage(uidError)}`);
+          }
+          this.logger.warn(`background_shell_recovery_lease_clear_failed sandbox=${ref.name}: ${errorMessage(err)}`);
+          await unrefDelay(retryMs);
+        }
+      }
+    }
   }
 
   private async terminateBackgroundTasks(ref: SandboxRef, taskIds: string[]): Promise<void> {
@@ -462,6 +685,7 @@ export class AcsExecutor {
     controller: AbortController,
     invocationKey: string,
     leaseKey: string,
+    sandboxUid: string,
     protectionState: InvocationProtectionState,
   ): AsyncIterable<ToolInvocationStreamChunk> {
     const child = this.spawnRunner(ref, runnerInput, controller);
@@ -477,7 +701,9 @@ export class AcsExecutor {
         if (parsed.chunk.type === 'completed') {
           sawCompleted = true;
           const response = addRunnerMetadata(parsed.chunk.response, 'one-shot');
-          await this.applyBackgroundShellProtection(ref, response, leaseKey, protectionState);
+          await this.applyBackgroundShellProtection(
+            ref, response, leaseKey, sandboxUid, protectionState,
+          );
           yield { ...parsed.chunk, response };
           continue;
         }
@@ -485,7 +711,9 @@ export class AcsExecutor {
       } else {
         sawCompleted = true;
         const response = addRunnerMetadata(parsed.response, 'one-shot');
-        await this.applyBackgroundShellProtection(ref, response, leaseKey, protectionState);
+        await this.applyBackgroundShellProtection(
+          ref, response, leaseKey, sandboxUid, protectionState,
+        );
         yield { type: 'completed', response };
       }
     }
@@ -581,8 +809,18 @@ function parseRunnerLine(line: string): SandboxRunnerOutput | SandboxRunnerFinal
   }
 }
 
+class OriginalSandboxGoneError extends Error {}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function unrefDelay(ms: number): Promise<void> {
+  // Recovery timers must not keep an otherwise drained process alive.
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
 }
 
 function addRunnerMetadata(

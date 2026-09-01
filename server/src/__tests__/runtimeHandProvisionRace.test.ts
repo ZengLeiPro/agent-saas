@@ -63,7 +63,7 @@ class CasMemoryHandStore implements HandStore {
   async listByWorkspace(workspaceId: string): Promise<HandRecord[]> { return this.record?.workspaceId === workspaceId ? [this.record] : []; }
 }
 
-describe('runtime Hand normal provision generation CAS', () => {
+describe('runtime Hand provision contracts and generation CAS', () => {
   it('maps the persisted sandbox profile into server-remote recipe resources', async () => {
     const handStore = new CasMemoryHandStore();
     const provision = vi.fn(async () => ({ status: 'ok' as const }));
@@ -107,6 +107,99 @@ describe('runtime Hand normal provision generation CAS', () => {
     expect(provision).toHaveBeenCalledWith(expect.objectContaining({
       resources: { cpu: '4', memoryMb: 8192, diskMb: 16384 },
     }));
+  });
+
+  it('tenant provision overrides static workload with taskboard/cron/memory while preserving static recipe fields', async () => {
+    const cases = [
+      [
+        { kind: 'taskboard' as const, taskKind: 'delivery' as const, purpose: 'review' as const },
+        { class: 'taskboard', taskKind: 'delivery', purpose: 'review' },
+      ],
+      [{ kind: 'cron' as const }, { class: 'cron' }],
+      [{ kind: 'memory' as const }, { class: 'memory' }],
+    ] as const;
+    const digests = new Set<string>(); // Distinct values prove workload participates in the effective digest.
+
+    for (const [sandboxWorkloadDescriptor, expectedWorkload] of cases) {
+      const handStore = new CasMemoryHandStore();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      try {
+        await ensureRuntimeHandRegistered({
+          handStore,
+          eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+          executionTransportRegistry: {
+            has: () => false,
+            get: () => { throw new Error('no default execution transport expected'); },
+          } as never,
+          executionTarget: 'server-local',
+          sessionId: `tenant-${sandboxWorkloadDescriptor.kind}`,
+          workspaceId: 'workspace-tenant',
+          workspaceMountSubPath: 'dynamic/mount-must-not-win',
+          topLevelSessionId: 'top-session',
+          tenantId: 'tenant-1',
+          userTenantId: 'tenant-1',
+          userId: 'user-1',
+          sandboxWorkloadDescriptor,
+          tenantRemoteHands: [{
+            id: 'tenant-acs',
+            baseUrl: 'https://tenant-hand.example',
+            authToken: 'static-config-token',
+            recipe: {
+              mountSubPath: 'static/mount',
+              repo: { url: 'https://git.example/repo.git', ref: 'main', remote: 'origin' },
+              resources: { cpu: '2', memoryMb: 4096 },
+              packages: ['git'],
+              setupCommands: ['pnpm install --frozen-lockfile'],
+              workload: { class: 'interactive' },
+            },
+          }],
+          tenantRemoteHandResolver: {
+            resolveForRegister: vi.fn(async () => ({
+              id: 'tenant-acs',
+              baseUrl: 'https://tenant-hand.example',
+              authToken: 'resolved-token',
+              source: 'inline' as const,
+            })),
+            resolveForHand: vi.fn(async () => 'resolved-token'),
+          },
+        });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchSpy.mock.calls[0]!;
+        expect(url).toBe('https://tenant-hand.example/provision');
+        expect((init as RequestInit).method).toBe('POST');
+        expect((init as { headers: Record<string, string> }).headers.authorization).toBe('Bearer resolved-token');
+        const request = JSON.parse(String((init as RequestInit).body));
+        const expectedRecipe = {
+          mountSubPath: 'static/mount',
+          repo: { url: 'https://git.example/repo.git', ref: 'main', remote: 'origin' },
+          resources: { cpu: '2', memoryMb: 4096 },
+          packages: ['git'],
+          setupCommands: ['pnpm install --frozen-lockfile'],
+          workload: expectedWorkload,
+          workspaceId: 'workspace-tenant',
+          sandboxScopeId: 'workspace-tenant__static_mount__s_top-session',
+          sessionId: `tenant-${sandboxWorkloadDescriptor.kind}`,
+        };
+        expect(request).toEqual({ workspaceId: 'workspace-tenant', recipe: expectedRecipe });
+        const expectedDigest = createHash('sha256').update(JSON.stringify(expectedRecipe)).digest('hex');
+        expect(handStore.record).toMatchObject({
+          handId: `tenant-${sandboxWorkloadDescriptor.kind}:tenant-acs`,
+          recipeDigest: expectedDigest,
+          metadata: { recipe: expectedRecipe },
+        });
+        digests.add(handStore.record!.recipeDigest!);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    }
+
+    expect(digests.size).toBe(3);
   });
 
   it('keeps environment-template resources authoritative over the session profile', async () => {

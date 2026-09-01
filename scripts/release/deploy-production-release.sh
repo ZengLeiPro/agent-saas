@@ -101,8 +101,11 @@ const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const image = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`;
-const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !line.startsWith('ACS_SANDBOX_IMAGE='));
+const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line
+  && !line.startsWith('ACS_SANDBOX_IMAGE=')
+  && !line.startsWith('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='));
 lines.push(`ACS_SANDBOX_IMAGE=${image}`);
+lines.push('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce');
 fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
 NODE
@@ -146,7 +149,7 @@ const fs = require('node:fs');
 const [manifestPath, healthPath] = process.argv.slice(2);
 const m = JSON.parse(fs.readFileSync(manifestPath));
 const h = JSON.parse(fs.readFileSync(healthPath));
-if (h.environment !== 'production' || h.releaseId !== m.releaseId || h.sourceSha !== m.components.acs.sourceSha || h.orchestratorArtifactDigest !== m.components.acs.orchestratorArtifactDigest || h.sandboxImageDigest !== m.components.acs.sandboxImageDigest || h.namespace !== 'agent-saas-coding') process.exit(1);
+if (h.environment !== 'production' || h.releaseId !== m.releaseId || h.sourceSha !== m.components.acs.sourceSha || h.orchestratorArtifactDigest !== m.components.acs.orchestratorArtifactDigest || h.sandboxImageDigest !== m.components.acs.sandboxImageDigest || h.namespace !== 'agent-saas-coding' || h.lifecyclePolicyMode !== 'enforce') process.exit(1);
 NODE
   then
     exit 20

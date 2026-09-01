@@ -5,7 +5,7 @@
  * controlled build flag and verification public key are both present. Store
  * and updater-disabled builds must never register it.
  */
-const { withAndroidManifest } = require('expo/config-plugins');
+const { withAndroidManifest } = require('@expo/config-plugins');
 
 function withInstallPermission(config) {
   return withAndroidManifest(config, (config) => {

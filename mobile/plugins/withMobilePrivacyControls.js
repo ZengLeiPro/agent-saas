@@ -3,7 +3,7 @@ const {
   withAndroidManifest,
   withDangerousMod,
   withInfoPlist,
-} = require('expo/config-plugins');
+} = require('@expo/config-plugins');
 const { mkdir, writeFile } = require('node:fs/promises');
 const { join } = require('node:path');
 

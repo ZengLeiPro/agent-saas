@@ -1,4 +1,4 @@
-const { withAppBuildGradle } = require('expo/config-plugins');
+const { withAppBuildGradle } = require('@expo/config-plugins');
 
 /**
  * Android release signing inputs are supplied only by the build environment.

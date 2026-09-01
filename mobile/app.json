@@ -13,12 +13,6 @@
     },
     "ios": {
       "supportsTablet": true,
-      "appleTeamId": "T4D4M5B485",
-      "entitlements": {
-        "keychain-access-groups": [
-          "$(AppIdentifierPrefix)group.com.agentsaas.mobile.share"
-        ]
-      },
       "infoPlist": {
         "CFBundleDevelopmentRegion": "zh_CN",
         "CFBundleLocalizations": [
@@ -109,28 +103,6 @@
         }
       ],
       "expo-sharing",
-      [
-        "expo-share-intent",
-        {
-          "iosShareExtensionName": "AgentSaaSShare",
-          "iosAppGroupIdentifier": "group.com.agentsaas.mobile.share",
-          "iosActivationRules": {
-            "NSExtensionActivationSupportsImageWithMaxCount": 10,
-            "NSExtensionActivationSupportsMovieWithMaxCount": 5,
-            "NSExtensionActivationSupportsFileWithMaxCount": 10
-          },
-          "androidIntentFilters": [
-            "image/*",
-            "video/*",
-            "*/*"
-          ],
-          "androidMultiIntentFilters": [
-            "image/*",
-            "video/*",
-            "*/*"
-          ]
-        }
-      ],
       "@react-native-community/datetimepicker",
       "./plugins/withAndroidSigningConfig",
       "./plugins/withMobilePrivacyControls"

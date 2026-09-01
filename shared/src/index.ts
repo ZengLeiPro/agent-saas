@@ -129,6 +129,33 @@ export type {
 } from './lib/attachmentUpload';
 
 export {
+  INCOMING_SHARE_DRAFT_TTL_MS,
+  INCOMING_SHARE_MAX_ITEMS,
+  INCOMING_SHARE_MAX_TOTAL_BYTES,
+  INCOMING_SHARE_STAGING_SAFETY_BYTES,
+  assertIncomingSharePathFree,
+  createIncomingShare,
+  incomingShareKind,
+  incomingShareUploadedAttachments,
+  mergeIncomingShareText,
+  projectIncomingShareStatus,
+  reduceAttachmentDraft,
+  shareError,
+  validateIncomingShareMagic,
+  validateIncomingShareSelection,
+} from './lib/incomingShare';
+export type {
+  AttachmentDraft,
+  AttachmentDraftEvent,
+  IncomingShare,
+  IncomingShareError,
+  IncomingShareErrorCode,
+  IncomingShareKind,
+  IncomingShareSelection,
+  IncomingShareStatus,
+} from './lib/incomingShare';
+
+export {
   buildInteractionResponseRequest,
   canInteract,
   createInteractionReducerState,

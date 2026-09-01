@@ -664,6 +664,34 @@ describe('attachment upload hardening', () => {
     }
   });
 
+  it('enforces the 5 item/20 MB incoming-share envelope and server content inspection', async () => {
+    const root = await createRoot();
+    const manager = new UploadManager({ agentCwd: root });
+    const baseUrl = await startUploadServer(root, manager);
+
+    const valid = new FormData();
+    valid.append('files', new Blob(['%PDF-1.7\nvalid'], { type: 'application/pdf' }), 'valid.pdf');
+    const ok = await fetch(`${baseUrl}/api/upload`, {
+      method: 'POST', headers: { 'X-Upload-Source': 'incoming-share', 'X-Upload-Request-Id': randomUUID() }, body: valid,
+    });
+    expect(ok.status).toBe(200);
+
+    const active = new FormData();
+    active.append('files', new Blob(['%PDF-1.7<script>bad'], { type: 'application/pdf' }), 'active.pdf');
+    const rejected = await fetch(`${baseUrl}/api/upload`, {
+      method: 'POST', headers: { 'X-Upload-Source': 'incoming-share', 'X-Upload-Request-Id': randomUUID() }, body: active,
+    });
+    expect(rejected.status).toBe(422);
+    expect(await rejected.json()).toMatchObject({ code: 'UPLOAD_EXECUTABLE_CONTENT' });
+
+    const six = new FormData();
+    for (let index = 0; index < 6; index += 1) six.append('files', new Blob(['%PDF-1.7\n'], { type: 'application/pdf' }), `${index}.pdf`);
+    const tooMany = await fetch(`${baseUrl}/api/upload`, {
+      method: 'POST', headers: { 'X-Upload-Source': 'incoming-share', 'X-Upload-Request-Id': randomUUID() }, body: six,
+    });
+    expect(tooMany.status).toBe(413);
+  });
+
   it('replays the same uploadRequestId idempotently and makes completed server result win cancel', async () => {
     const root = await createRoot();
     const manager = new UploadManager({ agentCwd: root });
@@ -678,6 +706,9 @@ describe('attachment upload hardening', () => {
       return { response, body: await response.json() as any };
     };
     const first = await upload();
+    const status = await fetch(`${baseUrl}/api/uploads/requests/${requestId}`);
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ success: true, requestId, files: [{ attachmentId: first.body.files[0].attachmentId }] });
     const replay = await upload();
     expect(first.response.status).toBe(200);
     expect(replay.body).toMatchObject({ success: true, requestId, idempotentReplay: true });

@@ -93,7 +93,7 @@ const BLOCKED_EXTENSIONS = new Set([
   'exe', 'dll', 'com', 'bat', 'cmd', 'ps1', 'sh', 'bash', 'zsh', 'app', 'apk', 'ipa', 'jar',
 ]);
 const BLOCKED_MIMES = /(?:text\/html|image\/svg\+xml|javascript|ecmascript|application\/x-msdownload)/i;
-const LOCAL_REFERENCE_KEYS = /^(?:uri|url|path|savedPath|relativePath|previewUrl|localPath|file)$/i;
+const LOCAL_REFERENCE_KEYS = /^(?:uri|url|path|absolutePath|savedPath|displayPath|relativePath|previewUrl|localPath|file)$/i;
 const LOCAL_REFERENCE_VALUE = /^(?:file|content|blob):|^(?:[a-zA-Z]:[\\/]|\/Users\/|\/home\/|\/var\/mobile\/|\/data\/user\/)/i;
 
 export function validateAttachmentSelection(

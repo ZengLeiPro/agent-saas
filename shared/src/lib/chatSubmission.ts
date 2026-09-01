@@ -117,6 +117,7 @@ const FORBIDDEN_ATTACHMENT_PATH_KEYS = [
   'savedPath',
   'relativePath',
   'absolutePath',
+  'displayPath',
   'filePath',
   'localPath',
   'path',

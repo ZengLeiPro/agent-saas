@@ -6,7 +6,7 @@ import { getV1BuildProfile } from '../../src/app/v1Runtime';
 import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronDown } from 'lucide-react-native';
-import { evaluateAgentTargetTransition, type AgentTarget, type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems } from '@agent/shared';
+import { evaluateAgentTargetTransition, type AgentTarget, type RenderItem, type MessageItem, getPreviewFileType, useGroups, fetchAgentProfile, getSortedGroupItems, mergeIncomingShareText } from '@agent/shared';
 import { BackButton } from '../../src/components/BackButton';
 import type { PickerExtraSection } from '../../src/components/chat/ModelPicker';
 import type { DrillDownPage } from '../../src/components/overlays/DropdownMenu';
@@ -445,8 +445,12 @@ export default function ChatDetailScreen() {
   // 这里在挂载时一次性消费并灌入 fileUpload state，等用户补一句话发送。
   useEffect(() => {
     if (!pendingShared.hasPending()) return;
-    const files = pendingShared.consume();
-    if (files.length) chat.addUploadedFiles(files);
+    const incoming = pendingShared.consume();
+    if (incoming.files.length) chat.addUploadedFiles(incoming.files);
+    if (incoming.text.trim()) {
+      // Inbound text augments rather than replaces the owner-scoped composer draft.
+      chat.setInput(mergeIncomingShareText(chat.input, incoming.text));
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pendingInteractions = useMemo(() => chat.messages

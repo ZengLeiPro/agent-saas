@@ -9,7 +9,7 @@ export const CACHE_MAX_BACKUP_BYTES = CACHE_MAX_JSON_BYTES * 8;
 
 const COMPONENT = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const RESOURCE = /^[a-z][a-z0-9-]{0,47}$/u;
-const FORBIDDEN_PROPERTY = /^(?:token|accessToken|refreshToken|credential|credentials|password|secret|savedPath|absolutePath|rawTool|rawToolInput|rawToolResult|toolInput|toolResult|queue|queues|queueId|serverQueue|serverQueueId|runtime|cursor|epoch|interaction|interactions|attachmentId|uploadedAttachmentId|submissionId|serverSubmissionId)$/iu;
+const FORBIDDEN_PROPERTY = /^(?:token|accessToken|refreshToken|credential|credentials|password|secret|savedPath|absolutePath|displayPath|rawTool|rawToolInput|rawToolResult|toolInput|toolResult|queue|queues|queueId|serverQueue|serverQueueId|runtime|cursor|epoch|interaction|interactions|attachmentId|uploadedAttachmentId|submissionId|serverSubmissionId)$/iu;
 const POLLUTION_PROPERTY = /^(?:__proto__|prototype|constructor)$/u;
 const ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\/|\\\\|file:\/\/)/u;
 const OUTBOX_RESOURCES = new Set(['outbox-draft', 'draft-attachments']);

@@ -14,6 +14,7 @@ import {
 } from '../uploads/manager.js';
 import { attachmentResponseHeaders, inspectUploadedFile, UploadPolicyError } from '../uploads/uploadSecurity.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import { INCOMING_SHARE_MAX_ITEMS, INCOMING_SHARE_MAX_TOTAL_BYTES, incomingShareKind } from '../../../shared/src/lib/incomingShare.js';
 
 /**
  * 修复 multer 中文文件名编码问题（浏览器发送 UTF-8，multer 默认用 latin1 解析）
@@ -57,6 +58,10 @@ export interface UploadRouterOptions {
 
 interface UploadRequest extends Request {
   uploadPartialDir?: string;
+}
+
+function isIncomingShare(req: Request): boolean {
+  return req.headers['x-upload-source'] === 'incoming-share';
 }
 
 function resolveRequestUserCwd(agentCwd: string, req: Request): string {
@@ -119,6 +124,14 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
     limits: {
       fileSize: MAX_UPLOAD_FILE_BYTES,
       files: MAX_UPLOAD_FILES_PER_REQUEST,
+    },
+  });
+
+  const incomingShareUpload = multer({
+    storage,
+    limits: {
+      fileSize: INCOMING_SHARE_MAX_TOTAL_BYTES,
+      files: INCOMING_SHARE_MAX_ITEMS,
     },
   });
 
@@ -225,11 +238,16 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       timer.unref?.();
     });
 
-    upload.array('files', MAX_UPLOAD_FILES_PER_REQUEST)(req, res, async (uploadError) => {
+    const uploadMiddleware = isIncomingShare(req)
+      ? incomingShareUpload.array('files', INCOMING_SHARE_MAX_ITEMS)
+      : upload.array('files', MAX_UPLOAD_FILES_PER_REQUEST);
+    uploadMiddleware(req, res, async (uploadError) => {
       completionStarted = true;
       if (uploadError) {
         await uploadManager.finishFailedRequest(requestId, req.aborted ? 'aborted' : 'failed');
-        const response = uploadErrorResponse(uploadError);
+        const response = isIncomingShare(req) && uploadError instanceof multer.MulterError
+          ? { status: 413, message: '系统分享最多 5 项且总大小不能超过 20 MB', code: 'UPLOAD_SHARE_LIMIT' }
+          : uploadErrorResponse(uploadError);
         uploadLogger.warn(`Upload rejected request=${requestId} code=${response.code ?? 'unknown'}`);
         if (!res.headersSent && !res.writableEnded) {
           res.status(response.status).json({ success: false, error: response.message, ...(response.code ? { code: response.code } : {}) });
@@ -245,6 +263,18 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       }
 
       try {
+        if (isIncomingShare(req)) {
+          const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+          if (files.length > INCOMING_SHARE_MAX_ITEMS || totalBytes > INCOMING_SHARE_MAX_TOTAL_BYTES) {
+            throw new UploadPolicyError('UPLOAD_SIZE_EXCEEDED', '系统分享最多 5 项且总大小不能超过 20 MB', 413);
+          }
+          for (const file of files) {
+            const kind = incomingShareKind(file.mimetype || 'application/octet-stream');
+            if (kind !== 'image' && kind !== 'pdf') {
+              throw new UploadPolicyError('UPLOAD_MIME_BLOCKED', '系统分享仅支持图片与 PDF 文件', 422);
+            }
+          }
+        }
         const inspected = await Promise.all(files.map(async (file) => {
           const originalName = fixFilename(file.originalname);
           return {
@@ -284,6 +314,21 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
         }
       }
     });
+  });
+
+  router.get('/uploads/requests/:requestId', async (req, res) => {
+    const requestId = req.params.requestId;
+    if (!UPLOAD_REQUEST_ID_RE.test(requestId)) {
+      res.status(400).json({ success: false, code: 'UPLOAD_REQUEST_ID_INVALID', error: 'uploadRequestId 格式无效' });
+      return;
+    }
+    const userCwd = resolveRequestUserCwd(agentCwd, req);
+    const files = await uploadManager.getCompletedRequest(userCwd, requestId);
+    if (!files) {
+      res.status(404).json({ success: false, requestId, code: 'UPLOAD_REQUEST_NOT_FOUND' });
+      return;
+    }
+    res.json({ success: true, requestId, files });
   });
 
   router.post('/upload/:requestId/cancel', async (req, res) => {

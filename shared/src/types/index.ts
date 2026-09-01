@@ -124,6 +124,16 @@ export type {
 } from "./workflowScenario";
 
 export type {
+  WorkflowDisplayScope,
+  WorkflowDisplaySource,
+  WorkflowDisplayPolicy,
+  EffectiveWorkflowDisplayConfig,
+  WorkflowDisplayPosition,
+  WorkflowDisplayMember,
+  WorkflowDisplayPoliciesResponse,
+} from "./workflowDisplay";
+
+export type {
   ScheduleAt,
   ScheduleEvery,
   ScheduleCron,

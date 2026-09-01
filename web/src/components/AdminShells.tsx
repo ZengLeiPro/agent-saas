@@ -57,6 +57,7 @@ const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigMan
 const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
 const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
 const AgentDwsAccountsPage = lazy(() => import('@/components/AgentDwsAccounts'));
+const WorkflowDisplaySettingsPage = lazy(() => import('@/components/WorkflowDisplaySettingsPage'));
 
 export type TenantSection = "overview" | "usage" | "qa" | "audit" | TenantSettingsSectionId;
 export type PlatformSection = PlatformSettingsSectionId;
@@ -455,6 +456,8 @@ export function TenantAdminShell({
         return <OrganizationOffboardingPage tenantId={effectiveTenantId} />;
       case "organization.agents.org-agents":
         return renderOrgAgents ? renderOrgAgents(effectiveTenantId, currentTenant?.name) : <GovernanceCapabilityNotice title="组织智能体" />;
+      case "organization.agents.workflows":
+        return <WorkflowDisplaySettingsPage tenantId={effectiveTenantId} />;
       case "organization.agents.dingtalk-accounts":
         return <AgentDwsAccountsPage tenantId={effectiveTenantId} />;
       case "organization.agents.skills":

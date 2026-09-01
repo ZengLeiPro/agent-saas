@@ -32,7 +32,7 @@ describe("governance navigation registry", () => {
       "overview", "members", "agents", "governance", "settings",
     ]);
     expect(GOVERNANCE_NAVIGATION.platform.flatMap((item) => item.routes)).toHaveLength(24);
-    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(22);
+    expect(GOVERNANCE_NAVIGATION.organization.flatMap((item) => item.routes).filter((item) => item.navigation !== "detail")).toHaveLength(23);
     expect(GOVERNANCE_NAVIGATION.settings[0].routes).toHaveLength(8);
   });
 

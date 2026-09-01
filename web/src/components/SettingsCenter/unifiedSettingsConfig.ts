@@ -21,6 +21,7 @@ const TENANT_SETTINGS_ICONS: Record<TenantSettingsIconKey, LucideIcon> = {
   members: EntityIcons.members,
   skill: EntityIcons.skill,
   expert: EntityIcons.expert,
+  workflow: EntityIcons.workflow,
   connector: EntityIcons.connector,
   billing: EntityIcons.billing,
   files: EntityIcons.files,

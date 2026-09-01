@@ -264,9 +264,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   app.use(
     '/api/scenarios',
     createScenariosRouter({
-      cronService: cronRuntime.service ?? undefined,
-      roleKit: config.roleKit,
-      tenantStore: runtime.tenantStore,
+      cronService: cronRuntime.service ?? undefined, roleKit: config.roleKit,
+      tenantStore: runtime.tenantStore, userStore: runtime.userStore,
+      workflowDisplayPoliciesPath: runtime.userStore ? resolve(processCwd, './data/workflow-display-policies.json') : undefined,
     }),
   );
   app.use('/api/contentops', createContentOpsRouter());

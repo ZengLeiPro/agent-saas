@@ -70,6 +70,7 @@ export const SETTINGS_REGISTRY = defineSettingsRegistry([
   { scope: "tenant", id: "users", label: "成员", iconKey: "members", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.members.list" },
   { scope: "tenant", id: "skills", label: "技能", iconKey: "skill", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.skills" },
   { scope: "tenant", id: "org-agents", label: "组织智能体", iconKey: "expert", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.org-agents" },
+  { scope: "tenant", id: "workflows", label: "工作流", iconKey: "workflow", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.workflows" },
   { scope: "tenant", id: "mcp", label: "连接器", iconKey: "connector", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.connectors" },
   { scope: "tenant", id: "connector-dictionary", label: "连接器映射", iconKey: "connector", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.connectors" },
   { scope: "tenant", id: "billing", label: "计费", iconKey: "billing", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.governance.usage" },

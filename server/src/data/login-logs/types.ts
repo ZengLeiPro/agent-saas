@@ -23,6 +23,7 @@ export type LoginEvent =
   | 'mcp_server_updated' | 'mcp_server_deleted' | 'mcp_user_selections_updated' | 'mcp_admin_user_selections_updated'
   | 'mcp_secret_bound' | 'mcp_secret_rotated' | 'mcp_secret_deleted' | 'mcp_oauth_connected' | 'mcp_oauth_revoked'
   | 'tenant_created' | 'tenant_updated' | 'tenant_disabled' | 'tenant_enabled' | 'tenant_deleted'
+  | 'workflow_display_policy_updated' | 'workflow_display_policy_deleted'
   | 'workspace_archived' | 'workspace_deleted'
   // 平台管理员能力治理：授权执行、拒绝与敏感检索留痕
   | 'platform_readonly_denied' | 'platform_capability_denied' | 'platform_privileged_action' | 'platform_user_search'

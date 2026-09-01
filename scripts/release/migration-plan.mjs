@@ -1084,7 +1084,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const isMethodCall = (node, owner, method) =>
     methodCallArguments(node, owner, method) !== undefined;
-  // Proven wrappers preserve descriptor targets and keys across local, nested/spread member, destructured, and invocation aliases.
+  // Proven wrappers preserve descriptor targets and keys across local, computed reads/writes, nested/spread member, multi-hop factory return, destructured, and invocation aliases.
   const descriptorFactories = new Map();
   const unprovenDescriptorFactories = new Set();
   const returnedFactoryExpression = (body) => {
@@ -1272,9 +1272,30 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         );
     }
   }
+  const descriptorFactoryReturnValues = new Map();
+  const registerDescriptorFactoryReturn = (name, body) => {
+    const returnedFactory = returnedFactoryExpression(body);
+    if (returnedFactory) descriptorFactoryReturnValues.set(name, returnedFactory.returned);
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body)
+      registerDescriptorFactoryReturn(statement.name.text, statement.body);
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      )
+        registerDescriptorFactoryReturn(declaration.name.text, declaration.initializer.body);
+    }
+  }
   const descriptorFactoryAliasWrites = new Map();
   const descriptorFactoryAliasReferences = new Map();
   const descriptorFactoryObjectSpreadReferences = new Map();
+  const descriptorFactoryDynamicMemberWrites = new Map();
+  const descriptorFactoryArrayLengths = new Map();
   const addDescriptorFactoryAliasWrite = (name, expression) => {
     const writes = descriptorFactoryAliasWrites.get(name) ?? [];
     writes.push(unwrapExpression(expression));
@@ -1289,6 +1310,11 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     const references = descriptorFactoryObjectSpreadReferences.get(owner) ?? [];
     references.push(reference);
     descriptorFactoryObjectSpreadReferences.set(owner, references);
+  };
+  const addDescriptorFactoryDynamicMemberWrite = (owner, expression) => {
+    const writes = descriptorFactoryDynamicMemberWrites.get(owner) ?? [];
+    writes.push(unwrapExpression(expression));
+    descriptorFactoryDynamicMemberWrites.set(owner, writes);
   };
   const staticObjectPropertyName = (node) => {
     if (!node) return undefined;
@@ -1413,6 +1439,10 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         : ts.isPropertyAssignment(property)
           ? property.initializer
           : undefined;
+      if ((!key || key === '*') && value) {
+        addDescriptorFactoryDynamicMemberWrite(owner, value);
+        continue;
+      }
       if (key && key !== '*' && value) {
         const member = `${owner}.${key}`;
         addDescriptorFactoryAliasWrite(member, value);
@@ -1423,26 +1453,38 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const addDescriptorFactoryArrayMemberWrites = (owner, array) => {
     if (!ts.isArrayLiteralExpression(array)) return;
-    let outputIndex = 0;
-    for (const element of array.elements) {
-      if (ts.isSpreadElement(element)) {
-        const spread = unwrapExpression(element.expression);
-        if (ts.isArrayLiteralExpression(spread)) {
-          for (const value of spread.elements) {
-            if (ts.isSpreadElement(value)) continue;
-            const member = `${owner}.${outputIndex++}`;
-            addDescriptorFactoryAliasWrite(member, value);
-            addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(value));
-            addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(value));
+    let lengthKnown = true;
+    const appendElements = (currentArray, startIndex) => {
+      let outputIndex = startIndex;
+      for (const element of currentArray.elements) {
+        if (ts.isSpreadElement(element)) {
+          const spread = unwrapExpression(element.expression);
+          if (ts.isArrayLiteralExpression(spread)) {
+            outputIndex = appendElements(spread, outputIndex);
+            continue;
           }
+          const reference = staticDescriptorAliasReferenceKey(spread);
+          const spreadLength = reference ? descriptorFactoryArrayLengths.get(reference) : undefined;
+          if (reference && Number.isInteger(spreadLength)) {
+            for (let index = 0; index < spreadLength; index += 1)
+              addDescriptorFactoryAliasReference(
+                `${owner}.${outputIndex + index}`,
+                `${reference}.${index}`,
+              );
+            outputIndex += spreadLength;
+          } else lengthKnown = false;
+          continue;
         }
-        continue;
+        const member = `${owner}.${outputIndex++}`;
+        addDescriptorFactoryAliasWrite(member, element);
+        addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(element));
+        addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(element));
       }
-      const member = `${owner}.${outputIndex++}`;
-      addDescriptorFactoryAliasWrite(member, element);
-      addDescriptorFactoryObjectMemberWrites(member, unwrapExpression(element));
-      addDescriptorFactoryArrayMemberWrites(member, unwrapExpression(element));
-    }
+      return outputIndex;
+    };
+    const length = appendElements(array, 0);
+    if (lengthKnown) descriptorFactoryArrayLengths.set(owner, length);
+    else descriptorFactoryArrayLengths.delete(owner);
   };
   const collectDescriptorFactoryAliases = (node) => {
     if (ts.isVariableDeclaration(node) && node.initializer) {
@@ -1486,11 +1528,49 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       addDescriptorFactoryBindingWrites(node.left, node.right);
       const member = staticDescriptorAliasReferenceKey(node.left);
       if (member) addDescriptorFactoryAliasWrite(member, node.right);
+      else {
+        const left = unwrapExpression(node.left);
+        if (ts.isElementAccessExpression(left)) {
+          const owner = staticDescriptorAliasReferenceKey(left.expression);
+          if (owner) addDescriptorFactoryDynamicMemberWrite(owner, node.right);
+        }
+      }
     }
     ts.forEachChild(node, collectDescriptorFactoryAliases);
   };
   collectDescriptorFactoryAliases(sourceFile);
-  const resolveDescriptorFactoryName = (name, visited = new Set()) => {
+  let resolveDescriptorFactoryName;
+  const returnedDescriptorFactoryExpression = (call, visited = new Set()) => {
+    const current = unwrapExpression(call);
+    if (!ts.isCallExpression(current)) return undefined;
+    let calledName = staticDescriptorAliasReferenceKey(current.expression);
+    if (!calledName && ts.isCallExpression(unwrapExpression(current.expression))) {
+      const returnedCallee = returnedDescriptorFactoryExpression(current.expression, visited);
+      calledName = returnedCallee ? staticDescriptorAliasReferenceKey(returnedCallee) : undefined;
+    }
+    if (!calledName || visited.has(`return:${calledName}`)) return undefined;
+    return descriptorFactoryReturnValues.get(calledName);
+  };
+  const resolveDescriptorFactoryExpression = (expression, visited = new Set()) => {
+    const current = unwrapExpression(expression);
+    const reference = staticDescriptorAliasReferenceKey(current);
+    if (reference) return resolveDescriptorFactoryName(reference, visited);
+    if (ts.isElementAccessExpression(current) && current.argumentExpression) {
+      const owner = staticDescriptorAliasReferenceKey(current.expression);
+      const member = staticMemberKey(current.argumentExpression);
+      const dynamicWrites = owner ? (descriptorFactoryDynamicMemberWrites.get(owner) ?? []) : [];
+      if (
+        member === '*' &&
+        dynamicWrites.some((write) => resolveDescriptorFactoryExpression(write, visited))
+      )
+        throw new Error(`descriptor wrapper dynamic member ${owner} cannot be proven statically`);
+    }
+    if (!ts.isCallExpression(current)) return undefined;
+    const returned = returnedDescriptorFactoryExpression(current, visited);
+    if (!returned) return undefined;
+    return resolveDescriptorFactoryExpression(returned, new Set(visited).add('return:call'));
+  };
+  resolveDescriptorFactoryName = (name, visited = new Set()) => {
     if (descriptorFactories.has(name) || unprovenDescriptorFactories.has(name)) return name;
     if (visited.has(name)) return undefined;
     const writes = descriptorFactoryAliasWrites.get(name) ?? [];
@@ -1527,15 +1607,9 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       if (target) resolved.add(target);
     }
     for (const write of writes) {
-      if (ts.isIdentifier(write)) {
-        const target = resolveDescriptorFactoryName(write.text, nextVisited);
-        if (target) resolved.add(target);
-        continue;
-      }
-      const reference = staticDescriptorAliasReferenceKey(write);
-      if (reference) {
-        const target = resolveDescriptorFactoryName(reference, nextVisited);
-        if (target) resolved.add(target);
+      const directTarget = resolveDescriptorFactoryExpression(write, nextVisited);
+      if (directTarget) {
+        resolved.add(directTarget);
         continue;
       }
       const referencedFactories = new Set();
@@ -1576,6 +1650,10 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     let calledName = staticDescriptorAliasReferenceKey(current.expression);
     let callArguments = [...current.arguments];
     let name = calledName ? resolveDescriptorFactoryName(calledName) : undefined;
+    if (!name) {
+      name = resolveDescriptorFactoryExpression(current.expression);
+      if (name) calledName = name;
+    }
     const invokedCallee = unwrapExpression(current.expression);
     if (
       !name &&
@@ -1619,6 +1697,15 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         if (name)
           callArguments = [...invokedCallee.arguments].slice(1).concat([...current.arguments]);
       }
+    }
+    if (!name && ts.isElementAccessExpression(invokedCallee)) {
+      const owner = staticDescriptorAliasReferenceKey(invokedCallee.expression);
+      const member = invokedCallee.argumentExpression
+        ? staticMemberKey(invokedCallee.argumentExpression)
+        : '*';
+      const dynamicWrites = owner ? (descriptorFactoryDynamicMemberWrites.get(owner) ?? []) : [];
+      if (member === '*' && dynamicWrites.some(expressionReferencesDescriptorFactory))
+        throw new Error(`descriptor wrapper dynamic member ${owner} cannot be proven statically`);
     }
     if (!name && current.arguments.some(expressionReferencesDescriptorFactory))
       throw new Error('descriptor wrapper callback target cannot be proven statically');

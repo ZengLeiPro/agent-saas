@@ -60,6 +60,7 @@ export function deriveSandboxScopeId(input: {
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
 }
 
+/** Explicit memory dispatches must not inherit an interactive replay source. */
 export function resolveSandboxWorkloadDescriptor(
   existing: SandboxWorkloadDescriptor | undefined,
   replay: SandboxWorkloadDescriptor | undefined,
@@ -67,7 +68,7 @@ export function resolveSandboxWorkloadDescriptor(
   toolProfile: unknown,
   channel: string,
 ): SandboxWorkloadDescriptor {
-  if (toolProfile === 'memory_consolidate') return { kind: 'memory' };
+  if (requested?.kind === 'memory' || toolProfile === 'memory_consolidate') return { kind: 'memory' };
   return existing ?? replay ?? requested ?? (toolProfile ? { kind: 'memory' } : channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
 }
 

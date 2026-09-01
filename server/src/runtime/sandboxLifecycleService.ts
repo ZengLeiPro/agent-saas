@@ -85,7 +85,13 @@ export class PgSandboxLifecycleStore {
         AND metadata->'sandboxWorkloadDescriptor'->>'kind' IN ('taskboard','cron','memory')
         AND COALESCE(metadata->'sandboxLifecycleOutbox'->>'state', 'pending') <> 'delivered'
         AND workspace_id IS NOT NULL AND sandbox_scope_id IS NOT NULL
-      ORDER BY updated_at ASC
+      ORDER BY COALESCE(
+        metadata->>'sandboxLifecycleTerminalAt',
+        completed_at::text,
+        failed_at::text,
+        cancelled_at::text,
+        updated_at::text
+      )::timestamptz ASC
       LIMIT $1
     `, [limit]);
     return result.rows.flatMap((row) => {
@@ -100,7 +106,8 @@ export class PgSandboxLifecycleStore {
         workspaceId: String(row.workspace_id), sandboxScopeId: String(row.sandbox_scope_id),
         status: status as LifecycleCandidate['status'],
         ...(typeof row.status_reason === 'string' ? { statusReason: row.status_reason } : {}),
-        terminalAt: String(row.completed_at ?? row.failed_at ?? row.cancelled_at ?? row.updated_at),
+        terminalAt: stringValue(metadata.sandboxLifecycleTerminalAt)
+          ?? String(row.completed_at ?? row.failed_at ?? row.cancelled_at ?? row.updated_at),
         ...(stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId) ? {
           targetHandId: stringValue(asRecord(metadata.sandboxLifecycleOutbox).targetHandId),
         } : {}),

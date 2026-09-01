@@ -37,12 +37,17 @@ function ref(name: string): SandboxRef {
   };
 }
 
-function finishBackground(child: ReturnType<typeof fakeChild>, taskId: string, protectedUntil: string): void {
+function finishBackground(
+  child: ReturnType<typeof fakeChild>,
+  taskId: string,
+  protectedUntil: string,
+  status = 'running',
+): void {
   child.stdout.end(`${JSON.stringify({
     kind: 'final',
     response: {
       status: 'success', content: '{}',
-      metadata: { backgroundShell: { taskId, status: 'running', protectedUntil } },
+      metadata: { backgroundShell: { taskId, status, protectedUntil } },
     },
   })}\n`);
   child.emit('close', 0, null);
@@ -64,7 +69,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     const executor = new AcsExecutor(
       baseConfig(), kubectl, sandboxManager, noopLogger, undefined, { persistentRunner: false },
     );
-    const protectedUntil = '2026-07-20T00:00:00.000Z';
+    const protectedUntil = '2099-07-20T00:00:00.000Z';
 
     const resultPromise = executor.execute({
       toolName: 'Shell',
@@ -86,7 +91,7 @@ describe('AcsExecutor background shell protection handoff', () => {
   it('falls back to the invocation lease and does not clear it when background protection fails', async () => {
     const sandboxRef = ref('as-background-fallback');
     const child = fakeChild();
-    const protectedUntil = '2026-07-20T00:10:00.000Z';
+    const protectedUntil = '2099-07-20T00:10:00.000Z';
     const setActiveInvocationLease = vi.fn(async () => undefined);
     const touch = vi.fn(async () => undefined);
     const warn = vi.fn();
@@ -126,10 +131,57 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('background_shell_protection_fallback'));
   });
 
+  it.each([
+    ['terminal BashOutput', { taskId: 'shell-bg-terminal', status: 'completed', protectedUntil: '2099-07-20T00:10:00.000Z' }],
+    ['aggregate reconcile', { activeTaskIds: ['shell-bg-other'], protectedUntil: '2099-07-20T00:10:00.000Z' }],
+  ])('preserves the invocation lease for %s when both protection writes fail', async (_case, backgroundShell) => {
+    const sandboxRef = ref(`as-background-${String(_case).replaceAll(' ', '-')}`);
+    const child = fakeChild();
+    const setActiveInvocationLease = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('lease CAS exhausted'));
+    const touch = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => sandboxRef,
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setActiveInvocationLease,
+      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+      touch,
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(),
+      { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager,
+      noopLogger,
+      undefined,
+      { persistentRunner: false },
+    );
+
+    const resultPromise = executor.execute({
+      toolName: _case === 'terminal BashOutput' ? 'BashOutput' : '__BackgroundShellReconcile',
+      input: {},
+      context: { invocationId: `inv-${_case}`, workspace: {
+        id: sandboxRef.workspaceId,
+        sessionId: sandboxRef.sessionId,
+        sandboxScopeId: sandboxRef.sandboxScopeId,
+      } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final',
+      response: { status: 'success', content: '{}', metadata: { backgroundShell } },
+    })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(resultPromise).rejects.toThrow(/保留现有 invocation lease/u);
+    expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
+    expect(touch).not.toHaveBeenCalled();
+  });
+
   it('preserves the existing invocation lease when both background protection writes fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();
-    const protectedUntil = '2026-07-20T00:10:00.000Z';
+    const protectedUntil = '2099-07-20T00:10:00.000Z';
     const setActiveInvocationLease = vi.fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('lease CAS exhausted'));

@@ -12,7 +12,7 @@ const row = {
   metadata: {},
 };
 
-describe('PgRunStore wakeMessage 生命周期', () => {
+describe('PgRunStore terminal metadata 生命周期', () => {
   it('markStatus 仅在终态合并 metadata 后原子移除 wakeMessage', async () => {
     const queries: Array<{ sql: string; params: unknown[] }> = [];
     const pool = {
@@ -29,12 +29,32 @@ describe('PgRunStore wakeMessage 生命周期', () => {
     });
 
     expect(queries[0].sql).toContain("WHEN $2::text IN ('completed','failed','cancelled','orphaned')");
-    expect(queries[0].sql).toContain("THEN (metadata || $5::jsonb) - 'wakeMessage'");
+    expect(queries[0].sql).toContain("THEN ((metadata || $5::jsonb) - 'wakeMessage') || jsonb_build_object(");
+    expect(queries[0].sql).toContain("metadata->>'sandboxLifecycleTerminalAt'");
+    expect(queries[0].sql).toContain("WHEN status = 'orphaned' THEN updated_at::text");
+    expect(queries[0].sql).toContain("WHEN status = $2 AND $2::text IN ('completed','failed','cancelled','orphaned') THEN updated_at");
     expect(queries[0].sql).toContain('ELSE metadata || $5::jsonb');
     expect(queries[0].params[1]).toBe('completed');
   });
 
-  it('releaseLease 和等待审批超时终态也移除 wakeMessage', async () => {
+  it('markStatusIfCurrent 也使用 write-once terminalAt', async () => {
+    const queries: string[] = [];
+    const pool = {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [{ row_json: row }] };
+      },
+    };
+    const store = new PgRunStore({ pool: pool as never });
+
+    await store.markStatusIfCurrent('run-1', ['running', 'completed'], 'completed', 'late');
+
+    expect(queries[0]).toContain("WHEN status = $3 AND $3::text IN ('completed','failed','cancelled','orphaned') THEN updated_at");
+    expect(queries[0]).toContain("metadata->>'sandboxLifecycleTerminalAt'");
+    expect(queries[0]).toContain("WHEN status = 'orphaned' THEN updated_at::text");
+  });
+
+  it('releaseLease 保留首次终态时间，等待审批超时终态也移除 wakeMessage', async () => {
     const queries: string[] = [];
     const pool = {
       query: async (sql: string) => {
@@ -47,7 +67,9 @@ describe('PgRunStore wakeMessage 生命周期', () => {
     await store.releaseLease('run-1', 'worker-1', 'failed', 'boom');
     await store.cancelStaleWaitingApproval('run-1', new Date(), 'timeout');
 
-    expect(queries[0]).toContain("THEN metadata - 'wakeMessage'");
+    expect(queries[0]).toContain("THEN (metadata - 'wakeMessage') || jsonb_build_object(");
+    expect(queries[0]).toContain("THEN metadata->>'sandboxLifecycleTerminalAt' END");
+    expect(queries[0]).toContain("THEN updated_at ELSE $5 END");
     expect(queries[1]).toContain("metadata = (metadata || $5::jsonb) - 'wakeMessage'");
   });
 

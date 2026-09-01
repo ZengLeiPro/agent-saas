@@ -51,14 +51,26 @@ export async function releaseRunLease(
                       THEN status_reason ELSE COALESCE($4, status_reason) END,
         worker_id = NULL,
         lease_expires_at = NULL,
-        updated_at = $5,
+        updated_at = CASE WHEN status IN ('completed','failed','cancelled','orphaned') THEN updated_at ELSE $5 END,
         completed_at = CASE WHEN $3 = 'completed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE completed_at END,
         failed_at = CASE WHEN $3 = 'failed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE failed_at END,
         cancelled_at = CASE WHEN $3 = 'cancelled' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE cancelled_at END,
         metadata = CASE
           WHEN status IN ('completed','failed','cancelled','orphaned')
             OR $3::text IN ('completed','failed','cancelled','orphaned')
-            THEN metadata - 'wakeMessage'
+            THEN (metadata - 'wakeMessage') || jsonb_build_object(
+              'sandboxLifecycleTerminalAt', COALESCE(
+                CASE WHEN status IN ('completed','failed','cancelled','orphaned')
+                  THEN metadata->>'sandboxLifecycleTerminalAt' END,
+                CASE
+                  WHEN status = 'completed' THEN completed_at::text
+                  WHEN status = 'failed' THEN failed_at::text
+                  WHEN status = 'cancelled' THEN COALESCE(cancelled_at::text, completed_at::text, failed_at::text)
+                  WHEN status = 'orphaned' THEN updated_at::text
+                END,
+                $5::text
+              )
+            )
           ELSE metadata
         END
     WHERE run_id = $1

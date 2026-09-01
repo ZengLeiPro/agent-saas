@@ -266,6 +266,7 @@ export class AcsExecutor {
     return { checked: sandboxes.length, failed };
   }
 
+  /** Persist workspace-level background protection before releasing the invocation lease. */
   private async applyBackgroundShellProtection(
     sandboxName: string,
     response: ToolInvocationResponse,
@@ -274,20 +275,36 @@ export class AcsExecutor {
   ): Promise<void> {
     const raw = response.metadata?.backgroundShell;
     if (!raw || typeof raw !== 'object') return;
-    const background = raw as { taskId?: unknown; status?: unknown; protectedUntil?: unknown };
+    const background = raw as {
+      taskId?: unknown;
+      status?: unknown;
+      protectedUntil?: unknown;
+      activeTaskIds?: unknown;
+    };
     const protectedUntil = typeof background.protectedUntil === 'string' ? background.protectedUntil : undefined;
-    const runningTask = typeof background.taskId === 'string'
-      && background.status === 'running' && protectedUntil !== undefined;
-    if (runningTask) state.preserveInvocationLease = true;
+    const protectedUntilMs = protectedUntil ? Date.parse(protectedUntil) : Number.NaN;
+    const activeTaskIds = Array.isArray(background.activeTaskIds)
+      ? background.activeTaskIds.filter((taskId): taskId is string => typeof taskId === 'string')
+      : [];
+    // protectedUntil is workspace-aggregate, including terminal BashOutput responses
+    // while another task remains active. Reconcile additionally provides activeTaskIds;
+    // an active list without a usable deadline must retain the invocation lease.
+    const aggregateProtectionActive = activeTaskIds.length > 0
+      || (Number.isFinite(protectedUntilMs) && protectedUntilMs > Date.now());
+    if (aggregateProtectionActive) state.preserveInvocationLease = true;
+    if (activeTaskIds.length > 0 && !(Number.isFinite(protectedUntilMs) && protectedUntilMs > Date.now())) {
+      this.logger.warn(`background_shell_protection_missing_deadline sandbox=${sandboxName}`);
+      return;
+    }
     try {
       await this.sandboxManager.setBackgroundShellProtection(sandboxName, protectedUntil);
-      if (runningTask) state.preserveInvocationLease = false;
+      if (aggregateProtectionActive) state.preserveInvocationLease = false;
     } catch (protectionError) {
-      if (!runningTask) throw protectionError;
+      if (!aggregateProtectionActive) throw protectionError;
       try {
         await this.sandboxManager.setActiveInvocationLease(sandboxName, leaseKey, protectedUntil);
         this.logger.warn(
-          `background_shell_protection_fallback sandbox=${sandboxName} task=${String(background.taskId)}`,
+          `background_shell_protection_fallback sandbox=${sandboxName} task=${String(background.taskId ?? activeTaskIds[0])}`,
         );
       } catch (leaseError) {
         throw new Error(

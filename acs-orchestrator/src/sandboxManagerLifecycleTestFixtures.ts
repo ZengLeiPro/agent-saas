@@ -3,6 +3,7 @@ import { vi } from 'vitest';
 import { SANDBOX_NETWORK_CLEANUP_FINALIZER } from './sandboxDeletion.js';
 import { SandboxManager } from './sandboxManager.js';
 
+/** Rebuilds a persisted final read, including transient broken-state evidence. */
 export function mockCurrentSandboxStatusReads(manager: SandboxManager): void {
   const getStatus = manager.getStatus.bind(manager);
   vi.spyOn(manager, 'getStatus').mockImplementation(async (name) => {
@@ -22,7 +23,20 @@ export function mockCurrentSandboxStatusReads(manager: SandboxManager): void {
             'agent-saas.kaiyan.net/workload-descriptor': JSON.stringify({ class: workloadClass }),
           },
         },
-        status: { phase: sandbox.phase ?? 'Unknown' },
+        ...(sandbox.brokenReason === 'requested_running'
+          ? { spec: { paused: false } }
+          : sandbox.brokenReason === 'image_changed' ? { spec: { paused: true } } : {}),
+        status: {
+          phase: sandbox.phase ?? 'Unknown',
+          ...(sandbox.brokenReason === 'image_changed' || sandbox.brokenReason === 'requested_running' ? {
+            conditions: [{
+              type: 'SandboxPaused', status: 'False',
+              reason: sandbox.brokenReason === 'image_changed' ? 'ImageChanged' : 'RequestedRunning',
+              ...(sandbox.pausedConditionChangedAt
+                ? { lastTransitionTime: sandbox.pausedConditionChangedAt } : {}),
+            }],
+          } : {}),
+        },
       },
     };
   });

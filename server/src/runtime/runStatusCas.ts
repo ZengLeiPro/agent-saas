@@ -21,14 +21,37 @@ export async function markRunStatus(
       UPDATE ${store.runsTable}
       SET status = $2,
           status_reason = $3,
-          updated_at = $4,
+          updated_at = CASE
+            WHEN status = $2 AND $2::text IN ('completed','failed','cancelled','orphaned') THEN updated_at
+            ELSE $4
+          END,
           started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN $4 ELSE started_at END,
-          completed_at = CASE WHEN $2 = 'completed' THEN $4 ELSE completed_at END,
-          failed_at = CASE WHEN $2 = 'failed' THEN $4 ELSE failed_at END,
-          cancelled_at = CASE WHEN $2 = 'cancelled' THEN $4 ELSE cancelled_at END,
+          completed_at = CASE
+            WHEN $2 = 'completed' THEN COALESCE(completed_at, CASE WHEN status = 'completed' THEN updated_at END, $4)
+            ELSE completed_at
+          END,
+          failed_at = CASE
+            WHEN $2 = 'failed' THEN COALESCE(failed_at, CASE WHEN status = 'failed' THEN updated_at END, $4)
+            ELSE failed_at
+          END,
+          cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(cancelled_at, $4) ELSE cancelled_at END,
           metadata = CASE
             WHEN $2::text IN ('completed','failed','cancelled','orphaned')
-              THEN (metadata || $5::jsonb) - 'wakeMessage'
+              THEN ((metadata || $5::jsonb) - 'wakeMessage') || jsonb_build_object(
+                'sandboxLifecycleTerminalAt', COALESCE(
+                  CASE
+                    WHEN status IN ('completed','failed','cancelled','orphaned')
+                      THEN metadata->>'sandboxLifecycleTerminalAt'
+                  END,
+                  CASE
+                    WHEN status = 'completed' THEN completed_at::text
+                    WHEN status = 'failed' THEN failed_at::text
+                    WHEN status = 'cancelled' THEN COALESCE(cancelled_at::text, completed_at::text, failed_at::text)
+                    WHEN status = 'orphaned' THEN updated_at::text
+                  END,
+                  $4::text
+                )
+              )
             ELSE metadata || $5::jsonb
           END
       WHERE run_id = $1
@@ -59,14 +82,37 @@ export async function markRunStatusIfCurrent(
     UPDATE ${store.runsTable}
     SET status = $3,
         status_reason = $4,
-        updated_at = $5,
+        updated_at = CASE
+          WHEN status = $3 AND $3::text IN ('completed','failed','cancelled','orphaned') THEN updated_at
+          ELSE $5
+        END,
         started_at = CASE WHEN $3 = 'running' AND started_at IS NULL THEN $5 ELSE started_at END,
-        completed_at = CASE WHEN $3 = 'completed' THEN $5 ELSE completed_at END,
-        failed_at = CASE WHEN $3 = 'failed' THEN $5 ELSE failed_at END,
-        cancelled_at = CASE WHEN $3 = 'cancelled' THEN $5 ELSE cancelled_at END,
+        completed_at = CASE
+          WHEN $3 = 'completed' THEN COALESCE(completed_at, CASE WHEN status = 'completed' THEN updated_at END, $5)
+          ELSE completed_at
+        END,
+        failed_at = CASE
+          WHEN $3 = 'failed' THEN COALESCE(failed_at, CASE WHEN status = 'failed' THEN updated_at END, $5)
+          ELSE failed_at
+        END,
+        cancelled_at = CASE WHEN $3 = 'cancelled' THEN COALESCE(cancelled_at, $5) ELSE cancelled_at END,
         metadata = CASE
           WHEN $3::text IN ('completed','failed','cancelled','orphaned')
-            THEN (metadata || $6::jsonb) - 'wakeMessage'
+            THEN ((metadata || $6::jsonb) - 'wakeMessage') || jsonb_build_object(
+              'sandboxLifecycleTerminalAt', COALESCE(
+                CASE
+                  WHEN status IN ('completed','failed','cancelled','orphaned')
+                    THEN metadata->>'sandboxLifecycleTerminalAt'
+                END,
+                CASE
+                  WHEN status = 'completed' THEN completed_at::text
+                  WHEN status = 'failed' THEN failed_at::text
+                  WHEN status = 'cancelled' THEN COALESCE(cancelled_at::text, completed_at::text, failed_at::text)
+                  WHEN status = 'orphaned' THEN updated_at::text
+                END,
+                $5::text
+              )
+            )
           ELSE metadata || $6::jsonb
         END
     WHERE run_id = $1

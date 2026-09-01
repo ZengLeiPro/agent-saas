@@ -13,7 +13,7 @@ const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 if (!testPgUrl) console.warn('[sandboxScopeActivity.pg] SKIPPED: TEST_DATABASE_URL is not configured');
 
-describePg('Sandbox lifecycle PostgreSQL contract', () => {
+describePg('Sandbox lifecycle PostgreSQL ordering contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let runStore: PgRunStore;
@@ -165,6 +165,75 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
     await expect(rebuilt.listCleanupCandidates()).resolves.not.toEqual(expect.arrayContaining([
       expect.objectContaining({ runId: 'takeover-run-1' }),
     ]));
+  });
+
+  it.each(['completed', 'failed', 'cancelled', 'orphaned'] as const)(
+    '同终态 %s 重写保留首次 lifecycle terminalAt',
+    async (status) => {
+      const runId = `write-once-${status}`;
+      await runStore.upsertPending({
+        runId,
+        sessionId: `session-${runId}`,
+        tenantId: 'tenant-1',
+        workspaceId: 'workspace-write-once',
+        sandboxScopeId: `scope-${runId}`,
+        metadata: {
+          sandboxWorkloadTopLevel: true,
+          sandboxWorkloadDescriptor: { kind: 'memory' },
+        },
+      });
+      await runStore.markStatus(runId, status, 'first');
+      const store = new PgSandboxLifecycleStore(
+        pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+      );
+      const first = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === runId);
+      expect(first).toBeDefined();
+
+      await pool.query('SELECT pg_sleep(0.01)');
+      await runStore.markStatus(runId, status, 'late-rewrite', { lateRewrite: true });
+      const rewritten = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === runId);
+
+      expect(rewritten?.terminalAt).toBe(first?.terminalAt);
+      const row = await runStore.get(runId);
+      expect(row).toMatchObject({ status, statusReason: 'late-rewrite', metadata: { lateRewrite: true } });
+    },
+  );
+
+  it('A 的迟到同终态重写不会越过同 scope 较新的 B 终态', async () => {
+    const scope = 'scope-terminal-order';
+    await runStore.upsertPending({
+      runId: 'terminal-a', sessionId: 'terminal-a-session', tenantId: 'tenant-1',
+      workspaceId: 'workspace-terminal-order', sandboxScopeId: scope, metadata: {
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: { kind: 'cron' },
+      },
+    });
+    await runStore.upsertPending({
+      runId: 'terminal-b', sessionId: 'terminal-b-session', tenantId: 'tenant-1',
+      workspaceId: 'workspace-terminal-order', sandboxScopeId: scope,
+      metadata: {
+        sandboxWorkloadTopLevel: true,
+        sandboxWorkloadDescriptor: { kind: 'cron' },
+        topLevelSessionId: 'terminal-a-session',
+      },
+    });
+    await runStore.markStatus('terminal-a', 'completed', 'first-terminal');
+    const store = new PgSandboxLifecycleStore(
+      pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
+    );
+    const firstA = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === 'terminal-a');
+    expect(firstA).toBeDefined();
+
+    await pool.query('SELECT pg_sleep(0.01)');
+    await runStore.markStatus('terminal-b', 'completed', 'newer-terminal');
+    const terminalB = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === 'terminal-b');
+    expect(terminalB).toBeDefined();
+    await pool.query('SELECT pg_sleep(0.01)');
+    await runStore.markStatus('terminal-a', 'completed', 'late-rewrite');
+    const rewrittenA = (await store.listTerminalCandidates()).find((candidate) => candidate.runId === 'terminal-a');
+
+    expect(rewrittenA?.terminalAt).toBe(firstA?.terminalAt);
+    expect(Date.parse(rewrittenA!.terminalAt)).toBeLessThan(Date.parse(terminalB!.terminalAt));
   });
 
   it('terminal outbox 的 target hand 经真实 PostgreSQL 持久化，store 重建后不随 rollout 漂移', async () => {

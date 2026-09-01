@@ -21,6 +21,21 @@ async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEv
   return events;
 }
 
+function completedResponse(responseId: string, content: string): Response {
+  const frame = (eventName: string, payload: unknown) => (
+    `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`
+  );
+  const body = [
+    frame('response.created', { type: 'response.created', response: { id: responseId } }),
+    frame('response.output_text.delta', { type: 'response.output_text.delta', delta: content }),
+    frame('response.completed', {
+      type: 'response.completed',
+      response: { id: responseId, status: 'completed', usage: { input_tokens: 4, output_tokens: 1 } },
+    }),
+  ].join('');
+  return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+}
+
 class NaturalCompletionAdapter implements ModelAdapter {
   calls = 0;
   requests: ModelRequest[] = [];
@@ -32,7 +47,7 @@ class NaturalCompletionAdapter implements ModelAdapter {
   }
 }
 
-describe('RawAgentLoop taskboard retry transaction', () => {
+describe('RawAgentLoop taskboard completion transaction', () => {
   const cleanupDirs = new Set<string>();
 
   afterEach(async () => {
@@ -150,6 +165,50 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     ]);
   });
 
+  it('新建路径的 stored Responses 控制轮强制完整 replay 后继续', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-responses-finish-gate-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-taskboard-responses-finish-gate';
+    const runId = 'run-taskboard-responses-finish-gate';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(completedResponse('resp_finish_gate_1', '首次返回'))
+      .mockResolvedValueOnce(completedResponse('resp_finish_gate_2', '显式交接后返回'));
+    let transitioned = false;
+    const loop = new RawAgentLoop({
+      modelAdapter: new ResponsesApiAdapter(
+        { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+        { protocol: 'responses' },
+      ),
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '完成任务' },
+      prompt: '完成任务', instructions: '必须显式交接。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' },
+      checkSuccessfulCompletion: async () => transitioned
+        ? { action: 'allow' }
+        : (transitioned = true, { action: 'continue', prompt: '隐藏 Responses finish 提示' }),
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(firstBody.previous_response_id).toBeUndefined();
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.instructions).toContain('隐藏 Responses finish 提示');
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(JSON.stringify(outbound)).not.toContain('隐藏 Responses finish 提示');
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(JSON.stringify(durable)).not.toContain('隐藏 Responses finish 提示');
+  });
+
   it('新建路径未显式 finish 时注入隐藏提示并在同一 Run 继续', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-finish-gate-'));
     cleanupDirs.add(cwd);
@@ -186,6 +245,60 @@ describe('RawAgentLoop taskboard retry transaction', () => {
       expect.objectContaining({ subtype: 'success' }),
     ]);
     expect(JSON.stringify(durable)).not.toContain('隐藏 finish 提示');
+  });
+
+  it('resume 路径的 stored Responses 控制轮强制完整 replay 后继续', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-responses-finish-resume-'));
+    cleanupDirs.add(cwd);
+    await writeFile(join(cwd, 'seed.txt'), 'OK', 'utf-8');
+    const sessionId = 'session-taskboard-responses-finish-resume';
+    const runId = 'run-taskboard-responses-finish-resume';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID);
+    await eventStore.appendBatch([
+      { type: 'user_message', runId, sessionId, content: '读取文件' },
+      {
+        type: 'assistant_tool_calls', runId, sessionId, content: '',
+        toolCalls: [{ id: 'call-responses-resume-read', name: 'Read', arguments: '{"path":"seed.txt"}' }],
+      },
+    ], { tenantId: DEFAULT_TENANT_ID });
+    const approval = await approvalStore.create({
+      sessionId, runId, toolCallId: 'call-responses-resume-read', toolId: 'Read', toolName: 'Read',
+      input: { path: 'seed.txt' },
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(completedResponse('resp_finish_resume_1', '读取完成'))
+      .mockResolvedValueOnce(completedResponse('resp_finish_resume_2', '交接完成'));
+    let transitioned = false;
+    const loop = new RawAgentLoop({
+      modelAdapter: new ResponsesApiAdapter(
+        { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+        { protocol: 'responses' },
+      ),
+      eventStore,
+      approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const outbound = await collect(loop.resumeApproval({
+      approvalId: approval.id, response: { allow: true }, instructions: '读取后显式交接。', maxTurns: 1,
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' }, approvalPolicy: { autoApproveTools: true },
+      checkSuccessfulCompletion: async () => transitioned
+        ? { action: 'allow' }
+        : (transitioned = true, { action: 'continue', prompt: '隐藏 Responses resume 提示' }),
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(secondBody.previous_response_id).toBeUndefined();
+    expect(secondBody.instructions).toContain('隐藏 Responses resume 提示');
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    expect(JSON.stringify(outbound)).not.toContain('隐藏 Responses resume 提示');
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(JSON.stringify(durable)).not.toContain('隐藏 Responses resume 提示');
   });
 
   it('恢复路径未显式 finish 时同样继续原 Run', async () => {

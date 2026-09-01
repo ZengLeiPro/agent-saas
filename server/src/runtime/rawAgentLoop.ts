@@ -1003,10 +1003,8 @@ export class RawAgentLoop implements AgentLoop {
     // safe boundary 在上一轮收尾/工具后完成 reserve+apply 时，把通知归属带到下一模型轮次。
     let carriedBoundaryInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
 
-    // RFC v1 P0.4：跨 run 接力 Responses API session state。
-    // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
-    // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
-    // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
+    // RFC v1 P0.4：跨 run 接力 Responses API session state；启动时读取 72h 内的 last_response_id。
+    // ChatCompletionsAdapter 不消费 previousResponseId；dispatcher 已按 protocol 路由 adapter。
     const usesStoredResponseState = !context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
@@ -1427,7 +1425,7 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         // RFC v1 P0.4：每轮持久化 Responses API session state。
-        // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
+        // currentResponseId 供同 run 下一轮及跨 run 接力。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
           await this.clearResponseSessionStateForRepair(context.runId, context.sessionId);
@@ -1656,6 +1654,7 @@ export class RawAgentLoop implements AgentLoop {
             }
           }
           if (await successfulCompletion.check(context, messages, assistantContent)) {
+            currentResponseId = undefined;
             textStarted = false;
             if (turn >= turnLimit) turnLimit += 1;
             continue;
@@ -3672,6 +3671,7 @@ export class RawAgentLoop implements AgentLoop {
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
           if (await successfulCompletion.check(args.context, args.messages, assistantContent)) {
+            currentResponseId = undefined;
             textStarted = false;
             if (turn >= turnLimit) turnLimit += 1;
             continue;

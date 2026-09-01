@@ -46,8 +46,7 @@ import {
   createContextCitationsRouter,
   createContextAdminRouter,
 } from '../routes/index.js';
-import { createAuthRouter } from '../routes/auth.js';
-import { createAuthConnectionCapabilityRouter } from '../routes/authConnectionCapabilities.js';
+import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
 import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js';
 import { requireAdmin } from '../auth/middleware.js';
@@ -846,65 +845,24 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         return archivePersonalWorkspace(agentCwd, user, jobId, relativePaths);
       },
     });
-    app.use(
-      '/api/auth',
-      createAuthRouter({ // shared HTTP/WS auth epoch authority
-        userStore: runtime.userStore,
-        tenantStore: runtime.tenantStore,
-        jwtSecret: config.auth.jwtSecret,
-        tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
-        avatarsDir,
-        loginLogFilePath,
-        agentCwd,
-        sharedDir,
-        tenantSkillsRootDir,
-        onUserDisabled: async (userId: string) => {
-          const disabledUser = userStore.findById(userId);
-          if (disabledUser) await terminateAndRevokeUserConnectors(disabledUser);
-        },
-        onUserTenantChanging: terminateAndRevokeUserConnectors,
-        skillConfigStore: runtime.skillConfigStore,
-        onUserDeleting: async (target) => {
-          await Promise.all([
-            terminateAndRevokeUserConnectors(target),
-            cronRuntime.service?.removeByOwners([target.id]),
-          ]);
-        },
-        mcpOAuthService: runtime.mcpOAuthService,
-        signupConfigStore: runtime.signupConfigStore,
-        secretVault: runtime.secretVault,
-        getModelsConfig: () => config.models,
-        runStore: runtime.runtimeRunStore,
-        authEpochAuthority: runtime.authEpochAuthority,
-        onAuthFenced: async (userId, reason) => { // login also evicts older WS generations
-          webChannel?.disconnectUser(userId);
-          if (reason === 'revoke' || reason === 'delete_account') {
-            const user = userStore.findById(userId);
-            if (user) await terminateAndRevokeUserConnectors(user);
-          }
-        },
-        legacyWriteGate,
-      }),
-    );
-    app.use('/api/auth', createAuthConnectionCapabilityRouter({
-      providerConfigured: (provider, operation) => operation === 'auth'
-        ? provider === 'password'
-        : provider === 'google-workspace'
-          ? Boolean(runtime.googleWorkspaceOAuthService && runtime.oauthGrantStore)
-          : Boolean(runtime.mcpOAuthService && runtime.mcpConfigStore?.getServer(provider)),
-      credentialState: (req, provider) => {
-        if (provider !== 'google-workspace' || !runtime.googleWorkspaceOAuthService || !req.user) return 'not_applicable';
-        return runtime.googleWorkspaceOAuthService.connectionView(req.user.sub, req.user.username, req.user.tenantId).status === 'connected'
-          ? 'valid' : 'missing';
-      },
-      tenantAllowed: (req, provider, operation) => {
-        if (operation === 'auth' || provider === 'google-workspace') return true;
-        return runtime.tenantStore?.getSettings(req.user!.tenantId)?.features.mcpEnabled ?? false;
-      },
-      callbackDomainConfigured: channel => channel === 'web' || Boolean(nativeOAuthHandoff),
-      ssoAvailable: provider => provider === 'password',
-      serverDegraded: () => channelManager.draining,
-    }));
+    registerAuthConnectionRoutes({
+      app,
+      runtime,
+      jwtSecret: config.auth.jwtSecret,
+      tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
+      avatarsDir,
+      loginLogFilePath,
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+      terminateAndRevokeUserConnectors,
+      disconnectWebUser: (userId) => webChannel?.disconnectUser(userId),
+      removeCronsByOwners: cronRuntime.service
+        ? (ownerIds) => cronRuntime.service!.removeByOwners(ownerIds)
+        : undefined,
+      nativeOAuthHandoffAvailable: Boolean(nativeOAuthHandoff),
+      legacyWriteGate,
+    });
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
     // 放行；enabled 开关与频控在 router 内收口。配置走 SignupConfigStore 动态读
     // （platform-admin「注册管理」页可改，改完下一请求即生效，无需重启）。

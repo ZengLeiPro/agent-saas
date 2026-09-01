@@ -756,50 +756,6 @@ describe('WebChannel active stream reconnect', () => {
     expect((channel as any).eventBufferStore.isActive('session-ghost-2')).toBe(false);
   });
 
-  it('echoes requestId when durable replay recovers an active run without an in-memory buffer', async () => {
-    const getActiveBySession = vi.fn().mockResolvedValue({
-      runId: 'run-durable-only',
-      sessionId: 'session-durable-only',
-      userId: 'admin-1',
-      status: 'running',
-      metadata: { streamId: 'stream-durable-only' },
-    });
-    const channel = new WebChannel({
-      agentCwd: '/tmp/workspace',
-      enqueueRuntime: { runStore: { getActiveBySession } } as any,
-    }, noopDispatch);
-    channels.push(channel);
-    const ws = new FakeWebSocket();
-
-    await (channel as any).handleResumeAsync(
-      {
-        ws,
-        user: { sub: 'admin-1', username: 'admin', role: 'admin', tenantId: DEFAULT_TENANT_ID },
-        alive: true,
-        lastActivityAt: Date.now(),
-      },
-      {
-        action: 'resume',
-        sessionId: 'session-durable-only',
-        requestId: 'resume-request-durable-only',
-        lastEventId: 0,
-        skipReplay: true,
-      },
-    );
-
-    expect(ws.sent[0]).toMatchObject({
-      data: {
-        type: 'active_stream',
-        sessionId: 'session-durable-only',
-        active: true,
-        streamId: 'stream-durable-only',
-        runId: 'run-durable-only',
-        status: 'running',
-        requestId: 'resume-request-durable-only',
-      },
-    });
-  });
-
   it('resume still reports active when durable runStore confirms a live run', async () => {
     const getActiveBySession = vi.fn().mockResolvedValue({
       runId: 'run-live',

@@ -21,6 +21,7 @@ import { saveUserPreferences } from "@agent/shared";
 import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import { useChatRightPanelController } from "./useChatRightPanelController";
+import { getDesktopHeaderTitle } from "./desktopHeaderTitle";
 import { useAuth } from "@/contexts/AuthContext";
 const AnalysisWorkspaceContent = lazy(() => import("@/components/AnalysisWorkspaceContent").then(m => ({ default: m.AnalysisWorkspaceContent })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
@@ -171,25 +172,16 @@ export function DesktopLayout(props: LayoutProps) {
   const [cronHeaderNavigationTarget, setCronHeaderNavigationTarget] = useState<HTMLDivElement | null>(null);
   const [cronHeaderActionsTarget, setCronHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
-  // Header 标题：根据 activeTab 动态显示
-  const headerTitle = useMemo(() => {
-    if (activeTab === "profile") return "我的 Agent";
-    if (activeTab === "capabilities") return "能力中心";
-    if (activeTab === "scenarios") return "任务模板";
-    if (activeTab === "cron") return "任务中心";
-    if (activeTab === "tenants") return "组织分析";
-    if (activeTab === "tenant-admin") return "组织分析";
-    if (activeTab === "platform-admin") return "平台分析";
-    if (activeTab === "skills") return "技能管理";
-    if (activeTab === "usage") return "Token 用量";
-    if (activeTab === "mcp") return "MCP 配置";
-    if (activeTab === "models") return "模型管理";
-    if (activeTab === "trash") return "回收站";
-    if (isTrashPreview) return "回收站预览";
-    const sessionTitle = sidebarSessions.find(s => s.id === sessionId)?.title;
-    if (sessionTitle && activeAgentTargetLabel) return `${sessionTitle} · ${activeAgentTargetLabel}`;
-    return sessionTitle || activeAgentTargetLabel || activeOrgAgent?.name || (orgAgentIdentityLoading ? "企业专家" : agentProfile?.name) || "KY Agent";
-  }, [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
+  const headerTitle = useMemo(() => getDesktopHeaderTitle({
+    activeTab,
+    isTrashPreview,
+    sidebarSessions,
+    sessionId,
+    activeAgentTargetLabel,
+    activeOrgAgent,
+    orgAgentIdentityLoading,
+    agentProfile,
+  }), [activeTab, isTrashPreview, sidebarSessions, sessionId, activeAgentTargetLabel, activeOrgAgent, agentProfile, orgAgentIdentityLoading]);
 
   // mount-once-visited：首次切换到 tab 后永久挂载
   const [cronMounted, setCronMounted] = useState(false);

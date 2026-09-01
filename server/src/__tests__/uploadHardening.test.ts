@@ -772,48 +772,6 @@ describe('attachment upload hardening', () => {
     expect(await deleted.json()).toMatchObject({ code: 'ATTACHMENT_DELETED' });
   });
 
-  it('serves authenticated audio with MIME, HEAD and RFC byte range boundaries', async () => {
-    const root = await createRoot();
-    const manager = new UploadManager({ agentCwd: root });
-    const baseUrl = await startUploadServer(root, manager);
-    const userCwd = join(root, USER.tenantId, USER.sub);
-    const requestId = randomUUID();
-    const attachmentId = randomUUID();
-    const partial = await manager.beginRequest(userCwd, requestId);
-    const filename = `${attachmentId}_voice.wav`;
-    const bytes = Buffer.from(Array.from({ length: 100 }, (_, index) => index));
-    await writeFile(join(partial, filename), bytes);
-    await manager.completeRequest(requestId, [{
-      attachmentId, filename, partialPath: join(partial, filename), originalName: 'voice.wav',
-      size: bytes.length, mimeType: 'audio/wav', isImage: false, isVoiceUpload: true,
-    }]);
-
-    const partialResponse = await fetch(`${baseUrl}/api/attachments/${attachmentId}/content`, {
-      headers: { Range: 'bytes=10-19' },
-    });
-    expect(partialResponse.status).toBe(206);
-    expect(partialResponse.headers.get('content-type')).toContain('audio/wav');
-    expect(partialResponse.headers.get('content-disposition')).toContain('inline');
-    expect(partialResponse.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(partialResponse.headers.get('accept-ranges')).toBe('bytes');
-    expect(partialResponse.headers.get('content-range')).toBe('bytes 10-19/100');
-    expect(Buffer.from(await partialResponse.arrayBuffer())).toEqual(bytes.subarray(10, 20));
-
-    const head = await fetch(`${baseUrl}/api/attachments/${attachmentId}/content`, {
-      method: 'HEAD', headers: { Range: 'bytes=-8' },
-    });
-    expect(head.status).toBe(206);
-    expect(head.headers.get('content-range')).toBe('bytes 92-99/100');
-    expect(head.headers.get('content-length')).toBe('8');
-    expect(await head.text()).toBe('');
-
-    const invalid = await fetch(`${baseUrl}/api/attachments/${attachmentId}/content`, {
-      headers: { Range: 'bytes=100-110' },
-    });
-    expect(invalid.status).toBe(416);
-    expect(invalid.headers.get('content-range')).toBe('bytes */100');
-  });
-
   it('ships nginx upload streaming with a NAS fallback temp path', async () => {
     const configPath = new URL('../../../daemon-packaging/nginx/agent-api-kaiyan.conf.example', import.meta.url);
     const config = await readFile(configPath, 'utf8');

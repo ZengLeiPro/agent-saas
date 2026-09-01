@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, Ban } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -16,15 +16,18 @@ import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
 import { extractTextFromChildren, getTableCellStyle } from '@/lib/tableCellWidth';
-import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, selectErrorPresentation, selectRenderModel, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
+import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { MessageCitationCard } from './MessageCitationCard';
 import { MessageFeedbackButton } from './MessageFeedback';
 import { GuardrailAppealButton } from './GuardrailAppealButton';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
-import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
+import {
+  SystemErrorMessage,
+} from './SystemErrorMessage';
+
 import { ImageLightbox } from './ImageLightbox';
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 // react-markdown 懒加载：不阻塞首屏渲染，模块加载后立即可用
@@ -1084,55 +1087,16 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
-  // Tool/error raw payloads are rendered only after the shared three-gate presenter authorizes them.
+  // Tool/error raw payloads render only after the shared three-gate presenter authorizes them.
   if (message.type === "system-error") {
-    const item = selectRenderModel({ messages: [message] }).items[0];
-    const presentation = selectErrorPresentation(item, rawPresentationMode ? {
-      debugBuild: true,
-      authenticatedAdmin: true,
-      explicitSessionToggle: true,
-    } : undefined);
-    const recovery = presentation.recoveryAction;
-    // Typed recovery actions must never fall through to blind retry.
-    const recoveryHandler = recovery?.kind === 'view_billing'
-      ? requestOpenBillingBadge
-      : recovery?.kind === 'switch_model'
-        ? onSwitchModel
-        : recovery?.kind === 'retry' && onRetry
-          ? () => onRetry(message)
-          : undefined;
     return (
-      <div
-        className={cn(
-          "rounded-xl border px-4 py-3 text-sm shadow-sm",
-          presentation.tone === 'danger'
-            ? "border-destructive/25 bg-destructive/5 text-foreground"
-            : "border-border bg-muted/30 text-muted-foreground",
-        )}
-        role={presentation.tone === 'danger' ? 'alert' : 'status'}
-        aria-label={[presentation.title, presentation.statusLabel, presentation.summary, recovery?.label].filter(Boolean).join('，')}
-      >
-        <div className="flex items-start gap-3">
-          <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <div className="min-w-0 flex-1">
-            <div className="font-semibold">{presentation.title}</div>
-            <div className="mt-1 whitespace-pre-wrap break-words">{presentation.summary ?? presentation.statusLabel}</div>
-            {presentation.showRaw && presentation.summary !== message.content && (
-              <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs">{message.content}</pre>
-            )}
-            {!isLoading && recovery && recoveryHandler && (
-              <button
-                type="button"
-                onClick={recoveryHandler}
-                className="mt-2 min-h-11 rounded-md px-3 text-xs font-medium ring-1 ring-border transition-colors hover:bg-muted"
-                aria-label={`${presentation.title}，${recovery.label}`}
-              >
-                {recovery.label}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
+      <SystemErrorMessage
+        message={message}
+        isLoading={isLoading}
+        rawPresentationMode={rawPresentationMode}
+        onRetry={onRetry}
+        onSwitchModel={onSwitchModel}
+      />
     );
   }
 

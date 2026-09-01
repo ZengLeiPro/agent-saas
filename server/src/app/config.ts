@@ -23,6 +23,7 @@ import { SYSTEM_PROMPT_IDS } from '../systemPrompts/types.js';
 import { sttConfigSchema, sttPricingSchema } from './sttConfigSchema.js';
 import { runtimeSchedulerConfigSchema } from './runtimeSchedulerConfigSchema.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
+import { ttsConfigSchema } from './ttsConfigSchema.js';
 const agentPermissionModeSchema = z.enum([
   'default',
   'acceptEdits',
@@ -205,15 +206,6 @@ const webPushConfigSchema = z.object({
   }
 });
 
-const ttsConfigSchema = z.object({
-  /** Fail closed in every environment; credentials alone never enable synthesis. */
-  enabled: z.boolean().default(false),
-  doubaoAppId: z.string(),
-  doubaoApiKey: z.string(),
-  doubaoCluster: z.string().optional(),
-  defaultVoice: z.string().optional(),
-  defaultSpeed: z.number().positive().optional(),
-});
 const webDisplayConfigSchema = z.object({
   thinking: z.boolean().optional(),
   toolInput: z.boolean().optional(),

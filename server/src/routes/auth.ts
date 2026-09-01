@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { Router, type RequestHandler } from "express";
-import jwt, { type SignOptions } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 import multer from "multer";
 import { z } from "zod";
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
@@ -23,7 +23,6 @@ import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import {
   DEFAULT_TENANT_ID,
-  DEFAULT_TENANT_SETTINGS,
   TENANT_SLUG_PATTERN,
 } from "../data/tenants/types.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
@@ -53,6 +52,7 @@ import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
 import { softDeleteUserResources } from "../data/users/cleanup.js";
 import type { McpOAuthService } from "../mcp/oauthService.js";
 import { ALLOWED_AVATAR_TYPES, buildAvatarUrl } from './authAvatar.js';
+import { createAuthResponseHelpers } from './authResponse.js';
 import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authLegacyWriteGate.js';
 import { startLoginRateCleanup, type RateBucket } from './authLoginRate.js';
 
@@ -316,72 +316,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     return creator ? creator.username : createdBy;
   }
 
-  function tenantFeatures(tenantId: string | undefined) {
-    return (
-      tenantStore?.getSettings(tenantId || DEFAULT_TENANT_ID)?.features ??
-      DEFAULT_TENANT_SETTINGS.features
-    );
-  }
-
-  /**
-   * 解析所属组织的人类可读名称（前端左下角头像行展示）。
-   * 组织不存在（极端配置）时回退 tenantId slug；tenantStore 未提供时返回 undefined。
-   */
-  function resolveTenantName(tenantId: string | undefined): string | undefined {
-    if (!tenantStore) return undefined;
-    const id = tenantId || DEFAULT_TENANT_ID;
-    return tenantStore.findById(id)?.name ?? id;
-  }
-
-  function buildAuthResponse(user: UserRecord) {
-    const tenantId = user.tenantId || DEFAULT_TENANT_ID;
-    const binding = deps.authEpochAuthority?.issueLogin(user.id);
-    const authPayload: JwtPayload = {
-      sub: user.id,
-      username: user.username,
-      role: user.role,
-      tenantId,
-      platformCapabilities: user.platformCapabilities,
-      platformCapabilityLimits: user.platformCapabilityLimits,
-    };
-    const token = jwt.sign(
-      {
-        sub: user.id,
-        username: user.username,
-        role: user.role,
-        tenantId,
-        ...(binding ?? {}),
-      },
-      jwtSecret,
-      { expiresIn: tokenExpiresIn } as SignOptions,
-    );
-    return {
-      token,
-      ...(binding ?? {}),
-      user: {
-        id: user.id,
-        ...(binding ?? {}),
-        username: user.username,
-        role: user.role,
-        tenantId,
-        tenantName: resolveTenantName(tenantId),
-        // 兼容旧客户端字段；所有平台管理员均返回 true。
-        isSuperAdmin: isSuperAdmin(authPayload),
-        platformCapabilities: getEffectivePlatformCapabilities(authPayload),
-        platformCapabilityLimits: user.platformCapabilityLimits,
-        realName: user.realName,
-        position: user.position,
-        phone: user.phone,
-        phoneVerifiedAt: user.phoneVerifiedAt,
-        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
-        avatarVersion: user.avatarVersion,
-        debugMode: user.debugMode === true
-          && isDebugModeAvailable(user.tenantId, tenantFeatures(user.tenantId)),
-        tenantFeatures: tenantFeatures(tenantId),
-        preferences: user.preferences ?? {},
-      },
-    };
-  }
+  const { buildAuthResponse, resolveTenantName, tenantFeatures } = createAuthResponseHelpers({
+    tenantStore,
+    jwtSecret,
+    tokenExpiresIn,
+    authEpochAuthority: deps.authEpochAuthority,
+  });
 
   interface SmsLoginRuntime {
     version: number;

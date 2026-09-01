@@ -135,7 +135,7 @@ import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from '
 import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
-import { LifecycleRecoveryRequestLedger } from './lifecycleRecoveryProtocol.js';
+import { getRuntimeStreamStatus, handleRuntimeStreamSocketClose, WebRuntimeRecovery } from './runtimeRecovery.js';
 export type { ModelResolver } from './channelConfig.js';
 
 /**
@@ -260,44 +260,13 @@ export class WebChannel implements BaseChannel {
     return undefined;
   }
 
-  /**
-   * 查询指定会话是否有活跃的 Agent 流。
-   *
-   * 事实源选择：主查 durable PG `runStore.getActiveBySession()`（run 是否活着的唯一真相）;
-   * `EventBufferStore` 只是内存传输缓存，进程重启/buffer 被 evict 都会丢，**不能**承担判活职责。
-   * 仅当 runStore 不可用或异常时退化看 buffer 信号。
-   *
-   * 这是 2026-06-25 "切会话后看不到积压消息" 问题的根因之一：原实现只看 buffer.isActive,
-   * buffer 在 chat 流结束后会 `complete` 但 PG run 仍可能 active（多 turn 场景）,导致 HTTP
-   * 误报 inactive,前端连锁忽略 active_stream 兜底,刷新才能看到新消息。
-   */
   async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
-    try {
-      const runStore = this.config.enqueueRuntime?.runStore;
-      if (runStore?.getActiveBySession) {
-        const activeRun = await runStore.getActiveBySession(sessionId);
-        if (activeRun) {
-          const streamId = this.findActiveStreamIdBySession(sessionId)
-            ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
-          return {
-            active: true,
-            ...(streamId ? { streamId } : {}),
-            runId: activeRun.runId,
-            status: activeRun.status,
-            liveness: projectRunLiveness(activeRun),
-          };
-        }
-        // runStore 明确说没在跑 → 即使 buffer 还 active 也按 runStore 为准
-        return { active: false };
-      }
-    } catch (err) {
-      chatLogger.warn(`[stream-status] runStore.getActiveBySession 异常,降级查 buffer: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    // 兜底：runStore 不可用时退化看 buffer
-    const active = this.eventBufferStore.isActive(sessionId);
-    if (!active) return { active: false };
-    const streamId = this.findActiveStreamIdBySession(sessionId);
-    return { active: true, ...(streamId ? { streamId } : {}) };
+    return getRuntimeStreamStatus(
+      sessionId,
+      this.config.enqueueRuntime?.runStore,
+      this.eventBufferStore,
+      (id) => this.findActiveStreamIdBySession(id),
+    );
   }
   private streamIdCounter = 0;
   private eventBufferStore = new EventBufferStore();
@@ -423,20 +392,13 @@ export class WebChannel implements BaseChannel {
       : '该企业专家当前不可用，请联系组织管理员';
   }
 
-  private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
-  /**
-   * 按 ws 串行化 resume 处理链。handleResumeAsync 内部有 await（runStore.getActiveBySession），
-   * 两条并发 resume（如前端重连时多个监听器各发一次）会在 await 处交错：都读到空的 prevUnsub，
-   * 都 eventBufferStore.subscribe，第二个 resumeSubscriptions.set 覆盖第一个的退订句柄，第一个
-   * EventBuffer listener 泄漏且无法退订 → 每个流式事件被投递两次（前端表现为逐字符重复）。
-   * 串行化保证后一条 resume 一定读到前一条已注册的订阅并先退订，同一 ws 只保留一个 listener。
-   */
-  private resumeChains = new WeakMap<WebSocket, Promise<void>>();
   /**
    * 追踪每个 WS 连接当前绑定的 streamId。
    * 用于防止用户切换会话后，旧会话的 handleEvents 继续向同一 WS 直接推送事件。
    * 事件仍会写入 EventBuffer，用户切回时通过 resume + replay 获取。
    */
+  private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
+  private resumeChains = new WeakMap<WebSocket, Promise<void>>();
   private wsActiveStream = new WeakMap<WebSocket, string>();
   /**
    * WS → 当前查看会话的亲和映射（chat accept / resume 设置，detach 清除）。
@@ -444,41 +406,14 @@ export class WebChannel implements BaseChannel {
    * 用户切去别的会话后，退化 run 的接管不应劫持新会话视图的流绑定。
    */
   private wsSessionAffinity = new WeakMap<WebSocket, string>();
-  /** Per-connection network fence; auth generation is independently enforced by WsServer. */
-  private lifecycleRecoveryLedgers = new WeakMap<WebSocket, LifecycleRecoveryRequestLedger>();
-
-  private admitLifecycleRecoveryRequest(client: WsClient, msg: WsResumeMessage | WsSyncMessage | WsQueueSnapshotMessage | WsAttachActiveStreamMessage): boolean {
-    if (!msg.requestId || msg.networkGeneration === undefined) return true; // N-1 compatibility
-    let ledger = this.lifecycleRecoveryLedgers.get(client.ws);
-    if (!ledger) {
-      ledger = new LifecycleRecoveryRequestLedger();
-      this.lifecycleRecoveryLedgers.set(client.ws, ledger);
-    }
-    const admission = ledger.admit({ requestId: msg.requestId, networkGeneration: msg.networkGeneration });
-    if (admission.status !== 'stale_generation') return true; // duplicate reads are safe and converge
-    this.wsSend(client.ws, {
-      type: 'recovery_rejected',
-      requestId: msg.requestId,
-      reason: 'stale_network_generation',
-      latestNetworkGeneration: admission.latestNetworkGeneration,
-    });
-    return false;
-  }
-
+  private readonly runtimeRecovery: WebRuntimeRecovery;
   private handleActiveStreamSocketClose(
     streamId: string,
     ws: WebSocket,
     connectionAbortController: AbortController,
     activeInteractionIds: Set<string>,
   ): void {
-    const entry = this.activeStreams.get(streamId);
-    // 断线不删除 activeStreams：Agent 可能仍在跑，重连 resume 需要同一个 streamId。
-    // 最终清理由 processChatMessage.finally 负责。
-    if (entry && entry.ws === ws) {
-      this.wsActiveStream.delete(ws);
-    }
-    connectionAbortController.abort();
-    interactionStore.rejectOnDisconnect(activeInteractionIds, 'WebSocket connection closed');
+    handleRuntimeStreamSocketClose(this.activeStreams.get(streamId)?.ws, ws, this.wsActiveStream, connectionAbortController, activeInteractionIds);
   }
 
   /** per-session 串行锁：确保同一 session 的 Agent run 不会并发执行 */
@@ -518,6 +453,25 @@ export class WebChannel implements BaseChannel {
     this.displayConfig = getWebDisplayConfig(config.displayConfig);
     this.modelResolver = config.modelResolver;
     this.userStore = config.userStore;
+    this.runtimeRecovery = new WebRuntimeRecovery({
+      config,
+      eventBufferStore: this.eventBufferStore,
+      wsActiveStream: this.wsActiveStream,
+      resumeSubscriptions: this.resumeSubscriptions,
+      resumeChains: this.resumeChains,
+      wsSessionAffinity: this.wsSessionAffinity,
+      getWsServer: () => this.wsServer,
+      getActiveStream: (streamId) => this.activeStreams.get(streamId),
+      findActiveStreamIdBySession: (sessionId) => this.findActiveStreamIdBySession(sessionId),
+      findActiveStreamByRunId: (runId) => this.findActiveStreamByRunId(runId),
+      sensitiveActionAccessError: (client, target) => this.sensitiveActionAccessError(client, target),
+      anonymousBindingAccessError: (client, ws) => this.anonymousBindingAccessError(client, ws),
+      eventStoreTenantForClient: (client, tenantId, userId) => this.eventStoreTenantForClient(client, tenantId, userId),
+      wsSend: (ws, data, eventId, eventCursor) => this.wsSend(ws, data, eventId, eventCursor),
+      sendQueueSnapshot: (client, sessionId, recovery) => this.sendQueueSnapshot(client, sessionId, recovery),
+      getStreamStatus: (sessionId) => this.getStreamStatus(sessionId),
+      getRuntimeEventStoreForSession: (sessionId, tenantId) => this.getRuntimeEventStoreForSession(sessionId, tenantId),
+    });
     // 定期清理 stale session locks，防止异常路径导致的 Map 泄漏
     this.lockCleanupTimer = setInterval(() => {
       const now = Date.now();
@@ -582,23 +536,23 @@ export class WebChannel implements BaseChannel {
           void this.handleRunStatus(client, msg);
           break;
         case 'resume':
-          if (this.admitLifecycleRecoveryRequest(client, msg)) this.handleResume(client, msg);
+          if (this.runtimeRecovery.admitRequest(client, msg)) this.runtimeRecovery.handleResume(client, msg);
           break;
         case 'queue_snapshot':
-          if (!this.admitLifecycleRecoveryRequest(client, msg)) break;
+          if (!this.runtimeRecovery.admitRequest(client, msg)) break;
           void this.sendQueueSnapshot(client, msg.sessionId, msg).catch((err) => {
             chatLogger.warn(`[queue_snapshot] recovery failed: ${err instanceof Error ? err.message : String(err)}`);
           });
           break;
         case 'attach_active_stream':
-          if (this.admitLifecycleRecoveryRequest(client, msg)) this.handleResume(client, msg, true);
+          if (this.runtimeRecovery.admitRequest(client, msg)) this.runtimeRecovery.handleResume(client, msg, true);
           break;
         case 'detach':
-          this.handleDetach(client);
+          this.runtimeRecovery.handleDetach(client);
           break;
         case 'sync':
-          if (!this.admitLifecycleRecoveryRequest(client, msg)) break;
-          void this.handleSync(client, msg).catch((err) => {
+          if (!this.runtimeRecovery.admitRequest(client, msg)) break;
+          void this.runtimeRecovery.handleSync(client, msg).catch((err) => {
             chatLogger.warn(`[sync] authoritative recovery failed: ${err instanceof Error ? err.message : String(err)}`);
           });
           break;
@@ -2123,440 +2077,29 @@ export class WebChannel implements BaseChannel {
     await eventStore.append(event, { tenantId });
   }
 
-  /** 处理 resume 消息（替代 GET /api/chat/stream/:sessionId） */
   private handleResume(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot = false): void {
-    // 串行化同一 ws 上的 resume，避免并发 handleResumeAsync 在 await 处交错导致
-    // 双 EventBuffer listener 泄漏、每个流式事件被投递两次（详见 resumeChains 注释）。
-    const ws = client.ws;
-    const run = () => this.handleResumeAsync(client, msg, skipQueueSnapshot);
-    const pending = this.resumeChains.get(ws);
-    // 无在途 resume → 同步启动，保持单条 resume 的同步语义（回放/订阅在本 tick 生效）；
-    // 有在途 resume → 串到其后执行，后一条一定能读到前一条已注册的订阅并先退订。
-    const next = pending ? pending.then(run, run) : run();
-    this.resumeChains.set(ws, next);
-    // handleResumeAsync 内部已容错；此处仅防 unhandled rejection 断链。
-    void next.catch(() => { /* noop */ });
+    this.runtimeRecovery.handleResume(client, msg, skipQueueSnapshot);
   }
 
-  private async handleResumeAsync(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot: boolean): Promise<void> {
-    const { sessionId: sid, requestId, networkGeneration, lastEventId, lastEventCursor, skipReplay } = msg;
-    this.wsSessionAffinity.set(client.ws, sid);
-    if (!skipQueueSnapshot) {
-      await this.sendQueueSnapshot(client, sid, { requestId, networkGeneration }).catch((error) => {
-        chatLogger.warn(`[resume] queue snapshot failed session=${sid}: ${error instanceof Error ? error.message : String(error)}`);
-      });
-    }
-
-    const prevUnsub = this.resumeSubscriptions.get(client.ws);
-    if (prevUnsub) {
-      prevUnsub();
-      this.resumeSubscriptions.delete(client.ws);
-    }
-
-    const bufferEntry = this.eventBufferStore.get(sid);
-    const activeStreamId = this.findActiveStreamIdBySession(sid);
-    const activeEntry = activeStreamId ? this.activeStreams.get(activeStreamId) : undefined;
-    const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
-    // durable runStore 是判活真源；buffer 只负责传输与同进程 WS 绑定。
-    let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
-    let durableBinding: ResumeDurableBinding | undefined;
-    if (bufferActive) {
-      try {
-        const runStore = this.config.enqueueRuntime?.runStore;
-        if (runStore?.getActiveBySession) durableBinding = await resolveResumeDurableBinding(
-          runStore.getActiveBySession.bind(runStore),
-          sid,
-          (run) => this.eventStoreTenantForClient(client, run.tenantId, run.userId) ?? undefined,
-        );
-        if (durableBinding?.active === false) {
-          this.eventBufferStore.complete(sid);
-          bufferActive = false;
-        }
-      } catch (err) {
-        chatLogger.warn(`[resume] runStore.getActiveBySession 异常,降级信 buffer: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (!bufferEntry || !bufferActive) {
-      const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
-        requestId, networkGeneration, lastEventId, lastEventCursor, skipReplay: skipReplay === true,
-      });
-      if (!durableActive) this.wsSend(client.ws, {
-        type: 'active_stream', sessionId: sid, active: false,
-        ...(requestId ? { requestId } : {}),
-        ...(networkGeneration !== undefined ? { networkGeneration } : {}),
-      });
-      const pendingAccessError = bufferEntry?.userId
-        ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
-        : this.anonymousBindingAccessError(client, activeEntry?.ws);
-      if (bufferEntry && !pendingAccessError) await this.pushPendingInteractions(client, sid);
-      return;
-    }
-
-    const bufferAccessError = durableBinding?.active && !durableBinding.accessError ? null
-      : bufferEntry.userId ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
-      : this.anonymousBindingAccessError(client, activeEntry?.ws);
-    if (durableBinding?.accessError || bufferAccessError) {
-      this.wsSend(client.ws, {
-        type: 'active_stream', sessionId: sid, active: false,
-        ...(requestId ? { requestId } : {}),
-        ...(networkGeneration !== undefined ? { networkGeneration } : {}),
-      });
-      return;
-    }
-    const resumeStreamId = activeStreamId ?? durableBinding?.streamId;
-    const resumeRunId = activeEntry?.runId ?? durableBinding?.runId;
-    if (resumeStreamId) {
-      this.wsActiveStream.set(client.ws, resumeStreamId);
-    }
-
-    this.wsSend(client.ws, {
-      type: 'active_stream',
-      sessionId: sid,
-      active: true,
-      streamId: resumeStreamId,
-      ...(resumeRunId ? { runId: resumeRunId } : {}),
-      status: durableBinding?.status ?? 'running',
-      ...(durableBinding?.liveness ? { liveness: durableBinding.liveness } : {}),
-      ...(requestId ? { requestId } : {}),
-      ...(networkGeneration !== undefined ? { networkGeneration } : {}),
-    });
-
-    const alreadyDirectBound = Boolean(
-      activeStreamId
-      && activeEntry?.ws === client.ws
-      && this.wsActiveStream.get(client.ws) === activeStreamId,
-    );
-    if (alreadyDirectBound) {
-      await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
-      return;
-    }
-
-    // buffer id 只在当前实例有效；durable cursor 用于跨实例增量回放。
-    // 无游标时跳过全量回放，避免与客户端 transcript 快照重复。
-    const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
-    const hasAnyCursor = hasBufferCursor || Boolean(lastEventCursor);
-    if (!skipReplay && !hasAnyCursor) {
-      chatLogger.warn(`[resume] replay requested without any cursor session=${sid}; skipping full replay to avoid duplicate content`);
-    }
-    let subscribeAfterId = resumeBufferBoundary;
-    let durableReplayCursor: string | undefined;
-    if (!skipReplay && hasAnyCursor) {
-      if (!hasBufferCursor && lastEventCursor) {
-        // The boundary was captured before async status lookup. Events pushed while either
-        // status lookup or durable replay is in flight are recovered by subscribeFrom below.
-        const tenantId = durableBinding?.tenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
-        const store = tenantId ? await this.getRuntimeEventStoreForSession(sid, tenantId) : null;
-        if (store) {
-          durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
-            lastEventCursor, activeRunId: resumeRunId ?? '', tenantId,
-          });
-        }
-      } else {
-        const result = this.eventBufferStore.getEventsAfter(sid, lastEventId);
-        subscribeAfterId = lastEventId;
-        if (result) {
-          if (result.gapDetected) {
-            this.wsSend(client.ws, { type: 'buffer_overflow' });
-          }
-          for (const evt of result.events) {
-            if (client.ws.readyState !== client.ws.OPEN) break;
-            try {
-              const data = JSON.parse(evt.data);
-              this.wsSend(client.ws, data, evt.id, evt.eventCursor);
-            } catch { /* skip */ }
-            subscribeAfterId = evt.id;
-          }
-        }
-      }
-    }
-    // Atomically recover the replay→subscribe window and subscribe to future events.
-    const unsubscribe = this.eventBufferStore.subscribeFrom(
-      sid,
-      subscribeAfterId,
-      (event) => {
-        if (
-          durableReplayCursor
-          && event.eventCursor
-          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
-        ) return;
-        if (client.ws.readyState === client.ws.OPEN) {
-          try {
-            const data = JSON.parse(event.data);
-            this.wsSend(client.ws, data, event.id, event.eventCursor);
-          } catch { /* skip */ }
-        }
-      },
-      () => {
-        // Agent 完成； subscribeFrom may invoke this synchronously before returning null.
-        this.resumeSubscriptions.delete(client.ws);
-      },
-    );
-
-    if (unsubscribe) {
-      this.resumeSubscriptions.set(client.ws, unsubscribe);
-    }
-    // 仅首次 resume 注册 close listener（旧订阅存在说明已注册过）
-    if (!prevUnsub) {
-      client.ws.on('close', () => {
-        const closeSub = this.resumeSubscriptions.get(client.ws);
-        if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
-      });
-    }
-
-    await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
+  private handleResumeAsync(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot: boolean): Promise<void> {
+    return this.runtimeRecovery.handleResumeAsync(client, msg, skipQueueSnapshot);
   }
 
-  private async tryReplayDurableRuntimeEvents(
+  private getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
+    return this.runtimeRecovery.getRuntimeEventStoreForSession(sessionId, tenantId);
+  }
+
+  private replayDurableRuntimeEvents(
     client: WsClient,
     sessionId: string,
-    options: { requestId?: string; networkGeneration?: number; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
-  ): Promise<boolean> {
-    const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore) return false;
-    const activeRun = await runStore.getActiveBySession?.(sessionId);
-    if (!activeRun) return false;
-    const active = this.findActiveStreamByRunId(activeRun.runId);
-    const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)
-      ? this.sensitiveActionAccessError(client, { tenantId: activeRun.tenantId, ownerUserId: activeRun.userId })
-      : this.anonymousBindingAccessError(client, active?.entry.sessionId === sessionId ? active.entry.ws : undefined);
-    if (accessError) return false;
-    const tenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId);
-    if (!tenantId) return false;
-    const streamId = typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : activeRun.runId;
-    this.eventBufferStore.create(sessionId, activeRun.userId);
-    this.wsActiveStream.set(client.ws, streamId);
-    this.wsSend(client.ws, {
-      type: 'active_stream',
-      sessionId,
-      active: true,
-      streamId,
-      runId: activeRun.runId,
-      status: activeRun.status,
-      liveness: projectRunLiveness(activeRun),
-      ...(options.requestId ? { requestId: options.requestId } : {}),
-      ...(options.networkGeneration !== undefined ? { networkGeneration: options.networkGeneration } : {}),
-    });
-    // Capture before durable awaits so subscribeFrom recovers the replay window.
-    const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
-    let durableReplayCursor: string | undefined;
-    if (!options.skipReplay) {
-      const store = await this.getRuntimeEventStoreForSession(sessionId, tenantId);
-      if (store) {
-        durableReplayCursor = await this.replayDurableRuntimeEvents(client, sessionId, store, {
-          ...options, activeRunId: activeRun.runId, tenantId,
-        });
-      }
-    }
-    const unsubscribe = this.eventBufferStore.subscribeFrom(
-      sessionId,
-      subscribeAfterId,
-      (event) => {
-        if (
-          durableReplayCursor
-          && event.eventCursor
-          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
-        ) return;
-        if (client.ws.readyState === client.ws.OPEN) {
-          try { this.wsSend(client.ws, JSON.parse(event.data), event.id, event.eventCursor); } catch { /* skip */ }
-        }
-      },
-      () => {
-        // subscribeFrom may complete synchronously and return null; never install a noop.
-        this.resumeSubscriptions.delete(client.ws);
-      },
-    );
-    if (unsubscribe) this.resumeSubscriptions.set(client.ws, unsubscribe);
-    client.ws.once('close', () => {
-      const closeSub = this.resumeSubscriptions.get(client.ws);
-      if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
-    });
-    await this.pushPendingInteractions(client, sessionId, tenantId);
-    return true;
-  }
-
-  private async getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
-    if (!this.config.runtimeEventStoreFor) return null;
-    const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
-    return this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId);
-  }
-
-  private async replayDurableRuntimeEvents(
-    client: WsClient,
-    sessionId: string, store: EventStore,
+    store: EventStore,
     options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string; tenantId?: string },
   ): Promise<string | undefined> {
-    const tenantId = options.tenantId ?? this.eventStoreTenantForClient(client); if (!tenantId) return undefined;
-    let replayId = options.lastEventId ?? 0;
-    let replayedCursor = options.lastEventCursor;
-    const hasDurableCursor = Boolean(options.lastEventCursor);
-    const streamStates = new Map<string, RuntimeStreamProjectionState>();
-    // ws-only 接管时预热 cursor 前的投影状态，但不重发已在 DOM 的 batch。
-    if (hasDurableCursor && options.lastEventCursor && store.listByRun) {
-      const priorRunEvents = await store.listByRun(tenantId, sessionId, options.activeRunId);
-      for (const event of priorRunEvents) {
-        if (event.type !== 'assistant_stream_event') continue;
-        const eventCursor = getDurableEventCursor(event);
-        if (!eventCursor || !isDurableCursorAtOrBefore(eventCursor, options.lastEventCursor)) continue;
-        projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates });
-      }
-    }
-    if (store.listPage) {
-      let cursor: string | undefined = hasDurableCursor ? options.lastEventCursor : undefined;
-      while (true) {
-        const page = await store.listPage(tenantId, sessionId, {
-          afterCursor: cursor,
-          limit: 200,
-          // durable cursor 是会话级游标；没有游标时绝不能从会话开头回放，
-          // 否则重连会把历次 Agent 回复全部追加到当前消息流。
-          ...(!hasDurableCursor ? { runId: options.activeRunId } : {}),
-        });
-        for (const event of page.events) {
-          const eventCursor = getDurableEventCursor(event);
-          const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
-          for (const [index, data] of frames.entries()) {
-            replayId += 1;
-            const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
-            // replayId is synthetic, not an EventBuffer ID. Once the client has a durable
-            // cursor, attaching replayId would let a later resume accidentally enter the
-            // in-memory buffer-cursor path.
-            this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
-          }
-          // Do not cover buffered events with this cursor until every projected frame sent.
-          if (eventCursor) replayedCursor = eventCursor;
-        }
-        if (!page.hasMore || !page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-      return replayedCursor;
-    }
-    // 兼容没有分页能力的自定义 EventStore，同样把最坏影响限制在当前 run。
-    const events = store.listByRun
-      ? await store.listByRun(tenantId, sessionId, options.activeRunId)
-      : (await store.list(tenantId, sessionId)).filter(
-          (event) => 'runId' in event && event.runId === options.activeRunId,
-        );
-    for (const event of events) {
-      const eventCursor = getDurableEventCursor(event);
-      const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
-      for (const [index, data] of frames.entries()) {
-        replayId += 1;
-        const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
-        if (replayId > (options.lastEventId ?? 0)) {
-          this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
-        }
-      }
-      if (eventCursor) replayedCursor = eventCursor;
-    }
-    return replayedCursor;
+    return this.runtimeRecovery.replayDurableRuntimeEvents(client, sessionId, store, options);
   }
 
-  /** 处理 detach 消息：后台/切换会话时仅解绑传输，不取消已有 run。 */
-  private handleDetach(client: WsClient): void {
-    // 清除 WS 活跃流绑定，阻止旧会话的 handleEvents/hooks send 继续向此 WS 直接推送
-    this.wsActiveStream.delete(client.ws);
-    this.wsSessionAffinity.delete(client.ws);
-    const prevUnsub = this.resumeSubscriptions.get(client.ws);
-    if (prevUnsub) {
-      prevUnsub();
-      this.resumeSubscriptions.delete(client.ws);
-    }
-  }
-
-  /** 处理 sync 消息：断线重连时回放漏掉的元数据事件。 */
-  private async handleSync(client: WsClient, msg: WsSyncMessage): Promise<void> {
-    const userId = client.user?.sub;
-    if (!userId || !this.wsServer) return;
-
-    const eventLog = this.wsServer.userEventLog;
-    const epoch = eventLog.getEpoch(userId);
-    const currentSeq = eventLog.getCurrentSeq(userId);
-    const correlation = {
-      ...(msg.requestId ? { requestId: msg.requestId } : {}),
-      ...(msg.networkGeneration !== undefined ? { networkGeneration: msg.networkGeneration } : {}),
-    };
-    if (this.wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
-      this.wsSend(client.ws, {
-        ...buildSyncOverflowFrame(
-          currentSeq,
-          epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
-        ),
-        ...correlation,
-      });
-      return;
-    }
-
-    const result = eventLog.getEventsAfter(userId, msg.lastSeq);
-    if (result.gapDetected) {
-      this.wsSend(client.ws, {
-        ...buildSyncOverflowFrame(
-          currentSeq,
-          epoch,
-          await this.buildAuthoritativeSyncSessionSnapshot(client, msg.sessionId),
-        ),
-        ...correlation,
-      });
-    } else {
-      this.wsSend(client.ws, {
-        type: 'sync_ok',
-        seq: currentSeq,
-        epoch,
-        events: result.events,
-        ...correlation,
-      });
-    }
-  }
-
-  private async buildAuthoritativeSyncSessionSnapshot(
-    client: WsClient,
-    requestedSessionId?: string,
-  ): Promise<SyncSessionSnapshot | undefined> {
-    const sessionId = requestedSessionId ?? this.wsSessionAffinity.get(client.ws);
-    if (!sessionId) return undefined;
-    const snapshot: SyncSessionSnapshot = { sessionId };
-    const runStore = this.config.enqueueRuntime?.runStore;
-    if (runStore?.listUserMessagesBySession) {
-      const runs = await runStore.listUserMessagesBySession(sessionId);
-      const first = runs[0];
-      if (first && this.sensitiveActionAccessError(client, {
-        tenantId: first.tenantId,
-        ownerUserId: first.userId,
-      })) return undefined;
-      snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
-    }
-    snapshot.runtime = await this.getStreamStatus(sessionId);
-    snapshot.pendingInteractions = await this.getAuthoritativePendingInteractions(
-      client,
-      sessionId,
-      client.user?.tenantId,
-    );
-    return snapshot;
-  }
-
-  private async getAuthoritativePendingInteractions(
-    client: WsClient,
-    sessionId: string,
-    tenantId?: string,
-  ): Promise<SyncPendingInteractionSnapshot[]> {
-    const pending = interactionStore.getPendingInteractions(sessionId);
-    const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
-    if (ownerIds.size > 1) return [];
-    const ownerUserId = this.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
-    const scopedTenantId = tenantId ?? this.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
-    if (this.config.runtimeEventStoreFor && !scopedTenantId) return [];
-    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
-    const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
-    const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
-
-    const recovered = scanBufferForPendingInteractions(this.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
-    if (recovered.length > 0) unresolved.push(...recovered);
-    return unresolved;
-  }
-
-  private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    const unresolved = await this.getAuthoritativePendingInteractions(client, sessionId, tenantId);
-    // Resume preserves N-1 frame ordering when empty; sync snapshots still carry authoritative [].
-    if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', sessionId, interactions: unresolved });
+  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
+    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId);
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────

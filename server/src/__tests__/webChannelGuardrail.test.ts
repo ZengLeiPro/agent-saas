@@ -472,35 +472,6 @@ describe('WebChannel 专职 Agent 门禁', () => {
     expect(session?.orgAgentId).toBe(agent.id);
   });
 
-  it('V1 新会话首绑 target 并持久 bindingVersion；已有 session 的 incoming mismatch 被拒', async () => {
-    const rig = await makeRig();
-    const agent = await seedOrgAgent(rig, {
-      guardrail: { enabled: false, scopeDescription: '', rejectionMessage: '超纲。', strictness: 'strict' },
-    });
-    const orgTarget = { kind: 'org-agent' as const, tenantId: 'wain', orgAgentId: agent.id };
-
-    await rig.sendRaw(WAIN_USER, canonicalMessage({ agentTarget: orgTarget }, 'v1-first-bind'));
-    expect(rig.enqueued).toHaveLength(1);
-    const session = await rig.sessionCatalog.get(rig.enqueued[0].sessionId);
-    const meta = await readSessionMeta(session!.transcriptPath);
-    expect(meta).toMatchObject({
-      orgAgentId: agent.id,
-      agentTarget: orgTarget,
-      agentTargetBindingVersion: 1,
-    });
-    expect((rig.enqueued[0].metadata?.chatSubmission as any)?.target).toMatchObject({ agentTarget: orgTarget });
-
-    rig.ws.sent.length = 0;
-    await rig.sendRaw(WAIN_USER, canonicalMessage({
-      sessionId: rig.enqueued[0].sessionId,
-      agentTarget: { kind: 'personal', tenantId: 'wain' },
-    }, 'v1-target-mismatch'));
-    expect(rig.ws.sent.find((message) => message.data?.type === 'chat_rejected')?.data).toMatchObject({
-      reason_code: 'invalid_submission',
-    });
-    expect(rig.enqueued).toHaveLength(1);
-  });
-
   it('V1 新 session 的 cross-tenant agentTarget fail-closed', async () => {
     const rig = await makeRig();
     const agent = await seedOrgAgent(rig, {

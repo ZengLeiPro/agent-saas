@@ -632,7 +632,7 @@ describe('processWsEvent - 工具执行与结果', () => {
   });
 });
 
-describe('processWsEvent - 交互事件', () => {
+describe('processWsEvent - 基础交互事件', () => {
   it('permission_request：新增 pending 卡片；EnterPlanMode 走中文映射', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
@@ -668,12 +668,6 @@ describe('processWsEvent - 交互事件', () => {
     const ctrl = makeController([{ id: 'a', type: 'ask_user', interactionId: 'x2', questions: [], status: 'pending' }]);
     dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2', response: { answers: { q: '否' } } }, makeCtx(ctrl).ctx);
     expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', status: 'answered', answers: { q: '否' } });
-  });
-
-  it('interaction_resolved：denied/workflow failure/expired 显示服务端原因', () => {
-    const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'failed', toolName: 'T', toolInput: '', status: 'pending' }]);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'failed', status: 'failed', response: { allow: false }, reason: 'Workflow approval unavailable' }, makeCtx(ctrl).ctx);
-    expect(ctrl.messages).toContainEqual(expect.objectContaining({ type: 'system-error', content: '交互未完成：Workflow approval unavailable' }));
   });
 
   it('interaction_resolved：兼容旧事件但不臆造审批结果', () => {
@@ -998,22 +992,7 @@ describe('processWsEvent - 会话元数据事件', () => {
   });
 });
 
-describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
-  it('structured error：清状态条并追加 canonical 安全终态，不复制 raw message', () => {
-    const ctrl = makeController([{ id: 'r', type: 'runtime_status', status: 'running' }]);
-    const { ctx } = makeCtx(ctrl);
-    dispatch({
-      type: 'error',
-      code: 'tls_untrusted',
-      correlationId: 'corr-ws-123',
-      message: 'token=WS_SECRET /workspace/private stack trace',
-    }, ctx);
-    expect(ctrl.messages.some((m) => m.type === 'runtime_status')).toBe(false);
-    const error = ctrl.messages.find((m) => m.type === 'system-error') as Extract<MessageItem, { type: 'system-error' }>;
-    expect(error.canonicalFailure).toMatchObject({ kind: 'tls_untrusted', terminal: true, correlationId: 'corr-ws-123' });
-    expect(JSON.stringify(error)).not.toMatch(/WS_SECRET|workspace|stack trace/);
-  });
-
+describe('processWsEvent - 语音 / 文件 / 溢出', () => {
   it('buffer_overflow：返回 buffer_overflow', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);

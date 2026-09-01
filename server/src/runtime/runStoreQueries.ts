@@ -4,6 +4,7 @@ import { markRunStatusIfCurrent } from './runStatusCas.js';
 import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
 import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
+import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 
 /** SQL implementation for authoritative Runtime Run state. */
 export class PgRunStoreQueries {
@@ -738,23 +739,7 @@ export class PgRunStoreQueries {
     now = new Date(),
     source: RunHeartbeatSource = 'worker',
   ): Promise<RunRecord | null> {
-    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET lease_expires_at = GREATEST(COALESCE(lease_expires_at, '-infinity'::timestamptz), $3::timestamptz),
-          last_heartbeat_at = GREATEST(COALESCE(last_heartbeat_at, '-infinity'::timestamptz), $4::timestamptz),
-          liveness_state = 'busy',
-          liveness_reason_code = $5,
-          liveness_detected_at = CASE WHEN liveness_state IS DISTINCT FROM 'busy' THEN $4::timestamptz ELSE liveness_detected_at END,
-          liveness_version = COALESCE(liveness_version, 0) + 1,
-          updated_at = GREATEST(updated_at, $4::timestamptz)
-      WHERE run_id = $1
-        AND worker_id = $2
-        AND status = 'running'
-        AND liveness_state IS DISTINCT FROM 'stale'
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, leaseExpiresAt, now.toISOString(), `heartbeat_${source}`]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return renewRunLease(this, runId, workerId, leaseMs, now, source);
   }
 
   async markLivenessStale(
@@ -763,109 +748,11 @@ export class PgRunStoreQueries {
     reasonCode: string,
     now = new Date(),
   ): Promise<RunRecord | null> {
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET liveness_state = 'stale',
-          liveness_reason_code = $3,
-          liveness_detected_at = $4::timestamptz,
-          liveness_version = COALESCE(liveness_version, 0) + 1,
-          updated_at = GREATEST(updated_at, $4::timestamptz)
-      WHERE run_id = $1
-        AND worker_id = $2
-        AND status = 'running'
-        AND liveness_version IS NOT NULL
-        AND liveness_state = 'busy'
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, reasonCode, now.toISOString()]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return markRunLivenessStale(this, runId, workerId, reasonCode, now);
   }
 
   async reapExpiredLiveness(now: Date, staleGraceMs: number, limit = 50): Promise<LivenessReapResult> {
-    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 500);
-    const staleBefore = new Date(now.getTime() - Math.max(0, staleGraceMs)).toISOString();
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      // Orphan first so a row made stale in this transaction cannot skip the grace phase.
-      const orphaned = await client.query<{ row_json: RunRecord }>(`
-        WITH candidates AS (
-          SELECT run_id
-          FROM ${this.runsTable}
-          WHERE status = 'running'
-            AND liveness_version IS NOT NULL
-            AND liveness_state = 'stale'
-            AND liveness_detected_at <= $1::timestamptz
-          ORDER BY liveness_detected_at ASC, run_id ASC
-          LIMIT $2
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE ${this.runsTable} run
-        SET status = 'orphaned',
-            status_reason = CASE WHEN EXISTS (
-              SELECT 1 FROM ${this.toolInvocationsTable} invocation
-              WHERE invocation.run_id = run.run_id AND invocation.status = 'running'
-            ) THEN 'external_tool_outcome_unknown' ELSE 'lease_expired' END,
-            worker_id = NULL,
-            lease_expires_at = NULL,
-            liveness_state = 'orphaned',
-            liveness_reason_code = CASE WHEN EXISTS (
-              SELECT 1 FROM ${this.toolInvocationsTable} invocation
-              WHERE invocation.run_id = run.run_id AND invocation.status = 'running'
-            ) THEN 'external_tool_outcome_unknown' ELSE 'lease_expired' END,
-            liveness_detected_at = $3::timestamptz,
-            liveness_version = run.liveness_version + 1,
-            updated_at = $3::timestamptz,
-            metadata = (run.metadata || jsonb_build_object(
-              'livenessTerminalizedBy', 'reaper',
-              'externalToolOutcomeUnknown', EXISTS (
-                SELECT 1 FROM ${this.toolInvocationsTable} invocation
-                WHERE invocation.run_id = run.run_id AND invocation.status = 'running'
-              )
-            )) - 'wakeMessage'
-        FROM candidates
-        WHERE run.run_id = candidates.run_id
-          AND run.status = 'running'
-          AND run.liveness_state = 'stale'
-          AND run.liveness_detected_at <= $1::timestamptz
-        RETURNING row_to_json(run.*) AS row_json
-      `, [staleBefore, boundedLimit, now.toISOString()]);
-      const remaining = Math.max(0, boundedLimit - orphaned.rows.length);
-      const stale = remaining === 0 ? { rows: [] as Array<{ row_json: RunRecord }> } : await client.query<{ row_json: RunRecord }>(`
-        WITH candidates AS (
-          SELECT run_id
-          FROM ${this.runsTable}
-          WHERE status = 'running'
-            AND liveness_version IS NOT NULL
-            AND liveness_state = 'busy'
-            AND lease_expires_at <= $1::timestamptz
-          ORDER BY lease_expires_at ASC, run_id ASC
-          LIMIT $2
-          FOR UPDATE SKIP LOCKED
-        )
-        UPDATE ${this.runsTable} run
-        SET liveness_state = 'stale',
-            liveness_reason_code = 'lease_expired',
-            liveness_detected_at = $1::timestamptz,
-            liveness_version = run.liveness_version + 1,
-            updated_at = $1::timestamptz
-        FROM candidates
-        WHERE run.run_id = candidates.run_id
-          AND run.status = 'running'
-          AND run.liveness_state = 'busy'
-          AND run.lease_expires_at <= $1::timestamptz
-        RETURNING row_to_json(run.*) AS row_json
-      `, [now.toISOString(), remaining]);
-      await client.query('COMMIT');
-      return {
-        stale: stale.rows.map((row) => normalizeRunRecord(row.row_json)),
-        orphaned: orphaned.rows.map((row) => normalizeRunRecord(row.row_json)),
-      };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    return reapExpiredRunLiveness(this, now, staleGraceMs, limit);
   }
 
   async retryOrphanedUserMessage(

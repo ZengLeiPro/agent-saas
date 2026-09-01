@@ -100,6 +100,20 @@ import { projectRunLiveness, type RunLiveness } from '../runtime/runLiveness.js'
 import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
 import {
+  buildMetaOnlyTranscript,
+  buildSessionDetailPayload,
+  filterProjectedQueuedMessages,
+  getLastRunState,
+  reqTranscriptOwner,
+  resolveSessionPathForRead,
+  SESSION_DETAIL_DEFAULT_PAGE_SIZE,
+  SESSION_DETAIL_MAX_PAGE_SIZE,
+  type LastRunState,
+  type ResolvedSessionPath,
+} from './sessionDetailHelpers.js';
+export { buildSessionDetailPayload, filterProjectedQueuedMessages, type LastRunState } from './sessionDetailHelpers.js';
+export { listDurablyProjectedQueuedRunIds } from './sessionListHelpers.js';
+import {
   buildCronSessionIndex,
   buildDingtalkSessionIndex,
   listDurablyProjectedQueuedRunIds,
@@ -115,133 +129,6 @@ import {
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
-const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
-const SESSION_DETAIL_DEFAULT_PAGE_SIZE = 100;
-const SESSION_DETAIL_MAX_PAGE_SIZE = 200;
-
-type SessionDetailPayload = SessionShareSnapshot & {
-  mode: "full" | "delta" | "before";
-  cursor?: string;
-  oldestCursor?: string;
-  historyComplete?: boolean;
-  /** Canonical M40-02 backward-history cursor (alias of oldestCursor during migration). */
-  nextCursor?: string;
-  hasMore?: boolean;
-  historyRevision?: string;
-  after?: string;
-  before?: string;
-};
-
-interface SessionDetailPayloadOptions {
-  after?: string;
-  before?: string;
-  /** N-1 numeric compatibility path; never combined with canonical cursors. */
-  offset?: number;
-  limit?: number;
-  /** window API 未从文件起点解析时，用于避免误报 historyComplete。 */
-  windowStartsAtBeginning?: boolean;
-  /** before 窗口不含 EOF，由窗口 API 提供真实最新 cursor。 */
-  latestCursor?: string;
-  /** Transcript generation fence; changes on truncate/replace/compaction. */
-  historyRevision?: string;
-}
-
-function semanticOrderForBlockId(blockId: string): { sequence: number; eventIndex: number; stableId: string } | undefined {
-  const match = /^line-(\d+)(?:-.*?-(\d+))?(?:-|$)/.exec(blockId);
-  if (!match) return undefined;
-  const sequence = Number(match[1]);
-  const eventIndex = match[2] === undefined ? 0 : Number(match[2]);
-  if (!Number.isSafeInteger(sequence) || !Number.isSafeInteger(eventIndex)) return undefined;
-  return { sequence, eventIndex, stableId: blockId };
-}
-
-function withoutTranscriptRaw(
-  blocks: SessionShareSnapshot["blocks"],
-): SessionShareSnapshot["blocks"] {
-  return blocks.map(({ raw: _raw, ...block }) => {
-    const semanticOrder = semanticOrderForBlockId(block.id);
-    return { ...block, ...(semanticOrder ? { semanticOrder } : {}) };
-  });
-}
-
-/**
- * 详情分页协议：
- * - after 命中时返回重叠尾部和新增块；
- * - before 命中时返回游标之前一页，并携带一个边界重叠块；
- * - 指定 limit 的普通请求只返回最新一页；未指定 limit 保持旧客户端的完整快照行为。
- */
-export function buildSessionDetailPayload(
-  detail: SessionShareSnapshot,
-  options: SessionDetailPayloadOptions = {},
-): SessionDetailPayload {
-  const { after, before } = options;
-  const requestedLimit = options.limit === undefined
-    ? undefined
-    : Math.min(
-      SESSION_DETAIL_MAX_PAGE_SIZE,
-      Math.max(1, Math.floor(options.limit || SESSION_DETAIL_DEFAULT_PAGE_SIZE)),
-    );
-  const cursor = options.latestCursor ?? detail.blocks.at(-1)?.id;
-  const windowStartsAtBeginning = options.windowStartsAtBeginning ?? true;
-
-  if (after) {
-    const afterIndex = detail.blocks.findIndex((block) => block.id === after);
-    const addedBlockCount = afterIndex >= 0 ? detail.blocks.length - afterIndex - 1 : 0;
-    if (
-      afterIndex >= 0 &&
-      (requestedLimit === undefined || addedBlockCount <= requestedLimit)
-    ) {
-      const start = Math.max(0, afterIndex - SESSION_DETAIL_DELTA_OVERLAP_BLOCKS + 1);
-      return {
-        ...detail,
-        mode: "delta",
-        blocks: withoutTranscriptRaw(detail.blocks.slice(start)),
-        after,
-        ...(cursor ? { cursor } : {}),
-        ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
-      };
-    }
-  }
-
-  if (before) {
-    const beforeIndex = detail.blocks.findIndex((block) => block.id === before);
-    if (beforeIndex >= 0) {
-      const limit = requestedLimit ?? SESSION_DETAIL_DEFAULT_PAGE_SIZE;
-      const start = Math.max(0, beforeIndex - limit);
-      const blocks = detail.blocks.slice(start, beforeIndex + 1);
-      const historyComplete = start === 0 && windowStartsAtBeginning;
-      return {
-        ...detail,
-        mode: "before",
-        blocks: withoutTranscriptRaw(blocks),
-        before,
-        historyComplete,
-        hasMore: !historyComplete,
-        ...(blocks[0]?.id ? { oldestCursor: blocks[0].id, nextCursor: blocks[0].id } : {}),
-        ...(cursor ? { cursor } : {}),
-        ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
-      };
-    }
-  }
-
-  const limit = requestedLimit;
-  const offset = Math.max(0, Math.floor(options.offset ?? 0));
-  const end = offset > 0 ? Math.max(0, detail.blocks.length - offset) : detail.blocks.length;
-  const start = limit === undefined ? 0 : Math.max(0, end - limit);
-  const blocks = detail.blocks.slice(start, end);
-  const historyComplete = start === 0 && windowStartsAtBeginning;
-  return {
-    ...detail,
-    mode: "full",
-    blocks: withoutTranscriptRaw(blocks),
-    historyComplete,
-    hasMore: !historyComplete,
-    ...(blocks[0]?.id ? { oldestCursor: blocks[0].id, nextCursor: blocks[0].id } : {}),
-    ...(cursor ? { cursor } : {}),
-    ...(options.historyRevision ? { historyRevision: options.historyRevision } : {}),
-  };
-}
-
 interface SessionSource {
   type: string;
   label: string;
@@ -540,167 +427,6 @@ export interface SessionsRouterOptions {
     statusReason?: string;
     metadata: Record<string, unknown>;
   } | null>;
-}
-
-interface ResolvedSessionPath {
-  transcriptPath: string;
-  hasTranscript: boolean;
-}
-
-/**
- * steering 的 durable user_message 已进入 transcript 后，不再属于队列区。
- * claim 与首个模型事件绑定，二者之间的短暂 pending 窗口不能让 detail API 复活该消息。
- */
-export function filterProjectedQueuedMessages<T extends { sourceRunId: string }>(
-  pending: T[],
-  blocks: Array<{ interjectionSourceRunId?: string }>,
-  durableProjectedSourceRunIds: Iterable<string> = [],
-): T[] {
-  const projectedSourceRunIds = new Set(durableProjectedSourceRunIds);
-  for (const block of blocks) {
-    if (block.interjectionSourceRunId) projectedSourceRunIds.add(block.interjectionSourceRunId);
-  }
-  return pending.filter((input) => !projectedSourceRunIds.has(input.sourceRunId));
-}
-
-export { listDurablyProjectedQueuedRunIds } from './sessionListHelpers.js';
-
-function reqTranscriptOwner(reqUser: Request["user"] | undefined): { tenantId?: string; userId?: string } | undefined {
-  return reqUser ? { tenantId: reqUser.tenantId, userId: reqUser.sub } : undefined;
-}
-
-async function resolveSessionPathForRead(
-  userCwd: string,
-  sessionId: string,
-  owner?: { tenantId?: string; userId?: string },
-): Promise<ResolvedSessionPath | null> {
-  let transcriptPath = getTranscriptPath(userCwd, sessionId, owner);
-  try {
-    await statTrustedTranscript(transcriptPath);
-    return { transcriptPath, hasTranscript: true };
-  } catch {
-    const foundTranscript = await findTranscriptPathBySessionId(sessionId);
-    if (foundTranscript)
-      return { transcriptPath: foundTranscript, hasTranscript: true };
-    const foundMeta = await findMetaPathBySessionId(sessionId);
-    if (foundMeta) return { transcriptPath: foundMeta, hasTranscript: false };
-    return null;
-  }
-}
-
-function isUserMessageSubmittedEvent(
-  event: PlatformEvent,
-): event is Extract<PlatformEvent, { type: "user_message_submitted" }> {
-  return (
-    event.type === "user_message_submitted" &&
-    typeof event.content === "string" &&
-    event.content.trim().length > 0
-  );
-}
-
-/**
- * 会话最近一次 run 的终态。前端进会话时原子拿到,用于对账"后端早结束、
- * 前端 UI 仍显示 running" 这种鬼状态：
- * - status='failed'/'cancelled' → 显示对应失败/取消 banner
- * - status='running' 但 WS 未 active → 提示"上次回复未完成"
- * - 缺省 → 兼容旧会话(无 run_state_changed 事件)
- */
-export interface LastRunState {
-  runId: string;
-  status: string;
-  /** run_state_changed.reason —— failed/cancelled 时通常是 model error message */
-  error?: string; failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
-  /** 该 run_state_changed 事件的 ISO timestamp */
-  finishedAt?: string;
-  /** Server-only M40-02 projection; shared/web/mobile contracts follow in part two. */
-  liveness?: RunLiveness;
-}
-
-/**
- * 拉最近一条 `run_state_changed` 事件,派生 lastRunState。
- *
- * 用 `listPage({type:'run_state_changed', limit:200})` 拉所有同类型事件再取末位。
- * run_state_changed 是稀疏事件(每个 run 通常 2-3 条),即使百 run 的超长会话也仅
- * 数百条;PG 后端走 (session_id, event_type) 索引几毫秒内完成。
- *
- * EventStore 不支持 DESC 排序 + LIMIT 1,所以采用拉全分页方案;后端类型也保证
- * filtered 行数远低于全表全量。任何异常都吞掉返回 undefined(对端将走 legacy 路径)。
- */
-async function getLastRunState(
-  eventStore: EventStore,
-  tenantId: string,
-  sessionId: string,
-): Promise<LastRunState | undefined> {
-  try {
-    const collected: PlatformEvent[] = [];
-    if (eventStore.listPage) {
-      let cursor: string | undefined;
-      // 安全上限：单 session run_state_changed 极少超过 1000 条
-      for (let guard = 0; guard < 10; guard++) {
-        const page = await eventStore.listPage(tenantId, sessionId, {
-          type: "run_state_changed",
-          limit: 200,
-          afterCursor: cursor,
-        });
-        collected.push(...page.events);
-        if (!page.hasMore || !page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-    } else {
-      const all = await eventStore.list(tenantId, sessionId);
-      for (const event of all) {
-        if (event.type === "run_state_changed") collected.push(event);
-      }
-    }
-    const last = collected.at(-1);
-    if (!last || last.type !== "run_state_changed") return undefined;
-    return {
-      runId: last.runId,
-      status: last.status,
-      ...(last.reason ? { error: last.reason } : {}), ...(last.failureKind ? { failureKind: last.failureKind } : {}), ...(last.recoveryAction ? { recoveryAction: last.recoveryAction } : {}),
-      ...(last.timestamp ? { finishedAt: last.timestamp } : {}),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function buildMetaOnlyTranscript(
-  tenantId: string,
-  sessionId: string,
-  transcriptPath: string,
-  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore,
-): Promise<ParsedTranscript> {
-  let events: PlatformEvent[] = [];
-  try {
-    const eventStore = runtimeEventStoreFor
-      ? runtimeEventStoreFor(transcriptPath, tenantId)
-      : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
-    events = await eventStore.list(tenantId, sessionId);
-  } catch {
-    events = [];
-  }
-
-  const submitted = events.filter(isUserMessageSubmittedEvent);
-  return {
-    sessionId,
-    blocks: submitted.map((event, index) => {
-      const parsedTs = Date.parse(event.timestamp);
-      return {
-        id: `runtime-${event.id || index}-user`,
-        ...(Number.isFinite(parsedTs) ? { tsMs: parsedTs } : {}),
-        kind: "prompt" as const,
-        title: "输入（Prompt）",
-        defaultOpen: true,
-        content: event.content,
-      };
-    }),
-    stats: {
-      lines: submitted.length,
-      parsedLines: submitted.length,
-      parseErrors: 0,
-    },
-  };
 }
 
 // 模块级缓存实例（供外部清除）

@@ -5,12 +5,15 @@ import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
 import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
 import { governanceV34Statements } from './v34Migration.js';
+import { governanceV35Statements } from './v35Migration.js';
 import { governanceV18Statements } from './v18Migration.js';
 import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
 import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
+import { governanceTablePrefix } from './governanceTablePrefix.js';
+export { governanceTablePrefix } from './governanceTablePrefix.js';
 
 export type GovernancePgPool = pg.Pool;
 
@@ -18,15 +21,6 @@ type GovernanceMigration = {
   version: number;
   statements: string[];
 };
-
-const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-export function governanceTablePrefix(value = 'runtime'): string {
-  if (!IDENTIFIER_PATTERN.test(value)) {
-    throw new Error(`Invalid PostgreSQL identifier: ${value}`);
-  }
-  return value;
-}
 
 function migrations(prefix: string): GovernanceMigration[] {
   const versions = `${prefix}_governance_schema_versions`;
@@ -947,18 +941,7 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },
     { version: 34, statements: governanceV34Statements(prefix) },
-    {
-      version: 35,
-      statements: [
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS client_state TEXT`,
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS client_state_hash TEXT`,
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS pkce_challenge TEXT`,
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS callback_provider TEXT`,
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS redirect_uri TEXT`,
-        `ALTER TABLE ${nativeOAuthHandoffs} ADD COLUMN IF NOT EXISTS identity_generation BIGINT`,
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${nativeOAuthHandoffs}_client_state_idx ON ${nativeOAuthHandoffs}(client_state_hash) WHERE client_state_hash IS NOT NULL`,
-      ],
-    },
+    { version: 35, statements: governanceV35Statements(prefix) },
   ];
 }
 

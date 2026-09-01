@@ -2,7 +2,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
-import type { CanonicalChatSubmissionWireMessage, ChatQueueSnapshot } from "@agent/shared";
+import type { ChatQueueSnapshot } from "@agent/shared";
+import { createChatPayloadReader } from "./chatPayloadTestHelper";
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
   const stateHandlers = new Set<(state: string) => void>();
@@ -133,11 +134,7 @@ vi.mock("@/lib/wsClient", () => ({
 }));
 function response(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
 function emit(data: unknown): void { for (const handler of [...harness.messageHandlers]) handler({ data }); }
-function chatPayloads(): CanonicalChatSubmissionWireMessage[] {
-  return harness.sends.mock.calls
-    .map(([payload]) => payload as CanonicalChatSubmissionWireMessage)
-    .filter((payload) => payload.action === "chat");
-}
+const chatPayloads = createChatPayloadReader(harness.sends);
 const fileA: UploadedFile = {
   attachmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   originalName: "a.png",

@@ -5,7 +5,6 @@
 
 import type { MessageItem } from '../types/message';
 import type { WsEvent } from '../types/ws';
-import { mapCanonicalError } from './canonicalError';
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure, isSameRunMessage } from './runtimeErrorMessage';
 import { hasTrailingActiveWork, resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
@@ -13,12 +12,13 @@ import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
 import { applyInteractionResolution } from './wsInteractionResolution';
-import { adaptWsEventToActivityMessageProjection } from './wsActivityMessageProjection';
+import { claimTerminalEvent } from './wsTerminalEventHelpers';
 import {
-  createActivityMessageProjectionState,
-  reduceActivityMessageProjection,
-  selectProjectedMessages,
-} from './activityMessageProjection';
+  applyCanonicalProjection,
+  applyCanonicalTimelineProjection,
+  handleCanonicalChatRejected,
+  handleCanonicalWsError,
+} from './wsCanonicalEventHelpers';
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
   findUserMsgIndexByClientId,
@@ -145,43 +145,6 @@ export {
   type WsProcessingContext,
 } from './wsEventProcessorHelpers';
 
-const MAX_HANDLED_TERMINAL_KEYS = 500;
-
-function claimTerminalEvent(data: Extract<WsEvent, { type: 'done' }>, ctx: WsProcessingContext): boolean {
-  const key = data.runId
-    ? `run:${data.runId}`
-    : data.client_msg_id
-      ? `client:${data.client_msg_id}`
-      : null;
-  if (!key || !ctx.handledTerminalKeysRef) return true;
-
-  const handled = ctx.handledTerminalKeysRef.current;
-  if (handled.has(key)) return false;
-  handled.add(key);
-  if (handled.size > MAX_HANDLED_TERMINAL_KEYS) {
-    const oldest = handled.values().next().value;
-    if (oldest) handled.delete(oldest);
-  }
-  return true;
-}
-
-/** Canonical modern projection path. Sparse legacy frames deliberately fall through below. */
-function applyCanonicalProjection(data: WsEvent, msg: MessagesController, block: WsBlockState): boolean {
-  const event = adaptWsEventToActivityMessageProjection(data);
-  if (!event) return false;
-  const previous = block.projectionState ?? createActivityMessageProjectionState();
-  const next = reduceActivityMessageProjection(previous, event);
-  block.projectionState = next;
-  if (next === previous) return true;
-  const projected = selectProjectedMessages(next);
-  for (const item of projected) {
-    const index = msg.messagesRef.current.findIndex((candidate) => candidate.id === item.id);
-    if (index >= 0) msg.updateMessageAt(index, () => item);
-    else msg.addMessage(item);
-  }
-  return true;
-}
-
 /** Process a single WS event. Returns 'done' or 'buffer_overflow' for special states. */
 export function processWsEvent(
   data: WsEvent,
@@ -295,43 +258,7 @@ export function processWsEvent(
   }
 
   if (data.type === "chat_rejected") {
-    const canonicalFailure = mapCanonicalError({
-      source: 'chat_rejected',
-      code: data.code,
-      reasonCode: data.reason_code,
-      retryAfterMs: typeof data.retryAfter === 'number' ? data.retryAfter * 1000 : undefined,
-      correlationId: data.correlationId,
-      legacyMessage: data.reason,
-    });
-    // duplicate_inflight（2026-08-04 P2-9 配套）：重试复用原 clientMsgId 撞上
-    // 「服务端其实已处理完」——消息确实送达过，翻已发送而不是对着一条成功的消息报错。
-    if (data.reason_code === "duplicate_inflight") {
-      const dupIdx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
-      if (dupIdx >= 0) {
-        msg.updateMessageAt(dupIdx, (m) => (
-          (m.type === "user" || m.type === "user-voice")
-            ? { ...m, status: "sent" as const }
-            : m
-        ));
-      }
-      ctx.onChatRejected?.(data.client_msg_id, data.reason_code, canonicalFailure.safeMessage);
-      return;
-    }
-    removeRuntimeStatusMessages(msg);
-    // 注意：必须在 removeRuntimeStatusMessages 之后再定位（它会改变数组索引）
-    const idx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
-    if (idx >= 0) {
-      msg.updateMessageAt(idx, (m) => {
-        if (m.type === "user") {
-          return { ...m, status: "failed" as const, failedReason: canonicalFailure.safeMessage };
-        }
-        if (m.type === "user-voice") {
-          return { ...m, status: "failed" as const, failedReason: canonicalFailure.safeMessage };
-        }
-        return m;
-      });
-    }
-    ctx.onChatRejected?.(data.client_msg_id, data.reason_code, canonicalFailure.safeMessage);
+    handleCanonicalChatRejected(data, ctx, removeRuntimeStatusMessages);
     return;
   }
 
@@ -428,16 +355,7 @@ export function processWsEvent(
     return;
   }
 
-  if (
-    data.type === 'block_start' || data.type === 'block_end' || data.type === 'text'
-    || data.type === 'thinking' || data.type === 'tool_execution' || data.type === 'tool_result'
-    || data.type === 'subagent_start' || data.type === 'subagent_end' || data.type === 'moderation_outcome'
-  ) {
-    if (applyCanonicalProjection(data, msg, block)) {
-      removeRuntimeStatusMessages(msg);
-      return;
-    }
-  }
+  if (applyCanonicalTimelineProjection(data, msg, block, removeRuntimeStatusMessages)) return;
 
   // Isolated compatibility adapter for old positional/string WS frames.
   if (data.type === "block_start") {
@@ -611,20 +529,7 @@ export function processWsEvent(
   }
 
   if (data.type === "error") {
-    removeRuntimeStatusMessages(msg);
-    const canonicalFailure = mapCanonicalError({
-      source: 'ws',
-      code: data.code,
-      retryAfterMs: typeof data.retryAfter === 'number' ? data.retryAfter * 1000 : undefined,
-      correlationId: data.correlationId,
-      legacyMessage: data.message,
-    });
-    msg.addMessage({
-      type: "system-error",
-      content: canonicalFailure.safeMessage,
-      severity: "error",
-      canonicalFailure,
-    });
+    handleCanonicalWsError(data, msg, removeRuntimeStatusMessages);
     return;
   }
 

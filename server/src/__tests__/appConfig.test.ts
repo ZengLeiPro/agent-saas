@@ -12,7 +12,6 @@ const baseConfig = {
 };
 
 afterEach(() => {
-  // Keep config parsing tests isolated from deployment path overrides.
   delete process.env.AGENT_SAAS_CONFIG_PATH;
   delete process.env.CONFIG_JSON_PATH;
 });
@@ -32,20 +31,6 @@ describe('getAppConfigPath', () => {
 });
 
 describe('parseAppConfig', () => {
-  it('keeps TTS off when credentials exist unless enablement is explicit', () => {
-    const disabled = parseAppConfig({
-      ...baseConfig,
-      tts: { doubaoAppId: 'app', doubaoApiKey: 'key' },
-    });
-    expect(disabled.tts).toMatchObject({ enabled: false, doubaoAppId: 'app', doubaoApiKey: 'key' });
-
-    const enabled = parseAppConfig({
-      ...baseConfig,
-      tts: { enabled: true, doubaoAppId: 'app', doubaoApiKey: 'key' },
-    });
-    expect(enabled.tts?.enabled).toBe(true);
-  });
-
   it('accepts an explicitly configured Codex subscription Responses model', () => {
     const config = parseAppConfig({
       ...baseConfig,

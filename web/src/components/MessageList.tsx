@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
+import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
@@ -22,7 +22,19 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { canShowRawPresentation, captureHistoryAnchor, isDebugModeAvailable, restoreHistoryAnchor, selectRenderModel, type AgentProfile, type AskUserAnswers, type HistoryAnchor, type RenderModel, type SessionParticipants } from '@agent/shared';
+import {
+  canShowRawPresentation,
+  captureHistoryAnchor,
+  isDebugModeAvailable,
+  selectRenderModel,
+  type AgentProfile,
+  type AskUserAnswers,
+  type HistoryAnchor,
+  type RenderModel, type SessionParticipants,
+} from '@agent/shared';
+import {
+  useHistoryAnchorRestoration,
+} from './useHistoryAnchorRestoration';
 import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
@@ -415,6 +427,7 @@ export const MessageList = memo(function MessageList({
   const [viewport, setViewport] = useState({ start: 0, size: 0 });
   const viewportRafRef = useRef(0);
   const viewportSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousVirtualLayoutRef = useRef(virtualLayout);
   const updateViewportNow = useCallback(() => {
     viewportRafRef.current = 0;
     const container = internalContainerRef.current;
@@ -522,63 +535,23 @@ export const MessageList = memo(function MessageList({
     handleLoadEarlier();
   }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, messages]);
 
-  // Shared semantic anchor preserves prepend, image remeasure and BusinessStep expansion.
-  const previousLayoutRef = useRef(virtualLayout);
-  useLayoutEffect(() => {
-    const el = internalContainerRef.current;
-    const body = virtualBodyRef.current;
-    const previous = previousLayoutRef.current;
-    if (!el || !body) {
-      previousLayoutRef.current = virtualLayout;
-      return;
-    }
-
-    if (wasNearBottomRef.current) {
-      // Streaming, appended rows, and image/expander growth follow only while near the bottom.
-      el.scrollTop = el.scrollHeight;
-    } else if (previous !== virtualLayout && previous.keys.length > 0) {
-      const pendingPrepend = prependScrollRef.current;
-      const didPrepend = pendingPrepend
-        && pendingPrepend.firstKey !== virtualLayout.keys[0];
-      if (didPrepend) {
-        const restored = restoreHistoryAnchor(pendingPrepend.anchor, {
-          semanticIds: virtualLayout.keys,
-          offsets: virtualLayout.offsets,
-        });
-        if (restored) {
-          el.scrollTop = body.offsetTop + restored.scrollOffset;
-        } else {
-          // A grouped row may disappear across the page boundary; preserve actual added height.
-          const addedHeight = el.scrollHeight - pendingPrepend.scrollHeight;
-          el.scrollTop = Math.max(0, pendingPrepend.scrollTop + addedHeight);
-        }
-        prependScrollRef.current = null;
-      } else {
-        const previousLocalStart = Math.max(0, el.scrollTop - body.offsetTop);
-        const anchor = captureHistoryAnchor(
-          { semanticIds: previous.keys, offsets: previous.offsets },
-          previousLocalStart,
-        );
-        const restored = anchor ? restoreHistoryAnchor(anchor, {
-          semanticIds: virtualLayout.keys,
-          offsets: virtualLayout.offsets,
-        }) : undefined;
-        if (restored) el.scrollTop = body.offsetTop + restored.scrollOffset;
-      }
-    }
-
-    previousLayoutRef.current = virtualLayout;
-    syncNearBottomState();
-    updateViewportNow();
-    // useMessages may force scrollTop in a parent effect without dispatching a scroll event.
-    // Re-sample once after that rAF rather than polling continuously.
-    if (viewportSettleTimerRef.current) clearTimeout(viewportSettleTimerRef.current);
-    viewportSettleTimerRef.current = setTimeout(() => {
-      viewportSettleTimerRef.current = null;
-      syncNearBottomState();
-      updateViewportNow();
-    }, 50);
-  }, [hasMoreHistory, showAgentLoading, showSyncLoading, syncNearBottomState, updateViewportNow, virtualLayout]);
+  // The list owns the DOM and scheduling refs; the hook owns semantic restoration policy.
+  // Keeping these boundaries explicit prevents virtualizer measurement from leaking into rendering.
+  const historyAnchorRestorationOptions = {
+    containerRef: internalContainerRef,
+    bodyRef: virtualBodyRef,
+    layout: virtualLayout,
+    wasNearBottomRef,
+    pendingPrependRef: prependScrollRef,
+    previousLayoutRef: previousVirtualLayoutRef,
+    settleTimerRef: viewportSettleTimerRef,
+    syncNearBottomState,
+    updateViewportNow,
+    hasMoreHistory,
+    showAgentLoading,
+    showSyncLoading,
+  };
+  useHistoryAnchorRestoration(historyAnchorRestorationOptions);
 
   useEffect(() => {
     const container = internalContainerRef.current;

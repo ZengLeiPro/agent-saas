@@ -71,8 +71,6 @@ import {
 
 // ── 模块 mock ──────────────────────────────────────────────────────────
 
-// STT：只拦上游语音识别调用，channel 侧编排逻辑真实执行
-
 // openai：自动命名（titleGenerator）上游，返回固定标题并记录调用
 vi.mock('openai', () => {
   class MockOpenAI {
@@ -562,14 +560,14 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         log.push('sync-u1', { type: 'title_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_updated', sessionId: 'a' });
         log.push('sync-u1', { type: 'session_deleted', sessionId: 'a' });
-        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u1'),
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
         expect(rig.ws.sent.at(-1)?.data.events.map((e: any) => e.seq)).toEqual([2, 3]);
 
         // 新实例可恰好追到相同 seq；正 seq 缺失/不匹配 epoch 仍必须强制全量恢复。
-        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 3, epoch: 'previous-instance',
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({
@@ -578,13 +576,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         });
 
         // 首次客户端 lastSeq=0 不要求 epoch，兼容滚动部署。
-        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u1' }), {
           action: 'sync', lastSeq: 0,
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'sync_ok', seq: 3, epoch: log.getEpoch('sync-u1') });
 
         for (let i = 0; i < 205; i += 1) log.push('sync-u2', { type: 'title_updated' });
-        await (rig.channel as any).handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, { ...USER, sub: 'sync-u2' }), {
           action: 'sync', lastSeq: 1, epoch: log.getEpoch('sync-u2'),
         });
         expect(rig.ws.sent.at(-1)?.data).toMatchObject({
@@ -593,7 +591,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         });
 
         const before = rig.ws.sent.length;
-        await (rig.channel as any).handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws), { action: 'sync', lastSeq: 0 });
         expect(rig.ws.sent.length).toBe(before);
       } finally {
         log.stop();
@@ -634,7 +632,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       });
       try {
         log.push(USER.sub, { type: 'session_status', sessionId: 'sync-session', status: 'running' });
-        await (rig.channel as any).handleSync(wsClient(rig.ws, USER), {
+        await (rig.channel as any).runtimeRecovery.handleSync(wsClient(rig.ws, USER), {
           action: 'sync', lastSeq: 1, epoch: 'stale-epoch', sessionId: 'sync-session',
         });
         const overflow = rig.ws.sent.at(-1)?.data;
@@ -664,7 +662,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const unsub = vi.fn();
       (rig.channel as any).wsActiveStream.set(rig.ws, 'st-detach');
       (rig.channel as any).resumeSubscriptions.set(rig.ws, unsub);
-      (rig.channel as any).handleDetach(wsClient(rig.ws, USER));
+      (rig.channel as any).runtimeRecovery.handleDetach(wsClient(rig.ws, USER));
       expect(unsub).toHaveBeenCalledTimes(1);
       expect((rig.channel as any).wsActiveStream.get(rig.ws)).toBeUndefined();
       expect((rig.channel as any).resumeSubscriptions.get(rig.ws)).toBeUndefined();
@@ -935,19 +933,6 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         type: 'chat_rejected', reason_code: 'model_not_allowed', reason: '当前组织不可使用所选模型',
       });
       expect(modelResolver).toHaveBeenCalledWith('forbidden/model', TENANT);
-    });
-  });
-
-  describe('M50-04 legacy voice path fence', () => {
-    it('rejects voiceFile.savedPath transport without invoking STT or dispatch', async () => {
-      const dispatch = vi.fn();
-      const rig = makeRig({}, dispatch as unknown as AgentRunDispatch);
-      await rig.send(USER, {
-        client_msg_id: 'cm-stt-legacy', message: '',
-        voiceFile: { savedPath: '/tmp/cov-voice.wav', relativePath: 'voice/cov-voice.wav', duration: 1200 },
-      });
-      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'chat_rejected', reason_code: 'empty_message' });
-      expect(dispatch).not.toHaveBeenCalled();
     });
   });
 

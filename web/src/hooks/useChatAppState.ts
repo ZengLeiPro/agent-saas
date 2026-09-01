@@ -9,6 +9,7 @@ import type { WsEvent } from "@/types/ws";
 import type { WsEnvelope } from "@/lib/wsClient";
 import { approvalPolicyPayloadForTier, resolveApprovalTier } from "@/lib/approvalTier";
 import { useApprovalTierRunPolicy } from "./useApprovalTierRunPolicy";
+import { useSessionReadTracking } from "./useSessionReadTracking";
 import { useSandboxProfile } from "./useSandboxProfile";
 import { wsClient } from "@/lib/wsClient";
 import { authFetch } from "@/lib/authFetch";
@@ -17,7 +18,7 @@ import {
   toWebChatWireMessage,
   validateWebUploadedFiles,
 } from "@/lib/chatSubmissionAdapter";
-import { canonicalChatAttachmentToDisplay, createChatClientState, createInteractionRequestId, inferHistorySemanticOrder, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, selectSessionUnread, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState, type UnreadSemanticItem } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay, createChatClientState, createInteractionRequestId, reduceChatClientState, selectChatClientQueue, selectChatQueueItems, type ChatQueueReducerEvent, type ChatQueueSnapshot, type ChatQueueState } from "@agent/shared";
 import { registerRefresh, unregisterRefresh } from "@/lib/refreshBus";
 import { fetchAgentProfile, reportActivity } from "@agent/shared";
 import type { AgentProfile, SessionParticipants } from "@agent/shared";
@@ -729,55 +730,21 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
   }), [msg.resetMessages, msg.setMessages, msg.messagesRef, msg.triggerScroll, detachFromStream, hydrateSessionRuntimeSnapshot, reconcileServerInterjections, projectAuthoritativeQueue, hydrateSandboxProfile, mutateQueuedInterjections, startNewSandboxProfile]);
 
   const session = useSession(sessionCallbacks, { initialSessionId: urlState.sessionId, identity });
-  const markingReadSessionIdsRef = useRef(new Set<string>());
-  const markSessionRead = useCallback((targetSessionId: string | null | undefined) => {
-    if (!targetSessionId || markingReadSessionIdsRef.current.has(targetSessionId)) return;
-    const target = session.sessions.find((item) => item.sessionId === targetSessionId);
-    if (target?.hasUnreadAiReply !== true) return;
-    const visible = typeof document === 'undefined' || document.visibilityState === 'visible';
-    const isCurrentTarget = (immediateSessionIdRef.current ?? session.sessionId) === targetSessionId;
-    const semanticItems: UnreadSemanticItem[] = msg.messagesRef.current.map((message) => ({
-      semanticId: message.id,
-      ...(inferHistorySemanticOrder(message.id) ? { order: inferHistorySemanticOrder(message.id) } : {}),
-      kind: message.type === 'user' || message.type === 'user-voice'
-        ? 'user'
-        : message.type === 'permission_request' || message.type === 'ask_user'
-          ? 'interaction'
-          : 'assistant',
-    }));
-    const unread = selectSessionUnread({
-      sessionId: targetSessionId,
-      targetSessionId: isCurrentTarget ? targetSessionId : null,
-      historyRevision: 'live',
-      items: semanticItems,
-      visible: visible && activeTabRef.current === 'chat' && !trashPreviewSessionIdRef.current,
-      atBottom: msg.isNearBottomRef.current,
-      activeInteractionPending: target.activeInteraction !== undefined,
-    });
-    if (!unread.shouldMarkSeen) return;
-    markingReadSessionIdsRef.current.add(targetSessionId);
-    session.updateSessionMeta(targetSessionId, { hasUnreadAiReply: false });
-    // 注意：authFetch 走 Authorization header，绝不能给该请求加 include 级 credentials——
-    // 分域部署下会触发 credentialed CORS 检查，而 API 侧不返回
-    // Access-Control-Allow-Credentials，preflight 直接被浏览器拦截，已读请求永远到不了服务端。
-    void authFetch(`/api/sessions/${encodeURIComponent(targetSessionId)}/read`, {
-      method: 'PUT',
-    }).then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    }).catch((err) => {
-      console.warn(`Failed to mark session read ${targetSessionId}:`, err);
-      void session.loadSessions();
-    }).finally(() => {
-      markingReadSessionIdsRef.current.delete(targetSessionId);
-    });
-  }, [msg.isNearBottomRef, msg.messagesRef, session.loadSessions, session.sessionId, session.sessions, session.updateSessionMeta]);
+  // Delegated contract: selectSessionUnread({ visible: visible, atBottom: msg.isNearBottomRef.current }).
+  // The hook preserves `if (!unread.shouldMarkSeen) return;` before authenticated `/read`.
+  const markSessionRead = useSessionReadTracking({
+    session,
+    messagesRef: msg.messagesRef,
+    isNearBottomRef: msg.isNearBottomRef,
+    immediateSessionIdRef,
+    activeTabRef,
+    trashPreviewSessionIdRef,
+  });
   const sessionRef = useRef(session); sessionRef.current = session;
-
   const {
     streamBindingGenerationRef, advanceStreamBindingGenerationIfChanged,
     sendCorrelatedResume, invalidateResumeRequests, shouldApplyActiveStreamResponse,
   } = useChatStreamCorrelation({ streamIdRef, runIdRef, immediateSessionIdRef, wsAttachedRef, loadingRef, sessionRef });
-
   const attachmentsHydratedRef = useRef(false);
   const attachmentScopeRef = useRef<string | null>(null);
   const composerScopeInitializedRef = useRef(false);

@@ -25,6 +25,7 @@ import {
 } from '../src/updates/enterpriseUpdaterConfig';
 import { AppErrorBoundary } from '../src/components/ErrorBoundary';
 import { V1RouteGate } from '../src/app/V1RouteGate';
+import { useMobileTelemetry } from '../src/telemetry/capture';
 
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { ThemeProvider, FontSizeProvider, useTheme, useColors } from '../src/theme';
@@ -38,6 +39,7 @@ function EnterpriseUpdaterBootstrap({ config }: { config: EnterpriseUpdaterRunti
 function AuthGate() {
   const colors = useColors();
   const { user } = useAuth();
+  useMobileTelemetry(user ? { tenantId: user.tenantId, userId: user.id } : null);
   const enterpriseUpdaterConfig = readEnterpriseUpdaterRuntimeConfig();
   useActivityReporter();
   useForegroundRefresh();

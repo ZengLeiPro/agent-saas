@@ -49,6 +49,7 @@ import {
 import { createAuthRouter } from '../routes/auth.js';
 import { createAuthConnectionCapabilityRouter } from '../routes/authConnectionCapabilities.js';
 import { createSignupRouters } from '../routes/signup.js';
+import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
 import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
@@ -171,6 +172,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
   app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));

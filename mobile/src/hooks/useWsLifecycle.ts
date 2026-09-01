@@ -3,6 +3,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { wsClient } from '@agent/shared';
 import { mobileReachability } from '../platform/lifecycleAdapter';
+import { telemetryClient } from '../telemetry/runtime';
 
 const BACKGROUND_WS_GRACE_MS = 3_000;
 const NETWORK_DEBOUNCE_MS = 750;
@@ -17,6 +18,7 @@ export function useWsLifecycle(enabled = true): void {
   const detachedRef = useRef(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disconnectedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -29,6 +31,8 @@ export function useWsLifecycle(enabled = true): void {
 
     const suspend = () => {
       clearTimers();
+      disconnectedAtRef.current = globalThis.performance?.now?.() ?? Date.now();
+      telemetryClient()?.capture('ws_disconnect', { correlationId: 'ws-lifecycle', measurements: { foreground: false } });
       // Detach transport subscription only. The authoritative run is deliberately not aborted.
       if (wsClient.isConnected) detachedRef.current = wsClient.send({ action: 'detach' });
       wsClient.suspendNonEssentialTransport();
@@ -56,7 +60,14 @@ export function useWsLifecycle(enabled = true): void {
             && (!wsClient.isConnected || detachedRef.current)) {
             detachedRef.current = false;
             wsClient.resumeNonEssentialTransport();
-            void wsClient.forceReconnect().catch(() => {});
+            void wsClient.forceReconnect().then(() => {
+              const disconnectedAt = disconnectedAtRef.current;
+              disconnectedAtRef.current = null;
+              telemetryClient()?.capture('ws_recovered', {
+                correlationId: 'ws-lifecycle',
+                ...(disconnectedAt !== null ? { measurements: { durationMs: Math.max(0, (globalThis.performance?.now?.() ?? Date.now()) - disconnectedAt) } } : {}),
+              });
+            }).catch(() => {});
           }
         });
       }, NETWORK_DEBOUNCE_MS);

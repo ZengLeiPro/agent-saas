@@ -20,6 +20,7 @@ on:
       MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
       MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
       MOBILE_ROLLOUT_ROBOT_TOKEN: { required: false }
+      MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: { required: false }
 permissions: { contents: read, actions: read, deployments: read }
 concurrency: { group: 'mobile-rollout-${{ inputs.profile }}', cancel-in-progress: false }
 env: { FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true }
@@ -80,6 +81,18 @@ jobs:
         with: { ref: '${{ needs.receipt-contract.outputs.commit }}', persist-credentials: false }
       - uses: actions/setup-node@v5
         with: { node-version: '22.23.1' }
+      - name: Revalidate M60-05 provider facts and real test-event receipt before rollout
+        env:
+          MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON: ${{ vars.MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON }}
+          MOBILE_TELEMETRY_TEST_RECEIPT_JSON: ${{ vars.MOBILE_TELEMETRY_TEST_RECEIPT_JSON }}
+          MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: ${{ secrets.MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON" && test -n "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON" && test -n "$MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY"
+          printf '%s' "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON" > "$RUNNER_TEMP/mobile-telemetry-provider.json"
+          printf '%s' "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON" > "$RUNNER_TEMP/mobile-telemetry-receipt.json"
+          node mobile/scripts/mobile-telemetry-release-gate.mjs --config "$RUNNER_TEMP/mobile-telemetry-provider.json" --receipt "$RUNNER_TEMP/mobile-telemetry-receipt.json" --release '${{ needs.receipt-contract.outputs.commit }}' --environment production
+          rm -f "$RUNNER_TEMP/mobile-telemetry-provider.json" "$RUNNER_TEMP/mobile-telemetry-receipt.json"
       - name: Fail closed without protected organization rollout adapter
         env:
           CONFIGURED: ${{ vars.MOBILE_ROLLOUT_CONFIGURED }}

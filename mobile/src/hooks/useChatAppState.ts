@@ -57,6 +57,8 @@ import {
   toMobileChatWireMessage,
   validateMobileUploadedFiles,
 } from "../lib/chatSubmissionAdapter";
+import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chatTelemetry';
+import { telemetryClient } from '../telemetry/runtime';
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
@@ -992,6 +994,7 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
       const submission = normalized.value;
+      markChatSubmit(clientMsgId, activeSessionId ?? undefined);
 
       wsLatestSessionIdRef.current = { value: activeSessionId };
       wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
@@ -1175,6 +1178,7 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
+      observeChatEvent(data, sessionIdRef.current ?? undefined);
       if (!data || !data.type) return;
       projectSessionListInteraction(data);
       if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
@@ -1445,7 +1449,8 @@ export function useChatAppStateCore(): ChatAppState {
           // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
           wsAttachedRef.current = true;
         },
-        onChatAck: (clientMsgId) => {
+        onChatAck: (clientMsgId, event) => {
+          markChatAck(clientMsgId, event);
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) {
             clearTimeout(t);
@@ -1500,6 +1505,7 @@ export function useChatAppStateCore(): ChatAppState {
       }
 
       if (result === "buffer_overflow") {
+        telemetryClient()?.capture('sync_overflow', { correlationId: 'ws-sync-overflow', ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}) });
         wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
         sessionRef.current.refreshCurrentSession();
         const overflowSid = sessionIdRef.current;
@@ -1836,6 +1842,8 @@ export function useChatAppStateCore(): ChatAppState {
         : m);
     } catch (error) {
       const code = error instanceof Error ? error.message : 'stt_provider_error';
+      const reasonCode = ['upload_failed', 'stt_provider_error', 'transcription_failed'].includes(code.toLowerCase()) ? code.toLowerCase() : 'voice_failed';
+      telemetryClient()?.capture('voice_error', { correlationId: voiceIntentId, measurements: { reasonCode } });
       msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
         ? { ...m, status: "failed" as const, failedReason: voiceFailureAction(code) }
         : m);

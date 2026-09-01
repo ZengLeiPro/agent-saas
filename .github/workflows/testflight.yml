@@ -37,6 +37,7 @@ on:
       EXPO_ORG_ROBOT_TOKEN: { required: false }
       MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
       MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
+      MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: { required: false }
 
 permissions:
   contents: read
@@ -142,6 +143,21 @@ jobs:
           pnpm install --frozen-lockfile
           test "$(pnpm --version)" = "$PNPM_VERSION"
           test "$(pnpm -F mobile exec eas --version | sed -nE 's/^eas-cli\/([^ ]+).*/\1/p')" = "$EAS_CLI_VERSION"
+      - name: Fail closed on missing M60-05 production provider and real test-event evidence
+        if: inputs.execute_build == true
+        env:
+          MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON: ${{ vars.MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON }}
+          MOBILE_TELEMETRY_TEST_RECEIPT_JSON: ${{ vars.MOBILE_TELEMETRY_TEST_RECEIPT_JSON }}
+          MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: ${{ secrets.MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON"
+          test -n "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON"
+          test -n "$MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY"
+          printf '%s' "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON" > "$RUNNER_TEMP/mobile-telemetry-provider.json"
+          printf '%s' "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON" > "$RUNNER_TEMP/mobile-telemetry-receipt.json"
+          node mobile/scripts/mobile-telemetry-release-gate.mjs --config "$RUNNER_TEMP/mobile-telemetry-provider.json" --receipt "$RUNNER_TEMP/mobile-telemetry-receipt.json" --release '${{ inputs.commit_oid }}' --environment production
+          rm -f "$RUNNER_TEMP/mobile-telemetry-provider.json" "$RUNNER_TEMP/mobile-telemetry-receipt.json"
       - uses: actions/upload-artifact@v7
         with:
           name: mobile-source-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}

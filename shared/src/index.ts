@@ -1,4 +1,5 @@
 export * from './types/correlation';
+export * from './telemetry/mobileTelemetry';
 export * from './lib/ttsCapability';
 
 // Canonical cross-platform media capability contract.

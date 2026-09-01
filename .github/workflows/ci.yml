@@ -258,6 +258,9 @@ jobs:
       - name: Run M60-04 workflow, schema, mock evidence and tamper contracts
         run: pnpm -F mobile test:m60-04
 
+      - name: Run M60-05 schema, redaction, intake config and release evidence contracts
+        run: pnpm -F @agent/shared exec vitest run src/telemetry/mobileTelemetry.test.ts && pnpm -F mobile test:m60-05 && pnpm -F server exec vitest run src/telemetry/mobileTelemetry.test.ts
+
       - name: Upload bounded normalized M60-03 failure evidence
         if: failure()
         uses: actions/upload-artifact@v7

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -85,6 +86,10 @@ async function withApp<T>(
 
 async function readJson(response: Response) {
   return response.json() as Promise<any>;
+}
+
+function revision(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 // PUT 必须先验证完整候选，再允许 config.json 与运行态一起前进。
@@ -335,6 +340,44 @@ describe('models admin router', () => {
     });
   });
 
+  it('连续两次保存均返回 raw config revision，并支持 expectedRevision/If-Match 接力', async () => {
+    const rawConfig = baseRawConfig();
+    await withApp(rawConfig, async ({ baseUrl, configPath }) => {
+      const loadedResponse = await fetch(`${baseUrl}/api/admin/models`); const loaded = await readJson(loadedResponse);
+      const loadedText = readFileSync(configPath, 'utf-8');
+      expect(loaded.revision).toBe(revision(loadedText));
+      expect(loadedResponse.headers.get('etag')).toBe(`"${loaded.revision}"`);
+
+      const noOpResponse = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models: rawConfig.models, expectedRevision: loaded.revision }),
+      });
+      expect(noOpResponse.status).toBe(200);
+      const noOp = await readJson(noOpResponse);
+      expect(noOp.revision).toBe(loaded.revision);
+      expect(noOpResponse.headers.get('etag')).toBe(`"${loaded.revision}"`);
+      expect(readFileSync(configPath, 'utf-8')).toBe(loadedText);
+
+      const firstModels = structuredClone(rawConfig.models); firstModels.groups[0]!.name = 'First';
+      const firstResponse = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models: firstModels, expectedRevision: noOp.revision }),
+      });
+      expect(firstResponse.status).toBe(200);
+      const first = await readJson(firstResponse);
+      expect(first.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(firstResponse.headers.get('etag')).toBe(`"${first.revision}"`);
+
+      const secondModels = structuredClone(firstModels); secondModels.groups[0]!.name = 'Second';
+      const secondResponse = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT', headers: { 'content-type': 'application/json', 'if-match': `"${first.revision}"` }, body: JSON.stringify({ models: secondModels }),
+      });
+      expect(secondResponse.status).toBe(200);
+      const second = await readJson(secondResponse);
+      expect(second.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(secondResponse.headers.get('etag')).toBe(`"${second.revision}"`);
+      expect(second.revision).not.toBe(first.revision);
+    }, { requireRevision: true });
+  });
+
   it('拒绝旧页面携带的过期 revision，不让后提交覆盖先提交', async () => {
     const rawConfig = baseRawConfig();
     await withApp(rawConfig, async ({ baseUrl, configPath }) => {
@@ -344,7 +387,10 @@ describe('models admin router', () => {
         method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ models: rawConfig.models, expectedRevision: loaded.revision }),
       });
       expect(response.status).toBe(409);
-      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+      const winnerText = readFileSync(configPath, 'utf-8'); const conflict = await readJson(response);
+      expect(JSON.parse(winnerText).concurrentWinner).toBe(true);
+      expect(conflict.revision).toBe(revision(winnerText));
+      expect(response.headers.get('etag')).toBe(`"${conflict.revision}"`);
     }, { requireRevision: true });
   });
 

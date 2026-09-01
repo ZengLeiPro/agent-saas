@@ -151,6 +151,14 @@ const MANAGED_CREDENTIAL_PAIRS: ReadonlyArray<{
     inline: ['imageGenTools', 'seedream', 'apiKey'],
     ref: ['imageGenTools', 'seedream', 'apiKeyRef'],
   },
+  {
+    inline: ['memory', 'index', 'embedding', 'apiKey'],
+    ref: ['memory', 'index', 'embedding', 'apiKeyRef'],
+  },
+  {
+    inline: ['models', 'groups', '*', 'apiKey'],
+    ref: ['models', 'groups', '*', 'apiKeyRef'],
+  },
 ];
 
 /** ref-only 受管字段（无 inline 形态；schema 已禁止凭据进 config）。 */
@@ -169,8 +177,6 @@ const SECRET_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
   ['dingtalk', 'robots', '*', 'appSecret'],
   ['dingtalkSendMessage', 'appSecret'],
   ['alerting', 'dingtalkRobot', 'appSecret'],
-  ['memory', 'index', 'embedding', 'apiKey'],
-  ['models', 'groups', '*', 'apiKey'],
   ['tts', 'doubaoApiKey'],
   ['webPush', 'privateKey'],
   ['secretVault', 'encryptionKey'],
@@ -338,7 +344,6 @@ function collectDbBehaviorOptions(url: URL): Record<string, string> {
   }
   return options;
 }
-
 
 function redactConnectionString(
   value: string,

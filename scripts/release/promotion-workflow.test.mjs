@@ -73,7 +73,7 @@ test('promotion accepts only an approved release id and shares the production mu
   assert.match(workflow, /stagingRuntimeAssetsDigest/u);
   assert.match(workflow, /expected_runtime_summary/u);
   assert.match(workflow, /assert-promotion-retry\.mjs/u);
-  assert.match(workflow, /retry-before-change:\$GITHUB_RUN_ID/u);
+  assert.match(workflow, /retry-before-change:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /GITHUB_RUN_ATTEMPT/u);
   assert.match(workflow, /APPROVAL_RECORDED=true/u);
 });
@@ -153,6 +153,104 @@ test('rolled-back App and Web failures require staging revalidation and reviewed
 
   for (const history of fixture.illegalTails) {
     assert.throws(() => assertPromotionRetryable(history), /terminal post-mutation state/u);
+  }
+});
+
+test('approval and promoting operations are unique per run attempt and idempotent within an attempt', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const approvalStart = workflow.indexOf(
+    '- name: Validate deterministic Staging evidence and record human approval',
+  );
+  const approvalEnd = workflow.indexOf('- name: Configure production SSH', approvalStart);
+  const approvalGate = workflow.slice(approvalStart, approvalEnd);
+  const approvalOperationTemplate = approvalGate.match(
+    /--state approved --operation "([^"]+)"/u,
+  )?.[1];
+  const promotingOperationTemplate = workflow.match(
+    /--state promoting --operation "([^"]+)"/u,
+  )?.[1];
+  assert.equal(approvalOperationTemplate, 'approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT');
+  assert.equal(promotingOperationTemplate, 'promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT');
+
+  const operationFor = (template, runId, runAttempt) =>
+    template
+      .replace('$GITHUB_RUN_ID', runId)
+      .replace('$GITHUB_RUN_ATTEMPT', String(runAttempt));
+  const appendIdempotently = (history, approval) => {
+    const existing = history.find((entry) => entry.operationKey === approval.operationKey);
+    if (existing) {
+      assert.deepEqual(existing, approval, 'same-attempt replay must carry identical content');
+      return existing;
+    }
+    history.push(approval);
+    return approval;
+  };
+
+  const runId = '424242';
+  const firstApproval = {
+    state: 'approved',
+    operationKey: operationFor(approvalOperationTemplate, runId, 1),
+    reason: 'attempt-1-review',
+  };
+  const retryFixtures = [
+    {
+      name: 'failed_before_change',
+      expectedMode: 'retry_before_change',
+      history: [
+        { state: 'verified', operationKey: 'verified:fixture' },
+        firstApproval,
+        { state: 'failed_before_change', operationKey: `failed-before-change:${runId}:1` },
+      ],
+    },
+    {
+      name: 'rolled_back',
+      expectedMode: 'retry_after_change',
+      history: [
+        { state: 'verified', operationKey: 'verified:fixture' },
+        firstApproval,
+        {
+          state: 'promoting',
+          operationKey: operationFor(promotingOperationTemplate, runId, 1),
+        },
+        { state: 'partial_failed', operationKey: `outcome:${runId}:1` },
+        { state: 'rolled_back', operationKey: `rollback:${runId}:1` },
+      ],
+    },
+  ];
+
+  for (const fixture of retryFixtures) {
+    assert.equal(
+      assertPromotionRetryable(fixture.history).mode,
+      fixture.expectedMode,
+      fixture.name,
+    );
+    const nextApproval = {
+      state: 'approved',
+      operationKey: operationFor(approvalOperationTemplate, runId, 2),
+      reason: `attempt-2-${fixture.expectedMode}`,
+    };
+    assert.notEqual(nextApproval.operationKey, firstApproval.operationKey);
+    appendIdempotently(fixture.history, nextApproval);
+    const lengthAfterApproval = fixture.history.length;
+    assert.equal(assertPromotionRetryable(fixture.history).previousApprovalCount, 2);
+    assert.strictEqual(appendIdempotently(fixture.history, { ...nextApproval }), nextApproval);
+    assert.equal(
+      fixture.history.length,
+      lengthAfterApproval,
+      `${fixture.name} replay must not append`,
+    );
+    const nextPromoting = {
+      state: 'promoting',
+      operationKey: operationFor(promotingOperationTemplate, runId, 2),
+    };
+    assert.notEqual(
+      nextPromoting.operationKey,
+      operationFor(promotingOperationTemplate, runId, 1),
+    );
+    appendIdempotently(fixture.history, nextPromoting);
+    const lengthAfterPromoting = fixture.history.length;
+    assert.strictEqual(appendIdempotently(fixture.history, { ...nextPromoting }), nextPromoting);
+    assert.equal(fixture.history.length, lengthAfterPromoting);
   }
 });
 
@@ -247,7 +345,7 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
-test('remote promotion workspaces are isolated by run attempt without changing attestation identity', async () => {
+test('remote workspaces and approval attestations are isolated by run attempt', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const remoteDirectories = [
     ...workflow.matchAll(
@@ -259,14 +357,17 @@ test('remote promotion workspaces are isolated by run attempt without changing a
     '/tmp/agent-saas-promotion-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT',
     '/tmp/release-readback-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT',
   ]);
-  assert.match(workflow, /--operation "approval:\$GITHUB_RUN_ID"/u);
-  assert.match(workflow, /--operation "promoting:\$GITHUB_RUN_ID"/u);
+  assert.match(workflow, /--operation "approval:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
+  assert.doesNotMatch(workflow, /--operation "approval:\$GITHUB_RUN_ID"/u);
+  assert.match(workflow, /--operation "promoting:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
+  assert.doesNotMatch(workflow, /--operation "promoting:\$GITHUB_RUN_ID"/u);
+  assert.match(workflow, /--operation "outcome:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u);
+  assert.match(
+    workflow,
+    /--operation "failed-before-change:\$GITHUB_RUN_ID:\$GITHUB_RUN_ATTEMPT"/u,
+  );
   assert.match(workflow, /rollback-attempted-acs/u);
   assert.match(workflow, /rollback-attempted-app/u);
-  assert.doesNotMatch(
-    workflow,
-    /--operation "(?:approval|promoting):\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u,
-  );
 });
 
 test('trusted identity write is followed by a strict stable ConfigIdentity confirmation', async () => {

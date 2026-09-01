@@ -25,18 +25,18 @@
 
 对 **parse 之后的 AppConfig**（Zod 校验 + 默认值填充后）做投影：
 
-| 输入形态                                                                         | 投影结果                                                          |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 普通有效配置字段                                                                 | 原值（键按 `canonicalJson` 排序）                                 |
-| JSONC 注释 / 原始文本排版                                                        | 不存在（parse 时天然消除）                                        |
-| 受管 inline/ref 双形态字段的 inline 值                                           | `{form:'inline'}`（明文不进投影）                                 |
-| 受管字段的 ref id                                                                | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）    |
-| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/models.groups[].apiKey 等） | `{__redacted:'secret'}`                                           |
-| URL（webhook/代理/signed URL 等）                                                | 保留无凭据 endpoint；userinfo/query/hash 剥除                     |
-| DB 连接串                                                                        | 只保留 host/database                                              |
-| 机器存储路径（agent.cwd、vault file、artifact root 等）                          | 不进投影（同语义配置在不同主机目录得到相同 digest）               |
-| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）        | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见           |
-| env 值（dispatch.env/proxy 的 value）                                            | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见） |
+| 输入形态                                                                            | 投影结果                                                          |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 普通有效配置字段                                                                    | 原值（键按 `canonicalJson` 排序）                                 |
+| JSONC 注释 / 原始文本排版                                                           | 不存在（parse 时天然消除）                                        |
+| 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                 |
+| 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）    |
+| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                           |
+| URL（webhook/代理/signed URL 等）                                                   | 保留无凭据 endpoint；userinfo/query/hash 剥除                     |
+| DB 连接串                                                                           | 只保留 host/database                                              |
+| 机器存储路径（agent.cwd、vault file、artifact root 等）                             | 不进投影（同语义配置在不同主机目录得到相同 digest）               |
+| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见           |
+| env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见） |
 
 投影语义的任何变化都必须递增 `CONFIG_IDENTITY_SCHEMA_VERSION` 并显式迁移，
 **不允许静默改变 digest 语义**。
@@ -81,9 +81,9 @@ overview snapshot 在 wire 层再校验一次，不合法载荷降级为 `null` 
 
 `configIdentity.ts` 中的注册表是**显式清单**：只登记已有 SecretVault ref 安全
 方案的 inline/ref 双形态字段（serverRemote / tenantRemoteHands / clientDaemon /
-stt / webTools / imageGenTools 共 10 组 + codexSubscription credentialRef(s)
-ref-only），不做字段名后缀猜测。tts / alerting / memory embedding 等当前没有
-ref 方案的旧字段只做投影脱敏，不伪装成可追踪轮换的受管凭据。
+stt / webTools / imageGenTools / memory embedding / models.groups 共 12 组 +
+codexSubscription credentialRef(s) ref-only），不做字段名后缀猜测。tts / alerting
+等当前没有 ref 方案的旧字段只做投影脱敏，不伪装成可追踪轮换的受管凭据。
 Production 门禁（`assertProductionManagedCredentialSafety`）基于同一注册表判定，
 避免误杀普通字符串配置。
 

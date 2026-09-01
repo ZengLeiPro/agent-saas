@@ -18,6 +18,17 @@ function makeFetch(responder: (path: string, body: any) => unknown) {
   }) as unknown as typeof fetch;
 }
 
+function remoteRef(id: string, ownerId = 'alice') {
+  return {
+    id,
+    ownerId,
+    kind: 'mcp',
+    metadata: {},
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-01T00:00:00.000Z',
+  };
+}
+
 const caller = {
   actor: 'mcp_proxy' as const,
   userId: 'alice',
@@ -32,7 +43,7 @@ describe('HttpSecretVault cache (A3)', () => {
     const fetchImpl = makeFetch((path, body) => {
       if (path === '/secrets/resolve') {
         fetchCount += 1;
-        return { value: `v${fetchCount}-${body.ref}` };
+        return { value: `v${fetchCount}-${body.ref}`, ref: remoteRef(body.ref) };
       }
       throw new Error(`unexpected path ${path}`);
     });
@@ -53,9 +64,9 @@ describe('HttpSecretVault cache (A3)', () => {
 
   it('cacheTtlMs=0 disables cache entirely', async () => {
     let fetchCount = 0;
-    const fetchImpl = makeFetch(() => {
+    const fetchImpl = makeFetch((_path, body) => {
       fetchCount += 1;
-      return { value: `v${fetchCount}` };
+      return { value: `v${fetchCount}`, ref: remoteRef(body.ref) };
     });
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.local',
@@ -75,10 +86,10 @@ describe('HttpSecretVault cache (A3)', () => {
     const fetchImpl = makeFetch((path, body) => {
       if (path === '/secrets/resolve') {
         resolveCount += 1;
-        return { value: `v${resolveCount}` };
+        return { value: `v${resolveCount}`, ref: remoteRef(body.ref) };
       }
       if (path === '/secrets/ref-a/rotate') {
-        return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', metadata: {}, createdAt: '', updatedAt: '' };
+        return { id: 'ref-a', ownerId: 'alice', kind: 'mcp', metadata: {}, createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z' };
       }
       throw new Error(`unexpected path ${path}`);
     });
@@ -98,10 +109,10 @@ describe('HttpSecretVault cache (A3)', () => {
     expect(resolveCount).toBe(2);
   });
 
-  it('different caller authorization contexts do not share secret cache entries', async () => {
+  it('different caller tenant contexts do not share secret cache entries', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-a-secret' }))
-      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-b-secret' }));
+      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-a-secret', ref: remoteRef('sec_shared', 'alice') }))
+      .mockResolvedValueOnce(jsonResponse({ value: 'tenant-b-secret', ref: remoteRef('sec_shared', 'alice') }));
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.internal',
       authToken: 'service-token',
@@ -112,7 +123,7 @@ describe('HttpSecretVault cache (A3)', () => {
       actor: 'mcp_proxy', userId: 'alice', tenantId: 'tenant-a', scopes: ['secret:mcp:read'],
     };
     const tenantBCaller: VaultCaller = {
-      actor: 'mcp_proxy', userId: 'bob', tenantId: 'tenant-b', scopes: ['secret:mcp:read'],
+      actor: 'mcp_proxy', userId: 'alice', tenantId: 'tenant-b', scopes: ['secret:mcp:read'],
     };
     await expect(vault.getSecret('sec_shared', tenantACaller)).resolves.toBe('tenant-a-secret');
     await expect(vault.getSecret('sec_shared', tenantBCaller)).resolves.toBe('tenant-b-secret');
@@ -121,10 +132,10 @@ describe('HttpSecretVault cache (A3)', () => {
 
   it('revokeSecret invalidates the cache for that ref', async () => {
     let resolveCount = 0;
-    const fetchImpl = makeFetch((path) => {
+    const fetchImpl = makeFetch((path, body) => {
       if (path === '/secrets/resolve') {
         resolveCount += 1;
-        return { value: `v${resolveCount}` };
+        return { value: `v${resolveCount}`, ref: remoteRef(body.ref) };
       }
       if (path === '/secrets/ref-a/revoke') {
         return {};
@@ -146,9 +157,9 @@ describe('HttpSecretVault cache (A3)', () => {
 
   it('invalidate(ref) public method forces immediate refetch', async () => {
     let resolveCount = 0;
-    const fetchImpl = makeFetch(() => {
+    const fetchImpl = makeFetch((_path, body) => {
       resolveCount += 1;
-      return { value: `v${resolveCount}` };
+      return { value: `v${resolveCount}`, ref: remoteRef(body.ref) };
     });
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.local',
@@ -168,7 +179,7 @@ describe('HttpSecretVault cache (A3)', () => {
     let resolveCount = 0;
     const fetchImpl = makeFetch((_path, body) => {
       resolveCount += 1;
-      return { value: `${body.ref}-#${resolveCount}` };
+      return { value: `${body.ref}-#${resolveCount}`, ref: remoteRef(body.ref) };
     });
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.local',
@@ -200,7 +211,7 @@ describe('HttpSecretVault cache (A3)', () => {
     let resolveCount = 0;
     const fetchImpl = makeFetch((_path, body) => {
       resolveCount += 1;
-      return { value: body.ref };
+      return { value: body.ref, ref: remoteRef(body.ref) };
     });
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.local',

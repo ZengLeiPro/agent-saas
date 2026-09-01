@@ -1,15 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { auditLog } from '../data/login-logs/index.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
-import {
-  ConfigWriteConflictError,
-  configRevision,
-  publishConfigIfUnchanged,
-} from './configWriteLock.js';
+import { configRevision } from './configWriteLock.js';
 import type {
   AppConfig,
   ToolControlsConfig,
@@ -36,6 +32,25 @@ import {
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { Request } from 'express';
+
+function configRequestRevisions(req: Request): string[] {
+  const ifMatch = mutationRequestContext(req).expectedFingerprint;
+  return [typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined, ifMatch]
+    .filter((revision): revision is string => Boolean(revision));
+}
+
+function revisionConflict(configText: string): ConfigConflictError {
+  return new ConfigConflictError(configFingerprint(parseJsonc(configText)), configRevision(configText));
+}
+
+function sendRevisionMutationError(res: Response, error: unknown): void {
+  if (error instanceof ConfigConflictError && error.currentRevision) {
+    res.setHeader('ETag', `"${error.currentRevision}"`);
+    res.status(409).json({ error: error.message, code: error.code, revision: error.currentRevision });
+    return;
+  }
+  sendConfigMutationError(res, error);
+}
 
 export interface CreateToolControlsAdminRouterOptions {
   processCwd: string;
@@ -329,12 +344,16 @@ async function persistUpdatedSettings(
   expectedConfigText: string,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
 ): Promise<{ settings: Pick<AppConfig, 'toolControls' | 'webTools'>; revision: string }> {
+  const requestContext = mutationRequestContext(req);
+  const expectedRevisions = configRequestRevisions(req);
   const result = await configMutationService.mutate({
-    ...mutationRequestContext(req),
+    actor: requestContext.actor,
+    expectedRevision: expectedRevisions[0],
     changedPaths: ['toolControls', 'webTools'],
     validateBaseline: (currentText) => {
-      if (currentText !== expectedConfigText) {
-        throw new ConfigConflictError(configFingerprint(parseJsonc(currentText)));
+      const revision = configRevision(currentText);
+      if (currentText !== expectedConfigText || expectedRevisions.some((expected) => expected !== revision)) {
+        throw revisionConflict(currentText);
       }
     },
     buildCandidate: (configText) => {
@@ -357,7 +376,7 @@ async function persistUpdatedSettings(
   });
   return {
     settings: { toolControls: result.config.toolControls, webTools: result.config.webTools },
-    revision: result.effectiveConfigFingerprint,
+    revision: result.revision,
   };
 }
 
@@ -385,7 +404,9 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
   router.get('/', (_req, res) => {
     const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
     const diskConfig = parseAppConfig(parseJsonc(configText));
-    res.json(catalogResponse({ toolControls: diskConfig.toolControls, webTools: diskConfig.webTools }, configRevision(configText)));
+    const revision = configRevision(configText);
+    res.setHeader('ETag', `"${revision}"`);
+    res.json(catalogResponse({ toolControls: diskConfig.toolControls, webTools: diskConfig.webTools }, revision));
   });
 
   router.put('/', async (req, res) => {
@@ -394,16 +415,18 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
 
     try {
       configText = readFileSync(configPath, 'utf-8');
-      if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) { res.status(409).json({ error: '配置版本已变化，请刷新后重试' }); return; }
+      const revision = configRevision(configText); const expectedRevisions = configRequestRevisions(req);
+      if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) throw revisionConflict(configText);
       if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
-      if (readFileSync(configPath, 'utf-8') !== configText) throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
+      const latestText = readFileSync(configPath, 'utf-8');
+      if (latestText !== configText) throw revisionConflict(latestText);
       const rawConfig = parseJsonc(configText);
       nextSettings = validateToolSettingsUpdate(rawConfig, req.body?.toolControls, req.body?.webTools);
       await options.validateToolSettingsConfig?.(nextSettings);
       nextSettings = await persistSearchCredential(nextSettings, options.secretVault);
     } catch (error) {
-      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
-        .json({ error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof ConfigConflictError) { sendRevisionMutationError(res, error); return; }
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
       return;
     }
 
@@ -416,9 +439,10 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         nextSettings,
       );
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.settings.toolControls));
+      res.setHeader('ETag', `"${persisted.revision}"`);
       res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
-      sendConfigMutationError(res, error);
+      sendRevisionMutationError(res, error);
     }
   });
 
@@ -438,9 +462,11 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
 
     try {
       configText = readFileSync(configPath, 'utf-8');
-      if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) { res.status(409).json({ error: '配置版本已变化，请刷新后重试' }); return; }
+      const revision = configRevision(configText); const expectedRevisions = configRequestRevisions(req);
+      if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) throw revisionConflict(configText);
       if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) throw new Error('当前配置基线未完整应用，拒绝写入');
-      if (readFileSync(configPath, 'utf-8') !== configText) throw new ConfigWriteConflictError('配置已被并发修改，请刷新后重试');
+      const latestText = readFileSync(configPath, 'utf-8');
+      if (latestText !== configText) throw revisionConflict(latestText);
       const rawConfig = parseJsonc(configText);
       // 管理端可能运行在蓝绿切换后的旧进程中：内存 config 未必包含其他进程
       // 已落盘的 override。单工具 patch 必须以刚读到的磁盘快照为基线，否则
@@ -458,8 +484,8 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
       );
       await options.validateToolSettingsConfig?.(nextSettings);
     } catch (error) {
-      res.status(error instanceof ConfigWriteConflictError ? 409 : 400)
-        .json({ error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof ConfigConflictError) { sendRevisionMutationError(res, error); return; }
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
       return;
     }
 
@@ -472,9 +498,10 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
         nextSettings,
       );
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.settings.toolControls, toolId)}`);
+      res.setHeader('ETag', `"${persisted.revision}"`);
       res.json(catalogResponse(persisted.settings, persisted.revision));
     } catch (error) {
-      sendConfigMutationError(res, error);
+      sendRevisionMutationError(res, error);
     }
   });
 

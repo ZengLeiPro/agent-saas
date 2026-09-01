@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -77,6 +78,10 @@ async function withApp<T>(
 
 async function readJson(response: Response) {
   return response.json() as Promise<any>;
+}
+
+function revision(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -592,6 +597,39 @@ describe('tool controls admin router', () => {
     }, { config: staleRuntimeConfig });
   });
 
+  it('连续两次保存均返回 raw config revision，并支持 expectedRevision/If-Match 接力', async () => {
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const loadedResponse = await fetch(`${baseUrl}/api/admin/tool-controls`); const loaded = await readJson(loadedResponse);
+      expect(loaded.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(loadedResponse.headers.get('etag')).toBe(`"${loaded.revision}"`);
+
+      const normalizedResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Shell`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: loaded.revision }) });
+      expect(normalizedResponse.status).toBe(200); const normalized = await readJson(normalizedResponse); const normalizedText = readFileSync(configPath, 'utf-8');
+      expect(normalized.revision).toBe(revision(normalizedText));
+
+      const noOpResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Shell`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: normalized.revision }) });
+      expect(noOpResponse.status).toBe(200); const noOp = await readJson(noOpResponse);
+      expect(noOp.revision).toBe(normalized.revision); expect(noOpResponse.headers.get('etag')).toBe(`"${normalized.revision}"`);
+      expect(readFileSync(configPath, 'utf-8')).toBe(normalizedText);
+      const firstResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Read`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, expectedRevision: noOp.revision }),
+      });
+      expect(firstResponse.status).toBe(200);
+      const first = await readJson(firstResponse);
+      expect(first.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(firstResponse.headers.get('etag')).toBe(`"${first.revision}"`);
+
+      const secondResponse = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
+        method: 'PUT', headers: { 'content-type': 'application/json', 'if-match': `"${first.revision}"` }, body: JSON.stringify({ enabled: false }),
+      });
+      expect(secondResponse.status).toBe(200);
+      const second = await readJson(secondResponse);
+      expect(second.revision).toBe(revision(readFileSync(configPath, 'utf-8')));
+      expect(secondResponse.headers.get('etag')).toBe(`"${second.revision}"`);
+      expect(second.revision).not.toBe(first.revision);
+    }, { requireRevision: true });
+  });
+
   it('single-tool PUT can flip enabled without editing webTools payload', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
       const res = await fetch(`${baseUrl}/api/admin/tool-controls/Edit`, {
@@ -688,7 +726,10 @@ describe('tool controls admin router', () => {
       });
 
       expect(response.status).toBe(409);
-      expect(JSON.parse(readFileSync(configPath, 'utf-8')).concurrentWinner).toBe(true);
+      const winnerText = readFileSync(configPath, 'utf-8'); const conflict = await readJson(response);
+      expect(JSON.parse(winnerText).concurrentWinner).toBe(true);
+      expect(conflict.revision).toBe(revision(winnerText));
+      expect(response.headers.get('etag')).toBe(`"${conflict.revision}"`);
       expect(runtimeConfig.toolControls?.tools?.Read).toBeUndefined();
       expect(onToolSettingsUpdated).not.toHaveBeenCalled();
       expect(onConfigReloaded).not.toHaveBeenCalled();

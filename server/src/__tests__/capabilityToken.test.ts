@@ -81,12 +81,26 @@ describe('HttpSecretVault', async () => {
     expect(() => new HttpSecretVault({ baseUrl: 'http://example.com', authToken: 'secret-token' })).toThrow(/https/);
     expect(() => new HttpSecretVault({ baseUrl: 'https://vault.example.com', authToken: '' })).toThrow(/authToken/);
 
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ value: 'resolved-secret' }), {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      value: 'resolved-secret',
+      ref: {
+        id: 'ref-1',
+        ownerId: 'user-1',
+        kind: 'mcp',
+        metadata: {},
+        createdAt: '2026-08-01T00:00:00.000Z',
+        updatedAt: '2026-08-01T00:00:00.000Z',
+      },
+    }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     })) as unknown as typeof fetch;
     const vault = new HttpSecretVault({ baseUrl: 'https://vault.example.com/', authToken: 'secret-token', fetchImpl });
-    await expect(vault.getSecret('ref-1', { actor: 'mcp_proxy', userId: 'user-1', scopes: ['secret:mcp:read'] })).resolves.toBe('resolved-secret');
+    await expect(vault.getSecret('ref-1', {
+      actor: 'mcp_proxy',
+      userId: 'user-1',
+      scopes: ['secret:mcp:read'],
+    })).resolves.toBe('resolved-secret');
     const [url, init] = (fetchImpl as unknown as { mock: { calls: Array<[string, RequestInit]> } }).mock.calls[0]!;
     expect(url).toBe('https://vault.example.com/secrets/resolve');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer secret-token');

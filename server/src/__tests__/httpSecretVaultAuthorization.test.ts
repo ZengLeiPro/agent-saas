@@ -20,9 +20,9 @@ function response(body: unknown): Response {
   });
 }
 
-function ref(ownerId: string): SecretRef {
+function ref(ownerId: string, id = 'ref-1'): SecretRef {
   return {
-    id: 'ref-1',
+    id,
     ownerId,
     kind: 'mcp',
     metadata: {},
@@ -50,7 +50,10 @@ describe('HttpSecretVault authorization boundary', () => {
   });
 
   it('旧未知 ref 仅允许精确 operation scope，并把 caller 交给远端权威校验', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({ value: 'resolved' }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({
+      value: 'resolved',
+      ref: ref('alice', 'legacy-ref'),
+    }));
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.example.com',
       authToken: 'service-token',
@@ -87,10 +90,10 @@ describe('HttpSecretVault authorization boundary', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('远端返回 ref 元数据时再次执行 ACL，不向错误 owner 泄露明文', async () => {
+  it('远端 ref 元数据再次执行 ACL，不向错误 owner 泄露明文', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response({
       value: 'must-not-return',
-      ref: ref('bob'),
+      ref: ref('bob', 'legacy-ref'),
     }));
     const vault = new HttpSecretVault({
       baseUrl: 'https://vault.example.com',

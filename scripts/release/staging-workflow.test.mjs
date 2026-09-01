@@ -197,10 +197,7 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy,
     /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1" "\$2"/u,
   );
-  assert.doesNotMatch(
-    deploy,
-    /install -d[^\n]*"\$runtime_dir"/u,
-  );
+  assert.doesNotMatch(deploy, /install -d[^\n]*"\$runtime_dir"/u);
   assert.match(deploy, /Artifact directory owner does not match the persistent runtime owner/u);
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);
@@ -317,8 +314,52 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
-  assert.match(deploy, /trap finish EXIT/u);
+  assert.match(deploy, /trap finish EXIT # one-shot dispatcher/u);
   assert.match(deploy, /verify --root "\$target" --component server/u);
+});
+
+test('Staging deploy cleanup is best-effort and every temporary path is run-attempt isolated', async () => {
+  const [deploy, workflow] = await Promise.all([
+    readFile(deployPath, 'utf8'),
+    readFile(workflowPath, 'utf8'),
+  ]);
+  assert.match(deploy, /GITHUB_RUN_ATTEMPT:\?GITHUB_RUN_ATTEMPT is required/u);
+  assert.match(
+    workflow,
+    /remote="\/tmp\/agent-saas-staging-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u,
+  );
+  assert.match(
+    deploy,
+    /printf '%s:%s' "\$GITHUB_RUN_ID" "\$GITHUB_RUN_ATTEMPT" \| grep -Eq '\^\[1-9\]\[0-9\]\*:\[1-9\]\[0-9\]\*\$'/u,
+  );
+  assert.match(deploy, /deployment_attempt_id="\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT"/u);
+  assert.match(
+    workflow,
+    /GITHUB_RUN_ID='\$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='\$GITHUB_RUN_ATTEMPT' bash/u,
+  );
+  for (const pathFixture of [
+    'config.json.migrate-$deployment_attempt_id',
+    'candidate-${deployment_attempt_id}',
+    'candidate-$deployment_attempt_id',
+    'rollback-$release_id-$deployment_attempt_id',
+    '.release-persistence-$release_id-$deployment_attempt_id',
+    'acs-health-$deployment_attempt_id.json',
+    'api-ready-$deployment_attempt_id.json',
+  ]) {
+    assert.ok(deploy.includes(pathFixture), `missing run-attempt path fixture: ${pathFixture}`);
+  }
+  assert.match(deploy, /candidatePath = `\$\{configPath\}\.candidate-\$\{deploymentAttemptId\}`/u);
+  assert.match(deploy, /candidatePath = `\$\{envPath\}\.candidate-\$\{deploymentAttemptId\}`/u);
+  assert.match(deploy, /trap '' HUP INT TERM[\s\S]{0,800}set \+e/u);
+  assert.match(deploy, /Rollback backups stay on disk for manual recovery/u);
+  assert.match(
+    deploy,
+    /rm -rf "\$candidate"[\s\S]{0,320}if \[ "\$deployment_committed" = false \]; then\s+rollback/u,
+  );
+  assert.match(
+    deploy,
+    /if \[ "\$deployment_committed" = false \]; then\s+rollback\s+fi\s+return "\$status"/u,
+  );
 });
 
 test('resource plan records provisioned resources ready for first deployment', async () => {

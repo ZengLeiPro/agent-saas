@@ -8,6 +8,10 @@ set -euo pipefail
 : "${STAGING_RUNTIME_ASSETS_PATH:?STAGING_RUNTIME_ASSETS_PATH is required}"
 : "${STAGING_RUNTIME_ASSETS_DIGEST:?STAGING_RUNTIME_ASSETS_DIGEST is required}"
 : "${VERIFY_INSTALLED_SCRIPT:?VERIFY_INSTALLED_SCRIPT is required}"
+: "${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}"
+: "${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}"
+printf '%s:%s' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
+deployment_attempt_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
 release_id="$(node -p "require(process.env.MANIFEST_PATH).releaseId")"
 release_sha="$(node -p "require(process.env.MANIFEST_PATH).releaseSha")"
@@ -42,7 +46,7 @@ if [ ! -e "$server_config" ]; then
     echo 'Staging shared config is missing from both mutable and legacy paths' >&2
     exit 1
   }
-  config_candidate="$config_root/.config.json.migrate-$GITHUB_RUN_ID"
+  config_candidate="$config_root/.config.json.migrate-$deployment_attempt_id"
   install -o agent-saas-staging -g agent-saas-staging -m 0600 \
     "$legacy_server_config" "$config_candidate"
   mv -f "$config_candidate" "$server_config"
@@ -57,7 +61,7 @@ chmod 0600 "$server_config"
 install_staging_unit() {
   source_path="$1"
   destination_path="$2"
-  candidate_path="${destination_path}.candidate-${GITHUB_RUN_ID}"
+  candidate_path="${destination_path}.candidate-${deployment_attempt_id}"
   test -f "$source_path" || {
     echo "Missing Staging systemd unit template: $source_path" >&2
     exit 1
@@ -148,9 +152,11 @@ for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
       exit 1
     }
 done
-candidate="$target.candidate-$GITHUB_RUN_ID"
-rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
-artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$GITHUB_RUN_ID"
+candidate="$target.candidate-$deployment_attempt_id"
+rollback_root="$state_root/rollback-$release_id-$deployment_attempt_id"
+artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$deployment_attempt_id"
+acs_health_probe="$state_root/acs-health-$deployment_attempt_id.json"
+api_ready_probe="$state_root/api-ready-$deployment_attempt_id.json"
 mkdir -p "$rollback_root"
 server_env=/etc/agent-saas-staging/server.env
 acs_env=/etc/agent-saas-staging/acs-orchestrator.env
@@ -163,7 +169,9 @@ if [ -e "$acs_identity" ]; then
   had_previous_identity=true
   cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
 fi
+# BEGIN staging deploy cleanup lifecycle
 deployment_committed=false
+cleanup_armed=true
 rollback() {
   cp -a "$rollback_root/server.env" "$server_env"
   cp -a "$rollback_root/config.json" "$server_config"
@@ -192,20 +200,33 @@ rollback() {
   fi
 }
 finish() {
-  status=$?
+  local status=$?
   trap - EXIT
+  trap '' HUP INT TERM
+  if [ "$cleanup_armed" != true ]; then
+    return "$status"
+  fi
+  cleanup_armed=false
+  # Cleanup is one-shot and best-effort: every cleanup and rollback operation is
+  # attempted, while the status captured before cleanup remains authoritative.
+  # Rollback backups stay on disk for manual recovery if any restore step fails.
+  set +e
   rm -rf "$candidate"
   rm -f "$artifact_persistence_probe"
-  if [ "$deployment_committed" = false ]; then rollback; fi
-  exit "$status"
+  rm -f "$acs_health_probe" "$api_ready_probe"
+  if [ "$deployment_committed" = false ]; then
+    rollback
+  fi
+  return "$status"
 }
-trap finish EXIT
+trap finish EXIT # one-shot dispatcher
 trap 'exit 130' HUP INT TERM
+# END staging deploy cleanup lifecycle
 
-node - "$server_config" <<'NODE'
+node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const configPath = process.argv[2];
+const [configPath, deploymentAttemptId] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const currentSecret = config.artifact?.signedUrlSecret;
 const signedUrlSecret = typeof currentSecret === 'string'
@@ -222,8 +243,9 @@ config.artifact = {
   retentionDays: 90,
   gcIntervalMs: 24 * 60 * 60 * 1000,
 };
-fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(`${configPath}.candidate`, configPath);
+const candidatePath = `${configPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
@@ -399,16 +421,17 @@ if (failures.length > 0) {
 NODE
 
 ln -sfn "$target" "$current"
-node - "$server_config" <<'NODE'
+node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const configPath = process.argv[2];
+const [configPath, deploymentAttemptId] = process.argv.slice(2);
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 config.agent = {
   ...(config.agent || {}),
   sharedDir: '/opt/agent-saas-staging/current/server/workspace-shared',
 };
-fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-fs.renameSync(`${configPath}.candidate`, configPath);
+const candidatePath = `${configPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
@@ -419,9 +442,9 @@ config_identity="$(node "$target/server/dist/config-identity-cli.js" \
   --process-cwd /mnt/agent-saas-staging/runtime/server \
   --runtime-data-dir /mnt/agent-saas-staging/runtime/server/data \
   --env-file "$server_env")"
-node - "$MANIFEST_PATH" "$server_env" "$config_identity" <<'NODE'
+node - "$MANIFEST_PATH" "$server_env" "$config_identity" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, envPath, configIdentityJson] = process.argv.slice(2);
+const [manifestPath, envPath, configIdentityJson, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const identity = JSON.parse(configIdentityJson);
 const desired = {
@@ -444,28 +467,30 @@ const keys = new Set([
 ]);
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter((line) => line && !keys.has(line.split('=', 1)[0]));
 for (const [key, value] of Object.entries(desired)) lines.push(`${key}=${value}`);
-fs.writeFileSync(`${envPath}.candidate`, `${lines.join('\n')}\n`, { mode: 0o600 });
-fs.renameSync(`${envPath}.candidate`, envPath);
+const candidatePath = `${envPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${lines.join('\n')}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, envPath);
 NODE
 chown root:agent-saas-staging "$server_env"
 chmod 0640 "$server_env"
-node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const reference = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`;
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter(Boolean);
 const output = lines.filter((line) => !line.startsWith('ACS_SANDBOX_IMAGE='));
 output.push(`ACS_SANDBOX_IMAGE=${reference}`);
-fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
-fs.renameSync(`${envPath}.candidate`, envPath);
+const candidatePath = `${envPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${output.join('\n')}\n`, { mode: 0o600 });
+fs.renameSync(candidatePath, envPath);
 NODE
 chown root:agent-saas-staging "$acs_env"
 chmod 0640 "$acs_env"
-node - "$MANIFEST_PATH" "$acs_env" <<'NODE'
+node - "$MANIFEST_PATH" "$acs_env" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
-const [manifestPath, envPath] = process.argv.slice(2);
+const [manifestPath, envPath, deploymentAttemptId] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const configFingerprint = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(envPath)).digest('hex')}`;
 const identity = {
@@ -478,8 +503,10 @@ const identity = {
   namespace: 'agent-saas-staging',
   configFingerprint,
 };
-fs.writeFileSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', `${JSON.stringify(identity)}\n`, { mode: 0o444 });
-fs.renameSync('/etc/agent-saas-staging/acs-release-identity.json.candidate', '/etc/agent-saas-staging/acs-release-identity.json');
+const identityPath = '/etc/agent-saas-staging/acs-release-identity.json';
+const candidatePath = `${identityPath}.candidate-${deploymentAttemptId}`;
+fs.writeFileSync(candidatePath, `${JSON.stringify(identity)}\n`, { mode: 0o444 });
+fs.renameSync(candidatePath, identityPath);
 NODE
 runuser -u agent-saas-staging -- sh -c \
   'umask 077; printf "%s" "$2" > "$1"' sh "$artifact_persistence_probe" "$release_id"
@@ -498,17 +525,17 @@ if systemctl is-active --quiet agent-saas-acs-orchestrator-staging.service; then
 fi
 systemctl restart agent-saas-acs-orchestrator-staging.service
 for attempt in $(seq 1 60); do
-  curl -fsS http://127.0.0.1:3410/health >"$state_root/acs-health.json" && break
+  curl -fsS http://127.0.0.1:3410/health >"$acs_health_probe" && break
   sleep 2
 done
-test -s "$state_root/acs-health.json"
+test -s "$acs_health_probe"
 systemctl restart agent-saas-server-staging.service
 systemctl restart agent-saas-runtime-worker-staging.service
 for attempt in $(seq 1 60); do
-  curl -fsS http://127.0.0.1:3210/api/healthz/ready >"$state_root/api-ready.json" && break
+  curl -fsS http://127.0.0.1:3210/api/healthz/ready >"$api_ready_probe" && break
   sleep 2
 done
-test -s "$state_root/api-ready.json"
+test -s "$api_ready_probe"
 runuser -u agent-saas-staging -- test -r "$artifact_persistence_probe"
 test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
   echo 'Staging Artifact persistence probe did not survive the service restart' >&2
@@ -516,7 +543,7 @@ test "$(cat "$artifact_persistence_probe")" = "$release_id" || {
 }
 rm -f "$artifact_persistence_probe"
 
-node --input-type=module - "$MANIFEST_PATH" "$state_root/api-ready.json" \
+node --input-type=module - "$MANIFEST_PATH" "$api_ready_probe" \
   /run/agent-saas-staging/config-identity.json "$config_identity" \
   "$config_identity_reader" <<'NODE'
 import fs from 'node:fs';
@@ -532,7 +559,7 @@ await validateCandidateReleaseReadiness({
 });
 NODE
 
-node - "$MANIFEST_PATH" "$state_root/acs-health.json" <<'NODE'
+node - "$MANIFEST_PATH" "$acs_health_probe" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, acsPath] = process.argv.slice(2);
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));

@@ -244,21 +244,24 @@ function toRef(secret: StoredSecret): SecretRef {
   return { ...ref, version: opaqueVersion(secret) };
 }
 
-function sanitizeInspectedRef(value: unknown): SecretRef {
+function sanitizeRemoteRef(value: unknown): SecretRef {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('HttpSecretVault inspect response is malformed');
+    throw new Error('HttpSecretVault response ref is malformed');
   }
   const raw = value as Record<string, unknown>;
   for (const field of ['id', 'ownerId', 'kind', 'createdAt'] as const) {
     if (typeof raw[field] !== 'string' || raw[field].length === 0) {
-      throw new Error(`HttpSecretVault inspect response ${field} is malformed`);
+      throw new Error(`HttpSecretVault response ref ${field} is malformed`);
     }
   }
   if (raw.updatedAt !== undefined && (typeof raw.updatedAt !== 'string' || !raw.updatedAt)) {
-    throw new Error('HttpSecretVault inspect response updatedAt is malformed');
+    throw new Error('HttpSecretVault response ref updatedAt is malformed');
+  }
+  if (raw.revokedAt !== undefined && (typeof raw.revokedAt !== 'string' || !raw.revokedAt)) {
+    throw new Error('HttpSecretVault response ref revokedAt is malformed');
   }
   if (raw.metadata !== undefined && (!raw.metadata || typeof raw.metadata !== 'object' || Array.isArray(raw.metadata))) {
-    throw new Error('HttpSecretVault inspect response metadata is malformed');
+    throw new Error('HttpSecretVault response ref metadata is malformed');
   }
   const ref: SecretRef = {
     id: raw.id as string,
@@ -269,7 +272,7 @@ function sanitizeInspectedRef(value: unknown): SecretRef {
     updatedAt: (raw.updatedAt as string | undefined) ?? (raw.createdAt as string),
     version: opaqueVersion(raw as unknown as SecretRef),
   };
-  if (typeof raw.revokedAt === 'string' && raw.revokedAt) ref.revokedAt = raw.revokedAt;
+  if (raw.revokedAt !== undefined) ref.revokedAt = raw.revokedAt as string;
   return ref;
 }
 
@@ -464,9 +467,8 @@ export interface HttpSecretVaultOptions {
   requestTimeoutMs?: number;
   /**
    * A3: 本地 plaintext cache TTL（毫秒）。默认 30_000；设 0 或负数关闭 cache。
-   * 命中条件：未过期 + 未被 invalidate / rotate / revoke。cache key 只用 refId
-   * （远端已按 caller scope 做 ACL；本地 cache 处于受信 vault adapter 内层，
-   * caller 不参与 key，让同一进程多个 caller 共享 plaintext，减少 KMS 压力）。
+   * 命中条件：未过期 + 未被 invalidate / rotate / revoke。cache key 绑定 refId
+   * 与完整 caller 授权上下文，禁止不同 tenant/user/scope 共享 plaintext。
    */
   cacheTtlMs?: number;
   /** Cache 最大条目数（默认 256）。命中 / 写入按 Map 插入顺序做 LRU 淘汰。 */
@@ -526,7 +528,8 @@ export class HttpSecretVault implements SecretVault {
     metadata: Record<string, unknown> = {},
   ): Promise<SecretRef> {
     assertAllowed({ ownerId, kind }, caller, 'write');
-    const created = await this.post<SecretRef>('/secrets', { ownerId, kind, value, caller, metadata });
+    const created = sanitizeRemoteRef(await this.post<unknown>('/secrets', { ownerId, kind, value, caller, metadata }));
+    assertAllowed(created, caller, 'write');
     this.rememberRef(created);
     return created;
   }
@@ -537,11 +540,11 @@ export class HttpSecretVault implements SecretVault {
     const cacheKey = this.cacheKey(id, caller);
     const cached = this.readCache(cacheKey);
     if (cached !== undefined) return cached;
-    const result = await this.post<{ value: string; ref?: SecretRef }>('/secrets/resolve', { ref: id, caller });
-    if (result.ref) {
-      assertAllowed(result.ref, caller, 'read');
-      this.rememberRef(result.ref);
-    }
+    const result = await this.post<{ value: string; ref: unknown }>('/secrets/resolve', { ref: id, caller });
+    const resolved = sanitizeRemoteRef(result.ref);
+    if (resolved.id !== id) throw new Error('HttpSecretVault resolve response ref id mismatch');
+    assertAllowed(resolved, caller, 'read');
+    this.rememberRef(resolved);
     this.writeCache(cacheKey, result.value);
     return result.value;
   }
@@ -558,7 +561,7 @@ export class HttpSecretVault implements SecretVault {
     if (cached) return cached;
     const response = await this.post<unknown | null>('/secrets/inspect', { ref: id, caller });
     if (!response) return null;
-    const inspected = sanitizeInspectedRef(response);
+    const inspected = sanitizeRemoteRef(response);
     if (inspected.id !== id) throw new Error('HttpSecretVault inspect response ref id mismatch');
     assertMetadataInspectionAllowed(inspected, caller);
     this.rememberRef(inspected);
@@ -568,7 +571,9 @@ export class HttpSecretVault implements SecretVault {
   async rotateSecret(ref: SecretRef | string, value: string, caller: VaultCaller): Promise<SecretRef> {
     const id = refId(ref);
     this.assertRemoteOperation(ref, caller, 'rotate');
-    const updated = await this.post<SecretRef>(`/secrets/${encodeURIComponent(id)}/rotate`, { value, caller });
+    const updated = sanitizeRemoteRef(await this.post<unknown>(`/secrets/${encodeURIComponent(id)}/rotate`, { value, caller }));
+    if (updated.id !== id) throw new Error('HttpSecretVault rotate response ref id mismatch');
+    assertAllowed(updated, caller, 'rotate');
     this.invalidate(id);
     this.rememberRef(updated);
     return updated;

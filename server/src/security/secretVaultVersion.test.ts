@@ -22,6 +22,37 @@ const REVOKE_CALLER: VaultCaller = {
   actor: 'connector_proxy',
   scopes: ['secret:tenant-hand:revoke'],
 };
+const HTTP_CALLER: VaultCaller = {
+  actor: 'mcp_proxy',
+  userId: 'alice',
+  scopes: ['secret:mcp:read', 'secret:mcp:write', 'secret:mcp:rotate'],
+};
+
+function remoteRef(id: string) {
+  return {
+    id,
+    ownerId: 'alice',
+    kind: 'mcp',
+    metadata: { purpose: 'test' },
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-30T00:00:00.000Z',
+    version: 2,
+    value: 'remote-ref-plaintext-must-be-dropped',
+    extra: 'remote-extra-must-be-dropped',
+  };
+}
+
+function cleanRemoteRef(id: string) {
+  return {
+    id,
+    ownerId: 'alice',
+    kind: 'mcp',
+    metadata: { purpose: 'test' },
+    createdAt: '2026-08-01T00:00:00.000Z',
+    updatedAt: '2026-08-30T00:00:00.000Z',
+    version: 2,
+  };
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -103,6 +134,85 @@ describe('EncryptedFileSecretVault opaque version migration（TASK-318）', () =
     expect(inspected?.revokedAt).toBeTruthy();
     expect(JSON.stringify(inspected)).not.toContain('legacy-plaintext-must-never-leak');
   });
+
+describe('HttpSecretVault remote ref sanitization（TASK-318）', () => {
+  it('get/put/rotate 缓存和返回前丢弃 ref 明文与额外字段', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/secrets/resolve') {
+        const body = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ value: 'resolved-plaintext', ref: remoteRef(body.ref) }));
+      }
+      if (path === '/secrets') return new Response(JSON.stringify(remoteRef('put-ref-id')));
+      if (path === '/secrets/rotate-ref-id/rotate') {
+        return new Response(JSON.stringify(remoteRef('rotate-ref-id')));
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: fetchImpl as typeof fetch,
+      metadataCacheTtlMs: 60_000,
+    });
+
+    expect(await vault.getSecret('get-ref-id', HTTP_CALLER)).toBe('resolved-plaintext');
+    expect(await vault.inspectRef!('get-ref-id', HTTP_CALLER)).toEqual(cleanRemoteRef('get-ref-id'));
+    expect(await vault.putSecret('alice', 'mcp', 'put-plaintext', HTTP_CALLER)).toEqual(cleanRemoteRef('put-ref-id'));
+    expect(await vault.inspectRef!('put-ref-id', HTTP_CALLER)).toEqual(cleanRemoteRef('put-ref-id'));
+    expect(await vault.rotateSecret('rotate-ref-id', 'rotate-plaintext', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
+    expect(await vault.inspectRef!('rotate-ref-id', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('get 远端省略权威 ref 时 fail closed', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        value: 'resolved-plaintext',
+      }))) as typeof fetch,
+    });
+
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).rejects.toThrow(/response ref is malformed/);
+  });
+
+  it('get 远端返回错误 ref id 时 fail closed', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        value: 'resolved-plaintext',
+        ref: remoteRef('different-ref-id'),
+      }))) as typeof fetch,
+    });
+
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).rejects.toThrow(/ref id mismatch/);
+  });
+
+  it('get 远端返回 ref ACL 不匹配时 fail closed', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify({
+        value: 'resolved-plaintext',
+        ref: { ...remoteRef('remote-ref-id'), ownerId: 'bob' },
+      }))) as typeof fetch,
+    });
+
+    await expect(vault.getSecret('remote-ref-id', HTTP_CALLER)).rejects.toThrow(/owner mismatch/);
+  });
+
+  it('rotate 远端返回错误 ref id 时 fail closed', async () => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify(remoteRef('different-ref-id')))) as typeof fetch,
+    });
+
+    await expect(vault.rotateSecret('remote-ref-id', 'rotated', HTTP_CALLER)).rejects.toThrow(/ref id mismatch/);
+  });
+});
 
 describe('HttpSecretVault metadata-only version inspection（TASK-318）', () => {
   it('metadata TTL 到期或 invalidate 后重检远端 version，且不解析 secret 明文', async () => {

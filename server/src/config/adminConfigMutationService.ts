@@ -22,7 +22,7 @@ const BACKUP_LIMIT = 20;
 
 export class ConfigConflictError extends Error {
   readonly code = 'CONFIG_FINGERPRINT_CONFLICT';
-  constructor(readonly currentFingerprint: string) {
+  constructor(readonly currentFingerprint: string, readonly currentRevision?: string) {
     super('配置已被其他管理员更新，请刷新后重试');
   }
 }
@@ -32,6 +32,7 @@ export interface AdminConfigMutationResult {
   previousConfig: AppConfig;
   beforeFingerprint: string;
   effectiveConfigFingerprint: string;
+  revision: string;
   appliedAt: string;
 }
 
@@ -39,6 +40,7 @@ interface MutationInput {
   actor: string;
   changedPaths: string[];
   expectedFingerprint?: string;
+  expectedRevision?: string;
   /** 锁内、任何 secret/候选副作用前确认完整磁盘基线。 */
   validateBaseline?: (currentText: string, current: AppConfig) => void | Promise<void>;
   buildCandidate: (
@@ -66,6 +68,10 @@ function canonicalJson(value: unknown): string {
 
 export function configFingerprint(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
+}
+
+function configRevision(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function parseRaw(text: string): Record<string, unknown> {
@@ -106,24 +112,30 @@ export class AdminConfigMutationService {
       const currentRaw = parseRaw(currentText);
       const previousConfig = parseAppConfig(currentRaw);
       const beforeFingerprint = configFingerprint(currentRaw);
+      const beforeRevision = configRevision(currentText);
       if (input.expectedFingerprint && input.expectedFingerprint !== beforeFingerprint) {
-        throw new ConfigConflictError(beforeFingerprint);
+        throw new ConfigConflictError(beforeFingerprint, beforeRevision);
+      }
+      if (input.expectedRevision && input.expectedRevision !== beforeRevision) {
+        throw new ConfigConflictError(beforeFingerprint, beforeRevision);
       }
       await input.validateBaseline?.(currentText, previousConfig);
       if (await readFile(this.options.configPath, 'utf8') !== currentText) {
-        throw new ConfigConflictError(beforeFingerprint);
+        const latestText = await readFile(this.options.configPath, 'utf8');
+        throw new ConfigConflictError(configFingerprint(parseRaw(latestText)), configRevision(latestText));
       }
       const candidateText = await input.buildCandidate(currentText, currentRaw);
       const candidateRaw = parseRaw(candidateText);
       const config = parseAppConfig(candidateRaw);
       await input.validateCandidate?.(config);
       if (await readFile(this.options.configPath, 'utf8') !== currentText) {
-        throw new ConfigConflictError(beforeFingerprint);
+        const latestText = await readFile(this.options.configPath, 'utf8');
+        throw new ConfigConflictError(configFingerprint(parseRaw(latestText)), configRevision(latestText));
       }
       const effectiveConfigFingerprint = configFingerprint(candidateRaw);
       const appliedAt = (this.options.now?.() ?? new Date()).toISOString();
       if (effectiveConfigFingerprint === beforeFingerprint) {
-        return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, appliedAt };
+        return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, revision: beforeRevision, appliedAt };
       }
 
       const backupPath = await this.createBackup(currentText, beforeFingerprint, appliedAt);
@@ -133,7 +145,7 @@ export class AdminConfigMutationService {
         const readbackText = await readFile(this.options.configPath, 'utf8');
         const readbackRaw = parseRaw(readbackText);
         if (readbackText !== candidateText || configFingerprint(readbackRaw) !== effectiveConfigFingerprint) {
-          throw new ConfigConflictError(configFingerprint(readbackRaw));
+          throw new ConfigConflictError(configFingerprint(readbackRaw), configRevision(readbackText));
         }
         await this.appendAudit({
           at: appliedAt,
@@ -172,7 +184,7 @@ export class AdminConfigMutationService {
       await input.onCommitted?.(candidateText);
       await this.options.onCommitted?.(candidateText);
       await this.pruneBackups();
-      return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, appliedAt };
+      return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, revision: configRevision(candidateText), appliedAt };
     } finally {
       await releaseLock();
     }
@@ -207,7 +219,7 @@ export class AdminConfigMutationService {
           continue;
         }
         const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
-        throw new ConfigConflictError(configFingerprint(parseRaw(currentText)));
+        throw new ConfigConflictError(configFingerprint(parseRaw(currentText)), configRevision(currentText));
       }
     }
   }

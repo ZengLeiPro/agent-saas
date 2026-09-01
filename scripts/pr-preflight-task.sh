@@ -12,9 +12,13 @@ require_test_database() {
 case "$task" in
   checks)
     pnpm check:ratchets
-    node --test scripts/release/config-identity-release.test.mjs
+    node --test \
+      scripts/release/config-identity-release.test.mjs \
+      scripts/release/promotion-workflow.test.mjs \
+      scripts/release/staging-workflow.test.mjs
     bash -n scripts/release/production-deploy-rollback.sh
     bash scripts/release/production-deploy-rollback.test.sh
+    bash scripts/release/staging-deploy-cleanup.test.sh
     pnpm -F server typecheck
     pnpm -F server context:relation-eval:baseline
     pnpm -F server build

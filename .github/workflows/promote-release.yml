@@ -122,7 +122,7 @@ jobs:
              [ "$(tail -n1 "$log" | jq -r .state)" != failed_before_change ]; then
             pnpm exec tsx server/src/release/releaseAttestationCli.ts \
               --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID" \
+              --state failed_before_change --operation "retry-before-change:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" \
               --actor "$GITHUB_ACTOR" --reason "$retry_evidence"
           fi
           staging="$(jq -c 'select(.state=="staging_deployed")' "$log" | tail -n1)"
@@ -169,7 +169,7 @@ jobs:
             '{releaseId:$releaseId,manifestDigest:$manifestDigest,stagingDeploymentId:$stagingDeploymentId,stagingRunId:$stagingRunId,verificationSummary:$verificationSummary,triggeredAt:$triggeredAt,recoveryMode:$recoveryMode,reason:$reason}')"
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state approved --operation "approval:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR" \
+            --state approved --operation "approval:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR" \
             --reason "$approval_reason"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
@@ -297,7 +297,7 @@ jobs:
           set -euo pipefail
           pnpm exec tsx server/src/release/releaseAttestationCli.ts \
             --root "$RUNNER_TEMP/attestations" --release-id "$RELEASE_ID" --digest "$MANIFEST_DIGEST" \
-            --state promoting --operation "promoting:$GITHUB_RUN_ID" --actor "$GITHUB_ACTOR"
+            --state promoting --operation "promoting:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" --actor "$GITHUB_ACTOR"
           snapshot_json="$(node scripts/release/attestation-snapshot.mjs create \
             "$RUNNER_TEMP/attestations/$RELEASE_ID.jsonl" "$RUNNER_TEMP/attestation-snapshots")"
           snapshot_path="$(printf '%s' "$snapshot_json" | jq -r .path)"

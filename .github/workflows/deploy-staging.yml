@@ -762,7 +762,7 @@ jobs:
       - name: Deploy exact Staging API, Worker and ACS artifacts
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" "mkdir -p '$remote'"
           # The deploy gate imports the shared strict private ConfigIdentity contract.
           scp -i ~/.ssh/staging_key "$RUNNER_TEMP/selected/"*.tgz "$RUNNER_TEMP/manifest.json" \
@@ -774,7 +774,7 @@ jobs:
             daemon-packaging/systemd/agent-saas-acs-orchestrator-staging.service.template \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
-            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' bash '$remote/deploy-staging-release.sh'"
+            "RELEASE_DIR='$remote' UNIT_DIR='$remote' MANIFEST_PATH='$remote/manifest.json' EXPECTED_MANIFEST_DIGEST='$MANIFEST_DIGEST' STAGING_RUNTIME_ASSETS_PATH='$remote/staging-runtime-assets.tgz' STAGING_RUNTIME_ASSETS_DIGEST='$(jq -r .stagingRuntimeAssetsDigest "$RUNNER_TEMP/staging-runtime-summary.json")' VERIFY_INSTALLED_SCRIPT='$remote/verify-installed-release.mjs' GITHUB_RUN_ID='$GITHUB_RUN_ID' GITHUB_RUN_ATTEMPT='$GITHUB_RUN_ATTEMPT' bash '$remote/deploy-staging-release.sh'"
 
       - name: Publish exact Staging Web artifact last
         run: |
@@ -816,7 +816,7 @@ jobs:
       - name: Verify migrations and isolated Integration fixture
         run: |
           set -euo pipefail
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           scp -i ~/.ssh/staging_key scripts/staging/ensure-integration-fixture.mjs \
             "$STAGING_ECS_USER@$STAGING_ECS_HOST:$remote/"
           ssh -i ~/.ssh/staging_key "$STAGING_ECS_USER@$STAGING_ECS_HOST" \
@@ -835,7 +835,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${STAGING_ISOLATION_EVIDENCE_URL:?Missing staging variable}"
-          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID"
+          remote="/tmp/agent-saas-staging-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           scp -i ~/.ssh/staging_key infra/staging/resource-plan.json \
             scripts/staging/collect-isolation-host.mjs \
             scripts/staging/publish-isolation-evidence.mjs \

@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { getPublicModelList } from '../app/models.js';
 import { getAppConfigPath, parseAppConfig } from '../app/config.js';
-import { ConfigWriteConflictError, configRevision, withConfigWriteLock } from './configWriteLock.js';
+import { configRevision } from './configWriteLock.js';
 import type {
   AppConfig,
   MemoryIndexAppConfig,
@@ -17,6 +17,7 @@ import type {
 import {
   AdminConfigMutationService,
   ConfigConflictError,
+  configFingerprint,
 } from '../config/adminConfigMutationService.js';
 import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
@@ -39,6 +40,15 @@ export interface CreateModelsAdminRouterOptions {
 }
 
 class RuntimeConfigValidationError extends Error {}
+
+function sendRevisionMutationError(res: Response, error: unknown): void {
+  if (error instanceof ConfigConflictError && error.currentRevision) {
+    res.setHeader('ETag', `"${error.currentRevision}"`);
+    res.status(409).json({ error: error.message, code: error.code, revision: error.currentRevision });
+    return;
+  }
+  sendConfigMutationError(res, error);
+}
 
 type ModelsAdminUpdate = {
   candidateConfig: AppConfig;
@@ -326,8 +336,10 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     const configText = readFileSync(getAppConfigPath(options.processCwd), 'utf-8');
     const diskConfig = parseAppConfig(parseJsonc(configText));
     if (!diskConfig.models) { res.status(404).json({ error: 'models 未配置' }); return; }
+    const revision = configRevision(configText);
+    res.setHeader('ETag', `"${revision}"`);
     res.json({
-      revision: configRevision(configText),
+      revision,
       models: redactModels(diskConfig.models),
       memoryIndex: redactMemoryIndex(diskConfig.memory?.index ?? null),
       titleGenerator: titleGeneratorView(diskConfig),
@@ -341,13 +353,19 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
     const createdRefs: CreatedSecretRef[] = [];
     const replacedRefs: CreatedSecretRef[] = [];
     const requestContext = mutationRequestContext(req);
+    const expectedRevisions = [
+      typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : undefined,
+      requestContext.expectedFingerprint,
+    ].filter((revision): revision is string => Boolean(revision));
     try {
       const result = await configMutationService.mutate({
-        ...requestContext,
+        actor: requestContext.actor,
+        expectedRevision: expectedRevisions[0],
         changedPaths: ['models', 'memory.index', 'titleGenerator', 'systemPrompts.utility.title'],
-        validateBaseline: async (configText) => {
-          if (options.requireRevision && req.body?.expectedRevision !== configRevision(configText)) {
-            throw new ConfigConflictError(configRevision(configText));
+        validateBaseline: async (configText, _current) => {
+          const revision = configRevision(configText);
+          if ((options.requireRevision && expectedRevisions.length === 0) || expectedRevisions.some((expected) => expected !== revision)) {
+            throw new ConfigConflictError(configFingerprint(parseJsonc(configText)), revision);
           }
           if (options.ensureConfigBaselineApplied && !await options.ensureConfigBaselineApplied(configText)) {
             throw new Error('当前配置基线未完整应用，拒绝写入');
@@ -427,9 +445,9 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
       await revokeModelRefs(options.secretVault, replacedRefs);
-      res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
+      res.setHeader('ETag', `"${result.revision}"`);
       res.json({
-        revision: result.effectiveConfigFingerprint,
+        revision: result.revision,
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
@@ -449,7 +467,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
           return;
         }
       }
-      sendConfigMutationError(res, error);
+      sendRevisionMutationError(res, error);
     }
   });
 

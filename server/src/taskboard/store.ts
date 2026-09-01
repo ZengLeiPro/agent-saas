@@ -34,8 +34,6 @@ import {
 } from './executionTaskActions.js';
 import { moveTaskFromReviewExecution } from './executionTaskMove.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { clearBoardCiPolicyForRepositoryChange, normalizeIntegrationPolicyCiFallback } from './ciPolicy.js';
-import { discoverBoardCiPolicy } from './ciPolicyDiscovery.js';
 import { deleteStoredTask, rollbackStoredTask } from './storeTaskDelete.js';
 import { completeStoredTask } from './manualTaskCompletion.js';
 import { describeTaskUpdate, resolveTaskKindMutation, TASK_PROMOTION_WORKFLOW_ASSIGNMENTS } from './storeTaskPromotion.js';
@@ -301,9 +299,8 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   async getBoard(identity: TaskboardIdentity, boardId: string): Promise<TaskBoard> {
     return this.requireBoard(this.pool, identity, boardId, false);
   }
-  getBoardCiPolicyDiscovery(identity: TaskboardIdentity, boardId: string) { return discoverBoardCiPolicy(this, identity, boardId); }
   async createBoard(identity: TaskboardIdentity, input: TaskBoardCreateInput): Promise<TaskBoard> {
-    const integrationPolicy = input.integrationPolicy && normalizeIntegrationPolicyCiFallback(input.integrationPolicy);
+    const integrationPolicy = input.integrationPolicy;
     const name = requireText(input.name, 'Board name');
     const description = optionalText(input.description);
     const prompt = normalizeBoardPrompt(input.prompt ?? TASKBOARD_DEFAULT_PROMPT);
@@ -347,7 +344,6 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
     }
   }
   async updateBoard(identity: TaskboardIdentity, boardId: string, input: TaskBoardPatchInput): Promise<TaskBoard> {
-    const inputPolicy = input.integrationPolicy && normalizeIntegrationPolicyCiFallback(input.integrationPolicy);
     return this.withTransaction(async (client) => {
       const current = await this.requireOwnedBoard(client, identity, boardId, true);
       assertExpectedVersion(current, input.expectedVersion);
@@ -393,12 +389,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         throw new TaskboardValidationError('Repository owner, name and base branch are required');
       }
       const effectiveRepository = input.repository === undefined ? current.repository : normalizedRepository ?? undefined;
-      const reboundPolicy = clearBoardCiPolicyForRepositoryChange(
-        current.repository,
-        effectiveRepository,
-        input.integrationPolicy === undefined ? current.integrationPolicy : inputPolicy ?? undefined,
-      );
-      const effectivePolicy = reboundPolicy.policy;
+      const effectivePolicy = input.integrationPolicy === undefined
+        ? current.integrationPolicy
+        : input.integrationPolicy ?? undefined;
       if (input.repository !== undefined) {
         const nextRepositoryId = normalizedRepository?.repositoryId;
         const currentRepositoryId = current.repository?.repositoryId;
@@ -425,7 +418,7 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
         params.push(normalizedRepository ? JSON.stringify(normalizedRepository) : null);
         assignments.push(`repository=$${params.length}::jsonb`);
       }
-      if (input.integrationPolicy !== undefined || reboundPolicy.cleared) {
+      if (input.integrationPolicy !== undefined) {
         if (effectivePolicy && !effectiveRepository) {
           throw new TaskboardValidationError(
             'Integration policy requires a repository',

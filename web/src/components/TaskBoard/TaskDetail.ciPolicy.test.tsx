@@ -49,7 +49,7 @@ describe("TaskDetail CI 未配置闭环", () => {
     mocks.fetchTask.mockResolvedValue(blockedTask);
   });
 
-  it("展示配置入口，并恢复后立即启动当前 PR head 重检", async () => {
+  it("提示在 GitHub 配置，并恢复后立即启动当前 PR head 重检", async () => {
     const user = userEvent.setup();
     const resumedTask = { ...blockedTask, status: "todo" as const, version: 4 };
     const runningTask = { ...resumedTask, status: "in_progress" as const, version: 5 };
@@ -58,10 +58,9 @@ describe("TaskDetail CI 未配置闭环", () => {
       status: "queued", purpose: "work", requestedBy: "user-1", createdAt: blockedTask.createdAt, updatedAt: blockedTask.updatedAt,
     };
     mocks.resumeTask.mockResolvedValue(resumedTask);
-    const onConfigureCiPolicy = vi.fn();
     const onExecute = vi.fn(async () => ({ task: runningTask, execution }));
     const onTaskLoaded = vi.fn();
-    render(<TaskDetail {...props({ onConfigureCiPolicy, onExecute, onTaskLoaded })} />);
+    render(<TaskDetail {...props({ onExecute, onTaskLoaded })} />);
     await user.click(await screen.findByRole("tab", { name: "讨论（0）" }));
 
     const compactStatus = await screen.findByRole("region", { name: "任务关键状态" });
@@ -70,26 +69,26 @@ describe("TaskDetail CI 未配置闭环", () => {
     expect(screen.getByTestId("task-detail-information").getAttribute("aria-hidden")).toBe("true");
     await user.click(screen.getByRole("tab", { name: "详细信息" }));
     expect(await screen.findByLabelText("CI 门禁未配置")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "前往配置" }));
-    expect(onConfigureCiPolicy).toHaveBeenCalledOnce();
+    expect(screen.getByText(/请在 GitHub branch protection \/ ruleset 中配置 required checks/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "前往配置" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "恢复任务并重新检查" }));
     await waitFor(() => expect(mocks.resumeTask).toHaveBeenCalledWith(
-      blockedTask.id, blockedTask.version, "CI 门禁已配置，恢复实施并重新检查当前精确 PR head",
+      blockedTask.id, blockedTask.version, "GitHub required checks 已配置，恢复实施并重新检查当前精确 PR head",
     ));
     expect(onExecute).toHaveBeenCalledWith(resumedTask, "work");
     expect(onTaskLoaded).toHaveBeenLastCalledWith(runningTask);
   });
 
-  it("无策略或恢复权限时明确提示联系看板所有者", async () => {
+  it("无恢复权限时仍明确提示 GitHub 配置位置", async () => {
     const user = userEvent.setup();
     const readOnlyBoard: TaskBoard = {
       ...editableBoard, visibility: "organization", ownerUserId: "owner-1", canManage: false,
       allowedActions: ["board.read"],
     };
-    render(<TaskDetail {...props({ board: readOnlyBoard, canTransitionTask: false, onConfigureCiPolicy: undefined })} />);
+    render(<TaskDetail {...props({ board: readOnlyBoard, canTransitionTask: false })} />);
 
     await user.click(await screen.findByRole("tab", { name: "详细信息" }));
-    expect(await screen.findByText(/请联系看板所有者配置/)).toBeTruthy();
+    expect(await screen.findByText(/请在 GitHub branch protection \/ ruleset 中配置 required checks/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "前往配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "恢复任务并重新检查" })).toBeNull();
   });

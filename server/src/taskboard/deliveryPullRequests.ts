@@ -1,14 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
-import type {
-  TaskBoardIntegrationPolicy,
-  TaskBoardTask,
-} from '../../../shared/src/types/taskboard.js';
+import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import { finalizeMergedSource } from './integrationFinalization.js';
 import type { IntegrationFinalizationHost } from './integrationFinalizationHost.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import { repositoryWithBoardCiPolicy } from './ciPolicy.js';
 import type {
   RepositoryProvider,
   RepositoryPullRequestInspection,
@@ -290,7 +286,7 @@ export function assertPullRequestGate(
   }
   if (snapshot.requiredChecksConfigured === false) {
     throw new TaskboardValidationError(
-      "CI gate is not configured: add GitHub required checks or this board's explicit CI fallback",
+      'CI gate is not configured: add GitHub required checks for the base branch',
       'TASKBOARD_CI_UNCONFIGURED',
     );
   }
@@ -678,7 +674,7 @@ async function loadContext(
     const result = await client.query(
       `SELECT t.id AS task_id,t.kind,t.branch AS task_branch,t.provider_pull_request_id,
               e.id AS execution_id,e.purpose,e.status AS execution_status,e.transitioned_at,e.superseded_at,
-              b.repository,b.integration_policy,b.owner_user_id,
+              b.repository,b.owner_user_id,
               agent.integration_task_id AS agent_task_id,
               agent.provider_pull_request_id AS agent_provider_pull_request_id,
               agent.integration_branch,
@@ -747,17 +743,14 @@ async function loadContext(
         : {}),
       ...(row.task_branch ? { taskBranch: String(row.task_branch) } : {}),
       ...(row.delivery_branch ? { deliveryBranch: String(row.delivery_branch) } : {}),
-      repository: repositoryWithBoardCiPolicy(
-        repository as {
-          provider: 'github';
-          repositoryId: string;
-          owner: string;
-          name: string;
-          baseBranch: string;
-          allowForkPullRequest: false;
-        },
-        jsonObject(row.integration_policy) as TaskBoardIntegrationPolicy | undefined,
-      ),
+      repository: repository as {
+        provider: 'github';
+        repositoryId: string;
+        owner: string;
+        name: string;
+        baseBranch: string;
+        allowForkPullRequest: false;
+      },
       boardOwnerUserId: String(row.owner_user_id),
     };
   } finally {

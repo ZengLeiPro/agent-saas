@@ -308,12 +308,6 @@ export class RetryableTaskboardService implements TaskboardService, TaskboardExe
     return service.removeMember(identity, boardId, userId);
   }
 
-  async getBoardCiPolicyDiscovery(identity: TaskboardIdentity, boardId: string) {
-    const service = await this.service();
-    if (!service.getBoardCiPolicyDiscovery) throw new Error('Taskboard CI policy discovery unavailable');
-    return service.getBoardCiPolicyDiscovery(identity, boardId);
-  }
-
   async createIntegrationBatch(
     identity: TaskboardIdentity,
     boardId: string,

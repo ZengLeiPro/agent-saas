@@ -1,6 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
-import { boardCiPolicySchema } from './taskboardCiPolicySchema.js';
 import { registerTaskboardWatchRoutes } from './taskboardWatch.js';
 
 import type { UserStore } from '../data/users/store.js';
@@ -69,7 +68,6 @@ const integrationPolicySchema = z.object({
   enabled: z.boolean(),
   revision: z.string().trim().max(128).default('server'),
   workflowVersion: z.literal(3).default(3),
-  ciPolicy: boardCiPolicySchema.optional(),
   trigger: integrationTriggerSchema,
   batch: z.object({
     maxTasks: z.number().int().min(1).max(100),
@@ -338,10 +336,6 @@ export function createTaskboardRouter(options: TaskboardRouterOptions): Router {
     res.json(await options.service!.getBoard(identityFrom(req), req.params.id));
   }));
 
-  router.get('/boards/:id/ci-policy', route(async (req, res) => {
-    if (!options.service!.getBoardCiPolicyDiscovery) throw new TaskboardExecutionUnavailableError();
-    res.json(await options.service!.getBoardCiPolicyDiscovery(identityFrom(req), req.params.id));
-  }));
   router.patch('/boards/:id', route(async (req, res) => {
     const input = parseOrReply(boardPatchSchema, req.body, res, 'body');
     if (!input) return;

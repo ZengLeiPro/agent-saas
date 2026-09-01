@@ -132,28 +132,9 @@ export interface TaskBoardCiRequiredCheck {
   appId?: number;
 }
 
-/** Board-scoped CI fallback, used only when GitHub declares no required checks. */
-export interface TaskBoardCiPolicy {
-  requiredChecks: TaskBoardCiRequiredCheck[];
-}
-
 export interface TaskBoardCiObservedCheck extends TaskBoardCiRequiredCheck {
   status: "pending" | "success" | "failure";
   appName?: string;
-}
-
-export interface TaskBoardCiPolicyDiscovery {
-  boardId: string;
-  repositoryId: string;
-  providerKnown: boolean;
-  effectiveSource: "github" | "board" | "unconfigured" | "unavailable";
-  githubRequiredChecks: TaskBoardCiRequiredCheck[];
-  boardRequiredChecks: TaskBoardCiRequiredCheck[];
-  effectiveRequiredChecks: TaskBoardCiRequiredCheck[];
-  observedChecks: TaskBoardCiObservedCheck[];
-  providerPullRequestId?: string;
-  headOid?: string;
-  providerQueriedAt: string;
 }
 
 export interface TaskBoardRepositoryConfig {
@@ -163,8 +144,6 @@ export interface TaskBoardRepositoryConfig {
   name: string;
   baseBranch: string;
   allowForkPullRequest: false;
-  /** Runtime-only overlay from this board's integration policy; never stored in repository JSON. */
-  ciPolicy?: TaskBoardCiPolicy;
 }
 
 export type TaskBoardIntegrationTrigger =
@@ -178,8 +157,6 @@ export interface TaskBoardIntegrationPolicy {
   revision: string;
   /** Integration creation is Agent-first; v2 is retained only on historical task rows until automatic migration. */
   workflowVersion?: 3;
-  /** Used only when GitHub branch protection and rulesets declare no required checks. */
-  ciPolicy?: TaskBoardCiPolicy;
   trigger: TaskBoardIntegrationTrigger;
   batch: {
     maxTasks: number;

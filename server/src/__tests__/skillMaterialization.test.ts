@@ -137,6 +137,32 @@ describe('技能异步增量物化', () => {
     });
   });
 
+  it('忽略缺少大写 SKILL.md 的残留技能源，不阻断其他技能和用户执行', async () => {
+    createSkill(poolDir, 'alpha', 'alpha');
+    mkdirSync(join(poolDir, 'peekaboo'), { recursive: true });
+    writeFileSync(
+      join(poolDir, 'peekaboo', 'skill.md'),
+      '---\nname: peekaboo\ndescription: stale lowercase entry\n---\nstale\n',
+    );
+    createSkill(join(userCwd, '.ky-agent', 'skills'), 'peekaboo', 'stale-user-copy');
+    const config = fakeStore(['alpha', 'peekaboo']);
+    const materializer = new SkillWorkspaceMaterializer({
+      sharedDir,
+      sourceRevision: 'test-release',
+      skillConfigStore: config.store,
+    });
+
+    const result = await materializer.materialize({ taskId: 'task-invalid-source', user, userCwd });
+
+    expect(result).toMatchObject({ changedSkills: 1, removedSkills: 1 });
+    expect(readFileSync(join(userCwd, '.ky-agent', 'skills', 'alpha', 'SKILL.md'), 'utf-8'))
+      .toContain('alpha');
+    expect(existsSync(join(userCwd, '.ky-agent', 'skills', 'peekaboo'))).toBe(false);
+    expect(await readSkillManifest(userCwd)).toMatchObject({
+      skills: { alpha: { source: 'pool' } },
+    });
+  });
+
   it('按 manifest provenance 将跨组织组织技能残留移入可恢复备份', async () => {
     createSkill(poolDir, 'alpha', 'alpha');
     createSkill(join(sharedDir, 'tenants', 'tenant-b', 'skills'), 'foreign-org-skill', 'foreign');

@@ -61,6 +61,29 @@ install_staging_unit() {
   mv -f "$candidate_path" "$destination_path"
 }
 
+verify_staging_unit_environment() {
+  local api_environment="$1"
+  local worker_environment="$2"
+  local expected_config='AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json'
+  if ! printf '%s\n' "$worker_environment" \
+    | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
+    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$api_environment" \
+    | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready'; then
+    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
+    return 1
+  fi
+  for unit_environment in "$api_environment" "$worker_environment"; do
+    if ! printf '%s\n' "$unit_environment" \
+      | grep -Fq "$expected_config"; then
+      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
+      return 1
+    fi
+  done
+}
+
 runtime_dir=/mnt/agent-saas-staging/runtime/server
 artifact_dir=/mnt/agent-saas-staging/runtime/artifacts
 runuser -u agent-saas-staging -- sh -c \
@@ -101,24 +124,8 @@ elif [ -e "$current" ]; then
   exit 1
 fi
 worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
-printf '%s\n' "$worker_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
-    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
-    exit 1
-  }
 api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
-printf '%s\n' "$api_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
-    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
-    exit 1
-  }
-for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
-  printf '%s\n' "$unit_environment" \
-    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json' || {
-      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
-      exit 1
-    }
-done
+verify_staging_unit_environment "$api_unit_environment" "$worker_unit_environment"
 candidate="$target.candidate-$GITHUB_RUN_ID"
 rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$GITHUB_RUN_ID"
@@ -208,24 +215,8 @@ for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-
   }
 done
 worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
-printf '%s\n' "$worker_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
-    echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
-    exit 1
-  }
 api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
-printf '%s\n' "$api_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
-    echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
-    exit 1
-  }
-for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
-  printf '%s\n' "$unit_environment" \
-    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json' || {
-      echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
-      exit 1
-    }
-done
+verify_staging_unit_environment "$api_unit_environment" "$worker_unit_environment"
 
 node - "$server_config" <<'NODE'
 const crypto = require('node:crypto');

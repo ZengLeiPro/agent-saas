@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { verifyPromotionAcsSelection } from './verify-promotion-acs-selection.mjs';
 
 const workflowPath = new URL('../../.github/workflows/promote-release.yml', import.meta.url);
 const deployPath = new URL('./deploy-production-release.sh', import.meta.url);
@@ -137,6 +138,102 @@ test('malicious multiline dispatch input cannot pass release-id validation or re
   assert.notEqual(result.status, 0);
 });
 
+test('web-only, app-only, and ACS-only promotion validate the selected ACS identity and kept baseline by action', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  assert.match(
+    workflow,
+    /verify-promotion-acs-selection\.mjs[\s\\]*"\$RUNNER_TEMP\/manifest\.json"[\s\S]*"\$RUNNER_TEMP\/built\/artifact-index\.json"/u,
+  );
+  const releaseSha = 'a'.repeat(40);
+  const baselineSha = 'b'.repeat(40);
+  const orchestratorDigest = `sha256:${'1'.repeat(64)}`;
+  const imageDigest = `sha256:${'2'.repeat(64)}`;
+  const expectedRepository = 'registry.example.com/agent-saas/acs-sandbox';
+  const baseline = {
+    sourceSha: baselineSha,
+    orchestratorArtifactDigest: orchestratorDigest,
+    sandboxImageDigest: imageDigest,
+  };
+  const manifestFor = (components, action) => ({
+    releaseSha,
+    components: {
+      ...components,
+      acs: { action, ...(action === 'deploy' ? { ...baseline, sourceSha: releaseSha } : baseline) },
+    },
+    productionBaseline: { acs: { ...baseline } },
+    artifacts: {
+      acsOrchestrator: { digest: orchestratorDigest, required: action === 'deploy' },
+      acsImage: {
+        repository: expectedRepository,
+        digest: imageDigest,
+        required: action === 'deploy',
+      },
+    },
+  });
+  const keepIndex = { acsImage: null };
+  const scenarios = [
+    [
+      'web-only',
+      { web: { action: 'deploy' }, api: { action: 'keep' }, runtimeWorker: { action: 'keep' } },
+    ],
+    [
+      'app-only',
+      { web: { action: 'keep' }, api: { action: 'deploy' }, runtimeWorker: { action: 'deploy' } },
+    ],
+  ];
+  for (const [name, components] of scenarios) {
+    assert.doesNotThrow(
+      () =>
+        verifyPromotionAcsSelection({
+          manifest: manifestFor(components, 'keep'),
+          artifactIndex: keepIndex,
+          expectedRepository,
+        }),
+      name,
+    );
+  }
+  const driftedKeep = manifestFor(scenarios[0][1], 'keep');
+  driftedKeep.productionBaseline.acs = {
+    ...driftedKeep.productionBaseline.acs,
+    sandboxImageDigest: `sha256:${'3'.repeat(64)}`,
+  };
+  assert.throws(
+    () =>
+      verifyPromotionAcsSelection({
+        manifest: driftedKeep,
+        artifactIndex: keepIndex,
+        expectedRepository,
+      }),
+    /Kept ACS image must equal the baseline/u,
+  );
+  const acsOnly = manifestFor(
+    { web: { action: 'keep' }, api: { action: 'keep' }, runtimeWorker: { action: 'keep' } },
+    'deploy',
+  );
+  assert.doesNotThrow(() =>
+    verifyPromotionAcsSelection({
+      manifest: acsOnly,
+      artifactIndex: {
+        acsImage: {
+          sourceSha: releaseSha,
+          digest: imageDigest,
+          reference: `${expectedRepository}@${imageDigest}`,
+        },
+      },
+      expectedRepository,
+    }),
+  );
+  assert.throws(
+    () =>
+      verifyPromotionAcsSelection({
+        manifest: acsOnly,
+        artifactIndex: keepIndex,
+        expectedRepository,
+      }),
+    /ACS deploy requires an image/u,
+  );
+});
+
 test('verified evidence, selected digests, and RC-bound units precede ACS, App, and Web convergence', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   ordered(workflow, [
@@ -151,10 +248,8 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
     '- name: Publish Web entry last and retain prior hashed assets',
   ]);
   assert.match(workflow, /components\.acs\.sandboxImageDigest/u);
-  assert.match(workflow, /\.acsImage\.sourceSha/u);
-  assert.match(workflow, /\.acsImage\.digest/u);
-  assert.match(workflow, /\.acsImage\.reference/u);
-  assert.match(workflow, /expected_repository@\$expected_image_digest/u);
+  assert.match(workflow, /verify-promotion-acs-selection\.mjs/u);
+  assert.match(workflow, /"\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
   assert.doesNotMatch(workflow, /release\/wait-for-acr-image\.sh/u);
   assert.doesNotMatch(workflow, /aliyun cr ListRepoTag/u);
   assert.match(workflow, /run_with_web_lock aliyun --secure oss stat/u);
@@ -170,7 +265,7 @@ test('verified evidence, selected digests, and RC-bound units precede ACS, App, 
   assert.match(workflow, /--recovery-mode "\$PROMOTION_RETRY_MODE"/u);
   assert.match(workflow, /identity_projection=/u);
   assert.doesNotMatch(workflow, /jq -S \.components "\$RUNNER_TEMP\/production-confirmed\.json"/u);
-  assert.match(workflow, /\.acsImage\.digest "\$RUNNER_TEMP\/built\/artifact-index\.json"/u);
+  assert.match(workflow, /verify-promotion-acs-selection\.mjs/u);
   assert.match(workflow, /built\/artifact-index\.json/u);
   assert.match(workflow, /built_base="\$RELEASE_RECORD_OSS_URI\/\$RELEASE_ID"/u);
   assert.match(workflow, /runtimeDependencies\.path/u);

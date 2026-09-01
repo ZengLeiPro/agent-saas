@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -197,6 +198,47 @@ test('Staging browser authentication is preloaded without recording the password
   assert.match(chatInput, /aria-label="消息输入"/u);
 });
 
+test('installed Staging units accept the persistent config path and reject the legacy path', async () => {
+  const deploy = await readFile(deployPath, 'utf8');
+  const functionStart = deploy.indexOf('verify_staging_unit_environment() {');
+  const functionEnd = deploy.indexOf('\n}\n\nruntime_dir=', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart);
+  const verifier = deploy.slice(functionStart, functionEnd + 2);
+  const config = 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json';
+  const api = `${config} AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
+  const worker = `${config} AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready`;
+  const run = (apiEnvironment, workerEnvironment) =>
+    spawnSync('bash', [
+      '-c',
+      `${verifier}\nverify_staging_unit_environment "$1" "$2"`,
+      'bash',
+      apiEnvironment,
+      workerEnvironment,
+    ]);
+
+  assert.equal(run(api, worker).status, 0);
+  assert.notEqual(
+    run(
+      api.replace(
+        '/var/lib/agent-saas-staging/config/config.json',
+        '/etc/agent-saas-staging/config.json',
+      ),
+      worker,
+    ).status,
+    0,
+  );
+  assert.notEqual(
+    run(
+      api,
+      worker.replace(
+        '/var/lib/agent-saas-staging/config/config.json',
+        '/etc/agent-saas-staging/config.json',
+      ),
+    ).status,
+    0,
+  );
+});
+
 test('target deployment consumes bundles without source install/build and uses only Staging paths', async () => {
   const deploy = await readFile(deployPath, 'utf8');
   assert.doesNotMatch(deploy, /pnpm (install|build)|npm (install|run)/u);
@@ -211,10 +253,7 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy,
     /runuser -u agent-saas-staging -- sh -c[\s\S]*umask 027; mkdir -p -- "\$1" "\$2"/u,
   );
-  assert.doesNotMatch(
-    deploy,
-    /install -d[^\n]*"\$runtime_dir"/u,
-  );
+  assert.doesNotMatch(deploy, /install -d[^\n]*"\$runtime_dir"/u);
   assert.match(deploy, /Artifact directory owner does not match the persistent runtime owner/u);
   assert.match(deploy, /persistent directory is not \$\{access\}-accessible/u);
   assert.match(deploy, /does not use the persistent Staging runtime directory/u);

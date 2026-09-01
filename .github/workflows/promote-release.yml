@@ -280,7 +280,7 @@ jobs:
           test "$(jq -r .artifactDigest "$RUNNER_TEMP/oss-record/record.json")" = \
             "$(jq -r .aggregateDigest "$RUNNER_TEMP/release/artifact-index.json")"
 
-      - name: Prefetch, verify, and safely extract selected Manifest artifacts
+      - name: Prefetch, verify, and safely extract selected Manifest artifacts and ACS identity
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/built" "$RUNNER_TEMP/selected"
@@ -347,15 +347,9 @@ jobs:
             fi
           fi
           expected_repository="$ACR_REGISTRY/$ACR_REPOSITORY"
-          test "$(jq -r .artifacts.acsImage.repository "$RUNNER_TEMP/manifest.json")" = \
+          node scripts/release/verify-promotion-acs-selection.mjs \
+            "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/built/artifact-index.json" \
             "$expected_repository"
-          expected_image_digest="$(jq -r .artifacts.acsImage.digest "$RUNNER_TEMP/manifest.json")"
-          test "$(jq -r .acsImage.sourceSha "$RUNNER_TEMP/built/artifact-index.json")" = \
-            "$RELEASE_SHA"
-          test "$(jq -r .acsImage.digest "$RUNNER_TEMP/built/artifact-index.json")" = \
-            "$expected_image_digest"
-          test "$(jq -r .acsImage.reference "$RUNNER_TEMP/built/artifact-index.json")" = \
-            "$expected_repository@$expected_image_digest"
 
       - name: Mark and persist promotion started before any production write
         env:

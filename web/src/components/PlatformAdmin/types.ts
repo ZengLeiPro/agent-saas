@@ -481,8 +481,12 @@ export interface CapabilityValidationRecord {
   configFingerprint: string;
 }
 
+/** 验证记录相对当前配置的有效性；never 与 passed 必须区分展示。 */
+export type CapabilityVerification = "passed" | "failed" | "stale" | "never";
+
 export interface CapabilityReadiness {
   state: CapabilityState;
+  verification: CapabilityVerification;
   /** 只有字段路径，不含 Secret 明文或 Vault 引用标识。 */
   missing: string[];
   blockers: CapabilityBlocker[];
@@ -492,7 +496,10 @@ export interface CapabilityReadiness {
 
 export interface EffectiveConfigStatus {
   configSchemaVersion: number;
+  /** 运行时收敛读回口径（解析后的 AppConfig）。不是乐观锁令牌。 */
   effectiveConfigFingerprint: string;
+  /** 回写配置时作为 If-Match 的乐观锁令牌；仅管理接口返回。 */
+  rawConfigFingerprint?: string;
   capabilityFingerprint: string;
   secretReadiness: "ready" | "missing" | "legacy_inline" | "unknown";
   environment: "development" | "staging" | "production" | "test";

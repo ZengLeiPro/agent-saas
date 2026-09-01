@@ -23,7 +23,14 @@ export interface EffectiveConfigSecretItem {
 
 export interface EffectiveConfigStatus {
   configSchemaVersion: number;
+  /**
+   * 解析并补齐默认值后的 AppConfig 指纹。只用于运行时收敛读回（比对 API 与
+   * Runtime Worker 是否在跑同一份配置），**不能**当乐观锁令牌：写入服务比较的是
+   * 原始 config.json，两者天然不同。回写请用 rawConfigFingerprint。
+   */
   effectiveConfigFingerprint: string;
+  /** 乐观锁令牌：原始 config.json 的指纹，回写时作为 If-Match。仅管理接口返回。 */
+  rawConfigFingerprint?: string;
   capabilityFingerprint: string;
   secretReadiness: 'ready' | 'missing' | 'legacy_inline' | 'unknown';
   environment: RuntimeEnvironment;
@@ -122,6 +129,7 @@ export function buildEffectiveConfigStatus(input: {
   processRole: string;
   appliedAt: string;
   validations?: CapabilityValidationLookup;
+  rawConfigFingerprint?: string;
 }): EffectiveConfigStatus {
   const secrets = secretSummary(input.config);
   const secretReadiness =
@@ -139,6 +147,7 @@ export function buildEffectiveConfigStatus(input: {
   return {
     configSchemaVersion: EFFECTIVE_CONFIG_SCHEMA_VERSION,
     effectiveConfigFingerprint: configFingerprint(input.config),
+    ...(input.rawConfigFingerprint ? { rawConfigFingerprint: input.rawConfigFingerprint } : {}),
     capabilityFingerprint: configFingerprint(capabilities),
     secretReadiness,
     environment: input.environment,

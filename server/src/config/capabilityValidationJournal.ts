@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import {
@@ -33,13 +33,12 @@ function parseRecord(value: unknown): CapabilityValidationRecord | null {
   };
 }
 
-function readSnapshot(path: string): Map<CapabilityId, CapabilityValidationRecord> {
+function decodeSnapshot(text: string): Map<CapabilityId, CapabilityValidationRecord> {
   const records = new Map<CapabilityId, CapabilityValidationRecord>();
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
+    parsed = JSON.parse(text);
   } catch {
-    // 首次启动或文件损坏：台账不是事实源，缺失时按「从未验证」处理即可。
     return records;
   }
   if (!parsed || typeof parsed !== 'object') return records;
@@ -51,12 +50,33 @@ function readSnapshot(path: string): Map<CapabilityId, CapabilityValidationRecor
   return records;
 }
 
+function readSnapshotSync(path: string): Map<CapabilityId, CapabilityValidationRecord> {
+  try {
+    return decodeSnapshot(readFileSync(path, 'utf8'));
+  } catch {
+    // 首次启动或文件损坏：台账不是事实源，缺失时按「从未验证」处理即可。
+    return new Map();
+  }
+}
+
+async function readSnapshotAsync(
+  path: string,
+): Promise<Map<CapabilityId, CapabilityValidationRecord>> {
+  try {
+    return decodeSnapshot(await readFile(path, 'utf8'));
+  } catch {
+    return new Map();
+  }
+}
+
 export class CapabilityValidationJournal implements CapabilityValidationLookup {
   private readonly path: string;
   private readonly now: () => Date;
   private readonly records: Map<CapabilityId, CapabilityValidationRecord>;
   private readonly inFlight = new Set<CapabilityId>();
-  /** 串行化落盘，避免并发启用互相覆盖台账。 */
+  /** 本进程写过的能力；落盘合并时以本进程的值为准，其余沿用磁盘上的。 */
+  private readonly owned = new Set<CapabilityId>();
+  /** 串行化落盘，避免本进程内的并发启用互相覆盖台账。 */
   private writes: Promise<void> = Promise.resolve();
 
   constructor(options: { processCwd: string; now?: () => Date }) {
@@ -67,7 +87,7 @@ export class CapabilityValidationJournal implements CapabilityValidationLookup {
       'capability-validations.json',
     );
     this.now = options.now ?? (() => new Date());
-    this.records = readSnapshot(this.path);
+    this.records = readSnapshotSync(this.path);
   }
 
   record(capability: CapabilityId): CapabilityValidationRecord | undefined {
@@ -94,6 +114,7 @@ export class CapabilityValidationJournal implements CapabilityValidationLookup {
       validatedAt: this.now().toISOString(),
       configFingerprint,
     });
+    this.owned.add(capability);
     await this.flush();
   }
 
@@ -103,10 +124,31 @@ export class CapabilityValidationJournal implements CapabilityValidationLookup {
     );
   }
 
+  /**
+   * 落盘失败必须让调用方知道：只写进内存的验证记录重启后就没了，把它当成成功
+   * 会让状态页长期显示一个其实不存在的「已验证」。
+   *
+   * 单次失败不能毒化写队列，所以链条本身吞掉异常，但本次 flush 照常抛出。
+   */
   private async flush(): Promise<void> {
-    const payload = `${JSON.stringify(this.snapshot(), null, 2)}\n`;
-    this.writes = this.writes.then(() => this.writeAtomic(payload)).catch(() => undefined);
-    await this.writes;
+    const write = this.writes.then(() => this.persist());
+    this.writes = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    await write;
+  }
+
+  /**
+   * 多实例部署下台账是「按能力最后写入者胜出」：先并入磁盘上其他进程写的记录，
+   * 再覆盖本进程写过的能力，最后整体原子替换。不是跨进程强一致，但不会因为
+   * 另一个实例先写而把它的结果整份抹掉。
+   */
+  private async persist(): Promise<void> {
+    for (const [capability, record] of await readSnapshotAsync(this.path)) {
+      if (!this.owned.has(capability)) this.records.set(capability, record);
+    }
+    await this.writeAtomic(`${JSON.stringify(this.snapshot(), null, 2)}\n`);
   }
 
   private async writeAtomic(payload: string): Promise<void> {

@@ -4,13 +4,17 @@ import type { EffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 
 export function createConfigStatusAdminRouter(options: {
-  getStatus: () => EffectiveConfigStatus;
+  getStatus: () => EffectiveConfigStatus | Promise<EffectiveConfigStatus>;
 }): Router {
   const router = Router();
   router.use(requirePlatformAdmin);
-  router.get('/', (_req, res) => {
+  router.get('/', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json(options.getStatus());
+    try {
+      res.json(await options.getStatus());
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
   return router;
 }

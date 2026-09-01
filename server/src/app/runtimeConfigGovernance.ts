@@ -25,15 +25,24 @@ export function createRuntimeConfigGovernance(options: {
       appliedAt,
       validations: capabilityValidationJournal,
     });
+  const configMutationService = new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: runtimeIdentity.environment,
+    processRole: options.processRole,
+  });
   return {
-    configMutationService: new AdminConfigMutationService({
-      configPath: getAppConfigPath(options.processCwd),
-      processCwd: options.processCwd,
-      environment: runtimeIdentity.environment,
-      processRole: options.processRole,
-    }),
+    configMutationService,
     capabilityValidationJournal,
     getEffectiveConfigStatus,
+    /**
+     * 管理接口版本：额外带上原始 config.json 指纹作为回写的乐观锁令牌。
+     * /health 不需要这个令牌，因此不承担这次文件读取。
+     */
+    getAdminConfigStatus: async () => ({
+      ...getEffectiveConfigStatus(),
+      rawConfigFingerprint: await configMutationService.readRawFingerprint(),
+    }),
     /**
      * 本进程的配置读回。读的是热更新后的进程内配置对象，能验出「文件写了但
      * 运行时没跟上」；Runtime Worker 的读回随执行环境批次接入。

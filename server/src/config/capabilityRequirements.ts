@@ -7,6 +7,7 @@ import {
   CAPABILITY_TARGET_ROUTES,
   type CapabilityBlocker,
   type CapabilityId,
+  type CapabilityReadiness,
 } from './capabilityContract.js';
 
 /**
@@ -28,8 +29,11 @@ export interface CapabilityDraft {
 
 export interface CapabilityEvaluationContext {
   config: AppConfig;
-  /** 第二轮评估可见的前序结果；工具控制的依赖门禁需要它。 */
-  resolved: ReadonlyMap<CapabilityId, CapabilityDraft>;
+  /**
+   * 第二轮评估可见的前序能力就绪状态。必须是已经并入验证记录的最终 state，
+   * 否则工具控制会把「探测失败的依赖」当成可用。
+   */
+  dependencies: ReadonlyMap<CapabilityId, CapabilityReadiness>;
 }
 
 type CapabilityEvaluator = (context: CapabilityEvaluationContext) => CapabilityDraft;
@@ -293,21 +297,33 @@ const TOOL_DEPENDENCY_RULES: readonly ToolDependencyRule[] = [
   { tool: 'AudioTranscribe', capability: 'stt', exposed: () => true },
 ];
 
-function evaluateToolControls({ config, resolved }: CapabilityEvaluationContext): CapabilityDraft {
+const DEPENDENCY_STATE_TEXT: Readonly<Record<string, string>> = {
+  disabled: '未启用',
+  incomplete: '缺少配置',
+  ready: '验证通过但未启用',
+  degraded: '运行异常',
+  blocked: '受阻塞',
+};
+
+function evaluateToolControls({
+  config,
+  dependencies,
+}: CapabilityEvaluationContext): CapabilityDraft {
   const controls = config.toolControls;
   const blockers: CapabilityBlocker[] = [];
   for (const rule of TOOL_DEPENDENCY_RULES) {
     if (!isToolEnabled(controls, rule.tool) || !rule.exposed(config)) continue;
-    const dependency = resolved.get(rule.capability);
+    const dependency = dependencies.get(rule.capability);
     if (!dependency) continue;
-    if (dependency.enabled && dependency.missing.length === 0 && dependency.blockers.length === 0) {
-      continue;
-    }
-    // 依赖能力整体没开、工具也只是「默认可见」时不算阻塞；显式点亮工具才追究。
-    if (!dependency.enabled && controls?.tools?.[rule.tool]?.enabled !== true) continue;
+    // 依赖的最终 state 才算数：探测失败的能力是 degraded，不能因为开关还开着就放行。
+    if (dependency.state === 'enabled' || dependency.state === 'validating') continue;
+    // 依赖能力当前是活的但不健康时一律阻塞；整体没开、工具又只是「默认可见」的
+    // 情况不算阻塞，只有显式点亮工具才追究。
+    const dependencyIsLive = dependency.state === 'degraded' || dependency.state === 'blocked';
+    if (!dependencyIsLive && controls?.tools?.[rule.tool]?.enabled !== true) continue;
     blockers.push(
       dependencyBlocker(
-        `${rule.tool} 依赖的能力尚未就绪，暴露给模型会在调用时失败`,
+        `${rule.tool} 依赖的能力当前${DEPENDENCY_STATE_TEXT[dependency.state] ?? '不可用'}，暴露给模型会在调用时失败`,
         rule.capability,
       ),
     );

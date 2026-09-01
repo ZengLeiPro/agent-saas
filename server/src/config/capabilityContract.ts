@@ -58,12 +58,29 @@ export interface CapabilityValidationRecord {
   configFingerprint: string;
 }
 
+/**
+ * 验证记录相对当前配置的有效性。`never` 与 `passed` 必须能被区分：从未探测过的
+ * 能力不能和「刚刚探测通过」显示成同一件事。
+ */
+export type CapabilityVerification = 'passed' | 'failed' | 'stale' | 'never';
+
 export interface CapabilityReadiness {
   state: CapabilityState;
+  /** 相对当前配置切片指纹的验证有效性；lastValidation 是它的原始依据。 */
+  verification: CapabilityVerification;
   missing: string[];
   blockers: CapabilityBlocker[];
   lastValidation?: CapabilityValidationRecord;
   targetRouteId: string | null;
+}
+
+export function resolveCapabilityVerification(
+  lastValidation: CapabilityValidationRecord | undefined,
+  configFingerprint: string,
+): CapabilityVerification {
+  if (!lastValidation) return 'never';
+  if (lastValidation.configFingerprint !== configFingerprint) return 'stale';
+  return lastValidation.status;
 }
 
 /**
@@ -132,25 +149,27 @@ export function capabilityConfigFingerprint(config: AppConfig, capability: Capab
 
 /**
  * 状态机。`blocked` 优先于一切：基础设施或依赖不满足时，先解阻塞再谈配置。
- * 验证记录只有在指纹仍然匹配时才算数——配置改过就必须重新验证。
+ *
+ * 已启用的能力只要验证记录失败或过期就落到 `degraded`：绕过向导直接改
+ * config.json 会让能力切片指纹变化、验证记录随之过期，必须重新验证而不是
+ * 继续显示运行正常。从未验证过（`never`）不等于探测异常，仍按 `enabled`
+ * 呈现，但 `verification` 字段会把「未验证」如实带给调用方。
  */
 export function resolveCapabilityState(input: {
   enabled: boolean;
   missing: readonly string[];
   blockers: readonly CapabilityBlocker[];
   validating: boolean;
-  configFingerprint: string;
-  lastValidation?: CapabilityValidationRecord;
+  verification: CapabilityVerification;
 }): CapabilityState {
   if (input.blockers.length > 0) return 'blocked';
   if (input.validating) return 'validating';
-  const current =
-    input.lastValidation?.configFingerprint === input.configFingerprint
-      ? input.lastValidation
-      : undefined;
   if (input.enabled) {
-    return input.missing.length > 0 || current?.status === 'failed' ? 'degraded' : 'enabled';
+    if (input.missing.length > 0) return 'degraded';
+    return input.verification === 'failed' || input.verification === 'stale'
+      ? 'degraded'
+      : 'enabled';
   }
   if (input.missing.length > 0) return 'incomplete';
-  return current?.status === 'passed' ? 'ready' : 'disabled';
+  return input.verification === 'passed' ? 'ready' : 'disabled';
 }

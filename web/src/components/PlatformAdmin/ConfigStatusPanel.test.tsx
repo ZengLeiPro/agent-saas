@@ -14,6 +14,7 @@ vi.mock('@/lib/urlSync', () => ({ navigateGovernance: mocks.navigateGovernance }
 
 const readiness = (overrides: Partial<CapabilityReadiness>): CapabilityReadiness => ({
   state: 'disabled',
+  verification: 'never',
   missing: [],
   blockers: [],
   targetRouteId: null,
@@ -34,12 +35,14 @@ const status: EffectiveConfigStatus = {
     codex: true,
     webTools: false,
     memoryConsolidation: false,
+    stt: true,
     tts: false,
   },
   capabilityStates: {
     models: readiness({ state: 'enabled', targetRouteId: 'platform.resource-center.models' }),
     codex: readiness({
       state: 'enabled',
+      verification: 'passed',
       targetRouteId: 'platform.resource-center.models',
       lastValidation: {
         status: 'passed',
@@ -61,6 +64,16 @@ const status: EffectiveConfigStatus = {
         },
       ],
       targetRouteId: 'platform.governance.memory-policy',
+    }),
+    stt: readiness({
+      state: 'degraded',
+      verification: 'stale',
+      targetRouteId: 'platform.resource-center.tools',
+      lastValidation: {
+        status: 'passed',
+        validatedAt: '2026-08-20T10:00:00.000Z',
+        configFingerprint: 'sha256:before-the-hand-edit',
+      },
     }),
     tts: readiness({ state: 'incomplete', missing: ['tts.doubaoAppId'] }),
   },
@@ -110,7 +123,12 @@ describe('ConfigStatusPanel', () => {
     expect(missingHints).toHaveLength(2);
     expect(missingHints[0]?.textContent).toContain('webTools.search.apiKeyRef');
     expect(screen.getByText('记忆整合要求 runtimeEventStore.backend="pg"')).toBeTruthy();
-    expect(screen.getByText(/最近验证：通过/u)).toBeTruthy();
+    expect(screen.getAllByText(/最近验证：通过/u)).toHaveLength(2);
+    // 验证过期的已启用能力必须显式提示重新验证，而不是继续显示运行正常。
+    expect(screen.getByText('运行异常')).toBeTruthy();
+    expect(screen.getByText('配置已变更，需重新验证')).toBeTruthy();
+    // 从未验证过的能力不能冒充「验证通过」。
+    expect(screen.getAllByText('未验证').length).toBeGreaterThan(0);
     // 状态页保持只读汇总，不出现任何配置输入控件。
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByRole('textbox')).toBeNull();
@@ -145,8 +163,8 @@ describe('ConfigStatusPanel', () => {
     render(<ConfigStatusPanel />);
 
     expect((await screen.findAllByText('WebTools')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('已启用')).toHaveLength(2);
+    expect(screen.getAllByText('已启用')).toHaveLength(3);
     expect(screen.getAllByText('已配置未启用')).toHaveLength(3);
-    expect(screen.getAllByText('暂无后台入口')).toHaveLength(6);
+    expect(screen.getAllByText('暂无后台入口')).toHaveLength(7);
   });
 });

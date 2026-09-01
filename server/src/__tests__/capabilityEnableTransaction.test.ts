@@ -89,7 +89,7 @@ async function fixture() {
         modify(
           text,
           ['webTools'],
-          { enabled: true, search: { provider: 'brave', apiKeyRef: 'ref' } },
+          { enabled: true, search: { provider: 'brave', apiKeyRef: stagedRefs.at(-1) } },
           {},
         ),
       ),
@@ -193,7 +193,7 @@ describe('capability enable transaction', () => {
       ),
       'CAPABILITY_CONFIG_CONFLICT',
     );
-    expect(error.details.effectiveConfigFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
+    expect(error.details.rawConfigFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect((await test.readConfig()).webTools.enabled).toBe(false);
   });
 
@@ -236,6 +236,66 @@ describe('capability enable transaction', () => {
     );
     expect(prepare).not.toHaveBeenCalled();
     expect((await test.readConfig()).webTools.enabled).toBe(false);
+  });
+
+  it('候选配置没有引用本次暂存的 Secret 时拒绝提交并撤销该 Secret', async () => {
+    const test = await fixture();
+    await expectEnableError(
+      runCapabilityEnableTransaction(
+        test.options({
+          // 典型误写：Secret 进了 Vault，配置里却填了另一个 ref。
+          buildCandidate: (text) =>
+            applyEdits(
+              text,
+              modify(
+                text,
+                ['webTools'],
+                { enabled: true, search: { provider: 'brave', apiKeyRef: 'some-other-ref' } },
+                {},
+              ),
+            ),
+        }),
+      ),
+      'CAPABILITY_CONFIG_INCOMPLETE',
+    );
+
+    expect((await test.readConfig()).webTools.enabled).toBe(false);
+    await expect(test.vault.getSecret(test.stagedRefs[0]!, READER)).rejects.toThrow('secret revoked');
+  });
+
+  it('运行时回滚失败时保留暂存 Secret 并报运行未就绪', async () => {
+    const test = await fixture();
+    const error = await expectEnableError(
+      runCapabilityEnableTransaction(
+        test.options({
+          applyRuntime: () => {
+            throw new Error('热更新失败');
+          },
+        }),
+      ),
+      'CAPABILITY_RUNTIME_NOT_READY',
+    );
+
+    expect(error.message).toContain('运行时回滚失败');
+    expect(error.details.unrevokedSecrets).toBe(1);
+    expect((await test.readConfig()).webTools.enabled).toBe(false);
+    // 进程内配置可能仍是新值，此时撤销凭据只会让运行实例更坏。
+    await expect(test.vault.getSecret(test.stagedRefs[0]!, READER)).resolves.toBe('brave-live-key');
+    const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
+    expect(audit).toContain('"result":"runtime_restore_failed"');
+  });
+
+  it('台账落盘失败不会被当成成功', async () => {
+    const test = await fixture();
+    const blocked = join(test.root, 'not-a-directory');
+    await writeFile(blocked, 'x');
+    const journal = new CapabilityValidationJournal({ processCwd: blocked });
+
+    await expect(journal.recordResult('webTools', 'passed', 'sha256:x')).rejects.toThrow();
+
+    const result = await runCapabilityEnableTransaction(test.options({ journal }));
+    expect(result.journalPersisted).toBe(false);
+    expect((await test.readConfig()).webTools.enabled).toBe(true);
   });
 
   it('错误码映射到可区分的 HTTP 状态', () => {

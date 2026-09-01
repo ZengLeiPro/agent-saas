@@ -181,8 +181,81 @@ describe('capability readiness', () => {
         missing: [],
         blockers: [{ code: 'X', message: 'x' }],
         validating: true,
-        configFingerprint: 'sha256:a',
+        verification: 'passed',
       }),
     ).toBe('blocked');
+  });
+
+  it('已启用能力的验证记录过期即降级，绕过向导改配置藏不住', () => {
+    const config = appConfig({
+      webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'ref-1' } },
+    });
+    const staleValidation = {
+      record: () => ({
+        status: 'passed' as const,
+        validatedAt: '2026-08-30T00:00:00.000Z',
+        // 管理员直接改了 config.json，能力切片指纹已经不是验证当时那份。
+        configFingerprint: 'sha256:before-the-hand-edit',
+      }),
+      isValidating: () => false,
+    };
+    const states = buildCapabilityReadiness({ config, validations: staleValidation });
+    expect(states.webTools.state).toBe('degraded');
+    expect(states.webTools.verification).toBe('stale');
+  });
+
+  it('从未验证过的已启用能力如实标注 never，不冒充验证通过', () => {
+    const states = readiness({
+      webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'ref-1' } },
+    });
+    expect(states.webTools.state).toBe('enabled');
+    expect(states.webTools.verification).toBe('never');
+  });
+
+  it('依赖能力探测失败时，显式点亮的工具被判为阻塞', () => {
+    const config = appConfig({
+      webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'ref-1' } },
+      toolControls: { enabled: true, tools: { WebSearch: { enabled: true } } },
+    });
+    const states = buildCapabilityReadiness({
+      config,
+      validations: {
+        record: (capability) =>
+          capability === 'webTools'
+            ? {
+                status: 'failed' as const,
+                validatedAt: '2026-09-01T00:00:00.000Z',
+                configFingerprint: capabilityConfigFingerprint(config, 'webTools'),
+              }
+            : undefined,
+        isValidating: () => false,
+      },
+    });
+    expect(states.webTools.state).toBe('degraded');
+    expect(states.toolControls.state).toBe('blocked');
+    expect(states.toolControls.blockers[0]?.message).toContain('WebSearch');
+  });
+
+  it('依赖能力探测失败时，默认可见的工具同样被判为阻塞', () => {
+    const config = appConfig({
+      imageGenTools: { enabled: true, gptImage2: { baseUrl: 'https://x.test/v1', apiKeyRef: 'r' } },
+      toolControls: { enabled: true },
+    });
+    const states = buildCapabilityReadiness({
+      config,
+      validations: {
+        record: (capability) =>
+          capability === 'imageGen'
+            ? {
+                status: 'failed' as const,
+                validatedAt: '2026-09-01T00:00:00.000Z',
+                configFingerprint: capabilityConfigFingerprint(config, 'imageGen'),
+              }
+            : undefined,
+        isValidating: () => false,
+      },
+    });
+    expect(states.imageGen.state).toBe('degraded');
+    expect(states.toolControls.state).toBe('blocked');
   });
 });

@@ -1,17 +1,21 @@
+import { parse as parseJsonc } from 'jsonc-parser';
+
 import type { AppConfig } from '../app/config.js';
 import { GLOBAL_OWNER_ID, type SecretVault, type VaultCaller } from '../security/secretVault.js';
 
 import {
   capabilityConfigFingerprint,
+  capabilityConfigSlice,
   type CapabilityBlocker,
   type CapabilityId,
 } from './capabilityContract.js';
 import type { CapabilityValidationJournal } from './capabilityValidationJournal.js';
 import {
   ConfigConflictError,
+  RuntimeRestoreFailedError,
   type AdminConfigMutationService,
 } from './adminConfigMutationService.js';
-import { configFingerprint } from './configDigest.js';
+import { canonicalJson, configFingerprint } from './configDigest.js';
 
 /**
  * 能力启用的原子事务骨架（docs/plans/capability-guided-enablement.md §6.3）。
@@ -34,8 +38,8 @@ export type CapabilityEnableErrorCode = (typeof CAPABILITY_ENABLE_ERROR_CODES)[n
 export interface CapabilityEnableErrorDetails {
   missing?: string[];
   blockers?: CapabilityBlocker[];
-  /** 冲突时回传当前有效配置指纹，供前端刷新后重试。 */
-  effectiveConfigFingerprint?: string;
+  /** 冲突时回传当前 config.json 的原始指纹（乐观锁口径），供前端刷新后重试。 */
+  rawConfigFingerprint?: string;
   /** 读回不收敛时列出各来源的指纹，便于定位是哪个进程没跟上。 */
   readback?: CapabilityFingerprintReadback[];
   /** 本次暂存 Secret 未能撤销的条数；不返回 ref 标识本身。 */
@@ -160,8 +164,15 @@ export interface CapabilityEnableResult {
   appliedAt: string;
   /** 有效配置指纹（解析后的 AppConfig），与 /api/admin/config-status 同口径。 */
   effectiveConfigFingerprint: string;
+  /** 写入后的原始 config.json 指纹，下一次回写的 If-Match 令牌。 */
+  rawConfigFingerprint: string;
   capabilityConfigFingerprint: string;
   readback: CapabilityFingerprintReadback[];
+  /**
+   * 验证台账是否成功落盘。false 表示配置已经生效但这次验证记录只存在于内存里，
+   * 重启后会丢失（状态页会退回「未验证」），需要运维关注数据目录可写性。
+   */
+  journalPersisted: boolean;
 }
 
 const DEFAULT_ATTEMPTS = 3;
@@ -171,11 +182,37 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * 候选配置必须真的引用上本次暂存的每一个 Secret。
+ *
+ * 少了这道检查，向导可以一边把明文写进 Vault、一边把另一个 ref 写进配置：
+ * Vault 里留下没人引用的孤儿凭据，配置里却指向不存在或过期的 ref。
+ */
+function assertStagedSecretsReferenced(
+  capability: CapabilityId,
+  stagedRefIds: readonly string[],
+  candidateText: string,
+): void {
+  if (stagedRefIds.length === 0) return;
+  const parsed = parseJsonc(candidateText);
+  const slice = parsed && typeof parsed === 'object' ? capabilityConfigSlice(parsed as AppConfig, capability) : undefined;
+  const serialized = canonicalJson(slice ?? null);
+  const orphans = stagedRefIds.filter((id) => !serialized.includes(JSON.stringify(id)));
+  if (orphans.length === 0) return;
+  throw new CapabilityEnableError(
+    'CAPABILITY_CONFIG_INCOMPLETE',
+    `候选配置没有引用本次写入的 ${orphans.length} 个 Secret，拒绝提交以免产生孤儿凭据`,
+  );
+}
+
 function toCapabilityEnableError(error: unknown): CapabilityEnableError {
   if (error instanceof CapabilityEnableError) return error;
+  if (error instanceof RuntimeRestoreFailedError) {
+    return new CapabilityEnableError('CAPABILITY_RUNTIME_NOT_READY', error.message);
+  }
   if (error instanceof ConfigConflictError) {
     return new CapabilityEnableError('CAPABILITY_CONFIG_CONFLICT', error.message, {
-      effectiveConfigFingerprint: error.currentFingerprint,
+      rawConfigFingerprint: error.currentFingerprint,
     });
   }
   return new CapabilityEnableError(
@@ -214,6 +251,7 @@ export async function runCapabilityEnableTransaction(
   const { capability, journal, staging } = options;
   const finishValidating = journal.beginValidation(capability);
   let readback: CapabilityFingerprintReadback[] = [];
+  let runtimeApplied = false;
   try {
     if (options.approval?.required && !options.approval.reference?.trim()) {
       throw new CapabilityEnableError(
@@ -229,25 +267,54 @@ export async function runCapabilityEnableTransaction(
       actor: options.actor,
       changedPaths: options.changedPaths,
       ...(options.expectedFingerprint ? { expectedFingerprint: options.expectedFingerprint } : {}),
-      buildCandidate: options.buildCandidate,
+      buildCandidate: async (currentText, currentRaw) => {
+        const candidateText = await options.buildCandidate(currentText, currentRaw);
+        assertStagedSecretsReferenced(capability, staging.refIds, candidateText);
+        return candidateText;
+      },
       applyRuntime: async (next, previous) => {
+        // mutate 在回滚时会再调一次 applyRuntime 把运行时恢复回旧配置。收敛断言只
+        // 属于正向那一次；在回滚调用里重跑只会把「读回不收敛」误报成「回滚失败」。
+        const forward = !runtimeApplied;
+        runtimeApplied = true;
         await options.applyRuntime(next, previous);
-        readback = await assertReadbackConverged(options, next);
+        if (forward) readback = await assertReadbackConverged(options, next);
       },
     });
 
     staging.commit();
     const fingerprint = capabilityConfigFingerprint(result.config, capability);
-    await journal.recordResult(capability, 'passed', fingerprint);
+    // 配置已经生效，台账落盘失败不该反过来把这次启用判成失败，但必须说出来。
+    let journalPersisted = true;
+    try {
+      await journal.recordResult(capability, 'passed', fingerprint);
+    } catch (cause) {
+      journalPersisted = false;
+      console.error(
+        `[capability-enable] ${capability}: 验证台账落盘失败，重启后本次验证记录会丢失：${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+    }
     return {
       capability,
       appliedAt: result.appliedAt,
       effectiveConfigFingerprint: configFingerprint(result.config),
+      rawConfigFingerprint: result.rawConfigFingerprint,
       capabilityConfigFingerprint: fingerprint,
       readback,
+      journalPersisted,
     };
   } catch (error) {
-    const unrevoked = await staging.rollback();
+    // 运行时恢复失败时进程内配置与 config.json 已经不一致：此时撤销 Secret 只会
+    // 让仍在运行的实例连凭据一起失效，保留它们等人工处置。
+    const runtimeRestoreFailed = error instanceof RuntimeRestoreFailedError;
+    if (runtimeRestoreFailed) {
+      console.error(
+        `[capability-enable] ${capability}: 运行时回滚失败，已保留本次暂存 Secret（${staging.refIds.length} 个）避免运行实例立即失效，需人工核对进程内配置`,
+      );
+    }
+    const unrevoked = runtimeRestoreFailed ? 0 : await staging.rollback();
     if (unrevoked > 0) {
       console.error(
         `[capability-enable] ${capability}: ${unrevoked} 个暂存 Secret 撤销失败，需人工在 SecretVault 中吊销`,
@@ -255,15 +322,22 @@ export async function runCapabilityEnableTransaction(
     }
     // 失败时有效配置未变，所以把结果记在当前生效的切片上：已启用的能力会因此
     // 显示为 degraded，未启用的能力仍是 disabled/incomplete，不会凭空多出噪音。
-    await journal
-      .recordResult(
+    try {
+      await journal.recordResult(
         capability,
         'failed',
         capabilityConfigFingerprint(options.getEffectiveConfig(), capability),
-      )
-      .catch(() => undefined);
+      );
+    } catch (cause) {
+      console.error(
+        `[capability-enable] ${capability}: 失败记录未能落盘：${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      );
+    }
     const failure = toCapabilityEnableError(error);
     if (unrevoked > 0) failure.details.unrevokedSecrets = unrevoked;
+    if (runtimeRestoreFailed) failure.details.unrevokedSecrets = staging.refIds.length;
     throw failure;
   } finally {
     finishValidating();

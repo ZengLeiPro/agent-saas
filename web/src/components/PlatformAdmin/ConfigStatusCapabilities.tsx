@@ -8,7 +8,12 @@ import { navigateGovernance } from '@/lib/urlSync';
 
 import { CAPABILITY_LABELS, CAPABILITY_SOURCES } from './configStatusTargets';
 import { formatTime } from './format';
-import type { CapabilityReadiness, CapabilityState, EffectiveConfigStatus } from './types';
+import type {
+  CapabilityReadiness,
+  CapabilityState,
+  CapabilityVerification,
+  EffectiveConfigStatus,
+} from './types';
 
 const STATE_PRESENTATION: Record<
   CapabilityState,
@@ -23,9 +28,26 @@ const STATE_PRESENTATION: Record<
   blocked: { label: '受阻塞', action: '查看阻塞项', variant: 'danger' },
 };
 
+/**
+ * 验证有效性。`never` 与 `passed` 必须区分：从未探测过的能力不能显示成
+ * 「已验证」，否则绕过向导直接改配置的实例看起来一切正常。
+ */
+const VERIFICATION_TEXT: Record<CapabilityVerification, string | null> = {
+  passed: null,
+  failed: '验证失败',
+  stale: '配置已变更，需重新验证',
+  never: '未验证',
+};
+
 /** 旧版服务端只返回布尔能力表时的降级视图。 */
 function fallbackReadiness(active: boolean): CapabilityReadiness {
-  return { state: active ? 'enabled' : 'disabled', missing: [], blockers: [], targetRouteId: null };
+  return {
+    state: active ? 'enabled' : 'disabled',
+    verification: 'never',
+    missing: [],
+    blockers: [],
+    targetRouteId: null,
+  };
 }
 
 /**
@@ -68,6 +90,7 @@ function CapabilityRow({
   const label = CAPABILITY_LABELS[capability] ?? capability;
   const source = CAPABILITY_SOURCES[capability] ?? capability;
   const presentation = STATE_PRESENTATION[readiness.state];
+  const verificationText = VERIFICATION_TEXT[readiness.verification];
 
   return (
     <div className="flex min-h-16 items-center justify-between gap-3 rounded-lg border px-3 py-2">
@@ -75,6 +98,7 @@ function CapabilityRow({
         <div className="flex items-center gap-2 text-sm font-medium">
           <span>{label}</span>
           <Badge variant={presentation.variant}>{presentation.label}</Badge>
+          {verificationText ? <Badge variant="muted">{verificationText}</Badge> : null}
         </div>
         {readiness.blockers.length > 0 ? (
           <CapabilityBlockers readiness={readiness} />

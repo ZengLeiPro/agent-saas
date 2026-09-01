@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseAppConfig } from '../app/config.js';
+import { configFingerprint } from '../config/configDigest.js';
 import { buildEffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 
 describe('effective config status', () => {
@@ -65,6 +67,7 @@ describe('effective config status', () => {
     expect(Object.keys(status.capabilityStates)).toEqual(Object.keys(status.capabilities));
     expect(status.capabilityStates.webTools).toEqual({
       state: 'enabled',
+      verification: 'never',
       missing: [],
       blockers: [],
       targetRouteId: 'platform.resource-center.tools',
@@ -77,5 +80,42 @@ describe('effective config status', () => {
     ]);
     // missing 只回字段路径，不得夹带 Secret 明文或 Vault ref。
     expect(JSON.stringify(status.capabilityStates)).not.toContain('vault/secret-ref');
+  });
+
+  it('有效配置指纹与乐观锁指纹是两个口径，不能互换', () => {
+    // parseAppConfig 会补齐默认值，所以同一份配置的原始 JSON 指纹与 AppConfig
+    // 指纹天然不同。把 effectiveConfigFingerprint 当 If-Match 用会必然冲突。
+    const raw = {
+      agent: { cwd: '/tmp/workspace' },
+      server: { port: 3000 },
+      // models.allowCrossGroupSwitch 有 schema 默认值，解析后 AppConfig 多一个键。
+      models: {
+        default: 'g/m',
+        groups: [
+          { id: 'g', name: 'G', apiKeyRef: 'ref-1', models: [{ id: 'm', name: 'M', value: 'm' }] },
+        ],
+      },
+    };
+    const rawConfigFingerprint = configFingerprint(raw);
+    const status = buildEffectiveConfigStatus({
+      config: parseAppConfig(raw),
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+      rawConfigFingerprint,
+    });
+
+    expect(status.rawConfigFingerprint).toBe(rawConfigFingerprint);
+    expect(status.effectiveConfigFingerprint).not.toBe(rawConfigFingerprint);
+  });
+
+  it('管理接口之外不返回乐观锁令牌', () => {
+    const status = buildEffectiveConfigStatus({
+      config: parseAppConfig({ agent: { cwd: '/tmp/workspace' }, server: { port: 3000 } }),
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+    expect(status.rawConfigFingerprint).toBeUndefined();
   });
 });

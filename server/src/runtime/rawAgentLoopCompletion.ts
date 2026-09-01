@@ -16,6 +16,7 @@ export function createSuccessfulCompletionController(
     async check(context, messages, assistantContent) {
       const decision = await context.checkSuccessfulCompletion?.();
       if (!decision || decision.action === 'allow') return false;
+      if (decision.action === 'reject') throw new Error(decision.error);
       if (continuationCount >= MAX_SUCCESS_COMPLETION_CONTINUATIONS) {
         throw new Error(
           `run success completion protocol remained unresolved after ${MAX_SUCCESS_COMPLETION_CONTINUATIONS} continuation turns`,
@@ -25,7 +26,7 @@ export function createSuccessfulCompletionController(
       if (lastMessage?.role !== 'assistant' || lastMessage.content !== assistantContent) {
         messages.push({ role: 'assistant', content: assistantContent });
       }
-      messages.push({ role: 'user', content: decision.prompt });
+      messages.push({ role: 'system', content: decision.prompt });
       continuationCount += 1;
       warn(`[run] successful completion deferred run=${context.runId} continuation=${continuationCount}`);
       return true;

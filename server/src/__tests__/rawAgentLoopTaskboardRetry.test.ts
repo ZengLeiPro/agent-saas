@@ -178,7 +178,7 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     }));
 
     expect(adapter.calls).toBe(2);
-    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: '隐藏 finish 提示' });
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'system', content: '隐藏 finish 提示' });
     expect(checkSuccessfulCompletion).toHaveBeenCalledTimes(2);
     expect(outbound.at(-1)).toEqual({ type: 'done' });
     const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
@@ -226,7 +226,7 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     }));
 
     expect(adapter.calls).toBe(2);
-    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: '隐藏 resume finish 提示' });
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'system', content: '隐藏 resume finish 提示' });
     expect(checkSuccessfulCompletion).toHaveBeenCalledTimes(2);
     expect(outbound.at(-1)).toEqual({ type: 'done' });
     const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
@@ -234,6 +234,38 @@ describe('RawAgentLoop taskboard retry transaction', () => {
       expect.objectContaining({ subtype: 'success' }),
     ]);
     expect(JSON.stringify(durable)).not.toContain('隐藏 resume finish 提示');
+  });
+
+  it('成功收尾检查拒绝时不继续模型轮且明确失败', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-finish-rejected-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-taskboard-finish-rejected';
+    const runId = 'run-taskboard-finish-rejected';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new NaturalCompletionAdapter();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '完成任务' },
+      prompt: '完成任务', instructions: '测试。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' },
+      checkSuccessfulCompletion: async () => ({ action: 'reject', error: 'execution already cancelled' }),
+    }));
+
+    expect(adapter.calls).toBe(1);
+    expect(outbound.at(-1)).toMatchObject({ type: 'error', error: 'execution already cancelled' });
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(durable.filter((event) => event.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'error', error: 'execution already cancelled' }),
+    ]);
   });
 
   it('重复自然返回且始终未 finish 时在有限纠正轮后明确失败', async () => {

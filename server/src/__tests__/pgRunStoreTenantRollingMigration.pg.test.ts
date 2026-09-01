@@ -24,6 +24,8 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
   let roleFenceAvailable = false; // Set when the PG test identity may create non-super roles.
   const legacyRoles = new Map<string, string>();
   const legacyPools = new Map<string, InstanceType<typeof Pool>>();
+  const legacyPoolsExpectedToDrain = new Set<InstanceType<typeof Pool>>();
+  const unexpectedLegacyPoolErrors: Error[] = [];
   let nativeRole: string | undefined;
   let nativePool: InstanceType<typeof Pool> | undefined;
 
@@ -51,6 +53,10 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
       await store.registerLegacyWriterCapability({ dbRole: role, tenantId });
       legacyRoles.set(tenantId, role);
       const rolePool = new Pool({ connectionString: roleConnectionString(testPgUrl!, role, password), max: 4 });
+      rolePool.on('error', (error) => {
+        if (legacyPoolsExpectedToDrain.has(rolePool) && 'code' in error && error.code === '57P01') return;
+        unexpectedLegacyPoolErrors.push(error);
+      });
       await expect(rolePool.query<{ session_user: string }>('SELECT session_user')).resolves.toMatchObject({
         rows: [{ session_user: role }],
       });
@@ -94,6 +100,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
       await pool.query(ddl.rows[0]!.sql);
     }
     await pool.end();
+    expect(unexpectedLegacyPoolErrors).toEqual([]);
   }, 30_000);
 
   // Exact pre-capability SQL used by the legacy writer.
@@ -337,7 +344,10 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
         evidenceId: 'premature-drain', capability: 'tenant-native-v1',
         observer: 'rolling-pg-test',
       })).rejects.toThrow('legacy roles NOLOGIN, disabled, and inactive');
-      for (const role of legacyRoles.values()) await store.disableLegacyWriterCapability(role);
+      for (const [tenantId, role] of legacyRoles) {
+        legacyPoolsExpectedToDrain.add(legacyPools.get(tenantId)!);
+        await store.disableLegacyWriterCapability(role);
+      }
       await expect(legacyPools.values().next().value!.query('SELECT 1')).rejects.toBeDefined();
     }
     await pool.query(`

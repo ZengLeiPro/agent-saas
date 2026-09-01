@@ -18,7 +18,7 @@ vi.mock("./api", async (importOriginal) => ({
   fetchIntegrationSources: vi.fn(async () => []),
 }));
 vi.mock("./hooks", () => ({
-  useTaskComments: () => ({ comments: [], loading: false, error: null, refresh: vi.fn(), addComment: vi.fn() }),
+  useTaskComments: () => ({ comments: [], loading: false, error: null, ready: true, refresh: vi.fn(), addComment: vi.fn() }),
   useTaskExecutions: () => ({ executions: [], loading: false, error: null, refresh: vi.fn() }),
 }));
 
@@ -62,12 +62,13 @@ describe("TaskDetail CI 未配置闭环", () => {
     const onExecute = vi.fn(async () => ({ task: runningTask, execution }));
     const onTaskLoaded = vi.fn();
     render(<TaskDetail {...props({ onConfigureCiPolicy, onExecute, onTaskLoaded })} />);
+    await user.click(await screen.findByRole("tab", { name: "讨论（0）" }));
 
     const compactStatus = await screen.findByRole("region", { name: "任务关键状态" });
     expect(compactStatus.textContent).toContain("任务已阻塞");
     expect(compactStatus.textContent).toContain("CI 门禁未配置");
     expect(screen.getByTestId("task-detail-information").getAttribute("aria-hidden")).toBe("true");
-    await user.click(screen.getByRole("button", { name: "展开任务详情" }));
+    await user.click(screen.getByRole("tab", { name: "详细信息" }));
     expect(await screen.findByLabelText("CI 门禁未配置")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "前往配置" }));
     expect(onConfigureCiPolicy).toHaveBeenCalledOnce();
@@ -87,7 +88,7 @@ describe("TaskDetail CI 未配置闭环", () => {
     };
     render(<TaskDetail {...props({ board: readOnlyBoard, canTransitionTask: false, onConfigureCiPolicy: undefined })} />);
 
-    await user.click(await screen.findByRole("button", { name: "展开任务详情" }));
+    await user.click(await screen.findByRole("tab", { name: "详细信息" }));
     expect(await screen.findByText(/请联系看板所有者配置/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "前往配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "恢复任务并重新检查" })).toBeNull();

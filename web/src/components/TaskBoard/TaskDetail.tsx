@@ -42,27 +42,12 @@ import { ModelSelect } from "./ModelSelect";
 import { TaskAttachmentField, TaskAttachmentList, toTaskBoardAttachments } from "./TaskAttachments";
 import { canManuallyCompleteTask, TaskCompletionButton } from "./TaskCompletionButton";
 import { TaskDetailComments, EXECUTION_PURPOSE_LABELS } from "./TaskDetailComments";
+import { inheritedModelHint, taskStageModels, TaskDetailTabs, type TaskDetailTab, useTaskDescriptionResize } from "./TaskDetailLayout";
 import { useTaskComments, useTaskExecutions } from "./hooks";
 type TaskDraftField = "description" | "attachments" | "priority" | "stageModels";
 const TASK_MODEL_PURPOSES: TaskBoardExecutionPurpose[] = ["work", "review"];
 const ACTIVE_EXECUTION_STATUSES = new Set(["queued", "running", "waiting_user", "waiting_approval"]);
 
-function taskStageModels(task: TaskBoardTask): TaskBoardStageModels {
-  if (task.stageModels && Object.keys(task.stageModels).length > 0) {
-    return {
-      ...(task.stageModels.work ? { work: task.stageModels.work } : {}),
-      ...(task.stageModels.review ? { review: task.stageModels.review } : {}),
-    };
-  }
-  return task.model
-    ? { work: task.model, review: task.model }
-    : {};
-}
-
-function inheritedModelHint(board: TaskBoard | null, purpose: TaskBoardExecutionPurpose): string {
-  const model = board?.stageModels?.[purpose] ?? board?.model;
-  return model ?? "未指定时继承看板默认模型";
-}
 interface TaskDetailProps {
   open: boolean;
   active?: boolean;
@@ -138,7 +123,7 @@ export function TaskDetail({
   const [saving, setSaving] = useState(false);
   const [watching, setWatching] = useState(false);
   const [watchLoading, setWatchLoading] = useState(false);
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<TaskDetailTab>(task?.commentCount ? "discussion" : "details");
   const [error, setError] = useState<string | null>(null);
   const taskAttachments = useFileUpload("taskboard");
   const commentAttachments = useFileUpload("taskboard");
@@ -146,11 +131,15 @@ export function TaskDetail({
   const dirtyFieldsRef = useRef<Set<TaskDraftField>>(new Set());
   const detailRequestRef = useRef(0);
   const refreshedExecutionRef = useRef<string | null>(null);
+  const tabSelectionResolvedTaskIdRef = useRef<string | null>(null);
+  const { viewportRef: detailsViewportRef, contentRef: detailsContentRef, textareaRef: descriptionRef }
+    = useTaskDescriptionResize({ active, open, taskId: task?.id });
 
   const {
     comments,
     loading: commentsLoading,
     error: commentsError,
+    ready: commentsReady,
     addComment,
     refresh: refreshComments,
   } = useTaskComments(open && task ? task.id : null);
@@ -189,9 +178,10 @@ export function TaskDetail({
     if (switchedTask) {
       detailRequestRef.current += 1;
       refreshedExecutionRef.current = null;
+      tabSelectionResolvedTaskIdRef.current = null;
       setWatching(task?.watched === true);
       setExecutionStartedTaskId(null);
-      setDetailsExpanded(false);
+      setActiveTab(task?.commentCount ? "discussion" : "details");
       setSaving(false);
     }
     if (!task) {
@@ -222,9 +212,12 @@ export function TaskDetail({
     taskAttachments.clearFiles,
   ]);
 
-  useEffect(() => { if (error) setDetailsExpanded(true); }, [error]);
-
   const taskId = task?.id ?? null;
+  useEffect(() => {
+    if (!taskId || !commentsReady || tabSelectionResolvedTaskIdRef.current === taskId) return;
+    setActiveTab(comments.length > 0 ? "discussion" : "details"); tabSelectionResolvedTaskIdRef.current = taskId;
+  }, [comments.length, commentsReady, taskId]);
+
   useEffect(() => {
     if (!open || !taskId) return;
     const requestId = ++detailRequestRef.current;
@@ -607,8 +600,7 @@ export function TaskDetail({
         }
       }
       if (isCurrentOperation(requestId, operationTask.id)) {
-        setCommentBody("");
-        setContinueAfterComment(false);
+        setCommentBody(""); setContinueAfterComment(false);
         setPendingContinuationCommentId(null);
         commentAttachments.clearFiles();
       }
@@ -643,7 +635,6 @@ export function TaskDetail({
       if (event.key !== "Escape" || event.defaultPrevented || saving) return;
       const target = event.target;
       if (target instanceof Element && target.closest('[role="listbox"], [data-radix-popper-content-wrapper]')) return;
-      setDetailsExpanded(false);
       onOpenChange(false);
     };
     window.addEventListener("keydown", closeOnEscape);
@@ -660,7 +651,7 @@ export function TaskDetail({
       data-testid="task-detail-panel"
       className={portalTarget
         ? "flex h-full min-h-0 w-full flex-col"
-        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-1/2 md:min-w-[26rem] md:max-w-[40rem] md:shrink-0"}
+        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-[46%] md:min-w-[24rem] md:max-w-[36rem] md:shrink-0"}
     >
         {currentTask ? (
           <>
@@ -668,7 +659,7 @@ export function TaskDetail({
               <div className="flex items-center gap-2">
                 <h2 id="task-detail-title" className="min-w-0 flex-1 truncate text-lg font-semibold">{currentTask.title ? `${currentTask.identifier} · ${currentTask.title}` : currentTask.identifier}</h2>
                 <Button type="button" size="icon" variant="ghost" className="size-8 shrink-0" aria-label="关闭任务详情"
-                  disabled={saving} onClick={() => { setDetailsExpanded(false); onOpenChange(false); }}><X className="size-4" /></Button>
+                  disabled={saving} onClick={() => onOpenChange(false)}><X className="size-4" /></Button>
               </div>
               <div data-testid="task-detail-actions" className="flex flex-wrap items-center gap-2">
                 {currentTask.integrationState ? <Badge variant="outline">{INTEGRATION_SOURCE_STATE_LABELS[currentTask.integrationState]}</Badge> : null}
@@ -701,23 +692,27 @@ export function TaskDetail({
                 ) : null}
               </div>
             </div>
-            {!detailsExpanded && (executionsError || latestExecution?.error || integrationSourcesState.error
+            <TaskDetailTabs value={activeTab} commentCount={Math.max(comments.length, currentTask.commentCount)}
+              onChange={(value) => { tabSelectionResolvedTaskIdRef.current = currentTask.id; setActiveTab(value); }} />
+            {activeTab === "discussion" && error ? <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive sm:px-6">{error}</p> : null}
+            {activeTab === "discussion" && (executionsError || latestExecution?.error || integrationSourcesState.error
               || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
               <section aria-label="任务关键状态" className="space-y-1 border-b bg-amber-50 px-4 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:px-6">
                 {executionsError ? <p role="alert">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="line-clamp-2 whitespace-pre-wrap">{latestExecution.error}</p> : null}
                 {integrationSourcesState.error ? <p role="alert">{integrationSourcesState.error}</p> : null}
-                {currentTask.status === "blocked" ? <p>任务已阻塞，展开任务详情查看解除条件。</p> : null}
-                {currentTask.providerCiStatus === "unconfigured" ? <p>CI 门禁未配置，展开任务详情处理。</p> : null}
-                {currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0 ? <p>集成来源需要人工处理，展开任务详情查看。</p> : null}
+                {currentTask.status === "blocked" ? <p>任务已阻塞，切换至详细信息查看解除条件。</p> : null}
+                {currentTask.providerCiStatus === "unconfigured" ? <p>CI 门禁未配置，切换至详细信息处理。</p> : null}
+                {currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0 ? <p>集成来源需要人工处理，切换至详细信息查看。</p> : null}
               </section>
             ) : null}
-            <div data-testid="task-detail-columns" className="flex min-h-0 flex-1 flex-col">
-              {/* @ts-expect-error -- inert is a valid HTML attribute, React types lag behind */}
-              <div id="task-detail-information" data-testid="task-detail-information" aria-hidden={!detailsExpanded} inert={!detailsExpanded}
-                className={`grid min-h-0 overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-in-out ${detailsExpanded ? "flex-1 grid-rows-[1fr] border-b opacity-100" : "shrink-0 grid-rows-[0fr] opacity-0"}`}>
-                <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
+            <div data-testid="task-detail-columns" className="relative min-h-0 flex-1 overflow-hidden">
+              <div ref={detailsViewportRef} id="task-detail-information" data-testid="task-detail-information"
+                aria-hidden={activeTab !== "details"} {...({ inert: activeTab !== "details" } as Record<string, boolean>)}
+                className={`absolute inset-0 overflow-y-auto will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "details" ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-2 opacity-0"}`}>
+
+                <div ref={detailsContentRef} data-testid="task-detail-content" className="p-4 sm:p-6">
               <section aria-label="流程状态" className="mb-6 space-y-2 rounded-lg border bg-muted/20 p-4 text-sm">
                 <h3 className="text-sm font-semibold">流程与执行</h3>
                 {latestExecution ? (
@@ -812,13 +807,15 @@ export function TaskDetail({
                     <div className="space-y-2">
                       <Label htmlFor="task-detail-description">正文</Label>
                       <Textarea
+                        ref={descriptionRef}
                         id="task-detail-description"
                         value={description}
                         onChange={(event) => {
                           dirtyFieldsRef.current.add("description");
                           setDescription(event.target.value);
                         }}
-                        rows={7}
+                        rows={3}
+                        className="resize-none overflow-y-hidden"
                         disabled={contentReadOnly || saving}
                         onPaste={(event) => {
                           if (event.clipboardData.files.length > 0) dirtyFieldsRef.current.add("attachments");
@@ -967,13 +964,14 @@ export function TaskDetail({
                 </div>
               </div>
 
-              <TaskDetailComments
+              <div aria-hidden={activeTab !== "discussion"}
+                {...({ inert: activeTab !== "discussion" } as Record<string, boolean>)}
+                className={`absolute inset-0 flex min-h-0 flex-col will-change-[opacity,transform] transition-[opacity,transform] duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${activeTab === "discussion" ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-2 opacity-0"}`}>
+                <TaskDetailComments
                 comments={comments}
                 commentsLoading={commentsLoading}
                 commentsError={commentsError}
                 currentTask={currentTask}
-                detailsExpanded={detailsExpanded}
-                onToggleDetails={() => setDetailsExpanded((value) => !value)}
                 taskDescription={executionStarted ? description : null}
                 taskAttachments={executionStarted ? taskAttachments.uploadedFiles : []}
                 latestExecution={latestExecution}
@@ -989,7 +987,8 @@ export function TaskDetail({
                 setPendingContinuationCommentId={setPendingContinuationCommentId}
                 commentAttachments={commentAttachments}
                 onSubmit={submitComment}
-              />
+                />
+              </div>
             </div>
           </>
         ) : null}

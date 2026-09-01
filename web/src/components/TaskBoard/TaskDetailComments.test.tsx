@@ -45,8 +45,6 @@ function renderComments(overrides: Partial<ComponentProps<typeof TaskDetailComme
       commentsLoading={false}
       commentsError={null}
       currentTask={task}
-      detailsExpanded={false}
-      onToggleDetails={vi.fn()}
       latestExecutionActive={false}
       commentReadOnly
       saving={false}
@@ -101,8 +99,6 @@ describe("TaskDetailComments", () => {
         commentsLoading={false}
         commentsError={null}
         currentTask={task}
-        detailsExpanded={false}
-        onToggleDetails={vi.fn()}
         latestExecutionActive={false}
         commentReadOnly
         saving={false}
@@ -132,6 +128,8 @@ describe("TaskDetailComments", () => {
     renderComments({ taskDescription: "很长的任务正文".repeat(20), comments });
 
     const navigation = screen.getByRole("navigation", { name: "评论阶段导航" });
+    expect(navigation.className).toContain("px-6");
+    expect(navigation.firstElementChild?.className).toContain("w-[88%]");
     const buttons = within(navigation).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "跳转到第 1 条：任务正文",
@@ -153,7 +151,7 @@ describe("TaskDetailComments", () => {
     expect(buttons[5]?.firstElementChild?.className).toContain("bg-orange-500");
   });
 
-  it("点击圆点后持续强调当前圆点和目标评论，并在再次点击时切换", () => {
+  it("点击圆点后仅用贴紧细蓝环强调当前圆点，不描边目标评论", () => {
     const userComment: TaskBoardComment = {
       ...agentComment,
       id: "comment-user",
@@ -185,9 +183,14 @@ describe("TaskDetailComments", () => {
     fireEvent.click(userButton);
     expect(userButton.getAttribute("aria-current")).toBe("true");
     expect(agentButton.getAttribute("aria-current")).toBeNull();
-    expect(userButton.firstElementChild?.className).toContain("size-4");
+    expect(userButton.className).not.toContain("ring-1 ring-primary");
+    expect(userButton.firstElementChild?.className).toContain("ring-1 ring-primary");
+    expect(userButton.className).not.toContain("scale-110");
+    expect(userButton.className).not.toContain("bg-primary/10");
+    expect(userButton.className).toContain("size-5");
+    expect(userButton.firstElementChild?.className).toContain("size-3");
     expect(userTarget?.getAttribute("data-navigation-selected")).toBe("true");
-    expect(userTarget?.firstElementChild?.className).toContain("outline-primary/70");
+    expect(userTarget?.firstElementChild?.className).not.toContain("outline-primary/70");
     expect(userTarget?.firstElementChild?.className).toContain("border-orange-200/80");
     expect(screen.getByText("曾磊").className).toContain("text-orange-800");
 
@@ -223,30 +226,7 @@ describe("TaskDetailComments", () => {
     fireEvent.click(screen.getByRole("button", { name: "跳转到第 2 条：复核阶段评论" }));
 
     expect(Number.parseFloat(container.style.paddingBottom)).toBeGreaterThan(0);
-    expect(scrollTo).toHaveBeenCalledWith({ top: 300, behavior: "smooth" });
-  });
-
-  it("展开详情时隐藏评论列表，并让讨论栏紧贴输入区", () => {
-    const onToggleDetails = vi.fn();
-    renderComments({ detailsExpanded: true, onToggleDetails });
-
-    const toggle = screen.getByRole("button", { name: "收起任务详情" });
-    const discussion = screen.getByTestId("task-discussion-toggle");
-    const form = screen.getByRole("textbox", { name: "发表讨论" }).closest("form");
-    expect(toggle.textContent).toContain("讨论（0）");
-    expect(toggle.className).toContain("justify-center");
-    const chevron = toggle.querySelector("svg");
-    expect(chevron?.classList.contains("left-full")).toBe(true);
-    expect(chevron?.classList.contains("ml-1")).toBe(true);
-    expect(chevron?.classList.contains("right-1")).toBe(false);
-    expect(chevron?.classList.contains("rotate-180")).toBe(true);
-    expect(screen.getByTestId("task-comments-scroll").className).toContain("hidden");
-    expect(screen.getByRole("region", { name: "任务讨论" }).className).toContain("shrink-0");
-    expect(discussion.nextElementSibling).toBe(form);
-    expect(discussion.className).toContain("slide-in-from-bottom-1");
-    expect(screen.queryByText(/^评论（/)).toBeNull();
-    fireEvent.click(toggle);
-    expect(onToggleDetails).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 288, behavior: "smooth" });
   });
 
   it("将附件、直接实施与发表收在同一操作行，并移除冗余文案", () => {

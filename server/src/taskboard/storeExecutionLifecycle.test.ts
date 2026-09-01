@@ -6,7 +6,9 @@ import {
   cancelExecution,
   claimExecution,
   completeExecution,
+  normalizeExecutionCompletion,
   shouldPersistIntegrationDurableSession,
+  UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR,
   unresolvedExecutionRecovery,
 } from './storeExecutionLifecycle.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from './types.js';
@@ -312,6 +314,33 @@ describe('claimExecution model consistency', () => {
     await expect(claimExecution(store, identity, task.id, claimInput())).resolves.toMatchObject({
       task: { id: task.id },
       execution: { id: 'execution-1', purpose: 'work' },
+    });
+  });
+});
+
+describe('normalizeExecutionCompletion', () => {
+  it('将 protocol v2 未交接的 Runtime success 兜底为 protocol failure', () => {
+    expect(normalizeExecutionCompletion(2, false, {
+      status: 'succeeded', commentBody: '不应成为业务交接',
+    })).toEqual({
+      input: {
+        status: 'failed',
+        commentBody: '不应成为业务交接',
+        error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR,
+      },
+      suppressBusinessDelivery: true,
+    });
+  });
+
+  it('保留 legacy success，并以已持久 transition 覆盖后到的 Runtime failure', () => {
+    expect(normalizeExecutionCompletion(1, false, {
+      status: 'succeeded', commentBody: 'legacy',
+    })).toMatchObject({ input: { status: 'succeeded' }, suppressBusinessDelivery: false });
+    expect(normalizeExecutionCompletion(2, true, {
+      status: 'cancelled', error: 'execution_transitioned', commentBody: '已交接',
+    })).toMatchObject({
+      input: { status: 'succeeded', error: undefined },
+      suppressBusinessDelivery: false,
     });
   });
 });

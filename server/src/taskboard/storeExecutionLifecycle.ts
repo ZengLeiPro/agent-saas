@@ -45,6 +45,32 @@ import {
 import { appendTaskChange } from './v2Store.js';
 import { EXECUTION_TRANSITIONED_REASON } from './workflow/cancellationOutbox.js';
 
+export const UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR =
+  'Taskboard protocol v2 execution cannot succeed before execution.finish persists a transition';
+
+export function normalizeExecutionCompletion(
+  protocolVersion: 1 | 2 | undefined,
+  hasProtocolTransition: boolean,
+  input: TaskboardExecutionCompletionInput,
+): { input: TaskboardExecutionCompletionInput; suppressBusinessDelivery: boolean } {
+  const unfinishedProtocolV2Success = protocolVersion === 2
+    && input.status === 'succeeded'
+    && !hasProtocolTransition;
+  if (hasProtocolTransition && input.status !== 'succeeded') {
+    return {
+      input: { ...input, status: 'succeeded', error: undefined },
+      suppressBusinessDelivery: false,
+    };
+  }
+  if (unfinishedProtocolV2Success) {
+    return {
+      input: { ...input, status: 'failed', error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR },
+      suppressBusinessDelivery: true,
+    };
+  }
+  return { input, suppressBusinessDelivery: false };
+}
+
 export function shouldPersistIntegrationDurableSession(
   integrationAgent: boolean,
   purpose: TaskBoardExecutionPurpose,
@@ -518,12 +544,13 @@ async function completeExecutionInternal(
     const hasProtocolTransition = currentExecution.protocolVersion === 2
       && Boolean(executionResult.rows[0].transitioned_at);
     // The durable protocol transition is the business terminal fact; a later Runtime stop only closes the old Run.
-    const completionInput = hasProtocolTransition && input.status !== 'succeeded'
-      ? { ...input, status: 'succeeded' as const, error: undefined }
-      : input;
-    const unfinishedStage = currentExecution.protocolVersion === 2
-      && input.status === 'succeeded'
-      && !hasProtocolTransition;
+    const normalizedCompletion = normalizeExecutionCompletion(
+      currentExecution.protocolVersion,
+      hasProtocolTransition,
+      input,
+    );
+    const completionInput = normalizedCompletion.input;
+    const unfinishedStage = normalizedCompletion.suppressBusinessDelivery;
     const archivedResult = await finalizeExecutionForArchivedTask(
       store, client, loaded.task, loaded.boardArchivedAt, currentExecution, completionInput,
     );

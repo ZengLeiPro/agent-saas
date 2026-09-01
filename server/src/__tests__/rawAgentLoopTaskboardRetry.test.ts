@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,12 +12,24 @@ import { RawAgentLoop } from '../runtime/rawAgentLoop.js';
 import { ResponsesApiAdapter } from '../runtime/responsesApiAdapter.js';
 import { InMemoryToolInvocationStore } from '../runtime/toolInvocationStore.js';
 import type { OutboundEvent } from '../types/index.js';
+import type { ModelAdapter, ModelEvent, ModelRequest, RunContext } from '../runtime/types.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 
 async function collect(stream: AsyncIterable<OutboundEvent>): Promise<OutboundEvent[]> {
   const events: OutboundEvent[] = [];
   for await (const event of stream) events.push(event);
   return events;
+}
+
+class NaturalCompletionAdapter implements ModelAdapter {
+  calls = 0;
+  requests: ModelRequest[] = [];
+
+  async *stream(request: ModelRequest, _context: RunContext): AsyncIterable<ModelEvent> {
+    this.calls += 1;
+    this.requests.push(request);
+    yield { type: 'completed', content: `自然返回 ${this.calls}`, toolCalls: [] };
+  }
 }
 
 describe('RawAgentLoop taskboard retry transaction', () => {
@@ -135,6 +147,130 @@ describe('RawAgentLoop taskboard retry transaction', () => {
     ]);
     expect(durable.filter((event) => event.type === 'run_finished')).toMatchObject([
       { subtype: 'success' },
+    ]);
+  });
+
+  it('新建路径未显式 finish 时注入隐藏提示并在同一 Run 继续', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-finish-gate-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-taskboard-finish-gate';
+    const runId = 'run-taskboard-finish-gate';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new NaturalCompletionAdapter();
+    let transitioned = false;
+    const checkSuccessfulCompletion = vi.fn(async () => transitioned
+      ? { action: 'allow' as const }
+      : (transitioned = true, { action: 'continue' as const, prompt: '隐藏 finish 提示' }));
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '完成任务' },
+      prompt: '完成任务', instructions: '必须显式交接。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' }, checkSuccessfulCompletion,
+    }));
+
+    expect(adapter.calls).toBe(2);
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: '隐藏 finish 提示' });
+    expect(checkSuccessfulCompletion).toHaveBeenCalledTimes(2);
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(durable.filter((event) => event.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'success' }),
+    ]);
+    expect(JSON.stringify(durable)).not.toContain('隐藏 finish 提示');
+  });
+
+  it('恢复路径未显式 finish 时同样继续原 Run', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-finish-resume-'));
+    cleanupDirs.add(cwd);
+    await writeFile(join(cwd, 'seed.txt'), 'OK', 'utf-8');
+    const sessionId = 'session-taskboard-finish-resume';
+    const runId = 'run-taskboard-finish-resume';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const approvalStore = new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID);
+    await eventStore.appendBatch([
+      { type: 'user_message', runId, sessionId, content: '读取文件' },
+      {
+        type: 'assistant_tool_calls', runId, sessionId, content: '',
+        toolCalls: [{ id: 'call-resume-read', name: 'Read', arguments: '{"path":"seed.txt"}' }],
+      },
+    ], { tenantId: DEFAULT_TENANT_ID });
+    const approval = await approvalStore.create({
+      sessionId, runId, toolCallId: 'call-resume-read', toolId: 'Read', toolName: 'Read', input: { path: 'seed.txt' },
+    });
+    const adapter = new NaturalCompletionAdapter();
+    let transitioned = false;
+    const checkSuccessfulCompletion = vi.fn(async () => transitioned
+      ? { action: 'allow' as const }
+      : (transitioned = true, { action: 'continue' as const, prompt: '隐藏 resume finish 提示' }));
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore, approvalStore,
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+      toolRuntime: new PlatformToolRuntime(),
+    });
+
+    const outbound = await collect(loop.resumeApproval({
+      approvalId: approval.id, response: { allow: true }, instructions: '读取后显式交接。', maxTurns: 1,
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' }, approvalPolicy: { autoApproveTools: true },
+      checkSuccessfulCompletion,
+    }));
+
+    expect(adapter.calls).toBe(2);
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: '隐藏 resume finish 提示' });
+    expect(checkSuccessfulCompletion).toHaveBeenCalledTimes(2);
+    expect(outbound.at(-1)).toEqual({ type: 'done' });
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(durable.filter((event) => event.type === 'run_finished')).toEqual([
+      expect.objectContaining({ subtype: 'success' }),
+    ]);
+    expect(JSON.stringify(durable)).not.toContain('隐藏 resume finish 提示');
+  });
+
+  it('重复自然返回且始终未 finish 时在有限纠正轮后明确失败', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-taskboard-finish-stall-'));
+    cleanupDirs.add(cwd);
+    const sessionId = 'session-taskboard-finish-stall';
+    const runId = 'run-taskboard-finish-stall';
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new NaturalCompletionAdapter();
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter,
+      eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, sessionId, DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')),
+    });
+
+    const outbound = await collect(loop.run({
+      message: { channel: 'web', chatId: sessionId, content: '不要交接' },
+      prompt: '不要交接', instructions: '测试。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId, sessionId, model: 'gpt-test', cwd, tenantId: DEFAULT_TENANT_ID,
+      channelContext: { channel: 'web' },
+      checkSuccessfulCompletion: async () => ({ action: 'continue', prompt: '仍未 finish' }),
+    }));
+
+    expect(adapter.calls).toBe(4);
+    expect(outbound.at(-1)).toMatchObject({
+      type: 'error',
+      error: expect.stringContaining('completion protocol remained unresolved'),
+    });
+    const durable = await eventStore.list(DEFAULT_TENANT_ID, sessionId);
+    expect(durable.filter((event) => event.type === 'run_finished')).toEqual([
+      expect.objectContaining({
+        subtype: 'error',
+        error: expect.stringContaining('completion protocol remained unresolved'),
+      }),
     ]);
   });
 

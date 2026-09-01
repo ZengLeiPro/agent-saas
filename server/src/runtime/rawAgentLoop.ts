@@ -114,6 +114,7 @@ import {
 } from './rawAgentLoopHelpers.js';
 import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
+import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
 import {
   COMPACT_COMMAND_MODEL_CONTENT,
@@ -996,6 +997,7 @@ export class RawAgentLoop implements AgentLoop {
     let finalText = '';
     let turn = 0;
     let turnLimit = input.maxTurns;
+    const successfulCompletion = createSuccessfulCompletionController((message) => logger.warn(message));
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
     // safe boundary 在上一轮收尾/工具后完成 reserve+apply 时，把通知归属带到下一模型轮次。
@@ -1653,26 +1655,21 @@ export class RawAgentLoop implements AgentLoop {
               );
             }
           }
-          const modelUsage = buildModelUsage(context.model, totalUsage);
-          await this.eventSink.append({
-            type: 'run_finished',
-            runId: context.runId,
-            sessionId: context.sessionId,
-            subtype: 'success',
-            numTurns: turn,
-            ...(modelUsage ? { modelUsage } : {}),
-          });
-          logger.info(`[run] finished session=${context.sessionId} turns=${turn}`);
-          await context.hooks?.onResult?.({
-            subtype: 'success',
-            numTurns: turn,
-            resultText: finalText,
-            ...(modelUsage ? { modelUsage } : {}),
+          if (await successfulCompletion.check(context, messages, assistantContent)) {
+            textStarted = false;
+            if (turn >= turnLimit) turnLimit += 1;
+            continue;
+          }
+          await finishSuccessfulRun({
+            context, numTurns: turn, totalUsage, finalText,
+            append: (event) => this.eventSink.append(event),
+            log: () => logger.info(`[run] finished session=${context.sessionId} turns=${turn}`),
           });
           yield { type: 'done' };
           return;
         }
 
+        successfulCompletion.reset();
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
@@ -3223,6 +3220,8 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    let turnLimit = args.maxTurns;
+    const successfulCompletion = createSuccessfulCompletionController((message) => logger.warn(message));
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
     let currentUserMessageIndex = 0;
@@ -3278,7 +3277,7 @@ export class RawAgentLoop implements AgentLoop {
       : undefined;
 
     try {
-      for (turn = 1; turn <= args.maxTurns; turn++) {
+      for (turn = 1; turn <= turnLimit; turn++) {
         if (args.context.drainHandoff?.requested) {
           logger.info(
             `[resume] safe drain handoff session=${args.context.sessionId} run=${args.context.runId} afterTurns=${turn - 1}`,
@@ -3672,26 +3671,21 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'draft_commit', draftId };
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
-          const modelUsage = buildModelUsage(args.context.model, totalUsage);
-          await this.eventSink.append({
-            type: 'run_finished',
-            runId: args.context.runId,
-            sessionId: args.context.sessionId,
-            subtype: 'success',
-            numTurns: turn,
-            ...(modelUsage ? { modelUsage } : {}),
-          });
-          logger.info(`[resume] finished session=${args.context.sessionId} turns=${turn}`);
-          await args.context.hooks?.onResult?.({
-            subtype: 'success',
-            numTurns: turn,
-            resultText: finalText,
-            ...(modelUsage ? { modelUsage } : {}),
+          if (await successfulCompletion.check(args.context, args.messages, assistantContent)) {
+            textStarted = false;
+            if (turn >= turnLimit) turnLimit += 1;
+            continue;
+          }
+          await finishSuccessfulRun({
+            context: args.context, numTurns: turn, totalUsage, finalText,
+            append: (event) => this.eventSink.append(event),
+            log: () => logger.info(`[resume] finished session=${args.context.sessionId} turns=${turn}`),
           });
           yield { type: 'done' };
           return;
         }
 
+        successfulCompletion.reset();
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
@@ -3779,7 +3773,7 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      throw new Error(`raw agent loop exceeded maxTurns=${args.maxTurns}`);
+      throw new Error(`raw agent loop exceeded maxTurns=${turnLimit}`);
     } catch (err) {
       if (err instanceof RunLeaseLostError) {
         if (thinkingStarted) yield { type: 'thinking_end' };

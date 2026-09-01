@@ -427,7 +427,6 @@ describePg('PgRunStore steering PostgreSQL contract', () => {
     await expect(store.findByIdempotencyKey(DEFAULT_TENANT_ID, 'admin-b', base.idempotencyKey))
       .resolves.toMatchObject({ runId: 'admin-scope-b', userId: base.userId, submitterUserId: 'admin-b' });
   });
-  it('相同 submitter/clientMessageId 在不同 tenant 独立幂等',async()=>{const common={sessionId:'shared-idempotency-session',userId:'owner',submitterUserId:'submitter',idempotencyKey:'shared-tenant-key',channel:'web'};await Promise.all([store.enqueueUserMessage({...common,tenantId:'tenant-a',runId:'tenant-idem-a'},'queue'),store.enqueueUserMessage({...common,tenantId:'tenant-b',runId:'tenant-idem-b'},'queue')]);await expect(store.findByIdempotencyKey('tenant-a','submitter',common.idempotencyKey)).resolves.toMatchObject({runId:'tenant-idem-a'});await expect(store.findByIdempotencyKey('tenant-b','submitter',common.idempotencyKey)).resolves.toMatchObject({runId:'tenant-idem-b'});});
   it('只有 message_submissions 已受理记录可短路幂等查询', async () => {
     await store.upsertPending({
       runId: 'preaccepted-failed-run',

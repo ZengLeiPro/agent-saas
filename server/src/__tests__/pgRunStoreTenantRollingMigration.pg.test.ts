@@ -429,6 +429,9 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
           WHERE session_id='contract-stop'`)).rejects.toMatchObject({ code: '42501' });
       } finally {
         await legacyPool.end();
+        const dropOwned = await pool.query<{ sql: string }>(
+          `SELECT format('DROP OWNED BY %I',$1::text) sql`, [legacyRole]);
+        await pool.query(dropOwned.rows[0]!.sql);
         const drop = await pool.query<{ sql: string }>(`SELECT format('DROP ROLE %I',$1::text) sql`, [legacyRole]);
         await pool.query(drop.rows[0]!.sql);
       }

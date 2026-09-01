@@ -21,12 +21,33 @@ test "sha256:$(sha256sum "$STAGING_RUNTIME_ASSETS_PATH" | cut -d' ' -f1)" = \
 
 root=/opt/agent-saas-staging
 state_root=/var/lib/agent-saas-staging
+config_root="$state_root/config"
+server_config="$config_root/config.json"
+legacy_server_config=/etc/agent-saas-staging/config.json
 target="$root/releases/$release_id"
 current="$root/current"
 lock=/run/lock/agent-saas-staging/deploy.lock
 mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
+
+install -d -o agent-saas-staging -g agent-saas-staging -m 0700 "$config_root"
+if [ ! -e "$server_config" ]; then
+  test -f "$legacy_server_config" || {
+    echo 'Staging shared config is missing from both mutable and legacy paths' >&2
+    exit 1
+  }
+  config_candidate="$config_root/.config.json.migrate-$GITHUB_RUN_ID"
+  install -o agent-saas-staging -g agent-saas-staging -m 0600 \
+    "$legacy_server_config" "$config_candidate"
+  mv -f "$config_candidate" "$server_config"
+fi
+test -f "$server_config" && test ! -L "$server_config" || {
+  echo 'Staging mutable config must be a regular non-symlink file' >&2
+  exit 1
+}
+chown agent-saas-staging:agent-saas-staging "$server_config"
+chmod 0600 "$server_config"
 
 install_staging_unit() {
   source_path="$1"
@@ -117,7 +138,7 @@ printf '%s\n' "$api_unit_environment" \
   }
 for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
   printf '%s\n' "$unit_environment" \
-    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json' || {
+    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json' || {
       echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
       exit 1
     }
@@ -127,7 +148,6 @@ rollback_root="$state_root/rollback-$release_id-$GITHUB_RUN_ID"
 artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$GITHUB_RUN_ID"
 mkdir -p "$rollback_root"
 server_env=/etc/agent-saas-staging/server.env
-server_config=/etc/agent-saas-staging/config.json
 acs_env=/etc/agent-saas-staging/acs-orchestrator.env
 acs_identity=/etc/agent-saas-staging/acs-release-identity.json
 cp -a "$server_env" "$rollback_root/server.env"
@@ -200,8 +220,8 @@ config.artifact = {
 fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 fs.renameSync(`${configPath}.candidate`, configPath);
 NODE
-chown root:agent-saas-staging "$server_config"
-chmod 0640 "$server_config"
+chown agent-saas-staging:agent-saas-staging "$server_config"
+chmod 0600 "$server_config"
 
 node - "$acs_env" <<'NODE'
 const fs = require('node:fs');
@@ -300,7 +320,7 @@ for required_directory in \
 done
 
 runuser -u agent-saas-staging -- env \
-  STAGING_CONFIG_PATH=/etc/agent-saas-staging/config.json STAGING_RELEASE_ROOT="$target" \
+  STAGING_CONFIG_PATH="$server_config" STAGING_RELEASE_ROOT="$target" \
   /usr/bin/node - <<'NODE'
 const fs = require('node:fs');
 const { Client } = require(`${process.env.STAGING_RELEASE_ROOT}/server/node_modules/pg`);
@@ -326,7 +346,7 @@ const client = new Client({
 });
 NODE
 
-node - /etc/agent-saas-staging/config.json <<'NODE'
+node - "$server_config" <<'NODE'
 const fs = require('node:fs');
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const failures = [];
@@ -385,8 +405,8 @@ config.agent = {
 fs.writeFileSync(`${configPath}.candidate`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 fs.renameSync(`${configPath}.candidate`, configPath);
 NODE
-chown root:agent-saas-staging "$server_config"
-chmod 0640 "$server_config"
+chown agent-saas-staging:agent-saas-staging "$server_config"
+chmod 0600 "$server_config"
 node - "$MANIFEST_PATH" "$server_env" <<'NODE'
 const fs = require('node:fs');
 const [manifestPath, envPath] = process.argv.slice(2);

@@ -16,7 +16,7 @@ Environment=NODE_ENV=production
 Environment=AGENT_SAAS_ENVIRONMENT=staging
 Environment=AGENT_SAAS_STAGING_RELEASE_ROOT=/opt/agent-saas-staging
 Environment=AGENT_SAAS_PROCESS_ROLE=ws-only
-Environment=AGENT_SAAS_CONFIG_PATH=/etc/agent-saas-staging/config.json
+Environment=AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json
 Environment=AGENT_SAAS_PIDFILE=/run/agent-saas-staging/server.pid
 Environment=AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready
 Environment=KB_PREVIEW_AUTO_GENERATE=false

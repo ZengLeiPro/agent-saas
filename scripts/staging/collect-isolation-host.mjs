@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
 const RELEASE_ID_PATTERN = /^rc-\d{8}-\d{2,}$/u;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const STAGING_ROOT = '/mnt/agent-saas-staging';
-const CONFIG_PATH = '/etc/agent-saas-staging/config.json';
+const CONFIG_PATH = '/var/lib/agent-saas-staging/config/config.json';
 const KUBECONFIG = '/etc/agent-saas-staging/kubeconfig';
 const CURRENT_SERVER = '/opt/agent-saas-staging/current/server';
 

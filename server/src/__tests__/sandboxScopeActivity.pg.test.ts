@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgRunStore } from '../runtime/runStore.js';
 import { PgSandboxLifecycleStore } from '../runtime/sandboxLifecycleService.js';
+import { PgToolInvocationStore } from '../runtime/toolInvocationStore.js';
 
 const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
@@ -20,11 +21,13 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
     pool = new Pool({ connectionString: testPgUrl!, connectionTimeoutMillis: 5_000, max: 4 });
     runStore = new PgRunStore({ pool, tablePrefix: prefix });
     await runStore.init();
+    await new PgToolInvocationStore({ pool, tablePrefix: prefix }).init();
   }, 30_000);
 
   afterAll(async () => {
     if (!pool) return;
     try {
+      await pool.query(`DROP TABLE IF EXISTS ${prefix}_tool_invocations`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_steering_inputs`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_steering_sessions`);
       await pool.query(`DROP TABLE IF EXISTS ${prefix}_message_submissions`);

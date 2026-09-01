@@ -83,10 +83,10 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     await expect(service.command(identity, input))
       .resolves.toMatchObject({ result: 'created' });
     expect(read).toHaveBeenCalledTimes(3);
-    expect(store.create).toHaveBeenCalledWith({}, identity, expect.objectContaining({ mode: 'adaptive' }), expect.any(Date));
+    expect(store.create).toHaveBeenCalledWith({}, identity, expect.objectContaining({ mode: 'adaptive' }), expect.any(Date), expect.any(Function));
   });
 
-  it('blocks create, edit, and run while execution is disabled', async () => {
+  it('blocks create, edit, and run while the execution kill switch is disabled', async () => {
     const store = { tx: vi.fn() };
     const service = new SessionAutomationCommandService(
       store as never,
@@ -103,6 +103,28 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
       expectedIncarnationId: snapshot.incarnationId,
     })).rejects.toMatchObject({ code: 'EXECUTION_DISABLED' });
     expect(store.tx).not.toHaveBeenCalled();
+  });
+
+  it('includes sessionId in canonical control digests so the same clientMessageId cannot replay across sessions', async () => {
+    const digests: string[] = [];
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})),
+      findCommand: vi.fn(async (_c: object, _id: object, _messageId: string, digest: string) => { digests.push(digest); return undefined; }),
+      getLockedForOwner: vi.fn(async (_c: object, id: typeof identity) => ({ ...snapshot, sessionId: id.sessionId })),
+      control: vi.fn(async (_c: object, current: typeof snapshot) => current),
+      recordCommand: vi.fn(async () => 'cursor-1'),
+      publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, staticSource({
+      controlEnabled: true, executionEnabled: true, adaptiveLoopEnabled: true,
+    }), { authorize: vi.fn(async () => undefined) });
+    const input = { clientMessageId: 'shared-message', action: 'pause' as const, expectedControlVersion: 1, expectedIncarnationId: snapshot.incarnationId };
+
+    await service.control(identity, snapshot.automationId, input);
+    await service.control({ ...identity, sessionId: 'session-2' }, snapshot.automationId, input);
+
+    expect(digests).toHaveLength(2);
+    expect(digests[0]).not.toBe(digests[1]);
   });
 
   it('rejects edit immediately after clear enters drain', async () => {

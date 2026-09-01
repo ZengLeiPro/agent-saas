@@ -488,11 +488,11 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       });
       if (outcome.childSessionId !== preparedIdentity.childSessionId || outcome.childRunId !== preparedIdentity.childRunId)
         throw new Error('subagent outcome identity does not match prepared background child');
-      await this.freezeOutcome(record, outcome); await automationResource.released();
+      const resolution = await automationResource.resolveFromAuthoritativeChild(); if (resolution !== 'released') throw new Error('background child terminal state is unknown; reconciliation required'); await this.freezeOutcome(record, outcome);
       const current = await this.config.runStore?.get(record.runId);
       const finalStatus = current?.status ?? outcomeToRunStatus(outcome.status);
       await lease?.release(finalStatus, current?.statusReason ?? `background_${outcome.status}`);
-    } catch (err) { await automationResource.released().catch(() => undefined);
+    } catch (err) { await automationResource.resolveFromAuthoritativeChild().catch((resolutionError) => logger.warn(`后台子任务资源权威结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
       const current = await this.config.runStore?.get(record.runId);
       if (current?.status === 'cancelled') {
         await this.config.runStore?.markStatus(record.runId, 'cancelled', current.statusReason, {

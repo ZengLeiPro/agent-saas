@@ -63,6 +63,7 @@ export interface GoalEvaluatorPort {
     executionRunId?: string;
     onAttemptPrepared?: (providerAttemptId: string) => Promise<void>;
   }): Promise<{ decision: GoalDecision; reason: string; confidence: number; usage?: ModelUsage }>;
+  settleBillingRun?(tenantId:string,runId:string):Promise<void>;
 }
 
 function canonicalJson(value: unknown): string {
@@ -113,6 +114,12 @@ function parsePersistedGoalDecision(payload: unknown): { decision: GoalDecision;
     reason: result.reason,
     confidence: Math.max(0, Math.min(1, result.confidence)),
   };
+}
+
+export async function finalizeEvaluatorBilling(finalize:(()=>Promise<void>)|undefined,maxAttempts=3):Promise<boolean>{
+  if(!finalize)return true;
+  for(let attempt=1;attempt<=maxAttempts;attempt++)try{await finalize();return true;}catch{if(attempt===maxAttempts)return false;}
+  return false;
 }
 
 export class GoalEvaluationResultUnknownError extends Error {
@@ -170,6 +177,8 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
       },
       ...(billing ? { authorizeModelTurn: billing.beforeModelCall } : {}),
     };
+    const closeBilling=async():Promise<boolean>=>{const closed=await finalizeEvaluatorBilling(billing?.finalize);
+      if(!closed&&billing)await this.options.runtimeGuard.ensureBillingClosure(context,billing.runId);return closed;};
     let text = '';
     let completed = false;
     let usage: ModelUsage | undefined;
@@ -222,23 +231,22 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
         || !Number.isFinite(parsed.confidence)) {
         throw new Error('result_unknown:invalid_evaluator_json');
       }
-      await this.options.runtimeGuard.finishModel(context, attempt, usage, undefined, {
-        evaluation: {
-          decision: parsed.decision as GoalDecision,
-          reason: parsed.reason,
-          confidence: Math.max(0, Math.min(1, parsed.confidence)),
-        },
-      });
-      return {
+      const decision = {
         decision: parsed.decision as GoalDecision,
         reason: parsed.reason,
         confidence: Math.max(0, Math.min(1, parsed.confidence)),
-        ...(usage ? { usage } : {}),
       };
+      await this.options.runtimeGuard.finishModel(context, attempt, usage, undefined, { evaluation: decision });
+      // The completed attempt/result payload is the durable replay authority. Billing usage
+      // is already in its durable ledger/outbox; fail closed after bounded settlement retries.
+      if(!await closeBilling())throw new GoalEvaluationResultUnknownError('billing_finalize_failed',attempt!.providerAttemptId);
+      return { ...decision, ...(usage ? { usage } : {}) };
     } catch (error) {
+      if(error instanceof GoalEvaluationResultUnknownError)throw error;
       if (attempt) {
         if (transportStarted) {
           await this.options.runtimeGuard.finishModel(context, attempt, usage, error);
+          await closeBilling();
           throw new GoalEvaluationResultUnknownError(
             error instanceof Error ? error.message : String(error),
             attempt.providerAttemptId,
@@ -250,11 +258,12 @@ export class ModelGoalEvaluator implements GoalEvaluatorPort {
           error instanceof Error ? error.message : String(error),
         );
       }
+      await closeBilling();
       throw error;
-    } finally {
-      await billing?.finalize();
     }
   }
+
+  async settleBillingRun(tenantId:string,runId:string):Promise<void>{const billing=this.options.billing();if(!billing)throw new Error('billing_service_unavailable');await billing.store.settleRunDebit(tenantId,runId);}
 }
 
 export class SessionAutomationEvaluator {
@@ -640,6 +649,15 @@ export class SessionAutomationEvaluator {
 
   async reconcileUnknown(): Promise<number> {
     let restored = 0;
+    // Restart-safe billing close: retry durable lifecycle rows before replaying a completed verdict.
+    if(this.evaluator.settleBillingRun){const pendingBilling=await this.store.pool.query(
+      `SELECT * FROM ${this.store.tables.lifecycleWork} WHERE object_type='run' AND action='reconcile' AND state IN ('pending','waiting','result_unknown','dead') ORDER BY created_at LIMIT 25`);
+      for(const row of pendingBilling.rows)try{await this.evaluator.settleBillingRun(row.tenant_id,row.object_id);await this.store.applyAuthoritativeLifecycleReceipt({
+        workId:row.work_id,tenantId:row.tenant_id,sessionId:row.session_id,automationId:row.automation_id,incarnationId:row.incarnation_id,generation:Number(row.generation),
+        objectIncarnationId:row.object_incarnation_id,objectGeneration:Number(row.object_generation),objectType:'run',objectId:row.object_id,action:'reconcile',
+        receiptKey:`billing:${row.work_id}`,authority:'server_internal',outcome:'completed',payload:{billingClosure:'settled'},
+      });}catch{/* keep durable work reachable for coordinator/restart retry */}
+    }
     const completed = await this.store.pool.query(
       `SELECT e.evaluation_id,e.tenant_id,e.session_id,e.automation_id,e.execution_id,e.incarnation_id,
               e.generation,e.spec_version,e.decision_epoch,e.evidence,e.evidence_manifest,e.evidence_manifest_hash,x.run_id,p.provider_attempt_id,p.result_payload
@@ -655,7 +673,11 @@ export class SessionAutomationEvaluator {
           AND p.generation=e.generation AND p.run_id=x.run_id
         WHERE ((e.state='claimed' AND e.lease_expires_at<now()) OR e.state='result_unknown')
           AND p.operation='goal-evaluation:'||e.execution_id::text
-          AND p.state IN ('response_received','completed')`,
+          AND p.state='completed'
+          AND NOT EXISTS(SELECT 1 FROM ${this.store.tables.lifecycleWork} billing
+            WHERE billing.tenant_id=e.tenant_id AND billing.session_id=e.session_id AND billing.automation_id=e.automation_id
+              AND billing.incarnation_id=e.incarnation_id AND billing.generation=e.generation
+              AND billing.object_type='run' AND billing.action='reconcile' AND billing.state<>'completed')`,
     );
     for (const job of completed.rows) {
       restored += await this.store.tx(async client => {
@@ -667,7 +689,7 @@ export class SessionAutomationEvaluator {
               AND ((e.state='claimed' AND e.lease_expires_at<now()) OR e.state='result_unknown')
               AND p.tenant_id=$3 AND p.session_id=$4 AND p.automation_id=$5
               AND p.incarnation_id=$6 AND p.generation=$7 AND p.execution_id=$8 AND p.run_id=$9
-              AND p.state IN ('response_received','completed')
+              AND p.operation='goal-evaluation:'||e.execution_id::text AND p.state='completed'
             FOR UPDATE OF e,p`,
           [job.evaluation_id, job.provider_attempt_id, job.tenant_id, job.session_id,
             job.automation_id, job.incarnation_id, job.generation, job.execution_id, job.run_id],
@@ -757,7 +779,8 @@ export class SessionAutomationEvaluator {
           WHERE e.state='claimed' AND e.lease_expires_at<now()
             AND NOT EXISTS(
               SELECT 1 FROM ${this.store.tables.providerAttempts} p
-               WHERE p.tenant_id=e.tenant_id AND p.automation_id=e.automation_id AND p.execution_id=e.execution_id
+               WHERE p.tenant_id=e.tenant_id AND p.session_id=e.session_id AND p.automation_id=e.automation_id
+                 AND p.incarnation_id=e.incarnation_id AND p.generation=e.generation AND p.execution_id=e.execution_id
                  AND p.operation='goal-evaluation:'||e.execution_id::text
                  AND p.state IN ('prepared','dispatched','result_unknown','reconcile')
             )

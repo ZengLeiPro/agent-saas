@@ -5,7 +5,8 @@ import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
 import type { AutomationInFlightSummary } from './sessionAutomationInFlight.js';
-import { parseWholeNumeric } from './sessionAutomationRuntimeGuard.js';
+import { parseWholeNumeric, SessionAutomationRuntimeGuard } from './sessionAutomationRuntimeGuard.js';
+import { createLifecycleAdapters } from '../app/sessionAutomationRuntime.js';
 import { PgSessionAutomationAttributionStore } from './sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
 import { SessionAutomationToolProvider } from '../agent/tools/sessionAutomationTools.js';
@@ -277,7 +278,7 @@ describePg('session automation real PostgreSQL integration',()=>{
     // Simulate the authoritative runtime side effect; it intentionally happens outside the store transaction.
     if (job.objectType === 'run') await pool.query(`UPDATE ${runs.runsTable} SET status='cancelled',updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3`, [job.tenantId, job.sessionId, job.objectId]);
     const { attemptCount: _attemptCount, details: _details, ...fence } = job;
-    return { ...fence, receiptKey: `test-runtime:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const, payload: {} };
+    return { ...fence, receiptKey: `test-runtime:${job.workId}`, authority: 'runtime' as const, outcome: 'completed' as const, payload: job.objectType === 'provider_attempt' ? { providerState: 'cancelled' } : {} };
   } };
   await store.processLifecycleWork({ run: adapter, execution: adapter, evaluation: adapter, provider_attempt: adapter, interaction: adapter, background_resource: adapter, budget_reservation: adapter }, 20);
   expect(await store.get(tenant,session,automationId)).toMatchObject({status:'cancelled',phase:'terminal'});
@@ -299,7 +300,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`,[evaluationId])).rows[0].state).toBe('pending');
  });
 
- it('dead typed work forces reconcile_required instead of a false terminal state',async()=>{
+ it('dead lifecycle work forces reconcile_required instead of a false terminal state',async()=>{
   const testSession=`${session}-dead-work`,automationId=randomUUID(),incarnationId=randomUUID();
   await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version,desired_terminal_status) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','cancelling','draining',1,1,1,1,'cancelled')`,[automationId,tenant,testSession,incarnationId]);
   await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'dead-work',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'x',budget:{}})]);
@@ -329,6 +330,62 @@ describePg('session automation real PostgreSQL integration',()=>{
   const receipt={workId,tenantId:tenant,sessionId:testSession,automationId,incarnationId,generation:1,objectIncarnationId:incarnationId,objectGeneration:1,objectType:'provider_attempt' as const,objectId,action:'reconcile' as const,receiptKey:'provider-final',authority:'provider' as const,outcome:'completed' as const,payload:{providerState:'completed'}};
   expect(await store.applyAuthoritativeLifecycleReceipt(receipt)).toBe(true);
   expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE work_id=$1`,[workId])).rows[0].state).toBe('completed');
+ });
+
+ it('rejects a stale authoritative lease before mutating the lifecycle object',async()=>{
+  const testSession=`${session}-stale-receipt`,automationId=randomUUID(),incarnationId=randomUUID(),workId=randomUUID(),evaluationId=randomUUID(),executionId=randomUUID(),runId=randomUUID(),wakeupId=randomUUID(),outboxId=randomUUID();
+  await runs.createPending({runId,sessionId:testSession,tenantId:tenant,userId:'user-a'});
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'goal','goal','cancelling','draining',1,1,1,1)`,[automationId,tenant,testSession,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'stale-receipt',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'goal',mode:'goal',condition:'done',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.wakeups}(wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,due_at,state) VALUES($1,$2,$3,$4,$5,1,1,0,$6,now(),'consumed')`,[wakeupId,tenant,testSession,automationId,incarnationId,`stale-${workId}`]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,0,$7,$8,'{}','completed')`,[outboxId,wakeupId,tenant,testSession,automationId,incarnationId,`stale-${workId}`,runId]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'terminal')`,[executionId,tenant,testSession,automationId,incarnationId,outboxId,runId]);
+  await pool.query(`INSERT INTO ${store.tables.evaluations}(evaluation_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,decision_epoch,evidence) VALUES($1,$2,$3,$4,$5,$6,1,1,1,'{}')`,[evaluationId,tenant,testSession,automationId,executionId,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action,state,lease_token,lease_expires_at) VALUES($1,$2,$3,$4,$5,1,$5,1,'evaluation',$6,'cancel','claimed',$7,now()+interval '2 minutes')`,[workId,tenant,testSession,automationId,incarnationId,evaluationId,randomUUID()]);
+  const receipt={workId,tenantId:tenant,sessionId:testSession,automationId,incarnationId,generation:1,objectIncarnationId:incarnationId,objectGeneration:1,objectType:'evaluation' as const,objectId:evaluationId,action:'cancel' as const,receiptKey:'stale-authority',authority:'provider' as const,outcome:'completed' as const,payload:{}};
+  expect(await store.applyAuthoritativeLifecycleReceipt(receipt)).toBe(false);
+  expect((await pool.query(`SELECT state FROM ${store.tables.evaluations} WHERE evaluation_id=$1`,[evaluationId])).rows[0].state).toBe('pending');
+  expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE work_id=$1`,[workId])).rows[0].state).toBe('claimed');
+ });
+
+ it('rejects old-generation reconcile evidence and keeps completed provider state monotonic',async()=>{
+  const testSession=`${session}-old-reconcile`,automationId=randomUUID(),oldIncarnation=randomUUID(),currentIncarnation=randomUUID();
+  const wakeupId=randomUUID(),outboxId=randomUUID(),executionId=randomUUID(),runId=randomUUID(),preparedId=randomUUID(),attemptId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','reconcile_required','waiting',2,1,1,1)`,[automationId,tenant,testSession,currentIncarnation]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'old-reconcile',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'x',budget:{}})]);
+  await pool.query(`INSERT INTO ${store.tables.wakeups}(wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,due_at,state) VALUES($1,$2,$3,$4,$5,1,1,1,$6,now(),'consumed')`,[wakeupId,tenant,testSession,automationId,oldIncarnation,`old:${wakeupId}`]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,1,1,1,$7,$8,'{}','completed')`,[outboxId,wakeupId,tenant,testSession,automationId,oldIncarnation,`old:${wakeupId}`,runId]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,1,1,$6,$7,'terminal')`,[executionId,tenant,testSession,automationId,oldIncarnation,outboxId,runId]);
+  await pool.query(`INSERT INTO ${store.tables.preparedDispatchAttempts}(prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,outbox_id,idempotency_key,request_payload,state) VALUES($1,$2,$3,$4,$5,1,$6,$7,$8,$9,'{}','completed')`,[preparedId,tenant,testSession,automationId,oldIncarnation,executionId,runId,outboxId,`old:${attemptId}`]);
+  await pool.query(`INSERT INTO ${store.tables.providerAttempts}(provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,provider,operation,idempotency_key,request_payload,state) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,'model','goal-evaluation:'||$7::text,$9,'{}','result_unknown')`,[attemptId,preparedId,tenant,testSession,automationId,oldIncarnation,executionId,runId,`old-provider:${attemptId}`]);
+  const current=(await store.get(tenant,testSession,automationId))!;
+  await expect(store.tx(c=>store.control(c,current,'reconcile',{providerAttemptId:attemptId,receiptKey:`receipt:${attemptId}`,observedState:'not_found',receiptAuthority:'operator',receiptPayload:{}}))).rejects.toMatchObject({code:'CONFLICT'});
+  expect((await pool.query(`SELECT state FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`,[attemptId])).rows[0].state).toBe('result_unknown');
+  await pool.query(`UPDATE ${store.tables.automations} SET incarnation_id=$2,generation=1 WHERE automation_id=$1`,[automationId,oldIncarnation]);
+  const workId=randomUUID();
+  await pool.query(`INSERT INTO ${store.tables.lifecycleWork}(work_id,tenant_id,session_id,automation_id,incarnation_id,generation,object_incarnation_id,object_generation,object_type,object_id,action,state) VALUES($1,$2,$3,$4,$5,1,$5,1,'provider_attempt',$6,'reconcile','waiting')`,[workId,tenant,testSession,automationId,oldIncarnation,attemptId]);
+  const base={workId,tenantId:tenant,sessionId:testSession,automationId,incarnationId:oldIncarnation,generation:1,objectIncarnationId:oldIncarnation,objectGeneration:1,objectType:'provider_attempt' as const,objectId:attemptId,action:'reconcile' as const,authority:'provider' as const,outcome:'completed' as const};
+  expect(await store.applyAuthoritativeLifecycleReceipt({...base,receiptKey:'provider-completed',payload:{providerState:'completed'}})).toBe(true);
+  await pool.query(`UPDATE ${store.tables.lifecycleWork} SET state='waiting' WHERE work_id=$1`,[workId]);
+  expect(await store.applyAuthoritativeLifecycleReceipt({...base,receiptKey:'stale-cancelled',payload:{providerState:'cancelled'}})).toBe(true);
+  expect((await pool.query(`SELECT state FROM ${store.tables.providerAttempts} WHERE provider_attempt_id=$1`,[attemptId])).rows[0].state).toBe('completed');
+ });
+
+ it('persists billing closure work and a restarted lifecycle worker retries settlement',async()=>{
+  const testSession=`${session}-billing-restart`,automationId=randomUUID(),incarnationId=randomUUID(),billingRunId=`utility-automation_evaluator-${randomUUID()}`;
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'goal','adaptive','active','waiting',1,1,1,1)`,[automationId,tenant,testSession,incarnationId]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'billing-restart',$4)`,[automationId,tenant,testSession,JSON.stringify({kind:'goal',mode:'adaptive',prompt:'x',completionCondition:'done',budget:{}})]);
+  const guard=new SessionAutomationRuntimeGuard(pool,()=>true,prefix,runs.runsTable);
+  const context={tenantId:tenant,sessionId:testSession,runId:'evaluation-run',model:'model',cwd:'.',channelContext:{channel:'web'},automationFence:{automationId,incarnationId,generation:1,specVersion:1,executionId:randomUUID(),runId:'evaluation-run'}} as never;
+  await guard.ensureBillingClosure(context,billingRunId);
+  let calls=0;const billing={store:{settleRunDebit:async()=>{calls++;if(calls===1)throw new Error('pg unavailable');}}};
+  const adapters=createLifecycleAdapters(async()=>undefined,undefined,()=>billing as never);
+  await new PgSessionAutomationStore(pool,prefix,runs.runsTable).processLifecycleWork(adapters,10);
+  expect((await pool.query(`SELECT state FROM ${store.tables.lifecycleWork} WHERE object_id=$1`,[billingRunId])).rows[0].state).toBe('pending');
+  await pool.query(`UPDATE ${store.tables.lifecycleWork} SET next_attempt_at=now() WHERE object_id=$1`,[billingRunId]);
+  await new PgSessionAutomationStore(pool,prefix,runs.runsTable).processLifecycleWork(adapters,10);
+  expect(calls).toBe(2);
+  expect((await pool.query(`SELECT state,receipt_payload FROM ${store.tables.lifecycleWork} WHERE object_id=$1`,[billingRunId])).rows[0]).toMatchObject({state:'completed',receipt_payload:{billingClosure:'settled',billingRunId}});
  });
 
  it.each([{desired:'blocked',status:'completing'},{desired:'cancelled',status:'cancelling'}] as const)('rejects replace while $desired drain is still closing lifecycle work',async({desired,status})=>{

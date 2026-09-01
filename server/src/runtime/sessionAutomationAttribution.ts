@@ -27,6 +27,17 @@ function claimedPrepared(row:Record<string,unknown>):ClaimedPreparedDispatch{ret
 export class PgSessionAutomationAttributionStore {
   readonly tables:SessionAutomationTables;
   constructor(readonly pool:Pool,tablePrefix='runtime'){this.tables=sessionAutomationTables(tablePrefix);}
+  /** Read only the durable attribution fact; this never guesses provider state. */
+  async readProviderAuthority(input:{providerAttemptId:string;tenantId:string;sessionId:string;automationId:string;incarnationId:string;generation:number}):Promise<{state:AttributionAttemptState|'cancelled';resultPayload?:Record<string,unknown>}|undefined>{
+    const result=await this.pool.query(
+      `SELECT state,result_payload FROM ${this.tables.providerAttempts}
+        WHERE provider_attempt_id=$1 AND tenant_id=$2 AND session_id=$3 AND automation_id=$4
+          AND incarnation_id=$5 AND generation=$6`,
+      [input.providerAttemptId,input.tenantId,input.sessionId,input.automationId,input.incarnationId,input.generation],
+    );
+    const row=result.rows[0];if(!row)return undefined;
+    return {state:row.state,...(row.result_payload?{resultPayload:row.result_payload as Record<string,unknown>}:{})};
+  }
 
   async prepareDispatch(input:AutomationLineage&{preparedDispatchAttemptId?:string;outboxId:string;idempotencyKey:string;requestPayload:Record<string,unknown>}):Promise<string>{
     const id=input.preparedDispatchAttemptId??randomUUID();
@@ -60,7 +71,13 @@ export class PgSessionAutomationAttributionStore {
   }
   async reconcileProviderAttempt(item:ClaimedAttributionAttempt,input:{receiptId?:string;receiptKey:string;observedState:'completed'|'not_found'|'still_running'|'ambiguous';receiptPayload:Record<string,unknown>;nextState:'completed'|'result_unknown'}):Promise<void>{
     if(item.state!=='reconcile')throw new SessionAutomationAttributionConflictError('invalid_transition',`reconcile 要求 reconcile 状态，当前为 ${item.state}`);
+    if((input.observedState==='completed'||input.observedState==='not_found')!==(input.nextState==='completed'))throw new SessionAutomationAttributionConflictError('invalid_transition','receipt observed state 与目标状态不一致');
     const client=await this.pool.connect();try{await client.query('BEGIN');await this.insertReceipt(client,item,input);const r=await client.query(`UPDATE ${this.tables.providerAttempts} SET state=$5,version=version+1,lease_token=NULL,lease_expires_at=NULL,result_payload=CASE WHEN $5='completed' THEN $6::jsonb ELSE result_payload END,last_error=CASE WHEN $5='completed' THEN NULL ELSE 'reconciliation_inconclusive' END,completed_at=CASE WHEN $5='completed' THEN now() ELSE completed_at END,updated_at=now() WHERE provider_attempt_id=$1 AND tenant_id=$2 AND version=$3 AND state=$4 AND lease_token=$7 AND session_id=$8 AND automation_id=$9 AND incarnation_id=$10 AND generation=$11 AND execution_id=$12 AND run_id=$13`,[item.providerAttemptId,item.tenantId,item.version,item.state,input.nextState,JSON.stringify(input.receiptPayload),item.leaseToken,item.sessionId,item.automationId,item.incarnationId,item.generation,item.executionId,item.runId]);if(r.rowCount!==1)throw new SessionAutomationAttributionConflictError('stale_claim','reconciliation CAS fence 不匹配');await client.query('COMMIT');}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
   }
-  private async insertReceipt(client:Client,item:ClaimedAttributionAttempt,input:{receiptId?:string;receiptKey:string;observedState:string;receiptPayload:Record<string,unknown>}):Promise<void>{await client.query(`INSERT INTO ${this.tables.reconciliationReceipts}(reconciliation_receipt_id,provider_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,receipt_key,observed_state,receipt_authority,receipt_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'provider_adapter',$12)`,[input.receiptId??randomUUID(),item.providerAttemptId,...lineageValues(item),input.receiptKey,input.observedState,JSON.stringify(input.receiptPayload)]);}
+  private async insertReceipt(client:Client,item:ClaimedAttributionAttempt,input:{receiptId?:string;receiptKey:string;observedState:string;receiptPayload:Record<string,unknown>}):Promise<void>{
+    const inserted=await client.query(`INSERT INTO ${this.tables.reconciliationReceipts}(reconciliation_receipt_id,provider_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,receipt_key,observed_state,receipt_authority,receipt_payload) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'provider_adapter',$12) ON CONFLICT(tenant_id,receipt_key) DO NOTHING`,[input.receiptId??randomUUID(),item.providerAttemptId,...lineageValues(item),input.receiptKey,input.observedState,JSON.stringify(input.receiptPayload)]);
+    if(inserted.rowCount===1)return;
+    const duplicate=await client.query(`SELECT 1 FROM ${this.tables.reconciliationReceipts} WHERE tenant_id=$1 AND receipt_key=$2 AND session_id=$3 AND automation_id=$4 AND incarnation_id=$5 AND generation=$6 AND provider_attempt_id=$7 AND execution_id=$8 AND run_id=$9 AND observed_state=$10 AND receipt_payload=$11::jsonb`,[item.tenantId,input.receiptKey,item.sessionId,item.automationId,item.incarnationId,item.generation,item.providerAttemptId,item.executionId,item.runId,input.observedState,JSON.stringify(input.receiptPayload)]);
+    if(duplicate.rowCount!==1)throw new SessionAutomationAttributionConflictError('stale_claim','receipt key lineage conflict');
+  }
 }

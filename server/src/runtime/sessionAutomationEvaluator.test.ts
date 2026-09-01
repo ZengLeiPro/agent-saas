@@ -149,6 +149,58 @@ describe('SessionAutomationEvaluator execution and evidence gating', () => {
     expect(stream).not.toHaveBeenCalled();
   });
 
+  it('retries only billing closure after a completed provider verdict', async () => {
+    const finalize = vi.fn().mockRejectedValueOnce(new Error('billing unavailable')).mockResolvedValue(undefined);
+    const stream = vi.fn(async function* (_request: unknown, context: { authorizeModelTurn?: () => Promise<void> }) {
+      await context.authorizeModelTurn?.();
+      yield { type: 'completed', content: '{"decision":"met","reason":"done","confidence":0.9}', usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+    const runtimeGuard = {
+      beforeModel: vi.fn().mockResolvedValue({ providerAttemptId: 'attempt', reservationIds: ['reservation'], sourceKey: 'source', model: 'model', purpose: 'goal_evaluation' }),
+      beforeModelTransport: vi.fn().mockResolvedValue(undefined), releaseModel: vi.fn(), finishModel: vi.fn().mockResolvedValue(undefined),
+      ensureBillingClosure: vi.fn().mockResolvedValue(undefined),
+    };
+    const evaluator = new ModelGoalEvaluator({
+      resolveModel: () => ({ model: 'model' }), createAdapter: () => ({ stream } as never),
+      billing: () => ({ beginUtilityModelRun: vi.fn().mockResolvedValue({ runId:'billing-run', beforeModelCall: vi.fn(), recordUsage: vi.fn(), finalize }) }) as never,
+      resolveIdentity: () => ({ username: 'owner' }), runtimeGuard: runtimeGuard as never, executionEnabled: () => true,
+    });
+    await expect(evaluator.evaluate({
+      tenantId: 'tenant', sessionId: 'session', ownerUserId: 'owner', automationId: 'automation', executionId: 'execution',
+      incarnationId: 'incarnation', generation: 1, specVersion: 1, condition: 'done', evidence: {} as never,
+    })).resolves.toMatchObject({ decision: 'met', reason: 'done' });
+    expect(stream).toHaveBeenCalledOnce();
+    expect(runtimeGuard.finishModel).toHaveBeenCalledOnce();
+    expect(runtimeGuard.ensureBillingClosure).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed after three billing finalization failures without a second provider call', async () => {
+    const finalize = vi.fn().mockRejectedValue(new Error('billing unavailable'));
+    const stream = vi.fn(async function* (_request: unknown, context: { authorizeModelTurn?: () => Promise<void> }) {
+      await context.authorizeModelTurn?.();
+      yield { type: 'completed', content: '{"decision":"met","reason":"done","confidence":0.9}', usage: { inputTokens: 10, outputTokens: 5 } };
+    });
+    const runtimeGuard = {
+      beforeModel: vi.fn().mockResolvedValue({ providerAttemptId: 'attempt', reservationIds: ['reservation'], sourceKey: 'source', model: 'model', purpose: 'goal_evaluation' }),
+      beforeModelTransport: vi.fn().mockResolvedValue(undefined), releaseModel: vi.fn(), finishModel: vi.fn().mockResolvedValue(undefined),
+      ensureBillingClosure: vi.fn().mockResolvedValue(undefined),
+    };
+    const evaluator = new ModelGoalEvaluator({
+      resolveModel: () => ({ model: 'model' }), createAdapter: () => ({ stream } as never),
+      billing: () => ({ beginUtilityModelRun: vi.fn().mockResolvedValue({ runId:'billing-run', beforeModelCall: vi.fn(), recordUsage: vi.fn(), finalize }) }) as never,
+      resolveIdentity: () => ({ username: 'owner' }), runtimeGuard: runtimeGuard as never, executionEnabled: () => true,
+    });
+    await expect(evaluator.evaluate({
+      tenantId: 'tenant', sessionId: 'session', ownerUserId: 'owner', automationId: 'automation', executionId: 'execution',
+      incarnationId: 'incarnation', generation: 1, specVersion: 1, condition: 'done', evidence: {} as never,
+    })).rejects.toMatchObject({ message: 'billing_finalize_failed', providerAttemptId: 'attempt' });
+    expect(finalize).toHaveBeenCalledTimes(3);
+    expect(stream).toHaveBeenCalledOnce();
+    expect(runtimeGuard.finishModel).toHaveBeenCalledOnce();
+    expect(runtimeGuard.ensureBillingClosure).toHaveBeenCalledWith(expect.any(Object),'billing-run');
+  });
+
   it('releases a claimed evaluation when execution is disabled before provider work', async () => {
     const claimed = {
       evaluation_id: 'evaluation', tenant_id: 'tenant', session_id: 'session',

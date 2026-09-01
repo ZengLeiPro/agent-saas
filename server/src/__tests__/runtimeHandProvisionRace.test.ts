@@ -424,12 +424,94 @@ describe('runtime Hand atomic provision attempt authority', () => {
     expect(beforeDispatch).toHaveBeenCalledOnce();
     expect(handStore.records.get('tenant-child-session:tenant-ecs')).toMatchObject({
       status: 'unhealthy', metadata: { provisionResult: 'result_unknown', reconcileRequired: true,
-        provisionGeneration: first.metadata.provisionGeneration },
+        provisionGeneration: first.metadata.provisionGeneration,
+        provisionDispatchClaim: first.metadata.provisionDispatchClaim },
     });
     await ensureRuntimeHandRegistered(params);
     expect(fetchImpl).toHaveBeenCalledOnce();
     release();
     await new Promise(resolve => setTimeout(resolve, 0));
+    vi.unstubAllGlobals();
+  });
+
+  it('replaces an unknown G1 dispatch fence when a recipe change installs G2', async () => {
+    const handStore = new MapMemoryHandStore();
+    let releaseG1!: () => void;
+    let releaseG2!: () => void;
+    let acceptedG1!: () => void;
+    let acceptedG2!: () => void;
+    const acceptedG1Promise = new Promise<void>(resolve => { acceptedG1 = resolve; });
+    const acceptedG2Promise = new Promise<void>(resolve => { acceptedG2 = resolve; });
+    const g1ResponseGate = new Promise<void>(resolve => { releaseG1 = resolve; });
+    const g2ResponseGate = new Promise<void>(resolve => { releaseG2 = resolve; });
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(async () => {
+        acceptedG1();
+        await g1ResponseGate;
+        throw new Error('G1 response lost');
+      })
+      .mockImplementationOnce(async () => {
+        acceptedG2();
+        await g2ResponseGate;
+        return new Response(JSON.stringify({ status: 'ok' }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      });
+    vi.stubGlobal('fetch', fetchImpl);
+    const baseParams = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'cross-generation-session', runId: 'cross-generation-run', workspaceId: 'cross-generation-workspace',
+      tenantId: 'tenant-a', userTenantId: 'tenant-a', userId: 'user-a',
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    };
+    const g1Params = {
+      ...baseParams,
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'],
+        recipe: { setupCommands: ['echo G1'] } }],
+    };
+    await ensureRuntimeHandRegistered(g1Params);
+    await acceptedG1Promise;
+    const g1 = handStore.records.get('cross-generation-session:tenant-ecs')!;
+    expect(g1).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      provisionDispatchClaim: expect.any(String),
+    } });
+
+    const g2Params = {
+      ...baseParams,
+      tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'],
+        recipe: { setupCommands: ['echo G2'] } }],
+    };
+    await ensureRuntimeHandRegistered(g2Params);
+    await acceptedG2Promise;
+    const g2 = handStore.records.get('cross-generation-session:tenant-ecs')!;
+    expect(g2.metadata.provisionGeneration).not.toBe(g1.metadata.provisionGeneration);
+    expect(g2).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
+      provisionDispatchClaim: expect.any(String),
+    } });
+    expect(g2.metadata.provisionDispatchClaim).not.toBe(g1.metadata.provisionDispatchClaim);
+
+    // A normal repeat registration for G2 must preserve its live fence rather than roll it back.
+    await ensureRuntimeHandRegistered(g2Params);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(handStore.records.get(g2.handId)?.metadata.provisionDispatchClaim)
+      .toBe(g2.metadata.provisionDispatchClaim);
+
+    releaseG2();
+    await vi.waitFor(() => expect(handStore.records.get(g2.handId)).toMatchObject({
+      status: 'ready', metadata: { provisionGeneration: g2.metadata.provisionGeneration,
+        provisionResult: 'ok', reconcileRequired: false, dispatchAuthorized: false,
+        provisionDispatchClaim: null },
+    }));
+    releaseG1();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(handStore.records.get(g2.handId)).toMatchObject({
+      status: 'ready', metadata: { provisionGeneration: g2.metadata.provisionGeneration, provisionResult: 'ok' },
+    });
     vi.unstubAllGlobals();
   });
 

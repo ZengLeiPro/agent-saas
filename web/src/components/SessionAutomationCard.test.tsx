@@ -33,10 +33,18 @@ describe('SessionAutomationCard controls', () => {
     expect(onControl).toHaveBeenCalledWith({ action: 'pause' });
   });
 
-  it('represents paused plus active run without implying the run was killed', () => {
+  it('represents a paused automation with an active run without implying the run was killed', () => {
     render(<SessionAutomationCard snapshot={snapshot({ status: 'paused', currentRunActive: true, willContinue: false })} onControl={vi.fn()} />);
     expect(screen.getByText('当前轮仍在运行 · 不会再续跑')).toBeTruthy();
     expect(screen.getByRole('button', { name: /继续/ })).toBeTruthy();
+  });
+
+  it.each(['completed', 'cancelled', 'failed', 'expired'] as const)('hides every control for terminal status %s', status => {
+    const onControl = vi.fn();
+    render(<SessionAutomationCard snapshot={snapshot({ status })} onControl={onControl} />);
+
+    expect(screen.queryByRole('button', { name: /暂停|继续|立即运行|编辑|停止/ })).toBeNull();
+    expect(onControl).not.toHaveBeenCalled();
   });
 
   it('edits the goal condition through CAS control payload', () => {

@@ -312,6 +312,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
         expect(replay?.providerAttemptId).toBe(attempt!.providerAttemptId);
         expect(replay?.sourceKey).toBe(attempt!.sourceKey);
         await guard.finishModel(childContext, attempt, { inputTokens: 10, outputTokens: 5 });
+        await runs.markStatus(childRunId, 'completed', 'subagent_completed');
         return {
           status: 'completed', text: 'done', totalTokens: 15, toolUseCount: 0, turnCount: 1,
           durationMs: 1, childSessionId, childRunId, model: 'test-model',
@@ -343,6 +344,73 @@ describePg('automation background child recovery on PostgreSQL', () => {
     await expect(guard.beforeModel({ ...childContext, runId: `invoking-${randomUUID()}` },
       'turn:spoof-invoking-run', { model: 'test-model', inputTokens: 1, maxOutputTokens: 1 }))
       .rejects.toMatchObject({ reason: 'context_run_mismatch' });
+  });
+
+  it('rejects the remote dispatch barrier when the root execution Run is already terminal', async () => {
+    const prepared = await preparedInterruptedChild();
+    await runs.markStatus(prepared.setup.dispatch.targetRunId, 'completed', 'root_terminal_race');
+
+    await expect(guard.recordBackgroundResource(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
+    )).rejects.toMatchObject({ reason: 'background_dispatch_authority_lost' });
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
+      [prepared.parentRunId],
+    )).rows[0]?.state).toBe('prepared');
+  });
+
+  it('releases an active resource only after the authoritative child Run is terminal', async () => {
+    const prepared = await preparedInterruptedChild();
+    await guard.recordBackgroundResource(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
+    );
+    await runs.markStatus(prepared.childRunId, 'completed', 'subagent_completed');
+
+    await expect(guard.resolveBackgroundResourceFromChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('released');
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
+      [prepared.parentRunId],
+    )).rows[0]?.state).toBe('released');
+  });
+
+  it('parks an active resource and lifecycle work as result_unknown when child terminality is unknown', async () => {
+    const prepared = await preparedInterruptedChild();
+    await guard.recordBackgroundResource(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
+    );
+    const resource = (await pool.query(
+      `SELECT background_resource_id FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
+      [prepared.parentRunId],
+    )).rows[0];
+    await pool.query(
+      `INSERT INTO ${store.tables.lifecycleWork}
+        (work_id,tenant_id,session_id,automation_id,incarnation_id,generation,
+         object_incarnation_id,object_generation,object_type,object_id,action)
+       VALUES($1,$2,$3,$4,$5,1,$5,1,'background_resource',$6,'release')`,
+      [randomUUID(), tenantId, prepared.setup.sessionId, prepared.setup.automationId,
+        prepared.setup.incarnationId, resource.background_resource_id],
+    );
+
+    await expect(guard.resolveBackgroundResourceFromChild(
+      prepared.context, prepared.parentRunId,
+      { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId },
+    )).resolves.toBe('result_unknown');
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
+      [prepared.parentRunId],
+    )).rows[0]?.state).toBe('result_unknown');
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.lifecycleWork} WHERE object_id=$1`,
+      [resource.background_resource_id],
+    )).rows[0]?.state).toBe('result_unknown');
+    expect(await store.get(tenantId, prepared.setup.sessionId, prepared.setup.automationId))
+      .toMatchObject({ status: 'reconcile_required' });
   });
 
   it('atomically requeues a running prepared child and clears both run leases', async () => {

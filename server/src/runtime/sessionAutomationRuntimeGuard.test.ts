@@ -36,6 +36,7 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
   providerAttemptState: 'dispatched' | 'cancelled' | 'result_unknown' = 'dispatched';
   backgroundAutomationStatus = 'active';
   backgroundExecutionState = 'running';
+  backgroundRootRunStatus = 'running';
   onBackgroundAuthorityLocked?: () => void;
 
   async connect(): Promise<pg.PoolClient> {
@@ -91,6 +92,7 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
     if (normalized.startsWith('SELECT 1 FROM runtime_session_automations a') && normalized.includes('parent_run.status')) {
       this.onBackgroundAuthorityLocked?.();
       return this.backgroundAutomationStatus === 'active' && this.backgroundExecutionState === 'running'
+        && this.backgroundRootRunStatus === 'running'
         ? { rows: [{ '?column?': 1 }] as T[], rowCount: 1 }
         : { rows: [] as T[], rowCount: 0 };
     }
@@ -339,6 +341,7 @@ describe('SessionAutomationRuntimeGuard', () => {
     const joined = pool.statements.join('\n');
     expect(joined).toContain("a.status='active'");
     expect(joined).toContain("e.state='running'");
+    expect(joined).toContain("root_run.status='running'");
     expect(joined).toContain("parent_run.status='running'");
     expect(joined).toContain("child_run.status='running'");
     expect(joined).toContain("SET state='active'");
@@ -362,12 +365,16 @@ describe('SessionAutomationRuntimeGuard', () => {
   });
 
   it.each([
-    ['pause/clear', 'cancelling', 'running'],
-    ['execution terminal', 'active', 'terminal'],
-  ])('%s race rejects remote dispatch without activating resource', async (_label, automationStatus, executionState) => {
+    ['pause/clear', 'cancelling', 'running', 'running'],
+    ['execution terminal', 'active', 'terminal', 'running'],
+    ['root Run terminal', 'active', 'running', 'completed'],
+  ])('%s race rejects remote dispatch without activating resource', async (
+    _label, automationStatus, executionState, rootRunStatus,
+  ) => {
     const pool = new FakePool();
     pool.backgroundAutomationStatus = automationStatus;
     pool.backgroundExecutionState = executionState;
+    pool.backgroundRootRunStatus = rootRunStatus;
     const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true, 'runtime', 'runtime_runs');
     await expect(guard.recordBackgroundResource(context, 'background-run', {
       childSessionId: 'child-session', childRunId: 'child-run',

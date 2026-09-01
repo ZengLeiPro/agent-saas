@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore,commandDigest } from './sessionAutomationStore.js';
+import { createSessionAutomationFlagSource } from '../app/sessionAutomationFlagSource.js';
 const {Pool}=pg;
 const url=process.env.TEST_DATABASE_URL;
 const describePg=url?describe:describe.skip;
@@ -40,6 +41,23 @@ describePg('session automation creation receipt saga on real PostgreSQL',()=>{
   await expect(store.prepareCommandSession({tenantId:'tenant-a',ownerUserId:'user-a',clientMessageId:'msg-denied',commandDigest:digest,canonicalRequest:request,sessionId:randomUUID()})).rejects.toMatchObject({message:'denied'});
   expect(await store.getCommandReceipt('tenant-a','user-a','msg-denied')).toMatchObject({state:'compensated',lastError:'denied',sessionMetaCreated:true});
  });
+ it('rechecks a process-local live flag after another connection releases the create lock',async()=>{
+  const sessionId=randomUUID();const id={tenantId:'tenant-race',ownerUserId:'user-a',sessionId};
+  const configB={sessionAutomation:{executionEnabled:true,controlEnabled:true,adaptiveLoopEnabled:true}} as {sessionAutomation:{executionEnabled:boolean;controlEnabled:boolean;adaptiveLoopEnabled:boolean}};
+  const sourceB=createSessionAutomationFlagSource(configB as never);
+  const a=await pool.connect();const b=await pool.connect();
+  try{
+   await a.query('BEGIN');
+   await a.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase) VALUES($1,$2,$3,$4,$5,'loop','adaptive','active','waiting')`,[randomUUID(),id.tenantId,id.sessionId,id.ownerUserId,randomUUID()]);
+   await b.query('BEGIN');
+   const blocked=store.create(b,{...id,ownerUserId:'user-b'},{kind:'loop',mode:'adaptive',prompt:'B',budget:{}} as never,new Date(),sourceB.executionEnabled);
+   await new Promise(resolve=>setTimeout(resolve,100));configB.sessionAutomation.executionEnabled=false;
+   await a.query('ROLLBACK');
+   await expect(blocked).rejects.toMatchObject({code:'EXECUTION_DISABLED'});
+   await b.query('ROLLBACK');
+   expect((await pool.query(`SELECT count(*)::int count FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id=$2`,[id.tenantId,sessionId])).rows[0].count).toBe(0);
+  }finally{await a.query('ROLLBACK').catch(()=>undefined);await b.query('ROLLBACK').catch(()=>undefined);a.release();b.release();}
+ },15000);
  it('commits the event cursor in the receipt and reads snapshot/cursor from one statement',async()=>{
   const id={tenantId:'tenant-a',ownerUserId:'user-a',sessionId:randomUUID()};const request={command:'create'};const digest=commandDigest(request);
   const committed=await store.tx(async client=>{const snapshot=await store.create(client,id,{kind:'loop',mode:'adaptive',prompt:'continue',budget:{}} as never,new Date());const response={result:'created',snapshot};const cursor=await store.recordCommand(client,id,id.sessionId,'msg-commit',digest,snapshot.automationId,response,request);return{snapshot,cursor};});

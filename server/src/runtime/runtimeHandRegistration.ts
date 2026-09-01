@@ -498,7 +498,7 @@ export async function ensureRuntimeHandRegistered(params: {
     tenantRecipe.provisionKey = tenantProvisionKey;
     const tenantRecipeDigest = createHash('sha256').update(canonicalJson(tenantRecipe)).digest('hex');
     const tenantProvisionGeneration = tenantProvisionKey;
-    // Unknown external results remain parked until an explicit reconciler clears the durable fence.
+    // Unknown external results remain parked only within their generation until an explicit reconciler clears the durable fence.
     const existingTenantHand = await params.handStore.get(handId);
     const reuseReadyTenantHand = existingTenantHand?.status === 'ready'
       && existingTenantHand.recipeDigest === tenantRecipeDigest
@@ -538,8 +538,18 @@ export async function ensureRuntimeHandRegistered(params: {
         provisionKey: tenantProvisionKey,
         provisionGeneration: tenantProvisionGeneration,
         provisionFailure: failure ?? null,
+        // register() merges JSONB on upsert. Explicitly replace every dispatch fence
+        // when this generation is installed so an unknown claim from an older
+        // recipe cannot block the new generation's atomic claim.
+        provisionDispatchClaim: null,
+        provisionDispatchClaimedAt: null,
+        dispatchAuthorized: false,
+        provisionResult: 'not_dispatched',
+        reconcileRequired: false,
         provisionRecoveryToken: null,
         provisionRecoveryClaimedAtMs: null,
+        lastProvisionedAt: null,
+        lastProvisionMetadata: null,
         provision: {
           attempts: 0,
           lastStatus: failure ? 'error' : 'provisioning',

@@ -13,7 +13,7 @@ interface SessionAutomationCardProps {
 
 const statusLabels: Readonly<Record<string, string>> = {
   active: '运行中', paused: '已暂停', blocked: '已阻塞', budget_limited: '预算受限',
-  completed: '已完成', failed: '失败', expired: '已到期', cancelling: '正在停止',
+  completed: '已完成', cancelled: '已取消', failed: '失败', expired: '已到期', cancelling: '正在停止',
   reconcile_required: '需要重新核对',
 };
 
@@ -42,7 +42,7 @@ export function SessionAutomationCard({ snapshot, timeline = [], pending, error,
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(snapshot.condition ?? snapshot.prompt ?? '');
   const paused = snapshot.status === 'paused';
-  const terminal = ['completed', 'failed', 'expired'].includes(snapshot.status);
+  const terminal = ['completed', 'cancelled', 'failed', 'expired'].includes(snapshot.status);
   const budget = snapshot.budget;
   const nextRun = snapshot.actualNextWakeAt ?? snapshot.nextActionAt ?? snapshot.nominalNextSlotAt;
   const summary = snapshot.kind === 'goal' ? snapshot.condition : snapshot.prompt;

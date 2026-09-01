@@ -1,4 +1,5 @@
 import type { PgPool } from '../runtime/runStoreTypes.js';
+import type { BillingService } from '../data/billing/service.js';
 import { SessionAutomationTools, SessionAutomationToolProvider } from '../agent/tools/sessionAutomationTools.js';
 import { SessionAutomationCommandService } from '../runtime/sessionAutomationCommandService.js';
 import {
@@ -7,6 +8,7 @@ import {
 } from '../runtime/sessionAutomationCoordinator.js';
 import { ModelGoalEvaluator, SessionAutomationEvaluator } from '../runtime/sessionAutomationEvaluator.js';
 import { PgSessionAutomationStore, type SessionAutomationLifecycleAdapters, type SessionAutomationLifecycleJob, type SessionAutomationLifecycleReceipt } from '../runtime/sessionAutomationStore.js';
+import { PgSessionAutomationAttributionStore } from '../runtime/sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from '../runtime/sessionAutomationTerminalProjector.js';
 import { SessionAutomationRuntimeGuard } from '../runtime/sessionAutomationRuntimeGuard.js';
 import type { SessionAutomationExecutionFlagSource } from '../runtime/sessionAutomationFlags.js';
@@ -26,14 +28,36 @@ export async function createSessionAutomationPersistence(options: {
 }
 
 function lifecycleReceipt(job:SessionAutomationLifecycleJob,outcome:SessionAutomationLifecycleReceipt['outcome'],payload:Record<string,unknown>={}):SessionAutomationLifecycleReceipt { const {attemptCount: _attemptCount,details: _details,...fence}=job; return {...fence,receiptKey:`runtime:${job.workId}:${job.attemptCount}`,authority:'runtime',outcome,payload}; }
-export function createLifecycleAdapters(cancelRun:(runId:string,reason:string)=>Promise<void>):SessionAutomationLifecycleAdapters{return{
-  run:{execute:async job=>{await cancelRun(job.objectId,'session_automation_typed_drain');return lifecycleReceipt(job,'completed',{runId:job.objectId});}},
+export function createLifecycleAdapters(
+  cancelRun:(runId:string,reason:string)=>Promise<void>,
+  attribution?:PgSessionAutomationAttributionStore,
+  billing?:()=>BillingService|undefined,
+):SessionAutomationLifecycleAdapters{return{
+  run:{execute:async job=>{
+    if(job.action==='reconcile'){
+      const service=billing?.();if(!service)return lifecycleReceipt(job,'pending',{error:'billing_service_unavailable'});
+      await service.store.settleRunDebit(job.tenantId,job.objectId);
+      return lifecycleReceipt(job,'completed',{billingClosure:'settled',billingRunId:job.objectId});
+    }
+    await cancelRun(job.objectId,'session_automation_typed_drain');return lifecycleReceipt(job,'completed',{runId:job.objectId});
+  }},
   execution:{execute:async job=>{const runId=String(job.details.run_id??'');if(!runId)return lifecycleReceipt(job,'pending',{error:'execution_run_id_unavailable'});await cancelRun(runId,'session_automation_typed_drain');return lifecycleReceipt(job,'completed',{runId});}},
   evaluation:{execute:async job=>lifecycleReceipt(job,job.action==='cancel'?'completed':'pending',{...(job.action==='reconcile'?{error:'provider_authority_receipt_required'}:{})})},
-  provider_attempt:{execute:async job=>lifecycleReceipt(job,job.action==='cancel'&&job.details.state==='prepared'?'completed':'pending',{error:'provider_reconciliation_adapter_unavailable'})},
+  provider_attempt:{execute:async job=>{
+    const authority=attribution?await attribution.readProviderAuthority({providerAttemptId:job.objectId,tenantId:job.tenantId,sessionId:job.sessionId,automationId:job.automationId,incarnationId:job.objectIncarnationId,generation:job.objectGeneration}):undefined;
+    const providerState=authority?.state??String(job.details.state??'');
+    if(['completed','cancelled'].includes(providerState))return lifecycleReceipt(job,'completed',{providerState,resultPayload:authority?.resultPayload,sideEffectKnown:true});
+    if(job.action==='cancel'&&providerState==='prepared')return lifecycleReceipt(job,'completed',{providerState:'cancelled',sideEffectKnown:false});
+    return lifecycleReceipt(job,'pending',{error:'provider_authority_unresolved',providerState,sideEffectKnown:false});
+  }},
   interaction:{execute:async job=>lifecycleReceipt(job,job.details.state==='prepared'?'completed':'pending',{error:'active_interaction_adapter_unavailable'})},
   background_resource:{execute:async job=>{if(job.details.resource_kind!=='child_run')return lifecycleReceipt(job,'pending',{error:`resource_adapter_unavailable:${String(job.details.resource_kind??'unknown')}`});const runId=String(job.details.provider_resource_id??'');if(!runId)return lifecycleReceipt(job,'pending',{error:'resource_provider_id_unavailable'});await cancelRun(runId,'session_automation_background_resource_release');return lifecycleReceipt(job,'completed',{runId});}},
-  budget_reservation:{execute:async job=>lifecycleReceipt(job,job.details.safe_to_release===true?'completed':'pending',{error:'provider_reconciliation_required_before_budget_release'})},
+  budget_reservation:{execute:async job=>{
+    const state=String(job.details.state??'');if(['settled','released'].includes(state))return lifecycleReceipt(job,'completed',{billingClosure:state});
+    if(job.details.safe_to_release===true)return lifecycleReceipt(job,'completed',{billingClosure:'released'});
+    if(['completed','result_unknown','reconcile'].includes(String(job.details.provider_state??'')))return lifecycleReceipt(job,'completed',{billingClosure:'suspense',costKnown:false,providerState:job.details.provider_state});
+    return lifecycleReceipt(job,'pending',{error:'provider_reconciliation_required_before_budget_closure',costKnown:false});
+  }},
 };}
 
 export function createSessionAutomationWorkers(options: {
@@ -65,7 +89,7 @@ export function createSessionAutomationWorkers(options: {
     coordinator: new SessionAutomationCoordinator(options.store, options.dispatcher, {
       executionEnabled: options.flagSource.executionEnabled,
       cancelRun: options.cancelRun,
-      lifecycleAdapters: createLifecycleAdapters(options.cancelRun),
+      lifecycleAdapters: createLifecycleAdapters(options.cancelRun, new PgSessionAutomationAttributionStore(options.store.pool, options.store.tablePrefix), options.evaluator.billing),
       onError: options.onError,
     }),
     terminalProjector: new SessionAutomationTerminalProjector(options.store),

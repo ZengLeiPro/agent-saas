@@ -6,6 +6,8 @@ export interface PreparedChildIdentity {
   childRunId: string;
 }
 
+export type BackgroundResourceResolution = 'released' | 'result_unknown';
+
 export class SessionAutomationBackgroundResource {
   constructor(
     private readonly guard: SessionAutomationRuntimeGuard | undefined,
@@ -32,9 +34,10 @@ export class SessionAutomationBackgroundResource {
     if (this.context) await this.guard?.recordBackgroundResource(this.context, this.resourceKey, identity, 'active');
   }
 
-  async released(): Promise<void> {
-    if (this.context) {
-      await this.guard?.recordBackgroundResource(this.context, this.resourceKey, this.identity, 'released');
-    }
+  async resolveFromAuthoritativeChild(): Promise<BackgroundResourceResolution> {
+    if (!this.context || !this.guard) return 'released';
+    return this.guard.resolveBackgroundResourceFromChild(
+      this.context, this.resourceKey, this.identity,
+    );
   }
 }

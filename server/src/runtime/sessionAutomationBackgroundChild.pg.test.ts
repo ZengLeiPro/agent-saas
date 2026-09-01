@@ -317,6 +317,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
         } satisfies SubagentOutcome;
       },
     });
+    await runs.markStatus(persisted!.runId, 'running', 'background_worker_started');
     await restored.execute(persisted!);
     const released = await pool.query(
       `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,

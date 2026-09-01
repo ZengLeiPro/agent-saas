@@ -135,7 +135,7 @@ describe('EncryptedFileSecretVault opaque version migration（TASK-318）', () =
     expect(JSON.stringify(inspected)).not.toContain('legacy-plaintext-must-never-leak');
   });
 
-describe('HttpSecretVault remote ref sanitization（TASK-318）', () => {
+describe('HttpSecretVault hostile remote ref validation（TASK-318）', () => {
   it('get/put/rotate 缓存和返回前丢弃 ref 明文与额外字段', async () => {
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(input)).pathname;
@@ -163,6 +163,20 @@ describe('HttpSecretVault remote ref sanitization（TASK-318）', () => {
     expect(await vault.rotateSecret('rotate-ref-id', 'rotate-plaintext', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
     expect(await vault.inspectRef!('rotate-ref-id', HTTP_CALLER)).toEqual(cleanRemoteRef('rotate-ref-id'));
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    { name: 'owner mismatch', ref: { ...remoteRef('put-ref-id'), ownerId: 'bob' }, error: /ownerId mismatch/ },
+    { name: 'global substitution', ref: { ...remoteRef('put-ref-id'), ownerId: 'global' }, error: /ownerId mismatch/ },
+    { name: 'kind mismatch', ref: { ...remoteRef('put-ref-id'), kind: 'git' }, error: /kind mismatch/ },
+  ])('put 远端返回 $name 时 fail closed', async ({ ref, error }) => {
+    const vault = new HttpSecretVault({
+      baseUrl: 'https://vault.example.com',
+      authToken: 'bootstrap-token',
+      fetchImpl: (async () => new Response(JSON.stringify(ref))) as typeof fetch,
+    });
+
+    await expect(vault.putSecret('alice', 'mcp', 'plaintext', HTTP_CALLER)).rejects.toThrow(error);
   });
 
   it('get 远端省略权威 ref 时 fail closed', async () => {

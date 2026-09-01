@@ -219,10 +219,13 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /if \[ -L "\$current" \]; then/u);
   assert.match(deploy, /readlink -f -- "\$current"/u);
   assert.match(deploy, /had_previous_release=false/u);
+  assert.match(deploy, /trap 'exit 129' HUP/u);
+  assert.match(deploy, /trap 'exit 130' INT/u);
+  assert.match(deploy, /trap 'exit 143' TERM/u);
   assert.match(deploy, /if \[ "\$had_previous_release" = true \]; then/u);
   assert.match(deploy, /systemctl stop agent-saas-acs-orchestrator-staging\.service/u);
-  assert.match(deploy, /rm -f \/run\/agent-saas-staging\/server\.pid/u);
-  assert.match(deploy, /\/run\/agent-saas-staging\/acs-orchestrator\.pid/u);
+  assert.match(deploy, /rm -f "\$run_root\/server\.pid"/u);
+  assert.match(deploy, /"\$run_root\/acs-orchestrator\.pid"/u);
   assert.match(deploy, /systemctl reset-failed agent-saas-runtime-worker-staging\.service/u);
   assert.match(deploy, /Staging ACS configuration is missing \$\{key\}/u);
   assert.match(deploy, /Staging ACS shared-cidr mode has no configured CIDR/u);
@@ -242,20 +245,20 @@ test('target deployment consumes bundles without source install/build and uses o
     deploy,
     /systemctl show agent-saas-runtime-worker-staging\.service --property Environment --value/u,
   );
-  assert.match(deploy, /AGENT_SAAS_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u);
+  assert.match(deploy, /AGENT_SAAS_READYFILE=\$run_root\/runtime-worker\.ready/u);
   assert.match(deploy, /does not publish the canonical readyfile/u);
   assert.match(
     deploy,
-    /AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\/run\/agent-saas-staging\/runtime-worker\.ready/u,
+    /AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=\$run_root\/runtime-worker\.ready/u,
   );
   assert.match(deploy, /does not observe the canonical Runtime Worker readyfile/u);
   assert.match(
     deploy,
-    /AGENT_SAAS_CONFIG_PATH=\/var\/lib\/agent-saas-staging\/config\/config\.json/u,
+    /AGENT_SAAS_CONFIG_PATH=\$server_config/u,
   );
   assert.match(deploy, /API and Runtime Worker must use the shared Staging config/u);
   assert.match(deploy, /config_root="\$state_root\/config"/u);
-  assert.match(deploy, /legacy_server_config=\/etc\/agent-saas-staging\/config\.json/u);
+  assert.match(deploy, /legacy_server_config="\$etc_root\/config\.json"/u);
   assert.match(deploy, /install -d -o agent-saas-staging -g agent-saas-staging -m 0700/u);
   assert.match(deploy, /Staging mutable config must be a regular non-symlink file/u);
   assert.match(deploy, /artifact\.backend must be local/u);
@@ -288,7 +291,10 @@ test('target deployment consumes bundles without source install/build and uses o
     /sharedDir: '\/opt\/agent-saas-staging\/current\/server\/workspace-shared'/u,
   );
   assert.match(deploy, /cp -a "\$server_config" "\$rollback_root\/config\.json"/u);
-  assert.match(deploy, /cp -a "\$rollback_root\/config\.json" "\$server_config"/u);
+  assert.match(
+    deploy,
+    /restore_optional_file "\$had_server_config" "\$rollback_root\/config\.json" "\$server_config"/u,
+  );
   assert.match(deploy, /chown agent-saas-staging:agent-saas-staging "\$server_config"/u);
   assert.match(deploy, /chmod 0600 "\$server_config"/u);
   assert.match(deploy, /tar -xzf "\$candidate\/\.release\/server-bundle\.tgz" -C "\$candidate"/u);
@@ -315,6 +321,11 @@ test('target deployment consumes bundles without source install/build and uses o
   assert.match(deploy, /chown root:agent-saas-staging "\$server_env"/u);
   assert.match(deploy, /chown root:agent-saas-staging "\$acs_env"/u);
   assert.match(deploy, /trap finish EXIT # one-shot dispatcher/u);
+  assert.match(deploy, /restore_optional_file "\$had_server_unit"/u);
+  assert.ok(
+    deploy.indexOf('trap finish EXIT # one-shot dispatcher') <
+      deploy.indexOf('install_staging_unit \\\n  "$UNIT_DIR/agent-saas-server-staging.service.template"'),
+  );
   assert.match(deploy, /verify --root "\$target" --component server/u);
 });
 

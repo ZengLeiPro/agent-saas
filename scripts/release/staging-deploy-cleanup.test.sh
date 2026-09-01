@@ -18,7 +18,7 @@ cat > "$harness" <<'HARNESS'
 #!/usr/bin/env bash
 set -euo pipefail
 
-candidate=/fixture/candidate
+candidate=/fixture/candidate # cleanup target for the active deploy attempt
 artifact_persistence_probe=/fixture/artifact-probe
 acs_health_probe=/fixture/acs-health
 api_ready_probe=/fixture/api-ready
@@ -27,12 +27,24 @@ server_env=/fixture/server.env
 server_config=/fixture/config.json
 acs_env=/fixture/acs.env
 acs_identity=/fixture/acs-identity.json
+server_unit=/fixture/server.service
+worker_unit=/fixture/worker.service
+acs_unit=/fixture/acs.service
+run_root=/fixture/run
+deployment_attempt_id=4242-1
+had_server_config=true
+had_server_env=true
+had_acs_env=true
 had_previous_identity=true
+had_server_unit=true
+had_worker_unit=true
+had_acs_unit=true
 had_previous_release=true
 previous=/fixture/previous
 current=/fixture/current
 
 source "$CLEANUP_LIFECYCLE"
+runtime_mutated=true
 
 rm_count=0
 cp_count=0
@@ -65,20 +77,20 @@ systemctl() {
 
 case "$TRIGGER" in
   status) exit 23 ;;
-  signal) kill -INT "$$" ;;
+  signal) kill -"$SIGNAL_NAME" "$$" ;;
   *) exit 90 ;;
 esac
 HARNESS
 chmod +x "$harness"
 
 run_case() {
-  local trigger="$1" second_signal="$2" expected_status="$3"
-  local case_dir="$tmp/$trigger-$second_signal"
+  local trigger="$1" signal_name="$2" second_signal="$3" expected_status="$4"
+  local case_dir="$tmp/$trigger-$signal_name-$second_signal"
   mkdir -p "$case_dir"
 
   set +e
   CLEANUP_LIFECYCLE="$lifecycle" RESTORE_LOG="$case_dir/restore.log" \
-    TRIGGER="$trigger" INJECT_SECOND_SIGNAL="$second_signal" \
+    TRIGGER="$trigger" SIGNAL_NAME="$signal_name" INJECT_SECOND_SIGNAL="$second_signal" \
     bash "$harness" >"$case_dir/stdout" 2>"$case_dir/stderr"
   local status=$?
   set -e
@@ -104,8 +116,10 @@ run_case() {
   fi
 }
 
-run_case status 1 23
-run_case signal 0 130
+run_case status INT 1 23
+run_case signal HUP 0 129
+run_case signal INT 0 130
+run_case signal TERM 0 143
 
 # Static/run-time fixture: the same run's attempts produce disjoint deploy paths.
 paths_for_attempt() {
@@ -133,4 +147,5 @@ test -z "$(comm -12 <(sort "$tmp/attempt-1") <(sort "$tmp/attempt-2"))"
 grep -F -- '-4242-1' "$tmp/attempt-1" >/dev/null
 grep -F -- '-4242-2' "$tmp/attempt-2" >/dev/null
 
+bash "$script_dir/staging-unit-preflight-rollback.test.sh"
 printf '%s\n' 'staging cleanup fault injection and run-attempt isolation: ok'

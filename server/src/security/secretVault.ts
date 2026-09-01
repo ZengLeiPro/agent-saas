@@ -529,6 +529,8 @@ export class HttpSecretVault implements SecretVault {
   ): Promise<SecretRef> {
     assertAllowed({ ownerId, kind }, caller, 'write');
     const created = sanitizeRemoteRef(await this.post<unknown>('/secrets', { ownerId, kind, value, caller, metadata }));
+    if (created.ownerId !== ownerId) throw new Error('HttpSecretVault create response ownerId mismatch');
+    if (created.kind !== kind) throw new Error('HttpSecretVault create response kind mismatch');
     assertAllowed(created, caller, 'write');
     this.rememberRef(created);
     return created;
@@ -549,7 +551,7 @@ export class HttpSecretVault implements SecretVault {
     return result.value;
   }
 
-  /** metadata-only 远端读取；TTL 到期后重检，确保外部 rotate 会改变 observed identity。 */
+  /** metadata-only 远端读取；TTL 到期后重检，远端响应仍按不可信输入校验。 */
   async inspectRef(ref: SecretRef | string, caller: VaultCaller): Promise<SecretRef | null> {
     const id = refId(ref);
     const known = typeof ref === 'string' ? this.refs.get(ref) : ref;

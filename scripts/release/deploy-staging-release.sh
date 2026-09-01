@@ -23,14 +23,24 @@ printf '%s' "$STAGING_RUNTIME_ASSETS_DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
 test "sha256:$(sha256sum "$STAGING_RUNTIME_ASSETS_PATH" | cut -d' ' -f1)" = \
   "$STAGING_RUNTIME_ASSETS_DIGEST"
 
-root=/opt/agent-saas-staging
-state_root=/var/lib/agent-saas-staging
+root="${STAGING_RELEASE_ROOT:-/opt/agent-saas-staging}"
+state_root="${STAGING_STATE_ROOT:-/var/lib/agent-saas-staging}"
+etc_root="${STAGING_ETC_ROOT:-/etc/agent-saas-staging}"
+systemd_root="${STAGING_SYSTEMD_ROOT:-/etc/systemd/system}"
+runtime_root="${STAGING_RUNTIME_ROOT:-/mnt/agent-saas-staging/runtime}"
+run_root="${STAGING_RUN_ROOT:-/run/agent-saas-staging}"
 config_root="$state_root/config"
 server_config="$config_root/config.json"
-legacy_server_config=/etc/agent-saas-staging/config.json
+legacy_server_config="$etc_root/config.json"
+server_env="$etc_root/server.env"
+acs_env="$etc_root/acs-orchestrator.env"
+acs_identity="$etc_root/acs-release-identity.json"
+server_unit="$systemd_root/agent-saas-server-staging.service"
+worker_unit="$systemd_root/agent-saas-runtime-worker-staging.service"
+acs_unit="$systemd_root/agent-saas-acs-orchestrator-staging.service"
 target="$root/releases/$release_id"
 current="$root/current"
-lock=/run/lock/agent-saas-staging/deploy.lock
+lock="${STAGING_LOCK_PATH:-/run/lock/agent-saas-staging/deploy.lock}"
 mkdir -p "$(dirname "$lock")" "$root/releases" "$state_root/releases"
 exec 9>"$lock"
 flock -n 9 || { echo 'Another Staging deployment is active' >&2; exit 1; }
@@ -39,6 +49,141 @@ test -f "$config_identity_reader" || {
   echo 'Missing shared ConfigIdentity readiness contract module' >&2
   exit 1
 }
+
+runtime_dir="$runtime_root/server"
+artifact_dir="$runtime_root/artifacts"
+candidate="$target.candidate-$deployment_attempt_id"
+rollback_root="$state_root/rollback-$release_id-$deployment_attempt_id"
+artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$deployment_attempt_id"
+acs_health_probe="$state_root/acs-health-$deployment_attempt_id.json"
+api_ready_probe="$state_root/api-ready-$deployment_attempt_id.json"
+mkdir -p "$rollback_root"
+
+previous=''
+had_previous_release=false
+if [ -L "$current" ]; then
+  previous="$(readlink -f -- "$current")" || {
+    echo 'Staging current symlink cannot be resolved' >&2
+    exit 1
+  }
+  case "$previous" in
+    "$root/releases/"*) ;;
+    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
+  esac
+  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
+  had_previous_release=true
+elif [ -e "$current" ]; then
+  echo 'Staging current path exists but is not a symlink' >&2
+  exit 1
+fi
+
+had_server_config=false
+had_server_env=false
+had_acs_env=false
+had_previous_identity=false
+had_server_unit=false
+had_worker_unit=false
+had_acs_unit=false
+if [ -e "$server_config" ]; then
+  had_server_config=true
+  cp -a "$server_config" "$rollback_root/config.json"
+fi
+if [ -e "$server_env" ]; then
+  had_server_env=true
+  cp -a "$server_env" "$rollback_root/server.env"
+fi
+if [ -e "$acs_env" ]; then
+  had_acs_env=true
+  cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
+fi
+if [ -e "$acs_identity" ]; then
+  had_previous_identity=true
+  cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
+fi
+if [ -e "$server_unit" ]; then
+  had_server_unit=true
+  cp -a "$server_unit" "$rollback_root/agent-saas-server-staging.service"
+fi
+if [ -e "$worker_unit" ]; then
+  had_worker_unit=true
+  cp -a "$worker_unit" "$rollback_root/agent-saas-runtime-worker-staging.service"
+fi
+if [ -e "$acs_unit" ]; then
+  had_acs_unit=true
+  cp -a "$acs_unit" "$rollback_root/agent-saas-acs-orchestrator-staging.service"
+fi
+
+# BEGIN staging deploy cleanup lifecycle
+deployment_committed=false
+runtime_mutated=false
+cleanup_armed=true
+restore_optional_file() {
+  local existed="$1" backup="$2" destination="$3"
+  if [ "$existed" = true ]; then
+    cp -a "$backup" "$destination"
+  else
+    rm -f "$destination"
+  fi
+}
+rollback() {
+  restore_optional_file "$had_server_config" "$rollback_root/config.json" "$server_config"
+  restore_optional_file "$had_server_env" "$rollback_root/server.env" "$server_env"
+  restore_optional_file "$had_acs_env" "$rollback_root/acs-orchestrator.env" "$acs_env"
+  restore_optional_file "$had_previous_identity" \
+    "$rollback_root/acs-release-identity.json" "$acs_identity"
+  restore_optional_file "$had_server_unit" \
+    "$rollback_root/agent-saas-server-staging.service" "$server_unit"
+  restore_optional_file "$had_worker_unit" \
+    "$rollback_root/agent-saas-runtime-worker-staging.service" "$worker_unit"
+  restore_optional_file "$had_acs_unit" \
+    "$rollback_root/agent-saas-acs-orchestrator-staging.service" "$acs_unit"
+  systemctl daemon-reload || true
+  if [ "$runtime_mutated" = true ]; then
+    if [ "$had_previous_release" = true ]; then
+      ln -sfn "$previous" "$current"
+      systemctl restart agent-saas-acs-orchestrator-staging.service || true
+      systemctl restart agent-saas-server-staging.service || true
+      systemctl restart agent-saas-runtime-worker-staging.service || true
+    else
+      rm -f "$current"
+      systemctl stop agent-saas-runtime-worker-staging.service || true
+      systemctl stop agent-saas-server-staging.service || true
+      systemctl stop agent-saas-acs-orchestrator-staging.service || true
+      rm -f "$run_root/server.pid" "$run_root/runtime-worker.pid" \
+        "$run_root/runtime-worker.ready" "$run_root/acs-orchestrator.pid"
+      systemctl reset-failed agent-saas-runtime-worker-staging.service \
+        agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
+    fi
+  fi
+}
+finish() {
+  local status=$?
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [ "$cleanup_armed" != true ]; then
+    return "$status"
+  fi
+  cleanup_armed=false
+  # Cleanup is one-shot and best-effort: every cleanup and rollback operation is
+  # attempted, while the status captured before cleanup remains authoritative.
+  # Rollback backups stay on disk for manual recovery if any restore step fails.
+  set +e
+  rm -rf "$candidate"
+  rm -f "$server_unit.candidate-$deployment_attempt_id" \
+    "$worker_unit.candidate-$deployment_attempt_id" \
+    "$acs_unit.candidate-$deployment_attempt_id"
+  rm -f "$artifact_persistence_probe"
+  rm -f "$acs_health_probe" "$api_ready_probe"
+  if [ "$deployment_committed" = false ]; then
+    rollback
+  fi
+  return "$status"
+}
+trap finish EXIT # one-shot dispatcher
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# END staging deploy cleanup lifecycle
 
 install -d -o agent-saas-staging -g agent-saas-staging -m 0700 "$config_root"
 if [ ! -e "$server_config" ]; then
@@ -70,8 +215,6 @@ install_staging_unit() {
   mv -f "$candidate_path" "$destination_path"
 }
 
-runtime_dir=/mnt/agent-saas-staging/runtime/server
-artifact_dir=/mnt/agent-saas-staging/runtime/artifacts
 runuser -u agent-saas-staging -- sh -c \
   'umask 027; mkdir -p -- "$1" "$2"' sh "$runtime_dir" "$artifact_dir"
 runtime_owner="$(stat -c '%u:%g' "$runtime_dir")"
@@ -94,13 +237,13 @@ for directory in "$runtime_dir" "$artifact_dir"; do
 done
 install_staging_unit \
   "$UNIT_DIR/agent-saas-server-staging.service.template" \
-  /etc/systemd/system/agent-saas-server-staging.service
+  "$server_unit"
 install_staging_unit \
   "$UNIT_DIR/agent-saas-runtime-worker-staging.service.template" \
-  /etc/systemd/system/agent-saas-runtime-worker-staging.service
+  "$worker_unit"
 install_staging_unit \
   "$UNIT_DIR/agent-saas-acs-orchestrator-staging.service.template" \
-  /etc/systemd/system/agent-saas-acs-orchestrator-staging.service
+  "$acs_unit"
 systemctl daemon-reload
 
 for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-staging.service; do
@@ -110,118 +253,31 @@ for service_name in agent-saas-server-staging.service agent-saas-runtime-worker-
     exit 1
   }
   systemctl show "$service_name" --property ExecStart --value \
-    | grep -Fq '/opt/agent-saas-staging/current/server/dist/index.js' || {
+    | grep -Fq "$current/server/dist/index.js" || {
     echo "$service_name does not execute the immutable Staging server entrypoint" >&2
     exit 1
   }
 done
 
-previous=''
-had_previous_release=false
-if [ -L "$current" ]; then
-  previous="$(readlink -f -- "$current")" || {
-    echo 'Staging current symlink cannot be resolved' >&2
-    exit 1
-  }
-  case "$previous" in
-    "$root/releases/"*) ;;
-    *) echo 'Staging current symlink is outside the immutable release root' >&2; exit 1 ;;
-  esac
-  test -d "$previous" || { echo 'Staging current release target is missing' >&2; exit 1; }
-  had_previous_release=true
-elif [ -e "$current" ]; then
-  echo 'Staging current path exists but is not a symlink' >&2
-  exit 1
-fi
 worker_unit_environment="$(systemctl show agent-saas-runtime-worker-staging.service --property Environment --value)"
 printf '%s\n' "$worker_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+  | grep -Fq "AGENT_SAAS_READYFILE=$run_root/runtime-worker.ready" || {
     echo 'Staging Runtime Worker unit does not publish the canonical readyfile' >&2
     exit 1
   }
 api_unit_environment="$(systemctl show agent-saas-server-staging.service --property Environment --value)"
 printf '%s\n' "$api_unit_environment" \
-  | grep -Fq 'AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=/run/agent-saas-staging/runtime-worker.ready' || {
+  | grep -Fq "AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE=$run_root/runtime-worker.ready" || {
     echo 'Staging API unit does not observe the canonical Runtime Worker readyfile' >&2
     exit 1
   }
 for unit_environment in "$api_unit_environment" "$worker_unit_environment"; do
   printf '%s\n' "$unit_environment" \
-    | grep -Fq 'AGENT_SAAS_CONFIG_PATH=/var/lib/agent-saas-staging/config/config.json' || {
+    | grep -Fq "AGENT_SAAS_CONFIG_PATH=$server_config" || {
       echo 'Staging API and Runtime Worker must use the shared Staging config' >&2
       exit 1
     }
 done
-candidate="$target.candidate-$deployment_attempt_id"
-rollback_root="$state_root/rollback-$release_id-$deployment_attempt_id"
-artifact_persistence_probe="$artifact_dir/.release-persistence-$release_id-$deployment_attempt_id"
-acs_health_probe="$state_root/acs-health-$deployment_attempt_id.json"
-api_ready_probe="$state_root/api-ready-$deployment_attempt_id.json"
-mkdir -p "$rollback_root"
-server_env=/etc/agent-saas-staging/server.env
-acs_env=/etc/agent-saas-staging/acs-orchestrator.env
-acs_identity=/etc/agent-saas-staging/acs-release-identity.json
-cp -a "$server_env" "$rollback_root/server.env"
-cp -a "$server_config" "$rollback_root/config.json"
-cp -a "$acs_env" "$rollback_root/acs-orchestrator.env"
-had_previous_identity=false
-if [ -e "$acs_identity" ]; then
-  had_previous_identity=true
-  cp -a "$acs_identity" "$rollback_root/acs-release-identity.json"
-fi
-# BEGIN staging deploy cleanup lifecycle
-deployment_committed=false
-cleanup_armed=true
-rollback() {
-  cp -a "$rollback_root/server.env" "$server_env"
-  cp -a "$rollback_root/config.json" "$server_config"
-  cp -a "$rollback_root/acs-orchestrator.env" "$acs_env"
-  if [ "$had_previous_identity" = true ]; then
-    cp -a "$rollback_root/acs-release-identity.json" "$acs_identity"
-  else
-    rm -f "$acs_identity"
-  fi
-  if [ "$had_previous_release" = true ]; then
-    ln -sfn "$previous" "$current"
-    systemctl restart agent-saas-acs-orchestrator-staging.service || true
-    systemctl restart agent-saas-server-staging.service || true
-    systemctl restart agent-saas-runtime-worker-staging.service || true
-  else
-    rm -f "$current"
-    systemctl stop agent-saas-runtime-worker-staging.service || true
-    systemctl stop agent-saas-server-staging.service || true
-    systemctl stop agent-saas-acs-orchestrator-staging.service || true
-    rm -f /run/agent-saas-staging/server.pid \
-      /run/agent-saas-staging/runtime-worker.pid \
-      /run/agent-saas-staging/runtime-worker.ready \
-      /run/agent-saas-staging/acs-orchestrator.pid
-    systemctl reset-failed agent-saas-runtime-worker-staging.service \
-      agent-saas-server-staging.service agent-saas-acs-orchestrator-staging.service || true
-  fi
-}
-finish() {
-  local status=$?
-  trap - EXIT
-  trap '' HUP INT TERM
-  if [ "$cleanup_armed" != true ]; then
-    return "$status"
-  fi
-  cleanup_armed=false
-  # Cleanup is one-shot and best-effort: every cleanup and rollback operation is
-  # attempted, while the status captured before cleanup remains authoritative.
-  # Rollback backups stay on disk for manual recovery if any restore step fails.
-  set +e
-  rm -rf "$candidate"
-  rm -f "$artifact_persistence_probe"
-  rm -f "$acs_health_probe" "$api_ready_probe"
-  if [ "$deployment_committed" = false ]; then
-    rollback
-  fi
-  return "$status"
-}
-trap finish EXIT # one-shot dispatcher
-trap 'exit 130' HUP INT TERM
-# END staging deploy cleanup lifecycle
 
 node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const crypto = require('node:crypto');
@@ -420,6 +476,7 @@ if (failures.length > 0) {
 }
 NODE
 
+runtime_mutated=true
 ln -sfn "$target" "$current"
 node - "$server_config" "$deployment_attempt_id" <<'NODE'
 const fs = require('node:fs');

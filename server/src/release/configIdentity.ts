@@ -17,6 +17,7 @@
  *   时，`credentialVersionDigest` 参与一致性判定。
  */
 import { createHash } from 'node:crypto';
+import { isAbsolute, win32 } from 'node:path';
 import type { AppConfig } from '../types/index.js';
 import {
   CONFIG_IDENTITY_DIGEST_PATTERN,
@@ -451,7 +452,11 @@ function projectValue(
   if (pathsMatchAny(path, OPAQUE_VALUE_FIELDS)) {
     return value === null || value === '' ? undefined : opaqueProjectionIdentity(value, path);
   }
-  if (pathsMatchAny(path, ABSOLUTE_PATH_FIELDS)) return undefined;
+  if (pathsMatchAny(path, ABSOLUTE_PATH_FIELDS)) {
+    if (typeof value !== 'string' || value.length === 0) return undefined;
+    if (isAbsolute(value) || win32.isAbsolute(value)) return undefined;
+    return opaqueProjectionIdentity(value, path);
+  }
   if (pathsMatchAny(path, ENV_VALUE_FIELDS)) {
     // Env/proxy 值可能含凭据，不能原样进入投影；同时它们也会改变运行行为，
     // 因此用不可逆摘要保留变更信号，而不是统一替换成同一个常量。

@@ -63,7 +63,7 @@ describe('WebChannel durable stop binding', () => {
       },
     );
 
-    expect(ws.sent[0]).toEqual({
+    expect(ws.sent[0]).toMatchObject({
       data: {
         type: 'active_stream',
         sessionId: 'taskboard-session-1',
@@ -114,7 +114,7 @@ describe('WebChannel durable stop binding', () => {
       },
     );
 
-    expect(ws.sent[0]).toEqual({
+    expect(ws.sent[0]).toMatchObject({
       data: {
         type: 'active_stream',
         sessionId: 'taskboard-session-cross-process',

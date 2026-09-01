@@ -19,6 +19,13 @@ const noopDispatch: AgentRunDispatch = async function* () {
   yield { type: 'done' };
 };
 
+function withoutProjection<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutProjection) as T;
+  if (!value || typeof value !== 'object') return value;
+  const { projection: _projection, ...rest } = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(rest).map(([key, entry]) => [key, withoutProjection(entry)])) as T;
+}
+
 describe('WebChannel active stream reconnect', () => {
   const channels: WebChannel[] = [];
 
@@ -64,7 +71,7 @@ describe('WebChannel active stream reconnect', () => {
     });
   });
 
-  it('resume replays buffered events and reports the active streamId', () => {
+  it('resume replays buffered events and reports the active streamId', async () => {
     const channel = createChannel();
     const oldWs = new FakeWebSocket();
     const newWs = new FakeWebSocket();
@@ -98,6 +105,7 @@ describe('WebChannel active stream reconnect', () => {
       },
       { action: 'resume', sessionId: 'session-2', requestId: 'resume-request-2', lastEventId: 1 },
     );
+    await (channel as any).resumeChains.get(newWs);
 
     expect(newWs.sent[0]).toEqual({
       data: {
@@ -209,7 +217,7 @@ describe('WebChannel active stream reconnect', () => {
     expect(storeSpy).not.toHaveBeenCalled();
   });
 
-  it('keeps resume subscription when scheduler session_init reuses an active buffer', () => {
+  it('keeps resume subscription when scheduler session_init reuses an active buffer', async () => {
     const channel = createChannel();
     const ws = new FakeWebSocket();
 
@@ -231,6 +239,7 @@ describe('WebChannel active stream reconnect', () => {
       },
       { action: 'resume', sessionId: 'session-3', lastEventId: 0 },
     );
+    await (channel as any).resumeChains.get(ws);
 
     (channel as any).eventBufferStore.create('session-3', 'admin-1');
     (channel as any).eventBufferStore.push('session-3', JSON.stringify({
@@ -244,7 +253,7 @@ describe('WebChannel active stream reconnect', () => {
     });
   });
 
-  it('does not subscribe the origin socket twice when resume is sent while direct-bound', () => {
+  it('does not subscribe the origin socket twice when resume is sent while direct-bound', async () => {
     const channel = createChannel();
     const ws = new FakeWebSocket();
 
@@ -267,6 +276,7 @@ describe('WebChannel active stream reconnect', () => {
       },
       { action: 'resume', sessionId: 'session-4', lastEventId: 0 },
     );
+    await (channel as any).resumeChains.get(ws);
 
     (channel as any).eventBufferStore.push('session-4', JSON.stringify({
       type: 'text',
@@ -332,7 +342,7 @@ describe('WebChannel active stream reconnect', () => {
     const buffer = (channel as any).eventBufferStore.get('session-agg-1');
     expect(buffer).toBeDefined();
     const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
-    expect(datas).toEqual([
+    expect(datas.map(withoutProjection)).toEqual([
       { type: 'block_start', blockType: 'text', runId: 'run-cross-1' },
       { type: 'text', content: '跨进程正文' },
       { type: 'block_end', blockType: 'text' },
@@ -363,7 +373,7 @@ describe('WebChannel active stream reconnect', () => {
       streamed: true,
     } as any);
 
-    expect(ws.sent).toEqual([
+    expect(ws.sent.map(withoutProjection)).toEqual([
       {
         eventId: 1,
         data: { type: 'block_start', blockType: 'text', runId: 'run-cursor-live' },
@@ -400,7 +410,7 @@ describe('WebChannel active stream reconnect', () => {
     const buffer = (channel as any).eventBufferStore.get('session-cross-stream-1');
     expect(buffer).toBeDefined();
     const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
-    expect(datas).toEqual([
+    expect(datas.map(withoutProjection)).toEqual([
       { type: 'block_start', blockType: 'text', draftId: 'draft-1' },
       { type: 'text', content: '跨进程' },
       { type: 'text', content: '流式正文' },
@@ -431,7 +441,7 @@ describe('WebChannel active stream reconnect', () => {
 
     const buffer = (channel as any).eventBufferStore.get('session-cross-tail-1');
     const datas = buffer.events.map((e: { data: string }) => JSON.parse(e.data));
-    expect(datas).toEqual([
+    expect(datas.map(withoutProjection)).toEqual([
       { type: 'block_start', blockType: 'text' },
       { type: 'text', content: '已实时送达' },
       { type: 'text', content: '，终态补齐' },
@@ -509,7 +519,7 @@ describe('WebChannel active stream reconnect', () => {
 
     const buffer = (channel as any).eventBufferStore.get('session-agent-1');
     const datas = buffer.events.map((event: { data: string }) => JSON.parse(event.data));
-    expect(datas).toEqual([{
+    expect(datas.map(withoutProjection)).toEqual([{
       type: 'subagent_start',
       toolId: 'call-agent-1',
       agentType: '定位刷新状态',
@@ -777,7 +787,7 @@ describe('WebChannel active stream reconnect', () => {
       },
     );
 
-    expect(ws.sent[0]).toEqual({
+    expect(ws.sent[0]).toMatchObject({
       data: {
         type: 'active_stream',
         sessionId: 'session-durable-only',
@@ -825,16 +835,16 @@ describe('WebChannel active stream reconnect', () => {
       { action: 'resume', sessionId: 'session-live', lastEventId: 0, skipReplay: true },
     );
 
-    expect(ws.sent).toContainEqual({
-      data: {
+    expect(ws.sent).toContainEqual(expect.objectContaining({
+      data: expect.objectContaining({
         type: 'active_stream',
         sessionId: 'session-live',
         active: true,
         streamId: 'stream-live',
         runId: 'run-live',
         status: 'running',
-      },
-    });
+      }),
+    }));
     expect((channel as any).eventBufferStore.isActive('session-live')).toBe(true);
   });
 

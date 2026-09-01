@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import type { AppConfig } from '../types/index.js';
-import {
-  buildCanonicalConfigProjection,
-  calculateConfigIdentityDigest,
-} from './configIdentity.js';
+import { buildCanonicalConfigProjection, calculateConfigIdentityDigest } from './configIdentity.js';
 
 const BASE = {
   agent: { cwd: '/srv/agent', permissionMode: 'default' },
@@ -58,6 +55,7 @@ describe('ConfigIdentity 机器路径投影', () => {
   it('相对路径以不可逆 opaque digest 投影且不泄漏原值', () => {
     const serialized = JSON.stringify(projection(cases[1].config('./private/artifacts')));
     expect(serialized).not.toContain('./private/artifacts');
+    expect(serialized).not.toContain('private/artifacts');
     expect(serialized).toContain('__opaqueDigest__');
   });
 
@@ -67,7 +65,12 @@ describe('ConfigIdentity 机器路径投影', () => {
       expect(digest(fixture.config('C:\\host-a'))).toBe(digest(fixture.config('D:\\host-b')));
     });
 
-    it(`${fixture.name} 保留相对行为路径变化`, () => {
+    it(`${fixture.name} 规范化运行期等价的相对路径`, () => {
+      const aliases = ['./data/source', 'data/source', 'data/cache/../source'];
+      expect(new Set(aliases.map((path) => digest(fixture.config(path))))).toHaveLength(1);
+    });
+
+    it(`${fixture.name} 保留不同相对目标的行为变化`, () => {
       expect(digest(fixture.config('./data/source-a'))).not.toBe(
         digest(fixture.config('./data/source-b')),
       );

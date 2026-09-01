@@ -25,20 +25,21 @@
 
 对 **parse 之后的 AppConfig**（Zod 校验 + 默认值填充后）做投影：
 
-| 输入形态                                                                            | 投影结果                                                          |
-| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 普通有效配置字段                                                                    | 原值（键按 `canonicalJson` 排序）                                 |
-| JSONC 注释 / 原始文本排版                                                           | 不存在（parse 时天然消除）                                        |
-| 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                 |
-| 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）    |
-| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                           |
-| URL（webhook/代理/signed URL 等）                                                   | 保留无凭据 endpoint；userinfo/query/hash 剥除                     |
-| DB 连接串                                                                           | 只保留 host/database                                              |
-| 机器存储路径（agent.cwd、vault file、artifact root 等）                             | 不进投影（同语义配置在不同主机目录得到相同 digest）               |
-| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见           |
-| env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见） |
+| 输入形态                                                                            | 投影结果                                                                                                                                                                 |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 普通有效配置字段                                                                    | 原值（键按 `canonicalJson` 排序）                                                                                                                                        |
+| JSONC 注释 / 原始文本排版                                                           | 不存在（parse 时天然消除）                                                                                                                                               |
+| 受管 inline/ref 双形态字段的 inline 值（含 memory embedding / model group API key） | `{form:'inline'}`（明文不进投影）                                                                                                                                        |
+| 受管字段的 ref id                                                                   | `{form:'ref', ref: sha256(refId)}`（不可逆、不含 ref id 本身）                                                                                                           |
+| 无 ref 替代方案的 secret 值字段（jwtSecret/appSecret/tts 等）                       | `{__redacted:'secret'}`                                                                                                                                                  |
+| URL（webhook/代理/signed URL 等）                                                   | 保留无凭据 endpoint；userinfo/query/hash 剥除                                                                                                                            |
+| DB 连接串                                                                           | 只保留 host/database                                                                                                                                                     |
+| 绝对机器存储路径（agent.cwd、vault file、artifact root 等）                         | 不进投影（同语义配置在不同主机目录得到相同 digest）                                                                                                                      |
+| 相对机器存储路径                                                                    | 先按运行期 `path.normalize` 规则 canonicalize，再投影为 `{__opaqueDigest__: sha256(...)}`；`./x`、`x`、`x/../x` 等解析后等价路径 identity 相同，目标变化可见且原值不可见 |
+| 语义路径/任意 payload（sandbox 路径、extraBody、setupCommands、repo URL）           | `{__opaqueDigest__: sha256(...)}`，变化可见但原值不可见                                                                                                                  |
+| env 值（dispatch.env/proxy 的 value）                                               | `{__opaqueDigest__: sha256(...)}`（键与变化信号保留，原值不可见）                                                                                                        |
 
-投影语义的任何变化都必须递增 `CONFIG_IDENTITY_SCHEMA_VERSION` 并显式迁移，
+已发布投影语义的任何变化都必须递增 `CONFIG_IDENTITY_SCHEMA_VERSION` 并显式迁移，
 **不允许静默改变 digest 语义**。
 
 ### 2.2 digest

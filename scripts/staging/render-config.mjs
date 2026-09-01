@@ -10,6 +10,12 @@ const required = (env, name) => {
 
 export function renderStagingConfig(source, env = process.env) {
   const config = structuredClone(source);
+  const overlay = env.STAGING_CAPABILITY_CONFIG_JSON
+    ? JSON.parse(env.STAGING_CAPABILITY_CONFIG_JSON)
+    : undefined;
+  if (!overlay || typeof overlay !== 'object' || Array.isArray(overlay)) {
+    throw new Error('STAGING_CAPABILITY_CONFIG_JSON is required and must contain the explicit Staging capability configuration');
+  }
   const jwtSecret = required(env, 'STAGING_JWT_SECRET');
   const artifactSignedUrlSecret = required(env, 'STAGING_ARTIFACT_SIGNED_URL_SECRET');
   const databaseUrl = required(env, 'STAGING_DATABASE_URL');
@@ -29,10 +35,24 @@ export function renderStagingConfig(source, env = process.env) {
     corsOrigins: ['https://staging-agent.kaiyan.net'],
     webBaseUrl: 'https://staging-agent.kaiyan.net',
   };
-  config.cron = {
-    enabled: false,
-    store: '/mnt/agent-saas-staging/runtime/server/data/cron-jobs.json',
-  };
+  // 功能配置只能来自 Staging 自己的显式 overlay。不得从 Production/source
+  // 复制凭据或通过 renderer 硬编码关闭功能来“实现隔离”。
+  for (const key of [
+    'models', 'cron', 'dingtalk', 'dingtalkSendMessage', 'webPush', 'alerting',
+    'codexSubscription', 'webTools', 'imageGenTools', 'tts', 'stt', 'memory',
+    'systemMonitor', 'runtimeEventRetention', 'integrationV3',
+    'integrationV3ControlPlane', 'notification', 'notifications',
+  ]) {
+    delete config[key];
+    if (Object.prototype.hasOwnProperty.call(overlay, key)) config[key] = structuredClone(overlay[key]);
+  }
+  if (!config.models) throw new Error('Staging capability configuration must define models explicitly');
+  if (config.cron) {
+    config.cron = {
+      ...config.cron,
+      store: '/mnt/agent-saas-staging/runtime/server/data/cron-jobs.json',
+    };
+  }
   config.artifact = {
     backend: 'local',
     rootDir: '/mnt/agent-saas-staging/runtime/artifacts',
@@ -52,24 +72,6 @@ export function renderStagingConfig(source, env = process.env) {
   delete config.auth.selfSignup.dingtalkLeadWebhook;
   delete config.auth.selfSignup.sms;
 
-  config.dingtalk = { enabled: false, robots: {} };
-  config.dingtalkSendMessage = { enabled: false };
-  config.webPush = { enabled: false };
-  config.alerting = { enabled: false };
-  config.codexSubscription = { enabled: false, websocketEnabled: false };
-  config.webTools = { enabled: false };
-  config.imageGenTools = { enabled: false };
-  delete config.tts;
-  config.stt = { enabled: false };
-  config.memory = {
-    enabled: false,
-    injectContext: { enabled: false },
-    maintenance: { enabled: false },
-    polling: { enabled: false },
-    consolidation: { enabled: false },
-  };
-  config.systemMonitor = { enabled: false };
-  config.runtimeEventRetention = { enabled: false, executionMode: 'dry-run' };
   config.dispatch = {
     ...(config.dispatch ?? {}),
     enabled: true,
@@ -126,18 +128,20 @@ export function renderStagingConfig(source, env = process.env) {
     },
   };
 
-  for (const key of ['integrationV3', 'integrationV3ControlPlane', 'notification', 'notifications'])
-    delete config[key];
   return JSON.parse(JSON.stringify(config));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [sourcePath, outputPath] = process.argv.slice(2);
-  if (!sourcePath || !outputPath) {
-    throw new Error('usage: render-config.mjs <source-config.json> <output-config.json>');
+  const [sourcePath, outputPath, capabilityPath] = process.argv.slice(2);
+  if (!sourcePath || !outputPath || !capabilityPath) {
+    throw new Error('usage: render-config.mjs <source-config.json> <output-config.json> <staging-capabilities.json>');
   }
   const source = JSON.parse(await readFile(sourcePath, 'utf8'));
-  const rendered = renderStagingConfig(source);
+  const capabilityConfig = await readFile(capabilityPath, 'utf8');
+  const rendered = renderStagingConfig(source, {
+    ...process.env,
+    STAGING_CAPABILITY_CONFIG_JSON: capabilityConfig,
+  });
   await writeFile(outputPath, `${JSON.stringify(rendered, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600,

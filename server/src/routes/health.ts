@@ -6,6 +6,7 @@ import type { ActiveRunCounts } from '../runtime/runStore.js';
 import type { UploadMetricsSnapshot } from '../uploads/manager.js';
 import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js';
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
+import type { EffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 
 interface IntegrationV3HealthStatus {
   status: string;
@@ -24,6 +25,8 @@ export interface HealthRouteOptions {
   /** Non-sensitive deployment identity. Staging must be safety-attested before ready. */
   getRuntimeIdentity?: () => RuntimeIdentity;
   getEnvironmentSafetyAttested?: () => boolean;
+  /** Non-sensitive effective configuration identity for deployment readback. */
+  getEffectiveConfigStatus?: () => EffectiveConfigStatus;
   /** Integration v3 release gate. Errors fail readiness closed. */
   getIntegrationV3Health?: () => IntegrationV3HealthStatus | Promise<IntegrationV3HealthStatus>;
   /** skills 后台物化进度（结构类型，避免反向依赖 app/runtime）；ready 载荷用 */
@@ -128,12 +131,21 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
       return;
     }
     const releaseReady = integrationV3?.releaseReady !== false;
+    const effectiveConfig = options.getEffectiveConfigStatus?.();
     res.status(draining || !runtimeReady || !releaseReady || !safetyAttested ? 503 : 200).json({
       status: draining ? 'draining' : runtimeReady && releaseReady && safetyAttested ? 'ok' : 'not_ready',
       draining,
       warmup,
       ...(runtimeAdmission ? { runtimeAdmission } : {}),
       ...(release ? { release: { ...release, safetyAttested } } : {}),
+      ...(effectiveConfig ? {
+        configSchemaVersion: effectiveConfig.configSchemaVersion,
+        effectiveConfigFingerprint: effectiveConfig.effectiveConfigFingerprint,
+        capabilityFingerprint: effectiveConfig.capabilityFingerprint,
+        secretReadiness: effectiveConfig.secretReadiness,
+        environment: effectiveConfig.environment,
+        appliedAt: effectiveConfig.appliedAt,
+      } : {}),
       ...(integrationV3 ? { integrationV3 } : {}),
     });
   });

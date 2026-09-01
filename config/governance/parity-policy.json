@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "mustEqual": [
+    "config.models.**",
+    "config.codexSubscription.enabled",
+    "config.codexSubscription.websocketEnabled",
+    "config.webTools.enabled",
+    "config.webTools.search.provider",
+    "config.imageGenTools.enabled",
+    "config.stt.enabled",
+    "config.tts.enabled",
+    "config.memory.enabled",
+    "config.memory.injectContext.enabled",
+    "config.memory.maintenance.enabled",
+    "config.memory.polling.enabled",
+    "config.memory.consolidation.enabled",
+    "config.cron.enabled",
+    "config.systemMonitor.enabled",
+    "config.runtimeEventRetention.**",
+    "config.runtimeScheduler.**",
+    "config.toolControls.**",
+    "config.systemPrompts.**",
+    "config.guardrail.**",
+    "config.titleGenerator.**"
+  ],
+  "mustDiffer": [
+    "environment",
+    "config.server.port",
+    "config.server.webBaseUrl",
+    "config.server.corsOrigins.**",
+    "config.agent.cwd",
+    "config.agent.sharedDir",
+    "config.runtimeEventStore.connectionString",
+    "config.runtimeEventStore.tablePrefix",
+    "config.secretVault.filePath",
+    "config.secretVault.namespace",
+    "config.tenantRemoteHands.hands.*.baseUrl",
+    "config.tenantRemoteHands.hands.*.authTokenRef",
+    "config.artifact.rootDir",
+    "config.artifact.bucket"
+  ],
+  "allowedDifference": [
+    {
+      "path": "config.auth.**",
+      "reason": "认证密钥、测试用户与注册目标按环境隔离",
+      "owner": "platform-security",
+      "permanent": true
+    },
+    {
+      "path": "config.dingtalk.**",
+      "reason": "Staging 只允许测试机器人和测试群",
+      "owner": "platform-operations",
+      "permanent": true
+    },
+    {
+      "path": "config.webPush.**",
+      "reason": "VAPID 密钥与订阅按环境隔离",
+      "owner": "platform-operations",
+      "permanent": true
+    },
+    {
+      "path": "config.alerting.**",
+      "reason": "告警接收目标按环境隔离",
+      "owner": "platform-operations",
+      "permanent": true
+    },
+    {
+      "path": "config.egress.**",
+      "reason": "Staging 使用独立且 fail-closed 的出口代理",
+      "owner": "platform-security",
+      "permanent": true
+    },
+    {
+      "path": "config.runtimeEventStore.poolMax",
+      "reason": "容量可按环境规模调整，不改变调度语义",
+      "owner": "platform-runtime",
+      "permanent": true
+    },
+    {
+      "path": "stores.**",
+      "reason": "租户和动态配置数据是环境本地事实源",
+      "owner": "platform-operations",
+      "permanent": true
+    },
+    {
+      "path": "runtime.**",
+      "reason": "运行资源身份与发布身份必须按环境隔离",
+      "owner": "platform-runtime",
+      "permanent": true
+    },
+    {
+      "path": "secrets.**",
+      "reason": "只比较就绪状态，凭据本体与引用标识不得跨环境共享",
+      "owner": "platform-security",
+      "permanent": true
+    }
+  ],
+  "ignored": ["exportedAt", "effectiveConfigFingerprint", "capabilityFingerprint"]
+}

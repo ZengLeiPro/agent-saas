@@ -47,12 +47,28 @@ test('renders a fail-closed Staging config with persistent local Artifact storag
     STAGING_JWT_SECRET: 'staging-jwt-secret-that-is-at-least-32-characters',
     STAGING_ARTIFACT_SIGNED_URL_SECRET: 'staging-artifact-secret-that-is-at-least-32-characters',
     STAGING_DATABASE_URL: 'postgresql://staging:secret@db.internal/staging',
+    STAGING_CAPABILITY_CONFIG_JSON: JSON.stringify({
+      models: source.models,
+      cron: { enabled: true },
+      dingtalk: { enabled: true, robots: { test: { appKey: 'staging-app', appSecret: 'staging-secret', name: 'test' } } },
+      webPush: { enabled: true, publicKey: 'staging-public', privateKey: 'staging-private', subject: 'https://staging-agent.kaiyan.net' },
+      codexSubscription: { enabled: true, websocketEnabled: true, credentialRef: 'STAGING_AGENT_SAAS/codex' },
+      webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'STAGING_AGENT_SAAS/web-search' } },
+      imageGenTools: { enabled: true, gptImage2: { enabled: true, apiKeyRef: 'STAGING_AGENT_SAAS/image-gen', baseUrl: 'https://api.openai.com/v1' } },
+      stt: { enabled: true, apiKeyRef: 'STAGING_AGENT_SAAS/stt', ossAccessKeyIdRef: 'STAGING_AGENT_SAAS/oss-id', ossAccessKeySecretRef: 'STAGING_AGENT_SAAS/oss-secret' },
+      memory: { enabled: true, polling: { enabled: true }, consolidation: { enabled: true } },
+      systemMonitor: { enabled: true, tlsCheckHosts: ['staging-agent.kaiyan.net'] },
+      runtimeEventRetention: { enabled: true, executionMode: 'execute' },
+      integrationV3ControlPlane: { enabled: true, githubTokenMode: 'staging' },
+    }),
   });
 
   assert.deepEqual(config.models, source.models);
-  assert.equal(config.cron.enabled, false);
-  assert.equal(config.dingtalk.enabled, false);
-  assert.equal(config.webPush.enabled, false);
+  assert.equal(config.cron.enabled, true);
+  assert.equal(config.cron.store, '/mnt/agent-saas-staging/runtime/server/data/cron-jobs.json');
+  assert.equal(config.dingtalk.enabled, true);
+  assert.equal(config.dingtalk.robots.test.appKey, 'staging-app');
+  assert.equal(config.webPush.enabled, true);
   assert.equal(config.agent.cwd, '/mnt/agent-saas-staging/workspaces');
   assert.equal(config.agent.sharedDir, '/opt/agent-saas-staging/current/server/workspace-shared');
   assert.deepEqual(config.agent.userOverrides, {});
@@ -70,19 +86,15 @@ test('renders a fail-closed Staging config with persistent local Artifact storag
   assert.equal(config.tenantRemoteHands.hands[0].authTokenRef, STAGING_ACS_TOKEN_REF);
   assert.equal(config.egress.server.failOpen, false);
   assert.deepEqual(config.egress.server.bypassDomains, []);
-  assert.equal(config.tts, undefined);
-  assert.deepEqual(config.stt, { enabled: false });
-  assert.deepEqual(config.memory, {
-    enabled: false,
-    injectContext: { enabled: false },
-    maintenance: { enabled: false },
-    polling: { enabled: false },
-    consolidation: { enabled: false },
-  });
+  assert.equal(config.codexSubscription.enabled, true);
+  assert.equal(config.webTools.enabled, true);
+  assert.equal(config.imageGenTools.enabled, true);
+  assert.equal(config.stt.enabled, true);
+  assert.equal(config.memory.enabled, true);
   assert.deepEqual(config.dispatch, { enabled: true, env: {} });
-  assert.deepEqual(config.systemMonitor, { enabled: false });
-  assert.deepEqual(config.runtimeEventRetention, { enabled: false, executionMode: 'dry-run' });
-  assert.equal(config.integrationV3ControlPlane, undefined);
+  assert.equal(config.systemMonitor.enabled, true);
+  assert.equal(config.runtimeEventRetention.enabled, true);
+  assert.equal(config.integrationV3ControlPlane.githubTokenMode, 'staging');
 });
 
 test('rejects a Staging Artifact signing secret reused from auth', () => {
@@ -92,6 +104,7 @@ test('rejects a Staging Artifact signing secret reused from auth', () => {
       STAGING_JWT_SECRET: sharedSecret,
       STAGING_ARTIFACT_SIGNED_URL_SECRET: sharedSecret,
       STAGING_DATABASE_URL: 'postgresql://staging:secret@db.internal/staging',
+      STAGING_CAPABILITY_CONFIG_JSON: JSON.stringify({ models: { groups: [], default: 'missing/model' } }),
     }),
     /must be independent/u,
   );

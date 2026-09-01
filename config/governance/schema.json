@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/config/governance/schema.json",
+  "title": "KY Agent effective configuration inventory",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "environment",
+    "effectiveConfigFingerprint",
+    "capabilityFingerprint",
+    "secretReadiness",
+    "config"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "environment": { "enum": ["development", "staging", "production", "test"] },
+    "effectiveConfigFingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "capabilityFingerprint": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "secretReadiness": { "enum": ["ready", "missing", "legacy_inline", "unknown"] },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "config": { "type": "object" },
+    "stores": { "type": "object" },
+    "runtime": { "type": "object" },
+    "secrets": { "type": "array", "items": { "$ref": "#/$defs/secretState" } }
+  },
+  "$defs": {
+    "secretState": {
+      "type": "object",
+      "required": ["path", "state"],
+      "properties": {
+        "path": { "type": "string" },
+        "state": { "enum": ["ref", "inline_legacy", "missing", "environment"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

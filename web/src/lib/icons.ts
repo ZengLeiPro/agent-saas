@@ -28,6 +28,7 @@ import {
   Columns3,
   Cpu,
   Files,
+  Fingerprint,
   Info,
   Library,
   LayoutGrid,
@@ -106,6 +107,8 @@ export const EntityIcons = {
   egress: Waypoints,
   /** 系统提示语 */
   systemPrompts: MessageSquareText,
+  /** 环境配置指纹与一致性状态 */
+  configStatus: Fingerprint,
 } as const;
 
 /** 运行状态四件套（+ pending）—— 全站唯一，禁止另起图标 */

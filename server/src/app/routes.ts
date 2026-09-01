@@ -100,6 +100,8 @@ import { createEgressConfigAdminRouter } from '../routes/egressConfigAdmin.js';
 import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js';
 import { createSystemPromptsAdminRouter } from '../routes/systemPromptsAdmin.js';
 import { createAgentRuntimeProfilesAdminRouter } from '../routes/agentRuntimeProfilesAdmin.js';
+import { createConfigStatusAdminRouter } from '../routes/configStatusAdmin.js';
+import { createRuntimeConfigGovernance } from './runtimeConfigGovernance.js';
 import { createAdminBillingRouter, createBillingRouter } from '../routes/billing.js';
 import { createAzerothProxyRouter } from '../routes/azeroth-proxy.js';
 import { createDingtalkSessionRouter } from '../channels/dingtalk/protocol/sessionRouter.js';
@@ -110,7 +112,6 @@ import { configureImageGenPricing } from '../data/usage/imageGenPricing.js';
 export function registerRoutes(app: Express, runtime: AppRuntime): void {
   // 路由约定：通道消息入口路由（如 /api/chat、/api/dingtalk/webhook）由各 Channel.start() 注册
   // - 控制面与查询类路由由 app 统一注册
-
   // 兼容原权限治理挂载点；平台管理员现已统一为完整权限。
   app.use('/api', enforcePlatformWritePolicy);
   const {
@@ -124,6 +125,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     dispatchMetricsStore,
   } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
+  const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
+    config, processCwd, processRole: runtime.processRole,
+  });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
   const legacyWriteGate = runtime.governanceWriteGate ?? {
     assertLegacyWriteAllowed: async () => {
@@ -150,6 +154,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
+      getEffectiveConfigStatus,
       ...(runtime.egressConfigStore
         ? {
             getEnvironmentSafetyAttested: () =>
@@ -159,10 +164,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
-
   app.use('/api/upload', tenantFeatureGuard(runtime.tenantStore, 'filesEnabled', '文件能力'));
   app.use('/api/file', tenantFeatureGuard(runtime.tenantStore, 'filesEnabled', '文件能力'));
   app.use('/api/uploads', tenantFeatureGuard(runtime.tenantStore, 'filesEnabled', '文件能力'));
@@ -190,7 +195,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       }),
     );
   }
-
   // 租户共享知识库文件只读服务（引用溯源卡；2026-07 唯恩批次）。
   // 独立开关 kbEnabled（默认 false，不复用 filesEnabled——关掉个人文件能力仍可溯源）。
   app.use(
@@ -198,18 +202,15 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     tenantFeatureGuard(runtime.tenantStore, 'kbEnabled', '知识库'),
     createKbFilesRouter({ kbRootDir: resolve(processCwd, './data/kb') }),
   );
-
   // 消息反馈（专职 Agent 会话 owner-only 点踩；PG 未装配时路由内 503）
   app.use(
     '/api/feedback',
     createFeedbackRouter({ messageFeedbackStore: runtime.messageFeedbackStore }),
   );
-
   // 员工申诉（门禁拒答后 owner-only 申诉 + 管理员处理队列；PG 未装配时路由内 503）
   app.use('/api/appeals', createAppealsRouter({ appealStore: runtime.appealStore }));
   app.use('/api/tenant/appeals', createTenantAppealsRouter({ appealStore: runtime.appealStore }));
   app.use('/api/tenant/expert-templates', createTenantExpertTemplatesRouter());
-
   // DWS 单轨连接状态：仅暴露当前登录用户自己的非敏感元数据。
   // access/refresh token 始终由 DWS 保存在该用户的 NAS workspace 内。
   app.use(
@@ -221,7 +222,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-
   app.use('/api/agent-dws-accounts', requireAdmin);
   app.use(
     '/api',
@@ -246,12 +246,10 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-
   // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
   app.use('/api', createAzerothProxyRouter());
-
   // HTML Preview: token API 走 /api（需认证），文件服务走 /preview（自认证）
   const preview = createPreviewRoutes({
     agentCwd,
@@ -259,7 +257,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-
   app.use('/api', createVoiceRouter({ agentCwd }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
@@ -360,7 +357,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       deliveryService: dingtalkDeps.deliveryService,
     }),
   );
-
   // 模型列表 API
   if (config.models) {
     configureModelPricing(config.models);
@@ -379,11 +375,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createModelsAdminRouter({
         processCwd,
         config,
+        configMutationService,
+        secretVault: runtime.secretVault,
         // 热更新逻辑与 runtime-worker 侧共用同一实现（modelsHotUpdate.ts），
         // 避免两个进程对同一份 config 产生不一致的内存状态。
-        onModelsUpdated: (models) => {
+        onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
-        },
+        }),
         onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
         onSystemPromptOverridesUpdated: (next) =>
           runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
@@ -395,6 +393,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createCodexSubscriptionAdminRouter({
       processCwd,
       config,
+      configMutationService,
       credentialManager: runtime.codexCredentialManager,
       deviceAuthService: runtime.codexDeviceAuthService,
       closeWebSockets: runtime.codexWebSocketShutdown,
@@ -405,6 +404,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createTenantRemoteHandsAdminRouter({
       processCwd,
       config,
+      configMutationService,
       secretVault: runtime.secretVault,
     }),
   );
@@ -423,6 +423,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createToolControlsAdminRouter({
       processCwd,
       config,
+      configMutationService,
       secretVault: runtime.secretVault,
       validateToolSettingsConfig: runtime.validateToolSettingsConfig,
       onToolSettingsUpdated: runtime.updateToolSettingsConfig,
@@ -449,6 +450,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       processCwd,
       config,
       registry: runtime.systemPromptRegistry,
+      configMutationService,
     }),
   );
   app.use(
@@ -465,6 +467,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createImageGenPricingAdminRouter({
       processCwd,
       config,
+      configMutationService,
       secretVault: runtime.secretVault,
       onPricingUpdated: (pricing) => configureImageGenPricing(pricing),
       validateImageGenToolsConfig: runtime.validateImageGenToolsConfig,
@@ -472,7 +475,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   // AudioTranscribe 服务配置与固定按次定价：SecretVault 托管凭据，保存后热更新。
-  registerAudioTranscribeAdminRoute(app, runtime, processCwd);
+  registerAudioTranscribeAdminRoute(app, runtime, processCwd, configMutationService);
   // 网络出口（代理 / 国内镜像源，2026-07-25）：server 段落盘即生效（dispatcher 按
   // configVersion 懒重建）；sandbox 段另行 PATCH 给 acs-orchestrator，只对新建容器生效。
   if (runtime.egressConfigStore) {
@@ -491,13 +494,12 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     createMemoryPollingAdminRouter({
       processCwd,
       config,
+      configMutationService,
       onPollingUpdated: runtime.updateMemoryPollingConfig,
       getConsolidationScannerStatus: runtime.getMemoryConsolidationScannerStatus,
     }),
   );
-
   app.use('/api/web-push', createWebPushRouter(runtime.webPushService));
-
   if (cronRuntime.service) {
     app.use('/api/cron', tenantFeatureGuard(runtime.tenantStore, 'cronEnabled', '定时任务'));
     app.use(
@@ -505,7 +507,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       createCronRouter(cronRuntime.service, cronRuntime.cronRunsDir, runtime.groupStore),
     );
   }
-
   app.use(
     '/api/taskboard',
     tenantFeatureGuard(runtime.tenantStore, 'cronEnabled', '定时任务'),
@@ -518,7 +519,6 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       generateTaskTitle: createRuntimeTaskboardTitleGenerator(agentCwd, runtime),
     }),
   );
-
   // Token 用量统计（admin-only），数据由 b4187f00 引入的 business.sqlite 提供
   if (runtime.tokenUsageStore) {
     const usageBillingStore = runtime.billingService?.store;

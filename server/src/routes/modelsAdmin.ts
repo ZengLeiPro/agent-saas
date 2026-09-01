@@ -1,6 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
 import { Router } from 'express';
-import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
+import { applyEdits, modify } from 'jsonc-parser';
 
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
@@ -13,13 +12,22 @@ import type {
   SystemPromptsConfig,
   TitleGeneratorAppConfig,
 } from '../app/config.js';
+import {
+  AdminConfigMutationService,
+  ConfigConflictError,
+} from '../config/adminConfigMutationService.js';
+import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
 
 export interface CreateModelsAdminRouterOptions {
   processCwd: string;
   config: AppConfig;
-  onModelsUpdated?: (models: ModelsConfig) => void;
+  onModelsUpdated?: (models: ModelsConfig) => void | Promise<void>;
   onMemoryIndexUpdated?: (memoryIndex: MemoryIndexAppConfig | undefined) => void | Promise<void>;
   onSystemPromptOverridesUpdated?: (next: SystemPromptsConfig) => void;
+  configMutationService?: AdminConfigMutationService;
+  secretVault?: SecretVault;
 }
 
 type ModelsAdminUpdate = {
@@ -46,20 +54,20 @@ function redactModels(models: ModelsConfig): unknown {
   return {
     ...models,
     groups: models.groups.map((group) => {
-      const { apiKey, ...rest } = group;
-      return { ...rest, hasApiKey: typeof apiKey === 'string' && apiKey.length > 0 };
+      const { apiKey, apiKeyRef: _apiKeyRef, ...rest } = group;
+      return { ...rest, hasApiKey: Boolean(apiKey || group.apiKeyRef) };
     }),
   };
 }
 
 function redactMemoryIndex(memoryIndex: MemoryIndexAppConfig | null): unknown {
   if (!memoryIndex) return null;
-  const { apiKey, ...restEmbedding } = memoryIndex.embedding;
+  const { apiKey, apiKeyRef: _apiKeyRef, ...restEmbedding } = memoryIndex.embedding;
   return {
     ...memoryIndex,
     embedding: {
       ...restEmbedding,
-      hasApiKey: typeof apiKey === 'string' && apiKey.length > 0,
+      hasApiKey: Boolean(apiKey || memoryIndex.embedding.apiKeyRef),
     },
   };
 }
@@ -99,7 +107,7 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
   if (Array.isArray(next.models ? (next.models as Record<string, unknown>).groups : undefined)) {
     const modelsRecord = next.models as Record<string, unknown>;
     const currentByGroupId = new Map(
-      (config.models?.groups ?? []).map((g) => [g.id, g.apiKey]),
+      (config.models?.groups ?? []).map((g) => [g.id, { apiKey: g.apiKey, apiKeyRef: g.apiKeyRef }]),
     );
     next.models = {
       ...modelsRecord,
@@ -108,8 +116,9 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
         const { hasApiKey: _ignored, ...group } = groupRaw;
         const inlineKey = typeof group.apiKey === 'string' ? group.apiKey : undefined;
         if (inlineKey && inlineKey.length > 0) return group;
-        const currentKey = typeof group.id === 'string' ? currentByGroupId.get(group.id) : undefined;
-        if (currentKey) return { ...group, apiKey: currentKey };
+        const currentCredential = typeof group.id === 'string' ? currentByGroupId.get(group.id) : undefined;
+        if (currentCredential?.apiKeyRef) return { ...group, apiKeyRef: currentCredential.apiKeyRef };
+        if (currentCredential?.apiKey) return { ...group, apiKey: currentCredential.apiKey };
         const { apiKey: _empty, ...withoutKey } = group;
         return withoutKey;
       }),
@@ -121,9 +130,11 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
     const { hasApiKey: _ignored, ...embedding } = embeddingRaw;
     const inlineKey = typeof embedding.apiKey === 'string' ? embedding.apiKey : undefined;
     if (!inlineKey || inlineKey.length === 0) {
-      const currentKey = config.memory?.index?.embedding.apiKey;
-      if (currentKey) {
-        next.memoryIndex = { ...next.memoryIndex, embedding: { ...embedding, apiKey: currentKey } };
+      const currentEmbedding = config.memory?.index?.embedding;
+      if (currentEmbedding?.apiKeyRef) {
+        next.memoryIndex = { ...next.memoryIndex, embedding: { ...embedding, apiKeyRef: currentEmbedding.apiKeyRef } };
+      } else if (currentEmbedding?.apiKey) {
+        next.memoryIndex = { ...next.memoryIndex, embedding: { ...embedding, apiKey: currentEmbedding.apiKey } };
       } else {
         next.memoryIndex = { ...next.memoryIndex, embedding };
       }
@@ -133,6 +144,89 @@ function restoreSecrets(body: unknown, config: AppConfig): unknown {
   }
 
   return next;
+}
+
+function submittedModelApiKeyGroups(body: unknown, current: AppConfig): Set<string> {
+  if (!isRecord(body) || !isRecord(body.models) || !Array.isArray(body.models.groups)) return new Set();
+  return new Set(body.models.groups.flatMap((value) => (
+    isRecord(value)
+      && typeof value.id === 'string'
+      && typeof value.apiKey === 'string'
+      && value.apiKey.trim()
+      && current.models?.groups.find((group) => group.id === value.id)?.apiKey !== value.apiKey
+      ? [value.id]
+      : []
+  )));
+}
+
+async function persistSubmittedModelCredentials(input: {
+  models: ModelsConfig;
+  submittedGroups: Set<string>;
+  secretVault?: SecretVault;
+  actor: string;
+  createdRefs: CreatedSecretRef[];
+  replacedRefs: CreatedSecretRef[];
+  previousRefs: Map<string, string | undefined>;
+}): Promise<ModelsConfig> {
+  return {
+    ...input.models,
+    groups: await Promise.all(input.models.groups.map(async (group) => {
+      if (!input.submittedGroups.has(group.id) || !group.apiKey) return group;
+      if (!input.secretVault) throw new Error('SecretVault 未配置，不能保存模型 API Key');
+      const ref = await input.secretVault.putSecret(
+        GLOBAL_OWNER_ID,
+        'models',
+        group.apiKey,
+        { actor: 'system', userId: 'models_config_admin', scopes: ['secret:models:write'] },
+        { groupId: group.id, purpose: 'model-api' },
+      );
+      input.createdRefs.push({ ref: ref.id, kind: 'models' });
+      const previousRef = input.previousRefs.get(group.id);
+      if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'models' });
+      const { apiKey: _apiKey, ...safe } = group;
+      return { ...safe, apiKeyRef: ref.id };
+    })),
+  };
+}
+
+type CreatedSecretRef = { ref: string; kind: 'models' | 'memory_index' };
+
+async function persistSubmittedMemoryCredential(input: {
+  memoryIndex: MemoryIndexAppConfig | null;
+  body: unknown;
+  current: AppConfig;
+  secretVault?: SecretVault;
+  createdRefs: CreatedSecretRef[];
+  replacedRefs: CreatedSecretRef[];
+}): Promise<MemoryIndexAppConfig | null> {
+  if (!input.memoryIndex || !isRecord(input.body) || !isRecord(input.body.memoryIndex)) return input.memoryIndex;
+  const requested = input.body.memoryIndex;
+  if (!isRecord(requested.embedding) || typeof requested.embedding.apiKey !== 'string' || !requested.embedding.apiKey.trim()) {
+    return input.memoryIndex;
+  }
+  if (requested.embedding.apiKey === input.current.memory?.index?.embedding.apiKey) return input.memoryIndex;
+  if (!input.secretVault) throw new Error('SecretVault 未配置，不能保存 Memory Embedding API Key');
+  const ref = await input.secretVault.putSecret(
+    GLOBAL_OWNER_ID,
+    'memory_index',
+    requested.embedding.apiKey,
+    { actor: 'system', userId: 'models_config_admin', scopes: ['secret:memory_index:write'] },
+    { purpose: 'memory-embedding' },
+  );
+  input.createdRefs.push({ ref: ref.id, kind: 'memory_index' });
+  const previousRef = input.current.memory?.index?.embedding.apiKeyRef;
+  if (previousRef && previousRef !== ref.id) input.replacedRefs.push({ ref: previousRef, kind: 'memory_index' });
+  const { apiKey: _apiKey, ...embedding } = input.memoryIndex.embedding;
+  return { ...input.memoryIndex, embedding: { ...embedding, apiKeyRef: ref.id } };
+}
+
+async function revokeModelRefs(vault: SecretVault | undefined, refs: CreatedSecretRef[]): Promise<void> {
+  if (!vault) return;
+  await Promise.all(refs.map((item) => vault.revokeSecret(item.ref, {
+    actor: 'system',
+    userId: 'models_config_admin',
+    scopes: [`secret:${item.kind}:revoke`],
+  }).catch(() => undefined)));
 }
 
 function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUpdate {
@@ -194,6 +288,12 @@ function validateModelsUpdate(currentRaw: unknown, body: unknown): ModelsAdminUp
 
 export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
 
   router.use(requirePlatformAdmin);
 
@@ -212,95 +312,87 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
   });
 
   router.put('/', async (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
-    let rawConfig: unknown;
     let nextUpdate: ModelsAdminUpdate;
-
+    const createdRefs: CreatedSecretRef[] = [];
+    const replacedRefs: CreatedSecretRef[] = [];
+    const requestContext = mutationRequestContext(req);
     try {
-      configText = readFileSync(configPath, 'utf-8');
-      rawConfig = parseJsonc(configText);
-      nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, options.config));
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-
-    try {
-      let updatedText = configText;
-      const edits = modify(updatedText, ['models'], nextUpdate.models, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
-      });
-      updatedText = applyEdits(updatedText, edits);
-      if (nextUpdate.memoryIndexProvided) {
-        const rawRecord = isRecord(rawConfig) ? rawConfig : {};
-        const hasMemoryObject = isRecord(rawRecord.memory);
-        const memoryEdits = nextUpdate.memoryIndex
-          ? modify(
-              updatedText,
-              hasMemoryObject ? ['memory', 'index'] : ['memory'],
-              hasMemoryObject ? nextUpdate.memoryIndex : { index: nextUpdate.memoryIndex },
-              { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-            )
-          : hasMemoryObject
-            ? modify(updatedText, ['memory', 'index'], undefined, {
-                formattingOptions: { insertSpaces: true, tabSize: 2 },
-              })
-            : [];
-        if (memoryEdits.length > 0) {
-          updatedText = applyEdits(updatedText, memoryEdits);
-        }
-      }
-      if (nextUpdate.titleGeneratorProvided) {
-        updatedText = applyEdits(updatedText, modify(
-          updatedText,
-          ['titleGenerator'],
-          nextUpdate.titleGenerator,
-          { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-        ));
-      }
-      if (nextUpdate.titleSystemPromptProvided) {
-        updatedText = applyEdits(updatedText, modify(
-          updatedText,
-          ['systemPrompts'],
-          Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined,
-          { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-        ));
-      }
-      writeFileSync(configPath, updatedText, 'utf-8');
-      options.config.models = nextUpdate.models;
-      if (nextUpdate.memoryIndexProvided) {
-        if (nextUpdate.memoryIndex) {
-          options.config.memory = {
-            ...(options.config.memory ?? {}),
-            index: nextUpdate.memoryIndex,
+      const result = await configMutationService.mutate({
+        ...requestContext,
+        changedPaths: ['models', 'memory.index', 'titleGenerator', 'systemPrompts.utility.title'],
+        buildCandidate: async (configText, rawConfig) => {
+          const persisted = parseAppConfig(rawConfig);
+          nextUpdate = validateModelsUpdate(rawConfig, restoreSecrets(req.body, persisted));
+          nextUpdate = {
+            ...nextUpdate,
+            models: await persistSubmittedModelCredentials({
+              models: nextUpdate.models,
+              submittedGroups: submittedModelApiKeyGroups(req.body, persisted),
+              secretVault: options.secretVault,
+              actor: requestContext.actor,
+              createdRefs,
+              replacedRefs,
+              previousRefs: new Map((persisted.models?.groups ?? []).map((group) => [group.id, group.apiKeyRef])),
+            }),
           };
-        } else if (options.config.memory) {
-          delete options.config.memory.index;
-        }
-      }
-      if (nextUpdate.titleGeneratorProvided) {
-        if (nextUpdate.titleGenerator) options.config.titleGenerator = nextUpdate.titleGenerator;
-        else delete options.config.titleGenerator;
-      }
-      if (nextUpdate.titleSystemPromptProvided) {
-        if (Object.keys(nextUpdate.systemPrompts ?? {}).length > 0) options.config.systemPrompts = nextUpdate.systemPrompts;
-        else delete options.config.systemPrompts;
-        options.onSystemPromptOverridesUpdated?.(options.config.systemPrompts);
-      }
-      options.onModelsUpdated?.(nextUpdate.models);
-      if (nextUpdate.memoryIndexProvided) {
-        await options.onMemoryIndexUpdated?.(options.config.memory?.index);
-      }
+          nextUpdate = {
+            ...nextUpdate,
+            memoryIndex: await persistSubmittedMemoryCredential({
+              memoryIndex: nextUpdate.memoryIndex,
+              body: req.body,
+              current: persisted,
+              secretVault: options.secretVault,
+              createdRefs,
+              replacedRefs,
+            }),
+          };
+          let updatedText = applyEdits(configText, modify(configText, ['models'], nextUpdate.models, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }));
+          if (nextUpdate.memoryIndexProvided) {
+            const hasMemoryObject = isRecord(rawConfig.memory);
+            const memoryEdits = nextUpdate.memoryIndex
+              ? modify(updatedText, hasMemoryObject ? ['memory', 'index'] : ['memory'], hasMemoryObject ? nextUpdate.memoryIndex : { index: nextUpdate.memoryIndex }, { formattingOptions: { insertSpaces: true, tabSize: 2 } })
+              : hasMemoryObject ? modify(updatedText, ['memory', 'index'], undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }) : [];
+            if (memoryEdits.length > 0) updatedText = applyEdits(updatedText, memoryEdits);
+          }
+          if (nextUpdate.titleGeneratorProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['titleGenerator'], nextUpdate.titleGenerator, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+          if (nextUpdate.titleSystemPromptProvided) updatedText = applyEdits(updatedText, modify(updatedText, ['systemPrompts'], Object.keys(nextUpdate.systemPrompts ?? {}).length > 0 ? nextUpdate.systemPrompts : undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+          return updatedText;
+        },
+        applyRuntime: async (candidate) => {
+          if (!candidate.models) throw new Error('models 未配置');
+          options.config.models = candidate.models;
+          if (candidate.memory) options.config.memory = candidate.memory;
+          else delete options.config.memory;
+          if (candidate.titleGenerator) options.config.titleGenerator = candidate.titleGenerator;
+          else delete options.config.titleGenerator;
+          if (candidate.systemPrompts) options.config.systemPrompts = candidate.systemPrompts;
+          else delete options.config.systemPrompts;
+          await options.onModelsUpdated?.(candidate.models);
+          await options.onMemoryIndexUpdated?.(candidate.memory?.index);
+          options.onSystemPromptOverridesUpdated?.(candidate.systemPrompts ?? {});
+        },
+      });
+      await revokeModelRefs(options.secretVault, replacedRefs);
+      res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
       res.json({
-        models: redactModels(nextUpdate.models),
+        models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),
         titleGenerator: titleGeneratorView(options.config),
         titleSystemPrompt: titleSystemPromptView(options.config),
-        publicModelList: getPublicModelList(nextUpdate.models),
+        publicModelList: getPublicModelList(result.config.models!),
       });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      await revokeModelRefs(options.secretVault, createdRefs);
+      if (error instanceof Error && !(error instanceof ConfigConflictError)) {
+        // Validation failures remain client errors; mutation/readback failures use the shared handler.
+        if (/models|memory|标题|提示语|配置/u.test(error.message)) {
+          res.status(400).json({ error: error.message });
+          return;
+        }
+      }
+      sendConfigMutationError(res, error);
     }
   });
 

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
@@ -7,6 +7,9 @@ import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, SttConfig } from '../app/config.js';
 import { requirePlatformAdmin } from '../auth/middleware.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 const DEFAULT_BUCKET = 'ky-azeroth-upload';
 const DEFAULT_ENDPOINT = 'https://oss-cn-shenzhen.aliyuncs.com';
@@ -20,6 +23,7 @@ export interface CreateAudioTranscribeAdminRouterOptions {
   validate?: (stt: AppConfig['stt']) => Promise<void> | void;
   /** 配置落盘并更新进程内对象后触发热更新。 */
   onUpdated?: (stt: AppConfig['stt']) => Promise<void> | void;
+  configMutationService?: AdminConfigMutationService;
 }
 
 type RawObject = Record<string, unknown>;
@@ -209,6 +213,12 @@ export function createAudioTranscribeAdminRouter(
   options: CreateAudioTranscribeAdminRouterOptions,
 ): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
   router.use(requirePlatformAdmin);
 
   router.get('/', (_req, res) => {
@@ -238,12 +248,17 @@ export function createAudioTranscribeAdminRouter(
     }
 
     try {
-      const edits = modify(configText, ['stt'], staged, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        changedPaths: ['stt'],
+        buildCandidate: (freshText) => applyEdits(freshText, modify(freshText, ['stt'], staged, {
+          formattingOptions: { insertSpaces: true, tabSize: 2 },
+        })),
+        applyRuntime: async (candidate) => {
+          options.config.stt = candidate.stt;
+          await options.onUpdated?.(candidate.stt);
+        },
       });
-      writeFileSync(configPath, applyEdits(configText, edits), 'utf-8');
-      options.config.stt = staged;
-      await options.onUpdated?.(staged);
       res.json(adminView(options.config));
     } catch (error) {
       res.status(500).json({ error: safeErrorMessage(error, staged, req.body) });

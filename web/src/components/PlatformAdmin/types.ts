@@ -459,3 +459,14 @@ export interface SnatStatus {
   entries: SnatEntry[];
   error?: string;
 }
+export interface EffectiveConfigStatus {
+  configSchemaVersion: number;
+  effectiveConfigFingerprint: string;
+  capabilityFingerprint: string;
+  secretReadiness: "ready" | "missing" | "legacy_inline" | "unknown";
+  environment: "development" | "staging" | "production" | "test";
+  processRole: string;
+  appliedAt: string;
+  capabilities: Record<string, boolean>;
+  secrets: { references: number; inlineLegacy: number; missing: number };
+}

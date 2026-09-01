@@ -64,6 +64,9 @@ vi.mock("@/components/RunTraceExplorer", () => ({
 vi.mock("@/components/EgressConfigManager", () => ({ default: () => <div>网络与安全管理器</div> }));
 vi.mock("@/components/SystemPromptsManager", () => ({ default: () => <div>系统提示语管理器</div> }));
 vi.mock("@/components/PlatformAdmin/SystemSettingsPanel", () => ({ SystemSettingsPanel: () => <div>系统配置管理器</div> }));
+vi.mock("@/components/WorkflowDisplaySettingsPage", () => ({
+  default: ({ tenantId }: { tenantId: string }) => <div>工作流设置 {tenantId}</div>,
+}));
 vi.mock("@/components/BillingManager", () => ({
   PlatformBillingManager: () => <div>平台计费管理器</div>,
   TenantBillingPanel: ({ tenantId, tenantName }: { tenantId: string; tenantName?: string }) => (
@@ -172,6 +175,27 @@ describe("AdminShells V2 内容适配", () => {
     await userEvent.click(screen.getByRole("button", { name: "添加成员" }));
     expect(window.location.pathname).toBe("/tenant-admin/members/list");
     expect(window.location.search).toBe("?org=acme");
+  });
+
+  it("统一组织设置的工作流入口挂载目标组织的工作流配置页", async () => {
+    adminShellMocks.auth = { user: { tenantId: "pantheon" }, isPlatformAdmin: true };
+    adminShellMocks.tenants = [
+      { id: "pantheon", name: "万神殿" },
+      { id: "kaiyan-demo", name: "开沿演示组织" },
+    ];
+    window.history.replaceState({}, "", "/tenant-admin/settings/workflows?org=kaiyan-demo");
+
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        settingsOpen
+        settingsContentOnly
+        settingsSection="workflows"
+        renderUsers={() => <div />}
+      />,
+    );
+
+    expect(await screen.findByText("工作流设置 kaiyan-demo")).toBeTruthy();
   });
 
   it("统一设置隐藏组织分组后继续回传持久 Shell 的实际组织", async () => {

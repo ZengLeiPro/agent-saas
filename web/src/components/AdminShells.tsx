@@ -396,6 +396,7 @@ export function TenantAdminShell({
     ) },
     { id: "skills", node: renderSkills(effectiveTenantId, currentTenant?.name) },
     ...(renderOrgAgents ? [{ id: "org-agents" as TenantSection, node: renderOrgAgents(effectiveTenantId, currentTenant?.name) }] : []),
+    { id: "workflows", node: <WorkflowDisplaySettingsPage tenantId={effectiveTenantId} /> },
     { id: "mcp", node: renderMcp() },
     { id: "connector-dictionary" as TenantSection, node: <TenantConnectorDictionaryPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },
     { id: "billing", node: <TenantBillingPanel tenantId={effectiveTenantId} tenantName={currentTenant?.name} /> },

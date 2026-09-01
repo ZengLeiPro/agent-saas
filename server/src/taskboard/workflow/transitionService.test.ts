@@ -239,7 +239,7 @@ describe('TASK-359 ordinary Delivery finish transitions', () => {
     })).resolves.toMatchObject({ kind: 'delivery', status: 'ready_to_merge' });
 
     expectNoLegacyDeliveryGateSql(client.query);
-    expect(provider.getPullRequest).not.toHaveBeenCalled();
+    expect(provider.getPullRequest).toHaveBeenCalledOnce();
     expect(provider.inspectPullRequest).not.toHaveBeenCalled();
   });
 

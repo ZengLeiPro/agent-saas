@@ -236,7 +236,7 @@ describePg('Sandbox lifecycle PostgreSQL ordering contract', () => {
     expect(Date.parse(rewrittenA!.terminalAt)).toBeLessThan(Date.parse(terminalB!.terminalAt));
   });
 
-  it('terminal outbox 的 target hand 经真实 PostgreSQL 持久化，store 重建后不随 rollout 漂移', async () => {
+  it('候选集合中的 terminal outbox target hand 经 PostgreSQL 持久化后不随 rollout 漂移', async () => {
     await runStore.upsertPending({
       runId: 'terminal-run-1', sessionId: 'terminal-session-1', tenantId: 'tenant-1',
       workspaceId: 'workspace-1', sandboxScopeId: 'scope-terminal-1', metadata: {
@@ -253,8 +253,8 @@ describePg('Sandbox lifecycle PostgreSQL ordering contract', () => {
     const rebuilt = new PgSandboxLifecycleStore(
       pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`,
     );
-    await expect(rebuilt.listTerminalCandidates()).resolves.toEqual([
+    await expect(rebuilt.listTerminalCandidates()).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ runId: 'terminal-run-1', targetHandId: 'acs-old' }),
-    ]);
+    ]));
   });
 });

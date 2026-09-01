@@ -459,6 +459,37 @@ export interface SnatStatus {
   entries: SnatEntry[];
   error?: string;
 }
+/** 能力就绪状态；与 server/src/config/capabilityContract.ts 保持一致。 */
+export type CapabilityState =
+  | "disabled"
+  | "incomplete"
+  | "validating"
+  | "ready"
+  | "enabled"
+  | "degraded"
+  | "blocked";
+
+export interface CapabilityBlocker {
+  code: string;
+  message: string;
+  targetRouteId?: string;
+}
+
+export interface CapabilityValidationRecord {
+  status: "passed" | "failed";
+  validatedAt: string;
+  configFingerprint: string;
+}
+
+export interface CapabilityReadiness {
+  state: CapabilityState;
+  /** 只有字段路径，不含 Secret 明文或 Vault 引用标识。 */
+  missing: string[];
+  blockers: CapabilityBlocker[];
+  lastValidation?: CapabilityValidationRecord;
+  targetRouteId: string | null;
+}
+
 export interface EffectiveConfigStatus {
   configSchemaVersion: number;
   effectiveConfigFingerprint: string;
@@ -468,6 +499,8 @@ export interface EffectiveConfigStatus {
   processRole: string;
   appliedAt: string;
   capabilities: Record<string, boolean>;
+  /** 旧版服务端不返回；缺失时前端退回到 capabilities 的已启用/未启用两态。 */
+  capabilityStates?: Record<string, CapabilityReadiness>;
   secrets: {
     references: number;
     inlineLegacy: number;

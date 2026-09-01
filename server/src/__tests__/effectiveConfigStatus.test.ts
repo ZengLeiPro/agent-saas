@@ -47,4 +47,35 @@ describe('effective config status', () => {
     expect(JSON.stringify(status)).not.toContain('must-also-not-leak');
     expect(JSON.stringify(status)).not.toContain('vault/secret-ref');
   });
+
+  it('在兼容布尔能力表之外给出逐能力就绪状态', () => {
+    const config = {
+      agent: { cwd: '/tmp/workspace' },
+      server: { port: 3000 },
+      webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'vault/secret-ref' } },
+      stt: { enabled: false },
+    } as never;
+    const status = buildEffectiveConfigStatus({
+      config,
+      environment: 'staging',
+      processRole: 'ws-only',
+      appliedAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    expect(Object.keys(status.capabilityStates)).toEqual(Object.keys(status.capabilities));
+    expect(status.capabilityStates.webTools).toEqual({
+      state: 'enabled',
+      missing: [],
+      blockers: [],
+      targetRouteId: 'platform.resource-center.tools',
+    });
+    expect(status.capabilityStates.stt.state).toBe('incomplete');
+    expect(status.capabilityStates.stt.missing).toEqual([
+      'stt.apiKeyRef',
+      'stt.ossAccessKeyIdRef',
+      'stt.ossAccessKeySecretRef',
+    ]);
+    // missing 只回字段路径，不得夹带 Secret 明文或 Vault ref。
+    expect(JSON.stringify(status.capabilityStates)).not.toContain('vault/secret-ref');
+  });
 });

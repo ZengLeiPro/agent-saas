@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   appendFile,
   mkdir,
@@ -16,6 +16,9 @@ import { parse as parseJsonc } from 'jsonc-parser';
 
 import { parseAppConfig, type AppConfig } from '../app/config.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
+import { configFingerprint } from './configDigest.js';
+
+export { configFingerprint };
 
 const LOCK_WAIT_MS = 5_000;
 const LOCK_STALE_MS = 120_000;
@@ -45,22 +48,6 @@ interface MutationInput {
     currentRaw: Record<string, unknown>,
   ) => string | Promise<string>;
   applyRuntime: (next: AppConfig, previous: AppConfig) => void | Promise<void>;
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-export function configFingerprint(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
 }
 
 function parseRaw(text: string): Record<string, unknown> {

@@ -343,7 +343,13 @@ describePg('session automation runtime fence and evaluator recovery on PostgreSQ
       `SELECT count(*)::int AS count FROM ${store.tables.evaluations} WHERE execution_id=$1`,
       [setup.dispatch.outboxId],
     )).rows[0].count).toBe(0);
-    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'idle' });
+    expect(await store.get(tenantId, setup.sessionId, setup.automationId)).toMatchObject({ phase: 'waiting' });
+    const continuation = await pool.query(
+      `SELECT trigger_key FROM ${store.tables.wakeups} WHERE automation_id=$1 AND state='pending'`,
+      [setup.automationId],
+    );
+    expect(continuation.rows).toHaveLength(1);
+    expect(continuation.rows[0].trigger_key).toContain('no_checkpoint');
   });
 
   it('creates a goal evaluation only after the current execution durably nominates frozen evidence', async () => {

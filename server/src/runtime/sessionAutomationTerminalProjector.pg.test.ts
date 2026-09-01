@@ -47,7 +47,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
 
   async function createAutomation(input: {
     kind: 'loop' | 'goal';
-    mode: 'fixed' | 'adaptive';
+    mode: 'fixed' | 'adaptive' | 'goal';
     spec: Record<string, unknown>;
     continuationEpoch?: number;
   }) {
@@ -221,8 +221,8 @@ describePg('session automation terminal projector state machine (real PostgreSQL
 
   it('does not add no_checkpoint when UpdateGoal already persisted a continuation for the run lineage', async () => {
     const goal = await createAutomation({
-      kind: 'goal', mode: 'adaptive',
-      spec: { kind: 'goal', mode: 'adaptive', prompt: 'finish', completionCondition: 'done', budget: {} },
+      kind: 'goal', mode: 'goal',
+      spec: { kind: 'goal', mode: 'goal', prompt: 'finish', completionCondition: 'done', budget: {} },
     });
     const item = await dispatch({ ...goal, triggerKey: 'goal-update', continuationEpoch: 7 });
     const flags = {
@@ -254,8 +254,8 @@ describePg('session automation terminal projector state machine (real PostgreSQL
 
   it('continues a goal with no_checkpoint and eventually applies no-progress pause', async () => {
     const goal = await createAutomation({
-      kind: 'goal', mode: 'adaptive',
-      spec: { kind: 'goal', mode: 'adaptive', prompt: 'finish', completionCondition: 'done', budget: {} },
+      kind: 'goal', mode: 'goal',
+      spec: { kind: 'goal', mode: 'goal', prompt: 'finish', completionCondition: 'done', budget: {} },
     });
     const projector = new SessionAutomationTerminalProjector(store, `goal-no-checkpoint-${randomUUID()}`, 2);
     let item = await dispatch({ ...goal, triggerKey: 'goal-first', continuationEpoch: 0 });

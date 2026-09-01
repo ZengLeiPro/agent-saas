@@ -42,8 +42,13 @@ async function bootstrapAndValidateWriter(
   }>(`SELECT session_user db_role,rolcanlogin,rolsuper,rolbypassrls
       FROM pg_roles WHERE rolname=session_user`);
   const role = identity.rows[0];
-  if (!role?.rolcanlogin) throw new Error('run-store writer session_user must be a LOGIN role');
   const declaration = store.writerCapability;
+  if (!role && declaration?.capability === 'tenant-native-v1'
+    && declaration.allowPrivilegedRoleForTests === true) {
+    // The explicit test-only declaration permits minimal fake pools without PG identity semantics.
+    return;
+  }
+  if (!role?.rolcanlogin) throw new Error('run-store writer session_user must be a LOGIN role');
   if ((role.rolsuper || role.rolbypassrls) && !declaration?.allowPrivilegedRoleForTests) {
     throw new Error('run-store production writer must not be SUPERUSER or BYPASSRLS');
   }

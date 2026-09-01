@@ -35,7 +35,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     ].entries()) {
       const role = `${prefix}_legacy_${index}`;
       const password = randomUUID();
-      const ddl = await pool.query<{ sql: string }>(`SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1,$2) sql`, [role, password]);
+      const ddl = await pool.query<{ sql: string }>(`SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1::text,$2::text) sql`, [role, password]);
       await pool.query(ddl.rows[0]!.sql);
       await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
         ${prefix}_message_submissions,${prefix}_steering_inputs,${prefix}_steering_sessions TO ${role}`);
@@ -48,7 +48,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     nativeRole = `${prefix}_tenant_native`;
     const nativePassword = randomUUID();
     const nativeDdl = await pool.query<{ sql: string }>(
-      `SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1,$2) sql`, [nativeRole, nativePassword]);
+      `SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1::text,$2::text) sql`, [nativeRole, nativePassword]);
     await pool.query(nativeDdl.rows[0]!.sql);
     await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
       ${prefix}_message_submissions,${prefix}_steering_inputs,${prefix}_steering_sessions TO ${nativeRole}`);
@@ -74,7 +74,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
     for (const rolePool of legacyPools.values()) await rolePool.end();
     if (nativePool) await nativePool.end();
     for (const role of [...legacyRoles.values(), ...(nativeRole ? [nativeRole] : [])]) {
-      const ddl = await pool.query<{ sql: string }>(`SELECT format('DROP ROLE IF EXISTS %I',$1) sql`, [role]);
+      const ddl = await pool.query<{ sql: string }>(`SELECT format('DROP ROLE IF EXISTS %I',$1::text) sql`, [role]);
       await pool.query(ddl.rows[0]!.sql);
     }
     await pool.end();
@@ -390,7 +390,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
       const legacyRole = `${prefix}_unregistered_legacy`;
       const password = randomUUID();
       const create = await pool.query<{ sql: string }>(
-        `SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1,$2) sql`, [legacyRole, password]);
+        `SELECT format('CREATE ROLE %I LOGIN PASSWORD %L',$1::text,$2::text) sql`, [legacyRole, password]);
       await pool.query(create.rows[0]!.sql);
       await pool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ${prefix}_runs,
         ${prefix}_steering_sessions TO ${legacyRole}`);
@@ -408,7 +408,7 @@ describePg('PgRunStore capability-fenced two-phase tenant migration', () => {
           WHERE session_id='contract-stop'`)).rejects.toMatchObject({ code: '42501' });
       } finally {
         await legacyPool.end();
-        const drop = await pool.query<{ sql: string }>(`SELECT format('DROP ROLE %I',$1) sql`, [legacyRole]);
+        const drop = await pool.query<{ sql: string }>(`SELECT format('DROP ROLE %I',$1::text) sql`, [legacyRole]);
         await pool.query(drop.rows[0]!.sql);
       }
     }

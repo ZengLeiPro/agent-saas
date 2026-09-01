@@ -21,7 +21,10 @@ describe('PgRunStore wakeMessage 生命周期', () => {
         return { rows: [{ row_json: row }] };
       },
     };
-    const store = new PgRunStore({ pool: pool as never });
+    const store = new PgRunStore({
+      pool: pool as never,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     await store.markStatus('run-1', 'completed', undefined, {
       wakeMessage: { content: '不得保留' },
@@ -42,13 +45,24 @@ describe('PgRunStore wakeMessage 生命周期', () => {
         return { rows: [{ row_json: row }] };
       },
     };
-    const store = new PgRunStore({ pool: pool as never });
+    const store = new PgRunStore({
+      pool: pool as never,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     await store.releaseLease('run-1', 'worker-1', 'failed', 'boom');
     await store.cancelStaleWaitingApproval('run-1', new Date(), 'timeout');
 
     expect(queries[0]).toContain("THEN metadata - 'wakeMessage'");
     expect(queries[1]).toContain("metadata = (metadata || $5::jsonb) - 'wakeMessage'");
+  });
+
+  it('init 在 fake pool 查询不到 pg_roles identity 且无测试声明时仍 fail-closed', async () => {
+    const client = { query: async () => ({ rows: [] }), release: vi.fn() };
+    const store = new PgRunStore({ pool: { connect: async () => client } as never });
+
+    await expect(store.init()).rejects.toThrow('run-store writer session_user must be a LOGIN role');
+    expect(client.release).toHaveBeenCalledOnce();
   });
 
   it('init 会幂等清理历史终态 Run 的 wakeMessage', async () => {
@@ -60,7 +74,10 @@ describe('PgRunStore wakeMessage 生命周期', () => {
       },
       release: vi.fn(),
     };
-    const store = new PgRunStore({ pool: { connect: async () => client } as never });
+    const store = new PgRunStore({
+      pool: { connect: async () => client } as never,
+      writerCapability: { capability: 'tenant-native-v1', allowPrivilegedRoleForTests: true },
+    });
 
     await store.init();
 

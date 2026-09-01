@@ -28,6 +28,7 @@ const RELATIVE_MODULE_SPECIFIER = /^\.{1,2}\//u;
 const GOVERNANCE_MIGRATION_PROVIDER_PATH =
   /^server\/src\/data\/governance-schema\/[^/]*migrations?\.ts$/iu;
 
+// ADD COLUMN is parsed again as an explicit safe subset; the prefix alone never grants expand.
 const ALLOWED_EXPAND_ALTER_PATTERN =
   /^ALTER\s+TABLE\s+\S+\s+(?:ADD\s+(?:COLUMN\s+)?|ADD\s+CONSTRAINT\b|VALIDATE\s+CONSTRAINT\b)/iu;
 const ADD_TABLE_CONSTRAINT_PATTERN =
@@ -557,15 +558,56 @@ function hasUnprovenAddConstraint(value) {
   );
 }
 
-// Nullable columns with pure type/default syntax remain expand-safe; inline constraints do not.
-function hasRiskyAddColumn(value) {
-  return operationSlices(value, 'ALTER').some(
-    (statement) =>
-      !ADD_TABLE_CONSTRAINT_PATTERN.test(statement) &&
-      /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+[^;\n]*\b(?:NOT\s+NULL|CHECK|UNIQUE|PRIMARY\s+KEY|REFERENCES|FOREIGN\s+KEY|EXCLUDE)\b/iu.test(
-        statement,
-      ),
+function isProvenSafeAlterColumnType(value) {
+  const builtinType =
+    '(?:smallint|int2|integer|int|int4|bigint|int8|decimal|numeric|real|float4|double\\s+precision|float8|money|character|char|character\\s+varying|varchar|text|bytea|timestamp(?:\\s+(?:with|without)\\s+time\\s+zone)?|timestamptz|date|time(?:\\s+(?:with|without)\\s+time\\s+zone)?|timetz|interval|boolean|bool|point|line|lseg|box|path|polygon|circle|cidr|inet|macaddr|macaddr8|bit|bit\\s+varying|varbit|tsvector|tsquery|uuid|xml|json|jsonb|name|oid|pg_lsn)';
+  const modifier = '(?:\\s*\\(\\s*\\d+(?:\\s*,\\s*\\d+)?\\s*\\))?';
+  const arrays = '(?:\\s*\\[\\s*\\])*';
+  if (/^\s*(?:smallserial|serial2|serial|serial4|bigserial|serial8)\b/iu.test(value)) return false;
+  return new RegExp(
+    `^\\s*(?:pg_catalog\\s*\\.\\s*)?${builtinType}${modifier}${arrays}\\s*$`,
+    'iu',
+  ).test(value);
+}
+
+function isProvenStaticAlterDefault(value) {
+  const literal = value.trim();
+  if (/^(?:NULL|TRUE|FALSE)$/iu.test(literal)) return true;
+  if (/^(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$/u.test(literal)) return true;
+  if (/^(?:E)?'(?:''|\\[\s\S]|[^'])*'$/iu.test(literal)) return true;
+  const tag = dollarQuoteTagAt(literal, 0);
+  return (
+    tag !== null &&
+    literal.endsWith(tag) &&
+    literal.indexOf(tag, tag.length) === literal.length - tag.length
   );
+}
+
+function isProvenSafeAddColumn(statement) {
+  const identifier =
+    '(?:(?:[A-Za-z_]|[^\\x00-\\x7F])(?:[A-Za-z0-9_$]|[^\\x00-\\x7F])*|"(?:""|[^"])+")';
+  const match = statement.match(
+    new RegExp(
+      `^ALTER\\s+TABLE\\s+\\S+\\s+ADD\\s+(?:COLUMN\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?${identifier}\\s+([\\s\\S]+)$`,
+      'iu',
+    ),
+  );
+  if (!match) return false;
+  const definition = match[1].trim();
+  const defaultMatch = definition.match(/^([\s\S]*?)\s+DEFAULT\s+([\s\S]+)$/iu);
+  if (!defaultMatch) return isProvenSafeAlterColumnType(definition);
+  return (
+    isProvenSafeAlterColumnType(defaultMatch[1]) && isProvenStaticAlterDefault(defaultMatch[2])
+  );
+}
+
+// A proven nullable ADD COLUMN uses a built-in type plus an optional static literal.
+function hasRiskyAddColumn(value) {
+  return operationSlices(value, 'ALTER').some((statement) => {
+    if (ADD_TABLE_CONSTRAINT_PATTERN.test(statement)) return false;
+    if (!/^ALTER\s+TABLE\s+\S+\s+ADD\s+/iu.test(statement)) return false;
+    return !isProvenSafeAddColumn(statement);
+  });
 }
 
 function changedLines(diff, prefix, header) {
@@ -728,19 +770,58 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const reflectObjectAliases = new Set(['Reflect']);
   const objectConstructorAliases = new Set(['Object']);
   const reflectGetAliases = new Set();
-  const descriptorAliases = new Set();
+  const reflectDescriptorAliases = new Set();
+  const objectDescriptorAliases = new Set();
+  const objectDescriptorsAliases = new Set();
+  const descriptorCallableFields = new Set(['value', 'get', 'set']);
+  // Method aliases may be identifiers or statically named one-level object members.
+  const staticReferenceKey = (node) => {
+    const expression = unwrapExpression(node);
+    if (ts.isIdentifier(expression)) return expression.text;
+    if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression))
+      return `${expression.expression.text}.${expression.name.text}`;
+    if (
+      ts.isElementAccessExpression(expression) &&
+      ts.isIdentifier(expression.expression) &&
+      expression.argumentExpression
+    )
+      return `${expression.expression.text}.${staticMemberKey(expression.argumentExpression)}`;
+    return undefined;
+  };
+  const isFunctionPrototypeMethod = (node, method) => {
+    const expression = unwrapExpression(node);
+    if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== method) return false;
+    const prototype = unwrapExpression(expression.expression);
+    return (
+      ts.isPropertyAccessExpression(prototype) &&
+      ts.isIdentifier(prototype.expression) &&
+      prototype.expression.text === 'Function' &&
+      prototype.name.text === 'prototype'
+    );
+  };
   const isMethodReference = (node, objectAliases, methodAliases, method) => {
     const expression = unwrapExpression(node);
-    if (ts.isIdentifier(expression)) return methodAliases.has(expression.text);
+    const referenceKey = staticReferenceKey(expression);
+    if (referenceKey && methodAliases.has(referenceKey)) return true;
     if (ts.isCallExpression(expression)) {
       const callee = unwrapExpression(expression.expression);
-      if (
-        (ts.isPropertyAccessExpression(callee) && callee.name.text === 'bind') ||
-        (ts.isElementAccessExpression(callee) &&
-          callee.argumentExpression &&
-          staticMemberKey(callee.argumentExpression) === 'bind')
-      )
-        return isMethodReference(callee.expression, objectAliases, methodAliases, method);
+      const invocation =
+        ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)
+          ? ts.isPropertyAccessExpression(callee)
+            ? callee.name.text
+            : callee.argumentExpression
+              ? staticMemberKey(callee.argumentExpression)
+              : '*'
+          : undefined;
+      if (invocation === 'bind') {
+        if (isMethodReference(callee.expression, objectAliases, methodAliases, method)) return true;
+        if (
+          isFunctionPrototypeMethod(callee.expression, 'call') &&
+          expression.arguments[0] &&
+          isMethodReference(expression.arguments[0], objectAliases, methodAliases, method)
+        )
+          return true;
+      }
     }
     if (ts.isPropertyAccessExpression(expression))
       return (
@@ -769,8 +850,12 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     const addDestructuredMethodAlias = (owner, propertyName, localName) => {
       if (reflectObjectAliases.has(owner) && propertyName === 'get')
         addAlias(reflectGetAliases, localName);
+      if (reflectObjectAliases.has(owner) && propertyName === 'getOwnPropertyDescriptor')
+        addAlias(reflectDescriptorAliases, localName);
       if (objectConstructorAliases.has(owner) && propertyName === 'getOwnPropertyDescriptor')
-        addAlias(descriptorAliases, localName);
+        addAlias(objectDescriptorAliases, localName);
+      if (objectConstructorAliases.has(owner) && propertyName === 'getOwnPropertyDescriptors')
+        addAlias(objectDescriptorsAliases, localName);
     };
     const collectAliases = (node) => {
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
@@ -786,12 +871,73 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         if (
           isMethodReference(
             initializer,
-            objectConstructorAliases,
-            descriptorAliases,
+            reflectObjectAliases,
+            reflectDescriptorAliases,
             'getOwnPropertyDescriptor',
           )
         )
-          addAlias(descriptorAliases, node.name.text);
+          addAlias(reflectDescriptorAliases, node.name.text);
+        if (
+          isMethodReference(
+            initializer,
+            objectConstructorAliases,
+            objectDescriptorAliases,
+            'getOwnPropertyDescriptor',
+          )
+        )
+          addAlias(objectDescriptorAliases, node.name.text);
+        if (
+          isMethodReference(
+            initializer,
+            objectConstructorAliases,
+            objectDescriptorsAliases,
+            'getOwnPropertyDescriptors',
+          )
+        )
+          addAlias(objectDescriptorsAliases, node.name.text);
+        if (ts.isObjectLiteralExpression(initializer)) {
+          for (const property of initializer.properties) {
+            if (!ts.isPropertyAssignment(property)) continue;
+            const propertyName =
+              ts.isIdentifier(property.name) ||
+              ts.isStringLiteral(property.name) ||
+              ts.isNumericLiteral(property.name)
+                ? property.name.text
+                : undefined;
+            if (!propertyName) continue;
+            const alias = `${node.name.text}.${propertyName}`;
+            const target = unwrapExpression(property.initializer);
+            if (isMethodReference(target, reflectObjectAliases, reflectGetAliases, 'get'))
+              addAlias(reflectGetAliases, alias);
+            if (
+              isMethodReference(
+                target,
+                reflectObjectAliases,
+                reflectDescriptorAliases,
+                'getOwnPropertyDescriptor',
+              )
+            )
+              addAlias(reflectDescriptorAliases, alias);
+            if (
+              isMethodReference(
+                target,
+                objectConstructorAliases,
+                objectDescriptorAliases,
+                'getOwnPropertyDescriptor',
+              )
+            )
+              addAlias(objectDescriptorAliases, alias);
+            if (
+              isMethodReference(
+                target,
+                objectConstructorAliases,
+                objectDescriptorsAliases,
+                'getOwnPropertyDescriptors',
+              )
+            )
+              addAlias(objectDescriptorsAliases, alias);
+          }
+        }
       }
       if (
         ts.isVariableDeclaration(node) &&
@@ -822,12 +968,62 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
           if (
             isMethodReference(
               right,
-              objectConstructorAliases,
-              descriptorAliases,
+              reflectObjectAliases,
+              reflectDescriptorAliases,
               'getOwnPropertyDescriptor',
             )
           )
-            addAlias(descriptorAliases, left.text);
+            addAlias(reflectDescriptorAliases, left.text);
+          if (
+            isMethodReference(
+              right,
+              objectConstructorAliases,
+              objectDescriptorAliases,
+              'getOwnPropertyDescriptor',
+            )
+          )
+            addAlias(objectDescriptorAliases, left.text);
+          if (
+            isMethodReference(
+              right,
+              objectConstructorAliases,
+              objectDescriptorsAliases,
+              'getOwnPropertyDescriptors',
+            )
+          )
+            addAlias(objectDescriptorsAliases, left.text);
+        }
+        const assignedAlias = staticReferenceKey(left);
+        if (assignedAlias && !ts.isIdentifier(left)) {
+          if (isMethodReference(right, reflectObjectAliases, reflectGetAliases, 'get'))
+            addAlias(reflectGetAliases, assignedAlias);
+          if (
+            isMethodReference(
+              right,
+              reflectObjectAliases,
+              reflectDescriptorAliases,
+              'getOwnPropertyDescriptor',
+            )
+          )
+            addAlias(reflectDescriptorAliases, assignedAlias);
+          if (
+            isMethodReference(
+              right,
+              objectConstructorAliases,
+              objectDescriptorAliases,
+              'getOwnPropertyDescriptor',
+            )
+          )
+            addAlias(objectDescriptorAliases, assignedAlias);
+          if (
+            isMethodReference(
+              right,
+              objectConstructorAliases,
+              objectDescriptorsAliases,
+              'getOwnPropertyDescriptors',
+            )
+          )
+            addAlias(objectDescriptorsAliases, assignedAlias);
         }
         if (ts.isObjectLiteralExpression(left) && ts.isIdentifier(right)) {
           for (const property of left.properties) {
@@ -852,7 +1048,14 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const methodCallArguments = (node, owner, method) => {
     if (!ts.isCallExpression(node)) return undefined;
     const objectAliases = owner === 'Reflect' ? reflectObjectAliases : objectConstructorAliases;
-    const methodAliases = owner === 'Reflect' ? reflectGetAliases : descriptorAliases;
+    const methodAliases =
+      owner === 'Reflect'
+        ? method === 'get'
+          ? reflectGetAliases
+          : reflectDescriptorAliases
+        : method === 'getOwnPropertyDescriptors'
+          ? objectDescriptorsAliases
+          : objectDescriptorAliases;
     if (isMethodReference(node.expression, objectAliases, methodAliases, method))
       return [...node.arguments];
     const callee = unwrapExpression(node.expression);
@@ -881,19 +1084,82 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const isMethodCall = (node, owner, method) =>
     methodCallArguments(node, owner, method) !== undefined;
+  // A local zero-side-effect wrapper does not erase the descriptor container's source object.
+  const descriptorContainerFactories = new Map();
+  const registerDescriptorContainerFactory = (name, parameters, body) => {
+    let returned;
+    if (!ts.isBlock(body)) returned = unwrapExpression(body);
+    else {
+      const returns = [];
+      const collectReturns = (node) => {
+        if (ts.isReturnStatement(node) && node.expression) {
+          returns.push(unwrapExpression(node.expression));
+          return;
+        }
+        if (!ts.isFunctionLike(node) || node === body) ts.forEachChild(node, collectReturns);
+      };
+      collectReturns(body);
+      if (returns.length === 1) returned = returns[0];
+    }
+    if (!returned || !isMethodCall(returned, 'Object', 'getOwnPropertyDescriptors')) return;
+    const [target] = methodCallArguments(returned, 'Object', 'getOwnPropertyDescriptors');
+    if (!target) return;
+    descriptorContainerFactories.set(name, {
+      parameters: parameters.map((parameter) =>
+        ts.isIdentifier(parameter.name) ? parameter.name.text : undefined,
+      ),
+      target,
+    });
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body)
+      registerDescriptorContainerFactory(statement.name.text, statement.parameters, statement.body);
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.initializer &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      )
+        registerDescriptorContainerFactory(
+          declaration.name.text,
+          declaration.initializer.parameters,
+          declaration.initializer.body,
+        );
+    }
+  }
+  const descriptorContainerTarget = (node) => {
+    const current = unwrapExpression(node);
+    if (isMethodCall(current, 'Object', 'getOwnPropertyDescriptors'))
+      return methodCallArguments(current, 'Object', 'getOwnPropertyDescriptors')?.[0];
+    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) return undefined;
+    const factory = descriptorContainerFactories.get(current.expression.text);
+    if (!factory) return undefined;
+    const target = unwrapExpression(factory.target);
+    if (!ts.isIdentifier(target)) return target;
+    const parameterIndex = factory.parameters.indexOf(target.text);
+    return parameterIndex >= 0 ? current.arguments[parameterIndex] : target;
+  };
   const appendMember = (reference, member) => {
     if (!reference) return undefined;
     if (reference.members.includes('*') || member === '*')
       return { owner: reference.owner, members: ['*'] };
     return { owner: reference.owner, members: [...reference.members, member] };
   };
+  let descriptorMemberReference;
   const objectReference = (node) => {
     const current = unwrapExpression(node);
     if (ts.isIdentifier(current)) return { owner: current.text, members: [] };
     if (isMethodCall(current, 'Reflect', 'get')) {
       const [target, key] = methodCallArguments(current, 'Reflect', 'get');
       if (!target || !key) return undefined;
-      return appendMember(objectReference(target), staticMemberKey(key));
+      const member = staticMemberKey(key);
+      if (descriptorCallableFields.has(member) || member === '*') {
+        const descriptorReference = descriptorMemberReference(target);
+        if (descriptorReference) return descriptorReference;
+      }
+      return appendMember(objectReference(target), member);
     }
     if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
       const member = ts.isPropertyAccessExpression(current)
@@ -902,21 +1168,37 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
           ? staticMemberKey(current.argumentExpression)
           : '*';
       const expression = unwrapExpression(current.expression);
-      if (member === 'value' && isMethodCall(expression, 'Object', 'getOwnPropertyDescriptor')) {
-        const [target, key] = methodCallArguments(expression, 'Object', 'getOwnPropertyDescriptor');
-        if (!target || !key) return undefined;
-        return appendMember(objectReference(target), staticMemberKey(key));
+      if (descriptorCallableFields.has(member) || member === '*') {
+        const descriptorReference = descriptorMemberReference(expression);
+        if (descriptorReference) return descriptorReference;
       }
       return appendMember(objectReference(expression), member);
     }
     return undefined;
   };
-  const descriptorMemberReference = (node) => {
+  descriptorMemberReference = (node) => {
     const current = unwrapExpression(node);
-    if (!isMethodCall(current, 'Object', 'getOwnPropertyDescriptor')) return undefined;
-    const [target, key] = methodCallArguments(current, 'Object', 'getOwnPropertyDescriptor');
-    if (!target || !key) return undefined;
-    return appendMember(objectReference(target), staticMemberKey(key));
+    for (const owner of ['Reflect', 'Object']) {
+      if (!isMethodCall(current, owner, 'getOwnPropertyDescriptor')) continue;
+      const [target, key] = methodCallArguments(current, owner, 'getOwnPropertyDescriptor');
+      if (!target || !key) return undefined;
+      return appendMember(objectReference(target), staticMemberKey(key));
+    }
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+      const key = ts.isPropertyAccessExpression(current)
+        ? current.name.text
+        : current.argumentExpression
+          ? staticMemberKey(current.argumentExpression)
+          : '*';
+      const container = unwrapExpression(current.expression);
+      const target = descriptorContainerTarget(container);
+      if (target) return appendMember(objectReference(target), key);
+    }
+    return undefined;
+  };
+  const descriptorContainerReference = (node) => {
+    const target = descriptorContainerTarget(node);
+    return target ? objectReference(target) : undefined;
   };
   const memberReference = (node) => {
     const reference = objectReference(node);
@@ -982,7 +1264,9 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     if (!ts.isCallExpression(node)) return [];
     if (
       isMethodCall(node, 'Reflect', 'get') ||
-      isMethodCall(node, 'Object', 'getOwnPropertyDescriptor')
+      isMethodCall(node, 'Reflect', 'getOwnPropertyDescriptor') ||
+      isMethodCall(node, 'Object', 'getOwnPropertyDescriptor') ||
+      isMethodCall(node, 'Object', 'getOwnPropertyDescriptors')
     )
       return [];
     if (ts.isIdentifier(node.expression))
@@ -1125,12 +1409,29 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       const descriptorReference = descriptorMemberReference(initializer);
       if (
         descriptorReference &&
-        [...members].some(
-          (member) => member === '*' || member === 'value' || member.startsWith('value.'),
-        )
+        [...members].some((member) => {
+          const field = member.split('.')[0];
+          return field === '*' || descriptorCallableFields.has(field);
+        })
       ) {
         if (addCalledMember(descriptorReference.owner, descriptorReference.members.join('.')))
           calledAliasesChanged = true;
+        return;
+      }
+      const descriptorContainer = descriptorContainerReference(initializer);
+      if (descriptorContainer) {
+        for (const member of members) {
+          const segments = member.split('.');
+          if (
+            segments.length < 2 ||
+            (segments[1] !== '*' && !descriptorCallableFields.has(segments[1]))
+          )
+            continue;
+          const mapped = appendMember(descriptorContainer, segments[0]);
+          const callable = segments.slice(2).reduce(appendMember, mapped);
+          if (callable && addCalledMember(callable.owner, callable.members.join('.')))
+            calledAliasesChanged = true;
+        }
         return;
       }
       if (ts.isIdentifier(initializer)) {

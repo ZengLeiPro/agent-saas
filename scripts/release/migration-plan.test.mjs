@@ -438,6 +438,94 @@ test('tracks imported callbacks through class fields, nested members, and re-exp
       },
     },
     {
+      label: 'Reflect property descriptor value callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.getOwnPropertyDescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'all property descriptors direct value callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptors(wrapper).run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'all property descriptors container alias value callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst all = Object.getOwnPropertyDescriptors(wrapper);\nall.run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect descriptor value callable through a method alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = Reflect.getOwnPropertyDescriptor;\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'all property descriptors through a bound alias and nested destructuring',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptors = Object.getOwnPropertyDescriptors.bind(Object);\nconst { run: { value } } = descriptors(wrapper);\nvalue(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'all property descriptors unknown member callable fails closed',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst key = process.argv[2];\nObject.getOwnPropertyDescriptors(wrapper)[key].value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect descriptor callable through an object-held method alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst methods = { descriptor: Reflect.getOwnPropertyDescriptor };\nmethods.descriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect descriptor callable through an assigned object method alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst methods = {};\nmethods.descriptor = Reflect.getOwnPropertyDescriptor;\nmethods.descriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'all property descriptors returned by a local factory',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst all = () => Object.getOwnPropertyDescriptors(wrapper);\nall().run.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect descriptor callable through Function.prototype.call.bind',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = Function.prototype.call.bind(Reflect.getOwnPropertyDescriptor, Reflect);\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get reads a callable descriptor value',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.get(Object.getOwnPropertyDescriptor(wrapper, 'run'), 'value')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'property descriptor value callable through a method alias',
       rootSource:
         "import { wrapper } from './providers/index.js';\nconst descriptor = Object.getOwnPropertyDescriptor;\ndescriptor(wrapper, 'run').value(db);",
@@ -644,7 +732,7 @@ test('tracks constructable class providers and their instance methods', () => {
   assert.match(result.blockingReasons.join('\n'), /runner\.ts/u);
 });
 
-test('does not treat ordinary data or side-effect-free reflective reads as callable providers', () => {
+test('does not treat direct data or side-effect-free reflective reads as callable providers', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const provider = 'server/src/data/governance-schema/provider.ts';
   const baselineProvider =
@@ -655,9 +743,13 @@ test('does not treat ordinary data or side-effect-free reflective reads as calla
     "import * as provider from './provider.js';\nregistry.map(provider.config);",
     "import * as provider from './provider.js';\nReflect.get(provider, 'config');",
     "import * as provider from './provider.js';\nObject.getOwnPropertyDescriptor(provider, 'config');",
+    "import * as provider from './provider.js';\nReflect.getOwnPropertyDescriptor(provider, 'config');",
+    "import * as provider from './provider.js';\nObject.getOwnPropertyDescriptors(provider).config;",
+    "import * as provider from './provider.js';\nconst descriptors = Object.getOwnPropertyDescriptors;\ndescriptors(provider).config;",
     "import * as provider from './provider.js';\nconst descriptor = Object.getOwnPropertyDescriptor;\ndescriptor(provider, 'config');",
     "import * as provider from './provider.js';\nconst get = Reflect.get.bind(Reflect);\nget(provider, 'config');",
     "import * as provider from './provider.js';\nconst descriptor = Object.getOwnPropertyDescriptor.bind(Object);\ndescriptor(provider, 'config');",
+    "import * as provider from './provider.js';\nconst methods = { descriptor: Object.getOwnPropertyDescriptor };\nmethods.descriptor(provider, 'config');",
   ]) {
     const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
       changedPaths: [provider],
@@ -1121,6 +1213,8 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
     'CREATE TABLE safe_types(amount numeric(10, 2), label varchar(255), created_at timestamp(6));',
     'CREATE TABLE safe_generated(first text, lowered text GENERATED ALWAYS AS (pg_catalog.lower(first)) STORED);',
     'ALTER TABLE safe_addition ADD COLUMN note numeric(10, 2);',
+    'ALTER TABLE safe_addition ADD COLUMN nullable_note text;',
+    'ALTER TABLE safe_addition ADD COLUMN builtin_note pg_catalog.text;',
     "ALTER TABLE safe_addition ADD COLUMN escaped text DEFAULT E'foo\\\',bar; -- DROP';",
     "ALTER TABLE safe_addition ADD COLUMN quoted text DEFAULT 'DROP, SELECT;';",
     'ALTER TABLE safe_addition ADD COLUMN dollar text DEFAULT $$DROP, SELECT;$$;',
@@ -1291,6 +1385,16 @@ for (const statement of [
   'ALTER TABLE records ADD COLUMN score integer CONSTRAINT positive CHECK (score > 0);',
   "ALTER TABLE records ADD COLUMN x bigint DEFAULT nextval('shared_seq');",
   'ALTER TABLE records ADD COLUMN period tstzrange EXCLUDE USING gist (period WITH &&);',
+  'ALTER TABLE records ADD COLUMN id serial;',
+  'ALTER TABLE records ADD COLUMN id serial2;',
+  'ALTER TABLE records ADD COLUMN id serial4;',
+  'ALTER TABLE records ADD COLUMN id serial8;',
+  'ALTER TABLE records ADD COLUMN owner public.required_text;',
+  'ALTER TABLE records ADD COLUMN id bigint GENERATED ALWAYS AS IDENTITY;',
+  'ALTER TABLE records ADD COLUMN derived integer GENERATED ALWAYS AS (public.expensive_immutable(id)) STORED;',
+  'ALTER TABLE records ADD COLUMN x integer DEFAULT (1 !@! 1);',
+  'ALTER TABLE records ADD COLUMN x integer DEFAULT -1;',
+  'ALTER TABLE records ADD COLUMN x integer DEFAULT +1;',
   'ALTER TABLE records ADD CONSTRAINT safe CHECK (destructive_function(id));',
   `ALTER TABLE records ADD COLUMN x bigint DEFAULT "nextval"('shared_seq');`,
   'ALTER TABLE records ADD CONSTRAINT safe CHECK ("destructive_function"(id));',

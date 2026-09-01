@@ -84,6 +84,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
       runId: dispatch.targetRunId, tenantId, sessionId, userId: 'user-a', metadata: { schedulerState: 'staged' },
     });
     await store.markDispatched(dispatch);
+    await runs.markStatus(dispatch.targetRunId, 'running', 'automation_execution_started');
     const context = {
       runId: dispatch.targetRunId,
       sessionId,

@@ -99,7 +99,7 @@ type WsEventPayload =
     | { type: 'steering_cancelled'; sessionId: string; sourceRunId: string; clientMsgId?: string; reason: string }
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; clientMsgId?: string; sessionId?: string; status?: ChatQueueItem['status']; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
     | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; sourceRunId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
-    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
+    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
@@ -125,7 +125,7 @@ type WsEventPayload =
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
-    | { type: 'error'; message: string }
+    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'respond_error'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'rejected' | 'not_found' | 'expired'; error: string; reason?: string; retryable?: boolean }
     | { type: 'respond_ok'; sessionId?: string; interactionId: string; requestId?: string; clientAttemptId?: string; version?: number; authEpoch?: number; generation?: number; status?: 'accepted' | 'duplicate' | 'resolved'; response?: Record<string, unknown> }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
@@ -146,7 +146,7 @@ type WsEventPayload =
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
     // epoch/recovery are optional for N-1 servers; current servers always include them.
     | { type: 'sync_ok'; seq: number; epoch?: string; events: Array<{ seq: number; event: WsEvent }> }
-    | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery }
+    | { type: 'sync_overflow'; seq: number; epoch?: string; recovery?: WsSyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number }
     | { type: 'pong'; seq?: number; epoch?: string; probe?: boolean };
 
 

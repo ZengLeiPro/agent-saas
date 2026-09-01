@@ -1,12 +1,14 @@
 import {
   presentationSemanticSignature,
   selectBusinessStepPresentation,
+  selectCanonicalErrorPresentation,
   selectErrorPresentation,
   selectPresentationCardViewModel,
   selectSharedPresentation,
   selectToolPresentation,
   selectUnknownCardViewModel,
   type BusinessStepEventItem,
+  type CanonicalError,
   type CardViewModel,
   type RawPresentationGate,
   type RenderTimelineItem,
@@ -72,6 +74,14 @@ export function adaptErrorPresentationForWeb(
   gate?: RawPresentationGate,
 ): WebPresentationSurface {
   return surface(item.id, 'error', selectErrorPresentation(item, gate));
+}
+
+/** ErrorCard, Toast and chat failures consume the same Shared canonical semantics. */
+export function adaptCanonicalErrorForWeb(
+  failure: CanonicalError,
+  key = `error:${failure.correlationId ?? failure.kind}`,
+): WebPresentationSurface {
+  return surface(key, 'error', selectCanonicalErrorPresentation(failure));
 }
 
 /** Existing BusinessStep components receive this Shared-owned semantic projection. */

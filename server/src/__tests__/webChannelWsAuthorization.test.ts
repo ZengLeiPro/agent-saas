@@ -42,7 +42,7 @@ async function listen(server: http.Server): Promise<number> {
   return address.port;
 }
 
-describe('WebChannel WebSocket auth-mode chat boundary', () => {
+describe('WebChannel WebSocket auth-mode structured chat boundary', () => {
   const channels: WebChannel[] = [];
   const servers: http.Server[] = [];
   const workspaces: string[] = [];
@@ -196,7 +196,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     otherWs.send(JSON.stringify({ action: 'abort', streamId }));
     await waitUntil(() => otherMessages.some((message) => message.data?.type === 'error'));
     expect(otherMessages.filter((message) => message.data?.type === 'error').at(-1)?.data)
-      .toEqual({ type: 'error', message: 'Access denied' });
+      .toMatchObject({ type: 'error', code: 'auth_revoked' });
 
     ownerWs.send(JSON.stringify({ action: 'abort', streamId }));
     await waitUntil(() => ownerMessages.some((message) => message.data?.type === 'abort_ok'));
@@ -250,7 +250,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
       type: 'active_stream', sessionId: 'tenant-sensitive-session', active: false,
     });
     await (channel as any).handleAbortAsync(client, { action: 'abort', runId: 'tenant-sensitive-run' });
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+    expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     expect((await runStore.get('tenant-sensitive-run'))?.status).toBe('pending');
   });
 
@@ -292,7 +292,7 @@ describe('WebChannel WebSocket auth-mode chat boundary', () => {
     expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'active_stream', sessionId, active: false });
 
     await (channel as any).handleAbortAsync(client, { action: 'abort', streamId });
-    expect(ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+    expect(ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     expect((channel as any).activeStreams.get(streamId).controller.signal.aborted).toBe(false);
   });
 

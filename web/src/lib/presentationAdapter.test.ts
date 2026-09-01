@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { selectRenderModel, type BusinessStepEventItem, type TodoItem } from '@agent/shared';
+import { mapCanonicalError, selectRenderModel, type BusinessStepEventItem, type TodoItem } from '@agent/shared';
 import {
   adaptBusinessStepPresentationForMobile,
+  adaptCanonicalErrorForMobile,
   adaptErrorPresentationForMobile,
   adaptToolPresentationForMobile,
   adaptUnknownPresentationForMobile,
 } from '../../../mobile/src/lib/presentationAdapter';
 import {
   adaptBusinessStepPresentationForWeb,
+  adaptCanonicalErrorForWeb,
   adaptErrorPresentationForWeb,
   adaptToolPresentationForWeb,
   adaptUnknownPresentationForWeb,
@@ -56,6 +58,21 @@ describe('M20-05 Web/Mobile shared presentation parity', () => {
     expect(web.card).toEqual(mobile.card);
     expect(web.semantic).toBe(mobile.semantic);
     expect(web.accessibility.label).toBe(mobile.accessibility.label);
+  });
+
+  it('keeps canonical ErrorCard/Toast/chat semantics and one action identical across platforms', () => {
+    const failure = mapCanonicalError({
+      source: 'ws', code: 'server_draining', correlationId: 'corr-parity-123',
+      legacyMessage: 'token=PARITY_SECRET /workspace/private',
+    });
+    const web = adaptCanonicalErrorForWeb(failure);
+    const mobile = adaptCanonicalErrorForMobile(failure);
+    expect(mobile.presentation).toEqual(web.presentation);
+    expect(mobile.semantic).toBe(web.semantic);
+    expect(mobile.accessibility.label).toBe(web.accessibility.label);
+    expect(web.presentation.busy).toBe(false);
+    expect(web.presentation.recoveryAction).toEqual({ kind: 'retry', label: '重试' });
+    expect(JSON.stringify({ web, mobile })).not.toMatch(/PARITY_SECRET|\/workspace/);
   });
 
   it('keeps failed/cancelled Error semantics terminal and raw-free on both platforms', () => {

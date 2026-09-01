@@ -1,3 +1,5 @@
+import type { CanonicalError } from './canonicalError';
+import { presentCanonicalError, restoreCanonicalSessionFailure } from './canonicalError';
 import type { TodoStatus } from './extractTodos';
 import { normalizeTodoDisplay } from './extractTodos';
 import type { PresentationBlock, PresentationTone, RecordItem } from './presentation/types';
@@ -27,7 +29,10 @@ export type SharedPresentationStatus =
   | 'unknown';
 
 export interface SharedPresentationRecoveryAction {
-  kind: 'retry' | 'switch_model' | 'view_billing';
+  kind:
+    | 'retry' | 'reconnect' | 'relogin' | 'open-settings' | 'choose-agent'
+    | 'reupload' | 'refresh' | 'full-sync' | 'contact-admin' | 'none'
+    | 'switch_model' | 'view_billing';
   label: string;
 }
 
@@ -492,13 +497,15 @@ export function selectToolPresentation(
   };
 }
 
-/** Safe fallback used before any runtime error classifier or renderer-specific wording. */
+/** Safe fallback used before any runtime error classifier or renderer-specific wording (M40-05 uses the canonical adapter below). */
 export function selectErrorPresentation(
   item: unknown,
   gate?: RawPresentationGate,
 ): SharedPresentation {
   const source = record(boundedSnapshot(item));
   const sourceMessage = record(record(source?.source)?.message);
+  const canonicalFailure = restoreCanonicalSessionFailure(sourceMessage?.canonicalFailure);
+  if (canonicalFailure) return selectCanonicalErrorPresentation(canonicalFailure);
   const rawStatus = source?.status;
   const cancelled = rawStatus === 'cancelled' || sourceMessage?.severity === 'cancelled';
   const error = record(source?.error);
@@ -531,6 +538,24 @@ export function selectErrorPresentation(
     ...(recoveryAction ? { recoveryAction } : {}),
     busy: false,
     showRaw: canShowRawPresentation(gate),
+  };
+}
+
+/** Adapts M40-05 canonical failures into the existing renderer-neutral error model. */
+export function selectCanonicalErrorPresentation(failure: CanonicalError): SharedPresentation {
+  const canonical = presentCanonicalError(failure);
+  return {
+    title: canonical.title,
+    status: 'failed',
+    statusLabel: '执行失败',
+    tone: canonical.tone,
+    summary: canonical.message,
+    detail: [],
+    display: [],
+    evidence: [],
+    ...(canonical.primaryAction ? { recoveryAction: canonical.primaryAction } : {}),
+    busy: false,
+    showRaw: false,
   };
 }
 

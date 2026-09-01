@@ -5,6 +5,7 @@
 
 import type { MessageItem } from '../types/message';
 import type { WsEvent } from '../types/ws';
+import { mapCanonicalError } from './canonicalError';
 import { formatRuntimeFailureMessage, isInsufficientCreditsFailure, isSameRunMessage } from './runtimeErrorMessage';
 import { hasTrailingActiveWork, resolveRuntimeStatusPatch, type RuntimeStatus, type RuntimeStatusOptions } from './runtimeStatusTransition';
 import { normalizeToolPresentation } from './toolPresentation';
@@ -294,6 +295,14 @@ export function processWsEvent(
   }
 
   if (data.type === "chat_rejected") {
+    const canonicalFailure = mapCanonicalError({
+      source: 'chat_rejected',
+      code: data.code,
+      reasonCode: data.reason_code,
+      retryAfterMs: typeof data.retryAfter === 'number' ? data.retryAfter * 1000 : undefined,
+      correlationId: data.correlationId,
+      legacyMessage: data.reason,
+    });
     // duplicate_inflight（2026-08-04 P2-9 配套）：重试复用原 clientMsgId 撞上
     // 「服务端其实已处理完」——消息确实送达过，翻已发送而不是对着一条成功的消息报错。
     if (data.reason_code === "duplicate_inflight") {
@@ -305,7 +314,7 @@ export function processWsEvent(
             : m
         ));
       }
-      ctx.onChatRejected?.(data.client_msg_id, data.reason_code, data.reason);
+      ctx.onChatRejected?.(data.client_msg_id, data.reason_code, canonicalFailure.safeMessage);
       return;
     }
     removeRuntimeStatusMessages(msg);
@@ -314,15 +323,15 @@ export function processWsEvent(
     if (idx >= 0) {
       msg.updateMessageAt(idx, (m) => {
         if (m.type === "user") {
-          return { ...m, status: "failed" as const, failedReason: data.reason };
+          return { ...m, status: "failed" as const, failedReason: canonicalFailure.safeMessage };
         }
         if (m.type === "user-voice") {
-          return { ...m, status: "failed" as const, failedReason: data.reason };
+          return { ...m, status: "failed" as const, failedReason: canonicalFailure.safeMessage };
         }
         return m;
       });
     }
-    ctx.onChatRejected?.(data.client_msg_id, data.reason_code, data.reason);
+    ctx.onChatRejected?.(data.client_msg_id, data.reason_code, canonicalFailure.safeMessage);
     return;
   }
 
@@ -603,8 +612,19 @@ export function processWsEvent(
 
   if (data.type === "error") {
     removeRuntimeStatusMessages(msg);
-    const owner = ctx.sessionOwnerRef?.current;
-    msg.addMessage({ type: "text", content: `Error: ${data.message || "Unknown error"}`, ...(owner ? { owner } : {}) });
+    const canonicalFailure = mapCanonicalError({
+      source: 'ws',
+      code: data.code,
+      retryAfterMs: typeof data.retryAfter === 'number' ? data.retryAfter * 1000 : undefined,
+      correlationId: data.correlationId,
+      legacyMessage: data.message,
+    });
+    msg.addMessage({
+      type: "system-error",
+      content: canonicalFailure.safeMessage,
+      severity: "error",
+      canonicalFailure,
+    });
     return;
   }
 

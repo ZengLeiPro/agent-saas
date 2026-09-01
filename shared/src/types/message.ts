@@ -2,6 +2,7 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { ToolResultMetadata } from '../lib/toolResultMetadata';
 import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
+import type { CanonicalError } from '../lib/canonicalError';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
 /**
@@ -204,6 +205,8 @@ export type MessageItem =
       severity?: 'error' | 'cancelled' | 'billing';
       failureKind?: RuntimeFailureKind;
       recoveryAction?: RuntimeRecoveryAction;
+      /** M40-05 sanitized cross-transport authority; safe to persist and restore. */
+      canonicalFailure?: CanonicalError;
       /** 终态所属 runtime run；用于 live 与 durable refresh 稳定去重。 */
       runId?: string;
       timestamp?: number;

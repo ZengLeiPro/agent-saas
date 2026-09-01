@@ -1,3 +1,5 @@
+import { mapCanonicalError, type CanonicalError } from './canonicalError';
+
 /** M30-03: pure, platform-independent auth/connection degraded-mode contract, reducer and presenter. */
 export type CapabilityMode = 'normal' | 'degraded' | 'blocked';
 export type CapabilityChannel = 'web' | 'mobile';
@@ -122,6 +124,20 @@ export function presentCapability(state: AuthConnectionCapabilityStatus): Capabi
     actions: state.allowedActions.map(action => ({ action, label: ACTION_LABELS[action], leavesApp: action === 'use_system_browser_sso' })),
     blocksSensitiveOperations: !isSensitiveCapabilityAllowed(state),
   };
+}
+
+/** M40-05 reuses the capability authority and only adapts its reason into canonical UI semantics. */
+export function capabilityStatusToCanonicalError(state: AuthConnectionCapabilityStatus): CanonicalError | undefined {
+  if (state.mode === 'normal') return undefined;
+  const code = state.reasonCode === 'tenant_policy_disabled' || state.reasonCode === 'unknown_server_capability'
+    ? 'capability_unavailable'
+    : state.reasonCode;
+  return mapCanonicalError({
+    source: 'runtime',
+    code,
+    correlationId: state.correlationId,
+    online: state.reasonCode === 'network_offline' ? false : undefined,
+  });
 }
 
 export function isSensitiveCapabilityAllowed(state: AuthConnectionCapabilityStatus): boolean {

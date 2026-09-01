@@ -70,6 +70,7 @@ export type {
 } from './lib/sessionMetadataReducer';
 
 export {
+  capabilityStatusToCanonicalError,
   evaluateCapability,
   reduceCapabilityStatus,
   unknownServerCapability,
@@ -1147,7 +1148,7 @@ export {
   isSameRunMessage,
 } from './lib/runtimeErrorMessage';
 
-// Lib - message grouping (pure function)
+// Lib - message grouping (pure function).
 export { groupMessages } from './lib/groupMessages';
 export type { GroupMessagesOptions } from './lib/groupMessages';
 
@@ -1176,7 +1177,34 @@ export {
   selectRenderModel,
 } from './lib/renderModel';
 
-// M40-04 authoritative renderer-neutral Tool/Error/BusinessStep presentation presenters
+// M40-05 canonical cross-transport error taxonomy, safe presentation and recovery policy.
+export {
+  CANONICAL_ERROR_KINDS,
+  canonicalErrorMapper,
+  createOneTapRecovery,
+  decideCanonicalRetry,
+  executeCanonicalRecovery,
+  mapCanonicalError,
+  presentCanonicalError,
+  restoreCanonicalSessionFailure,
+  serializeCanonicalSessionFailure,
+} from './lib/canonicalError';
+export type {
+  CanonicalError,
+  CanonicalErrorInput,
+  CanonicalErrorKind,
+  CanonicalErrorPresentation,
+  CanonicalErrorSource,
+  CanonicalErrorTone,
+  CanonicalRecoveryAction,
+  CanonicalRecoveryActionKind,
+  CanonicalRecoveryContext,
+  CanonicalRecoveryResult,
+  RetryDecision,
+  RetryPolicyInput,
+} from './lib/canonicalError';
+
+// M40-04/05 authoritative renderer-neutral Tool/Error/BusinessStep presentation presenters
 export {
   PRESENTATION_STRUCTURE_BUDGET,
   SHARED_PRESENTATION_PRESENTERS,
@@ -1184,6 +1212,7 @@ export {
   listSharedPresentationKinds,
   presentationSemanticSignature,
   selectBusinessStepPresentation,
+  selectCanonicalErrorPresentation,
   selectErrorPresentation,
   selectPresentationCardViewModel,
   selectPresentationViewModel,

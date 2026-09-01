@@ -16,6 +16,7 @@ import { registerAuthDebugModeRoute } from "./authDebugMode.js";
 import { validateTenantUserPolicy } from "./authUserPolicy.js";
 import type { UserStore } from "../data/users/store.js";
 import { ActiveRunApprovalPolicyConvergenceError, savePreferencesWithApprovalConvergence } from "../runtime/accountApprovalPreferenceService.js";
+import { sendStructuredHttpError } from "../runtime/structuredError.js";
 import type { RunStore } from "../runtime/runStoreTypes.js";
 import { withTenantDebugModeLock } from "../data/tenants/debugModeLock.js";
 import type { UserInfo, UserRecord } from "../data/users/types.js";
@@ -774,10 +775,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
             loginLogFilePath,
           ).catch(() => {});
         }
-        res.set("Retry-After", String(rate.retryAfter));
-        res
-          .status(429)
-          .json({ error: `登录尝试过于频繁，请 ${rate.retryAfter} 秒后再试` });
+        sendStructuredHttpError(res, 429, {
+          code: "rate_limited",
+          retryAfterMs: (rate.retryAfter ?? 1) * 1000,
+        });
         return;
       }
 

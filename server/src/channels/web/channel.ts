@@ -14,6 +14,7 @@ import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import { getWebDisplayConfig, isDedicatedWebTool, projectArtifactDelivery } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
+import { buildStructuredError, canonicalFailureLogRecord } from '../../runtime/structuredError.js';
 import type {
   WebMessageDisplayConfig,
   BaseChannel,
@@ -377,16 +378,27 @@ export class WebChannel implements BaseChannel {
     else this.wsSend(ws, data);
   }
 
-  /** 发送消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
+  /** 发送结构化消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
   private sendChatRejected(ws: WebSocket, clientMsgId: string, reasonCode: ChatRejectReasonCode, reason: string): void {
     if (ws.readyState !== ws.OPEN) return;
-    const data = { type: 'chat_rejected' as const, client_msg_id: clientMsgId, reason_code: reasonCode, reason };
+    const { failure, payload } = buildStructuredError({ source: 'chat_rejected', code: reasonCode });
+    // Auditable metadata only: never log reason/body/credential.
+    chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'chat_rejected' })));
+    const data = {
+      type: 'chat_rejected' as const,
+      client_msg_id: clientMsgId,
+      reason_code: reasonCode,
+      // N-1 display fallback only. Current clients classify exclusively by code.
+      reason,
+      code: payload.code,
+      correlationId: payload.correlationId,
+      ...(payload.retryAfter !== undefined ? { retryAfter: payload.retryAfter } : {}),
+    };
     if (this.eventBus) {
       this.eventBus.emitReply(ws, data);
     } else {
       this.wsSend(ws, data);
     }
-    chatLogger.warn(`[chat_rejected] ${reasonCode}: ${reason} (client_msg_id=${clientMsgId})`);
   }
 
   /** 企业专家会话的后续动作统一重新鉴权，避免停用/取消指派后从特殊路径继续执行。 */
@@ -560,7 +572,7 @@ export class WebChannel implements BaseChannel {
           });
           break;
         default:
-          this.wsSend(client.ws, { type: 'error', message: `Unknown action: ${(msg as any).action}` });
+          this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       }
     });
 
@@ -1133,12 +1145,18 @@ export class WebChannel implements BaseChannel {
       ...(eventCursor ? { eventCursor } : {}),
       data,
     };
-    if (this.wsServer) {
+    if (this.wsServer && typeof this.wsServer.sendTo === 'function') {
       this.wsServer.sendTo(ws, envelope);
     } else if (ws.readyState === ws.OPEN) {
-      // Unit-only construction before start(); production always uses WsServer.
+      // Unit-only construction before start() or with a partial WsServer test double.
       ws.send(JSON.stringify(envelope));
     }
+  }
+
+  private sendCanonicalWsError(ws: WebSocket, code: string, status?: number): void {
+    const { failure, payload } = buildStructuredError({ source: 'ws', code, ...(status ? { status } : {}) });
+    chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status })));
+    this.wsSend(ws, { type: 'error', ...payload });
   }
 
   // ── 消息处理器 ──────────────────────────────────────
@@ -1606,9 +1624,8 @@ export class WebChannel implements BaseChannel {
     // legacy 直连路径的 chat tail 覆盖整段模型流，abort 必须立即执行，不能排队到流结束。
     if (!this.config.enqueueRuntime) {
       void this.handleAbortAsync(client, msg).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        chatLogger.warn(`abort failed: ${message}`);
-        this.wsSend(client.ws, { type: 'error', message });
+        void err;
+        this.sendCanonicalWsError(client.ws, 'unknown');
       });
       return;
     }
@@ -1623,9 +1640,8 @@ export class WebChannel implements BaseChannel {
       }
     };
     void next.then(cleanup, (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      chatLogger.warn(`abort failed: ${message}`);
-      this.wsSend(client.ws, { type: 'error', message });
+      void err;
+      this.sendCanonicalWsError(client.ws, 'unknown');
       cleanup();
     });
   }
@@ -1634,14 +1650,14 @@ export class WebChannel implements BaseChannel {
     const runId = typeof msg.runId === 'string' && msg.runId.trim() ? msg.runId.trim() : undefined;
     const streamId = typeof msg.streamId === 'string' && msg.streamId.trim() ? msg.streamId.trim() : undefined;
     if (!runId && !streamId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
 
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const legacyEntry = !runId && streamId ? this.activeStreams.get(streamId) : undefined;
     if (runId && streamId && active && active.streamId !== streamId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId and streamId do not match' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 409);
       return;
     }
     const entry = active?.entry ?? legacyEntry;
@@ -1662,7 +1678,7 @@ export class WebChannel implements BaseChannel {
         if (hasSensitiveTarget && this.sensitiveActionAccessError(client, {
           tenantId: record.tenantId, ownerUserId: record.userId,
         })) {
-          this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+          this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
           return;
         }
       }
@@ -1671,12 +1687,12 @@ export class WebChannel implements BaseChannel {
     if (entry?.userId) {
       hasSensitiveTarget = true;
       if (this.sensitiveActionAccessError(client, { ownerUserId: entry.userId })) {
-        this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+        this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
         return;
       }
     }
     if (!hasSensitiveTarget && this.anonymousBindingAccessError(client, entry?.ws)) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
 
@@ -1826,7 +1842,7 @@ export class WebChannel implements BaseChannel {
       tenantId: record.tenantId,
       ownerUserId: record.userId,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const result = runStore.cancelPendingUserMessage
@@ -1967,18 +1983,18 @@ export class WebChannel implements BaseChannel {
 
   private async handleApprovalPolicy(client: WsClient, msg: import('./wsTypes.js').WsApprovalPolicyMessage): Promise<void> {
     if (!client.user) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const runStore = this.config.enqueueRuntime?.runStore;
     const runId = typeof msg.runId === 'string' ? msg.runId.trim() : '';
     if (!runStore || !runId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
     const record = await runStore.get(runId);
     if (!record) {
-      this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 404);
       return;
     }
     // 归属校验：重新读取 actor；平台 admin 可跨租户，其他用户只能改自己的 run。
@@ -1987,11 +2003,11 @@ export class WebChannel implements BaseChannel {
       ownerUserId: record.userId,
       ownerOnly: true,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     if (msg.sessionId && record.sessionId !== msg.sessionId) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const approvalPolicy = wantsToolAutoApproval(msg.approvalPolicy)
@@ -2008,19 +2024,19 @@ export class WebChannel implements BaseChannel {
   private async handleRunStatus(client: WsClient, msg: WsRunStatusMessage): Promise<void> {
     const runId = typeof msg.runId === 'string' ? msg.runId.trim() : '';
     if (!runId || !this.config.enqueueRuntime?.runStore) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
     const record = await this.config.enqueueRuntime.runStore.get(runId);
     if (!record) {
-      this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 404);
       return;
     }
     if (this.sensitiveActionAccessError(client, {
       tenantId: record.tenantId,
       ownerUserId: record.userId,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     // Status response carries the same server-owned liveness DTO as queue/detail/runtime snapshots.

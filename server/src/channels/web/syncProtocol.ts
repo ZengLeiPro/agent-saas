@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ChatQueueSnapshot, RunLiveness } from '@agent/shared';
 
 export const AUTHORITATIVE_SYNC_RECOVERY_VERSION = 1 as const;
@@ -54,6 +55,8 @@ export interface SyncOverflowRecovery {
 
 export interface SyncOverflowFrame {
   type: 'sync_overflow';
+  code: 'sync_overflow';
+  correlationId: string;
   seq: number;
   epoch: string;
   recovery: SyncOverflowRecovery;
@@ -61,7 +64,7 @@ export interface SyncOverflowFrame {
 
 export function buildSyncOverflowFrame(seq: number, epoch: string, session?: SyncSessionSnapshot): SyncOverflowFrame {
   return {
-    type: 'sync_overflow', seq, epoch,
+    type: 'sync_overflow', code: 'sync_overflow', correlationId: randomUUID(), seq, epoch,
     recovery: {
       version: AUTHORITATIVE_SYNC_RECOVERY_VERSION,
       authoritative: true,

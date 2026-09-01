@@ -10,6 +10,7 @@ import type { Server as HttpServer, IncomingMessage } from 'http';
 import { URL } from 'url';
 import jwt from 'jsonwebtoken';
 import { chatLogger } from '../../utils/logger.js';
+import { buildStructuredError, canonicalFailureLogRecord } from '../../runtime/structuredError.js';
 import type { WsAuthMessage, WsInboundMessage, WsPingMessage } from './wsTypes.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
@@ -257,7 +258,11 @@ export class WsServer {
                 } catch (err) {
                     chatLogger.warn('WS invalid message:', err);
                     if (!client.authenticated) ws.close(4401, 'Authentication required');
-                    else this.sendTo(ws, { data: { type: 'error', message: 'Invalid message format' } });
+                    else {
+                        const { failure, payload } = buildStructuredError({ source: 'ws', code: 'client_misconfigured', status: 400 });
+                        chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status: 400 })));
+                        this.sendTo(ws, { data: { type: 'error', ...payload } });
+                    }
                 }
             });
 

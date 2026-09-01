@@ -197,13 +197,13 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     it('缺 runId/streamId → error；runId 与 streamId 指向不同流 → error', async () => {
       const rig = makeRig();
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
 
       (rig.channel as any).activeStreams.set('st-a', {
         controller: new AbortController(), userId: USER.sub, ws: rig.ws, sessionId: 's-a', runId: 'run-mm',
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-mm', streamId: 'st-other' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId and streamId do not match' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
     });
 
     it('非 admin 中止他人活跃流（legacy streamId 路径）→ Access denied，流不受影响', async () => {
@@ -213,7 +213,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         controller, userId: OTHER_USER.sub, ws: rig.ws, sessionId: 's-b',
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', streamId: 'st-b' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect(controller.signal.aborted).toBe(false);
     });
 
@@ -330,7 +330,7 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleAbortAsync(wsClient(rig.ws, USER), { action: 'abort', runId: 'run-other-1' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect((await runStore.get('run-other-1'))?.status).toBe('running');
     });
 
@@ -461,11 +461,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       const runStore = new MemoryRunStore();
       const rig = policyRig(runStore);
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws), { action: 'approval_policy', runId: 'r' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), { action: 'approval_policy', runId: '  ' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), { action: 'approval_policy', runId: 'missing' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Run not found' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
     });
 
     it('组织 admin 不能改他人 run；owner 传错 sessionId 也拒绝', async () => {
@@ -476,12 +476,12 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, ORG_ADMIN), {
         action: 'approval_policy', runId: 'run-pol-1', approvalPolicy: { autoApproveTools: true },
       });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       // owner + sessionId 不匹配
       await (rig.channel as any).handleApprovalPolicy(wsClient(rig.ws, USER), {
         action: 'approval_policy', runId: 'run-pol-1', sessionId: 'wrong-session', approvalPolicy: { autoApproveTools: true },
       });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
       expect((await runStore.get('run-pol-1'))?.metadata?.approvalPolicy).toBeUndefined();
     });
 
@@ -521,11 +521,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
         enqueueRuntime: { scheduler: {} as any, runStore, sessionCatalog: {} as any, enabled: true },
       });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: '' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'runId is required' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'client_misconfigured' });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'missing' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Run not found' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'stale_generation' });
       await (rig.channel as any).handleRunStatus(wsClient(rig.ws, USER), { action: 'run_status', runId: 'run-st-0' });
-      expect(rig.ws.sent.at(-1)?.data).toEqual({ type: 'error', message: 'Access denied' });
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'error', code: 'auth_revoked' });
     });
 
     it('成功：回 session_status，携带 metadata.streamId 与 statusReason', async () => {

@@ -65,7 +65,7 @@ describe('M20-03 server authoritative sync protocol', () => {
     expect(log.getCurrentSeq('user-a')).toBe(1);
   });
 
-  it('carries reducer-compatible queue/runtime/interaction/session recovery data on overflow', () => {
+  it('carries structured code/correlation and reducer-compatible authoritative recovery data on overflow', () => {
     const queueSnapshot = buildChatQueueSnapshot('s1', [
       run({ runId: 'queued-run', sessionId: 's1', status: 'pending', idempotencyKey: 'msg-queued' }),
       run({ runId: 'done-run', sessionId: 's1', status: 'completed', idempotencyKey: 'msg-done' }),
@@ -79,6 +79,8 @@ describe('M20-03 server authoritative sync protocol', () => {
 
     expect(frame).toMatchObject({
       type: 'sync_overflow',
+      code: 'sync_overflow',
+      correlationId: expect.any(String),
       seq: 205,
       epoch: 'boot-a',
       recovery: {

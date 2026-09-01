@@ -211,7 +211,7 @@ export type WsDownstreamEvent =
     | { type: 'queue_item_updated'; item: ChatQueueItem }
     | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
     | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; sessionId?: string; clientMsgId?: string; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
-    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
+    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
@@ -234,7 +234,7 @@ export type WsDownstreamEvent =
     | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
-    | { type: 'error'; message: string }
+    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
@@ -252,5 +252,5 @@ export type WsDownstreamEvent =
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
     | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery }
+    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number }
     | { type: 'pong'; seq?: number; epoch: string; probe?: boolean };

@@ -1093,11 +1093,12 @@ export const MessageItem = memo(function MessageItem({
       explicitSessionToggle: true,
     } : undefined);
     const recovery = presentation.recoveryAction;
+    // Typed recovery actions must never fall through to blind retry.
     const recoveryHandler = recovery?.kind === 'view_billing'
       ? requestOpenBillingBadge
       : recovery?.kind === 'switch_model'
         ? onSwitchModel
-        : onRetry
+        : recovery?.kind === 'retry' && onRetry
           ? () => onRetry(message)
           : undefined;
     return (

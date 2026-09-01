@@ -334,10 +334,14 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     );
     const user = ctrl.messages.find((m) => m.type === 'user') as Extract<MessageItem, { type: 'user' }>;
     expect(user.status).toBe('failed');
-    expect(user.failedReason).toBe('会话锁定');
+    expect(user.failedReason).toBe('该交互已被处理或更新，请刷新查看最新状态。');
     // runtime_status 被清掉
     expect(ctrl.messages.some((m) => m.type === 'runtime_status')).toBe(false);
-    expect(hooks.onChatRejected).toHaveBeenCalledWith('c1', 'session_locked', '会话锁定');
+    expect(hooks.onChatRejected).toHaveBeenCalledWith(
+      'c1',
+      'session_locked',
+      '该交互已被处理或更新，请刷新查看最新状态。',
+    );
   });
 
   it('user_message：正常新增并透传消费身份；client_msg_id 相同则去重', () => {
@@ -995,13 +999,19 @@ describe('processWsEvent - 会话元数据事件', () => {
 });
 
 describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
-  it('error：清状态条并追加 Error 文本', () => {
+  it('structured error：清状态条并追加 canonical 安全终态，不复制 raw message', () => {
     const ctrl = makeController([{ id: 'r', type: 'runtime_status', status: 'running' }]);
     const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'error', message: '出错了' }, ctx);
+    dispatch({
+      type: 'error',
+      code: 'tls_untrusted',
+      correlationId: 'corr-ws-123',
+      message: 'token=WS_SECRET /workspace/private stack trace',
+    }, ctx);
     expect(ctrl.messages.some((m) => m.type === 'runtime_status')).toBe(false);
-    const text = ctrl.messages.find((m) => m.type === 'text') as Extract<MessageItem, { type: 'text' }>;
-    expect(text.content).toBe('Error: 出错了');
+    const error = ctrl.messages.find((m) => m.type === 'system-error') as Extract<MessageItem, { type: 'system-error' }>;
+    expect(error.canonicalFailure).toMatchObject({ kind: 'tls_untrusted', terminal: true, correlationId: 'corr-ws-123' });
+    expect(JSON.stringify(error)).not.toMatch(/WS_SECRET|workspace|stack trace/);
   });
 
   it('buffer_overflow：返回 buffer_overflow', () => {

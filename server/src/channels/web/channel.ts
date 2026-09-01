@@ -2956,9 +2956,35 @@ export class WebChannel implements BaseChannel {
       confidence?: number;
     } | undefined;
     const gateIdentity = sessionOwner ?? userIdentity;
+    const anonymousDefaultTenant = !(this.config.authEnabled ?? Boolean(this.config.jwtSecret)) && !user
+      ? DEFAULT_TENANT_ID
+      : undefined;
+    const gateTenantId = gateIdentity?.tenantId ?? anonymousDefaultTenant;
     let agentTarget: AgentTarget;
     if (validSessionId) {
-      const resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateIdentity?.tenantId);
+      let resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateTenantId);
+      if (
+        resolvedTarget.status === 'unproven'
+        && anonymousDefaultTenant
+        && gateTranscriptPath
+        && gateSessionMeta
+        && gateSessionMeta.agentTarget === undefined
+        && !gateSessionMeta.orgAgentId
+        && (gateSessionMeta.tenantId === undefined || gateSessionMeta.tenantId === anonymousDefaultTenant)
+      ) {
+        // No-auth ownerless sessions retain connection ownership semantics, but their legacy
+        // personal target is upgraded server-side to the one permitted default tenant.
+        // Do not synthesize a user/session owner: resume, abort and ask_user stay WS-bound.
+        agentTarget = { kind: 'personal', tenantId: anonymousDefaultTenant };
+        try {
+          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
+          resolvedTarget = { status: 'bound', target: agentTarget, needsMigration: false };
+        } catch {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
+          return;
+        }
+      }
       if (resolvedTarget.status === 'unproven') {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
         this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '历史会话缺少可证明的 Agent 绑定，已阻止继续发送');
@@ -2993,13 +3019,13 @@ export class WebChannel implements BaseChannel {
         }
         agentTarget = incomingAgentTarget;
       } else {
-        // N-1 新会话保留其显式 wire 语义；历史会话迁移绝不使用该缺省。
+        // N-1 新会话保留其显式 wire 语义；no-auth 缺省由服务端限定默认 tenant，历史迁移不使用该缺省。
         agentTarget = requestedOrgAgentId
-          ? { kind: 'org-agent', tenantId: gateIdentity?.tenantId ?? '', orgAgentId: requestedOrgAgentId }
-          : { kind: 'personal', tenantId: gateIdentity?.tenantId ?? '' };
+          ? { kind: 'org-agent', tenantId: gateTenantId ?? '', orgAgentId: requestedOrgAgentId }
+          : { kind: 'personal', tenantId: gateTenantId ?? '' };
       }
     }
-    if (!gateIdentity?.tenantId || agentTarget.tenantId !== gateIdentity.tenantId) {
+    if (!gateTenantId || agentTarget.tenantId !== gateTenantId) {
       this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
       this.sendChatRejected(ws, clientMsgId, 'access_denied', 'Agent target 不属于当前组织');
       return;
@@ -3008,7 +3034,7 @@ export class WebChannel implements BaseChannel {
     const isPlatformCommand = isCompactCommand(resolvedMessage);
     if (isPlatformCommand) deliveryMode = 'queue';
     if (orgAgentId) {
-      const accessError = this.orgAgentActionAccessError(client, orgAgentId, agentTarget.tenantId, gateIdentity.username);
+      const accessError = this.orgAgentActionAccessError(client, orgAgentId, agentTarget.tenantId, gateIdentity?.username);
       if (accessError) {
         // 跨租户/缺失/停用/未指派一律同码防枚举；历史可读、发送阻断。
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');

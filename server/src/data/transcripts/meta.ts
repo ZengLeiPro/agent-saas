@@ -254,7 +254,7 @@ export function resolveSessionAgentTarget(
 }
 
 /**
- * 跨进程原子绑定/迁移 target。已绑定会话只能确认同一 target，绝不允许后续请求改绑。
+ * 跨进程原子绑定/迁移 target。tenant 与已绑定会话都只能确认同一 target，绝不允许后续请求改绑。
  */
 export async function ensureSessionAgentTargetBinding(
   transcriptPath: string,
@@ -269,6 +269,9 @@ export async function ensureSessionAgentTargetBinding(
     }
     if (resolved.status === 'unproven' && existing.agentTarget !== undefined) {
       throw new Error('SESSION_AGENT_TARGET_INVALID');
+    }
+    if (existing.tenantId && existing.tenantId !== target.tenantId) {
+      throw new Error('SESSION_AGENT_TARGET_MISMATCH');
     }
     if (existing.orgAgentId && (target.kind !== 'org-agent' || existing.orgAgentId !== target.orgAgentId)) {
       throw new Error('SESSION_AGENT_TARGET_MISMATCH');

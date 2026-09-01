@@ -167,7 +167,7 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
-test('tracks imported callbacks through unknown registrars, aliases, containers, and barrels', () => {
+test('tracks imported callbacks through class fields, nested members, and re-exports', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const barrel = 'server/src/data/governance-schema/providers/index.ts';
   const provider = 'server/src/data/governance-schema/providers/run.ts';
@@ -177,6 +177,12 @@ test('tracks imported callbacks through unknown registrars, aliases, containers,
     {
       label: 'array map callback',
       rootSource: "import { run } from './providers/run.js';\n[db].map(run);",
+      extraTree: {},
+    },
+    {
+      label: 'static class field callable alias',
+      rootSource:
+        "import { run } from './providers/run.js';\nclass Runner { static execute = run; }\nRunner.execute(db);",
       extraTree: {},
     },
     {
@@ -259,6 +265,138 @@ test('tracks imported callbacks through unknown registrars, aliases, containers,
       extraTree: {},
     },
     {
+      label: 'exported object member callable from an empty provider baseline',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper.run(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'destructured object member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst { run } = wrapper;\nrun(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'object member callable assigned to a local alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst execute = wrapper.run;\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'object alias member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst alias = wrapper;\nalias.run(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'assigned object alias member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nlet alias;\nalias = wrapper;\nalias.run(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'renamed destructured member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst { run: execute } = wrapper;\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'computed string object member callable',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper['run'](db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'nested object member callable',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper.nested.run(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { nested: { run } };",
+      },
+    },
+    {
+      label: 'dynamic computed object member callable fails closed',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst key = 'run';\nwrapper[key](db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'nested renamed destructured member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst { nested: { run: execute } } = wrapper;\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { nested: { run } };",
+      },
+    },
+    {
+      label: 'destructuring assignment member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nlet execute;\n({ run: execute } = wrapper);\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'logical assignment member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nlet execute;\nexecute ||= wrapper.run;\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'object member callable through an alias and re-export',
+      rootSource: "import { migrated } from './providers/index.js';\nmigrated.run(db);",
+      extraTree: {
+        [barrel]: "export { wrapper as migrated } from './wrapper.js';",
+        'server/src/data/governance-schema/providers/wrapper.ts':
+          "import { run } from './run.js';\nconst base = { run };\nexport const wrapper = base;",
+      },
+    },
+    {
+      label: 'object member callable returned by a factory',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper.run(db);",
+      extraTree: {
+        [barrel]:
+          "import { run } from './run.js';\nconst makeWrapper = (callback) => ({ run: callback });\nexport const wrapper = makeWrapper(run);",
+      },
+    },
+    {
+      label: 'object member callable returned by a named zero-argument factory',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper.run(db);",
+      extraTree: {
+        [barrel]:
+          "import { run } from './run.js';\nfunction makeWrapper() { return { run }; }\nexport const wrapper = makeWrapper();",
+      },
+    },
+    {
+      label: 'object member callable through a namespace spread',
+      rootSource: "import { wrapper } from './providers/index.js';\nwrapper.run(db);",
+      extraTree: {
+        [barrel]: "import * as danger from './run.js';\nexport const wrapper = { ...danger };",
+      },
+    },
+    {
+      label: 'default-exported object member callable',
+      rootSource: "import wrapper from './providers/index.js';\nwrapper.run(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport default { run };",
+      },
+    },
+    {
       label: 'barrel Promise callback',
       rootSource:
         "import { runMigration } from './providers/index.js';\nPromise.resolve(db).then(runMigration);",
@@ -285,6 +423,23 @@ test('tracks imported callbacks through unknown registrars, aliases, containers,
     assert.equal(result.ok, false, callbackCase.label);
     assert.match(result.blockingReasons.join('\n'), /run\.ts/u, callbackCase.label);
   }
+});
+
+test('tracks constructable class providers and their instance methods', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/providers/runner.ts';
+  const rootSource = "import { Runner } from './providers/runner.js';\nnew Runner(db).run();";
+  const baselineProvider = 'export class Runner { run() {} }';
+  const targetProvider = "export class Runner { run() { db.query('DROP TABLE users'); } }";
+  const result = plan(targetProvider, addedSourceDiff("db.query('DROP TABLE users');"), {
+    changedPaths: [provider],
+    baselines: { [root]: rootSource, [provider]: baselineProvider },
+    targets: { [root]: rootSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff("db.query('DROP TABLE users');") },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /runner\.ts/u);
 });
 
 test('does not treat ordinary imported data arguments as callable providers', () => {
@@ -761,6 +916,8 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
     'ALTER /* outer /* nested DROP, SELECT; */ comment */ TABLE safe_addition ADD COLUMN nested text;',
     "ALTER TABLE safe_addition ADD CONSTRAINT safe_check CHECK (id <> '');",
     'ALTER TABLE safe_addition ADD CONSTRAINT safe_owner CHECK (owner_id IS NOT NULL);',
+    'ALTER TABLE safe_addition ADD CONSTRAINT safe_positive CHECK ((id > 0)) NOT VALID;',
+    'ALTER TABLE safe_addition ADD CHECK (owner_id IS NOT NULL);',
     'ALTER TABLE safe_addition VALIDATE CONSTRAINT safe_check;',
   ]) {
     const validSource = sqlSource(valid);
@@ -788,6 +945,16 @@ test('rejects unknown and context-confused function calls inside allowed CREATE 
     'CREATE TABLE unsafe_default(id integer DEFAULT numeric(1));',
     'CREATE TABLE unsafe_literal_default(id integer DEFAULT 1);',
     'CREATE TABLE unsafe_literal_check(id integer CHECK (id > 0));',
+    'ALTER TABLE records ADD CONSTRAINT records_pkey PRIMARY KEY (id);',
+    'ALTER TABLE records ADD CONSTRAINT records_email_key UNIQUE (email);',
+    'ALTER TABLE records ADD CONSTRAINT records_owner_fkey FOREIGN KEY (owner_id) REFERENCES users(id);',
+    'ALTER TABLE records ADD CONSTRAINT records_excl EXCLUDE USING gist (period WITH &&);',
+    'ALTER TABLE records ADD CONSTRAINT unsafe_operator CHECK (id !@! 1);',
+    'ALTER TABLE records ADD PRIMARY KEY (id);',
+    'ALTER TABLE records ADD UNIQUE (email);',
+    'ALTER TABLE records ADD FOREIGN KEY (owner_id) REFERENCES users(id);',
+    'ALTER TABLE records ADD EXCLUDE USING gist (period WITH &&);',
+    'ALTER TABLE records ADD CHECK (id !@! 1);',
     'CREATE TABLE unsafe_partition(id integer) PARTITION BY RANGE (id);',
     "CREATE TABLE unsafe_check(id integer CHECK (varchar(id) <> ''));",
     'CREATE INDEX unsafe_idx ON users (evil.lower(name));',

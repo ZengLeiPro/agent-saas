@@ -30,6 +30,8 @@ const GOVERNANCE_MIGRATION_PROVIDER_PATH =
 
 const ALLOWED_EXPAND_ALTER_PATTERN =
   /^ALTER\s+TABLE\s+\S+\s+(?:ADD\s+(?:COLUMN\s+)?|ADD\s+CONSTRAINT\b|VALIDATE\s+CONSTRAINT\b)/iu;
+const ADD_TABLE_CONSTRAINT_PATTERN =
+  /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?(?:CHECK|PRIMARY\s+KEY|UNIQUE|FOREIGN\s+KEY|EXCLUDE)\b/iu;
 const ALLOWED_EXPAND_CREATE_PATTERN =
   /^CREATE\s+(?:(?:UNIQUE\s+)?INDEX(?:\s+CONCURRENTLY)?|TABLE|SEQUENCE)\b/iu;
 const ALLOWED_CREATE_PAREN_KEYWORDS = new Set(['as', 'check', 'unique', 'with']);
@@ -316,6 +318,7 @@ function isAllowedExpandSqlStatement(statement) {
     UNKNOWN_SQL_PATTERN.test(statement) ||
     /\\[A-Za-z!?]/u.test(statement) ||
     hasRiskyAddColumn(statement) ||
+    hasUnprovenAddConstraint(statement) ||
     hasUnprovenAlterFunction(statement) ||
     hasUnprovenCreateFunction(statement) ||
     hasUnprovenCreateExpression(statement)
@@ -547,10 +550,32 @@ function hasUnprovenAlterFunction(value) {
   );
 }
 
+function hasUnprovenAddConstraint(value) {
+  const identifier =
+    '(?:(?:[A-Za-z_]|[^\\x00-\\x7F])(?:[A-Za-z0-9_$]|[^\\x00-\\x7F])*|"identifier")';
+  const literal = "(?:''|[-+]?\\d+(?:\\.\\d+)?|TRUE|FALSE|NULL)";
+  const nullPredicate = new RegExp(`^${identifier}\\s+IS\\s+(?:NOT\\s+)?NULL$`, 'iu');
+  const literalComparison = new RegExp(`^${identifier}\\s*(?:=|<>|<=|>=|<|>)\\s*${literal}$`, 'iu');
+  return operationSlices(value, 'ALTER').some((statement) => {
+    if (!ADD_TABLE_CONSTRAINT_PATTERN.test(statement)) return false;
+    const match = statement.match(
+      /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?CHECK\s*\(([\s\S]*)\)\s*(?:NOT\s+VALID)?$/iu,
+    );
+    if (!match) return true;
+    let expression = match[1].trim();
+    while (
+      expression.startsWith('(') &&
+      matchingParenthesis(expression, 0) === expression.length - 1
+    )
+      expression = expression.slice(1, -1).trim();
+    return !nullPredicate.test(expression) && !literalComparison.test(expression);
+  });
+}
+
 function hasRiskyAddColumn(value) {
   return operationSlices(value, 'ALTER').some(
     (statement) =>
-      !/^ALTER\s+TABLE\s+\S+\s+ADD\s+CONSTRAINT\b/iu.test(statement) &&
+      !ADD_TABLE_CONSTRAINT_PATTERN.test(statement) &&
       /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+[^;\n]*\bNOT\s+NULL\b/iu.test(
         statement,
       ),
@@ -693,23 +718,33 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     ts.forEachChild(node, collectCallTargetIdentifiers);
   };
   const memberReference = (node) => {
-    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression))
-      return { owner: node.expression.text, member: node.name.text };
-    if (
-      ts.isElementAccessExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.argumentExpression &&
-      ts.isStringLiteral(node.argumentExpression)
-    )
-      return { owner: node.expression.text, member: node.argumentExpression.text };
-    return undefined;
+    const members = [];
+    let current = node;
+    while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+      if (ts.isPropertyAccessExpression(current)) members.push(current.name.text);
+      else if (
+        current.argumentExpression &&
+        (ts.isStringLiteral(current.argumentExpression) ||
+          ts.isNoSubstitutionTemplateLiteral(current.argumentExpression))
+      )
+        members.push(current.argumentExpression.text);
+      else members.push('*');
+      current = current.expression;
+    }
+    if (!ts.isIdentifier(current) || members.length === 0) return undefined;
+    const path = members.reverse();
+    return { owner: current.text, member: path.includes('*') ? '*' : path.join('.') };
+  };
+  const addCalledMember = (owner, member) => {
+    const members = calledMemberBindings.get(owner) ?? new Set();
+    if (members.has(member)) return false;
+    members.add(member);
+    calledMemberBindings.set(owner, members);
+    return true;
   };
   const markCallableMember = (node) => {
     const reference = memberReference(node);
-    if (!reference) return;
-    const members = calledMemberBindings.get(reference.owner) ?? new Set();
-    members.add(reference.member);
-    calledMemberBindings.set(reference.owner, members);
+    if (reference) addCalledMember(reference.owner, reference.member);
   };
   const isCalledReference = (node) => {
     if (ts.isIdentifier(node)) return calledIdentifiers.has(node.text);
@@ -862,18 +897,105 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       visitCalls(statement);
   }
 
+  const propertyNameText = (name) => {
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))
+      return name.text;
+    if (ts.isComputedPropertyName(name) && ts.isStringLiteral(name.expression))
+      return name.expression.text;
+    return undefined;
+  };
   let calledAliasesChanged = true;
   while (calledAliasesChanged) {
     calledAliasesChanged = false;
     const collectAliasSources = (node) => {
+      const reference = memberReference(node);
+      if (reference) {
+        if (addCalledMember(reference.owner, reference.member)) calledAliasesChanged = true;
+        return;
+      }
       if (ts.isIdentifier(node) && !calledIdentifiers.has(node.text)) {
         calledIdentifiers.add(node.text);
         calledAliasesChanged = true;
       }
       ts.forEachChild(node, collectAliasSources);
     };
+    const propagateMembers = (initializer, members) => {
+      if (ts.isIdentifier(initializer)) {
+        for (const member of members)
+          if (addCalledMember(initializer.text, member)) calledAliasesChanged = true;
+        return;
+      }
+      const reference = memberReference(initializer);
+      if (reference)
+        for (const member of members)
+          if (addCalledMember(reference.owner, `${reference.member}.${member}`))
+            calledAliasesChanged = true;
+    };
+    const collectDestructuredMembers = (node, prefix = [], output = []) => {
+      if (ts.isIdentifier(node)) {
+        if (calledIdentifiers.has(node.text) && prefix.length > 0) output.push(prefix.join('.'));
+        return output;
+      }
+      if (ts.isObjectBindingPattern(node)) {
+        for (const element of node.elements) {
+          const member = propertyNameText(element.propertyName ?? element.name);
+          collectDestructuredMembers(element.name, member ? [...prefix, member] : ['*'], output);
+        }
+        return output;
+      }
+      if (ts.isArrayBindingPattern(node)) {
+        node.elements.forEach((element, index) => {
+          if (ts.isBindingElement(element))
+            collectDestructuredMembers(element.name, [...prefix, String(index)], output);
+        });
+        return output;
+      }
+      if (ts.isObjectLiteralExpression(node)) {
+        for (const property of node.properties) {
+          if (ts.isShorthandPropertyAssignment(property))
+            collectDestructuredMembers(property.name, [...prefix, property.name.text], output);
+          else if (ts.isPropertyAssignment(property)) {
+            const member = propertyNameText(property.name);
+            collectDestructuredMembers(
+              property.initializer,
+              member ? [...prefix, member] : ['*'],
+              output,
+            );
+          }
+        }
+      }
+      return output;
+    };
     const visitAliases = (node) => {
+      // Static field aliases are executable when their class member is invoked.
+      if (ts.isClassDeclaration(node) && node.name) {
+        const calledMembers = calledMemberBindings.get(node.name.text);
+        if (calledMembers)
+          for (const member of node.members) {
+            if (!member.name) continue;
+            const memberName = propertyNameText(member.name);
+            if (
+              calledMembers.has('*') ||
+              (memberName &&
+                [...calledMembers].some(
+                  (calledMember) =>
+                    calledMember === memberName || calledMember.startsWith(`${memberName}.`),
+                ))
+            ) {
+              if (ts.isPropertyDeclaration(member) && member.initializer)
+                collectAliasSources(member.initializer);
+              else collectAliasSources(member);
+            }
+          }
+      }
       if (ts.isVariableDeclaration(node) && node.initializer) {
+        if (ts.isIdentifier(node.name)) {
+          const members = calledMemberBindings.get(node.name.text);
+          if (members) propagateMembers(node.initializer, members);
+        } else if (ts.isObjectBindingPattern(node.name) || ts.isArrayBindingPattern(node.name)) {
+          const members = collectDestructuredMembers(node.name);
+          if (members.length > 0) propagateMembers(node.initializer, members);
+        }
         let bindingIsCalled = false;
         const visitBinding = (binding) => {
           if (ts.isIdentifier(binding) && calledIdentifiers.has(binding.text))
@@ -885,15 +1007,30 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       }
       if (
         ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        isCalledReference(node.left)
-      )
-        collectAliasSources(node.right);
+        [
+          ts.SyntaxKind.EqualsToken,
+          ts.SyntaxKind.BarBarEqualsToken,
+          ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+          ts.SyntaxKind.QuestionQuestionEqualsToken,
+        ].includes(node.operatorToken.kind)
+      ) {
+        if (ts.isIdentifier(node.left)) {
+          const members = calledMemberBindings.get(node.left.text);
+          if (members) propagateMembers(node.right, members);
+        } else {
+          const members = collectDestructuredMembers(node.left);
+          if (members.length > 0) propagateMembers(node.right, members);
+        }
+        if (isCalledReference(node.left)) collectAliasSources(node.right);
+        else if (ts.isIdentifier(node.left) && calledIdentifiers.has(node.left.text))
+          collectAliasSources(node.right);
+      }
       ts.forEachChild(node, visitAliases);
     };
     visitAliases(sourceFile);
   }
 
+  // Keep class and object member-qualified callable requests intact until import resolution.
   const callableLocalBindings = new Set(requestedCallableBindings);
   let callableAliasesChanged = true;
   while (callableAliasesChanged) {
@@ -907,12 +1044,131 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       )
         continue;
       for (const element of statement.exportClause.elements) {
-        if (
-          callableLocalBindings.has(element.name.text) &&
-          !callableLocalBindings.has((element.propertyName ?? element.name).text)
-        ) {
-          callableLocalBindings.add((element.propertyName ?? element.name).text);
-          callableAliasesChanged = true;
+        const exportedName = element.name.text;
+        const localName = (element.propertyName ?? element.name).text;
+        for (const binding of [...callableLocalBindings]) {
+          if (binding !== exportedName && !binding.startsWith(`${exportedName}.`)) continue;
+          const localBinding = `${localName}${binding.slice(exportedName.length)}`;
+          if (!callableLocalBindings.has(localBinding)) {
+            callableLocalBindings.add(localBinding);
+            callableAliasesChanged = true;
+          }
+        }
+      }
+    }
+  }
+
+  let callableMemberPropagationChanged = true;
+  while (callableMemberPropagationChanged) {
+    callableMemberPropagationChanged = false;
+    const addCallableBinding = (binding) => {
+      if (!callableLocalBindings.has(binding)) {
+        callableLocalBindings.add(binding);
+        callableMemberPropagationChanged = true;
+      }
+    };
+    const visitedFactories = new Set();
+    const collectRequestedMember = (initializer, members) => {
+      if (!initializer) return;
+      if (
+        ts.isParenthesizedExpression(initializer) ||
+        ts.isAsExpression(initializer) ||
+        ts.isTypeAssertionExpression(initializer) ||
+        ts.isNonNullExpression(initializer) ||
+        ts.isSatisfiesExpression(initializer)
+      ) {
+        collectRequestedMember(initializer.expression, members);
+        return;
+      }
+      if (members.length === 0) {
+        collectCallableReference(initializer);
+        return;
+      }
+      if (ts.isIdentifier(initializer)) {
+        addCallableBinding(`${initializer.text}.${members.join('.')}`);
+        return;
+      }
+      if (ts.isCallExpression(initializer) && ts.isIdentifier(initializer.expression)) {
+        const factoryName = initializer.expression.text;
+        const visitKey = `${factoryName}.${members.join('.')}`;
+        if (!visitedFactories.has(visitKey)) {
+          visitedFactories.add(visitKey);
+          const collectReturns = (node) => {
+            if (ts.isReturnStatement(node) && node.expression) {
+              collectRequestedMember(node.expression, members);
+              return;
+            }
+            ts.forEachChild(node, collectReturns);
+          };
+          for (const statement of sourceFile.statements) {
+            if (ts.isFunctionDeclaration(statement) && statement.name?.text === factoryName)
+              collectReturns(statement.body);
+            if (!ts.isVariableStatement(statement)) continue;
+            for (const declaration of statement.declarationList.declarations) {
+              if (
+                !ts.isIdentifier(declaration.name) ||
+                declaration.name.text !== factoryName ||
+                !declaration.initializer ||
+                (!ts.isArrowFunction(declaration.initializer) &&
+                  !ts.isFunctionExpression(declaration.initializer))
+              )
+                continue;
+              if (ts.isBlock(declaration.initializer.body))
+                collectReturns(declaration.initializer.body);
+              else collectRequestedMember(declaration.initializer.body, members);
+            }
+          }
+        }
+        for (const argument of initializer.arguments) collectCallableReference(argument);
+        return;
+      }
+      if (ts.isObjectLiteralExpression(initializer)) {
+        const [member, ...remaining] = members;
+        for (const property of initializer.properties) {
+          if (member === '*') {
+            if (ts.isSpreadAssignment(property))
+              collectRequestedMember(property.expression, members);
+            else if (ts.isPropertyAssignment(property))
+              collectRequestedMember(property.initializer, []);
+            else if (ts.isShorthandPropertyAssignment(property))
+              collectRequestedMember(property.name, []);
+            else collectCallTargetIdentifiers(property);
+            continue;
+          }
+          if (ts.isSpreadAssignment(property)) {
+            collectRequestedMember(property.expression, members);
+            continue;
+          }
+          const propertyName = property.name && propertyNameText(property.name);
+          if (propertyName !== member) continue;
+          if (ts.isPropertyAssignment(property))
+            collectRequestedMember(property.initializer, remaining);
+          else if (ts.isShorthandPropertyAssignment(property))
+            collectRequestedMember(property.name, remaining);
+          else collectCallTargetIdentifiers(property);
+        }
+        return;
+      }
+      collectCallableReference(initializer);
+    };
+    for (const statement of sourceFile.statements) {
+      if (ts.isExportAssignment(statement) && !statement.isExportEquals)
+        for (const binding of [...callableLocalBindings])
+          if (binding.startsWith('default.'))
+            collectRequestedMember(
+              statement.expression,
+              binding.slice('default.'.length).split('.'),
+            );
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+        const prefix = `${declaration.name.text}.`;
+        for (const binding of [...callableLocalBindings]) {
+          if (binding.startsWith(prefix))
+            collectRequestedMember(
+              declaration.initializer,
+              binding.slice(prefix.length).split('.'),
+            );
         }
       }
     }
@@ -921,6 +1177,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const dependencies = [];
   const requestedAll = requestedBindings.has('*');
   const requestedCallableAll = requestedCallableBindings.has('*');
+  // Callable member paths are preserved through aliases and re-exports.
   for (const statement of sourceFile.statements) {
     if (
       ts.isImportDeclaration(statement) &&
@@ -935,7 +1192,15 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       else {
         if (clause.name) {
           bindings.add('default');
-          if (
+          const calledMembers = calledMemberBindings.get(clause.name.text);
+          const callableMembers = [...callableLocalBindings]
+            .filter((binding) => binding.startsWith(`${clause.name.text}.`))
+            .map((binding) => binding.slice(clause.name.text.length + 1));
+          if (calledMembers) for (const member of calledMembers) callableMembers.push(member);
+          if (requestedCallableAll) callableBindings.add('default');
+          else if (callableMembers.length > 0)
+            for (const member of callableMembers) callableBindings.add(`default.${member}`);
+          else if (
             calledIdentifiers.has(clause.name.text) ||
             callableLocalBindings.has(clause.name.text)
           )
@@ -946,21 +1211,33 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
             bindings.add('*');
             const localName = clause.namedBindings.name.text;
             const calledMembers = calledMemberBindings.get(localName);
-            if (calledMembers) for (const member of calledMembers) callableBindings.add(member);
+            const callableMembers = [...callableLocalBindings]
+              .filter((binding) => binding.startsWith(`${localName}.`))
+              .map((binding) => binding.slice(localName.length + 1));
+            if (calledMembers) for (const member of calledMembers) callableMembers.push(member);
+            for (const member of callableMembers) callableBindings.add(member);
             if (
+              requestedCallableAll ||
               callableLocalBindings.has(localName) ||
-              (calledIdentifiers.has(localName) && !calledMembers?.size)
+              (calledIdentifiers.has(localName) && callableMembers.length === 0)
             )
               callableBindings.add('*');
           } else {
             for (const element of clause.namedBindings.elements) {
               if (element.isTypeOnly) continue;
               const importedName = (element.propertyName ?? element.name).text;
+              const localName = element.name.text;
               bindings.add(importedName);
-              if (
-                calledIdentifiers.has(element.name.text) ||
-                callableLocalBindings.has(element.name.text)
-              )
+              const calledMembers = calledMemberBindings.get(localName);
+              const callableMembers = [...callableLocalBindings]
+                .filter((binding) => binding.startsWith(`${localName}.`))
+                .map((binding) => binding.slice(localName.length + 1));
+              if (calledMembers) for (const member of calledMembers) callableMembers.push(member);
+              if (requestedCallableAll) callableBindings.add(importedName);
+              else if (callableMembers.length > 0)
+                for (const member of callableMembers)
+                  callableBindings.add(`${importedName}.${member}`);
+              else if (calledIdentifiers.has(localName) || callableLocalBindings.has(localName))
                 callableBindings.add(importedName);
             }
           }
@@ -998,15 +1275,29 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       } else if (ts.isNamespaceExport(statement.exportClause)) {
         if (requestedAll || requestedBindings.has(statement.exportClause.name.text))
           bindings.add('*');
-        if (requestedCallableAll || requestedCallableBindings.has(statement.exportClause.name.text))
+        if (
+          requestedCallableAll ||
+          [...requestedCallableBindings].some(
+            (binding) =>
+              binding === statement.exportClause.name.text ||
+              binding.startsWith(`${statement.exportClause.name.text}.`),
+          )
+        )
           callableBindings.add('*');
       } else {
         for (const element of statement.exportClause.elements) {
           if (element.isTypeOnly) continue;
           if (requestedAll || requestedBindings.has(element.name.text))
             bindings.add((element.propertyName ?? element.name).text);
-          if (requestedCallableAll || requestedCallableBindings.has(element.name.text))
+          if (requestedCallableAll)
             callableBindings.add((element.propertyName ?? element.name).text);
+          else
+            for (const binding of requestedCallableBindings) {
+              if (binding === element.name.text || binding.startsWith(`${element.name.text}.`))
+                callableBindings.add(
+                  `${(element.propertyName ?? element.name).text}${binding.slice(element.name.text.length)}`,
+                );
+            }
         }
       }
       const sideEffect =
@@ -1406,6 +1697,8 @@ function hasRequestedCallableExport(path, content, requestedCallableBindings) {
   }
 
   const exportedCallables = new Set();
+  const exportedValues = new Set();
+  // Functions and classes are directly callable/constructable exports.
   for (const statement of sourceFile.statements) {
     const exported = hasModifier(statement, ts.SyntaxKind.ExportKeyword);
     const defaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword);
@@ -1414,10 +1707,21 @@ function hasRequestedCallableExport(path, content, requestedCallableBindings) {
       else if (statement.name) exportedCallables.add(statement.name.text);
       continue;
     }
+    if (ts.isClassDeclaration(statement) && exported) {
+      const exportName = defaultExport ? 'default' : statement.name?.text;
+      if (exportName) {
+        exportedValues.add(exportName);
+        exportedCallables.add(exportName);
+      }
+      continue;
+    }
     if (ts.isVariableStatement(statement) && exported) {
       for (const declaration of statement.declarationList.declarations)
-        if (ts.isIdentifier(declaration.name) && callableLocals.has(declaration.name.text))
-          exportedCallables.add(declaration.name.text);
+        if (ts.isIdentifier(declaration.name)) {
+          exportedValues.add(declaration.name.text);
+          if (callableLocals.has(declaration.name.text))
+            exportedCallables.add(declaration.name.text);
+        }
       continue;
     }
     if (
@@ -1428,19 +1732,27 @@ function hasRequestedCallableExport(path, content, requestedCallableBindings) {
     ) {
       for (const element of statement.exportClause.elements) {
         if (element.isTypeOnly) continue;
+        exportedValues.add(element.name.text);
         const localName = (element.propertyName ?? element.name).text;
         if (callableLocals.has(localName)) exportedCallables.add(element.name.text);
       }
       continue;
     }
-    if (ts.isExportAssignment(statement) && callableInitializer(statement.expression))
-      exportedCallables.add(statement.isExportEquals ? '*' : 'default');
+    if (ts.isExportAssignment(statement)) {
+      exportedValues.add(statement.isExportEquals ? '*' : 'default');
+      if (callableInitializer(statement.expression))
+        exportedCallables.add(statement.isExportEquals ? '*' : 'default');
+    }
   }
 
   return (
-    (requestedCallableBindings.has('*') && exportedCallables.size > 0) ||
+    (requestedCallableBindings.has('*') &&
+      (exportedCallables.size > 0 || exportedValues.size > 0)) ||
     [...requestedCallableBindings].some(
-      (binding) => exportedCallables.has(binding) || exportedCallables.has('*'),
+      (binding) =>
+        exportedCallables.has(binding) ||
+        exportedCallables.has('*') ||
+        (binding.includes('.') && exportedValues.has(binding.split('.')[0])),
     )
   );
 }

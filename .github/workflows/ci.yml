@@ -2306,13 +2306,19 @@ jobs:
             echo "COMPAT_RELEASE_ID=$release_id"
           } >> "$GITHUB_ENV"
 
-      - name: Install OSS clients
+      - name: Install and verify OSS clients
         run: |
           set -euo pipefail
           curl -sL https://gosspublic.alicdn.com/ossutil/v2/2.1.2/ossutil-2.1.2-linux-amd64.zip -o /tmp/ossutil.zip
           unzip -o -q /tmp/ossutil.zip -d /tmp
           sudo install /tmp/ossutil-2.1.2-linux-amd64/ossutil /usr/local/bin/ossutil
-          ossutil version
+          ossutil version | grep -F '2.1.2'
+          ossutil cp --help > "$RUNNER_TEMP/ossutil-cp-help.txt"
+          ossutil stat --help > "$RUNNER_TEMP/ossutil-stat-help.txt"
+          grep -Eq -- '(^|[[:space:],])-f([[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-cp-help.txt"
+          grep -Eq -- '(^|[[:space:],])--region([=[:space:],]|$)' "$RUNNER_TEMP/ossutil-stat-help.txt"
+          node scripts/release/put-web-asset-create-only.mjs --self-check
           curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz \
             -o "$RUNNER_TEMP/aliyun.tgz"
           tar xzf "$RUNNER_TEMP/aliyun.tgz" -C "$RUNNER_TEMP"
@@ -2461,10 +2467,15 @@ jobs:
           set -euo pipefail
           : "${OSS_ACCESS_KEY_ID:?Missing secret OSS_WEB_DEPLOY_AK_ID}"
           : "${OSS_ACCESS_KEY_SECRET:?Missing secret OSS_WEB_DEPLOY_AK_SECRET}"
+          credentials="$RUNNER_TEMP/web-oss-sdk-credentials.json"
+          umask 077
+          jq -n --arg accessKeyId "$OSS_ACCESS_KEY_ID" \
+            --arg accessKeySecret "$OSS_ACCESS_KEY_SECRET" \
+            '{accessKeyId:$accessKeyId,accessKeySecret:$accessKeySecret}' > "$credentials"
           cd web/dist
           # 1) hash 静态资源：最终字节只允许创建或复用，禁止覆盖既有对象键。
           bash ../../scripts/release/upload-web-assets-immutable.sh \
-            assets "oss://$OSS_BUCKET/assets"
+            assets "oss://$OSS_BUCKET/assets" "$credentials"
           # 2) 图标与预置资源：短缓存
           for d in icons kaikai-presets; do
             [ -d "$d" ] && ossutil cp "$d" "oss://$OSS_BUCKET/$d" -r -f --region "$OSS_REGION" \

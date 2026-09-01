@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 asset_root="${1:?asset root is required}"
 target_base="${2:?target OSS prefix is required}"
+credentials_path="${3:?OSS SDK credentials file is required}"
+oss_module_path="${4:-}"
 region="${OSS_REGION:?OSS_REGION is required}"
 test -d "$asset_root"
+test -s "$credentials_path"
 asset_root="${asset_root%/}"
 case "$target_base" in oss://*/*) ;; *) echo 'target must be an OSS prefix' >&2; exit 1 ;; esac
 target_base="${target_base%/}"
@@ -24,7 +28,6 @@ while IFS= read -r -d '' source_path; do
   cache_control='public, max-age=31536000, immutable'
   expected_type="$(file --brief --mime-type "$source_path")"
   expected_encoding=''
-  cp_args=(--region "$region" --cache-control "$cache_control" --content-type "$expected_type")
   compressed=''
   case "$key" in
     *.js|*.mjs)
@@ -34,8 +37,6 @@ while IFS= read -r -d '' source_path; do
       upload_path="$compressed"
       expected_type='text/javascript; charset=utf-8'
       expected_encoding=gzip
-      cp_args=(--region "$region" --cache-control "$cache_control" \
-        --content-type "$expected_type" --content-encoding "$expected_encoding")
       ;;
     *.css)
       css_assets=$((css_assets + 1))
@@ -44,20 +45,24 @@ while IFS= read -r -d '' source_path; do
       upload_path="$compressed"
       expected_type='text/css; charset=utf-8'
       expected_encoding=gzip
-      cp_args=(--region "$region" --cache-control "$cache_control" \
-        --content-type "$expected_type" --content-encoding "$expected_encoding")
       ;;
     *) ;;
   esac
 
   put_log="$(mktemp)"
-  # The OSS request header makes create-only atomic; only FileAlreadyExists may enter reuse proof.
-  if ossutil cp "$upload_path" "$target_uri" "${cp_args[@]}" \
-    --meta 'x-oss-forbid-overwrite:true' > "$put_log" 2>&1; then
+  # ali-oss sends the real conditional request header; exit 17 means an exact 409 conflict.
+  set +e
+  node "$script_dir/put-web-asset-create-only.mjs" \
+    "$upload_path" "$bucket" "${target_uri#"oss://$bucket/"}" "$region" \
+    "$cache_control" "$expected_type" "$expected_encoding" \
+    "$credentials_path" "$oss_module_path" > "$put_log" 2>&1
+  put_status=$?
+  set -e
+  if [ "$put_status" -eq 0 ]; then
     uploaded=$((uploaded + 1))
   else
-    if ! grep -Eiq 'ErrorCode[=: ]+FileAlreadyExists([[:space:],}]|$)|FileAlreadyExists([[:space:],}]|$)' \
-      "$put_log"; then
+    if [ "$put_status" -ne 17 ] || \
+      ! grep -Fxq 'OSS_CREATE_ONLY_CONFLICT FileAlreadyExists status=409' "$put_log"; then
       cat "$put_log" >&2
       rm -f "$put_log" "$compressed"
       exit 1

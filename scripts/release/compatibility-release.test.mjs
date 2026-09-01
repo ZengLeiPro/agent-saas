@@ -299,6 +299,23 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.doesNotMatch(acsDeploy, /APP_DIR="\$ECS_DEPLOY_ROOT"\n/u);
 });
 
+test('pins and probes the real OSS client capabilities used by immutable uploads', async () => {
+  const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
+  assert.match(workflow, /ossutil-2\.1\.2-linux-amd64\.zip/u);
+  assert.match(workflow, /ossutil cp --help[\s\S]*ossutil stat --help/u);
+  assert.match(workflow, /grep -Eq -- '[^']*--region/u);
+  assert.match(workflow, /put-web-asset-create-only\.mjs --self-check/u);
+  assert.doesNotMatch(workflow, /ossutil cp[^\n]*--meta/u);
+  assert.match(
+    workflow,
+    /credentials="\$RUNNER_TEMP\/web-oss-sdk-credentials\.json"[\s\S]*umask 077[\s\S]*accessKeyId[\s\S]*upload-web-assets-immutable\.sh[\s\S]*"\$credentials"/u,
+  );
+  const helper = await readFile('scripts/release/put-web-asset-create-only.mjs', 'utf8');
+  assert.match(helper, /'x-oss-forbid-overwrite': 'true'/u);
+  assert.doesNotMatch(helper, /process\.env\.(?:OSS_ACCESS|ALI_OSS)/u);
+  assert.doesNotMatch(helper, /process\.argv[^\n]*(?:accessKeyId|accessKeySecret)/u);
+});
+
 test('snapshots, restores, and proves every mutable Web key class and metadata', async () => {
   const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
   const snapshotStart = workflow.indexOf(

@@ -247,7 +247,7 @@ jobs:
       - name: Install frozen workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint native Maestro flows and test receipt contracts
+      - name: Lint native Maestro flows and test M60-02 receipt contracts
         run: pnpm -F mobile lint:maestro && pnpm -F mobile test:m60-02
 
       - name: Run M60-03 native mutation contracts and clean prebuild policy gate
@@ -260,6 +260,9 @@ jobs:
 
       - name: Run M60-05 schema, redaction, intake config and release evidence contracts
         run: pnpm -F @agent/shared exec vitest run src/telemetry/mobileTelemetry.test.ts && pnpm -F mobile test:m60-05 && pnpm -F server exec vitest run src/telemetry/mobileTelemetry.test.ts
+
+      - name: Run M70-01 plan/schema/mock validator, negative, YAML and security contracts
+        run: pnpm -F mobile test:m70-01
 
       - name: Upload bounded normalized M60-03 failure evidence
         if: failure()

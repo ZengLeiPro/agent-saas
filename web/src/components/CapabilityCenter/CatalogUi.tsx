@@ -1,16 +1,10 @@
-import type { ReactNode } from "react";
-import { Search } from "lucide-react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 /**
  * 能力中心表面语言
@@ -22,7 +16,7 @@ import {
  */
 export const CAPABILITY_SURFACE = "rounded-xl bg-card ring-1 ring-border/60";
 export const CAPABILITY_SURFACE_HOVER =
-  "transition-all hover:-translate-y-0.5 hover:ring-brand-200 hover:shadow-[0_6px_18px_-8px_rgba(15,23,42,0.18)]";
+  "transition-[transform,box-shadow,--tw-ring-color] [transition-duration:var(--dur-base)] [transition-timing-function:var(--ease-out-expo)] hover:-translate-y-0.5 hover:ring-brand-200 hover:shadow-[0_8px_24px_-10px_rgba(15,23,42,0.20)] active:translate-y-0 active:duration-75 motion-reduce:transform-none motion-reduce:transition-none";
 /** 空态 / 提示位：不承载操作，用虚线描边而非实线，底色比白框略深一档 */
 export const CAPABILITY_EMPTY_SURFACE = "rounded-xl border border-dashed border-border/70 bg-muted/20";
 /** 框内次级容器（说明块、分组底）：无描边，仅靠底色与白框区分 */
@@ -45,10 +39,10 @@ const SOURCE_META: Record<CapabilitySource, { label: string; className: string }
   },
 };
 
-export function CapabilitySourceBadge({ source }: { source: CapabilitySource }) {
+export function CapabilitySourceBadge({ source, className }: { source: CapabilitySource; className?: string }) {
   const meta = SOURCE_META[source];
   return (
-    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium", meta.className)}>
+    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-2xs font-medium", meta.className, className)}>
       {meta.label}
     </span>
   );
@@ -57,16 +51,19 @@ export function CapabilitySourceBadge({ source }: { source: CapabilitySource }) 
 export function CapabilityLogo({
   label,
   children,
+  tone,
   className,
 }: {
   label: string;
   children?: ReactNode;
+  tone?: string;
   className?: string;
 }) {
   return (
     <span
       className={cn(
         "flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-50 text-base font-semibold text-brand-700 ring-1 ring-inset ring-brand-100 dark:bg-brand-900/35 dark:text-brand-200 dark:ring-brand-800",
+        tone,
         className,
       )}
       aria-hidden="true"
@@ -168,6 +165,7 @@ export interface CatalogFilterOption<T extends string> {
   value: T;
   label: string;
   count?: number;
+  icon?: ReactNode;
 }
 
 export function CapabilityFilterTabs<T extends string>({
@@ -201,15 +199,22 @@ export function CapabilityFilterTabs<T extends string>({
             role="tab"
             aria-selected={selected}
             className={cn(
-              "shrink-0 rounded-full border border-transparent px-3 py-1.5 text-sm transition-colors",
+              "group/chip relative shrink-0 rounded-full border px-3 py-1.5 text-sm transition-[color,background-color,border-color,box-shadow] duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
               selected
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                ? "border-brand-200 bg-brand-50 font-medium text-brand-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] dark:border-brand-800 dark:bg-brand-900/40 dark:text-brand-200"
+                : "border-transparent bg-muted/50 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
             )}
             onClick={() => onValueChange(option.value)}
           >
-            {option.label}
-            {typeof option.count === "number" ? <span className="ml-1 text-xs opacity-70">{option.count}</span> : null}
+            <span className="inline-flex items-center gap-1.5">
+              {option.icon}
+              <span>{option.label}</span>
+            </span>
+            {typeof option.count === "number" ? (
+              <span className="ml-1.5 text-xs tabular-nums opacity-60">
+                {option.count}
+              </span>
+            ) : null}
           </button>
         );
       })}
@@ -254,12 +259,33 @@ export function CatalogToolbar<T extends string>({
   onFilterChange?: (filter: T) => void;
   actions?: ReactNode;
 }) {
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditable =
+        target?.isContentEditable ||
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT";
+      const isShortcut =
+        event.key === "/" || ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k");
+      if (!isShortcut || isEditable || event.altKey) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
   return (
     <div className="mb-5 space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative min-w-0 flex-1 sm:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchInputRef}
             type="search"
             name="capability-catalog-search"
             autoComplete="off"
@@ -267,8 +293,26 @@ export function CatalogToolbar<T extends string>({
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="h-10 rounded-xl border-transparent bg-muted/50 pl-9 shadow-none focus-visible:bg-card"
+            className="h-10 rounded-xl border-transparent bg-muted/50 pl-9 pr-20 shadow-none focus-visible:bg-card"
           />
+          {query ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-9 top-1/2 size-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                onQueryChange("");
+                searchInputRef.current?.focus();
+              }}
+              aria-label="清空搜索"
+            >
+              <X className="size-3.5" />
+            </Button>
+          ) : null}
+          <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-border/70 bg-card px-1.5 py-0.5 font-sans text-2xs text-muted-foreground sm:block">
+            /
+          </kbd>
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>

@@ -3,7 +3,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Plus } from "lucide-react";
-import { CapabilityLogo, ConnectorCatalogCard } from "./CatalogUi";
+import { CapabilityLogo, CatalogToolbar, ConnectorCatalogCard } from "./CatalogUi";
 
 describe("ConnectorCatalogCard", () => {
   it("整卡支持键盘打开详情，快捷动作不会冒泡触发详情", () => {
@@ -32,5 +32,21 @@ describe("ConnectorCatalogCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "连接 测试连接器" }));
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onOpenDetail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CatalogToolbar", () => {
+  it("支持斜杠快捷键聚焦搜索框", () => {
+    render(
+      <CatalogToolbar
+        query=""
+        onQueryChange={vi.fn()}
+        searchPlaceholder="搜索能力"
+      />,
+    );
+
+    const input = screen.getByRole("searchbox", { name: "搜索能力" });
+    fireEvent.keyDown(window, { key: "/" });
+    expect(document.activeElement).toBe(input);
   });
 });

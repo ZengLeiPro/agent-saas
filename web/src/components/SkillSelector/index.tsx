@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { skillIcon } from "@/lib/skillIcons";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { ArrowLeft, Check, ChevronRight, Loader2, Pencil, Plus, SearchX, Trash2, Upload } from "lucide-react";
+import { skillCategoryClass, skillIcon } from "@/lib/skillIcons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -54,7 +54,13 @@ function sourceDescription(source: CapabilitySource): string {
   return "由平台统一维护，再由组织决定是否向成员开放。";
 }
 
-export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescription, embedded = false }: SkillSelectorProps) {
+export function SkillSelector({
+  targetUsername,
+  onBack,
+  headerTitle,
+  headerDescription,
+  embedded = false,
+}: SkillSelectorProps) {
   const { data, loading, error, saving, saveSelection, refresh } = useMySkills(targetUsername);
   const [localSelections, setLocalSelections] = useState<Record<string, boolean>>({});
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -102,45 +108,85 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return skills.filter((skill) => {
       const source = skillSource(skill);
-      const matchesSource = activeFilter === "all"
-        || (activeFilter === "enabled" ? localSelections[skill.id] === true : source === activeFilter);
-      const matchesQuery = !normalizedQuery
-        || skill.name.toLocaleLowerCase().includes(normalizedQuery)
-        || skill.description.toLocaleLowerCase().includes(normalizedQuery);
+      const matchesSource =
+        activeFilter === "all" ||
+        (activeFilter === "enabled" ? localSelections[skill.id] === true : source === activeFilter);
+      const matchesQuery =
+        !normalizedQuery ||
+        skill.name.toLocaleLowerCase().includes(normalizedQuery) ||
+        skill.description.toLocaleLowerCase().includes(normalizedQuery);
       return matchesSource && matchesQuery;
     });
   }, [activeFilter, localSelections, query, skills]);
 
-  const enabledCount = Object.values(localSelections).filter(Boolean).length;
-  const filters = useMemo(() => [
-    { value: "all" as const, label: "全部", count: skills.length },
-    { value: "enabled" as const, label: "已启用", count: enabledCount },
-    { value: "platform" as const, label: "平台提供", count: skills.filter((skill) => skillSource(skill) === "platform").length },
-    { value: "organization" as const, label: "组织提供", count: skills.filter((skill) => skillSource(skill) === "organization").length },
-    { value: "personal" as const, label: "我创建的", count: skills.filter((skill) => skillSource(skill) === "personal").length },
-  ], [enabledCount, skills]);
-
-  const toggle = useCallback(async (id: string, checked: boolean) => {
-    if (saving || toggleInFlightRef.current) return;
-    toggleInFlightRef.current = true;
-    const previous = localSelections;
-    setLocalSelections({ ...localSelections, [id]: checked });
-    setPendingSkillId(id);
-    setSaveMsg(null);
-    try {
-      await saveSelection(id, checked);
-      setSaveOk(true);
-      setSaveMsg(checked ? "技能已启用" : "技能已停用");
-      setTimeout(() => setSaveMsg(null), 1800);
-    } catch (err) {
-      if (!(err instanceof SkillSelectionConflictError)) setLocalSelections(previous);
-      setSaveOk(false);
-      setSaveMsg(err instanceof Error ? err.message : "更新失败");
-    } finally {
-      toggleInFlightRef.current = false;
-      setPendingSkillId(null);
+  const groupedSkills = useMemo(() => {
+    if (activeFilter !== "all") return null;
+    const enabled: UserSkillInfo[] = [];
+    const platform: UserSkillInfo[] = [];
+    const organization: UserSkillInfo[] = [];
+    const personal: UserSkillInfo[] = [];
+    for (const skill of filteredSkills) {
+      if (localSelections[skill.id]) enabled.push(skill);
+      else if (skillSource(skill) === "organization") organization.push(skill);
+      else if (skillSource(skill) === "personal") personal.push(skill);
+      else platform.push(skill);
     }
-  }, [localSelections, saveSelection, saving]);
+    return [
+      { id: "enabled", label: "已启用", skills: enabled },
+      { id: "platform", label: "平台提供", skills: platform },
+      { id: "organization", label: "组织提供", skills: organization },
+      { id: "personal", label: "我创建的", skills: personal },
+    ].filter((group) => group.skills.length > 0);
+  }, [activeFilter, filteredSkills, localSelections]);
+
+  const enabledCount = Object.values(localSelections).filter(Boolean).length;
+  const filters = useMemo(
+    () => [
+      { value: "all" as const, label: "全部", count: skills.length },
+      { value: "enabled" as const, label: "已启用", count: enabledCount },
+      {
+        value: "platform" as const,
+        label: "平台提供",
+        count: skills.filter((skill) => skillSource(skill) === "platform").length,
+      },
+      {
+        value: "organization" as const,
+        label: "组织提供",
+        count: skills.filter((skill) => skillSource(skill) === "organization").length,
+      },
+      {
+        value: "personal" as const,
+        label: "我创建的",
+        count: skills.filter((skill) => skillSource(skill) === "personal").length,
+      },
+    ],
+    [enabledCount, skills],
+  );
+
+  const toggle = useCallback(
+    async (id: string, checked: boolean) => {
+      if (saving || toggleInFlightRef.current) return;
+      toggleInFlightRef.current = true;
+      const previous = localSelections;
+      setLocalSelections({ ...localSelections, [id]: checked });
+      setPendingSkillId(id);
+      setSaveMsg(null);
+      try {
+        await saveSelection(id, checked);
+        setSaveOk(true);
+        setSaveMsg(checked ? "技能已启用" : "技能已停用");
+        setTimeout(() => setSaveMsg(null), 1800);
+      } catch (err) {
+        if (!(err instanceof SkillSelectionConflictError)) setLocalSelections(previous);
+        setSaveOk(false);
+        setSaveMsg(err instanceof Error ? err.message : "更新失败");
+      } finally {
+        toggleInFlightRef.current = false;
+        setPendingSkillId(null);
+      }
+    },
+    [localSelections, saveSelection, saving],
+  );
 
   const openEdit = useCallback(async (skill: UserSkillInfo) => {
     setEditing(true);
@@ -193,30 +239,35 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
     }
   }, [deleteTarget, refresh]);
 
-  const handleSkillImport = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    event.target.value = "";
-    if (files.length === 0) return;
-    setImporting(true);
-    setImportMsg(null);
-    setImportOk(false);
-    try {
-      const result = await governanceResourcesApi.importPersonalSkillPackage(files);
-      setImportOk(true);
-      const auditStatus = result.auditCompletion === "pending" ? "，审计记录同步中" : "";
-      setImportMsg(result.selected === false
-        ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}），但未能自动启用，请在列表中手动启用`
-        : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}）`);
-      await refresh();
-      setTimeout(() => setImportMsg(null), 2200);
-    } catch (err) {
+  const handleSkillImport = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = "";
+      if (files.length === 0) return;
+      setImporting(true);
+      setImportMsg(null);
       setImportOk(false);
-      setImportMsg(`导入失败：${err instanceof Error ? err.message : "未知错误"}`);
-    } finally {
-      setImportDialogOpen(false);
-      setImporting(false);
-    }
-  }, [refresh]);
+      try {
+        const result = await governanceResourcesApi.importPersonalSkillPackage(files);
+        setImportOk(true);
+        const auditStatus = result.auditCompletion === "pending" ? "，审计记录同步中" : "";
+        setImportMsg(
+          result.selected === false
+            ? `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}），但未能自动启用，请在列表中手动启用`
+            : `已导入并发布技能：${result.skill.name}（v${result.version.versionNumber}${auditStatus}）`,
+        );
+        await refresh();
+        setTimeout(() => setImportMsg(null), 2200);
+      } catch (err) {
+        setImportOk(false);
+        setImportMsg(`导入失败：${err instanceof Error ? err.message : "未知错误"}`);
+      } finally {
+        setImportDialogOpen(false);
+        setImporting(false);
+      }
+    },
+    [refresh],
+  );
 
   const backButton = onBack ? (
     <button
@@ -260,13 +311,112 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         </Button>
       ) : null}
       {saveMsg ? <span className={cn("text-sm", saveOk ? "text-success" : "text-destructive")}>{saveMsg}</span> : null}
-      {importMsg ? <span className={cn("text-sm", importOk ? "text-success" : "text-destructive")}>{importMsg}</span> : null}
+      {importMsg ? (
+        <span className={cn("text-sm", importOk ? "text-success" : "text-destructive")}>{importMsg}</span>
+      ) : null}
     </>
   );
 
+  const renderSkillCard = (skill: UserSkillInfo, index: number) => {
+    const source = skillSource(skill);
+    const selected = localSelections[skill.id] === true;
+    const SkillGlyph = skillIcon(skill.id);
+    const versionLabel = skill.governance?.version
+      ? `v${skill.governance.version}`
+      : source === "platform"
+        ? "平台内置"
+        : source === "organization"
+          ? "组织技能"
+          : "个人技能";
+    return (
+      <Card
+        key={skill.id}
+        style={{ "--i": Math.min(index, 12) } as CSSProperties}
+        className={cn(
+          "cap-grid-item group relative cursor-pointer overflow-hidden border-0 shadow-none",
+          CAPABILITY_SURFACE,
+          CAPABILITY_SURFACE_HOVER,
+          selected &&
+            "ring-success/30 before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-success/60",
+        )}
+        onClick={() => setDetailSkill(skill)}
+        onKeyDown={(event) => {
+          if ((event.target as HTMLElement).closest("button")) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setDetailSkill(skill);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <CardContent className="flex min-h-[9.5rem] flex-col p-4">
+          <div className="flex items-start gap-3">
+            <CapabilityLogo
+              label={skill.name}
+              tone={selected ? "bg-success/10 text-success-ink ring-success/20" : skillCategoryClass(skill.id)}
+            >
+              <SkillGlyph className="size-5" />
+            </CapabilityLogo>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">
+                    <HighlightedText text={skill.name} query={query} />
+                  </div>
+                  <div className="mt-1">
+                    <CapabilitySourceBadge source={source} className="px-1.5 text-2xs" />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex size-7 shrink-0 items-center justify-center rounded-full border transition-all duration-200 [transition-timing-function:var(--ease-spring)] active:scale-95 motion-reduce:transition-none",
+                    selected
+                      ? "border-success/25 bg-success/10 text-success-ink hover:bg-success/20"
+                      : "border-border/70 bg-transparent text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success-ink",
+                  )}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void toggle(skill.id, !selected);
+                  }}
+                  disabled={saving}
+                  aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
+                >
+                  {pendingSkillId === skill.id ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : selected ? (
+                    <Check className="size-4 animate-in zoom-in-50 duration-200" strokeWidth={2.5} />
+                  ) : (
+                    <Plus className="size-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 min-h-10 line-clamp-2 text-sm leading-5 text-muted-foreground">
+            <HighlightedText text={skill.description || "暂无技能说明"} query={query} />
+          </p>
+          <div className="mt-auto flex items-center justify-between gap-2 pt-3 text-2xs text-muted-foreground">
+            <span className="truncate">
+              {versionLabel}
+              {selected ? " · 已启用" : ""}
+            </span>
+            <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100">
+              详情
+              <ChevronRight className="size-3 transition-transform duration-200 group-hover:translate-x-0.5" />
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {headerTitle ? <CatalogHeader title={headerTitle} description={headerDescription} actions={actionControls} /> : null}
+      {headerTitle ? (
+        <CatalogHeader title={headerTitle} description={headerDescription} actions={actionControls} />
+      ) : null}
       {backButton}
 
       <CatalogToolbar
@@ -281,74 +431,72 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
 
       <div className={cn("min-h-0 flex-1 pb-2", !embedded && "overflow-auto")}>
         {filteredSkills.length === 0 ? (
-          <div className={cn("px-6 py-12 text-center text-sm text-muted-foreground", CAPABILITY_EMPTY_SURFACE)}>
-            {skills.length === 0 ? "暂无可用技能" : "没有找到匹配的技能"}
+          <div
+            className={cn(
+              "flex flex-col items-center px-6 py-12 text-center text-sm text-muted-foreground",
+              CAPABILITY_EMPTY_SURFACE,
+            )}
+          >
+            <SearchX className="size-8 opacity-60" aria-hidden="true" />
+            <div className="mt-3 font-medium text-foreground">
+              {skills.length === 0
+                ? "暂无可用技能"
+                : query.trim()
+                  ? `没有匹配「${query.trim()}」的技能`
+                  : "当前来源没有可用技能"}
+            </div>
+            {skills.length > 0 ? (
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {query ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setQuery("")}>
+                    清空搜索
+                  </Button>
+                ) : null}
+                {activeFilter !== "all" ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setActiveFilter("all")}>
+                    切到全部来源
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : groupedSkills ? (
+          <div key={`${query}-${activeFilter}-${enabledCount}`}>
+            {groupedSkills.map((group, groupIndex) => (
+              <section
+                key={group.id}
+                className={groupIndex === 0 ? "" : "mt-6"}
+                aria-labelledby={`skill-group-${group.id}`}
+              >
+                <div className="sticky top-[3.25rem] z-[5] -mx-1 mb-2 flex items-center gap-2 bg-card/85 px-1 py-1.5 backdrop-blur-sm">
+                  <h3 id={`skill-group-${group.id}`} className="text-xs font-medium text-foreground">
+                    {group.label}
+                  </h3>
+                  <span className="rounded-full bg-muted px-1.5 text-2xs tabular-nums text-muted-foreground">
+                    {group.skills.length}
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  {group.skills.map((skill, index) => renderSkillCard(skill, index))}
+                </div>
+              </section>
+            ))}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {filteredSkills.map((skill) => {
-              const source = skillSource(skill);
-              const selected = localSelections[skill.id] === true;
-              const SkillGlyph = skillIcon(skill.id);
-              return (
-                <Card
-                  key={skill.id}
-                  className={cn("group cursor-pointer border-0 shadow-none", CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER)}
-                  onClick={() => setDetailSkill(skill)}
-                  onKeyDown={(event) => {
-                    if ((event.target as HTMLElement).closest("button")) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setDetailSkill(skill);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <CardContent className="flex min-h-40 flex-col p-4">
-                    <div className="flex items-start gap-3">
-                      <CapabilityLogo label={skill.name}><SkillGlyph className="size-5" /></CapabilityLogo>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold">{skill.name}</div>
-                            <div className="mt-1"><CapabilitySourceBadge source={source} /></div>
-                          </div>
-                          <button
-                            type="button"
-                            className={cn(
-                              "flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                              selected
-                                ? "border-transparent bg-success text-success-foreground hover:bg-success/85"
-                                : "bg-muted/40 text-muted-foreground hover:border-success/40 hover:bg-success/10 hover:text-success",
-                            )}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void toggle(skill.id, !selected);
-                            }}
-                            disabled={saving}
-                            aria-label={`${selected ? "停用" : "启用"} ${skill.name}`}
-                          >
-                            {pendingSkillId === skill.id ? <Loader2 className="size-4 animate-spin" /> : selected ? <Check className="size-4" strokeWidth={2.5} /> : <Plus className="size-4" />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    <p className="mt-4 line-clamp-3 text-sm leading-5 text-muted-foreground">
-                      {skill.description || "暂无技能说明"}
-                    </p>
-                    <div className="mt-auto pt-3 text-xs text-muted-foreground">点击查看详情</div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+          <div
+            key={`${query}-${activeFilter}-${enabledCount}`}
+            className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+          >
+            {filteredSkills.map((skill, index) => renderSkillCard(skill, index))}
           </div>
         )}
       </div>
 
       <CapabilityDetailDrawer
         open={!!detailSkill}
-        onOpenChange={(open) => { if (!open) setDetailSkill(null); }}
+        onOpenChange={(open) => {
+          if (!open) setDetailSkill(null);
+        }}
         title={detailSkill?.name ?? "技能详情"}
         description={detailSkill?.description}
       >
@@ -374,7 +522,11 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
               {sourceDescription(skillSource(detailSkill))}
               {detailSkill.governance ? (
                 <div className="mt-2 text-xs">
-                  {detailSkill.governance.status === "published" ? "已发布" : detailSkill.governance.status === "draft" ? "草稿" : "已退役"}
+                  {detailSkill.governance.status === "published"
+                    ? "已发布"
+                    : detailSkill.governance.status === "draft"
+                      ? "草稿"
+                      : "已退役"}
                   {detailSkill.governance.version ? ` · v${detailSkill.governance.version}` : ""}
                   {` · ${detailSkill.governance.source === "governance_upload" ? "治理上传" : "治理资源"}`}
                   {` · ${detailSkill.governance.scope === "personal" ? "个人" : "组织"}`}
@@ -385,22 +537,42 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
               className="w-full"
               variant={localSelections[detailSkill.id] ? "outline" : "default"}
               disabled={saving}
-              onClick={() => { void toggle(detailSkill.id, !localSelections[detailSkill.id]); }}
+              onClick={() => {
+                void toggle(detailSkill.id, !localSelections[detailSkill.id]);
+              }}
             >
-              {pendingSkillId === detailSkill.id ? <Loader2 className="size-4 animate-spin" /> : localSelections[detailSkill.id] ? <Check className="size-4" /> : <Plus className="size-4" />}
+              {pendingSkillId === detailSkill.id ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : localSelections[detailSkill.id] ? (
+                <Check className="size-4" />
+              ) : (
+                <Plus className="size-4" />
+              )}
               {localSelections[detailSkill.id] ? "停用技能" : "启用技能"}
             </Button>
             {canDeleteCustom && detailSkill.source === "custom" ? (
               <>
-                <Button variant="outline" className="w-full" disabled={editing} onClick={() => { void openEdit(detailSkill); }}>
-                  {editing ? <Loader2 className="size-4 animate-spin" /> : <Pencil className="size-4" />}编辑 SKILL.md
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={editing}
+                  onClick={() => {
+                    void openEdit(detailSkill);
+                  }}
+                >
+                  {editing ? <Loader2 className="size-4 animate-spin" /> : <Pencil className="size-4" />}
+                  编辑 SKILL.md
                 </Button>
                 <Button
                   variant="ghost"
                   className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => { setDeleteErr(null); setDeleteTarget({ id: detailSkill.id, name: detailSkill.name }); }}
+                  onClick={() => {
+                    setDeleteErr(null);
+                    setDeleteTarget({ id: detailSkill.id, name: detailSkill.name });
+                  }}
                 >
-                  <Trash2 className="size-4" />删除自建技能
+                  <Trash2 className="size-4" />
+                  删除自建技能
                 </Button>
               </>
             ) : null}
@@ -410,22 +582,53 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
 
       {canImport ? (
         <>
-          <input ref={skillFileInputRef} type="file" accept=".md,text/markdown" className="hidden" onChange={(event) => { void handleSkillImport(event); }} />
-          <input ref={skillZipInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { void handleSkillImport(event); }} />
-          {/* @ts-expect-error webkitdirectory is supported by Chromium for folder uploads but missing from React types. */}
-          <input ref={skillFolderInputRef} type="file" className="hidden" multiple webkitdirectory="" onChange={(event) => { void handleSkillImport(event); }} />
+          <input
+            ref={skillFileInputRef}
+            type="file"
+            accept=".md,text/markdown"
+            className="hidden"
+            onChange={(event) => {
+              void handleSkillImport(event);
+            }}
+          />
+          <input
+            ref={skillZipInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={(event) => {
+              void handleSkillImport(event);
+            }}
+          />
+          <input
+            ref={skillFolderInputRef}
+            type="file"
+            className="hidden"
+            multiple
+            {...({ webkitdirectory: "" } as { webkitdirectory: string })}
+            onChange={(event) => {
+              void handleSkillImport(event);
+            }}
+          />
           <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
             <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>导入技能</DialogTitle>
                 <DialogDescription>
-                  支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。最多 300 个文件（zip 目录不计），单个文件不超过 25MB，总计不超过 100MB。SKILL.md 需包含 name 和 description frontmatter。
+                  支持 SKILL.md 单文件、包含 SKILL.md 的文件夹，或包含同样结构的 zip 压缩包。最多 300 个文件（zip
+                  目录不计），单个文件不超过 25MB，总计不超过 100MB。SKILL.md 需包含 name 和 description frontmatter。
                 </DialogDescription>
               </DialogHeader>
               <div className="grid gap-2">
-                <Button variant="outline" onClick={() => skillFileInputRef.current?.click()} disabled={importing}>上传 SKILL.md</Button>
-                <Button variant="outline" onClick={() => skillFolderInputRef.current?.click()} disabled={importing}>上传文件夹</Button>
-                <Button variant="outline" onClick={() => skillZipInputRef.current?.click()} disabled={importing}>上传 zip 压缩包</Button>
+                <Button variant="outline" onClick={() => skillFileInputRef.current?.click()} disabled={importing}>
+                  上传 SKILL.md
+                </Button>
+                <Button variant="outline" onClick={() => skillFolderInputRef.current?.click()} disabled={importing}>
+                  上传文件夹
+                </Button>
+                <Button variant="outline" onClick={() => skillZipInputRef.current?.click()} disabled={importing}>
+                  上传 zip 压缩包
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -433,7 +636,15 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       ) : null}
 
       {canDeleteCustom ? (
-        <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open && !editing) { setEditTarget(null); setEditErr(null); } }}>
+        <Dialog
+          open={!!editTarget}
+          onOpenChange={(open) => {
+            if (!open && !editing) {
+              setEditTarget(null);
+              setEditErr(null);
+            }
+          }}
+        >
           <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>编辑自建技能“{editTarget?.name}”</DialogTitle>
@@ -447,8 +658,22 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
             />
             {editErr ? <div className="text-sm text-destructive">{editErr}</div> : null}
             <DialogFooter>
-              <Button variant="outline" onClick={() => { setEditTarget(null); setEditErr(null); }} disabled={editing}>取消</Button>
-              <Button onClick={() => { void handleEditSave(); }} disabled={editing}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setEditTarget(null);
+                  setEditErr(null);
+                }}
+                disabled={editing}
+              >
+                取消
+              </Button>
+              <Button
+                onClick={() => {
+                  void handleEditSave();
+                }}
+                disabled={editing}
+              >
                 {editing ? <Loader2 className="size-4 animate-spin" /> : null}保存
               </Button>
             </DialogFooter>
@@ -457,18 +682,42 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
       ) : null}
 
       {canDeleteCustom ? (
-        <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open && !deleting) { setDeleteTarget(null); setDeleteErr(null); } }}>
+        <Dialog
+          open={!!deleteTarget}
+          onOpenChange={(open) => {
+            if (!open && !deleting) {
+              setDeleteTarget(null);
+              setDeleteErr(null);
+            }
+          }}
+        >
           <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-sm">
             <DialogHeader>
               <DialogTitle>删除自建技能</DialogTitle>
               <DialogDescription>
-                确定删除自建技能“{deleteTarget?.name}”？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的 workspace 中移除。
+                确定删除自建技能“{deleteTarget?.name}”？操作不可撤销，SKILL.md 及关联 references/scripts 会一并从你的
+                workspace 中移除。
               </DialogDescription>
             </DialogHeader>
             {deleteErr ? <div className="text-sm text-destructive">{deleteErr}</div> : null}
             <DialogFooter>
-              <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteErr(null); }} disabled={deleting}>取消</Button>
-              <Button variant="destructive" onClick={() => { void handleDeleteConfirm(); }} disabled={deleting}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteErr(null);
+                }}
+                disabled={deleting}
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  void handleDeleteConfirm();
+                }}
+                disabled={deleting}
+              >
                 {deleting ? <Loader2 className="size-4 animate-spin" /> : null}
                 删除
               </Button>
@@ -477,5 +726,25 @@ export function SkillSelector({ targetUsername, onBack, headerTitle, headerDescr
         </Dialog>
       ) : null}
     </div>
+  );
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return <>{text}</>;
+  const escapedQuery = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escapedQuery})`, "gi"));
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.toLocaleLowerCase() === normalizedQuery.toLocaleLowerCase() ? (
+          <mark key={`${part}-${index}`} className="rounded bg-brand-100/70 px-0.5 text-inherit">
+            {part}
+          </mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
   );
 }

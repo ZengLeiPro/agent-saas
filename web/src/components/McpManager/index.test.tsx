@@ -113,7 +113,8 @@ describe("McpManager 连接器目录", () => {
     expect(screen.getAllByText("我创建的").length).toBeGreaterThan(0);
     const allFilter = within(screen.getByLabelText("能力来源筛选")).getByRole("tab", { name: /全部/ });
     expect(allFilter.className).toContain("rounded-full");
-    expect(allFilter.className).toContain("bg-primary");
+    expect(allFilter.className).toContain("border-brand-200");
+    expect(allFilter.className).toContain("bg-brand-50");
     expect(allFilter.getAttribute("aria-selected")).toBe("true");
 
     const stockCard = screen.getByRole("button", { name: "查看 通达信 详情" });

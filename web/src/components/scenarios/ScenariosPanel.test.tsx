@@ -25,9 +25,7 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("./useScenarioLibrary", async () => {
-  const actual = await vi.importActual<typeof import("./useScenarioLibrary")>(
-    "./useScenarioLibrary",
-  );
+  const actual = await vi.importActual<typeof import("./useScenarioLibrary")>("./useScenarioLibrary");
   return {
     ...actual,
     useScenarioLibrary: () => ({
@@ -116,9 +114,7 @@ function renderPanel() {
 }
 
 function visibleTitles(): string[] {
-  return mocked
-    .library!.scenarios.map((s) => s.title)
-    .filter((title) => screen.queryByText(title) !== null);
+  return mocked.library!.scenarios.map((s) => s.title).filter((title) => screen.queryByText(title) !== null);
 }
 
 describe("ScenariosPanel · industry chip 集成", () => {
@@ -137,7 +133,8 @@ describe("ScenariosPanel · industry chip 集成", () => {
     const roleTab = screen.getByRole("tab", { name: "全部" });
     expect(industryTab.className).toBe(roleTab.className);
     expect(industryTab.className).toContain("rounded-full");
-    expect(industryTab.className).toContain("bg-primary");
+    expect(industryTab.className).toContain("border-brand-200");
+    expect(industryTab.className).toContain("bg-brand-50");
   });
 
   it("默认无 URL / storage / preferences 时全部行业 + 全部岗位：4 条全显", () => {
@@ -165,9 +162,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
     fireEvent.click(screen.getByRole("tab", { name: "零售" }));
 
     // 收窄：零售 chip 高亮，只保留命中 retail 或未填 industryFocus 的场景
-    expect(
-      screen.getByRole("tab", { name: "零售" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "零售" }).getAttribute("aria-selected")).toBe("true");
     expect(visibleTitles()).toEqual([
       "老板 · 通用竞品晨报", // industryFocus=undefined → 通用命中
       "老板 · 零售门店日报", // ["retail"] → 命中
@@ -218,14 +213,9 @@ describe("ScenariosPanel · industry chip 集成", () => {
     renderPanel();
 
     // URL 胜出，activeIndustry = ecommerce
-    expect(
-      screen.getByRole("tab", { name: "电商" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "电商" }).getAttribute("aria-selected")).toBe("true");
     // 电商命中 retail-sales (["retail","ecommerce"]) 与 universal-boss (undefined)
-    expect(visibleTitles()).toEqual([
-      "老板 · 通用竞品晨报",
-      "销售 · 零售电商客户简报",
-    ]);
+    expect(visibleTitles()).toEqual(["老板 · 通用竞品晨报", "销售 · 零售电商客户简报"]);
   });
 
   it("URL 缺失 + localStorage 有值 → 用 storage 作为初值，且反写到 URL 便于分享", () => {
@@ -235,9 +225,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
 
     renderPanel();
 
-    expect(
-      screen.getByRole("tab", { name: "零售" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "零售" }).getAttribute("aria-selected")).toBe("true");
     // 初值来自 storage 时，mount effect 应反写 URL 以支持分享
     expect(window.location.search).toBe("?industry=retail");
     // storage 未被清（初始化不动 storage）
@@ -249,9 +237,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
 
     renderPanel();
 
-    expect(
-      screen.getByRole("tab", { name: "出口" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "出口" }).getAttribute("aria-selected")).toBe("true");
     // preferences 是最兜底源，也要反写 URL 以支持分享
     expect(window.location.search).toBe("?industry=export");
     // 但不应污染 localStorage（避免默认偏好写入本地）
@@ -263,9 +249,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
 
     renderPanel();
 
-    expect(
-      screen.getByRole("tab", { name: "全部行业" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "全部行业" }).getAttribute("aria-selected")).toBe("true");
     expect(window.location.search).toBe("");
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
     expect(visibleTitles()).toHaveLength(4);
@@ -290,9 +274,7 @@ describe("ScenariosPanel · industry chip 集成", () => {
     renderPanel();
 
     // 非法值 → 走 all
-    expect(
-      screen.getByRole("tab", { name: "全部行业" }).getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "全部行业" }).getAttribute("aria-selected")).toBe("true");
     // 4 条全在
     expect(visibleTitles()).toHaveLength(4);
     // 非法值不应被反写：activeIndustry=all 时 mount effect 不 set URL，

@@ -39,6 +39,46 @@ import {
 } from "lucide-react";
 import { EntityIcons } from "@/lib/icons";
 
+export type SkillCategory = "doc" | "comm" | "media" | "data" | "dev";
+
+/** 分类仅控制技能图标色调，不参与筛选，也不表达好坏。 */
+export const SKILL_CATEGORY_BY_ID: Record<string, SkillCategory> = {
+  docx: "doc",
+  xlsx: "doc",
+  pptx: "doc",
+  "dingtalk-docs": "doc",
+  feishu: "doc",
+  "dingtalk-msg": "comm",
+  dws: "comm",
+  gmail: "comm",
+  imsg: "comm",
+  "image-gen": "media",
+  "video-gen": "media",
+  hyperframes: "media",
+  "audio-transcribe": "media",
+  "media-download": "media",
+  "video-subtitle": "media",
+  "ky-data-query": "data",
+  browser: "data",
+  cron: "data",
+  archify: "dev",
+  codex: "dev",
+  "skill-creator": "dev",
+};
+
+export const SKILL_CATEGORY_CLASS: Record<SkillCategory, string> = {
+  doc: "bg-[hsl(var(--chart-1)/0.10)] text-[hsl(var(--chart-1))] ring-[hsl(var(--chart-1)/0.18)]",
+  comm: "bg-[hsl(var(--chart-2)/0.10)] text-[hsl(var(--chart-2))] ring-[hsl(var(--chart-2)/0.18)]",
+  media: "bg-[hsl(var(--chart-3)/0.10)] text-[hsl(var(--chart-3))] ring-[hsl(var(--chart-3)/0.18)]",
+  data: "bg-[hsl(var(--chart-4)/0.10)] text-[hsl(var(--chart-4))] ring-[hsl(var(--chart-4)/0.18)]",
+  dev: "bg-[hsl(var(--chart-5)/0.10)] text-[hsl(var(--chart-5))] ring-[hsl(var(--chart-5)/0.18)]",
+};
+
+export function skillCategoryClass(skillId: string): string | undefined {
+  const category = SKILL_CATEGORY_BY_ID[skillId.trim().toLocaleLowerCase()];
+  return category ? SKILL_CATEGORY_CLASS[category] : undefined;
+}
+
 const SKILL_ICON_BY_ID: Record<string, LucideIcon> = {
   // —— skills-pool（仓库内置）——
   archify: Workflow, // 架构图 / 流程图 / 时序图

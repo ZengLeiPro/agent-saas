@@ -37,7 +37,7 @@ export interface ManagedSandbox extends SandboxLifecycleState {
   pausedConditionChangedAt?: string;
   createdAt?: string;
   lastActiveAt?: string;
-  /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate。 */
+  /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate，清除另受 generation 栅栏约束。 */
   backgroundShellProtectedUntil?: string;
   /**
    * 当前 Sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
@@ -64,6 +64,7 @@ export interface ManagedSandboxInventory extends ManagedSandbox {
 }
 
 export const BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION = 'agent-saas.kaiyan.net/background-shell-protected-until';
+export const BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION = 'agent-saas.kaiyan.net/background-shell-protection-generation';
 
 export function labelValue(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 40);

@@ -28,6 +28,7 @@ interface InvocationEntry {
 
 interface InvocationProtectionState {
   preserveInvocationLease: boolean;
+  observedBackgroundProtectionGeneration?: string | null;
   originalSandboxGone?: boolean;
   recovery?: {
     expectedUid: string;
@@ -130,13 +131,16 @@ export class AcsExecutor {
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
       const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
+      const activityGeneration = request.context.correlation?.invocationId ?? request.context.invocationId;
       sandboxUid = await this.sandboxManager.setActiveInvocationLease(
-        ref.name,
-        leaseKey,
-        new Date(leaseUntilMs).toISOString(),
+        ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined, activityGeneration,
       );
       if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
       leasePersisted = true;
+      if (typeof this.sandboxManager.getBackgroundShellProtection === 'function') {
+        const observed = await this.sandboxManager.getBackgroundShellProtection(ref.name, sandboxUid);
+        protectionState.observedBackgroundProtectionGeneration = observed.generation;
+      }
       leaseMonitor = new InvocationLeaseMonitor(
         async (leaseUntil) => {
           await this.sandboxManager.setActiveInvocationLease(
@@ -358,9 +362,16 @@ export class AcsExecutor {
     }
     let protectionError: unknown;
     try {
-      await this.sandboxManager.setBackgroundShellProtection(
-        sandboxName, protectedUntil, expectedUid,
-      );
+      if (!protectedUntil && protectionStateHasObservation(state)) {
+        await this.sandboxManager.setBackgroundShellProtection(
+          sandboxName, undefined, expectedUid, state.observedBackgroundProtectionGeneration,
+        );
+      } else {
+        await this.sandboxManager.setBackgroundShellProtection(
+          sandboxName, protectedUntil, expectedUid, undefined, leaseKey,
+        );
+      }
+      state.observedBackgroundProtectionGeneration = protectedUntil ? leaseKey : null;
     } catch (err) {
       protectionError = err;
     }
@@ -518,7 +529,7 @@ export class AcsExecutor {
       if (recovery.protectedUntil && this.hasSafeBackgroundProtection(protectedUntilMs)) {
         try {
           await this.sandboxManager.setBackgroundShellProtection(
-            ref.name, recovery.protectedUntil, recovery.expectedUid,
+            ref.name, recovery.protectedUntil, recovery.expectedUid, undefined, leaseKey,
           );
           // Re-check after CAS completion; an expired marker is not durable safety.
           safe = this.hasSafeBackgroundProtection(protectedUntilMs);
@@ -821,6 +832,12 @@ async function unrefDelay(ms: number): Promise<void> {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
+}
+
+function protectionStateHasObservation(
+  state: InvocationProtectionState,
+): state is InvocationProtectionState & { observedBackgroundProtectionGeneration: string | null } {
+  return state.observedBackgroundProtectionGeneration !== undefined;
 }
 
 function addRunnerMetadata(

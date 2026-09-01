@@ -697,8 +697,8 @@ export class SandboxManager {
     }
   }
 
-  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string): Promise<string> {
-    return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid);
+  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string, activityGeneration?: string): Promise<string> {
+    return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid, activityGeneration);
   }
   async clearExpiredInvocationLeases(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now); }
 
@@ -741,10 +741,10 @@ export class SandboxManager {
     this.ensureFastPath.delete(name);
   }
 
-  async setBackgroundShellProtection(name: string, protectedUntil?: string, expectedUid?: string): Promise<string> {
-    return await this.invocationMutations.setBackgroundProtection(name, protectedUntil, expectedUid);
+  async setBackgroundShellProtection(name: string, protectedUntil?: string, expectedUid?: string, expectedClearGeneration?: string | null, generation?: string): Promise<string> {
+    return await this.invocationMutations.setBackgroundProtection(name, protectedUntil, expectedUid, expectedClearGeneration, generation);
   }
-  async getSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getUid(name); }
+  async getSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getUid(name); } async getBackgroundShellProtection(name: string, expectedUid: string) { return await this.invocationMutations.getBackgroundProtection(name, expectedUid); }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {
     const result = await this.kubectl.run(['get', this.resourceName(name), '-o', 'json'], { timeoutMs: 15_000 });
@@ -917,7 +917,7 @@ export class SandboxManager {
     throw new SandboxBusyError(`ACS Sandbox ${name} is busy; refuse to ${reason} while active`);
   }
 
-  private refFromStatus(name: string, status: SandboxStatus): SandboxRef {
+  refFromStatus(name: string, status: SandboxStatus): SandboxRef {
     const raw = status.raw ?? {};
     const metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
     const annotations = metadata.annotations && typeof metadata.annotations === 'object' ? metadata.annotations as Record<string, unknown> : {};

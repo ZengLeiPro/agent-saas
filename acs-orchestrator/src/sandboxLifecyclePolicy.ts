@@ -27,6 +27,7 @@ export const TERMINAL_STATE_ANNOTATION = 'agent-saas.kaiyan.net/terminal-state';
 export const TERMINAL_AT_ANNOTATION = 'agent-saas.kaiyan.net/terminal-at';
 export const TERMINAL_OUTCOME_ANNOTATION = 'agent-saas.kaiyan.net/terminal-outcome';
 export const RETENTION_DEADLINE_ANNOTATION = 'agent-saas.kaiyan.net/retention-deadline';
+export const ACTIVITY_GENERATION_ANNOTATION = 'agent-saas.kaiyan.net/activity-generation';
 export const DELETION_GENERATION_ANNOTATION = 'agent-saas.kaiyan.net/deletion-generation';
 export const ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX = 'agent-saas.kaiyan.net/active-invocation-';
 
@@ -69,6 +70,7 @@ export interface SandboxLifecycleUpdate extends SandboxLifecycleIdentity {
   terminalAt: string;
   outcome?: unknown;
   retentionDeadline?: string;
+  expectedActivityGeneration?: string | null;
 }
 
 export interface SandboxDeletionGenerationUpdate extends SandboxLifecycleIdentity {
@@ -325,6 +327,10 @@ export function parseLifecycleUpdate(value: unknown): { ok: true; value: Sandbox
   if (raw.retentionDeadline !== undefined && !validIso(raw.retentionDeadline)) {
     return { ok: false, error: 'retentionDeadline 必须是合法 ISO 时间' };
   }
+  if (raw.expectedActivityGeneration !== undefined && raw.expectedActivityGeneration !== null
+    && (typeof raw.expectedActivityGeneration !== 'string' || !raw.expectedActivityGeneration)) {
+    return { ok: false, error: 'expectedActivityGeneration 必须是非空字符串或 null' };
+  }
   if (raw.outcome !== undefined && Buffer.byteLength(JSON.stringify(raw.outcome), 'utf8') > 8 * 1024) {
     return { ok: false, error: 'outcome 超过 8KiB' };
   }
@@ -336,6 +342,9 @@ export function parseLifecycleUpdate(value: unknown): { ok: true; value: Sandbox
       terminalAt: raw.terminalAt as string,
       ...(raw.outcome === undefined ? {} : { outcome: raw.outcome }),
       ...(raw.retentionDeadline === undefined ? {} : { retentionDeadline: raw.retentionDeadline as string }),
+      ...(raw.expectedActivityGeneration === undefined ? {} : {
+        expectedActivityGeneration: raw.expectedActivityGeneration as string | null,
+      }),
     },
   };
 }

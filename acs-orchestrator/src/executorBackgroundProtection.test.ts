@@ -37,7 +37,7 @@ function ref(name: string): SandboxRef {
   };
 }
 
-/** Completes the one-shot runner with background metadata. */
+/** Completes a one-shot runner with background metadata. */
 function finishBackground(
   child: ReturnType<typeof fakeChild>,
   taskId: string,
@@ -115,7 +115,48 @@ describe('AcsExecutor background shell protection handoff', () => {
     finishBackground(child, 'shell-bg-task-1', protectedUntil);
 
     await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
-    expect(setBackgroundShellProtection).toHaveBeenCalledWith(sandboxRef.name, protectedUntil, 'uid-1');
+    expect(setBackgroundShellProtection).toHaveBeenCalledWith(
+      sandboxRef.name, protectedUntil, 'uid-1', undefined, expect.any(String),
+    );
+  });
+
+  it('binds an empty runner snapshot to the background protection observed before execution', async () => {
+    const sandboxRef = ref('as-background-empty-snapshot');
+    const child = fakeChild();
+    const observed = '2026-08-30T00:05:00.000Z'; const observedGeneration = 'generation-old';
+    const setBackgroundShellProtection = vi.fn(async () => 'uid-1');
+    const sandboxManager = {
+      ref: () => sandboxRef,
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      getBackgroundShellProtection: vi.fn(async () => ({ protectedUntil: observed, generation: observedGeneration })),
+      touch: vi.fn(async () => undefined),
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setBackgroundShellProtection,
+    } as unknown as SandboxManager;
+    const kubectl = { spawn: vi.fn(() => child) } as unknown as Kubectl;
+    const executor = new AcsExecutor(
+      baseConfig(), kubectl, sandboxManager, noopLogger, undefined, { persistentRunner: false },
+    );
+
+    const resultPromise = executor.execute({
+      toolName: '__BackgroundShellReconcile', input: {},
+      context: { workspace: {
+        id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
+        sandboxScopeId: sandboxRef.sandboxScopeId, mountSubPath: sandboxRef.mountSubPath,
+      } },
+    });
+    await vi.waitFor(() => expect(kubectl.spawn).toHaveBeenCalledOnce());
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final', response: {
+        status: 'success', content: '{}', metadata: { backgroundShell: { activeTaskIds: [] } },
+      },
+    })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
+    expect(setBackgroundShellProtection).toHaveBeenCalledWith(
+      sandboxRef.name, undefined, 'uid-1', observedGeneration,
+    );
   });
 
   it('falls back to a long invocation lease when the background annotation write fails', async () => {
@@ -312,7 +353,7 @@ describe('AcsExecutor background shell protection handoff', () => {
 
       await resultAssertion;
       expect(setBackgroundShellProtection).toHaveBeenCalledWith(
-        sandboxRef.name, protectedUntil, 'uid-old',
+        sandboxRef.name, protectedUntil, 'uid-old', undefined, expect.any(String),
       );
       expect(terminateBackgroundTasks).toHaveBeenCalledWith(
         sandboxRef, ['shell-bg-expired-during-cas'],
@@ -401,7 +442,7 @@ describe('AcsExecutor background shell protection handoff', () => {
         );
         if (proof === 'protection') {
           expect(setBackgroundShellProtection).toHaveBeenLastCalledWith(
-            sandboxRef.name, protectedUntil, 'uid-1',
+            sandboxRef.name, protectedUntil, 'uid-1', undefined, leaseKey,
           );
         } else {
           expect(terminateBackgroundTasks).toHaveBeenLastCalledWith(

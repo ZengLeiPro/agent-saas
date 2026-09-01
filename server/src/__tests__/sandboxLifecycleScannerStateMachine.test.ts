@@ -262,7 +262,9 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
           return { baseUrl: entry.baseUrl, authToken: entry.authToken };
         },
       },
-      fetchImpl: vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+      fetchImpl: vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+        String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-good' } : {},
+      ), { status: 200 })) as unknown as typeof fetch,
     });
 
     await scan(instance);
@@ -272,7 +274,7 @@ describe('SandboxLifecycleService durable preparation, guarded claims and candid
     expect(markTerminalDelivered).toHaveBeenCalledWith('terminal-good', expect.any(String));
   });
 
-  it('continues later scanner queues when an earlier candidate list query fails', async () => {
+  it('continues with later scanner queues when an earlier candidate list query fails', async () => {
     const delivered = vi.fn(async () => undefined);
     const pending = { ...baseCleanup, claimId: 'claim-pending' };
     const store = {

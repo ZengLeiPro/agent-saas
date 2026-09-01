@@ -319,7 +319,7 @@ describe('sessions routes lifecycle coverage', () => {
     expect(meta?.customTitle).toBe('新标题');
   });
 
-  it('DELETE /sessions/:id：软删除成功、重复删除幂等、跨用户 403', async () => {
+  it('DELETE /sessions/:id：durable 软删除成功、重复删除幂等、跨用户 403', async () => {
     const { sessionId, transcriptPath } = await writeSession(OWNER);
     const artifactShareStore = new InMemoryArtifactShareStore();
     const revokeBySession = vi.spyOn(artifactShareStore, 'revokeBySession');
@@ -353,6 +353,40 @@ describe('sessions routes lifecycle coverage', () => {
     servers.push(otherServer);
     const foreign = await fetch(`${otherBase}/api/sessions/${mySession}`, { method: 'DELETE' });
     expect(foreign.status).toBe(403);
+  });
+
+  it('cleanup intent blocked 时拒绝软删除且不写 tombstone', async () => {
+    const { sessionId, transcriptPath } = await writeSession(OWNER);
+    const cleanup = vi.fn(async () => 'deleted' as const);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletionIntent: async () => 'blocked', sandboxSessionDeletion: cleanup,
+    });
+    servers.push(server);
+
+    const failed = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBeUndefined();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it('cleanup commit blocked 时保留 prepared tombstone，重启后重复 DELETE 可续跑', async () => {
+    const { sessionId, transcriptPath } = await writeSession(OWNER);
+    const first = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletionIntent: async () => 'queued',
+      sandboxSessionDeletion: async () => 'blocked',
+    });
+    servers.push(first.server);
+
+    const failed = await fetch(`${first.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBeTruthy();
+
+    const resumedCleanup = vi.fn(async () => 'queued' as const);
+    const restarted = await startServer(agentCwd, OWNER, { sandboxSessionDeletion: resumedCleanup });
+    servers.push(restarted.server);
+    const retried = await fetch(`${restarted.baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(retried.status).toBe(200);
+    expect(resumedCleanup).toHaveBeenCalledWith(sessionId);
   });
 
   it('cleanup enqueue 失败时 tombstone 已持久化，进程重启后重复 DELETE 可续跑', async () => {

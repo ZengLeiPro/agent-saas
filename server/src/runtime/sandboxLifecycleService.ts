@@ -474,8 +474,18 @@ export class AcsSandboxLifecycleClient {
     terminalState: 'completed' | 'failed' | 'cancelled' | 'timed-out';
     terminalAt: string;
     outcome?: unknown;
+    expectedActivityGeneration?: string | null;
   }): Promise<void> {
     await this.request('/sandboxes/lifecycle', 'POST', input, undefined, false);
+  }
+
+  async readLifecycleFence(input: SandboxLifecycleIdentity): Promise<string | null> {
+    const response = await this.request('/sandboxes/lifecycle-fence', 'POST', input, undefined, false);
+    if (!response || typeof response !== 'object' || !('activityGeneration' in response))
+      throw new Error('ACS lifecycle fence response is invalid');
+    const generation = (response as { activityGeneration?: unknown }).activityGeneration;
+    if (generation !== null && typeof generation !== 'string') throw new Error('ACS lifecycle fence generation is invalid');
+    return generation;
   }
 
   async advanceDeletionGeneration(input: SandboxDeletionGenerationUpdate, signal?: AbortSignal): Promise<void> {
@@ -492,7 +502,7 @@ export class AcsSandboxLifecycleClient {
     body: unknown,
     externalSignal: AbortSignal | undefined,
     allowMissing: boolean,
-  ): Promise<void> {
+  ): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.requestTimeoutMs ?? 5_000);
     timer.unref?.();
@@ -502,7 +512,7 @@ export class AcsSandboxLifecycleClient {
         method, headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.authToken}` },
         body: JSON.stringify(body), signal: externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal,
       });
-      if (response.ok) return;
+      if (response.ok) return await response.json().catch(() => ({}));
       const text = await response.text().catch(() => '');
       if (allowMissing && response.status === 404 && /Sandbox .*not found|lifecycle identity not found/i.test(text)) return;
       throw new Error(`ACS ${method} ${path} HTTP ${response.status}: ${text.slice(0, 300) || 'no body'}`);
@@ -700,12 +710,21 @@ export class SandboxLifecycleService {
           await this.deferTerminalCandidate(candidate.runId, new Error(`sandbox lifecycle target unavailable: ${targetHandId}`));
           continue;
         }
+        const lifecycleIdentity = {
+          workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
+          sandboxScopeId: candidate.sandboxScopeId,
+        };
+        const expectedActivityGeneration = await target.client.readLifecycleFence(lifecycleIdentity);
+        if (await this.options.store.hasActivity(candidate)) {
+          await this.deferTerminalCandidate(candidate.runId, new Error('sandbox scope became active before terminal commit'));
+          continue;
+        }
         const timedOut = candidate.status === 'failed' && /timed?\s*out|timeout/i.test(candidate.statusReason ?? '');
         await target.client.notifyTerminal({
           workspaceId: candidate.workspaceId, sessionId: candidate.sessionId,
           sandboxScopeId: candidate.sandboxScopeId,
           terminalState: timedOut ? 'timed-out' : candidate.status === 'orphaned' ? 'failed' : candidate.status,
-          terminalAt: candidate.terminalAt,
+          terminalAt: candidate.terminalAt, expectedActivityGeneration,
           outcome: { runId: candidate.runId, status: candidate.status, ...(candidate.statusReason ? { reason: candidate.statusReason } : {}) },
         });
         await this.options.store.markTerminalDelivered(candidate.runId, this.currentTime().toISOString());

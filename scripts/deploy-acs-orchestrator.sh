@@ -441,8 +441,9 @@ if ! EXPECTED_MAX_RUNNING="$EXPECTED_MAX_RUNNING" EXPECTED_WARN_RUNNING="$EXPECT
   EXPECTED_MAX_MEMORY="$EXPECTED_MAX_MEMORY" EXPECTED_WARN_MEMORY="$EXPECTED_WARN_MEMORY" node <<'NODE'
 const fs = require('node:fs');
 const health = JSON.parse(fs.readFileSync('/tmp/acs-health.json', 'utf8'));
-const actual = health.runtimeConfig || {};
+const actual = { ...(health.runtimeConfig || {}), lifecyclePolicyMode: health.lifecyclePolicyMode };
 const expected = {
+  lifecyclePolicyMode: 'enforce',
   maxRunningSandboxes: Number(process.env.EXPECTED_MAX_RUNNING),
   warnRunningSandboxes: Number(process.env.EXPECTED_WARN_RUNNING),
   maxAllocatedCpuMillicores: Number(process.env.EXPECTED_MAX_CPU),
@@ -462,7 +463,7 @@ then
   rollback
   exit 1
 fi
-echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING"
+echo "runtime config and lifecycle policy gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING mode=enforce"
 
 # ── 5. Smoke: provision + execute 真实拉新镜像跑通 ──
 # SMOKE_SESSION/SMOKE_WS/SMOKE_MOUNT 已在 cleanup 定义前赋值，确保任何失败路径都能清理。

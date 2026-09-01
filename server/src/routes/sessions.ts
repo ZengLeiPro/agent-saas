@@ -3279,7 +3279,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
         if (newlyDeleted) {
           // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，跨文件/PG 不伪装原子事务。
-          await options.sandboxSessionDeletionIntent?.(sessionId);
+          const intent = await options.sandboxSessionDeletionIntent?.(sessionId); if (intent === "blocked") throw new Error("Sandbox cleanup intent blocked");
           await updateSessionMeta(transcriptPath, { deletedAt: new Date().toISOString(), deletedBy: req.user?.username || "anonymous" });
         }
         await options.sessionShareStore?.revokeBySession(sessionId, currentMeta.userId).catch((err) => {
@@ -3287,7 +3287,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-        await options.sandboxSessionDeletion?.(sessionId); return newlyDeleted;
+        const cleanup = await options.sandboxSessionDeletion?.(sessionId); if (cleanup === "blocked") throw new Error("Sandbox cleanup commit blocked"); return newlyDeleted;
       };
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)

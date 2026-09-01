@@ -55,27 +55,33 @@ describe('PgSandboxLifecycleStore terminal candidate contract', () => {
 });
 
 describe('AcsSandboxLifecycleClient exact-scope contract', () => {
-  it('arms a generation before deleting the exact three-field scope', async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 })) as unknown as typeof fetch;
+  it('reads the activity fence and arms a deletion generation before mutating the exact scope', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-1' } : { status: 'ok' },
+    ), { status: 200 })) as unknown as typeof fetch;
     const client = new AcsSandboxLifecycleClient({ baseUrl: 'http://acs.test/', authToken: 'secret', fetchImpl });
+    await expect(client.readLifecycleFence(identity)).resolves.toBe('activity-1');
     await client.notifyTerminal({ ...identity, terminalState: 'completed', terminalAt: '2026-08-30T00:00:00.000Z' });
     await client.advanceDeletionGeneration({ ...identity, deletionGeneration: 'generation-1' });
     await client.deleteScope({ ...identity, deletionGeneration: 'generation-1' });
     const calls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls;
     expect(calls.map((call) => [call[0], (call[1] as RequestInit).method])).toEqual([
+      ['http://acs.test/sandboxes/lifecycle-fence', 'POST'],
       ['http://acs.test/sandboxes/lifecycle', 'POST'],
       ['http://acs.test/sandboxes/deletion-generation', 'POST'],
       ['http://acs.test/sandboxes/scope', 'DELETE'],
     ]);
-    expect(JSON.parse((calls[2]![1] as RequestInit).body as string)).toEqual({
+    expect(JSON.parse((calls[3]![1] as RequestInit).body as string)).toEqual({
       ...identity, deletionGeneration: 'generation-1',
     });
   });
 });
 
 describe('SandboxLifecycleService durable lifecycle protocol', () => {
-  it('notifies a terminal top-level workload only after its whole scope is inactive', async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 })) as unknown as typeof fetch;
+  it('notifies a terminal top-level workload only after its entire scope is inactive', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-1' } : { status: 'ok' },
+    ), { status: 200 })) as unknown as typeof fetch;
     const store = {
       listCleanupCandidates: vi.fn(async () => []),
       listTerminalCandidates: vi.fn(async () => [{
@@ -97,8 +103,38 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     await scan();
     expect(fetchImpl).not.toHaveBeenCalled();
     await scan();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
+      'http://acs.test/sandboxes/lifecycle-fence', 'http://acs.test/sandboxes/lifecycle',
+    ]);
+    const terminalBody = JSON.parse(((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[1]![1] as RequestInit).body as string);
+    expect(terminalBody.expectedActivityGeneration).toBe('activity-1');
     expect(store.markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
+  });
+
+  it('does not notify when scope activity starts after reading the lifecycle fence', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ activityGeneration: 'activity-old' }), { status: 200 })) as unknown as typeof fetch;
+    const store = {
+      listCleanupCandidates: vi.fn(async () => []),
+      listTerminalCandidates: vi.fn(async () => [{
+        ...identity, runId: 'run-racing', tenantId: 'tenant-1', targetHandId: 'agent-saas-acs',
+        status: 'completed' as const, terminalAt: '2026-08-30T00:00:00.000Z', workload: { kind: 'cron' as const },
+      }]),
+      hasActivity: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
+      markTerminalDelivered: vi.fn(async () => undefined),
+    };
+    const service = new SandboxLifecycleService({
+      agentCwd: '/data', store: store as never, runStore: {} as never,
+      sessionCatalog: { get: async () => session() }, tenantRemoteHands: () => [remote()],
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({ tenantRemoteHands: () => [remote()] }),
+      fetchImpl,
+    });
+
+    await (service as unknown as { scan(): Promise<void> }).scan();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect((fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
+      .toBe('http://acs.test/sandboxes/lifecycle-fence');
+    expect(store.markTerminalDelivered).not.toHaveBeenCalled();
   });
 
   it('terminal outbox 固定原 hand，重启和 rollout 后仍重投原目标，404 不标记 delivered', async () => {
@@ -131,7 +167,9 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     expect(pinned).toBe('acs-old');
     expect(markTerminalDelivered).not.toHaveBeenCalled();
 
-    const recoveredFetch = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    const recoveredFetch = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
+      String(input).endsWith('/lifecycle-fence') ? { activityGeneration: 'activity-recovered' } : {},
+    ), { status: 200 })) as unknown as typeof fetch;
     const restarted = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => null },
@@ -140,12 +178,13 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
       fetchImpl: recoveredFetch,
     });
     await (restarted as unknown as { scan(): Promise<void> }).scan();
-    expect((recoveredFetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
-      .toBe('http://acs-old.test/sandboxes/lifecycle');
+    expect((recoveredFetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])).toEqual([
+      'http://acs-old.test/sandboxes/lifecycle-fence', 'http://acs-old.test/sandboxes/lifecycle',
+    ]);
     expect(markTerminalDelivered).toHaveBeenCalledWith('run-top', expect.any(String));
   });
 
-  it('deletion result distinguishes verified not_required from unresolved blocked and can retry after target recovery', async () => {
+  it('distinguishes verified not_required from unresolved blocked and retries after target recovery', async () => {
     const enqueueCleanup = vi.fn(async (candidate: object) => ({ ...cleanup(), ...candidate }));
     let current: RuntimeSessionRecord | null = null;
     const service = new SandboxLifecycleService({

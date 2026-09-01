@@ -2,14 +2,18 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { MAX_BODY_BYTES } from './protocol.js';
 import type { SandboxManager } from './sandboxManager.js';
-import { parseDeletionGenerationUpdate, parseLifecycleUpdate, parseScopeDeletion } from './sandboxLifecyclePolicy.js';
+import {
+  parseDeletionGenerationUpdate, parseLifecycleIdentity, parseLifecycleUpdate, parseScopeDeletion,
+} from './sandboxLifecyclePolicy.js';
 import { sendSandboxError } from './sandboxHttp.js';
+import { readSandboxLifecycleFence } from './sandboxLifecycleFence.js';
 
-export type SandboxLifecycleRoute = 'update' | 'deletion-generation' | 'delete-scope';
+export type SandboxLifecycleRoute = 'fence' | 'update' | 'deletion-generation' | 'delete-scope';
 // These paths and generation errors are consumed by server/runtime/sandboxLifecycleService.ts.
 
 export function matchSandboxLifecycleRoute(rawUrl: string | undefined): SandboxLifecycleRoute | null {
   const path = (rawUrl ?? '').split(/[?#]/)[0] ?? '';
+  if (path === '/sandboxes/lifecycle-fence') return 'fence';
   if (path === '/sandboxes/lifecycle') return 'update';
   if (path === '/sandboxes/deletion-generation') return 'deletion-generation';
   if (path === '/sandboxes/scope') return 'delete-scope';
@@ -38,6 +42,12 @@ export async function handleSandboxLifecycleRoute(
   const body = await readJson(req, res);
   if (!body.ok) return;
   try {
+    if (route === 'fence') {
+      const parsed = parseLifecycleIdentity(body.value);
+      if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });
+      const result = await readSandboxLifecycleFence(options.sandboxManager, parsed.value);
+      return sendJson(res, 200, { status: 'ok', ...result });
+    }
     if (route === 'update') {
       const parsed = parseLifecycleUpdate(body.value);
       if (!parsed.ok) return sendJson(res, 400, { status: 'error', error: parsed.error });

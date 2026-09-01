@@ -279,6 +279,16 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertEqual(classified.returncode, 0, classified.stderr)
         self.assertIn('publish=true', classified.stdout)
 
+    def test_direct_deploy_requires_enforced_lifecycle_policy_from_health(self):
+        self.assertIn(
+            "lifecyclePolicyMode: health.lifecyclePolicyMode",
+            self.deploy_script,
+        )
+        self.assertIn("lifecyclePolicyMode: 'enforce'", self.deploy_script)
+        gate_start = self.deploy_script.index("const actual = { ...(health.runtimeConfig || {})")
+        rollback = self.deploy_script.index("  rollback\n  exit 1\n", gate_start)
+        self.assertGreater(rollback, gate_start)
+
     def test_test_fixtures_are_contract_only_and_never_publish(self):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as changed:
             changed.write('acs-orchestrator/src/sandboxManagerTestFixtures.ts\n')
@@ -294,7 +304,7 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
         self.assertIn('publish=false', classified.stdout)
         self.assertIn('contract_check=true', classified.stdout)
 
-    def test_mixed_publish_and_contract_changes_run_both_gates(self):
+    def test_mixed_changes_run_publish_and_contract_gates(self):
         self.assertIn(
             "if: needs.changes.outputs.contract_check == 'true'",
             self.workflow,

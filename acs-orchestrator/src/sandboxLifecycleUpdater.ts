@@ -5,11 +5,13 @@ import {
   SandboxMutationPreconditionError,
 } from './sandboxLifecycleMutations.js';
 import {
+  ACTIVITY_GENERATION_ANNOTATION,
   RETENTION_DEADLINE_ANNOTATION,
   TERMINAL_AT_ANNOTATION,
   type SandboxLifecycleUpdate,
 } from './sandboxLifecyclePolicy.js';
 import type { SandboxStatus } from './sandboxState.js';
+import { LAST_ACTIVE_AT_ANNOTATION } from './sandboxInventoryReader.js';
 
 interface SandboxLifecycleUpdaterHost {
   config: AcsOrchestratorConfig;
@@ -47,7 +49,12 @@ export async function updateSandboxLifecycle(
       throw new SandboxMutationPreconditionError('Sandbox 已进入删除流程，拒绝 lifecycle 更新');
     }
     const currentTerminalAt = stringValue(annotations[TERMINAL_AT_ANNOTATION]);
-    if (currentTerminalAt && Date.parse(currentTerminalAt) >= Date.parse(input.terminalAt)) {
+    const lastActiveAt = stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]);
+    const activityGeneration = stringValue(annotations[ACTIVITY_GENERATION_ANNOTATION]) ?? null;
+    if ((input.expectedActivityGeneration !== undefined && input.expectedActivityGeneration !== activityGeneration)
+      || (input.expectedActivityGeneration === undefined
+        && lastActiveAt && Date.parse(lastActiveAt) >= Date.parse(input.terminalAt))
+      || (currentTerminalAt && Date.parse(currentTerminalAt) >= Date.parse(input.terminalAt))) {
       const retentionDeadline = stringValue(annotations[RETENTION_DEADLINE_ANNOTATION]);
       return { name: host.name, ...(retentionDeadline ? { retentionDeadline } : {}) };
     }
@@ -63,7 +70,7 @@ export async function updateSandboxLifecycle(
       if (!(error instanceof SandboxMutationPreconditionError) || attempt === 2) throw error;
     }
   }
-  throw new SandboxMutationPreconditionError('Sandbox lifecycle 更新重试耗尽');
+  throw new SandboxMutationPreconditionError('Sandbox lifecycle CAS 更新重试耗尽');
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

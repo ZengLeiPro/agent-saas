@@ -38,10 +38,53 @@ function options(manager: Partial<SandboxManager>) {
 
 describe('authenticated sandbox lifecycle routes', () => {
   it('matches only the lifecycle update, deletion-generation, and exact scope delete endpoints', () => {
+    expect(matchSandboxLifecycleRoute('/sandboxes/lifecycle-fence')).toBe('fence');
     expect(matchSandboxLifecycleRoute('/sandboxes/lifecycle')).toBe('update');
     expect(matchSandboxLifecycleRoute('/sandboxes/deletion-generation')).toBe('deletion-generation');
     expect(matchSandboxLifecycleRoute('/sandboxes/scope?source=test')).toBe('delete-scope');
     expect(matchSandboxLifecycleRoute('/sandboxes/as-name')).toBeNull();
+  });
+
+  it('authenticates and validates exact identity before returning the lifecycle fence', async () => {
+    const identity = { workspaceId: 'ws_kaiyan__u1', sessionId: 'session-1', sandboxScopeId: 'scope-1' };
+    const getStatus = vi.fn(async () => ({ raw: { metadata: { annotations: {
+      'agent-saas.kaiyan.net/activity-generation': 'activity-1',
+    } } } }));
+    const refFromStatus = vi.fn(() => ({ name: 'as-task', mountSubPath: 'workspace', ...identity }));
+    const manager = {
+      ref: vi.fn(() => ({ name: 'as-task', mountSubPath: 'workspace', ...identity })), getStatus, refFromStatus,
+    } as Partial<SandboxManager>;
+
+    const unauthorized = response();
+    await handleSandboxLifecycleRoute(request('POST', '/sandboxes/lifecycle-fence', identity, false), unauthorized.res, 'fence', options(manager));
+    expect(unauthorized.replies.at(-1)).toMatchObject({ status: 401 });
+    expect(getStatus).not.toHaveBeenCalled();
+
+    const wrongMethod = response();
+    await handleSandboxLifecycleRoute(request('GET', '/sandboxes/lifecycle-fence', identity), wrongMethod.res, 'fence', options(manager));
+    expect(wrongMethod.replies.at(-1)).toMatchObject({ status: 405 });
+
+    const invalid = response();
+    await handleSandboxLifecycleRoute(request('POST', '/sandboxes/lifecycle-fence', {}, true), invalid.res, 'fence', options(manager));
+    expect(invalid.replies.at(-1)).toMatchObject({ status: 400 });
+
+    const reply = response();
+    await handleSandboxLifecycleRoute(request('POST', '/sandboxes/lifecycle-fence', identity), reply.res, 'fence', options(manager));
+    expect(reply.replies.at(-1)).toEqual({
+      status: 200, body: { status: 'ok', activityGeneration: 'activity-1' },
+    });
+
+    refFromStatus.mockReturnValueOnce({
+      name: 'as-task', mountSubPath: 'workspace', ...identity, sessionId: 'session-other',
+    });
+    const mismatch = response();
+    await handleSandboxLifecycleRoute(request('POST', '/sandboxes/lifecycle-fence', identity), mismatch.res, 'fence', options(manager));
+    expect(mismatch.replies.at(-1)).toMatchObject({ status: 404 });
+
+    getStatus.mockResolvedValueOnce(null as never);
+    const missing = response();
+    await handleSandboxLifecycleRoute(request('POST', '/sandboxes/lifecycle-fence', identity), missing.res, 'fence', options(manager));
+    expect(missing.replies.at(-1)).toMatchObject({ status: 404 });
   });
 
   it('authenticates and forwards a validated lifecycle update to SandboxManager', async () => {
@@ -79,7 +122,7 @@ describe('authenticated sandbox lifecycle routes', () => {
     });
   });
 
-  it('advances a validated deletion generation before forwarding exact scope deletion', async () => {
+  it('advances a validated deletion generation before forwarding the exact scope deletion', async () => {
     const generation = {
       workspaceId: 'ws_kaiyan__u1', sessionId: 'session-1', sandboxScopeId: 'scope-1',
       previousDeletionGeneration: 'generation-1', deletionGeneration: 'generation-2',

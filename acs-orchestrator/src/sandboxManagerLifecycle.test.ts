@@ -71,6 +71,7 @@ describe('SandboxManager lifecycle mutations', () => {
       labels: { 'agent-saas.kaiyan.net/workload-class': 'cron' },
       annotations: {
         'agent-saas.kaiyan.net/workload-descriptor': JSON.stringify({ class: 'cron' }),
+        'agent-saas.kaiyan.net/last-active-at': expect.any(String),
         'agent-saas.kaiyan.net/terminal-state': null,
         'agent-saas.kaiyan.net/terminal-at': null,
         'agent-saas.kaiyan.net/terminal-outcome': null,
@@ -81,13 +82,16 @@ describe('SandboxManager lifecycle mutations', () => {
 
   it('updates terminal annotations only after exact identity verification and CAS fencing', async () => {
     const { manager, run } = setup();
-    vi.spyOn(manager, 'getStatus').mockResolvedValue(status());
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+      'agent-saas.kaiyan.net/activity-generation': 'generation-current',
+    }));
     const update = {
       ...identity,
       terminalState: 'failed' as const,
       terminalAt: '2026-08-30T00:00:00.000Z',
       outcome: { reason: 'probe failed' },
       retentionDeadline: '2026-08-30T00:15:00.000Z',
+      expectedActivityGeneration: 'generation-current',
     };
 
     await expect(manager.updateLifecycle(update)).resolves.toEqual({
@@ -131,6 +135,23 @@ describe('SandboxManager lifecycle mutations', () => {
     })).resolves.toEqual({ name: manager.ref(identity).name, retentionDeadline: newerDeadline });
 
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a stale terminal receipt when a newer admission generation won even if its clock is behind', async () => {
+    const { manager, run } = setup();
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+      'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:10:00.000Z',
+      'agent-saas.kaiyan.net/activity-generation': 'generation-new',
+    }));
+
+    await expect(manager.updateLifecycle({
+      ...identity,
+      terminalState: 'completed',
+      terminalAt: '2026-08-30T00:15:00.000Z',
+      retentionDeadline: '2026-08-30T00:20:00.000Z',
+      expectedActivityGeneration: 'generation-old',
+    })).resolves.toEqual({ name: manager.ref(identity).name });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('rejects a delayed lifecycle patch after the Sandbox is deleted and recreated with the same name', async () => {

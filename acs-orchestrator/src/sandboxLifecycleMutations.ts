@@ -3,6 +3,7 @@ import type { Kubectl } from './kubectl.js';
 import type { SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import type { SandboxStatus } from './sandboxState.js';
 import {
+  ACTIVITY_GENERATION_ANNOTATION,
   DELETION_GENERATION_ANNOTATION,
   RETENTION_DEADLINE_ANNOTATION,
   TERMINAL_AT_ANNOTATION,
@@ -16,7 +17,11 @@ import {
   type SandboxLifecycleUpdate,
   type SandboxWorkloadDescriptor,
 } from './sandboxLifecyclePolicy.js';
-import { BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION } from './sandboxState.js';
+import {
+  BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
+  BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION,
+} from './sandboxState.js';
+import { LAST_ACTIVE_AT_ANNOTATION } from './sandboxInventoryReader.js';
 
 /** Kubernetes UID/resourceVersion JSON Patch 前置条件失败统一映射为可重试冲突。 */
 export class SandboxMutationPreconditionError extends Error {
@@ -117,12 +122,17 @@ export async function createSandboxResource(
 export async function applyInvocationLease(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
   invocationKey: string, leaseUntil: string | undefined,
-  getStatus: () => Promise<SandboxStatus | null>, expectedUid?: string,
+  getStatus: () => Promise<SandboxStatus | null>, expectedUid?: string, activityGeneration?: string,
 ): Promise<string> {
+  const activityUpdates = leaseUntil && activityGeneration ? {
+    [ACTIVITY_GENERATION_ANNOTATION]: activityGeneration,
+    [TERMINAL_STATE_ANNOTATION]: null, [TERMINAL_AT_ANNOTATION]: null,
+    [TERMINAL_OUTCOME_ANNOTATION]: null, [RETENTION_DEADLINE_ANNOTATION]: null,
+  } : undefined;
   return await applyProtectedAnnotation(
     config, kubectl, resourceName, activeInvocationLeaseAnnotationKey(invocationKey),
     leaseUntil ? JSON.stringify({ invocationKey, until: leaseUntil }) : undefined,
-    'invocation lease', getStatus, true, expectedUid,
+    'invocation lease', getStatus, { mergeLatest: true, expectedUid, updates: activityUpdates },
   );
 }
 
@@ -187,6 +197,7 @@ export async function applyWorkloadDescriptor(
     labels: { [WORKLOAD_CLASS_LABEL]: workload.class },
     annotations: {
       [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
+      [LAST_ACTIVE_AT_ANNOTATION]: new Date().toISOString(),
       [TERMINAL_STATE_ANNOTATION]: null,
       [TERMINAL_AT_ANNOTATION]: null,
       [TERMINAL_OUTCOME_ANNOTATION]: null,
@@ -195,41 +206,42 @@ export async function applyWorkloadDescriptor(
   }, '更新 workload descriptor 失败');
 }
 
+type ProtectedAnnotationOptions = { mergeLatest?: boolean; expectedUid?: string; expectedClear?: { key: string; value: string | null }; updates?: Record<string, string | null> };
 async function applyProtectedAnnotation(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
   key: string, value: string | undefined, description: string,
-  getStatus: () => Promise<SandboxStatus | null>, mergeLatestProtection = false,
-  expectedUid?: string,
+  getStatus: () => Promise<SandboxStatus | null>, options: ProtectedAnnotationOptions = {},
 ): Promise<string> {
-  const maxAttempts = value ? 3 : 1;
-  let observedUid = expectedUid;
+  const maxAttempts = value ? 3 : 1; let observedUid = options.expectedUid;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const status = await getStatus();
     if (!status) throw new SandboxMutationPreconditionError(`Sandbox 不存在，拒绝更新 ${description}`);
-    const metadata = objectValue(status.raw?.metadata);
-    const uid = stringValue(metadata.uid);
-    const resourceVersion = stringValue(metadata.resourceVersion);
+    const metadata = objectValue(status.raw?.metadata); const annotations = objectValue(metadata.annotations);
+    const uid = stringValue(metadata.uid); const resourceVersion = stringValue(metadata.resourceVersion);
     if (!uid || !resourceVersion) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID/resourceVersion');
-    if (observedUid && observedUid !== uid) {
-      throw new SandboxMutationPreconditionError(`Sandbox 已同名重建，拒绝更新 ${description}`);
-    }
+    if (observedUid && observedUid !== uid) throw new SandboxMutationPreconditionError(`Sandbox 已同名重建，拒绝更新 ${description}`);
     observedUid ??= uid;
-    if (value && stringValue(metadata.deletionTimestamp)) {
-      throw new SandboxMutationPreconditionError(`Sandbox 已进入删除流程，拒绝新增或续租 ${description}`);
-    }
-    const current = stringValue(objectValue(metadata.annotations)[key]);
-    const desired = value && mergeLatestProtection ? laterProtection(current, value) : value;
-    if (desired === current || (!desired && current === undefined)) return uid;
+    if (value && stringValue(metadata.deletionTimestamp)) throw new SandboxMutationPreconditionError(`Sandbox 已进入删除流程，拒绝新增或续租 ${description}`);
+    if (!value && options.expectedClear
+      && stringValue(annotations[options.expectedClear.key]) !== (options.expectedClear.value ?? undefined)) return uid;
+    const current = stringValue(annotations[key]);
+    const desired = value && options.mergeLatest ? laterProtection(current, value) : value;
+    const changes = Object.entries(options.updates ?? {}).filter(([extraKey, extraValue]) => (
+      extraValue === null ? Object.hasOwn(annotations, extraKey) : annotations[extraKey] !== extraValue
+    ));
+    if ((desired === current || (!desired && current === undefined)) && changes.length === 0) return uid;
     const path = `/metadata/annotations/${jsonPointerSegment(key)}`;
     const patch = [
-      { op: 'test', path: '/metadata/uid', value: uid },
-      { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
+      { op: 'test', path: '/metadata/uid', value: uid }, { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
       ...(!desired && current !== undefined ? [{ op: 'test', path, value: current }] : []),
-      desired ? { op: 'add', path, value: desired } : { op: 'remove', path },
+      ...(desired === current || (!desired && current === undefined) ? [] : [desired ? { op: 'add', path, value: desired } : { op: 'remove', path }]),
+      ...changes.flatMap(([extraKey, extraValue]) => {
+        const extraPath = `/metadata/annotations/${jsonPointerSegment(extraKey)}`; const existing = annotations[extraKey];
+        return extraValue === null ? [{ op: 'test', path: extraPath, value: existing }, { op: 'remove', path: extraPath }]
+          : [{ op: 'add', path: extraPath, value: extraValue }];
+      }),
     ];
-    const result = await kubectl.run([
-      'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
-    ], { timeoutMs: config.sandboxWaitTimeoutMs });
+    const result = await kubectl.run(['patch', resourceName, '--type=json', '-p', JSON.stringify(patch)], { timeoutMs: config.sandboxWaitTimeoutMs });
     if (result.exitCode === 0) return uid;
     const detail = result.stderr || result.stdout;
     const conflict = /conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion/i.test(detail);
@@ -270,10 +282,15 @@ function jsonPointerSegment(value: string): string {
 export async function applyBackgroundShellProtection(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
   protectedUntil: string | undefined, getStatus: () => Promise<SandboxStatus | null>,
-  expectedUid?: string,
+  expectedUid?: string, expectedClearGeneration?: string | null, generation?: string,
 ): Promise<string> {
+  const clearFence = !protectedUntil && expectedClearGeneration !== undefined
+    ? { key: BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION, value: expectedClearGeneration } : undefined;
+  const updates = protectedUntil && generation ? { [BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION]: generation }
+    : !protectedUntil ? { [BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION]: null } : undefined;
   return await applyProtectedAnnotation(
     config, kubectl, resourceName, BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
-    protectedUntil, '后台 Shell 生命周期保护', getStatus, true, expectedUid,
+    protectedUntil, '后台 Shell 生命周期保护', getStatus,
+    { mergeLatest: true, expectedUid, expectedClear: clearFence, updates },
   );
 }

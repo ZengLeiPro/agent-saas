@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { SandboxDeletionPreconditionError } from './sandboxDeletion.js';
+import { SandboxMutationPreconditionError } from './sandboxLifecycleMutations.js';
 import {
   SandboxBusyError,
   SandboxCapacityError,
@@ -44,7 +45,8 @@ export function decodeSandboxName(rawName: string): string | null {
 
 export function sendSandboxError(res: ServerResponse, err: unknown): void {
   if (err instanceof SandboxCapacityError) return sendCapacityError(res, err);
-  if (err instanceof SandboxBusyError || err instanceof SandboxDeletionPreconditionError) {
+  if (err instanceof SandboxBusyError || err instanceof SandboxDeletionPreconditionError
+    || err instanceof SandboxMutationPreconditionError) {
     return sendJsonError(res, 409, err.message);
   }
   if (err instanceof SandboxNotFoundError) return sendJsonError(res, 404, err.message);

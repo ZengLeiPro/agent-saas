@@ -1,5 +1,7 @@
 export * from './types/correlation';
+export * from './lib/ttsCapability';
 
+// Canonical cross-platform media capability contract.
 // M50-02 canonical Artifact safe-view descriptor, policy and cross-platform viewer state.
 export {
   ARTIFACT_TEXT_MAX_BYTES,

@@ -61,6 +61,16 @@ import {
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
 
+function voiceFailureAction(code: string): string {
+  switch (code.toLowerCase()) {
+    case 'upload_failed': return '语音上传失败，请重录；也可改用文字发送。';
+    case 'stt_silence': return '未识别到有效语音，请重录或改用文字发送。';
+    case 'stt_timeout': return '语音识别超时，请重试录音或改用文字发送。';
+    case 'stt_not_configured': return '语音识别暂不可用，请改用文字发送。';
+    default: return '语音处理失败，请重录；仍失败时可改用文字发送。';
+  }
+}
+
 function createVoiceId(): string {
   const id = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto?.randomUUID?.();
   if (!id) throw new Error('设备安全随机数能力不可用');
@@ -1827,7 +1837,7 @@ export function useChatAppStateCore(): ChatAppState {
     } catch (error) {
       const code = error instanceof Error ? error.message : 'stt_provider_error';
       msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
-        ? { ...m, status: "failed" as const, failedReason: code }
+        ? { ...m, status: "failed" as const, failedReason: voiceFailureAction(code) }
         : m);
     } finally {
       try { new File(fileUri).delete(); } catch {}

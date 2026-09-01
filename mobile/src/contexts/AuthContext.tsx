@@ -30,6 +30,7 @@ import { clearAllMessageCache, setMobileMessageCacheIdentity } from '../platform
 import { clearMobileCacheV2Namespace } from '../platform/mobileCacheAdapter';
 import { fileCacheService } from '../services/fileCacheService';
 import { textContentCache } from '../services/textContentCache';
+import { clearVoiceMediaTempCache } from '../services/voiceMediaTempCache';
 import { clearFileListCache } from '../hooks/useFileList';
 import { cancelNativeOAuthTransaction } from '../services/nativeOAuthHandoff';
 import { clearGroupsCache, getPlatform, setSensitiveTransportAllowed } from '@agent/shared';
@@ -130,6 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await Promise.all([
           clearMobileCacheV2Namespace(), clearSessionListCache(), clearGroupsCache(), clearAllMessageCache(),
           fileCacheService.clearAll(), textContentCache.clearAll(), clearFileListCache(),
+          Promise.resolve(clearVoiceMediaTempCache()),
         ]);
         await Promise.all([
           Promise.resolve(getPlatform().storage.removeItem('avatarMap')),

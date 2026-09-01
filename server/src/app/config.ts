@@ -206,6 +206,8 @@ const webPushConfigSchema = z.object({
 });
 
 const ttsConfigSchema = z.object({
+  /** Fail closed in every environment; credentials alone never enable synthesis. */
+  enabled: z.boolean().default(false),
   doubaoAppId: z.string(),
   doubaoApiKey: z.string(),
   doubaoCluster: z.string().optional(),
@@ -1231,6 +1233,7 @@ export const appConfigSchema = z.object({
   dingtalk: dingtalkConfigSchema.optional(),
   dingtalkSendMessage: dingtalkSendMessageConfigSchema.optional(),
   webPush: webPushConfigSchema.optional(),
+  // TTS remains optional and, when present, is still disabled unless enabled=true.
   tts: ttsConfigSchema.optional(),
   stt: sttConfigSchema.optional(),
   messageDisplay: messageDisplayConfigSchema.optional(),

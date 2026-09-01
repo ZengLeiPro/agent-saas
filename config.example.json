@@ -352,8 +352,9 @@
   },
 
   // ── TTS 语音合成（豆包）───────────────────────────────────
-  // 用于钉钉 [VOICE] 标记触发的文本转语音
+  // 默认关闭；只有 enabled=true 且凭据完整时，服务端与 Web/Mobile 才暴露能力
   "tts": {
+    "enabled": false,
     "doubaoAppId": "",
     "doubaoApiKey": "",
     "doubaoCluster": "volcengine_input_common",

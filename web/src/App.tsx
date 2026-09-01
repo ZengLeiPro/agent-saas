@@ -64,7 +64,7 @@ function toSidebarSessions(
 
 function App() {
   const { isAdmin, isPlatformAdmin, user: authUser } = useAuth();
-  const isOnline = useOnlineStatus();
+  const isOnline = useOnlineStatus(); // lifecycle-sensitive media remains fail-closed
   const ttsPlayer = useTtsPlayer();
   const isMobile = useIsMobile();
 
@@ -102,6 +102,8 @@ function App() {
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
     startAgentTargetSession, pendingAgentTarget,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
+
+  useEffect(() => ttsPlayer.stop, [sessionId, ttsPlayer.stop]);
 
   const [subagentTranscript, setSubagentTranscript] = useState<SubagentTranscriptTarget | null>(null);
   const [previewArtifact, setPreviewArtifact] = useState<ArtifactPreviewTarget | null>(null);

@@ -50,6 +50,8 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
   const activeRef = useRef(false);
   const cancelledRef = useRef(false);
   const singleFlightRef = useRef(false);
+  const permissionPendingRef = useRef(false);
+  const stoppingRef = useRef(false);
   const identityRef = useRef(identityKey);
 
   const clearTimer = useCallback(() => {
@@ -61,13 +63,16 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
     clearTimer();
     activeRef.current = false;
     singleFlightRef.current = false;
+    permissionPendingRef.current = false;
+    stoppingRef.current = false;
     setDuration(0);
     setStatus(terminal);
     void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
   }, [clearTimer]);
 
   const stopInternal = useCallback(async (send: boolean, terminalReason: VoiceStatus = 'cancelled') => {
-    if (!activeRef.current || status === 'stopping') return;
+    if (!activeRef.current || stoppingRef.current) return;
+    stoppingRef.current = true;
     activeRef.current = false;
     clearTimer();
     setStatus('stopping');
@@ -75,7 +80,7 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
     try {
       await recorder.stop();
       const uri = recorder.uri;
-      if (!uri) { reset('failed'); return; }
+      if (!uri) { Alert.alert('录音失败', '未生成录音文件，请重录或改用文字发送。'); reset('failed'); return; }
       const file = new File(uri);
       const shouldSend = send && !cancelledRef.current;
       if (!shouldSend) {
@@ -99,18 +104,21 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
       await onVoiceSend(uri, elapsed);
       reset('idle');
     } catch {
+      Alert.alert('语音处理失败', '请重录；仍失败时可改用文字发送。');
       reset('failed');
     }
-  }, [clearTimer, onTooShort, onVoiceSend, recorder, reset, status]);
+  }, [clearTimer, onTooShort, onVoiceSend, recorder, reset]);
 
   const startRecording = useCallback(async () => {
     // This is called only by the microphone press. The fence is set before awaiting permission.
     if (singleFlightRef.current || activeRef.current) return;
     singleFlightRef.current = true;
+    permissionPendingRef.current = true;
     cancelledRef.current = false;
     setStatus('requesting_permission');
     try {
       const permission = await requestMicrophoneForUserAction();
+      permissionPendingRef.current = false;
       if (cancelledRef.current || AppState.currentState !== 'active') {
         reset('cancelled');
         return;
@@ -123,6 +131,8 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
             { text: '取消', style: 'cancel' },
             { text: '打开设置', onPress: () => { void openAppSettingsForPermissionFallback(); } },
           ]);
+        } else {
+          Alert.alert('未获得麦克风权限', '你仍可直接输入文字发送；再次录音时会重新请求权限。');
         }
         return;
       }
@@ -140,6 +150,7 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
         if (elapsed >= VOICE_MAX_DURATION_MS) void stopInternal(true);
       }, 200);
     } catch {
+      Alert.alert('无法开始录音', '请重试；仍失败时可改用文字发送。');
       reset('failed');
     }
   }, [recorder, reset, stopInternal]);
@@ -156,7 +167,7 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' && (activeRef.current || singleFlightRef.current)) {
+      if (next !== 'active' && (activeRef.current || permissionPendingRef.current)) {
         cancelledRef.current = true;
         if (!activeRef.current) reset('cancelled');
         else void stopInternal(false, 'cancelled');
@@ -175,9 +186,15 @@ export function useVoiceRecorder({ onVoiceSend, onTooShort, identityKey }: UseVo
   }, [identityKey, reset, stopInternal]);
 
   useEffect(() => () => {
-    cancelledRef.current = true;
+    cancelledRef.current = true; // offscreen/unmount fence
     clearTimer();
-    if (activeRef.current) void recorder.stop().catch(() => undefined);
+    if (activeRef.current) {
+      activeRef.current = false;
+      void recorder.stop().then(() => {
+        const uri = recorder.uri;
+        if (uri) { try { new File(uri).delete(); } catch {} }
+      }).catch(() => undefined);
+    }
     void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
   }, [clearTimer, recorder]);
 

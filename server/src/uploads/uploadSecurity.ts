@@ -25,6 +25,7 @@ export class UploadPolicyError extends Error {
 }
 
 const SAFE_RASTER = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const SAFE_INLINE_MEDIA = new Set([...SAFE_RASTER, 'audio/wav', 'audio/x-wav', 'audio/mpeg']);
 const ZIP_DECLARATIONS = new Set([
   'application/zip',
   'application/x-zip-compressed',
@@ -135,7 +136,7 @@ export async function inspectUploadedFile(file: {
 }
 
 export function attachmentResponseHeaders(input: { originalName: string; mimeType: string; inline: boolean }): Record<string, string> {
-  const safeInline = input.inline && SAFE_RASTER.has(input.mimeType);
+  const safeInline = input.inline && SAFE_INLINE_MEDIA.has(input.mimeType.toLowerCase());
   const ascii = input.originalName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\\r\n]/g, '_').slice(0, 150) || 'attachment';
   const encoded = encodeURIComponent(input.originalName).replace(/['()]/g, escape);
   return {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { createReadStream } from 'node:fs';
 import { basename, extname, join } from 'path';
 import multer from 'multer';
 import { Router, type Request } from 'express';
@@ -37,6 +38,24 @@ function safeUploadFilename(originalName: string): string {
 
 
 const UPLOAD_REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INLINE_AUDIO_MIME_TYPES = new Set(['audio/wav', 'audio/x-wav', 'audio/mpeg']);
+
+type ByteRange = { start: number; end: number };
+function parseAttachmentRange(raw: string | undefined, size: number): ByteRange | null | 'invalid' {
+  if (!raw) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(raw.trim());
+  if (!match || size <= 0 || (!match[1] && !match[2])) return 'invalid';
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return 'invalid';
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd)
+    || start < 0 || requestedEnd < start || start >= size) return 'invalid';
+  return { start, end: Math.min(size - 1, requestedEnd) };
+}
 
 function uploadRequestId(req: Request): string {
   const supplied = typeof req.headers['x-upload-request-id'] === 'string'
@@ -342,19 +361,39 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
     res.status(outcome === 'not_found' ? 404 : 200).json({ success: outcome !== 'not_found', requestId, outcome });
   });
 
-  router.get('/attachments/:attachmentId/content', async (req, res) => {
+  const serveAttachmentContent = async (req: Request, res: import('express').Response): Promise<void> => {
     try {
       const userCwd = resolveRequestUserCwd(agentCwd, req);
       const content = await uploadManager.getAttachmentContent(userCwd, req.params.attachmentId);
-      const inline = req.query.download !== '1' && content.isImage;
+      const audio = INLINE_AUDIO_MIME_TYPES.has(content.mimeType.toLowerCase());
+      const inline = req.query.download !== '1' && (content.isImage || audio);
       for (const [name, value] of Object.entries(attachmentResponseHeaders({
-        originalName: content.originalName,
-        mimeType: content.mimeType,
-        inline,
+        originalName: content.originalName, mimeType: content.mimeType, inline,
       }))) res.setHeader(name, value);
-      res.sendFile(content.absolutePath, (error) => {
-        if (error && !res.headersSent) res.status(410).json({ success: false, code: 'ATTACHMENT_DELETED', error: '附件已删除' });
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const range = parseAttachmentRange(typeof req.headers.range === 'string' ? req.headers.range : undefined, content.size);
+      if (range === 'invalid') {
+        res.setHeader('Content-Range', `bytes */${content.size}`);
+        res.status(416).end();
+        return;
+      }
+      const start = range?.start ?? 0;
+      const end = range?.end ?? Math.max(0, content.size - 1);
+      if (range) {
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${content.size}`);
+      } else {
+        res.status(200);
+      }
+      res.setHeader('Content-Length', Math.max(0, end - start + 1));
+      if (req.method === 'HEAD') { res.end(); return; }
+      const stream = createReadStream(content.absolutePath, { start, end });
+      stream.on('error', () => {
+        if (!res.headersSent) res.status(410).json({ success: false, code: 'ATTACHMENT_DELETED', error: '附件已删除' });
+        else res.destroy();
       });
+      stream.pipe(res);
     } catch (error) {
       if (error instanceof AttachmentUnavailableError) {
         res.status(error.code === 'ATTACHMENT_NOT_FOUND' ? 404 : 410).json({ success: false, code: error.code, error: error.message });
@@ -362,8 +401,11 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       }
       res.status(404).json({ success: false, code: 'ATTACHMENT_NOT_FOUND', error: '附件不存在或无权访问' });
     }
-  });
+  };
+  router.get('/attachments/:attachmentId/content', serveAttachmentContent);
+  router.head('/attachments/:attachmentId/content', serveAttachmentContent);
 
+  // Usage and cleanup endpoints remain separate from byte-stream playback.
   router.get('/uploads/usage', async (req, res) => {
     try {
       const userCwd = resolveRequestUserCwd(agentCwd, req);

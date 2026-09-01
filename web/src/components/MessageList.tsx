@@ -276,7 +276,7 @@ export const MessageList = memo(function MessageList({
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
-  // 本地捕获滚动容器 DOM，供「回到最新消息」浮动按钮判定距离与主动滚动。
+  // 本地捕获滚动容器 DOM，用于「回到最新消息」判定距离与主动滚动。
   // 通过 setContainerRef 合并到外部传入的 scrollContainerRef，不破坏原有引用契约。
   const internalContainerRef = useRef<HTMLDivElement | null>(null);
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -289,6 +289,8 @@ export const MessageList = memo(function MessageList({
   }, [scrollContainerRef]);
 
   const voicePlayer = useVoicePlayer();
+  // A historical clip is scoped to the visible conversation; switching sessions releases it.
+  useEffect(() => voicePlayer.stop, [sessionId, voicePlayer.stop]);
   const { user } = useAuth();
   const debugModeRequested = debugModeOverride
     ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));

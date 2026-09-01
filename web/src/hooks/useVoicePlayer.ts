@@ -1,36 +1,29 @@
-/**
- * 语音消息回放 Hook
- *
- * 管理 HTMLAudioElement 实例，支持播放/暂停/停止。
- * 全局同一时间只播放一条语音消息。
- * 通过 authFetch 获取音频数据，确保 JWT 鉴权正常工作。
- */
-
-import { useCallback, useRef, useState } from 'react';
+/** Authenticated historical voice playback with pause/resume and lifecycle fences. */
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch } from '@/lib/authFetch';
 
 export type VoicePlayState = 'idle' | 'loading' | 'playing' | 'paused';
 
 export interface UseVoicePlayerReturn {
-  /** 正在播放的消息 ID */
   activeId: string | null;
-  /** 获取指定消息的播放状态 */
   getState: (id: string) => VoicePlayState;
-  /** 播放 */
   play: (id: string, attachmentId: string) => void;
-  /** 暂停/恢复 */
   togglePause: (id: string) => void;
-  /** 停止 */
   stop: () => void;
 }
 
 export function useVoicePlayer(): UseVoicePlayerReturn {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [state, setState] = useState<VoicePlayState>('idle');
+  const activeIdRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
 
   const cleanup = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.removeAttribute('src');
@@ -44,68 +37,66 @@ export function useVoicePlayer(): UseVoicePlayerReturn {
   }, []);
 
   const stop = useCallback(() => {
+    generationRef.current += 1;
     cleanup();
+    activeIdRef.current = null;
     setActiveId(null);
     setState('idle');
   }, [cleanup]);
 
-  const play = useCallback(async (id: string, attachmentId: string) => {
-    // 如果正在播放别的，先停止
-    stop();
-
-    setActiveId(id);
-    setState('loading');
-
-    try {
-      // 通过 authFetch 获取音频数据，携带 JWT token
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) throw new Error('Invalid voice attachmentId');
-      const res = await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/content`);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+  const play = useCallback((id: string, attachmentId: string) => {
+    void (async () => {
+      stop();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) return;
+      const generation = generationRef.current;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      activeIdRef.current = id;
+      setActiveId(id);
+      setState('loading');
+      try {
+        const response = await authFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/content`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        if (generationRef.current !== generation || activeIdRef.current !== id) return;
+        const objectUrl = URL.createObjectURL(blob);
+        objectUrlRef.current = objectUrl;
+        const audio = new Audio(objectUrl);
+        audioRef.current = audio;
+        audio.onended = stop;
+        audio.onerror = stop;
+        await audio.play();
+        if (generationRef.current === generation && activeIdRef.current === id) setState('playing');
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') stop();
       }
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      objectUrlRef.current = objectUrl;
-
-      const audio = new Audio(objectUrl);
-      audioRef.current = audio;
-      setState('playing');
-
-      audio.onended = () => {
-        setActiveId(null);
-        setState('idle');
-        cleanup();
-      };
-      audio.onerror = () => {
-        setActiveId(null);
-        setState('idle');
-        cleanup();
-      };
-
-      await audio.play();
-    } catch {
-      setActiveId(null);
-      setState('idle');
-      cleanup();
-    }
-  }, [stop, cleanup]);
+    })();
+  }, [stop]);
 
   const togglePause = useCallback((id: string) => {
-    if (activeId !== id || !audioRef.current) return;
-
-    if (state === 'playing') {
+    if (activeIdRef.current !== id || !audioRef.current) return;
+    if (audioRef.current.paused) {
+      // HTMLAudioElement resumes at currentTime; loading a new source is deliberately avoided.
+      void audioRef.current.play().then(() => setState('playing')).catch(stop);
+    } else {
       audioRef.current.pause();
       setState('paused');
-    } else if (state === 'paused') {
-      audioRef.current.play().catch(() => {});
-      setState('playing');
     }
-  }, [activeId, state]);
+  }, [stop]);
 
-  const getState = useCallback((id: string): VoicePlayState => {
-    if (activeId !== id) return 'idle';
-    return state;
-  }, [activeId, state]);
+  const getState = useCallback((id: string): VoicePlayState => activeId === id ? state : 'idle', [activeId, state]);
+
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState !== 'visible') stop(); };
+    const onPageHide = () => stop();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      cleanup();
+    };
+  }, [cleanup, stop]);
 
   return { activeId, getState, play, togglePause, stop };
 }

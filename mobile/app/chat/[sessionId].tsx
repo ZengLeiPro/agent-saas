@@ -128,7 +128,7 @@ export default function ChatDetailScreen() {
     chat.refreshCurrentSession();
   }, 5_000);
 
-  // Wire up TTS auto-play callback
+  // Wire the explicitly available TTS capability into auto-play.
   useEffect(() => {
     if (tts.available && tts.autoPlay) {
       chat.voiceCallbackRef.current = (key, text, voice, speed) => {
@@ -156,6 +156,7 @@ export default function ChatDetailScreen() {
     if (sessionId && sessionId !== 'new') return sessionId;
     return chat.sessionId;
   }, [sessionId, chat.sessionId]);
+  useEffect(() => tts.stop, [effectiveSessionId, tts.stop]);
 
   const currentSession = useMemo(() => {
     if (!effectiveSessionId) return undefined;

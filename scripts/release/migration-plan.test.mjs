@@ -334,6 +334,182 @@ test('tracks imported callbacks through class fields, nested members, and re-exp
       },
     },
     {
+      label: 'Reflect.get static member callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.get(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through a method alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst get = Reflect.get;\nget(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through a destructured alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst { get } = Reflect;\nget(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through an object alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst reflection = Reflect;\nreflection.get(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through a destructuring assignment',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nlet get;\n({ get } = Reflect);\nget(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through a bound alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst get = Reflect.get.bind(Reflect);\nget(wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through Function.call',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.get.call(Reflect, wrapper, 'run')(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get callable through Function.apply',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.get.apply(Reflect, [wrapper, 'run'])(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get member callable assigned to an alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst execute = Reflect.get(wrapper, 'run');\nexecute(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get member callable through Function.call',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.get(wrapper, 'run').call(undefined, db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get member callable through Reflect.apply',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nReflect.apply(Reflect.get(wrapper, 'run'), undefined, [db]);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'Reflect.get unknown member callable fails closed',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst key = process.argv[2];\nReflect.get(wrapper, key)(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through a method alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = Object.getOwnPropertyDescriptor;\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through a destructured alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst { getOwnPropertyDescriptor: descriptor } = Object;\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through a destructuring assignment',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nlet descriptor;\n({ getOwnPropertyDescriptor: descriptor } = Object);\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through a bound alias',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = Object.getOwnPropertyDescriptor.bind(Object);\ndescriptor(wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through Function.call',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptor.call(Object, wrapper, 'run').value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through Function.apply',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptor.apply(Object, [wrapper, 'run']).value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor value callable through Function.apply',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptor(wrapper, 'run').value.apply(undefined, [db]);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor alias value callable',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nconst descriptor = Object.getOwnPropertyDescriptor(wrapper, 'run');\ndescriptor.value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'property descriptor unknown value callable fails closed',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nObject.getOwnPropertyDescriptor(wrapper, process.argv[2]).value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'nested renamed destructured member callable',
       rootSource:
         "import { wrapper } from './providers/index.js';\nconst { nested: { run: execute } } = wrapper;\nexecute(db);",
@@ -425,6 +601,32 @@ test('tracks imported callbacks through class fields, nested members, and re-exp
   }
 });
 
+test('fails closed when reflective apply arguments are dynamic', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/providers/run.ts';
+  const rootSource =
+    "import { wrapper } from './providers/index.js';\nReflect.get.apply(Reflect, reflectiveArgs)(db);";
+  const providerSource = "export async function run(db) { await db.query('DROP TABLE users'); }";
+  const barrel = 'server/src/data/governance-schema/providers/index.ts';
+  const result = plan(providerSource, addedSourceDiff("await db.query('DROP TABLE users');"), {
+    changedPaths: [provider],
+    baselines: {
+      [root]: rootSource,
+      [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      [provider]: 'export async function run(_db) {}',
+    },
+    targets: {
+      [root]: rootSource,
+      [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      [provider]: providerSource,
+    },
+    diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.blockingReasons.join('\n'), /dependency closure could not be proven/u);
+});
+
 test('tracks constructable class providers and their instance methods', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const provider = 'server/src/data/governance-schema/providers/runner.ts';
@@ -442,25 +644,34 @@ test('tracks constructable class providers and their instance methods', () => {
   assert.match(result.blockingReasons.join('\n'), /runner\.ts/u);
 });
 
-test('does not treat ordinary imported data arguments as callable providers', () => {
+test('does not treat ordinary data or side-effect-free reflective reads as callable providers', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const provider = 'server/src/data/governance-schema/provider.ts';
-  const rootSource = "import * as provider from './provider.js';\nregistry.map(provider.config);";
   const baselineProvider =
     "export const config = { name: 'safe' };\nexport async function run(db) { await db.query('CREATE TABLE users(id text)'); }";
   const targetProvider =
     "export const config = { name: 'safe' };\nexport async function run(db) { await db.query('DROP TABLE users'); }";
-  const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
-    changedPaths: [provider],
-    baselines: { [root]: rootSource, [provider]: baselineProvider },
-    targets: { [root]: rootSource, [provider]: targetProvider },
-    diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
-    nameStatus: `M\t${provider}`,
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.migrationPlan.phase, 'none');
+  for (const rootSource of [
+    "import * as provider from './provider.js';\nregistry.map(provider.config);",
+    "import * as provider from './provider.js';\nReflect.get(provider, 'config');",
+    "import * as provider from './provider.js';\nObject.getOwnPropertyDescriptor(provider, 'config');",
+    "import * as provider from './provider.js';\nconst descriptor = Object.getOwnPropertyDescriptor;\ndescriptor(provider, 'config');",
+    "import * as provider from './provider.js';\nconst get = Reflect.get.bind(Reflect);\nget(provider, 'config');",
+    "import * as provider from './provider.js';\nconst descriptor = Object.getOwnPropertyDescriptor.bind(Object);\ndescriptor(provider, 'config');",
+  ]) {
+    const result = plan(targetProvider, addedSourceDiff("await db.query('DROP TABLE users');"), {
+      changedPaths: [provider],
+      baselines: { [root]: rootSource, [provider]: baselineProvider },
+      targets: { [root]: rootSource, [provider]: targetProvider },
+      diffs: { [provider]: addedSourceDiff("await db.query('DROP TABLE users');") },
+      nameStatus: `M\t${provider}`,
+    });
+    assert.equal(result.ok, true, rootSource);
+    assert.equal(result.migrationPlan.phase, 'none', rootSource);
+  }
 });
 
+// Dynamic module resolution is independent of the static callable/member closure above.
 test('fails closed for dynamic import, require, and createRequire loaders', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   for (const source of [
@@ -914,10 +1125,6 @@ test('requires standalone expand metadata and accepts only whitelisted expand st
     "ALTER TABLE safe_addition ADD COLUMN quoted text DEFAULT 'DROP, SELECT;';",
     'ALTER TABLE safe_addition ADD COLUMN dollar text DEFAULT $$DROP, SELECT;$$;',
     'ALTER /* outer /* nested DROP, SELECT; */ comment */ TABLE safe_addition ADD COLUMN nested text;',
-    "ALTER TABLE safe_addition ADD CONSTRAINT safe_check CHECK (id <> '');",
-    'ALTER TABLE safe_addition ADD CONSTRAINT safe_owner CHECK (owner_id IS NOT NULL);',
-    'ALTER TABLE safe_addition ADD CONSTRAINT safe_positive CHECK ((id > 0)) NOT VALID;',
-    'ALTER TABLE safe_addition ADD CHECK (owner_id IS NOT NULL);',
     'ALTER TABLE safe_addition VALIDATE CONSTRAINT safe_check;',
   ]) {
     const validSource = sqlSource(valid);
@@ -950,11 +1157,18 @@ test('rejects unknown and context-confused function calls inside allowed CREATE 
     'ALTER TABLE records ADD CONSTRAINT records_owner_fkey FOREIGN KEY (owner_id) REFERENCES users(id);',
     'ALTER TABLE records ADD CONSTRAINT records_excl EXCLUDE USING gist (period WITH &&);',
     'ALTER TABLE records ADD CONSTRAINT unsafe_operator CHECK (id !@! 1);',
+    'ALTER TABLE records ADD CONSTRAINT owner_required CHECK (owner_id IS NOT NULL);',
+    "ALTER TABLE records ADD CONSTRAINT non_empty CHECK (owner_id <> '');",
+    'ALTER TABLE records ADD CONSTRAINT positive CHECK ((id > 0)) NOT VALID;',
+    'ALTER TABLE records ADD CHECK (owner_id IS NOT NULL);',
     'ALTER TABLE records ADD PRIMARY KEY (id);',
     'ALTER TABLE records ADD UNIQUE (email);',
     'ALTER TABLE records ADD FOREIGN KEY (owner_id) REFERENCES users(id);',
     'ALTER TABLE records ADD EXCLUDE USING gist (period WITH &&);',
     'ALTER TABLE records ADD CHECK (id !@! 1);',
+    'ALTER TABLE records ADD CONSTRAINT future_syntax;',
+    'ALTER TABLE records ADD IF NOT EXISTS CONSTRAINT owner_required CHECK (owner_id IS NOT NULL);',
+    'ALTER TABLE records ADD NOT NULL owner_id;',
     'CREATE TABLE unsafe_partition(id integer) PARTITION BY RANGE (id);',
     "CREATE TABLE unsafe_check(id integer CHECK (varchar(id) <> ''));",
     'CREATE INDEX unsafe_idx ON users (evil.lower(name));',
@@ -1070,7 +1284,13 @@ for (const statement of [
   'MERGE /* routing */ INTO records USING incoming ON records.id=incoming.id WHEN MATCHED THEN UPDATE SET id=incoming.id;',
   'REPLACE INTO records(id) VALUES (1);',
   'ALTER TABLE records ADD COLUMN owner_id text NOT NULL;',
+  'ALTER TABLE records ADD COLUMN email text UNIQUE;',
+  'ALTER TABLE records ADD COLUMN id text PRIMARY KEY;',
+  'ALTER TABLE records ADD COLUMN owner_id uuid REFERENCES users(id);',
+  'ALTER TABLE records ADD COLUMN score integer CHECK (score > 0);',
+  'ALTER TABLE records ADD COLUMN score integer CONSTRAINT positive CHECK (score > 0);',
   "ALTER TABLE records ADD COLUMN x bigint DEFAULT nextval('shared_seq');",
+  'ALTER TABLE records ADD COLUMN period tstzrange EXCLUDE USING gist (period WITH &&);',
   'ALTER TABLE records ADD CONSTRAINT safe CHECK (destructive_function(id));',
   `ALTER TABLE records ADD COLUMN x bigint DEFAULT "nextval"('shared_seq');`,
   'ALTER TABLE records ADD CONSTRAINT safe CHECK ("destructive_function"(id));',

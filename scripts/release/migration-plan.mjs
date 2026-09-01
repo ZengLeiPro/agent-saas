@@ -31,7 +31,7 @@ const GOVERNANCE_MIGRATION_PROVIDER_PATH =
 const ALLOWED_EXPAND_ALTER_PATTERN =
   /^ALTER\s+TABLE\s+\S+\s+(?:ADD\s+(?:COLUMN\s+)?|ADD\s+CONSTRAINT\b|VALIDATE\s+CONSTRAINT\b)/iu;
 const ADD_TABLE_CONSTRAINT_PATTERN =
-  /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?(?:CHECK|PRIMARY\s+KEY|UNIQUE|FOREIGN\s+KEY|EXCLUDE)\b/iu;
+  /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:CONSTRAINT\b|CHECK\b|NOT\s+NULL\b|PRIMARY\s+KEY\b|UNIQUE\b|FOREIGN\s+KEY\b|EXCLUDE\b)/iu;
 const ALLOWED_EXPAND_CREATE_PATTERN =
   /^CREATE\s+(?:(?:UNIQUE\s+)?INDEX(?:\s+CONCURRENTLY)?|TABLE|SEQUENCE)\b/iu;
 const ALLOWED_CREATE_PAREN_KEYWORDS = new Set(['as', 'check', 'unique', 'with']);
@@ -551,32 +551,18 @@ function hasUnprovenAlterFunction(value) {
 }
 
 function hasUnprovenAddConstraint(value) {
-  const identifier =
-    '(?:(?:[A-Za-z_]|[^\\x00-\\x7F])(?:[A-Za-z0-9_$]|[^\\x00-\\x7F])*|"identifier")';
-  const literal = "(?:''|[-+]?\\d+(?:\\.\\d+)?|TRUE|FALSE|NULL)";
-  const nullPredicate = new RegExp(`^${identifier}\\s+IS\\s+(?:NOT\\s+)?NULL$`, 'iu');
-  const literalComparison = new RegExp(`^${identifier}\\s*(?:=|<>|<=|>=|<|>)\\s*${literal}$`, 'iu');
-  return operationSlices(value, 'ALTER').some((statement) => {
-    if (!ADD_TABLE_CONSTRAINT_PATTERN.test(statement)) return false;
-    const match = statement.match(
-      /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?CHECK\s*\(([\s\S]*)\)\s*(?:NOT\s+VALID)?$/iu,
-    );
-    if (!match) return true;
-    let expression = match[1].trim();
-    while (
-      expression.startsWith('(') &&
-      matchingParenthesis(expression, 0) === expression.length - 1
-    )
-      expression = expression.slice(1, -1).trim();
-    return !nullPredicate.test(expression) && !literalComparison.test(expression);
-  });
+  // Reject explicit and shorthand constraints, including future PostgreSQL constraint forms.
+  return operationSlices(value, 'ALTER').some((statement) =>
+    ADD_TABLE_CONSTRAINT_PATTERN.test(statement),
+  );
 }
 
+// Nullable columns with pure type/default syntax remain expand-safe; inline constraints do not.
 function hasRiskyAddColumn(value) {
   return operationSlices(value, 'ALTER').some(
     (statement) =>
       !ADD_TABLE_CONSTRAINT_PATTERN.test(statement) &&
-      /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+[^;\n]*\bNOT\s+NULL\b/iu.test(
+      /^ALTER\s+TABLE\s+\S+\s+ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+[^;\n]*\b(?:NOT\s+NULL|CHECK|UNIQUE|PRIMARY\s+KEY|REFERENCES|FOREIGN\s+KEY|EXCLUDE)\b/iu.test(
         statement,
       ),
   );
@@ -717,23 +703,225 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     if (ts.isIdentifier(node)) calledIdentifiers.add(node.text);
     ts.forEachChild(node, collectCallTargetIdentifiers);
   };
-  const memberReference = (node) => {
-    const members = [];
+  const unwrapExpression = (node) => {
     let current = node;
-    while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-      if (ts.isPropertyAccessExpression(current)) members.push(current.name.text);
-      else if (
-        current.argumentExpression &&
-        (ts.isStringLiteral(current.argumentExpression) ||
-          ts.isNoSubstitutionTemplateLiteral(current.argumentExpression))
-      )
-        members.push(current.argumentExpression.text);
-      else members.push('*');
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    )
       current = current.expression;
+    return current;
+  };
+  const staticMemberKey = (node) => {
+    const current = unwrapExpression(node);
+    if (
+      ts.isStringLiteral(current) ||
+      ts.isNoSubstitutionTemplateLiteral(current) ||
+      ts.isNumericLiteral(current)
+    )
+      return current.text;
+    return '*';
+  };
+  const reflectObjectAliases = new Set(['Reflect']);
+  const objectConstructorAliases = new Set(['Object']);
+  const reflectGetAliases = new Set();
+  const descriptorAliases = new Set();
+  const isMethodReference = (node, objectAliases, methodAliases, method) => {
+    const expression = unwrapExpression(node);
+    if (ts.isIdentifier(expression)) return methodAliases.has(expression.text);
+    if (ts.isCallExpression(expression)) {
+      const callee = unwrapExpression(expression.expression);
+      if (
+        (ts.isPropertyAccessExpression(callee) && callee.name.text === 'bind') ||
+        (ts.isElementAccessExpression(callee) &&
+          callee.argumentExpression &&
+          staticMemberKey(callee.argumentExpression) === 'bind')
+      )
+        return isMethodReference(callee.expression, objectAliases, methodAliases, method);
     }
-    if (!ts.isIdentifier(current) || members.length === 0) return undefined;
-    const path = members.reverse();
-    return { owner: current.text, member: path.includes('*') ? '*' : path.join('.') };
+    if (ts.isPropertyAccessExpression(expression))
+      return (
+        ts.isIdentifier(expression.expression) &&
+        objectAliases.has(expression.expression.text) &&
+        expression.name.text === method
+      );
+    if (ts.isElementAccessExpression(expression))
+      return (
+        ts.isIdentifier(expression.expression) &&
+        objectAliases.has(expression.expression.text) &&
+        expression.argumentExpression &&
+        staticMemberKey(expression.argumentExpression) === method
+      );
+    return false;
+  };
+  let reflectiveAliasesChanged = true;
+  while (reflectiveAliasesChanged) {
+    reflectiveAliasesChanged = false;
+    const addAlias = (aliases, name) => {
+      if (!aliases.has(name)) {
+        aliases.add(name);
+        reflectiveAliasesChanged = true;
+      }
+    };
+    const addDestructuredMethodAlias = (owner, propertyName, localName) => {
+      if (reflectObjectAliases.has(owner) && propertyName === 'get')
+        addAlias(reflectGetAliases, localName);
+      if (objectConstructorAliases.has(owner) && propertyName === 'getOwnPropertyDescriptor')
+        addAlias(descriptorAliases, localName);
+    };
+    const collectAliases = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const initializer = unwrapExpression(node.initializer);
+        if (ts.isIdentifier(initializer)) {
+          if (reflectObjectAliases.has(initializer.text))
+            addAlias(reflectObjectAliases, node.name.text);
+          if (objectConstructorAliases.has(initializer.text))
+            addAlias(objectConstructorAliases, node.name.text);
+        }
+        if (isMethodReference(initializer, reflectObjectAliases, reflectGetAliases, 'get'))
+          addAlias(reflectGetAliases, node.name.text);
+        if (
+          isMethodReference(
+            initializer,
+            objectConstructorAliases,
+            descriptorAliases,
+            'getOwnPropertyDescriptor',
+          )
+        )
+          addAlias(descriptorAliases, node.name.text);
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isObjectBindingPattern(node.name) &&
+        node.initializer &&
+        ts.isIdentifier(unwrapExpression(node.initializer))
+      ) {
+        const owner = unwrapExpression(node.initializer).text;
+        for (const element of node.name.elements) {
+          if (!ts.isIdentifier(element.name)) continue;
+          const property = element.propertyName ?? element.name;
+          const propertyName =
+            ts.isIdentifier(property) || ts.isStringLiteral(property) ? property.text : undefined;
+          addDestructuredMethodAlias(owner, propertyName, element.name.text);
+        }
+      }
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const left = unwrapExpression(node.left);
+        const right = unwrapExpression(node.right);
+        if (ts.isIdentifier(left)) {
+          if (ts.isIdentifier(right)) {
+            if (reflectObjectAliases.has(right.text)) addAlias(reflectObjectAliases, left.text);
+            if (objectConstructorAliases.has(right.text))
+              addAlias(objectConstructorAliases, left.text);
+          }
+          if (isMethodReference(right, reflectObjectAliases, reflectGetAliases, 'get'))
+            addAlias(reflectGetAliases, left.text);
+          if (
+            isMethodReference(
+              right,
+              objectConstructorAliases,
+              descriptorAliases,
+              'getOwnPropertyDescriptor',
+            )
+          )
+            addAlias(descriptorAliases, left.text);
+        }
+        if (ts.isObjectLiteralExpression(left) && ts.isIdentifier(right)) {
+          for (const property of left.properties) {
+            const propertyName =
+              property.name && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+                ? property.name.text
+                : undefined;
+            const target = ts.isShorthandPropertyAssignment(property)
+              ? property.name
+              : ts.isPropertyAssignment(property)
+                ? unwrapExpression(property.initializer)
+                : undefined;
+            if (propertyName && target && ts.isIdentifier(target))
+              addDestructuredMethodAlias(right.text, propertyName, target.text);
+          }
+        }
+      }
+      ts.forEachChild(node, collectAliases);
+    };
+    collectAliases(sourceFile);
+  }
+  const methodCallArguments = (node, owner, method) => {
+    if (!ts.isCallExpression(node)) return undefined;
+    const objectAliases = owner === 'Reflect' ? reflectObjectAliases : objectConstructorAliases;
+    const methodAliases = owner === 'Reflect' ? reflectGetAliases : descriptorAliases;
+    if (isMethodReference(node.expression, objectAliases, methodAliases, method))
+      return [...node.arguments];
+    const callee = unwrapExpression(node.expression);
+    if (!ts.isPropertyAccessExpression(callee) && !ts.isElementAccessExpression(callee))
+      return undefined;
+    const invocation = ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : callee.argumentExpression
+        ? staticMemberKey(callee.argumentExpression)
+        : '*';
+    if (
+      !['call', 'apply'].includes(invocation) ||
+      !isMethodReference(callee.expression, objectAliases, methodAliases, method)
+    )
+      return undefined;
+    if (invocation === 'call') return [...node.arguments].slice(1);
+    const appliedArguments = node.arguments[1] && unwrapExpression(node.arguments[1]);
+    if (
+      !appliedArguments ||
+      !ts.isArrayLiteralExpression(appliedArguments) ||
+      appliedArguments.elements.some(ts.isSpreadElement)
+    )
+      // A dynamic apply array can hide both the imported owner and selected member.
+      throw new Error(`${owner}.${method}.apply arguments cannot be proven statically`);
+    return [...appliedArguments.elements];
+  };
+  const isMethodCall = (node, owner, method) =>
+    methodCallArguments(node, owner, method) !== undefined;
+  const appendMember = (reference, member) => {
+    if (!reference) return undefined;
+    if (reference.members.includes('*') || member === '*')
+      return { owner: reference.owner, members: ['*'] };
+    return { owner: reference.owner, members: [...reference.members, member] };
+  };
+  const objectReference = (node) => {
+    const current = unwrapExpression(node);
+    if (ts.isIdentifier(current)) return { owner: current.text, members: [] };
+    if (isMethodCall(current, 'Reflect', 'get')) {
+      const [target, key] = methodCallArguments(current, 'Reflect', 'get');
+      if (!target || !key) return undefined;
+      return appendMember(objectReference(target), staticMemberKey(key));
+    }
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+      const member = ts.isPropertyAccessExpression(current)
+        ? current.name.text
+        : current.argumentExpression
+          ? staticMemberKey(current.argumentExpression)
+          : '*';
+      const expression = unwrapExpression(current.expression);
+      if (member === 'value' && isMethodCall(expression, 'Object', 'getOwnPropertyDescriptor')) {
+        const [target, key] = methodCallArguments(expression, 'Object', 'getOwnPropertyDescriptor');
+        if (!target || !key) return undefined;
+        return appendMember(objectReference(target), staticMemberKey(key));
+      }
+      return appendMember(objectReference(expression), member);
+    }
+    return undefined;
+  };
+  const descriptorMemberReference = (node) => {
+    const current = unwrapExpression(node);
+    if (!isMethodCall(current, 'Object', 'getOwnPropertyDescriptor')) return undefined;
+    const [target, key] = methodCallArguments(current, 'Object', 'getOwnPropertyDescriptor');
+    if (!target || !key) return undefined;
+    return appendMember(objectReference(target), staticMemberKey(key));
+  };
+  const memberReference = (node) => {
+    const reference = objectReference(node);
+    if (!reference || reference.members.length === 0) return undefined;
+    return { owner: reference.owner, member: reference.members.join('.') };
   };
   const addCalledMember = (owner, member) => {
     const members = calledMemberBindings.get(owner) ?? new Set();
@@ -744,7 +932,11 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   };
   const markCallableMember = (node) => {
     const reference = memberReference(node);
-    if (reference) addCalledMember(reference.owner, reference.member);
+    if (!reference) return;
+    addCalledMember(reference.owner, reference.member);
+    const members = reference.member.split('.');
+    if (['call', 'apply', 'bind'].includes(members.at(-1)) && members.length > 1)
+      addCalledMember(reference.owner, members.slice(0, -1).join('.'));
   };
   const isCalledReference = (node) => {
     if (ts.isIdentifier(node)) return calledIdentifiers.has(node.text);
@@ -788,6 +980,11 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       return node.arguments?.map((_, index) => index) ?? [];
     }
     if (!ts.isCallExpression(node)) return [];
+    if (
+      isMethodCall(node, 'Reflect', 'get') ||
+      isMethodCall(node, 'Object', 'getOwnPropertyDescriptor')
+    )
+      return [];
     if (ts.isIdentifier(node.expression))
       return (
         callbackFunctionArguments.get(node.expression.text) ??
@@ -812,6 +1009,11 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const collectCallableReference = (node) => {
     if (ts.isIdentifier(node)) {
       calledIdentifiers.add(node.text);
+      return;
+    }
+    if (memberReference(node)) {
+      collectCallTargetIdentifiers(node);
+      markCallableMember(node);
       return;
     }
     if (ts.isSpreadElement(node)) {
@@ -920,6 +1122,17 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       ts.forEachChild(node, collectAliasSources);
     };
     const propagateMembers = (initializer, members) => {
+      const descriptorReference = descriptorMemberReference(initializer);
+      if (
+        descriptorReference &&
+        [...members].some(
+          (member) => member === '*' || member === 'value' || member.startsWith('value.'),
+        )
+      ) {
+        if (addCalledMember(descriptorReference.owner, descriptorReference.members.join('.')))
+          calledAliasesChanged = true;
+        return;
+      }
       if (ts.isIdentifier(initializer)) {
         for (const member of members)
           if (addCalledMember(initializer.text, member)) calledAliasesChanged = true;
@@ -1177,7 +1390,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const dependencies = [];
   const requestedAll = requestedBindings.has('*');
   const requestedCallableAll = requestedCallableBindings.has('*');
-  // Callable member paths are preserved through aliases and re-exports.
+  // Callable member paths and direct calls are preserved independently through imports.
   for (const statement of sourceFile.statements) {
     if (
       ts.isImportDeclaration(statement) &&
@@ -1198,13 +1411,14 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
             .map((binding) => binding.slice(clause.name.text.length + 1));
           if (calledMembers) for (const member of calledMembers) callableMembers.push(member);
           if (requestedCallableAll) callableBindings.add('default');
-          else if (callableMembers.length > 0)
+          else {
             for (const member of callableMembers) callableBindings.add(`default.${member}`);
-          else if (
-            calledIdentifiers.has(clause.name.text) ||
-            callableLocalBindings.has(clause.name.text)
-          )
-            callableBindings.add('default');
+            if (
+              calledIdentifiers.has(clause.name.text) ||
+              callableLocalBindings.has(clause.name.text)
+            )
+              callableBindings.add('default');
+          }
         }
         if (clause.namedBindings) {
           if (ts.isNamespaceImport(clause.namedBindings)) {
@@ -1234,11 +1448,12 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
                 .map((binding) => binding.slice(localName.length + 1));
               if (calledMembers) for (const member of calledMembers) callableMembers.push(member);
               if (requestedCallableAll) callableBindings.add(importedName);
-              else if (callableMembers.length > 0)
+              else {
                 for (const member of callableMembers)
                   callableBindings.add(`${importedName}.${member}`);
-              else if (calledIdentifiers.has(localName) || callableLocalBindings.has(localName))
-                callableBindings.add(importedName);
+                if (calledIdentifiers.has(localName) || callableLocalBindings.has(localName))
+                  callableBindings.add(importedName);
+              }
             }
           }
         }

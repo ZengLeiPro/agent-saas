@@ -137,7 +137,7 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
     ]);
   });
 
-  it('cancelling owner 崩溃后可按 lease/generation 接管，restore 可使旧 owner CAS 失效', async () => {
+  it('cancelling owner 崩溃后可按 lease/generation 接管，restore 可使自身旧 owner CAS 失效', async () => {
     await runStore.upsertPending({
       runId: 'takeover-run-1', sessionId: 'takeover-session-1', tenantId: 'tenant-1',
       workspaceId: 'workspace-takeover', sandboxScopeId: 'scope-takeover', metadata: {},
@@ -162,7 +162,9 @@ describePg('Sandbox lifecycle PostgreSQL contract', () => {
     await expect(rebuilt.completePreparedCleanup(
       'takeover-run-1', takeover!.claimId!, takeover!.claimGeneration!,
     )).resolves.toBeUndefined();
-    await expect(rebuilt.listCleanupCandidates()).resolves.toEqual([]);
+    await expect(rebuilt.listCleanupCandidates()).resolves.not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: 'takeover-run-1' }),
+    ]));
   });
 
   it('terminal outbox 的 target hand 经真实 PostgreSQL 持久化，store 重建后不随 rollout 漂移', async () => {

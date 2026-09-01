@@ -4,9 +4,8 @@ import { parse as parseJsonc } from 'jsonc-parser';
 
 import type { AppConfig } from '../app/config.js';
 import { parseAppConfig } from '../app/config.js';
-import { InMemorySecretVault } from '../security/secretVault.js';
-import type { VaultCaller } from '../security/secretVault.js';
-import { parseConfigIdentitySummary } from '@agent/shared';
+import { InMemorySecretVault, type VaultCaller } from '../security/secretVault.js';
+import { parseConfigIdentitySummary } from '@agent/shared/schemas/configIdentity';
 import {
   buildCanonicalConfigProjection,
   calculateConfigIdentityDigest,

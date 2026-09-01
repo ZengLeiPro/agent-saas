@@ -128,9 +128,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
     config,
     processCwd,
-    processRole: runtime.processRole,
-    onConfigCommitted: (expectedText) =>
-      publishAdminCommittedConfigIdentity(runtime, expectedText),
+    processRole: runtime.processRole, onConfigCommitted: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
   });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
   const legacyWriteGate = runtime.governanceWriteGate ?? {
@@ -158,10 +156,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       getIsDraining: () => channelManager.draining,
       getRuntimeAdmissionSnapshot,
       getSkillsWarmupStatus: () => runtime.getSkillsWarmupStatus(),
-      getEffectiveConfigStatus,
-      getConfigIdentitySummary: runtime.getConfigIdentitySummary
-        ? () => runtime.getConfigIdentitySummary!()
-        : undefined,
+      getEffectiveConfigStatus, getConfigIdentitySummary: runtime.getConfigIdentitySummary ? () => runtime.getConfigIdentitySummary!() : undefined,
       ...(runtime.egressConfigStore
         ? {
             getEnvironmentSafetyAttested: () =>
@@ -170,8 +165,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : {}),
     }),
   );
-  app.use('/api', activeOffboardingWriteFence(runtime));
-  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  app.use('/api', activeOffboardingWriteFence(runtime)); app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
   // App update: version check + APK download.
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
@@ -364,11 +358,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       deliveryService: dingtalkDeps.deliveryService,
     }),
   );
-
   // 模型列表与配置版本 CAS 管理 API；保存前先同步完整共享配置基线。
   if (config.models) {
-    configureModelPricing(config.models);
-    app.get('/api/models', (req: Request, res: Response) => {
+    configureModelPricing(config.models); app.get('/api/models', (req: Request, res: Response) => {
       const tenantSettings = req.user?.tenantId
         ? runtime.tenantStore?.getSettings(req.user.tenantId)
         : undefined;
@@ -385,19 +377,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         config,
         configMutationService,
         secretVault: runtime.secretVault,
-        requireRevision: true,
-        ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
-        ...(runtime.validateSharedConfigCandidate
-          ? { validateConfigReload: runtime.validateSharedConfigCandidate }
-          : {}),
+        requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+        ...(runtime.validateSharedConfigCandidate ? { validateConfigReload: runtime.validateSharedConfigCandidate } : {}),
         // 热更新逻辑与 runtime-worker 侧共用同一实现，并先解析模型 SecretRef。
         onModelsUpdated: runtime.updateModelsConfig ?? ((models) => {
           applyModelsHotUpdate({ config, target: runtime, models });
         }),
-        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
-        onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
-        onSystemPromptOverridesUpdated: (next) =>
-          runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
+        onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText), onMemoryIndexUpdated: runtime.updateMemoryIndexConfig,
+        onSystemPromptOverridesUpdated: (next) => runtime.systemPromptRegistry.replaceOverrides(next ?? {}),
       }),
     );
   }
@@ -431,17 +418,14 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       runtimeSchedulerCapacity: runtime.runtimeSchedulerCapacity,
     }),
   );
-  app.use(
-    '/api/admin/tool-controls',
+  app.use('/api/admin/tool-controls',
     createToolControlsAdminRouter({
       processCwd,
       config,
       configMutationService,
-      requireRevision: true,
-      ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
+      requireRevision: true, ensureConfigBaselineApplied: async () => await runtime.refreshSharedConfig(true),
       secretVault: runtime.secretVault, // 配置版本 CAS 防止旧页面恢复已禁用工具
-      validateToolSettingsConfig: runtime.validateToolSettingsConfig,
-      onToolSettingsUpdated: runtime.updateToolSettingsConfig,
+      validateToolSettingsConfig: runtime.validateToolSettingsConfig, onToolSettingsUpdated: runtime.updateToolSettingsConfig,
       onConfigReloaded: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText),
     }),
   );

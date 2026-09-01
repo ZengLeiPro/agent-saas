@@ -338,17 +338,7 @@ export type {
   ReleaseManifest,
   CanonicalJsonValue,
 } from './schemas/releaseManifest';
-// Release-bound Config Identity（TASK-318）：跨 App/Worker/Web/ACS 的配置身份契约。
-export {
-  CONFIG_IDENTITY_DIGEST_PATTERN,
-  CONFIG_IDENTITY_SCHEMA_VERSION,
-  configIdentityStatusSchema,
-  configIdentityVersionResolutionSchema,
-  configIdentityUnverifiableReasonSchema,
-  configIdentitySideSchema,
-  configIdentitySummarySchema,
-  parseConfigIdentitySummary,
-} from './schemas/configIdentity';
+// Release-bound Config Identity（TASK-318）：根入口仅导出类型，运行时 schema 按需直引，避免污染 Web 首屏。
 export type {
   ConfigIdentityStatus,
   ConfigIdentityVersionResolution,

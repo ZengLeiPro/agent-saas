@@ -1,4 +1,3 @@
-import { parseConfigIdentitySummary } from '@agent/shared';
 import { Fingerprint } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +34,19 @@ const REASON_HINT: Record<NonNullable<OverviewConfigIdentity['reason']>, string>
   secret_ref_version_unresolved: '受管凭据的 SecretVault 版本不可解析，无法完成一致性判定。',
   schema_version_unsupported: '配置身份 schema 版本不受当前页面支持，需要升级后再判断。',
 };
+
+function isDisplayableIdentity(
+  identity: OverviewConfigIdentity | null | undefined,
+): identity is OverviewConfigIdentity {
+  if (!identity || identity.schemaVersion !== 1 || !Object.prototype.hasOwnProperty.call(STATUS_LABEL, identity.status)) return false;
+  if (identity.status === 'not_collected') return !identity.observed;
+  if (identity.status === 'unverifiable') {
+    return Boolean(identity.observed && identity.reason && Object.prototype.hasOwnProperty.call(REASON_HINT, identity.reason));
+  }
+  return Boolean(
+    identity.expected?.schemaVersion === 1 && identity.observed?.schemaVersion === 1,
+  );
+}
 
 function shortDigest(digest: string | null | undefined): string {
   if (!digest) return '—';
@@ -73,8 +85,8 @@ export function ConfigIdentityCard({
   identity: OverviewConfigIdentity | null | undefined;
   className?: string;
 }) {
-  // 客户端同样执行 wire 校验：旧 schema / 缺字段 / 未知状态不能被渲染成正常值。
-  const safeIdentity = parseConfigIdentitySummary(identity);
+  // API 边界已执行完整 wire 校验；页面再守住核心关系，避免旧 schema / 缺字段显示成正常值。
+  const safeIdentity = isDisplayableIdentity(identity) ? identity : undefined;
   // 后端未接入 / 接口失败时 identity 为空：显式「未采集」，不渲染成正常一致。
   const status: OverviewConfigIdentity['status'] = safeIdentity?.status ?? 'not_collected';
   const reason = safeIdentity?.reason;

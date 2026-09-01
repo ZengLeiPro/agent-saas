@@ -14,12 +14,16 @@ import type { AppConfig } from '../types/index.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { ExpectedConfigIdentity } from '../release/configIdentity.js';
 import {
+  CONFIG_IDENTITY_SCHEMA_VERSION,
+  type ConfigIdentitySummary,
+} from '@agent/shared/schemas/configIdentity';
+import {
   assertProductionManagedCredentialSafety,
   computeObservedConfigIdentity,
   evaluateConfigIdentityStatus,
   type ConfigIdentityObservation,
 } from '../release/configIdentity.js';
-import { CONFIG_IDENTITY_SCHEMA_VERSION, type ConfigIdentitySummary } from '@agent/shared';
+
 
 export interface ConfigIdentityRuntimeOptions {
   config: AppConfig;

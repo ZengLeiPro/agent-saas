@@ -180,8 +180,7 @@ import { SystemMetricsCollector } from '../runtime/systemMetricsCollector.js';
 import { PgAlertStateStore } from '../runtime/alertStateStore.js';
 import { AlertNotifier } from '../runtime/alertNotifier.js';
 import { notifyBillingAuditAlerts, registerSearchProviderAlerts } from './registerSearchProviderAlerts.js';
-import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js';
-import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js';
+import { createToolSettingsUpdater, createWebToolsRuntimeUpdatePreparer, createWebToolsRuntimeUpdater } from './webToolsRuntimeUpdate.js'; import { createSttRuntimeUpdatePreparer } from './sttRuntimeUpdate.js'; import { createToolControlsRuntimeUpdatePreparer } from './toolControlsRuntimeUpdate.js';
 import { createRuntimeRunCapacityResolver, createRuntimeSchedulerCapacityController } from './runtimeSchedulerCapacityAssembly.js';
 import { PgDwsConnectionStore } from '../dws/store.js';
 import { DwsAuthKeepaliveService, DwsAuthStatusRunner } from '../dws/keepalive.js';
@@ -1543,10 +1542,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   // 生图 per-engine 定价注册表初始化；admin PUT /api/admin/image-gen-pricing 时热更。
   configureImageGenPricing(config.imageGenTools?.pricing);
   // 模型解析器：如果配置了 models，则绑定到 RawRuntime、WebChannel 与 Cron。
-  // 安全入口解析前强制对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
-  let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>;
-  let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>;
-  let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
+  // 安全入口解析前先对齐磁盘，让 runtime-worker 感知 ws-only 写入（见 modelResolvers.ts）。
+  let prepareToolControlsRuntimeUpdate!: ReturnType<typeof createToolControlsRuntimeUpdatePreparer>; let prepareWebToolsRuntimeUpdate!: ReturnType<typeof createWebToolsRuntimeUpdatePreparer>; let prepareSttRuntimeUpdate!: ReturnType<typeof createSttRuntimeUpdatePreparer>;
   const { modelResolver, defaultModelResolver, sharedConfigRefresher, updateModelsConfig } = createModelResolvers({
     config,
     processCwd,
@@ -1554,16 +1551,13 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     tenantsFilePath,
     logger: serverLogger, titleGeneratorConfigs, defaultTitleModel: titleGeneratorDefaultModel,
     onGuardrailModelConfigsUpdated: (next) => { guardrailModelConfigs = next; },
-    prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next),
-    prepareToolControlsUpdate: (next) => prepareToolControlsRuntimeUpdate(next),
-    prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next),
-    prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
+    prepareSystemPromptOverridesUpdate: (next) => systemPromptRegistry.prepareReplaceOverrides(next), prepareToolControlsUpdate: (next) => prepareToolControlsRuntimeUpdate(next),
+    prepareWebToolsUpdate: (next) => prepareWebToolsRuntimeUpdate(next), prepareSttUpdate: (next) => prepareSttRuntimeUpdate(next),
     ...(resolvedModels ? { initialRuntimeModels: resolvedModels } : {}),
     resolveRuntimeModels: (next) => resolveModelsConfig(next, secretVault).then((value) => {
       if (!value) throw new Error('models 未配置');
       return value;
-    }),
-    ...configIdentityAssembly.modelResolverHooks,
+    }), ...configIdentityAssembly.modelResolverHooks,
   });
   runPreflightService = initializeRuntimeGovernancePreflight({
     sessionCatalog,
@@ -2985,12 +2979,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     titleGeneratorConfigs, titleModelAdapterFactory, defaultTitleModel: titleGeneratorDefaultModel,
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     updateModelsConfig,
-    ...(configIdentityAssembly.modelResolverHooks.validateConfigReload
-      ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload }
-      : {}),
-    invalidateSharedConfigIdentity: configIdentityAssembly.invalidate,
-    notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded,
-    acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied,
+    ...(configIdentityAssembly.modelResolverHooks.validateConfigReload ? { validateSharedConfigCandidate: configIdentityAssembly.modelResolverHooks.validateConfigReload } : {}),
+    invalidateSharedConfigIdentity: configIdentityAssembly.invalidate, notifySharedConfigChanged: configIdentityAssembly.modelResolverHooks.onConfigReloaded, acknowledgeSharedConfigApplied: sharedConfigRefresher.acknowledgeConfigApplied,
     orgAgentStore,
     validateOrgAgentDispatcherRuntime: createOrgAgentDispatcherRuntimeValidator({ backgroundTasks: rawRuntimeConfig.backgroundTasks, profileResolver: rawRuntimeConfig.agentRuntimeProfileResolver, defaultModelResolver, modelResolver }),
     guardrailEventStore,

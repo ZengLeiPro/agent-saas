@@ -18,14 +18,14 @@
  */
 import { createHash } from 'node:crypto';
 import type { AppConfig } from '../types/index.js';
-import { canonicalJson } from '@agent/shared';
 import {
   CONFIG_IDENTITY_DIGEST_PATTERN,
   CONFIG_IDENTITY_SCHEMA_VERSION,
   type ConfigIdentityStatus,
   type ConfigIdentityUnverifiableReason,
   type ConfigIdentityVersionResolution,
-} from '@agent/shared';
+} from '@agent/shared/schemas/configIdentity';
+import { canonicalJson } from '@agent/shared';
 import type { SecretVault } from '../security/secretVault.js';
 
 export { CONFIG_IDENTITY_SCHEMA_VERSION, CONFIG_IDENTITY_DIGEST_PATTERN };

@@ -412,28 +412,8 @@ fs.renameSync(`${configPath}.candidate`, configPath);
 NODE
 chown agent-saas-staging:agent-saas-staging "$server_config"
 chmod 0600 "$server_config"
-shared_root=/mnt/agent-saas-staging/workspace-shared
-runuser -u agent-saas-staging -- mkdir -p "$shared_root/.ky-agent"
-for shared_asset in \
-  .browser-profile-seed \
-  .ky-agent/scripts \
-  .ky-agent/skills-pool \
-  prompts \
-  MEMORY.template.md \
-  PERSONA.template.md \
-  questions.template.md; do
-  live_asset="$shared_root/$shared_asset"
-  if [ -e "$live_asset" ] && [ ! -L "$live_asset" ]; then
-    echo "Staging immutable shared asset conflicts with persistent path: $live_asset" >&2
-    exit 1
-  fi
-  runuser -u agent-saas-staging -- ln -sfn \
-    "$current/server/workspace-shared/$shared_asset" "$live_asset.candidate-$GITHUB_RUN_ID"
-  runuser -u agent-saas-staging -- mv -Tf \
-    "$live_asset.candidate-$GITHUB_RUN_ID" "$live_asset"
-done
-# TASK-318：发布前对 Staging 实际配置计算 expected config identity（与运行期
-# observed identity 同一实现；Staging 启动断言要求该 digest 必须存在）。
+# TASK-318：发布前对可写状态路径中的 Staging 实际配置计算 expected config identity
+#（与运行期 observed identity 同一实现；Staging 启动断言要求该 digest 必须存在）。
 config_identity="$(node "$target/server/dist/config-identity-cli.js" \
   --config /etc/agent-saas-staging/config.json --environment staging \
   --process-cwd /mnt/agent-saas-staging/runtime/server \

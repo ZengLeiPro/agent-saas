@@ -1,4 +1,7 @@
-import { parseConfigIdentitySummary, type ConfigIdentitySummary } from '@agent/shared';
+import {
+  parseConfigIdentitySummary,
+  type ConfigIdentitySummary,
+} from '@agent/shared/schemas/configIdentity';
 
 import type { AttentionItem } from '../runtime/attention.js';
 
@@ -6,7 +9,7 @@ export type ConfigIdentityPayload = ConfigIdentitySummary;
 
 /**
  * 对 Runtime 摘要做 API 边界二次校验，并把漂移/不可验证统一接入概览待关注队列。
- * 非法 wire payload 一律降级为未采集，不能伪装成正常状态。
+ * 无效 wire payload 一律降级为未采集，不能伪装成正常状态。
  */
 export function appendConfigIdentityAttention(
   raw: ConfigIdentitySummary | undefined,

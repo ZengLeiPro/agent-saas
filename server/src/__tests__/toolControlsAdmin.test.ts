@@ -2,7 +2,7 @@ import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadAppConfig, parseAppConfig } from '../app/config.js';
 import { createToolControlsAdminRouter } from '../routes/toolControlsAdmin.js';
@@ -86,7 +86,13 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe('tool controls admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     while (servers.length > 0) servers.pop()?.close();
   });
 

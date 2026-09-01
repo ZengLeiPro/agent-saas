@@ -24,10 +24,14 @@ describe('SandboxManager workload concurrency with create-only Sandbox writes', 
           if (args.includes('--ignore-not-found=true')) return ok();
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
           return ok(JSON.stringify({
-            metadata: { annotations: {
-              'agent-saas.kaiyan.net/mount-subpath': identity.workspaceId,
-              [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
-            } },
+            metadata: {
+              uid: 'sandbox-uid-created', resourceVersion: 'resource-version-created',
+              labels: { 'agent-saas.kaiyan.net/workload-class': workload.class },
+              annotations: {
+                'agent-saas.kaiyan.net/mount-subpath': identity.workspaceId,
+                [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
+              },
+            },
             spec: { template: { spec: { containers: [{ name: config.sandboxContainerName, image: config.sandboxImage }] } } },
             status: { phase: 'Running' },
           }));
@@ -43,9 +47,11 @@ describe('SandboxManager workload concurrency with create-only Sandbox writes', 
           return ok();
         }
         if (args[0] === 'patch') {
-          const payload = JSON.parse(args[args.length - 1] ?? '{}') as { metadata?: { annotations?: Record<string, string> } };
-          const descriptor = payload.metadata?.annotations?.[WORKLOAD_DESCRIPTOR_ANNOTATION];
-          if (descriptor) workload = JSON.parse(descriptor);
+          const payload = JSON.parse(args[args.length - 1] ?? '{}') as Array<{ op: string; path: string; value?: unknown }> | Record<string, unknown>;
+          const descriptor = Array.isArray(payload)
+            ? payload.find((entry) => entry.op === 'add' && entry.path.endsWith('workload-descriptor'))?.value
+            : undefined;
+          if (typeof descriptor === 'string') workload = JSON.parse(descriptor);
           return ok();
         }
         throw new Error(`unexpected kubectl args: ${args.join(' ')}`);

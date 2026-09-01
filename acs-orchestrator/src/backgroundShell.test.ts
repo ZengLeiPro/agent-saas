@@ -141,6 +141,29 @@ describe('background shell runtime', () => {
     }
   }, 15_000);
 
+  it('fails closed when an unrequested task has unreadable state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-corrupt-state-'));
+    const runningTaskId = `shell-bg-test-${randomUUID()}`;
+    const corruptTaskId = `shell-bg-test-${randomUUID()}`;
+    await startBackgroundShell({
+      workspaceRoot: root,
+      taskId: runningTaskId,
+      command: 'sleep 20',
+      timeoutMs: 30_000,
+      env: process.env,
+    });
+    await waitForStatus(root, runningTaskId, 'running');
+    const corruptDir = backgroundShellTaskDir(root, corruptTaskId);
+    await mkdir(corruptDir, { recursive: true });
+    await writeFile(join(corruptDir, 'state.json'), '{half-written');
+
+    await expect(terminateBackgroundShellsFailClosed(root, [runningTaskId]))
+      .rejects.toThrow(`background shell task state is unreadable: ${corruptTaskId}`);
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: runningTaskId })).status)
+      .toBe('running');
+    await killBackgroundShell(root, runningTaskId);
+  }, 15_000);
+
   it('records timeout as timed_out instead of cancellation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-timeout-'));
     const taskId = `shell-bg-test-${randomUUID()}`;

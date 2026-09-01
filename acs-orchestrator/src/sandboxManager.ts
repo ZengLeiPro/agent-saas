@@ -703,7 +703,7 @@ export class SandboxManager {
   async clearExpiredInvocationLeases(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now); }
 
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
-    await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload);
+    await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload, () => this.getStatus(name));
   }
 
   async touch(name: string, now: Date = new Date()): Promise<void> {

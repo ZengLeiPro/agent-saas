@@ -454,7 +454,7 @@ export interface SessionsRouterOptions {
    * Sandbox 预热钩子（2026-07-31 冷启动治理）：用户在会话输入框首次产生有效输入时
    * fire-and-forget 预热 ACS Sandbox。纯旁路，失败不影响输入与正式 dispatch。
    */
-  sandboxWarmup?: (sessionId: string) => void; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<Exclude<SandboxSessionDeletionResult, 'deleted'>>;
+  sandboxWarmup?: (sessionId: string) => void; sandboxCleanupRequired?: boolean; sandboxSessionDeletionIntent?: (sessionId: string) => Promise<Exclude<SandboxSessionDeletionResult, 'deleted'>>;
   sandboxSessionDeletion?: (sessionId: string) => Promise<SandboxSessionDeletionResult>; sandboxSessionRestore?: (sessionId: string) => Promise<void>;
   /**
    * 排队插话查询（2026-08-04 终态设计）：detail API 返回仍在排队（未被目标 run
@@ -3276,7 +3276,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
 
       const applySoftDelete = async (): Promise<boolean> => {
-        const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
+        if (options.sandboxCleanupRequired && !options.sandboxSessionDeletion) throw new Error("Sandbox cleanup 能力不可用"); const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
         if (newlyDeleted) {
           // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，跨文件/PG 不伪装原子事务。
           const intent = await options.sandboxSessionDeletionIntent?.(sessionId); if (intent === "blocked") throw new Error("Sandbox cleanup intent blocked");
@@ -3330,7 +3330,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         res.status(400).json({ error: msg });
         return;
       }
-      res.status(500).json({ error: msg });
+      res.status(msg.includes("Sandbox cleanup 能力不可用") ? 503 : 500).json({ error: msg });
     }
   });
 

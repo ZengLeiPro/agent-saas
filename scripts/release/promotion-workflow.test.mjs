@@ -132,12 +132,15 @@ test('production ACS promotion enforces lifecycle policy and fails closed on hea
     deploy,
     /!line\.startsWith\('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='\)/u,
   );
+  assert.match(deploy, /!line\.startsWith\('ACS_SANDBOX_LIFECYCLE_ENABLED='\)/u);
+  assert.equal(deploy.match(/lines\.push\('ACS_SANDBOX_LIFECYCLE_ENABLED=true'\)/gu)?.length, 1);
   assert.equal(
     deploy.match(/lines\.push\('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce'\)/gu)?.length,
     1,
   );
   assert.match(deploy, /writeFileSync\(`\$\{envPath\}\.candidate`/u);
   assert.match(deploy, /renameSync\(`\$\{envPath\}\.candidate`, envPath\)/u);
+  assert.match(deploy, /h\.lifecycle\?\.enabled !== true/u);
   assert.match(deploy, /h\.lifecyclePolicyMode !== 'enforce'/u);
   assert.match(
     deploy,

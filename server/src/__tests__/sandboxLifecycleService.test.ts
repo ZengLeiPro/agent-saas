@@ -277,8 +277,11 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
     expect(store.completePreparedCleanup).toHaveBeenCalledBefore(store.claimCleanup);
   });
 
-  it('retries persisted cleanup on its original hand after rollout switches to another ACS', async () => {
-    const pending = { ...cleanup(), targetHandId: 'acs-old' };
+  it('retries persisted cleanup on its original hand with the inherited generation chain', async () => {
+    const pending = {
+      ...cleanup('generation-2'), targetHandId: 'acs-old',
+      previousDeletionGeneration: 'generation-root',
+    };
     const markCleanupDelivered = vi.fn(async () => undefined);
     const store = {
       listCleanupCandidates: vi.fn(async () => [pending]),
@@ -289,7 +292,22 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
       listTerminalCandidates: vi.fn(async () => []),
     };
     const hands = [remote('acs-new', 'http://acs-new.test'), remote('acs-old', 'http://acs-old.test', 'drain')];
-    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    let currentGeneration = 'generation-root';
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        deletionGeneration: string; previousDeletionGeneration?: string;
+      };
+      if (String(input).endsWith('/deletion-generation')) {
+        if (body.previousDeletionGeneration !== currentGeneration) {
+          return new Response(JSON.stringify({ error: 'generation conflict' }), { status: 409 });
+        }
+        currentGeneration = body.deletionGeneration;
+      }
+      if (String(input).endsWith('/scope') && body.deletionGeneration !== currentGeneration) {
+        return new Response(JSON.stringify({ error: 'stale deletion' }), { status: 409 });
+      }
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
     const restarted = new SandboxLifecycleService({
       agentCwd: '/data', store: store as never, runStore: {} as never,
       sessionCatalog: { get: async () => null },
@@ -305,6 +323,7 @@ describe('SandboxLifecycleService durable lifecycle protocol', () => {
       'http://acs-old.test/sandboxes/deletion-generation',
       'http://acs-old.test/sandboxes/scope',
     ]);
+    expect(currentGeneration).toBe('generation-2');
     expect(markCleanupDelivered).toHaveBeenCalledWith('run-cleanup', expect.any(String), expect.any(String));
   });
 

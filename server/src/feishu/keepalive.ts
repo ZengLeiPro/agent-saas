@@ -61,6 +61,7 @@ export class FeishuAuthStatusRunner implements FeishuAuthStatusRunnerLike {
           sandboxScopeId: `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`,
           mountSubPath,
           executionTarget: 'server-remote',
+          workload: { class: 'cron' },
         },
       },
     });

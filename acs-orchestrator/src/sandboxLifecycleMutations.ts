@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { AcsOrchestratorConfig } from './config.js';
 import type { Kubectl } from './kubectl.js';
 import type { SandboxDeletionPreconditions } from './sandboxDeletion.js';
@@ -26,19 +28,6 @@ import { LAST_ACTIVE_AT_ANNOTATION } from './sandboxInventoryReader.js';
 /** Kubernetes UID/resourceVersion JSON Patch 前置条件失败统一映射为可重试冲突。 */
 export class SandboxMutationPreconditionError extends Error {
   readonly statusCode = 409;
-}
-
-async function patchMetadata(
-  config: AcsOrchestratorConfig,
-  kubectl: Kubectl,
-  resourceName: string,
-  metadata: Record<string, unknown>,
-  errorPrefix: string,
-): Promise<void> {
-  const result = await kubectl.run([
-    'patch', resourceName, '--type=merge', '-p', JSON.stringify({ metadata }),
-  ], { timeoutMs: config.sandboxWaitTimeoutMs });
-  if (result.exitCode !== 0) throw new Error(`${errorPrefix}: ${result.stderr || result.stdout}`);
 }
 
 type ResourcePatchChange = { path: string; value: unknown } | { path: string; remove: true };
@@ -191,19 +180,42 @@ export async function clearExpiredInvocationLeases(
 
 export async function applyWorkloadDescriptor(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
-  workload: SandboxWorkloadDescriptor,
+  workload: SandboxWorkloadDescriptor, getStatus: () => Promise<SandboxStatus | null>,
 ): Promise<void> {
-  await patchMetadata(config, kubectl, resourceName, {
-    labels: { [WORKLOAD_CLASS_LABEL]: workload.class },
-    annotations: {
-      [WORKLOAD_DESCRIPTOR_ANNOTATION]: JSON.stringify(workload),
-      [LAST_ACTIVE_AT_ANNOTATION]: new Date().toISOString(),
-      [TERMINAL_STATE_ANNOTATION]: null,
-      [TERMINAL_AT_ANNOTATION]: null,
-      [TERMINAL_OUTCOME_ANNOTATION]: null,
-      [RETENTION_DEADLINE_ANNOTATION]: null,
-    },
-  }, '更新 workload descriptor 失败');
+  const activityGeneration = `ensure:${randomUUID()}`;
+  const admittedAt = new Date().toISOString();
+  let observedUid: string | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const status = await getStatus();
+    if (!status) throw new SandboxMutationPreconditionError('Sandbox 不存在，拒绝更新 workload descriptor');
+    const metadata = objectValue(status.raw?.metadata);
+    const annotations = objectValue(metadata.annotations);
+    const uid = stringValue(metadata.uid);
+    const resourceVersion = stringValue(metadata.resourceVersion);
+    if (!uid || !resourceVersion) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID/resourceVersion');
+    if (observedUid && observedUid !== uid) {
+      throw new SandboxMutationPreconditionError('Sandbox 已同名重建，拒绝更新 workload descriptor');
+    }
+    observedUid ??= uid;
+    if (stringValue(metadata.deletionTimestamp)) {
+      throw new SandboxMutationPreconditionError('Sandbox 已进入删除流程，拒绝更新 workload descriptor');
+    }
+    const changes: ResourcePatchChange[] = [
+      { path: `/metadata/labels/${jsonPointerSegment(WORKLOAD_CLASS_LABEL)}`, value: workload.class },
+      { path: `/metadata/annotations/${jsonPointerSegment(WORKLOAD_DESCRIPTOR_ANNOTATION)}`, value: JSON.stringify(workload) },
+      { path: `/metadata/annotations/${jsonPointerSegment(LAST_ACTIVE_AT_ANNOTATION)}`, value: admittedAt },
+      { path: `/metadata/annotations/${jsonPointerSegment(ACTIVITY_GENERATION_ANNOTATION)}`, value: activityGeneration },
+      ...[TERMINAL_STATE_ANNOTATION, TERMINAL_AT_ANNOTATION, TERMINAL_OUTCOME_ANNOTATION, RETENTION_DEADLINE_ANNOTATION]
+        .filter((key) => Object.hasOwn(annotations, key))
+        .map((key) => ({ path: `/metadata/annotations/${jsonPointerSegment(key)}`, remove: true as const })),
+    ];
+    try {
+      await patchWithResourcePreconditions(config, kubectl, resourceName, { uid, resourceVersion }, changes, '更新 workload descriptor 失败');
+      return;
+    } catch (error) {
+      if (!(error instanceof SandboxMutationPreconditionError) || attempt === 2) throw error;
+    }
+  }
 }
 
 type ProtectedAnnotationOptions = { mergeLatest?: boolean; expectedUid?: string; expectedClear?: { key: string; value: string | null }; updates?: Record<string, string | null> };

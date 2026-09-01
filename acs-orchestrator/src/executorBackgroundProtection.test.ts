@@ -572,6 +572,57 @@ describe('AcsExecutor background shell protection handoff', () => {
     }
   });
 
+  it('strictly reconciles the workspace after a synthetic deadline expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const sandboxRef = ref('as-background-final-lost-expired');
+      const child = fakeChild();
+      const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+      const setBackgroundShellProtection = vi.fn(async () => {
+        throw new Error('aggregate protection unavailable');
+      });
+      const terminateBackgroundTasks = vi.fn(async () => undefined);
+      const sandboxManager = {
+        ref: () => sandboxRef,
+        ensureRunning: vi.fn(async () => sandboxRef),
+        setActiveInvocationLease,
+        setBackgroundShellProtection,
+        getSandboxUid: vi.fn(async () => 'uid-1'),
+        touch: vi.fn(async () => undefined),
+      } as unknown as SandboxManager;
+      const executor = new AcsExecutor(
+        baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+        sandboxManager, noopLogger, undefined,
+        { persistentRunner: false, terminateBackgroundTasks, backgroundRecoveryRetryMs: 30_000 },
+      );
+
+      const resultPromise = executor.execute({
+        toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+        context: { invocationId: 'inv-final-lost-expired', workspace: {
+          id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
+          sandboxScopeId: sandboxRef.sandboxScopeId,
+        } },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      child.stdout.end();
+      child.emit('close', 1, null);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(resultPromise).resolves.toMatchObject({ status: 'error' });
+      expect(executor.backgroundRecoveryCount()).toBe(1);
+      expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+
+      vi.setSystemTime(new Date(Date.now() + 49 * 60 * 60_000));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, []);
+      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
+        sandboxRef.name, expect.any(String), undefined, 'uid-1',
+      );
+      expect(executor.backgroundRecoveryCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the short lease as the last fence when protection writes and task termination all fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();

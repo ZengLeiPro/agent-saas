@@ -62,22 +62,39 @@ function setup(activeRegistry?: ActiveSandboxRegistry) {
 
 describe('SandboxManager lifecycle mutations', () => {
   // Cleanup and capacity eviction share the same serialized, fresh-state deletion gate.
-  it('clears stale terminal receipts when an existing scope becomes active again', async () => {
+  it('atomically advances activity generation when an existing scope becomes active again', async () => {
     const { manager, run } = setup();
+    vi.spyOn(manager, 'getStatus').mockResolvedValueOnce(status({
+      'agent-saas.kaiyan.net/activity-generation': 'generation-old',
+      'agent-saas.kaiyan.net/terminal-state': 'completed',
+      'agent-saas.kaiyan.net/terminal-at': '2026-08-30T00:00:00.000Z',
+      'agent-saas.kaiyan.net/terminal-outcome': '{}',
+      'agent-saas.kaiyan.net/retention-deadline': '2026-08-30T00:05:00.000Z',
+    }));
     await (manager as any).patchWorkloadDescriptor('as-task', { class: 'cron' });
     const patchArgs = run.mock.calls.at(-1)![0];
-    const payload = JSON.parse(patchArgs[4]!) as any;
-    expect(payload.metadata).toEqual({
-      labels: { 'agent-saas.kaiyan.net/workload-class': 'cron' },
-      annotations: {
-        'agent-saas.kaiyan.net/workload-descriptor': JSON.stringify({ class: 'cron' }),
-        'agent-saas.kaiyan.net/last-active-at': expect.any(String),
-        'agent-saas.kaiyan.net/terminal-state': null,
-        'agent-saas.kaiyan.net/terminal-at': null,
-        'agent-saas.kaiyan.net/terminal-outcome': null,
-        'agent-saas.kaiyan.net/retention-deadline': null,
-      },
-    });
+    expect(patchArgs.slice(0, 3)).toEqual(['patch', 'sandbox/as-task', '--type=json']);
+    const payload = JSON.parse(patchArgs[4]!) as Array<{ op: string; path: string; value?: unknown }>;
+    const generation = payload.find((entry) => entry.path.endsWith('activity-generation'))?.value;
+    expect(generation).toEqual(expect.stringMatching(/^ensure:/u));
+    expect(generation).not.toBe('generation-old');
+    expect(payload).toEqual(expect.arrayContaining([
+      { op: 'test', path: '/metadata/uid', value: 'sandbox-uid-1' },
+      { op: 'test', path: '/metadata/resourceVersion', value: 'resource-version-1' },
+      expect.objectContaining({ op: 'add', path: expect.stringContaining('workload-class'), value: 'cron' }),
+      expect.objectContaining({ op: 'remove', path: expect.stringContaining('terminal-state') }),
+      expect.objectContaining({ op: 'remove', path: expect.stringContaining('retention-deadline') }),
+    ]));
+
+    vi.mocked(manager.getStatus).mockResolvedValueOnce(status({
+      'agent-saas.kaiyan.net/activity-generation': String(generation),
+      'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:01:00.000Z',
+    }));
+    await expect(manager.updateLifecycle({
+      ...identity, terminalState: 'completed', terminalAt: '2026-08-30T00:02:00.000Z',
+      expectedActivityGeneration: 'generation-old',
+    })).resolves.toEqual({ name: manager.ref(identity).name });
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it('updates terminal annotations only after exact identity verification and CAS fencing', async () => {

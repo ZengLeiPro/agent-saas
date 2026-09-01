@@ -4,6 +4,7 @@ import type { UserInfo } from '../data/users/types.js';
 import type { DwsAuthSessionIdentity, DwsAuthSessionRecord, DwsAuthSessionStore } from '../dws/authStore.js';
 import {
   NotionAuthFlowService,
+  NotionDeviceLoginRunner,
   parseNotionDeviceAuthorization,
   type NotionDeviceLoginRunnerLike,
 } from '../notion/authFlow.js';
@@ -44,6 +45,32 @@ Verification code: 83GJ-T6GJ
       userCode: '83GJ-T6GJ',
     });
     expect(parseNotionDeviceAuthorization('no authorization here')).toBeNull();
+  });
+
+  it('classifies the remote device login Sandbox as interactive', async () => {
+    const wires: Array<Record<string, any>> = [];
+    const outputs = [
+      'https://www.notion.so/install-integration?verificationCode=83GJ-T6GJ',
+      'authorized',
+      'ntn_secret_token',
+    ];
+    const runner = new NotionDeviceLoginRunner({
+      agentCwd: '/mnt/agent-saas/workspaces',
+      serverRemote: { baseUrl: 'http://acs.internal', authToken: 'acs-token' },
+      fetchImpl: vi.fn(async (_input, init) => {
+        wires.push(JSON.parse(String(init?.body)));
+        const completed = {
+          type: 'completed', response: { status: 'success', content: outputs.shift() ?? '' },
+        };
+        return new Response(`data: ${JSON.stringify(completed)}\n\n`, {
+          status: 200, headers: { 'content-type': 'text/event-stream' },
+        });
+      }) as typeof fetch,
+    });
+
+    await expect(runner.login(user(), async () => undefined)).resolves.toBe('ntn_secret_token');
+    expect(wires).toHaveLength(4);
+    expect(wires.every((wire) => wire.context.workspace.workload?.class === 'interactive')).toBe(true);
   });
 
   it('passes the token only to the Vault callback and never persists it in auth session state', async () => {

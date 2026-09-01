@@ -164,6 +164,10 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
       runId, sessionId, tenantId: 'tenant-1', workspaceId: 'workspace-prepared-refresh',
       sandboxScopeId, metadata: {},
     });
+    await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
+      '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, [runId, JSON.stringify({
+      state: 'delivered', deletionGeneration: 'delete-generation-root',
+    })]);
     const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
     await store.enqueueCleanup({
       workspaceId: 'workspace-prepared-refresh', sessionId, sandboxScopeId,
@@ -196,7 +200,8 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
       committed = true;
 
       await expect(takeover).resolves.toEqual(expect.objectContaining({
-        runId, deletionGeneration: 'delete-generation-new', targetHandId: 'acs-new',
+        runId, previousDeletionGeneration: 'delete-generation-root',
+        deletionGeneration: 'delete-generation-new', targetHandId: 'acs-new',
       }));
       await expect(expiry).resolves.toBe(false);
     } finally {
@@ -206,7 +211,10 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
 
     const rebuilt = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
     await expect(rebuilt.listPreparedCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }),
+      expect.objectContaining({
+        runId, previousDeletionGeneration: 'delete-generation-root',
+        deletionGeneration: 'delete-generation-new',
+      }),
     ]));
     await runStore.markStatus(runId, 'cancelled', 'session deleted before restart');
     const claimed = await rebuilt.claimPreparedCleanup(runId, 'restarted-scanner');
@@ -215,7 +223,10 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
       runId, claimed!.claimId!, claimed!.claimGeneration!,
     )).resolves.toEqual(expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }));
     await expect(rebuilt.listCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }),
+      expect.objectContaining({
+        runId, previousDeletionGeneration: 'delete-generation-root',
+        deletionGeneration: 'delete-generation-new',
+      }),
     ]));
   }, 30_000);
 

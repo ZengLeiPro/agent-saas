@@ -328,12 +328,12 @@ export async function terminateBackgroundShellsFailClosed(
   taskIds: string[],
 ): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
   const requested = [...new Set(taskIds)];
-  let remaining = await reconcileBackgroundShells(workspaceRoot);
+  let remaining = await reconcileBackgroundShells(workspaceRoot, { strict: true });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const activeTaskIds = [...new Set([...requested, ...remaining.activeTaskIds])];
     if (activeTaskIds.length === 0) return remaining;
     for (const taskId of activeTaskIds) await killBackgroundShell(workspaceRoot, taskId);
-    remaining = await reconcileBackgroundShells(workspaceRoot);
+    remaining = await reconcileBackgroundShells(workspaceRoot, { strict: true });
     if (remaining.activeTaskIds.length === 0) return remaining;
   }
   throw new Error(`background shell fail-closed verification failed: ${remaining.activeTaskIds.join(',')}`);

@@ -51,6 +51,7 @@ async function startServer(
       markRead(input: { tenantId: string; userId: string; sessionId: string }): Promise<boolean>;
       listUnreadSessionIds(input: { tenantId: string; userId: string; sessionIds: readonly string[] }): Promise<Set<string>>;
     };
+    sandboxCleanupRequired?: boolean;
     sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'not_required' | 'blocked' | 'queued'>;
     sandboxSessionDeletion?: ((sessionId: string) => Promise<'not_required' | 'blocked' | 'deleted' | 'queued'>) | null;
     sandboxSessionRestore?: (sessionId: string) => Promise<void>;
@@ -82,6 +83,7 @@ async function startServer(
     artifactLifecycle: createSessionArtifactLifecycle(opts.artifactShareStore, opts.artifactService),
     ...(opts.sessionReadStateStore ? { sessionReadStateStore: opts.sessionReadStateStore } : {}),
     ...(opts.sessionProjectionStore ? { sessionProjectionStore: opts.sessionProjectionStore } : {}),
+    ...(opts.sandboxCleanupRequired !== undefined ? { sandboxCleanupRequired: opts.sandboxCleanupRequired } : {}),
     ...(opts.sandboxSessionDeletionIntent ? { sandboxSessionDeletionIntent: opts.sandboxSessionDeletionIntent } : {}),
     ...(sandboxSessionDeletion ? { sandboxSessionDeletion } : {}),
     ...(opts.sandboxSessionRestore ? { sandboxSessionRestore: opts.sandboxSessionRestore } : {}),
@@ -353,6 +355,20 @@ describe('sessions routes lifecycle coverage', () => {
     servers.push(otherServer);
     const foreign = await fetch(`${otherBase}/api/sessions/${mySession}`, { method: 'DELETE' });
     expect(foreign.status).toBe(403);
+  });
+
+  it('ACS 可创建 Sandbox 但 cleanup callback 缺失时软删除 fail closed', async () => {
+    const { sessionId, transcriptPath } = await writeSession(OWNER);
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sandboxCleanupRequired: true,
+      sandboxSessionDeletion: null,
+    });
+    servers.push(server);
+
+    const failed = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ error: 'Sandbox cleanup 能力不可用' });
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBeUndefined();
   });
 
   it('cleanup intent blocked 时拒绝软删除且不写 tombstone', async () => {

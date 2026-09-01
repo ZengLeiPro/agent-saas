@@ -81,7 +81,17 @@ function harness(existing?: ReturnType<typeof sandboxBody>, firstSandboxApplyGat
       if (args[0] === 'patch') {
         const patchIndex = args.indexOf('-p');
         const patch = patchIndex >= 0 ? JSON.parse(args[patchIndex + 1] ?? '{}') as Record<string, any> : {};
-        if (current && !Array.isArray(patch)) {
+        if (current && Array.isArray(patch)) {
+          const metadata = current.metadata as Record<string, any>;
+          for (const operation of patch as Array<{ op: string; path: string; value?: unknown }>) {
+            const match = /^\/metadata\/(annotations|labels)\/(.+)$/u.exec(operation.path);
+            if (!match || operation.op === 'test') continue;
+            const bucket = match[1]!; const key = match[2]!.replaceAll('~1', '/').replaceAll('~0', '~');
+            metadata[bucket] ??= {};
+            if (operation.op === 'remove') delete metadata[bucket][key];
+            else if (operation.op === 'add') metadata[bucket][key] = operation.value;
+          }
+        } else if (current) {
           const currentMetadata = current.metadata as Record<string, any>;
           current.metadata = {
             ...currentMetadata,

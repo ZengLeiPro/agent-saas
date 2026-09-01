@@ -281,9 +281,11 @@ class AcsWorkflowRollbackTest(unittest.TestCase):
 
     def test_direct_deploy_requires_enforced_lifecycle_policy_from_health(self):
         self.assertIn(
-            "lifecyclePolicyMode: health.lifecyclePolicyMode",
+            "lifecycleEnabled: health.lifecycle?.enabled",
             self.deploy_script,
         )
+        self.assertIn("lifecycleEnabled: true", self.deploy_script)
+        self.assertIn("lifecyclePolicyMode: health.lifecyclePolicyMode", self.deploy_script)
         self.assertIn("lifecyclePolicyMode: 'enforce'", self.deploy_script)
         gate_start = self.deploy_script.index("const actual = { ...(health.runtimeConfig || {})")
         rollback = self.deploy_script.index("  rollback\n  exit 1\n", gate_start)

@@ -558,7 +558,7 @@ export class AcsExecutor {
           this.logger.warn(`background_shell_recovery_protection_failed sandbox=${ref.name}: ${errorMessage(err)}`);
         }
       }
-      if (!safe && taskIds.length > 0) {
+      if (!safe && (taskIds.length > 0 || !this.hasSafeBackgroundProtection(protectedUntilMs))) {
         try {
           if (!await this.originalSandboxExists(ref.name, recovery.expectedUid)) {
             await leaseMonitor.finish();

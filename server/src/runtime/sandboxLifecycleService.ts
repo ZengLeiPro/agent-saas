@@ -138,7 +138,7 @@ export class PgSandboxLifecycleStore {
         UPDATE ${this.runsTable} AS run
         SET metadata = jsonb_set(run.metadata, '{sandboxCleanupOutbox}',
           $3::jsonb || jsonb_build_object(
-            'previousDeletionGeneration', NULLIF(run.metadata->'sandboxCleanupOutbox'->>'deletionGeneration',''),
+            'previousDeletionGeneration', NULLIF(run.metadata->'sandboxCleanupOutbox'->>'previousDeletionGeneration',''),
             'deletionGeneration', $4::text
           )), updated_at=NOW()
         FROM active

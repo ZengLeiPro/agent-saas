@@ -241,13 +241,16 @@ describe('飞书官方 CLI 连接器', () => {
   });
 
   it('按官方 auth status JSON 契约识别可用且已校验的用户身份', async () => {
+    let wire: Record<string, any> | undefined;
     const runner = new FeishuAuthStatusRunner({
       agentCwd: '/mnt/agent-saas/workspaces',
       resolveServerRemote: vi.fn(async () => ({
         baseUrl: 'http://acs.internal',
         authToken: 'acs-token',
       })),
-      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+      fetchImpl: vi.fn(async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
         status: 'success',
         content: JSON.stringify({
           appId: 'cli_test',
@@ -268,7 +271,8 @@ describe('飞书官方 CLI 连接器', () => {
       }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      })) as typeof fetch,
+      });
+      }) as typeof fetch,
     });
 
     await expect(runner.check(USER, connection())).resolves.toMatchObject({
@@ -279,6 +283,7 @@ describe('飞书官方 CLI 连接器', () => {
       userName: 'Alice',
       refreshExpiresAt: '2026-07-28T03:30:00.000Z',
     });
+    expect(wire?.context.workspace.workload).toEqual({ class: 'cron' });
   });
 });
 

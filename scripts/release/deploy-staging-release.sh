@@ -434,8 +434,10 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const reference = `${manifest.artifacts.acsImage.repository}@${manifest.artifacts.acsImage.digest}`; // 不可变镜像引用
 const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/).filter(Boolean);
 const output = lines.filter((line) => !line.startsWith('ACS_SANDBOX_IMAGE=')
-  && !line.startsWith('ACS_SANDBOX_LIFECYCLE_POLICY_MODE='));
+  && !line.startsWith('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=')
+  && !line.startsWith('ACS_SANDBOX_LIFECYCLE_ENABLED='));
 output.push(`ACS_SANDBOX_IMAGE=${reference}`);
+output.push('ACS_SANDBOX_LIFECYCLE_ENABLED=true');
 output.push('ACS_SANDBOX_LIFECYCLE_POLICY_MODE=enforce'); // rollout 显式收敛到 enforce
 fs.writeFileSync(`${envPath}.candidate`, `${output.join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${envPath}.candidate`, envPath);
@@ -507,7 +509,7 @@ if (release.releaseId !== manifest.releaseId || release.releaseSha !== manifest.
   throw new Error('Staging API readiness identity does not match Manifest');
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
-if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging' || acs.lifecyclePolicyMode !== 'enforce')
+if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging' || acs.lifecycle?.enabled !== true || acs.lifecyclePolicyMode !== 'enforce')
   throw new Error('Staging ACS digest, namespace or lifecycle mode does not match Manifest');
 
 NODE

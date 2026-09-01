@@ -507,8 +507,9 @@ if (release.releaseId !== manifest.releaseId || release.releaseSha !== manifest.
   throw new Error('Staging API readiness identity does not match Manifest');
 if (acs.environment !== 'staging' || acs.releaseId !== manifest.releaseId || acs.sourceSha !== manifest.components.acs.sourceSha)
   throw new Error('Staging ACS identity does not match Manifest');
-if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging')
-  throw new Error('Staging ACS digest or namespace does not match Manifest');
+if (acs.orchestratorArtifactDigest !== manifest.components.acs.orchestratorArtifactDigest || acs.sandboxImageDigest !== manifest.components.acs.sandboxImageDigest || acs.namespace !== 'agent-saas-staging' || acs.lifecyclePolicyMode !== 'enforce')
+  throw new Error('Staging ACS digest, namespace or lifecycle mode does not match Manifest');
+
 NODE
 
 install -m 0444 "$MANIFEST_PATH" "$state_root/releases/$release_id.manifest.json"

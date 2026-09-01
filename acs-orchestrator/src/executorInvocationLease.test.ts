@@ -96,7 +96,7 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     }
   });
 
-  it('uses an execution-unique lease key when the same invocationId runs on two instances', async () => {
+  it('advances activity generation when a new attempt is admitted after an old fence read', async () => {
     const childA = fakeChild();
     const childB = fakeChild();
     const setLeaseA = vi.fn(async () => 'uid-lease');
@@ -112,15 +112,26 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     const executorB = new AcsExecutor(baseConfig(), { spawn: vi.fn(() => childB) } as unknown as Kubectl,
       manager(setLeaseB), noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false });
 
-    const first = executorA.execute(request);
-    const second = executorB.execute(request);
-    await vi.waitFor(() => {
-      expect(setLeaseA).toHaveBeenCalledOnce();
-      expect(setLeaseB).toHaveBeenCalledOnce();
+    const requestForAttempt = (attemptId: string) => ({
+      ...request,
+      context: {
+        ...request.context,
+        correlation: { version: 1 as const, invocationId: 'logical-invocation', attemptId },
+      },
     });
+    const first = executorA.execute(requestForAttempt('attempt-a'));
+    await vi.waitFor(() => expect(setLeaseA).toHaveBeenCalledOnce());
     const leaseA = (setLeaseA.mock.calls as unknown[][])[0]?.[1];
+    const staleFence = (setLeaseA.mock.calls as unknown[][])[0]?.[4];
+
+    const second = executorB.execute(requestForAttempt('attempt-b'));
+    await vi.waitFor(() => expect(setLeaseB).toHaveBeenCalledOnce());
     const leaseB = (setLeaseB.mock.calls as unknown[][])[0]?.[1];
+    const currentFence = (setLeaseB.mock.calls as unknown[][])[0]?.[4];
     expect(leaseA).not.toBe(leaseB);
+    expect(staleFence).toBe(leaseA);
+    expect(currentFence).toBe(leaseB);
+    expect(currentFence).not.toBe(staleFence);
 
     childA.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'a' } })}\n`);
     childA.emit('close', 0, null);

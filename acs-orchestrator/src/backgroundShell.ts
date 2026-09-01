@@ -339,7 +339,10 @@ export async function terminateBackgroundShellsFailClosed(
   throw new Error(`background shell fail-closed verification failed: ${remaining.activeTaskIds.join(',')}`);
 }
 
-export async function reconcileBackgroundShells(workspaceRoot: string): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
+export async function reconcileBackgroundShells(
+  workspaceRoot: string,
+  options: { strict?: boolean } = {},
+): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
   const root = backgroundShellTaskRoot(workspaceRoot);
   let entries: string[];
   try {
@@ -355,8 +358,12 @@ export async function reconcileBackgroundShells(workspaceRoot: string): Promise<
     try {
       const state = await reconcileBackgroundShellState(join(root, taskId));
       if (!isBackgroundShellTerminal(state.status)) active.push(state);
-    } catch {
-      // 单个损坏任务记录不能阻断同 workspace 其他任务的生命周期保护。
+    } catch (error) {
+      // 生命周期恢复必须把损坏/尚未写完的 task 视为未知活动；普通 inventory
+      // 仍可跳过单个坏记录，避免阻断其他任务的可观测性。
+      if (options.strict) {
+        throw new Error(`background shell task state is unreadable: ${taskId}`, { cause: error });
+      }
     }
   }
   const protectedUntil = active

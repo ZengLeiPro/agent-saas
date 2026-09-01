@@ -55,7 +55,7 @@ function finishBackground(
 }
 
 describe('AcsExecutor background shell protection handoff', () => {
-  it('sweeps expired invocation-only residues without executing or touching on repeated scans', async () => {
+  it('sweeps expired invocation-only residues without spawning or touching on repeated scans', async () => {
     const sandboxRef = ref('as-expired-only');
     const clearExpiredInvocationLeases = vi.fn(async () => ({ active: false, removed: 1 }));
     const ensureRunning = vi.fn(async () => sandboxRef);
@@ -82,6 +82,46 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(ensureRunning).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
     expect(touch).not.toHaveBeenCalled();
+  });
+
+  it('requests strict reconciliation when lifecycle protection is scanned', async () => {
+    const sandboxRef = ref('as-protected-reconcile');
+    const child = fakeChild();
+    const setBackgroundShellProtection = vi.fn(async () => undefined);
+    const sandboxManager = {
+      listManagedSandboxes: vi.fn(async () => [{
+        ...sandboxRef,
+        backgroundShellProtectedUntil: '2099-07-20T00:00:00.000Z',
+      }]),
+      clearExpiredInvocationLeases: vi.fn(async () => ({ active: false, removed: 0 })),
+      ref: () => sandboxRef,
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection,
+      touch: vi.fn(async () => undefined),
+    } as unknown as SandboxManager;
+    const spawn = vi.fn(() => child);
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn } as unknown as Kubectl, sandboxManager, noopLogger, undefined,
+      { persistentRunner: false },
+    );
+
+    const resultPromise = executor.reconcileBackgroundShellProtections();
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
+    const runnerInput = JSON.parse(String((spawn.mock.calls as unknown[][])[0]?.[1]
+      && ((spawn.mock.calls as unknown[][])[0]?.[1] as { input?: unknown }).input));
+    expect(runnerInput).toMatchObject({
+      toolName: '__BackgroundShellReconcile',
+      input: { fail_closed: true },
+    });
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final', response: {
+        status: 'success', content: '{}', metadata: { backgroundShell: { activeTaskIds: [] } },
+      },
+    })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(resultPromise).resolves.toEqual({ checked: 1, failed: 0 });
   });
 
   it('persists background protection before returning and clearing the invocation lease', async () => {
@@ -459,6 +499,79 @@ describe('AcsExecutor background shell protection handoff', () => {
     },
   );
 
+  it('keeps renewing after a detached worker loses its final until conservative aggregate protection persists', async () => {
+    vi.useFakeTimers();
+    try {
+      const sandboxRef = ref('as-background-final-lost');
+      const child = fakeChild();
+      let protectionAvailable = false;
+      const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+      const setBackgroundShellProtection = vi.fn(async () => {
+        if (!protectionAvailable) throw new Error('aggregate protection unavailable');
+      });
+      const terminateBackgroundTasks = vi.fn(async () => { throw new Error('KillBash unavailable'); });
+      const touch = vi.fn(async () => undefined);
+      const sandboxManager = {
+        ref: () => sandboxRef,
+        ensureRunning: vi.fn(async () => sandboxRef),
+        setActiveInvocationLease,
+        setBackgroundShellProtection,
+        getSandboxUid: vi.fn(async () => 'uid-1'),
+        touch,
+      } as unknown as SandboxManager;
+      const executor = new AcsExecutor(
+        baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+        sandboxManager, noopLogger, undefined,
+        {
+          persistentRunner: false,
+          terminateBackgroundTasks,
+          backgroundRecoveryRetryMs: 30_000,
+        },
+      );
+
+      const resultPromise = executor.execute({
+        toolName: 'Shell',
+        input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-final-lost' },
+        context: { invocationId: 'inv-background-final-lost', workspace: {
+          id: sandboxRef.workspaceId,
+          sessionId: sandboxRef.sessionId,
+          sandboxScopeId: sandboxRef.sandboxScopeId,
+        } },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      child.stdout.end();
+      child.emit('close', 1, null);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(resultPromise).resolves.toMatchObject({
+        status: 'error', error: expect.stringContaining('启动结果不确定'),
+      });
+      expect(executor.backgroundRecoveryCount()).toBe(1);
+      expect((setActiveInvocationLease.mock.calls as unknown[][])
+        .some((call) => call[2] === undefined)).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+      expect((setActiveInvocationLease.mock.calls as unknown[][])
+        .some((call) => call[2] === undefined)).toBe(false);
+
+      protectionAvailable = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      const aggregateDeadline = (setBackgroundShellProtection.mock.calls as unknown[][]).at(-1)?.[1];
+      expect(Date.parse(aggregateDeadline as string) - Date.now()).toBeGreaterThan(24 * 60 * 60_000);
+      expect(setBackgroundShellProtection).toHaveBeenLastCalledWith(
+        sandboxRef.name, aggregateDeadline, 'uid-1', undefined, expect.any(String),
+      );
+      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
+        sandboxRef.name, expect.any(String), undefined, 'uid-1',
+      );
+      expect(executor.backgroundRecoveryCount()).toBe(0);
+      expect(touch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the short lease as the last fence when protection writes and task termination all fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();
@@ -487,7 +600,7 @@ describe('AcsExecutor background shell protection handoff', () => {
 
     const resultPromise = executor.execute({
       toolName: 'Shell',
-      input: { command: 'sleep 60', mode: 'background' },
+      input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-fail-closed' },
       context: { invocationId: 'inv-background-fail-closed', workspace: {
         id: sandboxRef.workspaceId,
         sessionId: sandboxRef.sessionId,

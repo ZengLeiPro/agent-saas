@@ -117,7 +117,8 @@ export class PgSandboxLifecycleStore {
       await lockSandboxCleanupKeys(client, candidate.sessionId, candidate.sandboxScopeId);
       const result = await client.query<Record<string, unknown>>(`
       WITH active AS (
-        SELECT run_id FROM ${this.runsTable}
+        SELECT run_id, metadata->'sandboxCleanupOutbox'->>'state' AS state
+        FROM ${this.runsTable}
         WHERE session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
           AND metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling','pending','claimed')
           AND NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NOT NULL
@@ -133,6 +134,17 @@ export class PgSandboxLifecycleStore {
           AND (NULLIF(metadata->'sandboxCleanupOutbox'->>'targetHandId','') IS NULL
             OR NULLIF(metadata->'sandboxCleanupOutbox'->>'deletionGeneration','') IS NULL)
         ORDER BY updated_at DESC LIMIT 1
+      ), takeover AS (
+        UPDATE ${this.runsTable} AS run
+        SET metadata = jsonb_set(run.metadata, '{sandboxCleanupOutbox}',
+          $3::jsonb || jsonb_build_object(
+            'previousDeletionGeneration', NULLIF(run.metadata->'sandboxCleanupOutbox'->>'deletionGeneration',''),
+            'deletionGeneration', $4::text
+          )), updated_at=NOW()
+        FROM active
+        WHERE $7::boolean AND active.state='prepared' AND run.run_id=active.run_id
+        RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
+                  run.metadata->'sandboxCleanupOutbox' AS cleanup
       ), target AS (
         SELECT run_id FROM legacy
         UNION ALL
@@ -158,10 +170,14 @@ export class PgSandboxLifecycleStore {
         SELECT run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
                run.metadata->'sandboxCleanupOutbox' AS cleanup
         FROM ${this.runsTable} AS run JOIN active ON run.run_id=active.run_id
+        WHERE NOT EXISTS (SELECT 1 FROM takeover)
       )
-      SELECT * FROM updated UNION ALL SELECT * FROM existing LIMIT 1
+      SELECT * FROM updated
+      UNION ALL SELECT * FROM takeover
+      UNION ALL SELECT * FROM existing
+      LIMIT 1
       `, [candidate.sessionId, candidate.tenantId ?? null, payload, candidate.deletionGeneration,
-        new Date(Date.now() - 60_000).toISOString(), candidate.legacyRunId ?? null]);
+        new Date(Date.now() - 60_000).toISOString(), candidate.legacyRunId ?? null, options.prepared === true]);
       await client.query('COMMIT');
       const row = result.rows[0];
       return row ? cleanupCandidateFromRow(row, asRecord(row.cleanup)) : undefined;
@@ -338,16 +354,37 @@ export class PgSandboxLifecycleStore {
 
   async expireUncommittedPreparedCleanup(runId: string): Promise<boolean> {
     const staleBefore = new Date(Date.now() - 60_000).toISOString();
-    const result = await this.pool.query(`
-      UPDATE ${this.runsTable}
-      SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
-        metadata->'sandboxCleanupOutbox' || jsonb_build_object(
-          'state','cancelled','cancelledAt',NOW()::text,'cancelReason','intent_without_tombstone'
-        )), updated_at=NOW()
-      WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='prepared'
-        AND COALESCE(metadata->'sandboxCleanupOutbox'->>'queuedAt','') < $2::text
-    `, [runId, staleBefore]);
-    return (result.rowCount ?? 0) > 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const identity = await client.query<{ session_id: string; sandbox_scope_id: string }>(`
+        SELECT metadata->'sandboxCleanupOutbox'->>'sessionId' AS session_id,
+               metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
+        FROM ${this.runsTable} WHERE run_id=$1
+      `, [runId]);
+      const current = identity.rows[0];
+      if (!current?.session_id) {
+        await client.query('COMMIT');
+        return false;
+      }
+      await lockSandboxCleanupKeys(client, current.session_id, current.sandbox_scope_id);
+      const result = await client.query(`
+        UPDATE ${this.runsTable}
+        SET metadata = jsonb_set(metadata, '{sandboxCleanupOutbox}',
+          metadata->'sandboxCleanupOutbox' || jsonb_build_object(
+            'state','cancelled','cancelledAt',NOW()::text,'cancelReason','intent_without_tombstone'
+          )), updated_at=NOW()
+        WHERE run_id=$1 AND metadata->'sandboxCleanupOutbox'->>'state'='prepared'
+          AND COALESCE(metadata->'sandboxCleanupOutbox'->>'queuedAt','') < $2::text
+      `, [runId, staleBefore]);
+      await client.query('COMMIT');
+      return (result.rowCount ?? 0) > 0;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // 只有 cancellation 完成后的完整 outbox 可投递；legacy record 先升级再 claim。

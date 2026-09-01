@@ -8,6 +8,7 @@ import type { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  backgroundShellTaskDir,
   getBackgroundShellOutput,
   isBackgroundShellTerminal,
   killBackgroundShell,
@@ -46,6 +47,19 @@ describe('background shell runtime', () => {
       env: process.env,
     });
     expect(idempotent.status).toBe('completed');
+  });
+
+  it('strict reconciliation treats a partially written task as unknown activity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-strict-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const taskDir = backgroundShellTaskDir(root, taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, 'state.json'), '{not-json', 'utf8');
+
+    await expect(reconcileBackgroundShells(root, { strict: true })).rejects.toThrow(
+      /task state is unreadable/u,
+    );
+    await expect(reconcileBackgroundShells(root)).resolves.toEqual({ activeTaskIds: [] });
   });
 
   it('preserves the injected PATH instead of resetting it through a login shell', async () => {

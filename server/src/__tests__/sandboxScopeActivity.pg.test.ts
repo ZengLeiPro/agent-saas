@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import pg from 'pg';
+import pg, { type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgEventStore } from '../runtime/pgEventStore.js';
@@ -12,6 +12,25 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 if (!testPgUrl) console.warn('[sandboxScopeActivity.pg] SKIPPED: TEST_DATABASE_URL is not configured');
+
+interface AdvisoryLockId { classid: string; objid: string; objsubid: number }
+
+async function waitForAdvisoryWaiters(
+  client: PoolClient,
+  lock: AdvisoryLockId,
+  expected: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const result = await client.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM pg_locks
+      WHERE locktype='advisory' AND NOT granted
+        AND classid=$1::oid AND objid=$2::oid AND objsubid=$3
+    `, [lock.classid, lock.objid, lock.objsubid]);
+    if (Number(result.rows[0]?.count ?? 0) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`expected at least ${expected} waiter(s) for the prepared-intent advisory lock`);
+}
 
 describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -136,6 +155,69 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
       expect.objectContaining({ runId: 'intent-run-1', sessionId: 'intent-session-1' }),
     ]);
   });
+
+  it('prepared intent takeover serializes with stale expiry and survives restart without another DELETE', async () => {
+    const runId = 'prepared-refresh-run';
+    const sessionId = 'aaa-prepared-refresh-session';
+    const sandboxScopeId = 'zzz-prepared-refresh-scope';
+    await runStore.upsertPending({
+      runId, sessionId, tenantId: 'tenant-1', workspaceId: 'workspace-prepared-refresh',
+      sandboxScopeId, metadata: {},
+    });
+    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await store.enqueueCleanup({
+      workspaceId: 'workspace-prepared-refresh', sessionId, sandboxScopeId,
+      tenantId: 'tenant-1', targetHandId: 'acs-old', deletionGeneration: 'delete-generation-old',
+    }, { prepared: true });
+    await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
+      '{sandboxCleanupOutbox,queuedAt}', to_jsonb($2::text)) WHERE run_id=$1`, [
+      runId, '2000-01-01T00:00:00.000Z',
+    ]);
+
+    const blocker = await pool.connect();
+    let committed = false;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [sessionId]);
+      const held = await blocker.query<AdvisoryLockId>(`
+        SELECT classid::text, objid::text, objsubid FROM pg_locks
+        WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted
+      `);
+      const lock = held.rows[0];
+      expect(lock).toBeDefined();
+      const takeover = store.enqueueCleanup({
+        workspaceId: 'workspace-prepared-refresh', sessionId, sandboxScopeId,
+        tenantId: 'tenant-1', targetHandId: 'acs-new', deletionGeneration: 'delete-generation-new',
+      }, { prepared: true });
+      await waitForAdvisoryWaiters(blocker, lock!, 1);
+      const expiry = store.expireUncommittedPreparedCleanup(runId);
+      await waitForAdvisoryWaiters(blocker, lock!, 2);
+      await blocker.query('COMMIT');
+      committed = true;
+
+      await expect(takeover).resolves.toEqual(expect.objectContaining({
+        runId, deletionGeneration: 'delete-generation-new', targetHandId: 'acs-new',
+      }));
+      await expect(expiry).resolves.toBe(false);
+    } finally {
+      if (!committed) await blocker.query('ROLLBACK').catch(() => undefined);
+      blocker.release();
+    }
+
+    const rebuilt = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await expect(rebuilt.listPreparedCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }),
+    ]));
+    await runStore.markStatus(runId, 'cancelled', 'session deleted before restart');
+    const claimed = await rebuilt.claimPreparedCleanup(runId, 'restarted-scanner');
+    expect(claimed?.claimGeneration).toBe(1);
+    await expect(rebuilt.completePreparedCleanup(
+      runId, claimed!.claimId!, claimed!.claimGeneration!,
+    )).resolves.toEqual(expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }));
+    await expect(rebuilt.listCleanupCandidates()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId, deletionGeneration: 'delete-generation-new' }),
+    ]));
+  }, 30_000);
 
   it('cancelling owner 崩溃后可按 lease/generation 接管，restore 可使自身旧 owner CAS 失效', async () => {
     await runStore.upsertPending({

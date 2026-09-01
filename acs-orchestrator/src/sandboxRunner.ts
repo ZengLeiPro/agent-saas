@@ -531,7 +531,7 @@ async function executeBackgroundShellTool(input: {
     }
     if (input.toolName === '__BackgroundShellFailClosed') {
       if (!Array.isArray(args.task_ids) || args.task_ids.some((taskId) => typeof taskId !== 'string')) {
-        return { status: 'error', error: '__BackgroundShellFailClosed 需要 task_ids。' };
+        return { status: 'error', error: '__BackgroundShellFailClosed 需要字符串 task_ids。' };
       }
       try {
         const remaining = await terminateBackgroundShellsFailClosed(
@@ -553,7 +553,7 @@ async function executeBackgroundShellTool(input: {
       }
     }
     if (input.toolName === '__BackgroundShellReconcile') {
-      const result = await reconcileBackgroundShells(input.workspaceRoot);
+      const result = await reconcileBackgroundShells(input.workspaceRoot, { strict: args.fail_closed === true });
       return {
         status: 'success',
         content: JSON.stringify(result),

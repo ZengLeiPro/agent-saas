@@ -14,6 +14,7 @@ import { PersistentSandboxRunner } from './persistentRunner.js';
 import type { SandboxManager, SandboxRef, SandboxResourceOverride } from './sandboxManager.js';
 import type { ToolInvocationResponse, ToolInvocationStreamChunk } from 'server/runtime/handProtocol.js';
 import { sandboxResourceOverride } from './provision.js';
+import { MAX_BACKGROUND_SHELL_TIMEOUT_MS } from './backgroundShell.js';
 import { summarizeRunnerStderr } from './runnerLog.js';
 import {
   ACTIVE_INVOCATION_LEASE_MS,
@@ -28,6 +29,7 @@ interface InvocationEntry {
 
 interface InvocationProtectionState {
   preserveInvocationLease: boolean;
+  backgroundMetadataObserved?: boolean;
   observedBackgroundProtectionGeneration?: string | null;
   originalSandboxGone?: boolean;
   recovery?: {
@@ -45,6 +47,7 @@ interface AcsExecutorOptions {
 }
 
 const BACKGROUND_PROTECTION_CONFIRM_MARGIN_MS = 5_000;
+const UNKNOWN_BACKGROUND_SHELL_PROTECTION_MS = 2 * MAX_BACKGROUND_SHELL_TIMEOUT_MS;
 
 export class AcsExecutor {
   private readonly invocations = new Map<string, InvocationEntry>();
@@ -92,6 +95,7 @@ export class AcsExecutor {
     const ref = this.sandboxManager.ref(sandboxIdentity);
     const invocationId = request.context.invocationId;
     const invocationKey = invocationId ?? `internal-${Date.now()}-${++this.invocationSeq}`;
+    const backgroundShellRequested = isBackgroundShellRequest(request);
     // 同一 invocationId 可因跨实例重试并发存在；每次执行必须使用独立 annotation key，
     // 否则旧实例 finally 清理会删除新实例刚续租的 lease。
     const leaseKey = `${invocationKey}:${randomUUID()}`;
@@ -131,9 +135,8 @@ export class AcsExecutor {
     try {
       await this.ensureSandboxRunning(ref, sandboxIdentity, invocationKey);
       const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
-      const activityGeneration = request.context.correlation?.invocationId ?? request.context.invocationId;
       sandboxUid = await this.sandboxManager.setActiveInvocationLease(
-        ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined, activityGeneration,
+        ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined, leaseKey,
       );
       if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
       leasePersisted = true;
@@ -220,6 +223,21 @@ export class AcsExecutor {
     } catch (err) {
       runError = err;
     } finally {
+      if (leasePersisted && sandboxUid && backgroundShellRequested
+        && !protectionState.backgroundMetadataObserved && !protectionState.recovery) {
+        protectionState.preserveInvocationLease = true;
+        protectionState.recovery = {
+          expectedUid: sandboxUid,
+          protectedUntil: new Date(Date.now() + UNKNOWN_BACKGROUND_SHELL_PROTECTION_MS).toISOString(),
+          taskIds: [],
+          reason: 'background shell runner ended without protection metadata',
+        };
+        finalResponse = {
+          status: 'error',
+          error: '后台 Shell 启动结果不确定，ACS 正在保留 lease 并核对本地 worker。',
+        };
+        runError = undefined;
+      }
       let leaseFailure: Error | undefined;
       if (leasePersisted && protectionState.recovery && leaseMonitor) {
         recoveryOwnsLease = true;
@@ -302,7 +320,7 @@ export class AcsExecutor {
       }
       const response = await this.execute({
         toolName: '__BackgroundShellReconcile',
-        input: {},
+        input: { fail_closed: true },
         context: {
           workspace: {
             id: sandbox.workspaceId,
@@ -333,6 +351,7 @@ export class AcsExecutor {
   ): Promise<void> {
     const raw = response.metadata?.backgroundShell;
     if (!raw || typeof raw !== 'object') return;
+    state.backgroundMetadataObserved = true;
     const sandboxName = ref.name;
     const background = raw as {
       taskId?: unknown;
@@ -525,11 +544,13 @@ export class AcsExecutor {
       }
 
       let safe = false;
-      const protectedUntilMs = recovery.protectedUntil ? Date.parse(recovery.protectedUntil) : Number.NaN;
-      if (recovery.protectedUntil && this.hasSafeBackgroundProtection(protectedUntilMs)) {
+      const taskIds = recovery.taskIds;
+      const protectedUntil = recovery.protectedUntil;
+      const protectedUntilMs = protectedUntil ? Date.parse(protectedUntil) : Number.NaN;
+      if (!safe && protectedUntil && this.hasSafeBackgroundProtection(protectedUntilMs)) {
         try {
           await this.sandboxManager.setBackgroundShellProtection(
-            ref.name, recovery.protectedUntil, recovery.expectedUid, undefined, leaseKey,
+            ref.name, protectedUntil, recovery.expectedUid, undefined, leaseKey,
           );
           // Re-check after CAS completion; an expired marker is not durable safety.
           safe = this.hasSafeBackgroundProtection(protectedUntilMs);
@@ -537,14 +558,14 @@ export class AcsExecutor {
           this.logger.warn(`background_shell_recovery_protection_failed sandbox=${ref.name}: ${errorMessage(err)}`);
         }
       }
-      if (!safe) {
+      if (!safe && taskIds.length > 0) {
         try {
           if (!await this.originalSandboxExists(ref.name, recovery.expectedUid)) {
             await leaseMonitor.finish();
             this.logger.info(`background_shell_recovery_original_gone sandbox=${ref.name}`);
             return;
           }
-          await terminate(ref, recovery.taskIds);
+          await terminate(ref, taskIds);
           safe = true;
         } catch (err) {
           this.logger.warn(`background_shell_recovery_termination_failed sandbox=${ref.name}: ${errorMessage(err)}`);
@@ -773,6 +794,13 @@ export class AcsExecutor {
     });
     return child;
   }
+}
+
+function isBackgroundShellRequest(request: WireToolInvocationRequest): boolean {
+  return request.toolName === 'Shell'
+    && Boolean(request.input)
+    && typeof request.input === 'object'
+    && (request.input as Record<string, unknown>).mode === 'background';
 }
 
 export function toolNameForSandboxRunner(toolName: string): string {

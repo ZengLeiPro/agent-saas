@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
@@ -23,6 +23,10 @@ import {
   PLATFORM_TOOL_SOURCE_MODULE,
 } from '../agent/toolCatalog.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
+import type { Request } from 'express';
 
 export interface CreateToolControlsAdminRouterOptions {
   processCwd: string;
@@ -30,6 +34,7 @@ export interface CreateToolControlsAdminRouterOptions {
   secretVault?: SecretVault;
   validateToolSettingsConfig?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
   onToolSettingsUpdated?: (settings: Pick<AppConfig, 'toolControls' | 'webTools'>) => Promise<void> | void;
+  configMutationService?: AdminConfigMutationService;
 }
 
 type RawObject = Record<string, unknown>;
@@ -305,24 +310,31 @@ function mergeSingleToolPatch(
  */
 async function persistUpdatedSettings(
   options: CreateToolControlsAdminRouterOptions,
+  configMutationService: AdminConfigMutationService,
+  req: Request,
   nextSettings: Pick<AppConfig, 'toolControls' | 'webTools'>,
 ): Promise<Pick<AppConfig, 'toolControls' | 'webTools'>> {
-  const configPath = getAppConfigPath(options.processCwd);
-  const configText = readFileSync(configPath, 'utf-8');
-
-  const webToolsEdits = modify(configText, ['webTools'], nextSettings.webTools, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  const result = await configMutationService.mutate({
+    ...mutationRequestContext(req),
+    changedPaths: ['toolControls', 'webTools'],
+    buildCandidate: (configText) => {
+      const withWebTools = applyEdits(configText, modify(configText, ['webTools'], nextSettings.webTools, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }));
+      return applyEdits(withWebTools, modify(withWebTools, ['toolControls'], nextSettings.toolControls, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      }));
+    },
+    applyRuntime: async (candidate) => {
+      options.config.toolControls = candidate.toolControls;
+      options.config.webTools = candidate.webTools;
+      await options.onToolSettingsUpdated?.({
+        toolControls: candidate.toolControls,
+        webTools: candidate.webTools,
+      });
+    },
   });
-  const withWebTools = applyEdits(configText, webToolsEdits);
-  const toolControlsEdits = modify(withWebTools, ['toolControls'], nextSettings.toolControls, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  });
-  const updatedText = applyEdits(withWebTools, toolControlsEdits);
-  writeFileSync(configPath, updatedText, 'utf-8');
-  options.config.toolControls = nextSettings.toolControls;
-  options.config.webTools = nextSettings.webTools;
-  await options.onToolSettingsUpdated?.(nextSettings);
-  return nextSettings;
+  return { toolControls: result.config.toolControls, webTools: result.config.webTools };
 }
 
 function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>) {
@@ -336,6 +348,12 @@ function catalogResponse(settings: Pick<AppConfig, 'toolControls' | 'webTools'>)
 
 export function createToolControlsAdminRouter(options: CreateToolControlsAdminRouterOptions): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
 
   router.use(requirePlatformAdmin);
 
@@ -362,11 +380,11 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     try {
-      const persisted = await persistUpdatedSettings(options, nextSettings);
+      const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
       auditLog(req, 'tool_controls_updated', describeToolControlsChange(persisted.toolControls));
       res.json(catalogResponse(persisted));
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -408,11 +426,11 @@ export function createToolControlsAdminRouter(options: CreateToolControlsAdminRo
     }
 
     try {
-      const persisted = await persistUpdatedSettings(options, nextSettings);
+      const persisted = await persistUpdatedSettings(options, configMutationService, req, nextSettings);
       auditLog(req, 'tool_controls_updated', `${toolId}：${describeToolEntry(persisted.toolControls, toolId)}`);
       res.json(catalogResponse(persisted));
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 

@@ -21,6 +21,7 @@ import type {
   ToolInvocationAnalysisResponse,
   ToolInvocationStatus,
   UserSummaryResponse,
+  EffectiveConfigStatus,
 } from "./types";
 import type { UserInfo } from "@/components/UserManager/types";
 
@@ -263,6 +264,9 @@ function safeParseJson<T>(text: string, fallback: T): T {
 }
 
 export const platformAdminApi = {
+  configStatus(): Promise<EffectiveConfigStatus> {
+    return getJson("/api/admin/config-status");
+  },
   search(q: string): Promise<{ matches: PlatformSearchMatch[] }> {
     return getJson(buildAdminApiPath("/search", { q }));
   },

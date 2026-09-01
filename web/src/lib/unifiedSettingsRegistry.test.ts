@@ -52,6 +52,7 @@ const EXPECTED_KEYS = [
   "platform:skill-pool",
   "platform:egress",
   "platform:system",
+  "platform:config-status",
 ] as const;
 
 const EXPECTED_ACCESS_ACTION: Record<SettingsScope, string> = {
@@ -65,12 +66,12 @@ function expectUnique(values: readonly string[]) {
 }
 
 describe("unified settings registry", () => {
-  it("穷举唯一的 35 个叶子，scope 数量固定为 8/10/17", () => {
+  it("穷举唯一的 36 个叶子，scope 数量固定为 8/10/18", () => {
     expect(SETTINGS_REGISTRY.map((entry) => entry.key)).toEqual(EXPECTED_KEYS);
     expectUnique(SETTINGS_REGISTRY.map((entry) => entry.key));
     expect(settingsSectionsForScope("personal")).toHaveLength(8);
     expect(settingsSectionsForScope("tenant")).toHaveLength(10);
-    expect(settingsSectionsForScope("platform")).toHaveLength(17);
+    expect(settingsSectionsForScope("platform")).toHaveLength(18);
   });
 
   it("保持 path、route 表示与 scope 内 id 唯一", () => {

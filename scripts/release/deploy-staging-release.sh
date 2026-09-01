@@ -330,20 +330,32 @@ node - /etc/agent-saas-staging/config.json <<'NODE'
 const fs = require('node:fs');
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const failures = [];
-if (config.tts) failures.push('tts must be absent');
-if (config.stt?.enabled !== false) failures.push('stt.enabled must be false');
-for (const key of ['apiKey', 'apiKeyRef', 'ossAccessKeyId', 'ossAccessKeyIdRef', 'ossAccessKeySecret', 'ossAccessKeySecretRef']) {
-  if (config.stt?.[key]) failures.push(`stt.${key} must be absent`);
+if (!config.models?.groups?.length) failures.push('models must be explicitly configured');
+for (const group of config.models?.groups ?? []) {
+  if (group.apiKey) failures.push(`models.${group.id}.apiKey must use a Staging SecretRef`);
+  const usesCodex = group.responses_transport === 'codex_subscription'
+    || (group.models ?? []).some((model) => model.responses_transport === 'codex_subscription');
+  if (!usesCodex && !group.apiKeyRef) failures.push(`models.${group.id}.apiKeyRef is required`);
 }
-if (config.memory?.enabled !== false) failures.push('memory.enabled must be false');
-if (config.memory?.index) failures.push('memory.index must be absent');
-for (const key of ['injectContext', 'maintenance', 'polling', 'consolidation']) {
-  if (config.memory?.[key]?.enabled !== false) failures.push(`memory.${key}.enabled must be false`);
+if (config.codexSubscription?.enabled && !(config.codexSubscription.credentialRefs?.length || config.codexSubscription.credentialRef)) {
+  failures.push('enabled Codex requires a Staging credentialRef');
+}
+if (config.stt?.enabled) {
+  for (const key of ['apiKeyRef', 'ossAccessKeyIdRef', 'ossAccessKeySecretRef']) {
+    if (!config.stt[key]) failures.push(`enabled stt.${key} is required`);
+  }
+  for (const key of ['apiKey', 'ossAccessKeyId', 'ossAccessKeySecret']) {
+    if (config.stt[key]) failures.push(`stt.${key} must use a Staging SecretRef`);
+  }
+}
+if (config.memory?.index?.embedding?.apiKey) failures.push('memory.index.embedding.apiKey must use a Staging SecretRef');
+if (config.memory?.index?.enabled && !config.memory.index.embedding?.apiKeyRef) {
+  failures.push('enabled memory index requires embedding.apiKeyRef');
+}
+if (config.cron?.enabled && config.cron.store !== '/mnt/agent-saas-staging/runtime/server/data/cron-jobs.json') {
+  failures.push('enabled cron must use the Staging job store');
 }
 if (Object.keys(config.dispatch?.env ?? {}).length > 0) failures.push('dispatch.env must be empty');
-if (config.systemMonitor?.enabled !== false) failures.push('systemMonitor.enabled must be false');
-if (config.runtimeEventRetention?.enabled !== false) failures.push('runtimeEventRetention.enabled must be false');
-if (config.integrationV3ControlPlane) failures.push('integrationV3ControlPlane must be absent');
 const artifact = config.artifact ?? {};
 if (artifact.backend !== 'local') failures.push('artifact.backend must be local');
 if (artifact.rootDir !== '/mnt/agent-saas-staging/runtime/artifacts') failures.push('artifact.rootDir must use the shared NAS Artifact directory');

@@ -71,6 +71,10 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/config/export-effective-config.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('scripts/staging/render-config.mjs'), {
     components: [],
     blockingReason: null,

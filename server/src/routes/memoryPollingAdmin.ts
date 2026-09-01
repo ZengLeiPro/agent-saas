@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
@@ -7,12 +7,16 @@ import { getAppConfigPath, parseAppConfig } from '../app/config.js';
 import type { AppConfig, MemoryPollingConfig } from '../app/config.js';
 import { MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
 import type { MemoryConsolidationScannerStatus } from '../memory/consolidation/types.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 export interface CreateMemoryPollingAdminRouterOptions {
   processCwd: string;
   config: AppConfig;
   onPollingUpdated?: (polling: MemoryPollingConfig) => void | Promise<void>;
   getConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
+  configMutationService?: AdminConfigMutationService;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +88,12 @@ export function createMemoryPollingAdminRouter(
   options: CreateMemoryPollingAdminRouterOptions,
 ): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
   router.use(requirePlatformAdmin);
 
   router.get('/', async (_req, res) => {
@@ -113,39 +123,34 @@ export function createMemoryPollingAdminRouter(
   });
 
   router.put('/', async (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
-    let rawConfig: unknown;
-    let polling: MemoryPollingConfig;
-
     try {
-      configText = readFileSync(configPath, 'utf-8');
-      rawConfig = parseJsonc(configText);
-      polling = validatePollingUpdate(rawConfig, req.body);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-
-    try {
-      const rawRecord = isRecord(rawConfig) ? rawConfig : {};
-      const hasMemoryObject = isRecord(rawRecord.memory);
-      const edits = modify(
-        configText,
-        hasMemoryObject ? ['memory', 'polling'] : ['memory'],
-        hasMemoryObject ? polling : { polling },
-        { formattingOptions: { insertSpaces: true, tabSize: 2 } },
-      );
-      const updatedText = applyEdits(configText, edits);
-      writeFileSync(configPath, updatedText, 'utf-8');
-      options.config.memory = {
-        ...(options.config.memory ?? {}),
-        polling,
-      };
-      await options.onPollingUpdated?.(polling);
+      const result = await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        changedPaths: ['memory.polling'],
+        buildCandidate: (configText, rawConfig) => {
+          const polling = validatePollingUpdate(rawConfig, req.body);
+          const hasMemoryObject = isRecord(rawConfig.memory);
+          return applyEdits(configText, modify(
+            configText,
+            hasMemoryObject ? ['memory', 'polling'] : ['memory'],
+            hasMemoryObject ? polling : { polling },
+            { formattingOptions: { insertSpaces: true, tabSize: 2 } },
+          ));
+        },
+        applyRuntime: async (candidate) => {
+          if (!candidate.memory?.polling) throw new Error('memory.polling: 缺少轮询配置');
+          options.config.memory = candidate.memory;
+          await options.onPollingUpdated?.(candidate.memory.polling);
+        },
+      });
+      res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
       res.json(pollingView(options.config));
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof Error && /memory\.polling|时区|触发窗口|模型/u.test(error.message)) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      sendConfigMutationError(res, error);
     }
   });
 

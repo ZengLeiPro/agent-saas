@@ -25,6 +25,7 @@ import { TenantAdminHeaderControls } from "@/components/TenantAdminHeaderControl
 import { TenantSettingsPanel } from "@/components/TenantSettingsPanel";
 import { InfraPage, OverviewPage, SandboxesPage, SessionsPage, TenantsPage, UsersPage } from "@/components/PlatformAdmin/pages";
 import { SystemSettingsPanel } from "@/components/PlatformAdmin/SystemSettingsPanel";
+import { ConfigStatusPanel } from "@/components/PlatformAdmin/ConfigStatusPanel";
 import { RunTraceExplorer } from "@/components/RunTraceExplorer";
 import { OverviewSection as TenantOverviewSection } from "@/components/TenantAnalytics/OverviewSection";
 import { QaConsole } from "@/components/QaConsole";
@@ -617,6 +618,7 @@ export function PlatformAdminShell({
     { id: "skill-pool", render: renderSkills },
     { id: "egress", render: () => <EgressConfigManagerPanel /> },
     { id: "system", render: () => <SystemSettingsPanel /> },
+    { id: "config-status", render: () => <ConfigStatusPanel /> },
   ];
 
   const settingsContent = (
@@ -699,6 +701,8 @@ export function PlatformAdminShell({
         return renderMemoryPolling();
       case "platform.governance.system-settings":
         return <SystemSettingsPanel />;
+      case "platform.governance.config-status":
+        return <ConfigStatusPanel />;
       default:
         return <GovernanceCapabilityNotice title="该治理能力" />;
     }

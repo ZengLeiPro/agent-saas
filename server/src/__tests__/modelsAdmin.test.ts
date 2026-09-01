@@ -8,6 +8,8 @@ import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { parseAppConfig } from '../app/config.js';
 import { createModelsAdminRouter } from '../routes/modelsAdmin.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { InMemorySecretVault } from '../security/secretVault.js';
+import { resolveModelsConfig } from '../app/runtimeGovernanceCredentials.js';
 
 const servers: Array<{ close: () => void }> = [];
 
@@ -168,9 +170,32 @@ describe('models admin router', () => {
     });
   });
 
+  it('stores a newly submitted model API key in SecretVault and resolves it only for runtime', async () => {
+    const secretVault = new InMemorySecretVault();
+    await withApp(baseRawConfig(), async ({ baseUrl, configPath }) => {
+      const source = baseRawConfig();
+      source.models.groups[0]!.apiKey = 'sk-rotated';
+      const response = await fetch(`${baseUrl}/api/admin/models`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ models: source.models }),
+      });
+      expect(response.status).toBe(200);
+      const written = JSON.parse(readFileSync(configPath, 'utf8'));
+      expect(written.models.groups[0].apiKey).toBeUndefined();
+      expect(written.models.groups[0].apiKeyRef).toEqual(expect.any(String));
+      expect(JSON.stringify(await readJson(response))).not.toContain('sk-rotated');
+
+      const resolved = await resolveModelsConfig(parseAppConfig(written).models, secretVault);
+      expect(resolved?.groups[0]?.apiKey).toBe('sk-rotated');
+      expect(resolved?.groups[0]?.apiKeyRef).toBe(written.models.groups[0].apiKeyRef);
+    }, { secretVault });
+  });
+
   it('updates models and memory index embedding settings in one config write', async () => {
     const onModelsUpdated = vi.fn();
     const onMemoryIndexUpdated = vi.fn(async () => undefined);
+    const secretVault = new InMemorySecretVault();
 
     await withApp(baseRawConfig(), async ({ baseUrl, configPath, runtimeConfig }) => {
       const response = await fetch(`${baseUrl}/api/admin/models`, {
@@ -228,23 +253,26 @@ describe('models admin router', () => {
         expect(runtimeConfig.models?.groups[0]?.models[1]?.value).toBe('gpt-5.5');
         expect(runtimeConfig.models?.groups[0]?.models[1]?.context_window).toBe(372_000);
         expect(runtimeConfig.models?.groups[0]?.models[1]?.auto_compact_threshold).toBe(0.65);
-      expect(runtimeConfig.memory?.index?.embedding.apiKey).toBe('new-embedding-key');
+      expect(runtimeConfig.memory?.index?.embedding.apiKey).toBeUndefined();
+      expect(runtimeConfig.memory?.index?.embedding.apiKeyRef).toEqual(expect.any(String));
       expect(onModelsUpdated).toHaveBeenCalledWith(runtimeConfig.models);
       expect(onMemoryIndexUpdated).toHaveBeenCalledWith(runtimeConfig.memory?.index);
 
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(written.memory.injectContext).toEqual({ enabled: true, maxLines: 120 });
-      expect(written.memory.index.embedding.apiKey).toBe('new-embedding-key');
+      expect(written.memory.index.embedding.apiKey).toBeUndefined();
+      expect(written.memory.index.embedding.apiKeyRef).toEqual(expect.any(String));
         expect(written.models.groups[0].models.map((model: { id: string }) => model.id)).toEqual(['mini', 'gpt']);
         expect(written.models.groups[0].models[1].value).toBe('gpt-5.5');
         expect(written.models.groups[0].models[1].context_window).toBe(372_000);
         expect(written.models.groups[0].models[1].auto_compact_threshold).toBe(0.65);
-    }, { onModelsUpdated, onMemoryIndexUpdated });
+    }, { onModelsUpdated, onMemoryIndexUpdated, secretVault });
   });
 
   it('creates memory.index when only models existed before', async () => {
     const rawConfig = baseRawConfig();
     delete (rawConfig as any).memory;
+    const secretVault = new InMemorySecretVault();
 
     await withApp(rawConfig, async ({ baseUrl, configPath }) => {
       const response = await fetch(`${baseUrl}/api/admin/models`, {
@@ -266,8 +294,9 @@ describe('models admin router', () => {
 
       expect(response.status).toBe(200);
       const written = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(written.memory.index.embedding.apiKey).toBe('embedding-key');
-    });
+      expect(written.memory.index.embedding.apiKey).toBeUndefined();
+      expect(written.memory.index.embedding.apiKeyRef).toEqual(expect.any(String));
+    }, { secretVault });
   });
 
   it('rejects an automatic compaction threshold outside 0~1', async () => {

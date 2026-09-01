@@ -102,6 +102,7 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
       route("platform", "governance", "system-prompts", "系统提示语", ["platform-console", "governance", "system-prompts"]),
       route("platform", "governance", "memory-policy", "记忆策略", ["platform-console", "governance", "memory-policy"]),
       route("platform", "governance", "system-settings", "系统配置", ["platform-console", "governance", "system-settings"]),
+      route("platform", "governance", "config-status", "配置状态", ["platform-console", "governance", "config-status"]),
     ],
   },
 ];

@@ -332,9 +332,12 @@ describe('registerRoutes', () => {
     //   + Agent DWS 精确前缀管理员门禁 = 45
     //   + 租户专家模板 = 46
     //   + 普通用户 Context citation = 47
+    //   + Context Plane 管理路由 = 48
+    //   + 有效配置状态管理路由 = 49
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(48);
+    expect(app.use).toHaveBeenCalledTimes(49);
+    expect(app.use).toHaveBeenCalledWith('/api/admin/config-status', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api', mocked.contextCitationsRouter);
     expect(app.use).toHaveBeenCalledWith(
       '/api/admin/context-plane', mocked.requireAdmin, mocked.contextAdminRouter,

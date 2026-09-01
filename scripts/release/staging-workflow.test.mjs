@@ -288,7 +288,10 @@ test('target deployment consumes bundles without source install/build and uses o
   );
   assert.match(deploy, /Staging runtime profile preflight failed/u);
   assert.match(deploy, /dispatch\.env must be empty/u);
-  assert.match(deploy, /memory\.index must be absent/u);
+  assert.match(deploy, /enabled memory index requires embedding\.apiKeyRef/u);
+  assert.match(deploy, /enabled Codex requires a Staging credentialRef/u);
+  assert.match(deploy, /group\.responses_transport === 'codex_subscription'/u);
+  assert.doesNotMatch(deploy, /memory\.enabled must be false/u);
   assert.ok(
     deploy.indexOf('Staging runtime profile preflight failed') <
       deploy.indexOf('ln -sfn "$target" "$current"'),

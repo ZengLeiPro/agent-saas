@@ -66,6 +66,8 @@ export function createSharedConfigRefresher(params: {
    * STT 变更回调。凭据需经 SecretVault 异步解析，行为与 webTools 一致。
    */
   onSttUpdated?: (next: AppConfig['stt']) => void;
+  /** 模型持久化配置变化后，由调用方异步解析 SecretRef 并替换执行快照。 */
+  onModelsUpdated?: (next: NonNullable<AppConfig['models']>) => void;
   tenantStore?: TenantStore;
   tenantsFilePath?: string;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
@@ -80,6 +82,7 @@ export function createSharedConfigRefresher(params: {
     onSystemPromptOverridesUpdated,
     onWebToolsUpdated,
     onSttUpdated,
+    onModelsUpdated,
     tenantStore,
     tenantsFilePath,
     logger,
@@ -129,7 +132,8 @@ export function createSharedConfigRefresher(params: {
     }
 
     if ((modelsChanged || titleGeneratorChanged || guardrailChanged) && config.models) {
-      applyModelsHotUpdate({ config, target, models: config.models });
+      if (modelsChanged && onModelsUpdated) onModelsUpdated(config.models);
+      else applyModelsHotUpdate({ config, target, models: config.models });
       logger?.info(
         `[SharedConfig] 已从磁盘热更新模型及辅助模型配置：${config.models.groups.length} 组 / ` +
           `${config.models.groups.reduce((n, g) => n + g.models.length, 0)} 个模型`,

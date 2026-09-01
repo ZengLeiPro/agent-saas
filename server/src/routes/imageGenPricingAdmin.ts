@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Router } from 'express';
 import { applyEdits, modify, parse as parseJsonc } from 'jsonc-parser';
 
@@ -11,6 +11,9 @@ import {
   listEffectiveImageGenPricing,
 } from '../data/usage/imageGenPricing.js';
 import { GLOBAL_OWNER_ID, type SecretVault } from '../security/secretVault.js';
+import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
+import { mutationRequestContext, sendConfigMutationError } from '../config/adminConfigMutationHttp.js';
+import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 
 /**
  * GenerateImage per-engine 生图定价平台管理 API（2026-07-15 批次）。
@@ -30,6 +33,7 @@ export interface CreateImageGenPricingAdminRouterOptions {
   onPricingUpdated?: (pricing: ImageGenPricingConfig | undefined) => void;
   validateImageGenToolsConfig?: (config: AppConfig['imageGenTools']) => Promise<void> | void;
   onImageGenToolsUpdated?: (config: AppConfig['imageGenTools']) => Promise<void> | void;
+  configMutationService?: AdminConfigMutationService;
 }
 
 type ImageGenEngineKey = 'gptImage2' | 'seedream';
@@ -172,6 +176,12 @@ function pricingView(config: AppConfig) {
 
 export function createImageGenPricingAdminRouter(options: CreateImageGenPricingAdminRouterOptions): Router {
   const router = Router();
+  const configMutationService = options.configMutationService ?? new AdminConfigMutationService({
+    configPath: getAppConfigPath(options.processCwd),
+    processCwd: options.processCwd,
+    environment: readRuntimeIdentity().environment,
+    processRole: 'all',
+  });
 
   router.use(requirePlatformAdmin);
 
@@ -179,43 +189,32 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
     res.json(pricingView(options.config));
   });
 
-  router.put('/', (req, res) => {
-    const configPath = getAppConfigPath(options.processCwd);
-    let configText: string;
-    let rawConfig: unknown;
-    let nextImageGenTools: AppConfig['imageGenTools'];
-
+  router.put('/', async (req, res) => {
     try {
-      configText = readFileSync(configPath, 'utf-8');
-      rawConfig = parseJsonc(configText);
-      nextImageGenTools = validatePricingUpdate(rawConfig, req.body?.pricing);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-
-    try {
-      const rawRecord = isRecord(rawConfig) ? rawConfig : {};
-      const hasImageGenToolsObject = isRecord(rawRecord.imageGenTools);
-      const nextPricing = nextImageGenTools?.pricing;
-      // 父节点缺失时不能直接 modify 嵌套路径（jsonc-parser 不会创建中间对象）——
-      // 与 modelsAdmin.ts 的 memory.index 写法一致。
-      const edits = hasImageGenToolsObject
-        ? modify(configText, ['imageGenTools', 'pricing'], nextPricing, {
-            formattingOptions: { insertSpaces: true, tabSize: 2 },
-          })
-        : nextPricing
-          ? modify(configText, ['imageGenTools'], { pricing: nextPricing }, {
-              formattingOptions: { insertSpaces: true, tabSize: 2 },
-            })
-          : [];
-      const updatedText = edits.length > 0 ? applyEdits(configText, edits) : configText;
-      writeFileSync(configPath, updatedText, 'utf-8');
-      options.config.imageGenTools = nextImageGenTools;
-      options.onPricingUpdated?.(nextImageGenTools?.pricing);
+      await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        changedPaths: ['imageGenTools.pricing'],
+        buildCandidate: (configText, rawConfig) => {
+          const nextImageGenTools = validatePricingUpdate(rawConfig, req.body?.pricing);
+          const hasImageGenToolsObject = isRecord(rawConfig.imageGenTools);
+          const nextPricing = nextImageGenTools?.pricing;
+          const edits = hasImageGenToolsObject
+            ? modify(configText, ['imageGenTools', 'pricing'], nextPricing, { formattingOptions: { insertSpaces: true, tabSize: 2 } })
+            : nextPricing ? modify(configText, ['imageGenTools'], { pricing: nextPricing }, { formattingOptions: { insertSpaces: true, tabSize: 2 } }) : [];
+          return edits.length > 0 ? applyEdits(configText, edits) : configText;
+        },
+        applyRuntime: (candidate) => {
+          options.config.imageGenTools = candidate.imageGenTools;
+          options.onPricingUpdated?.(candidate.imageGenTools?.pricing);
+        },
+      });
       res.json(pricingView(options.config));
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof Error && /pricing|价格|imageGenTools/u.test(error.message)) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      sendConfigMutationError(res, error);
     }
   });
 
@@ -236,15 +235,20 @@ export function createImageGenPricingAdminRouter(options: CreateImageGenPricingA
     }
 
     try {
-      const edits = modify(configText, ['imageGenTools'], nextImageGenTools, {
-        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      await configMutationService.mutate({
+        ...mutationRequestContext(req),
+        changedPaths: ['imageGenTools'],
+        buildCandidate: (freshText) => applyEdits(freshText, modify(freshText, ['imageGenTools'], nextImageGenTools, {
+          formattingOptions: { insertSpaces: true, tabSize: 2 },
+        })),
+        applyRuntime: async (candidate) => {
+          options.config.imageGenTools = candidate.imageGenTools;
+          await options.onImageGenToolsUpdated?.(candidate.imageGenTools);
+        },
       });
-      writeFileSync(configPath, applyEdits(configText, edits), 'utf-8');
-      options.config.imageGenTools = nextImageGenTools;
-      await options.onImageGenToolsUpdated?.(nextImageGenTools);
       res.json(pricingView(options.config));
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      sendConfigMutationError(res, error);
     }
   });
 

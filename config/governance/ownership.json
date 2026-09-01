@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "paths": [
+        "config.models.**",
+        "config.webTools.**",
+        "config.imageGenTools.**",
+        "config.stt.**",
+        "config.tts.**",
+        "config.memory.**",
+        "config.toolControls.**",
+        "config.systemPrompts.**"
+      ],
+      "source": "config.json and platform admin APIs",
+      "owner": "platform-product",
+      "secretBoundary": "SecretVault refs only for new credentials"
+    },
+    {
+      "paths": [
+        "config.auth.**",
+        "config.runtimeEventStore.**",
+        "config.secretVault.**",
+        "config.artifact.**"
+      ],
+      "source": "environment-local config and systemd environment",
+      "owner": "platform-security",
+      "secretBoundary": "environment-local infrastructure credentials"
+    },
+    {
+      "paths": ["config.tenantRemoteHands.**", "runtime.**"],
+      "source": "environment-local config, ACS and release identity",
+      "owner": "platform-runtime",
+      "secretBoundary": "isolated ACS namespace and credential refs"
+    },
+    {
+      "paths": ["stores.**"],
+      "source": "environment-local persistent data stores",
+      "owner": "platform-operations",
+      "secretBoundary": "never copied across environments"
+    },
+    {
+      "paths": ["config.dingtalk.**", "config.webPush.**", "config.alerting.**", "config.cron.**"],
+      "source": "environment-local notification and schedule configuration",
+      "owner": "platform-operations",
+      "secretBoundary": "Staging test sinks and targets only"
+    }
+  ]
+}

@@ -27,10 +27,8 @@ export type {
   ModelWireMode,
 } from './modelRequestTypes.js';
 export type { ModelRetryBlockedReason, ModelRetryReason } from './modelRetryTypes.js';
-export interface RuntimeConnection {
-  apiKey?: string;
-  baseUrl?: string;
-}
+export interface RuntimeConnection { apiKey?: string; baseUrl?: string; }
+export type SuccessfulCompletionDecision = { action: 'allow' } | { action: 'continue'; prompt: string } | { action: 'reject'; error: string };
 
 /** 已完成附件解析、可直接注入下一次模型请求的插话消息。 */
 export interface QueuedInterjection {
@@ -88,6 +86,8 @@ export interface RunContext {
   authorizeModelTurn?: () => Promise<void>;
   /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */
   loadQueuedInterjections?: () => Promise<QueuedInterjection[]>;
+  /** 最终文本落库后、成功终态写入前执行；可要求同一 Run 继续模型轮，或拒绝成功收尾。 */
+  checkSuccessfulCompletion?: () => Promise<SuccessfulCompletionDecision>;
   /**
    * 当前 run 的内联自动压缩判定器。最终回答落库后、run_finished 之前调用；
    * forceReason 来自已持久化的 context pressure，不受 governor 裁剪后的 usage 干扰。

@@ -115,6 +115,7 @@ export function groupMessages(
   const result: RenderItem[] = [];
   let currentGroup: MessageItem[] = [];
   let currentSection: BusinessStepSection | null = null;
+  let currentSectionMainTail: RenderItem[] = [];
   const debugMode = options?.debugMode === true;
   const sectioning = options?.sectioning === true;
   const businessProjection = projectBusinessStepEvents(messages, loading);
@@ -145,6 +146,10 @@ export function groupMessages(
     const systemActionIds = collectSystemActionIds(section);
     if (systemActionIds.length > 0) section.systemActionIds = systemActionIds;
     result.push(section);
+    if (currentSectionMainTail.length > 0) {
+      result.push(...currentSectionMainTail);
+      currentSectionMainTail = [];
+    }
   };
 
   const handleBusinessEvent = (event: BusinessStepEventItem) => {
@@ -205,6 +210,15 @@ export function groupMessages(
       for (const event of anchoredEvents) handleBusinessEvent(event);
     }
     if (!debugMode && businessProjection.hiddenMessageIds.has(msg.id)) {
+      continue;
+    }
+
+    if (sectioning && currentSection && msg.type === 'text' && msg.finalOutput) {
+      // finalOutput 由 run 成功结束事件追认，比模型调用 TodoWrite 的先后顺序更可信。
+      // 模型漏掉终态快照，或先输出总结、后补 TodoWrite 时，最终正文都不能被步骤详情吞掉。
+      // 暂存到节尾：若后面还有迟到的终态 TodoWrite，仍可先补全步骤再把正文放回主区。
+      flushGroup(false);
+      currentSectionMainTail.push(msg);
       continue;
     }
 

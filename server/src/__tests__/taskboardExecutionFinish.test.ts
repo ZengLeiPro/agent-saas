@@ -35,11 +35,11 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
     expect(rig.store.claimExecution).not.toHaveBeenCalled();
     expect(rig.store.claimExecutionDispatch).not.toHaveBeenCalled();
   });
-  it('V2 work 未 finish 时即使任务已进入复核，也不自动续跑或派发 review', async () => {
+  it('V2 work 未 finish 的漏网 Runtime success 由 Store 兜底失败且不派发 review', async () => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running' });
     const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({
       task: { ...task, status: 'in_review' as const, version: task.version + 1 },
-      execution: execution({ protocolVersion: 2, status: 'succeeded' }),
+      execution: execution({ protocolVersion: 2, status: 'failed' }),
     }));
     const rig = makeRig({
       completeExecution,
@@ -95,11 +95,11 @@ describe('TaskboardExecutionCoordinator finish protocol', () => {
       expect.objectContaining({ purpose: 'review' }));
   });
 
-  it.each(['review', 'merge'] as const)('%s Run 未 finish 时不自动续跑', async (purpose) => {
+  it.each(['review', 'merge'] as const)('%s Run 未 finish 的漏网 success 不产生业务推进', async (purpose) => {
     const currentExecution = execution({ protocolVersion: 2, status: 'running', purpose });
     const completeExecution = vi.fn(async (_runId: string, _input: unknown) => ({
       task: { ...task, status: 'in_progress' as const },
-      execution: execution({ protocolVersion: 2, status: 'succeeded', purpose }),
+      execution: execution({ protocolVersion: 2, status: 'failed', purpose }),
     }));
     const rig = makeRig({
       completeExecution,

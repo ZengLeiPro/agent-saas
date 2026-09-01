@@ -7,6 +7,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ScenarioReplayView } from './ScenarioReplayView';
+import source from './ScenarioReplayView.tsx?raw';
 import { knowledgeQaScript } from './knowledgeQaScript';
 import { deadlineWatchScript } from './deadlineWatchScript';
 import type { ReplayScript } from './types';
@@ -350,6 +351,8 @@ describe('右侧企业系统面板', () => {
     expect(panel.className).toContain('rounded-xl');
     expect(panel.className).not.toContain('border-l');
     expect(divider.parentElement?.className).toContain('w-2.5');
+    expect(source).toContain('<FloatingPanel\n            data-scenario-replay-panel');
+    expect(source).not.toContain('REPLAY_FLOATING_PANEL_SURFACE');
   });
 
   it('可拖拽调整宽度，双击恢复默认宽度', () => {

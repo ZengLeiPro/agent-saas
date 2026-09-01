@@ -166,9 +166,8 @@ export function DesktopLayout(props: LayoutProps) {
   const showRightPanel = !settingsMode && !analysisMode && activeTab === "chat" && rightPanelOpen;
   const showTaskDetailPanel = !settingsMode && !analysisMode && activeTab === "cron" && taskDetailOpen;
   const showDockedPanel = showRightPanel || showTaskDetailPanel; const dockedPanelKey = showTaskDetailPanel ? "task-detail" : rightPanelKey;
-  // 任务详情略窄于正文；业务步骤保留专用宽度，其余聊天侧栏保持对半分栏。
-  const dockedPanelInitialRatio = showTaskDetailPanel ? 0.46 : rightPanelKind === "business-step" ? 0.42 : 0.5;
-  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey);
+  const { ratio: splitRatio, containerRef: splitContainerRef, onDividerMouseDown, onDividerDoubleClick } = useResizePanel(0.35, 0.25, 0.75, dockedPanelKey);
+  const dockedPanelWidth = `clamp(26rem, ${splitRatio * 100}%, 46rem)`;
 
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("sidebar-collapsed") === "true");
@@ -445,9 +444,7 @@ export function DesktopLayout(props: LayoutProps) {
             !capabilityReplayActive && "rounded-xl",
             contentPanelFloating && FLOATING_PANEL_SURFACE,
           )}
-          style={showDockedPanel
-            ? { flexBasis: `calc(${(1 - splitRatio) * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }
-            : { flex: 1 }}
+          style={{ flex: 1 }}
         >
         {/* Header 内含任务中心的 portal 宿主，只隐藏不卸载，避免切页时与 portal 清理竞争。 */}
         <header
@@ -933,7 +930,7 @@ export function DesktopLayout(props: LayoutProps) {
             </div>
             <FloatingPanel
               className={cn("min-w-0 flex-col", showRightPanel ? "flex" : "hidden")}
-              style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0 }}
+              style={{ width: dockedPanelWidth, flexShrink: 0 }}
             >
               {rightPanelKind === 'business-step' ? (
                 <div ref={setBusinessStepDetailHost} className="h-full min-h-0" data-business-step-detail-host />
@@ -992,7 +989,7 @@ export function DesktopLayout(props: LayoutProps) {
         <div
           ref={setTaskDetailPanelTarget}
           className={cn("min-w-0 flex-col", showTaskDetailPanel ? "flex" : "hidden")}
-          style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexShrink: 0, flexGrow: 0, minWidth: "min(26rem, 75%)" }}
+          style={{ width: dockedPanelWidth, flexShrink: 0 }}
         />
       </div>
     </div>

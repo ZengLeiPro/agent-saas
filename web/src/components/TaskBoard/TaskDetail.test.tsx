@@ -124,8 +124,8 @@ describe("TaskDetail 交互与草稿隔离", () => {
     mocks.addComment.mockResolvedValue(undefined);
   });
 
-  it("任务详情使用窄侧栏与品牌分段标签，并按评论数选择默认页", async () => { const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
-    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); const dialog = screen.getByRole("dialog"); expect(dialog.className).toContain("md:basis-[46%]"); expect(dialog.className).toContain("md:min-w-[24rem]"); expect(dialog.className).toContain("md:max-w-[36rem]");
+  it("任务详情使用统一响应式侧栏与品牌分段标签，并按评论数选择默认页", async () => { const user = userEvent.setup(); const onOpenChange = vi.fn(); render(<TaskDetail {...props({ onOpenChange })} />);
+    await waitFor(() => expect(mocks.fetchTask).toHaveBeenCalledWith(taskOne.id)); const dialog = screen.getByRole("dialog"); expect(dialog.className).toContain("md:basis-[35%]"); expect(dialog.className).toContain("md:min-w-[26rem]"); expect(dialog.className).toContain("md:max-w-[46rem]");
     const tabs = screen.getByRole("tablist", { name: "任务详情分区" }); expect(tabs.className).toContain("bg-brand-50"); expect(tabs.className).toContain("h-10"); const information = screen.getByTestId("task-detail-information"); expect(information.getAttribute("aria-hidden")).toBe("false");
     await user.click(screen.getByRole("tab", { name: "讨论（0）" })); expect(information.getAttribute("aria-hidden")).toBe("true"); await user.click(screen.getByRole("tab", { name: "详细信息" }));
     await user.click(screen.getByRole("combobox", { name: "任务状态" })); expect(screen.getByRole("listbox")).toBeTruthy(); await user.keyboard("{Escape}"); expect(screen.queryByRole("listbox")).toBeNull(); expect(onOpenChange).not.toHaveBeenCalled();

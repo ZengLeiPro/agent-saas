@@ -673,6 +673,43 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
   });
 
   it.each([
+    ["漏掉终态 TodoWrite", false],
+    ["先输出总结、后补终态 TodoWrite", true],
+  ])("%s 时最终正文仍显示在主区且不进入步骤详情", async (_label, appendTerminal) => {
+    const active = [{ id: "verify", kind: "business", content: "最终正文归位", status: "in_progress" }];
+    const messages: MessageItem[] = [
+      { id: "final-user", type: "user", content: "开始" },
+      todoSnapshot("final-start", active, "run-final"),
+      {
+        id: "final-read", type: "tool_use", toolName: "Read", toolId: "final-read",
+        toolInput: "{}", resultReady: true, executionStatus: "completed",
+        presentation: { title: "归位前读取" },
+      },
+      { id: "misplaced-final", type: "text", content: "这段最终正文必须留在主区", finalOutput: true },
+      ...(appendTerminal
+        ? [todoSnapshot("final-done", [{ ...active[0], status: "completed" }], "run-final")]
+        : []),
+    ];
+
+    render(<Harness messages={messages} debugMode />);
+    await waitForBusinessPlan();
+    expect(screen.getByText("这段最终正文必须留在主区")).toBeTruthy();
+    expect(screen.queryByText(/归位前读取/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /最终正文归位/ }));
+    await waitFor(() => expect(screen.getByLabelText("步骤详情：最终正文归位")).toBeTruthy());
+    const processTab = screen.queryByRole("tab", { name: "过程" });
+    if (processTab) fireEvent.click(processTab);
+    const process = await waitFor(() => {
+      const value = document.querySelector<HTMLElement>("[data-business-step-process]");
+      expect(value).toBeTruthy();
+      return value!;
+    });
+    expect(within(process).getByText(/归位前读取/)).toBeTruthy();
+    expect(within(process).queryByText("这段最终正文必须留在主区")).toBeNull();
+  });
+
+  it.each([
     ["同 Run task-only", "run-reset", [{ id: "task", kind: "task", content: "普通任务", status: "in_progress" }]],
     ["跨 Run empty", "run-next", []],
   ])("%s reset 后工具与最终正文留在主区且不进入旧步骤详情", async (_label, resetRunId, resetTodos) => {

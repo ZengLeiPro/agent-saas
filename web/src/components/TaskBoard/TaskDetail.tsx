@@ -640,6 +640,7 @@ export function TaskDetail({
 
   if (!active || !open || !task) return null;
 
+  // 独立渲染时沿用桌面 dock 的 35% 与 26rem–46rem 边界；portal 模式由宿主控制宽度。
   const panel = (
     <FloatingPanel
       role="dialog"
@@ -648,7 +649,7 @@ export function TaskDetail({
       data-testid="task-detail-panel"
       className={portalTarget
         ? "flex h-full min-h-0 w-full flex-col"
-        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-[46%] md:min-w-[24rem] md:max-w-[36rem] md:shrink-0"}
+        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-[35%] md:min-w-[26rem] md:max-w-[46rem] md:shrink-0"}
     >
         {currentTask ? (
           <>

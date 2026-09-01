@@ -114,6 +114,7 @@ import {
 } from './rawAgentLoopHelpers.js';
 import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
+import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
 import {
   COMPACT_COMMAND_MODEL_CONTENT,
@@ -996,15 +997,14 @@ export class RawAgentLoop implements AgentLoop {
     let finalText = '';
     let turn = 0;
     let turnLimit = input.maxTurns;
+    const successfulCompletion = createSuccessfulCompletionController((message) => logger.warn(message));
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
     // safe boundary 在上一轮收尾/工具后完成 reserve+apply 时，把通知归属带到下一模型轮次。
     let carriedBoundaryInterjections: Awaited<ReturnType<typeof drainQueuedInterjections>> = [];
 
-    // RFC v1 P0.4：跨 run 接力 Responses API session state。
-    // 启动时查上一已完成 run 的 last_response_id（72h 内未过期），赋给本 run。
-    // ChatCompletionsAdapter 收到 previousResponseId 会抛错 — 所以 runStore 只在
-    // 模型走 protocol="responses" 时才有意义；dispatcher 已按 protocol 路由 adapter。
+    // RFC v1 P0.4：跨 run 接力 Responses API session state；启动时读取 72h 内的 last_response_id。
+    // ChatCompletionsAdapter 不消费 previousResponseId；dispatcher 已按 protocol 路由 adapter。
     const usesStoredResponseState = !context.disableResponseRelay
       && this.modelAdapter.capabilities?.responseState !== 'stateless';
     if (contextRewindRecoveryUsed) await this.clearResponseRelayState(context.sessionId, 'run wake');
@@ -1425,7 +1425,7 @@ export class RawAgentLoop implements AgentLoop {
         }
 
         // RFC v1 P0.4：每轮持久化 Responses API session state。
-        // currentResponseId 用于下一轮 turn 接力（同 run 内）；落库后跨 run 也能查回。
+        // currentResponseId 供同 run 下一轮及跨 run 接力。
         if (usesStoredResponseState && completed.responseStateReset) {
           currentResponseId = undefined;
           await this.clearResponseSessionStateForRepair(context.runId, context.sessionId);
@@ -1653,26 +1653,22 @@ export class RawAgentLoop implements AgentLoop {
               );
             }
           }
-          const modelUsage = buildModelUsage(context.model, totalUsage);
-          await this.eventSink.append({
-            type: 'run_finished',
-            runId: context.runId,
-            sessionId: context.sessionId,
-            subtype: 'success',
-            numTurns: turn,
-            ...(modelUsage ? { modelUsage } : {}),
-          });
-          logger.info(`[run] finished session=${context.sessionId} turns=${turn}`);
-          await context.hooks?.onResult?.({
-            subtype: 'success',
-            numTurns: turn,
-            resultText: finalText,
-            ...(modelUsage ? { modelUsage } : {}),
+          if (await successfulCompletion.check(context, messages, assistantContent)) {
+            currentResponseId = undefined;
+            textStarted = false;
+            if (turn >= turnLimit) turnLimit += 1;
+            continue;
+          }
+          await finishSuccessfulRun({
+            context, numTurns: turn, totalUsage, finalText,
+            append: (event) => this.eventSink.append(event),
+            log: () => logger.info(`[run] finished session=${context.sessionId} turns=${turn}`),
           });
           yield { type: 'done' };
           return;
         }
 
+        successfulCompletion.reset();
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
@@ -3223,6 +3219,8 @@ export class RawAgentLoop implements AgentLoop {
     let totalUsage: ModelUsage | undefined;
     let finalText = '';
     let turn = 0;
+    let turnLimit = args.maxTurns;
+    const successfulCompletion = createSuccessfulCompletionController((message) => logger.warn(message));
     let thinkingOnlyContinuationUsed = false;
     let pendingTurnText = '';
     let currentUserMessageIndex = 0;
@@ -3278,7 +3276,7 @@ export class RawAgentLoop implements AgentLoop {
       : undefined;
 
     try {
-      for (turn = 1; turn <= args.maxTurns; turn++) {
+      for (turn = 1; turn <= turnLimit; turn++) {
         if (args.context.drainHandoff?.requested) {
           logger.info(
             `[resume] safe drain handoff session=${args.context.sessionId} run=${args.context.runId} afterTurns=${turn - 1}`,
@@ -3672,26 +3670,22 @@ export class RawAgentLoop implements AgentLoop {
             yield { type: 'draft_commit', draftId };
           }
           if (turnContextUsage) yield { type: 'context_usage', contextUsage: turnContextUsage };
-          const modelUsage = buildModelUsage(args.context.model, totalUsage);
-          await this.eventSink.append({
-            type: 'run_finished',
-            runId: args.context.runId,
-            sessionId: args.context.sessionId,
-            subtype: 'success',
-            numTurns: turn,
-            ...(modelUsage ? { modelUsage } : {}),
-          });
-          logger.info(`[resume] finished session=${args.context.sessionId} turns=${turn}`);
-          await args.context.hooks?.onResult?.({
-            subtype: 'success',
-            numTurns: turn,
-            resultText: finalText,
-            ...(modelUsage ? { modelUsage } : {}),
+          if (await successfulCompletion.check(args.context, args.messages, assistantContent)) {
+            currentResponseId = undefined;
+            textStarted = false;
+            if (turn >= turnLimit) turnLimit += 1;
+            continue;
+          }
+          await finishSuccessfulRun({
+            context: args.context, numTurns: turn, totalUsage, finalText,
+            append: (event) => this.eventSink.append(event),
+            log: () => logger.info(`[resume] finished session=${args.context.sessionId} turns=${turn}`),
           });
           yield { type: 'done' };
           return;
         }
 
+        successfulCompletion.reset();
         if (completed.content && completed.content !== turnText) {
           if (!textStarted) {
             textStarted = true;
@@ -3779,7 +3773,7 @@ export class RawAgentLoop implements AgentLoop {
         textStarted = false;
         yield { type: 'text_end' };
       }
-      throw new Error(`raw agent loop exceeded maxTurns=${args.maxTurns}`);
+      throw new Error(`raw agent loop exceeded maxTurns=${turnLimit}`);
     } catch (err) {
       if (err instanceof RunLeaseLostError) {
         if (thinkingStarted) yield { type: 'thinking_end' };

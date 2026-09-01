@@ -176,7 +176,11 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     await expect(store.attachExecutionPullRequestV2(identity, runId, '31'))
       .resolves.toMatchObject({ providerPullRequestId: '31' });
     await expect(store.attachExecutionPullRequestV2(identity, runId, '31'))
-      .resolves.toMatchObject({ providerPullRequestId: '31', headOid: 'head-31' });
+      .resolves.toMatchObject({ providerPullRequestId: '31' });
+    expect((await pool.query(
+      `SELECT head_oid,base_oid FROM ${store.tasksTable} WHERE id=$1`,
+      [delivery.id],
+    )).rows[0]).toEqual({ head_oid: 'head-31', base_oid: 'base-main' });
     await expect(store.attachExecutionPullRequestV2(identity, runId, '32'))
       .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
 

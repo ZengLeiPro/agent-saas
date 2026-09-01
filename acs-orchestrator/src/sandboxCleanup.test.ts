@@ -12,7 +12,7 @@ function candidate(name: string): ManagedSandbox {
   };
 }
 
-describe('sandbox cleanup final-read isolation', () => {
+describe('sandbox cleanup final persisted read isolation', () => {
   it('continues reclaiming later candidates when the first candidate throws', async () => {
     const first = candidate('as-first');
     const second = candidate('as-second');
@@ -84,6 +84,52 @@ describe('sandbox cleanup final-read isolation', () => {
 
     expect(deleteWhenIdle).toHaveBeenCalledOnce();
     expect(report.brokenRecycled).toEqual([]);
+    expect(report.skippedBusy).toEqual([stale.name]);
+  });
+
+  it('does not resurrect cleared terminal retention fields after the Sandbox is reused', async () => {
+    const stale: ManagedSandbox = {
+      ...candidate('as-reused'),
+      workloadClass: 'cron',
+      workloadDescriptor: { class: 'cron' },
+      terminalState: 'completed',
+      terminalAt: '2026-08-30T00:00:00.000Z',
+      retentionDeadline: '2026-08-30T00:05:00.000Z',
+    };
+    const deleteWhenIdle = vi.fn(async (
+      _name: string,
+      _busy: Set<string>,
+      canDelete?: (latest: ManagedSandbox) => boolean,
+    ): Promise<string[] | null> => canDelete?.({
+      name: stale.name,
+      phase: 'Running',
+      createdAt: stale.createdAt,
+      lastActiveAt: '2026-08-30T00:09:59.000Z',
+      workloadClass: 'interactive',
+      workloadDescriptor: { class: 'interactive' },
+    }) ? [] : null);
+    const host: SandboxCleanupHost = {
+      lifecyclePolicyMode: 'enforce',
+      sandboxBrokenRecycleGraceMs: 0,
+      sandboxOrphanGraceMs: 0,
+      sandboxTtlMs: 0,
+      sandboxIdlePauseMs: 0,
+      listManagedSandboxes: async () => [stale],
+      isBusy: () => false,
+      deleteWhenIdle,
+      pauseWhenIdle: async () => false,
+      cleanupOrphanSnat: async () => ({
+        enabled: false, checked: 0, deleted: [], orphanCidrs: [], unexpected: [],
+      }),
+      warn: vi.fn(),
+    };
+
+    const report = await cleanupManagedSandboxes(host, {
+      now: new Date('2026-08-30T00:10:00.000Z'),
+    });
+
+    expect(deleteWhenIdle).toHaveBeenCalledOnce();
+    expect(report.deleted).toEqual([]);
     expect(report.skippedBusy).toEqual([stale.name]);
   });
 });

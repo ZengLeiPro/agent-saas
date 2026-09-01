@@ -13,7 +13,7 @@ const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 if (!testPgUrl) console.warn('[sandboxScopeActivity.pg] SKIPPED: TEST_DATABASE_URL is not configured');
 
-describePg('Sandbox lifecycle PostgreSQL ordering contract', () => {
+describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let runStore: PgRunStore;
@@ -197,6 +197,67 @@ describePg('Sandbox lifecycle PostgreSQL ordering contract', () => {
       const row = await runStore.get(runId);
       expect(row).toMatchObject({ status, statusReason: 'late-rewrite', metadata: { lateRewrite: true } });
     },
+  );
+
+  it.each(['markStatus', 'markStatusIfCurrent', 'releaseLease'] as const)(
+    '%s 的首次终态 marker 不早于 PostgreSQL 行锁释放时刻',
+    async (entry) => {
+      const runId = `lock-time-${entry}`;
+      const workerId = `worker-${entry}`;
+      await runStore.upsertPending({
+        runId,
+        sessionId: `session-${runId}`,
+        tenantId: 'tenant-1',
+        workspaceId: 'workspace-lock-time',
+        sandboxScopeId: `scope-${runId}`,
+        metadata: {
+          sandboxWorkloadTopLevel: true,
+          sandboxWorkloadDescriptor: { kind: 'memory' },
+        },
+      });
+      if (entry === 'releaseLease') {
+        await expect(runStore.acquireLease(runId, workerId, 60_000)).resolves.toBeDefined();
+      }
+
+      const blocker = await pool.connect();
+      let committed = false;
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query(`SELECT run_id FROM ${prefix}_runs WHERE run_id=$1 FOR UPDATE`, [runId]);
+        const mutation = entry === 'markStatus'
+          ? runStore.markStatus(runId, 'completed', 'after-lock')
+          : entry === 'markStatusIfCurrent'
+            ? runStore.markStatusIfCurrent(runId, ['pending'], 'completed', 'after-lock')
+            : runStore.releaseLease(runId, workerId, 'completed', 'after-lock');
+
+        let waiting = false;
+        for (let attempt = 0; attempt < 100 && !waiting; attempt += 1) {
+          const observed = await blocker.query<{ waiting: boolean }>(`
+            SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity
+              WHERE pid <> pg_backend_pid()
+                AND wait_event_type = 'Lock'
+                AND query LIKE $1
+            ) AS waiting
+          `, [`%${prefix}_runs%`]);
+          waiting = observed.rows[0]?.waiting === true;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(waiting).toBe(true);
+        const unlockClock = await blocker.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+        await blocker.query('COMMIT');
+        committed = true;
+
+        const updated = await mutation;
+        const marker = updated?.metadata.sandboxLifecycleTerminalAt;
+        expect(typeof marker).toBe('string');
+        expect(Date.parse(marker as string)).toBeGreaterThanOrEqual(unlockClock.rows[0]!.now.getTime());
+      } finally {
+        if (!committed) await blocker.query('ROLLBACK').catch(() => undefined);
+        blocker.release();
+      }
+    },
+    30_000,
   );
 
   it('A 的迟到同终态重写不会越过同 scope 较新的 B 终态', async () => {

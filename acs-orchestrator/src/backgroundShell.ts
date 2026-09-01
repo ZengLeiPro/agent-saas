@@ -111,6 +111,7 @@ export interface BackgroundShellOutput {
   signal?: string | null;
   error?: string;
   protectedUntil?: string;
+  activeTaskIds: string[];
 }
 
 export async function startBackgroundShell(input: BackgroundShellStartInput): Promise<BackgroundShellOutput> {
@@ -251,7 +252,7 @@ export async function getBackgroundShellOutput(input: BackgroundShellOutputInput
   const limitBytes = Math.min(Math.max(Math.floor(input.limitBytes ?? 20_000), 1), MAX_BACKGROUND_SHELL_READ_BYTES);
   const stdout = await readLogSlice(join(taskDir, 'stdout.log'), initialStdoutOffset, limitBytes);
   const stderr = await readLogSlice(join(taskDir, 'stderr.log'), initialStderrOffset, limitBytes);
-  const protectedUntil = await activeBackgroundShellProtectedUntil(input.workspaceRoot);
+  const protection = await reconcileBackgroundShells(input.workspaceRoot);
   return {
     taskId: state.taskId,
     status: state.status,
@@ -274,10 +275,12 @@ export async function getBackgroundShellOutput(input: BackgroundShellOutputInput
     ...(state.exitCode !== undefined ? { exitCode: state.exitCode } : {}),
     ...(state.signal !== undefined ? { signal: state.signal } : {}),
     ...(state.error ? { error: state.error } : {}),
-    ...(protectedUntil ? { protectedUntil } : {}),
+    ...(protection.protectedUntil ? { protectedUntil: protection.protectedUntil } : {}),
+    activeTaskIds: protection.activeTaskIds,
   };
 }
 
+/** 终止单个后台任务，并在返回前确认任务状态已经进入终态。 */
 export async function killBackgroundShell(workspaceRoot: string, taskId: string): Promise<BackgroundShellOutput> {
   const taskDir = backgroundShellTaskDir(workspaceRoot, taskId);
   let state = await reconcileBackgroundShellState(taskDir);
@@ -318,6 +321,22 @@ export async function killBackgroundShell(workspaceRoot: string, taskId: string)
     error: 'background shell cancelled',
   });
   return await getBackgroundShellOutput({ workspaceRoot, taskId });
+}
+
+export async function terminateBackgroundShellsFailClosed(
+  workspaceRoot: string,
+  taskIds: string[],
+): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
+  const requested = [...new Set(taskIds)];
+  let remaining = await reconcileBackgroundShells(workspaceRoot);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const activeTaskIds = [...new Set([...requested, ...remaining.activeTaskIds])];
+    if (activeTaskIds.length === 0) return remaining;
+    for (const taskId of activeTaskIds) await killBackgroundShell(workspaceRoot, taskId);
+    remaining = await reconcileBackgroundShells(workspaceRoot);
+    if (remaining.activeTaskIds.length === 0) return remaining;
+  }
+  throw new Error(`background shell fail-closed verification failed: ${remaining.activeTaskIds.join(',')}`);
 }
 
 export async function reconcileBackgroundShells(workspaceRoot: string): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {

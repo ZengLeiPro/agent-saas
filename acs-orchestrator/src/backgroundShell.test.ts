@@ -13,6 +13,7 @@ import {
   killBackgroundShell,
   reconcileBackgroundShells,
   startBackgroundShell,
+  terminateBackgroundShellsFailClosed,
   type BackgroundShellOutput,
 } from './backgroundShell.js';
 
@@ -100,6 +101,31 @@ describe('background shell runtime', () => {
     expect(cancelled.status).toBe('cancelled');
     expect((await reconcileBackgroundShells(root)).activeTaskIds).toEqual([]);
   });
+
+  it('terminates the aggregate active task set when lifecycle protection fails closed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-fail-closed-'));
+    const taskIds = [
+      `shell-bg-test-${randomUUID()}`,
+      `shell-bg-test-${randomUUID()}`,
+    ];
+    for (const taskId of taskIds) {
+      await startBackgroundShell({
+        workspaceRoot: root,
+        taskId,
+        command: 'sleep 20',
+        timeoutMs: 30_000,
+        env: process.env,
+      });
+      await waitForStatus(root, taskId, 'running');
+    }
+
+    await expect(terminateBackgroundShellsFailClosed(root, [taskIds[0]!])).resolves.toEqual({
+      activeTaskIds: [],
+    });
+    for (const taskId of taskIds) {
+      expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId })).status).toBe('cancelled');
+    }
+  }, 15_000);
 
   it('records timeout as timed_out instead of cancellation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-timeout-'));

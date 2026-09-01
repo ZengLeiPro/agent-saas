@@ -88,7 +88,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(setBackgroundShellProtection).toHaveBeenCalledWith(sandboxRef.name, protectedUntil);
   });
 
-  it('falls back to the invocation lease and does not clear it when background protection fails', async () => {
+  it('falls back to a long invocation lease when the background annotation write fails', async () => {
     const sandboxRef = ref('as-background-fallback');
     const child = fakeChild();
     const protectedUntil = '2099-07-20T00:10:00.000Z';
@@ -132,14 +132,20 @@ describe('AcsExecutor background shell protection handoff', () => {
   });
 
   it.each([
-    ['terminal BashOutput', { taskId: 'shell-bg-terminal', status: 'completed', protectedUntil: '2099-07-20T00:10:00.000Z' }],
-    ['aggregate reconcile', { activeTaskIds: ['shell-bg-other'], protectedUntil: '2099-07-20T00:10:00.000Z' }],
-  ])('preserves the invocation lease for %s when both protection writes fail', async (_case, backgroundShell) => {
+    ['terminal BashOutput', {
+      taskId: 'shell-bg-terminal', status: 'completed',
+      protectedUntil: '2099-07-20T00:10:00.000Z', activeTaskIds: ['shell-bg-other'],
+    }],
+    ['aggregate reconcile', {
+      activeTaskIds: ['shell-bg-other'], protectedUntil: '2099-07-20T00:10:00.000Z',
+    }],
+  ])('terminates active tasks for %s when both protection writes fail', async (_case, backgroundShell) => {
     const sandboxRef = ref(`as-background-${String(_case).replaceAll(' ', '-')}`);
     const child = fakeChild();
     const setActiveInvocationLease = vi.fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('lease CAS exhausted'));
+    const terminateBackgroundTasks = vi.fn(async () => undefined);
     const touch = vi.fn(async () => undefined);
     const sandboxManager = {
       ref: () => sandboxRef,
@@ -154,7 +160,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       sandboxManager,
       noopLogger,
       undefined,
-      { persistentRunner: false },
+      { persistentRunner: false, terminateBackgroundTasks },
     );
 
     const resultPromise = executor.execute({
@@ -173,18 +179,24 @@ describe('AcsExecutor background shell protection handoff', () => {
     })}\n`);
     child.emit('close', 0, null);
 
-    await expect(resultPromise).rejects.toThrow(/保留现有 invocation lease/u);
-    expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
-    expect(touch).not.toHaveBeenCalled();
+    await expect(resultPromise).rejects.toThrow(/已终止活跃任务/u);
+    expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-other']);
+    expect(setActiveInvocationLease).toHaveBeenCalledTimes(3);
+    expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
+      sandboxRef.name,
+      expect.any(String),
+    );
+    expect(touch).toHaveBeenCalledOnce();
   });
 
-  it('preserves the existing invocation lease when both background protection writes fail', async () => {
+  it('keeps the short lease as the last fence when protection writes and task termination all fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();
     const protectedUntil = '2099-07-20T00:10:00.000Z';
     const setActiveInvocationLease = vi.fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('lease CAS exhausted'));
+    const terminateBackgroundTasks = vi.fn(async () => { throw new Error('kill runner unavailable'); });
     const touch = vi.fn(async () => undefined);
     const sandboxManager = {
       ref: () => sandboxRef,
@@ -199,7 +211,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       sandboxManager,
       noopLogger,
       undefined,
-      { persistentRunner: false },
+      { persistentRunner: false, terminateBackgroundTasks },
     );
 
     const resultPromise = executor.execute({
@@ -212,9 +224,20 @@ describe('AcsExecutor background shell protection handoff', () => {
       } },
     });
     await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
-    finishBackground(child, 'shell-bg-fail-closed', protectedUntil);
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final',
+      response: {
+        status: 'success', content: '{}',
+        metadata: { backgroundShell: {
+          taskId: 'shell-bg-fail-closed', status: 'running', protectedUntil,
+          activeTaskIds: ['shell-bg-fail-closed'],
+        } },
+      },
+    })}\n`);
+    child.emit('close', 0, null);
 
-    await expect(resultPromise).rejects.toThrow(/保留现有 invocation lease/u);
+    await expect(resultPromise).rejects.toThrow(/终止任务失败，保留现有 invocation lease/u);
+    expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-fail-closed']);
     expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
     expect(touch).not.toHaveBeenCalled();
   });

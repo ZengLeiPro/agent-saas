@@ -120,17 +120,11 @@ export async function cleanupManagedSandboxes(
 type CleanupDeletionReason = 'broken' | 'expired';
 
 
-function mergeLatestSandbox(fallback: ManagedSandbox, latest: ManagedSandbox): ManagedSandbox {
-  const defined = Object.fromEntries(Object.entries(latest).filter(([, value]) => value !== undefined));
-  return {
-    ...fallback,
-    ...defined,
-    // phase/broken condition are transient health observations. Absence in the final
-    // persisted read means recovery and must clear stale inventory values.
-    phase: latest.phase,
-    brokenReason: latest.brokenReason,
-    pausedConditionChangedAt: latest.pausedConditionChangedAt,
-  };
+function mergeLatestSandbox(_fallback: ManagedSandbox, latest: ManagedSandbox): ManagedSandbox {
+  // The final persisted read is authoritative for every lifecycle field. Reusing
+  // stale inventory values when an annotation disappeared can resurrect a terminal
+  // deadline or lease after the Sandbox was reused and reclassified.
+  return latest;
 }
 
 function cleanupDeletionReason(

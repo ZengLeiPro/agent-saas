@@ -26,7 +26,7 @@ import {
   type RuntimeIsolationRequirement,
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
-// Workload classification is fixed at the Server creation boundary; memory consolidation is always isolated.
+// Workload classification is fixed at the Server creation boundary; memory consolidation is isolated on first creation.
 
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
@@ -60,7 +60,7 @@ export function deriveSandboxScopeId(input: {
   return `${base}__s_${input.topLevelSessionId.replace(/[^A-Za-z0-9_-]+/g, '_')}`;
 }
 
-/** Explicit memory dispatches must not inherit an interactive replay source. */
+/** Workload classification is immutable once persisted; explicit creation input beats replay. */
 export function resolveSandboxWorkloadDescriptor(
   existing: SandboxWorkloadDescriptor | undefined,
   replay: SandboxWorkloadDescriptor | undefined,
@@ -68,8 +68,8 @@ export function resolveSandboxWorkloadDescriptor(
   toolProfile: unknown,
   channel: string,
 ): SandboxWorkloadDescriptor {
-  if (requested?.kind === 'memory' || toolProfile === 'memory_consolidate') return { kind: 'memory' };
-  return existing ?? replay ?? requested ?? (toolProfile ? { kind: 'memory' } : channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
+  const requestedDescriptor = requested ?? (toolProfile ? { kind: 'memory' as const } : undefined);
+  return existing ?? requestedDescriptor ?? replay ?? (channel === 'cron' ? { kind: 'cron' } : { kind: 'interactive' });
 }
 
 export function toAcsSandboxWorkloadDescriptor(

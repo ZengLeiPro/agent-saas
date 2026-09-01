@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createIntegrationBatch, type TaskboardV2StoreOptions } from './v2Store.js';
+import { createIntegrationBatch, enqueueOnReadyTrigger, type TaskboardV2StoreOptions } from './v2Store.js';
 
 const identity = {
   tenantId: 'tenant-1',
@@ -16,6 +16,34 @@ const repository = {
   baseBranch: 'main',
   allowForkPullRequest: false,
 };
+
+describe('enqueueOnReadyTrigger', () => {
+  it('checks existing eligible sources when policy activation has no triggering task', async () => {
+    const query = vi.fn(async (_sql: string, _values?: unknown[]) => ({ rows: [] }));
+    await enqueueOnReadyTrigger({
+      pool: { connect: vi.fn(), query },
+      boardsTable: 'boards', tasksTable: 'tasks', commentsTable: 'comments', executionsTable: 'executions',
+      membersTable: 'members', changesTable: 'changes', integrationLanesTable: 'integration_lanes',
+      integrationSourcesTable: 'integration_sources', mergeAuthorizationsTable: 'merge_authorizations',
+      mergeOperationsTable: 'merge_operations', blockEpisodesTable: 'block_episodes',
+      integrationTriggerOutboxTable: 'integration_triggers', remediationAttemptsTable: 'remediation_attempts',
+      cancellationOutboxTable: 'cancellation_outbox',
+    }, { query } as never, {
+      id: 'board-1',
+      integration_policy: {
+        enabled: true,
+        revision: 'policy-1',
+        trigger: { mode: 'on_ready', debounceMs: 0 },
+      },
+    });
+
+    const [sql, values] = query.mock.calls[0]!;
+    expect(sql).toContain("task.status='ready_to_merge'");
+    expect(sql).toContain('task.reviewed_subject_digest IS NOT NULL');
+    expect(sql).toContain("source.state NOT IN ('merged','canceled')");
+    expect(values).toEqual(expect.arrayContaining(['board-1', null, 'policy-1', 0]));
+  });
+});
 
 describe('createIntegrationBatch', () => {
   it('creates a single-Agent integration from ready-to-merge delivery sources without lane or Provider gates', async () => {

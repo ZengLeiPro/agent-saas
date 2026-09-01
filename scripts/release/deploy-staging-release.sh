@@ -333,7 +333,8 @@ const failures = [];
 if (!config.models?.groups?.length) failures.push('models must be explicitly configured');
 for (const group of config.models?.groups ?? []) {
   if (group.apiKey) failures.push(`models.${group.id}.apiKey must use a Staging SecretRef`);
-  const usesCodex = (group.models ?? []).some((model) => model.responses_transport === 'codex_subscription');
+  const usesCodex = group.responses_transport === 'codex_subscription'
+    || (group.models ?? []).some((model) => model.responses_transport === 'codex_subscription');
   if (!usesCodex && !group.apiKeyRef) failures.push(`models.${group.id}.apiKeyRef is required`);
 }
 if (config.codexSubscription?.enabled && !(config.codexSubscription.credentialRefs?.length || config.codexSubscription.credentialRef)) {

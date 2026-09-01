@@ -9,18 +9,45 @@ const { saveSelection, refresh, importPersonalSkillPackage } = vi.hoisted(() => 
 
 vi.mock("./hooks", () => {
   const data = {
-      poolSkills: [{ id: "platform-analysis", name: "平台分析", description: "平台统一提供的数据分析能力", selected: false, selectionVersion: 0, source: "pool" }],
-      tenantSkills: [{ id: "org-crm", name: "组织 CRM", description: "组织内部 CRM 能力", selected: false, selectionVersion: 0, source: "tenant" }],
-      customSkills: [{ id: "my-report", name: "我的周报", description: "个人创建的周报能力", selected: true, selectionVersion: 1, source: "custom" }],
+    poolSkills: [
+      {
+        id: "platform-analysis",
+        name: "平台分析",
+        description: "平台统一提供的数据分析能力",
+        selected: false,
+        selectionVersion: 0,
+        source: "pool",
+      },
+    ],
+    tenantSkills: [
+      {
+        id: "org-crm",
+        name: "组织 CRM",
+        description: "组织内部 CRM 能力",
+        selected: false,
+        selectionVersion: 0,
+        source: "tenant",
+      },
+    ],
+    customSkills: [
+      {
+        id: "my-report",
+        name: "我的周报",
+        description: "个人创建的周报能力",
+        selected: true,
+        selectionVersion: 1,
+        source: "custom",
+      },
+    ],
   };
   return {
     useMySkills: () => ({
       data,
-    loading: false,
-    error: null,
-    saving: false,
-    saveSelection,
-    refresh,
+      loading: false,
+      error: null,
+      saving: false,
+      saveSelection,
+      refresh,
     }),
   };
 });
@@ -58,6 +85,12 @@ describe("SkillSelector 能力目录", () => {
     expect(screen.getAllByText("平台提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("组织提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("我创建的").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
+      "已启用",
+      "平台提供",
+      "组织提供",
+    ]);
+    expect(screen.queryByText("点击查看详情")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "启用 平台分析" }));
     await waitFor(() => {
@@ -67,7 +100,11 @@ describe("SkillSelector 能力目录", () => {
 
   it("请求处理中快速连续点击只发送一次更新", async () => {
     let release!: () => void;
-    saveSelection.mockReturnValue(new Promise<void>(resolve => { release = resolve; }));
+    saveSelection.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
     render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "启用 平台分析" }));
@@ -87,13 +124,37 @@ describe("SkillSelector 能力目录", () => {
   });
 
   it("个人 Skill 导入展示上传限制、使用治理入口并展示发布版本", async () => {
-    importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: true, auditCompletion: "pending", skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
+    importPersonalSkillPackage.mockResolvedValue({
+      ok: true,
+      status: "succeeded",
+      selected: true,
+      auditCompletion: "pending",
+      skill: { id: "personal-tool", name: "个人工具", description: "个人治理技能" },
+      resource: {
+        skillId: "personal-hash",
+        tenantId: "tenant-a",
+        scope: "personal",
+        ownerUserId: "user-1",
+        status: "published",
+        currentVersionId: "skillv-1",
+        revision: 2,
+        createdBy: "user-1",
+      },
+      version: {
+        versionId: "skillv-1",
+        skillId: "personal-hash",
+        versionNumber: 1,
+        digest: "digest-1",
+      },
+    });
     const { container } = render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
     fireEvent.click(screen.getByRole("button", { name: "导入技能" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText(/最多 300 个文件（zip 目录不计）/)).toBeTruthy();
     const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
-    const file = new File(["---\nname: personal-tool\ndescription: personal\n---"], "SKILL.md", { type: "text/markdown" });
+    const file = new File(["---\nname: personal-tool\ndescription: personal\n---"], "SKILL.md", {
+      type: "text/markdown",
+    });
     fireEvent.change(input, { target: { files: [file] } });
     await waitFor(() => expect(importPersonalSkillPackage).toHaveBeenCalledWith([file]));
     expect(await screen.findByText("已导入并发布技能：个人工具（v1，审计记录同步中）")).toBeTruthy();
@@ -116,10 +177,33 @@ describe("SkillSelector 能力目录", () => {
   });
 
   it("个人 Skill 发布成功但自动启用失败时提示手动启用", async () => {
-    importPersonalSkillPackage.mockResolvedValue({ ok: true, status: "succeeded", selected: false, skill: { id: "manual-enable", name: "手动启用技能", description: "个人治理技能" }, resource: { skillId: "personal-hash", tenantId: "tenant-a", scope: "personal", ownerUserId: "user-1", status: "published", currentVersionId: "skillv-1", revision: 2, createdBy: "user-1" }, version: { versionId: "skillv-1", skillId: "personal-hash", versionNumber: 1, digest: "digest-1" } });
+    importPersonalSkillPackage.mockResolvedValue({
+      ok: true,
+      status: "succeeded",
+      selected: false,
+      skill: { id: "manual-enable", name: "手动启用技能", description: "个人治理技能" },
+      resource: {
+        skillId: "personal-hash",
+        tenantId: "tenant-a",
+        scope: "personal",
+        ownerUserId: "user-1",
+        status: "published",
+        currentVersionId: "skillv-1",
+        revision: 2,
+        createdBy: "user-1",
+      },
+      version: {
+        versionId: "skillv-1",
+        skillId: "personal-hash",
+        versionNumber: 1,
+        digest: "digest-1",
+      },
+    });
     const { container } = render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
     const input = container.querySelector('input[accept=".md,text/markdown"]') as HTMLInputElement;
-    const file = new File(["---\nname: manual-enable\ndescription: personal\n---"], "SKILL.md", { type: "text/markdown" });
+    const file = new File(["---\nname: manual-enable\ndescription: personal\n---"], "SKILL.md", {
+      type: "text/markdown",
+    });
     fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText(/但未能自动启用，请在列表中手动启用/)).toBeTruthy();
     expect(refresh).toHaveBeenCalled();
@@ -133,15 +217,19 @@ describe("SkillSelector 能力目录", () => {
     const organizationFilter = within(filters).getByRole("tab", { name: /组织提供/ });
     fireEvent.click(organizationFilter);
     expect(organizationFilter.className).toContain("rounded-full");
-    expect(organizationFilter.className).toContain("border-transparent");
-    expect(organizationFilter.className).toContain("bg-primary");
+    expect(organizationFilter.className).toContain("border-brand-200");
+    expect(organizationFilter.className).toContain("bg-brand-50");
     expect(organizationFilter.getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("组织 CRM")).toBeTruthy();
     expect(screen.queryByText("平台分析")).toBeNull();
 
     fireEvent.click(within(filters).getByRole("tab", { name: /全部/ }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "搜索技能名称或描述" }), { target: { value: "周报" } });
-    expect(screen.getByText("我的周报")).toBeTruthy();
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索技能名称或描述" }), {
+      target: { value: "周报" },
+    });
+    expect(screen.getAllByText("周报", { selector: "mark" })).toHaveLength(2);
     expect(screen.queryByText("组织 CRM")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "清空搜索" }));
+    expect(screen.getByText("组织 CRM")).toBeTruthy();
   });
 });

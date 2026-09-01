@@ -5,14 +5,15 @@
  * 有意与 ScenariosPanel 拆成独立小模块：推荐位随聊天主视图打包，
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
-import { lazy, Suspense, useState } from "react";
-import { Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { lazy, Suspense, useState, type CSSProperties } from "react";
+import { ChevronRight, Globe, MessageSquareShare, Repeat, ShieldAlert, Target, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CAPABILITY_SURFACE, CAPABILITY_SURFACE_HOVER } from "@/components/CapabilityCenter/CatalogUi";
 import type { CatalogScenarioPublic, ScenarioItem, ScenarioRequirement } from "@agent/shared";
 import { friendlyPrimaryType, friendlyReadiness } from "./friendlyMappings";
+import { OUTCOME_ICON } from "./outcomeIcons";
 import { workflowCta, type WorkflowPrimaryAction } from "./workflowUi";
 
 // 懒加载：仅点开「看示例结果」时才拉取弹层（内含 markdown 渲染），
@@ -30,9 +31,17 @@ export function scenarioDemoSharePath(scenario: ScenarioItem): string | null {
 export function ScenarioModeBadge({ mode }: { mode: ScenarioItem["mode"] }) {
   return (
     <Badge variant="secondary" className="shrink-0 gap-1 font-normal">
-      {mode === "recurring"
-        ? <><Repeat className="size-3" aria-hidden="true" />常驻</>
-        : <><Zap className="size-3" aria-hidden="true" />一次性</>}
+      {mode === "recurring" ? (
+        <>
+          <Repeat className="size-3" aria-hidden="true" />
+          常驻
+        </>
+      ) : (
+        <>
+          <Zap className="size-3" aria-hidden="true" />
+          一次性
+        </>
+      )}
     </Badge>
   );
 }
@@ -103,41 +112,70 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
   const [exampleOpen, setExampleOpen] = useState(false);
   return (
     <>
-    <div
-      role={clickable ? "button" : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onClick={clickable ? () => onOpenDetail(scenario) : undefined}
-      onKeyDown={
-        clickable
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onOpenDetail(scenario);
+      <div
+        role={clickable ? "button" : undefined}
+        tabIndex={clickable ? 0 : undefined}
+        onClick={clickable ? () => onOpenDetail(scenario) : undefined}
+        onKeyDown={
+          clickable
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenDetail(scenario);
+                }
               }
-            }
-          : undefined
-      }
-      className={cn(
-        "flex flex-col gap-2 p-4 text-left text-card-foreground",
-        CAPABILITY_SURFACE,
-        clickable && cn("cursor-pointer", CAPABILITY_SURFACE_HOVER),
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="text-sm font-semibold leading-snug">{scenario.title}</div>
-        <ScenarioModeBadge mode={scenario.mode} />
-      </div>
-      <p className={cn("text-sm text-muted-foreground", compact ? "line-clamp-2" : "line-clamp-3")}>
-        {scenario.pitch}
-      </p>
-      {!compact && <ScenarioRequireBadges requires={scenario.requires} className="mt-auto" />}
-      <div className={cn("flex items-center justify-end gap-2", compact ? "mt-auto" : "pt-1")}>
-        {hasExample ? (
-          <>
-            {/* 原预填按钮保留为次按钮：行为不变，文案改为「换成我的资料」 */}
+            : undefined
+        }
+        className={cn(
+          "flex flex-col gap-2 p-4 text-left text-card-foreground",
+          CAPABILITY_SURFACE,
+          clickable && cn("cursor-pointer", CAPABILITY_SURFACE_HOVER),
+        )}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="text-sm font-semibold leading-snug">{scenario.title}</div>
+          <ScenarioModeBadge mode={scenario.mode} />
+        </div>
+        <p className={cn("text-sm text-muted-foreground", compact ? "line-clamp-2" : "line-clamp-3")}>
+          {scenario.pitch}
+        </p>
+        {!compact && <ScenarioRequireBadges requires={scenario.requires} className="mt-auto" />}
+        <div className={cn("flex items-center justify-end gap-2", compact ? "mt-auto" : "pt-1")}>
+          {hasExample ? (
+            <>
+              {/* 原预填按钮保留为次按钮：行为不变，文案改为「换成我的资料」 */}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-3 text-xs"
+                onClick={(e) => {
+                  // 阻止冒泡：避免同时触发卡片的「打开详情」
+                  e.stopPropagation();
+                  onTry(scenario);
+                }}
+              >
+                换成我的资料
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-3 text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (demoSharePath) {
+                    window.location.assign(demoSharePath);
+                    return;
+                  }
+                  setExampleOpen(true);
+                }}
+              >
+                看示例结果
+              </Button>
+            </>
+          ) : (
             <Button
               type="button"
-              variant="outline"
               size="sm"
               className="h-7 px-3 text-xs"
               onClick={(e) => {
@@ -146,54 +184,25 @@ export function ScenarioCard({ scenario, onTry, onOpenDetail, compact }: Scenari
                 onTry(scenario);
               }}
             >
-              换成我的资料
+              试一试
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 px-3 text-xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (demoSharePath) {
-                  window.location.assign(demoSharePath);
-                  return;
-                }
-                setExampleOpen(true);
-              }}
-            >
-              看示例结果
-            </Button>
-          </>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            className="h-7 px-3 text-xs"
-            onClick={(e) => {
-              // 阻止冒泡：避免同时触发卡片的「打开详情」
-              e.stopPropagation();
-              onTry(scenario);
-            }}
-          >
-            试一试
-          </Button>
-        )}
+          )}
+        </div>
       </div>
-    </div>
-    {/* 弹层挂在卡片 div 的兄弟位置：Portal 内的合成事件不会冒泡进卡片的「打开详情」 */}
-    {scenario.exampleResult && exampleOpen && (
-      <Suspense fallback={null}>
-        <ScenarioExampleDialogLazy
-          scenario={scenario}
-          open={exampleOpen}
-          onOpenChange={setExampleOpen}
-          onUseMyData={(s) => {
-            setExampleOpen(false);
-            onTry(s);
-          }}
-        />
-      </Suspense>
-    )}
+      {/* 弹层挂在卡片 div 的兄弟位置：Portal 内的合成事件不会冒泡进卡片的「打开详情」 */}
+      {scenario.exampleResult && exampleOpen && (
+        <Suspense fallback={null}>
+          <ScenarioExampleDialogLazy
+            scenario={scenario}
+            open={exampleOpen}
+            onOpenChange={setExampleOpen}
+            onUseMyData={(s) => {
+              setExampleOpen(false);
+              onTry(s);
+            }}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -203,6 +212,10 @@ export interface WorkflowScenarioCardProps {
   onOpenDetail: (scenario: CatalogScenarioPublic) => void;
   onPrimaryAction: (action: WorkflowPrimaryAction, scenario: CatalogScenarioPublic) => void;
   compact?: boolean;
+  /** 同屏只强调一个主动作，避免多个实心品牌色同时争夺注意力。 */
+  emphasizePrimary?: boolean;
+  className?: string;
+  style?: CSSProperties;
 }
 
 /** V3 客户目录卡；不消费 prompt、tool 或旧 demoShareToken。 */
@@ -210,32 +223,61 @@ export function WorkflowScenarioCard({
   scenario,
   onOpenDetail,
   onPrimaryAction,
+  emphasizePrimary = false,
+  className,
+  style,
 }: WorkflowScenarioCardProps) {
   const cta = workflowCta(scenario);
-  const showPrimaryAction = cta.label !== "接入我的系统";
+  const outcome = scenario.goalTags[0] ?? "控风险";
+  const OutcomeIcon = OUTCOME_ICON[outcome as keyof typeof OUTCOME_ICON] ?? Target;
   return (
     <article
+      style={style}
       className={cn(
-        "flex flex-col p-4 text-left text-card-foreground",
+        "group relative flex min-h-[13.5rem] flex-col overflow-hidden p-4 text-left text-card-foreground",
         CAPABILITY_SURFACE,
         CAPABILITY_SURFACE_HOVER,
+        scenario.featured &&
+          "ring-brand-200/70 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-gradient-to-b before:from-brand-500 before:to-brand-600",
+        className,
       )}
     >
-      <div className="flex flex-wrap items-center gap-1.5">
-        {scenario.featured ? (
-          <Badge className="bg-brand-50 font-normal text-brand-700 hover:bg-brand-50">重点工作流</Badge>
-        ) : null}
-        <Badge variant="secondary" className="font-normal">{friendlyPrimaryType[scenario.primaryType]}</Badge>
-        <Badge variant="outline" className="font-normal">{friendlyReadiness[scenario.readiness]}</Badge>
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <OutcomeIcon className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{outcome}</span>
+          {scenario.featured ? <span className="sr-only">重点工作流</span> : null}
+        </span>
+        <span className="shrink-0 text-2xs" title={`接入就绪度：${friendlyReadiness[scenario.readiness]}`}>
+          {friendlyReadiness[scenario.readiness]}
+        </span>
       </div>
-      <h3 className="mt-3 text-base font-semibold leading-snug">
-        <button type="button" className="text-left hover:text-brand-600" onClick={() => onOpenDetail(scenario)}>
-          {scenario.goalTags[0]}
+      <h3 className="mt-4 text-base font-semibold leading-snug">
+        <button
+          type="button"
+          className="text-left transition-colors hover:text-brand-600 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onOpenDetail(scenario)}
+        >
+          {scenario.title}
         </button>
       </h3>
-      <p className="mt-1.5 text-sm leading-5 text-muted-foreground">{scenario.title}</p>
-      {cta.secondaryLabel || showPrimaryAction ? (
-        <div className="mt-auto flex items-center justify-end gap-2 pt-4">
+      <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">{scenario.value}</p>
+      <div className="mt-3 flex min-w-0 items-center gap-1 text-2xs text-muted-foreground/80">
+        {scenario.shortChain.slice(0, 3).map((step, index) => (
+          <span key={`${step}-${index}`} className="contents">
+            {index > 0 ? <ChevronRight className="size-3 shrink-0 opacity-50" aria-hidden="true" /> : null}
+            <span className="min-w-0 truncate">{step}</span>
+          </span>
+        ))}
+      </div>
+      <div className="mt-auto flex items-end justify-between gap-3 border-t border-border/50 pt-4">
+        <div className="min-w-0 text-2xs leading-4 text-muted-foreground">
+          <div className="truncate" title={scenario.humanApprovalSummary}>
+            {scenario.humanApprovalSummary}
+          </div>
+          <div className="mt-0.5 text-muted-foreground/70">{friendlyPrimaryType[scenario.primaryType]}</div>
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2">
           {cta.secondaryLabel ? (
             <Button
               type="button"
@@ -251,21 +293,25 @@ export function WorkflowScenarioCard({
               {cta.secondaryLabel}
             </Button>
           ) : null}
-          {showPrimaryAction ? (
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 px-3 text-xs"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPrimaryAction(cta.action, scenario);
-              }}
-            >
-              {cta.label}
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-8 px-3 text-xs transition-colors duration-200",
+              emphasizePrimary
+                ? "border-brand-600 bg-brand-600 text-white hover:border-brand-700 hover:bg-brand-700 hover:text-white"
+                : "group-hover:border-brand-600 group-hover:bg-brand-600 group-hover:text-white group-focus-within:border-brand-600 group-focus-within:bg-brand-600 group-focus-within:text-white",
+            )}
+            onClick={(event) => {
+              event.stopPropagation();
+              onPrimaryAction(cta.action, scenario);
+            }}
+          >
+            {cta.label}
+          </Button>
         </div>
-      ) : null}
+      </div>
     </article>
   );
 }

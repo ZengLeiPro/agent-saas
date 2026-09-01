@@ -51,6 +51,17 @@ describe('M30-01 native OAuth thin bridge', () => {
       const suffix = (++uuidSequence).toString(16).padStart(12, '0');
       return `00000000-0000-4000-8000-${suffix}`;
     });
+    // This case stresses transaction fencing, not WebCrypto throughput. The real
+    // SHA-256 path is exercised above; a deterministic digest keeps the 100-way
+    // race independent from the shared worker-pool load of the full test suite.
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (_algorithm, data) => {
+      const input = ArrayBuffer.isView(data)
+        ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        : new Uint8Array(data);
+      const output = new Uint8Array(32);
+      input.forEach((byte, index) => { output[index % output.length] ^= byte; });
+      return output.buffer;
+    });
 
     const starts = await Promise.all(Array.from(
       { length: 100 },

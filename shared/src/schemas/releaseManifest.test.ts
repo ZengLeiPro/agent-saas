@@ -124,6 +124,14 @@ describe('releaseManifestSchema', () => {
     ).toBe(true);
   });
 
+  it('rejects empty or punctuation-only OCI repositories', () => {
+    for (const repository of ['', ':', '.../', '/agent-saas']) {
+      const invalid = validManifestContent();
+      invalid.artifacts.acsImage.repository = repository;
+      expect(releaseManifestContentSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
   it('strictly accepts immutable legacy v1 without treating v2 fields as optional', () => {
     const legacy = validLegacyManifestContent();
     expect(releaseManifestContentSchema.safeParse(legacy).success).toBe(true);

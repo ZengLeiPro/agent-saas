@@ -6,6 +6,7 @@ import {
   digestBuffer,
   digestFile,
   DIGEST_PATTERN,
+  OCI_IMAGE_REFERENCE_PATTERN,
   SHA_PATTERN,
 } from './artifact-lib.mjs';
 import { verifyRuntimeDependencyIdentity } from './runtime-dependency.mjs';
@@ -113,7 +114,10 @@ export async function verifyArtifactIndex(indexPath, expectedSha) {
       ['sourceSha', 'reference', 'digest'],
       'Artifact index ACS image',
     );
-    if (typeof index.acsImage.reference !== 'string') {
+    if (
+      typeof index.acsImage.reference !== 'string' ||
+      !OCI_IMAGE_REFERENCE_PATTERN.test(index.acsImage.reference)
+    ) {
       throw new Error('Artifact index ACS image reference is invalid');
     }
   }

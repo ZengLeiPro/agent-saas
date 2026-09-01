@@ -1,6 +1,140 @@
 #!/usr/bin/env bash
 # 由 ACS workflow 通过 SSH stdin 执行；保持依赖预检、远程部署与回滚为单一事务。
 set -euo pipefail
+
+PRESERVE_ACS_UNIT_BAK=false
+
+cleanup_acs_unit_backup() {
+  if [ "${PRESERVE_ACS_UNIT_BAK:-false}" = true ]; then
+    echo "preserving ACS unit backup for manual recovery: ${ACS_UNIT_BAK:-unknown}" >&2
+    return 0
+  fi
+  [ -n "${ACS_UNIT_BAK:-}" ] && rm -f "$ACS_UNIT_BAK"
+}
+
+cleanup_acs_rollback_test() {
+  local deploy_status=$? rollback_status=0
+  set +e
+  rollback || rollback_status=$?
+  cleanup_acs_unit_backup
+  if [ "$rollback_status" -ne 0 ]; then
+    echo "ACS direct deployment failed with status $deploy_status; rollback status $rollback_status" >&2
+    trap - EXIT HUP INT TERM
+    exit "$rollback_status"
+  fi
+  return "$deploy_status"
+}
+
+rollback() {
+  # 每个恢复边界独立累计状态；任何单点故障都不得截断后续 unit/restart 恢复。
+  local rollback_status=0 unit_restore_status=0 restart_status=0 health_ok=false
+  set +e
+  echo "ROLLING BACK SNAT, release link, identity, env, managed unit, and runtime config..."
+
+  if [ ! -d "$PREVIOUS_APP_DIR" ]; then
+    echo "previous content-addressed release is unavailable; continuing best-effort rollback" >&2
+    rollback_status=1
+  fi
+  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
+    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
+  elif [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
+    echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."
+    "$SYSTEMCTL_BIN" stop "$ACS_SERVICE_NAME" || rollback_status=1
+    timeout 600s node "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js" \
+      >/tmp/acs-offline-snat-restore.json || rollback_status=1
+    node -e "const r=require('/tmp/acs-offline-snat-restore.json');if(r.status!=='ok'||r.rollbackPrepared!==true||r.report.available!==r.report.checked)process.exit(1)" \
+      || rollback_status=1
+    if [ "$rollback_status" -eq 0 ]; then SNAT_ROLLBACK_PREPARED=true; fi
+  elif [ "$SNAT_ROLLBACK_PREPARED" != "true" ]; then
+    echo "neither per-Pod SNAT nor an identical shared rollback config was verified" >&2
+    rollback_status=1
+  fi
+
+  cp "$ENV_BAK" "$ENV_FILE" || rollback_status=1
+  cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE" || rollback_status=1
+  if [ "$HAD_IDENTITY" = "true" ]; then
+    cp "$IDENTITY_BAK" "$IDENTITY_FILE" || rollback_status=1
+  else
+    rm -f "$IDENTITY_FILE" || rollback_status=1
+  fi
+  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
+    if cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"; then
+      RUNTIME_IDENTITY_UPDATED=false
+    else
+      rollback_status=1
+    fi
+  fi
+  if [ -d "$PREVIOUS_APP_DIR" ]; then
+    if ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"; then
+      CURRENT_LINK_UPDATED=false
+    else
+      rollback_status=1
+    fi
+  fi
+  rm -f "$SNAT_OPERATION_STATE_FILE" || rollback_status=1
+
+  if [ "$ACS_UNIT_UPDATED" = true ]; then
+    restore_acs_managed_unit \
+      "$ACS_UNIT_PATH" "$ACS_UNIT_BAK" "$ACS_UNIT_HAD_PREVIOUS" "$SYSTEMCTL_BIN" \
+      || unit_restore_status=$?
+    if [ "$unit_restore_status" -eq 0 ]; then
+      ACS_UNIT_UPDATED=false
+    else
+      rollback_status=1
+      PRESERVE_ACS_UNIT_BAK=true
+    fi
+  fi
+
+  "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME" || restart_status=$?
+  if [ "$restart_status" -ne 0 ]; then
+    rollback_status=1
+    echo 'rollback could not restart the previous ACS service; manual intervention required' >&2
+  else
+    for _ in $(seq 1 "${ROLLBACK_HEALTH_ATTEMPTS:-60}"); do
+      if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
+        health_ok=true
+        echo "rollback health ok"
+        break
+      fi
+      sleep "${ROLLBACK_HEALTH_INTERVAL_SECONDS:-1}"
+    done
+    if [ "$health_ok" != true ]; then
+      rollback_status=1
+      echo "ROLLBACK HEALTH ALSO FAILED — manual intervention required" >&2
+    fi
+  fi
+
+  if [ "$rollback_status" -ne 0 ]; then
+    PRESERVE_ACS_UNIT_BAK=true
+    echo 'ACS direct rollback completed with one or more recovery failures' >&2
+    return 70
+  fi
+  return 0
+}
+
+rollback_and_exit() {
+  local deploy_status="${1:-1}" rollback_status=0
+  rollback || rollback_status=$?
+  if [ "$rollback_status" -ne 0 ]; then exit "$rollback_status"; fi
+  exit "$deploy_status"
+}
+
+case "${1:-}" in
+  --test-acs-direct-rollback|--test-acs-direct-cleanup-trap)
+    restore_acs_managed_unit() {
+      "$ROLLBACK_TEST_BIN/restore_acs_managed_unit" "$@"
+    }
+    if [ "$1" = --test-acs-direct-rollback ]; then
+      rollback_status=0
+      rollback || rollback_status=$?
+      cleanup_acs_unit_backup
+      exit "$rollback_status"
+    fi
+    trap cleanup_acs_rollback_test EXIT
+    false
+    ;;
+esac
+
 : "${IMAGE:?missing IMAGE}"
 : "${IMAGE_TAG:?missing IMAGE_TAG}"
 : "${IMAGE_DIGEST:?missing IMAGE_DIGEST}"
@@ -66,6 +200,7 @@ cleanup() {
       "$ACS_UNIT_PATH" "$ACS_UNIT_BAK" "$ACS_UNIT_HAD_PREVIOUS" "$SYSTEMCTL_BIN"; then
       ACS_UNIT_UPDATED=false
     else
+      PRESERVE_ACS_UNIT_BAK=true
       echo 'failed to restore ACS managed unit; manual intervention required' >&2
     fi
   fi
@@ -73,7 +208,8 @@ cleanup() {
     case "${RUNTIME_PREFLIGHT_DIR:-}" in
       /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
     esac
-    rm -f "$RELEASE_TGZ" "$ACS_UNIT_BAK"
+    rm -f "$RELEASE_TGZ"
+    cleanup_acs_unit_backup
     return "$deploy_status"
   fi
   local sandbox_cleanup_safe=true
@@ -206,8 +342,9 @@ EOF
   case "${RUNTIME_PREFLIGHT_DIR:-}" in
     /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
   esac
-  rm -f "$RELEASE_TGZ" "$ACS_UNIT_BAK" "$SMOKE_CLEANUP_ERROR" \
+  rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
+  cleanup_acs_unit_backup
   return "$deploy_status"
 }
 trap cleanup EXIT
@@ -395,69 +532,6 @@ node "$APP_DIR/scripts/release/write-compatibility-acs-identity.mjs" \
 ln -sfn "$APP_DIR" "$CURRENT_LINK"
 CURRENT_LINK_UPDATED=true
 
-rollback() {
-  local unit_restore_status=0 restart_status=0
-  echo "ROLLING BACK SNAT, release link, identity, env, managed unit, and runtime config..."
-  if [ ! -d "$PREVIOUS_APP_DIR" ]; then
-    echo "previous content-addressed release is unavailable; refusing rollback" >&2
-    return 1
-  fi
-  if [ "$SNAT_ROLLBACK_PREPARED" != "true" ] \
-    && [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" != "true" ] \
-    && [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" != "true" ]; then
-    echo "neither per-Pod SNAT nor an identical shared rollback config was verified; refusing rollback" >&2
-    return 1
-  fi
-  if [ "$SNAT_ROLLBACK_SHARED_CONFIG_SAFE" = "true" ]; then
-    echo "rollback retains the verified identical shared SNAT config (digest=$SNAT_ROLLBACK_DIGEST)"
-  fi
-  if [ "$SNAT_ROLLBACK_OFFLINE_RESTORE" = "true" ]; then
-    echo "legacy rollback: stopping failed candidate and restoring every non-Paused /32 offline..."
-    "$SYSTEMCTL_BIN" stop "$ACS_SERVICE_NAME"
-    timeout 600s node "$APP_DIR/acs-orchestrator/dist/restorePerPodCli.js" \
-      >/tmp/acs-offline-snat-restore.json
-    node -e "const r=require('/tmp/acs-offline-snat-restore.json');if(r.status!=='ok'||r.rollbackPrepared!==true||r.report.available!==r.report.checked)process.exit(1)"
-    SNAT_ROLLBACK_PREPARED=true
-  fi
-  cp "$ENV_BAK" "$ENV_FILE"
-  cp "$RUNTIME_CONFIG_BAK" "$RUNTIME_CONFIG_FILE"
-  if [ "$HAD_IDENTITY" = "true" ]; then
-    cp "$IDENTITY_BAK" "$IDENTITY_FILE"
-  else
-    rm -f "$IDENTITY_FILE"
-  fi
-  if [ "$RUNTIME_IDENTITY_UPDATED" = "true" ]; then
-    cp "$RUNTIME_IDENTITY_BAK" "$RUNTIME_IDENTITY_FILE"
-    RUNTIME_IDENTITY_UPDATED=false
-  fi
-  ln -sfn "$PREVIOUS_APP_DIR" "$CURRENT_LINK"
-  CURRENT_LINK_UPDATED=false
-  rm -f "$SNAT_OPERATION_STATE_FILE"
-  if [ "$ACS_UNIT_UPDATED" = true ]; then
-    restore_acs_managed_unit \
-      "$ACS_UNIT_PATH" "$ACS_UNIT_BAK" "$ACS_UNIT_HAD_PREVIOUS" "$SYSTEMCTL_BIN" \
-      || unit_restore_status=$?
-    ACS_UNIT_UPDATED=false
-  fi
-  "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME" || restart_status=$?
-  if [ "$restart_status" -ne 0 ]; then
-    echo 'rollback could not restart the previous ACS service; manual intervention required' >&2
-    return 1
-  fi
-  for _ in $(seq 1 60); do
-    if curl -fsS -m 5 http://127.0.0.1:3400/health >/dev/null 2>&1; then
-      echo "rollback health ok"
-      if [ "$unit_restore_status" -ne 0 ]; then
-        echo 'previous ACS managed unit restoration or daemon-reload failed; manual intervention required' >&2
-        return 1
-      fi
-      return 0
-    fi
-    sleep 1
-  done
-  echo "ROLLBACK HEALTH ALSO FAILED — manual intervention required" >&2
-  return 1
-}
 
 # ── 3. Drain 旧进程: SIGUSR2 → 排空 inflight 后 clean exit →
 #      当前事务显式 systemctl restart 拉起新代码、新 env 与 managed unit ──
@@ -507,8 +581,7 @@ fi
 PROCESS_REPLACED=true
 if ! "$SYSTEMCTL_BIN" restart "$ACS_SERVICE_NAME"; then
   echo 'candidate restart failed; rolling back the managed unit and previous release' >&2
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 
 # ── 4. 等新进程 health 且 image 已切换 ──
@@ -526,8 +599,7 @@ done
 if [ "$HEALTH_OK" != "true" ]; then
   echo "health/image check failed after 120s" >&2
   journalctl -u "$ACS_SERVICE_NAME" -n 100 --no-pager || true
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 
 EXPECTED_MAX_RUNNING="$(grep '^ACS_SANDBOX_MAX_RUNNING=' "$DESIRED_ENV" | head -n1 | cut -d= -f2-)"
@@ -559,8 +631,7 @@ if (mismatch.length > 0) {
 }
 NODE
 then
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 echo "runtime config gate passed: max=$EXPECTED_MAX_RUNNING warn=$EXPECTED_WARN_RUNNING"
 
@@ -614,8 +685,7 @@ if [ "$SMOKE_OK" != "true" ]; then
     # shellcheck disable=SC2086
     kubectl $KCFG_ARGS -n "${ACS_NAMESPACE:-agent-saas-coding}" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 || true
   fi
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 
 if command -v kubectl >/dev/null 2>&1; then
@@ -718,8 +788,7 @@ for identity_attempt in $(seq 1 10); do
 done
 if [ "$IDENTITY_SYNCED" != "true" ]; then
   echo "Production runtime identity failed to converge after ACS deployment; rolling ACS back" >&2
-  rollback
-  exit 1
+  rollback_and_exit 1
 fi
 rm -rf "$IDENTITY_SYNC_DIR"
 echo "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"

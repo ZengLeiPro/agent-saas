@@ -142,8 +142,22 @@ test('produces digest-bound Release Evidence v2 with kept-component Runtime iden
   assert.deepEqual(evidence.sourcePullRequests, [300]);
   assert.deepEqual(evidence.integrationCandidates, []);
   assert.equal(evidence.checks.mergeReceipt.status, 'success');
+  assert.equal(
+    evidence.baselineArtifacts.acsImage.repository,
+    documents['baseline-artifacts'].acsImage.repository,
+  );
   const { evidenceDigest, ...body } = evidence;
   assert.equal(evidenceDigest, digestBuffer(Buffer.from(canonicalJson(body))));
+});
+
+test('rejects a malformed baseline ACS image repository', async () => {
+  const base = await fixture();
+  base.documents['baseline-artifacts'].acsImage.repository = ':.../';
+  await writeFile(
+    base.options['baseline-artifacts'],
+    `${JSON.stringify(base.documents['baseline-artifacts'])}\n`,
+  );
+  await assert.rejects(produceReleaseEvidence(base.options), /Baseline artifacts/u);
 });
 
 test('rejects production components tampered without recomputing the canonical digest', async () => {

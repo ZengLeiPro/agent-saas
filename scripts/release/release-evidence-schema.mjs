@@ -1,11 +1,17 @@
 import { z } from 'zod';
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 
 const releaseComponentSchema = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 const fullShaSchema = z
   .string()
   .regex(/^[a-f0-9]{40}$/u, 'Expected a lowercase complete 40-character SHA');
 const sha256DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u, 'Expected a sha256 digest');
+const ociRepositorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .regex(OCI_REPOSITORY_PATTERN, 'Expected a valid OCI repository');
 
 const artifactUriSchema = z
   .string()
@@ -72,7 +78,7 @@ const baselineArtifactShape = {
   acsOrchestrator: fileArtifactSchema,
   acsImage: z
     .object({
-      repository: z.string().trim().min(1).max(512),
+      repository: ociRepositorySchema,
       digest: sha256DigestSchema,
     })
     .strict(),

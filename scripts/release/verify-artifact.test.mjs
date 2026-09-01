@@ -188,6 +188,26 @@ test('rejects an empty or partial artifact map', async () => {
   await assert.rejects(verifyArtifactIndex(value.path, SHA), /complete supported artifact set/u);
 });
 
+test('rejects a digest-suffixed ACS image with an invalid OCI repository', async () => {
+  const value = await fixture();
+  const acsPath = join(value.root, 'acs.tgz');
+  await writeFile(acsPath, 'acs');
+  const index = JSON.parse(await readFile(value.path, 'utf8'));
+  index.artifacts.acsOrchestrator = {
+    path: 'acs.tgz',
+    ...(await digestFile(acsPath)),
+  };
+  index.acsImage = {
+    sourceSha: SHA,
+    reference: `:@sha256:${'1'.repeat(64)}`,
+    digest: `sha256:${'1'.repeat(64)}`,
+  };
+  const { aggregateDigest: _aggregateDigest, ...body } = index;
+  index.aggregateDigest = digestBuffer(Buffer.from(canonicalJson(body)));
+  await writeFile(value.path, JSON.stringify(index));
+  await assert.rejects(verifyArtifactIndex(value.path, SHA), /ACS image reference is invalid/u);
+});
+
 test('rejects index mutation and path traversal', async () => {
   const value = await fixture();
   const index = JSON.parse(await readFile(value.path, 'utf8'));

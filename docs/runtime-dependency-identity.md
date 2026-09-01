@@ -39,7 +39,7 @@ Production 与 Staging systemd unit 在 `ExecStart` 前运行；ACS 兼容直发
 Release Manifest v2 的 Server/ACS archive 同时携带对应 managed systemd unit；Promotion 仅为 `deploy` 组件从已校验的 selected archive 提取并安装 unit，`keep` 不要求历史 baseline archive 补带 unit，避免 partial RC 被旧基线阻断。这样也不会让批准 RC 后的主线 unit 变化污染旧 RC。历史 Manifest v1 仍可做证据校验和仅 Web 的晋级，但 App、Runtime Worker 或 ACS 为 `deploy` 时会在任何生产写入前拒绝；旧 bundle 没有 Runtime identity/guard，必须用相同源码重建 v2 RC，不能注入当前 main 的 unit 假装兼容。
 
 门禁精确比较 Node version、`process.arch`、`process.platform`，并对组件声明的宿主工具执行版本 probe。
-缺文件、篡改、版本/架构不符、工具缺失或版本不符均阻断启动。工具 probe 只能使用代码 allowlist 中的固定 argv，带超时执行，并要求输出中的首个规范化 semver token精确等于契约版本，不能借后续兼容版本文本蒙混过关。ACS Orchestrator 无条件校验其实际 `ACS_KUBECTL_PATH`（默认 `kubectl`）；`ACS_SNAT_MODE=disabled` 时不要求 `aliyun`，其他模式则精确校验实际 `ACS_ALIYUN_CLI_PATH`。`--production=true`（包括 bare flag）时禁止使用 `--mode=off`；local/dev 只有显式传入 `--mode=off` 才能跳过。
+缺文件、篡改、版本/架构不符、工具缺失或版本不符均阻断启动。工具 probe 只能使用代码 allowlist 中的固定 argv，带超时执行，并要求输出中的首个规范化 semver token精确等于契约版本，不能借后续兼容版本文本蒙混过关。ACS Orchestrator 无条件校验宿主 `git` 与其实际 `ACS_KUBECTL_PATH`（默认 `kubectl`）；`ACS_SNAT_MODE=disabled` 时不要求 `aliyun`，其他模式则精确校验实际 `ACS_ALIYUN_CLI_PATH`。`--production=true`（包括 bare flag）时禁止使用 `--mode=off`；local/dev 只有显式传入 `--mode=off` 才能跳过。
 
 同一 RC 的 Promotion 重跑会重新校验不可变 Staging evidence，并在 GitHub `production` 环境再次人工批准后追加新的 `approved → promoting` 记录。只允许从 `verified`、`approved`、`promoting`、`failed_before_change`、`partial_failed`、`rolled_back`、`needs_human` 恢复；`rejected`、`revoked`、`superseded`、`completed` 继续 fail closed。生产 live matrix 仍必须是 Manifest 定义的精确提交前缀。
 

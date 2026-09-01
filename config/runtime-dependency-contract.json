@@ -32,7 +32,7 @@
       "name": "git",
       "version": "2.49.1",
       "architecture": "x64",
-      "components": ["server"],
+      "components": ["server", "acsOrchestrator"],
       "probe": ["git", "--version"]
     },
     {

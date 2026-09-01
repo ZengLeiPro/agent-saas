@@ -96,12 +96,40 @@ test('runtime, image, and tool upgrades produce auditable identity changes', asy
   }
 });
 
-test('mutable or missing image identities fail closed', async () => {
+test('mutable, missing, or malformed image identities fail closed', async () => {
   const contract = await fixture();
-  contract.baseImages[0].reference = 'docker.io/library/node:22-alpine';
-  assert.throws(() => validateRuntimeDependencyContract(contract), /immutable registry digest/u);
+  for (const reference of [
+    'docker.io/library/node:22-alpine',
+    `:@${DIGEST}`,
+    `.../@${DIGEST}`,
+    `/library/node@${DIGEST}`,
+  ]) {
+    const invalid = structuredClone(contract);
+    invalid.baseImages[0].reference = reference;
+    assert.throws(() => validateRuntimeDependencyContract(invalid), /immutable registry digest/u);
+  }
   delete contract.baseImages[0].reference;
   assert.throws(() => validateRuntimeDependencyContract(contract), /fields must be exactly/u);
+});
+
+test('Runtime contract collections require canonical order instead of producing false identity drift', async () => {
+  const contract = await fixture();
+  const baseline = runtimeDependencyContractDigest(contract);
+  assert.equal(runtimeDependencyContractDigest(structuredClone(contract)), baseline);
+
+  const reorderedTools = structuredClone(contract);
+  reorderedTools.tools.reverse();
+  assert.throws(
+    () => runtimeDependencyContractDigest(reorderedTools),
+    /tools must use the canonical supported order/u,
+  );
+
+  const reorderedComponents = structuredClone(contract);
+  reorderedComponents.node.components.reverse();
+  assert.throws(
+    () => runtimeDependencyContractDigest(reorderedComponents),
+    /node.components must use the canonical supported order/u,
+  );
 });
 
 test('contract ownership matrix cannot drop a Runtime component, base image, or required tool', async () => {
@@ -280,7 +308,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
           throw new Error('missing');
         },
       }),
-    /tool kubectl is missing/u,
+    /tool git is missing/u,
   );
   assert.throws(
     () =>
@@ -289,7 +317,8 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
         component: 'acsOrchestrator',
         runtime,
         environment: { ACS_SNAT_MODE: 'disabled' },
-        execFileSync: () => 'Client Version: v1.36.9',
+        execFileSync: (command) =>
+          command === 'git' ? 'git version 2.49.1' : 'Client Version: v1.36.9',
       }),
     /tool kubectl version mismatch/u,
   );
@@ -307,11 +336,14 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       },
       execFileSync: (command, args) => {
         disabledCalls.push([command, args]);
-        return 'Client Version: v1.37.0';
+        return command === 'git' ? 'git version 2.49.1' : 'Client Version: v1.37.0';
       },
     }),
   );
-  assert.deepEqual(disabledCalls, [['/managed/kubectl', ['version', '--client=true']]]);
+  assert.deepEqual(disabledCalls, [
+    ['git', ['--version']],
+    ['/managed/kubectl', ['version', '--client=true']],
+  ]);
 
   const enabledCalls = [];
   assert.doesNotThrow(() =>
@@ -326,11 +358,13 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
       },
       execFileSync: (command, args) => {
         enabledCalls.push([command, args]);
+        if (command === 'git') return 'git version 2.49.1';
         return command.endsWith('kubectl') ? 'Client Version: v1.37.0' : '3.4.4';
       },
     }),
   );
   assert.deepEqual(enabledCalls, [
+    ['git', ['--version']],
     ['/managed/kubectl', ['version', '--client=true']],
     ['/managed/aliyun', ['version']],
   ]);
@@ -342,6 +376,7 @@ test('ACS Orchestrator fails closed on kubectl and conditionally probes the conf
         runtime,
         environment: { ACS_SNAT_MODE: 'probe-only' },
         execFileSync: (command) => {
+          if (command === 'git') return 'git version 2.49.1';
           if (command === 'kubectl') return 'Client Version: v1.37.0';
           throw new Error('missing');
         },

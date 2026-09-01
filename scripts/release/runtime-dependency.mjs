@@ -2,7 +2,13 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { canonicalJson, digestBuffer, DIGEST_PATTERN, SHA_PATTERN } from './artifact-lib.mjs';
+import {
+  canonicalJson,
+  digestBuffer,
+  DIGEST_PATTERN,
+  OCI_IMAGE_REFERENCE_PATTERN,
+  SHA_PATTERN,
+} from './artifact-lib.mjs';
 
 export const RUNTIME_DEPENDENCY_KIND = 'agent-saas-runtime-dependency-contract';
 export const RUNTIME_IDENTITY_KIND = 'agent-saas-runtime-dependency-identity';
@@ -14,13 +20,13 @@ export const RUNTIME_COMPONENTS = Object.freeze([
   'acsSandbox',
 ]);
 const BASE_IMAGE_COMPONENTS = new Set([...RUNTIME_COMPONENTS, 'webBuild']);
-const REQUIRED_BASE_IMAGE_BINDINGS = new Set([
+const REQUIRED_BASE_IMAGE_BINDINGS = Object.freeze([
   'node-alpine:x64:server,webBuild',
   'node-bookworm:x64:acsSandbox',
   'python-bookworm:x64:acsSandbox',
 ]);
-const REQUIRED_TOOL_BINDINGS = new Set([
-  'git:x64:server',
+const REQUIRED_TOOL_BINDINGS = Object.freeze([
+  'git:x64:server,acsOrchestrator',
   'bird:x64:server',
   'kubectl:x64:acsOrchestrator',
   'aliyun:x64:acsOrchestrator',
@@ -46,7 +52,6 @@ const TOOL_PROBES = new Map([
   ['dws', ['dws', '--version']],
   ['lark-cli', ['lark-cli', '--version']],
 ]);
-const IMAGE_PATTERN = /^[a-z0-9./:-]+@sha256:[a-f0-9]{64}$/u;
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/u;
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
@@ -83,8 +88,25 @@ function assertExactSet(actual, expected, label) {
   }
 }
 
+function assertCanonicalOrder(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} must use the canonical supported order`);
+  }
+}
+
+const COMPONENT_ORDER = new Map(
+  [...RUNTIME_COMPONENTS, 'webBuild'].map((component, index) => [component, index]),
+);
+
+function assertCanonicalComponentOrder(value, label) {
+  const canonical = [...value].sort(
+    (left, right) => COMPONENT_ORDER.get(left) - COMPONENT_ORDER.get(right),
+  );
+  assertCanonicalOrder(value, canonical, label);
+}
+
 function bindingKey(entry) {
-  return `${entry.name}:${entry.architecture}:${[...entry.components].sort().join(',')}`;
+  return `${entry.name}:${entry.architecture}:${entry.components.join(',')}`;
 }
 
 function assertNoSensitiveData(value, path = '$') {
@@ -115,6 +137,12 @@ export function validateRuntimeDependencyContract(contract) {
   assertStringArray(contract.node.architectures, ARCHITECTURES, 'node.architectures');
   assertStringArray(contract.node.components, new Set(RUNTIME_COMPONENTS), 'node.components');
   assertExactSet(contract.node.components, RUNTIME_COMPONENTS, 'node.components');
+  assertCanonicalOrder(contract.node.components, RUNTIME_COMPONENTS, 'node.components');
+  assertCanonicalOrder(
+    contract.node.architectures,
+    [...contract.node.architectures].sort(),
+    'node.architectures',
+  );
 
   if (!Array.isArray(contract.baseImages) || contract.baseImages.length === 0)
     throw new Error('baseImages must not be empty');
@@ -124,7 +152,7 @@ export function validateRuntimeDependencyContract(contract) {
     if (!NAME_PATTERN.test(image.name) || imageNames.has(image.name))
       throw new Error(`Invalid or duplicate base image ${String(image.name)}`);
     imageNames.add(image.name);
-    if (!IMAGE_PATTERN.test(image.reference))
+    if (!OCI_IMAGE_REFERENCE_PATTERN.test(image.reference))
       throw new Error(`Base image ${image.name} must use an immutable registry digest`);
     if (!ARCHITECTURES.has(image.architecture))
       throw new Error(`Base image ${image.name} has unsupported architecture`);
@@ -133,8 +161,14 @@ export function validateRuntimeDependencyContract(contract) {
       BASE_IMAGE_COMPONENTS,
       `baseImage.${image.name}.components`,
     );
+    assertCanonicalComponentOrder(image.components, `baseImage.${image.name}.components`);
   }
   assertExactSet(contract.baseImages.map(bindingKey), REQUIRED_BASE_IMAGE_BINDINGS, 'baseImages');
+  assertCanonicalOrder(
+    contract.baseImages.map(bindingKey),
+    REQUIRED_BASE_IMAGE_BINDINGS,
+    'baseImages',
+  );
 
   if (!Array.isArray(contract.tools)) throw new Error('tools must be an array');
   const toolIdentities = new Set();
@@ -157,6 +191,7 @@ export function validateRuntimeDependencyContract(contract) {
     if (!ARCHITECTURES.has(tool.architecture))
       throw new Error(`Tool ${tool.name} has unsupported architecture`);
     assertStringArray(tool.components, new Set(RUNTIME_COMPONENTS), `tool.${tool.name}.components`);
+    assertCanonicalComponentOrder(tool.components, `tool.${tool.name}.components`);
     assertStringArray(tool.probe, null, `tool.${tool.name}.probe`);
     const expectedProbe = TOOL_PROBES.get(tool.name);
     if (!expectedProbe || JSON.stringify(tool.probe) !== JSON.stringify(expectedProbe)) {
@@ -191,6 +226,7 @@ export function validateRuntimeDependencyContract(contract) {
     toolIdentities.add(identity);
   }
   assertExactSet(contract.tools.map(bindingKey), REQUIRED_TOOL_BINDINGS, 'tools');
+  assertCanonicalOrder(contract.tools.map(bindingKey), REQUIRED_TOOL_BINDINGS, 'tools');
   return contract;
 }
 

@@ -35,6 +35,22 @@ test('creates component-scoped immutable artifact indexes', async () => {
   assert.equal(index.artifacts.serverBundle.path, 'server-bundle.tgz');
   assert.match(index.aggregateDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(index.acsImage, null);
+  assert.equal(index.runtimeDependencies, null);
+});
+
+test('component indexes reject malformed digest-suffixed ACS image references', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'compat-acs-index-'));
+  const artifactPath = join(root, 'acs-orchestrator.tgz');
+  await writeFile(artifactPath, 'acs');
+  await assert.rejects(
+    createComponentArtifactIndex({
+      sourceSha: SHA,
+      artifactName: 'acsOrchestrator',
+      artifactPath,
+      imageReference: `:@${DIGEST}`,
+    }),
+    /ACS image reference must use a valid immutable repository digest/u,
+  );
 });
 
 test('component indexes bind the standalone runtime identity to the same source SHA', async () => {

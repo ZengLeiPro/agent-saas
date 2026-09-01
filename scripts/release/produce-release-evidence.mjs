@@ -2,11 +2,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
+import { canonicalJson, digestBuffer, OCI_REPOSITORY_PATTERN } from './artifact-lib.mjs';
 import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
+const ociRepository = z.string().regex(OCI_REPOSITORY_PATTERN);
 const component = z.enum(['web', 'api', 'runtimeWorker', 'acs']);
 
 const mergeSnapshotSchema = z
@@ -121,7 +122,7 @@ const baselineArtifactsSchema = z
       })
       .strict(),
     acsOrchestrator: artifactSchema,
-    acsImage: z.object({ repository: z.string().min(1), digest }).strict(),
+    acsImage: z.object({ repository: ociRepository, digest }).strict(),
   })
   .strict();
 

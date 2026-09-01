@@ -13,6 +13,15 @@ export const sha256DigestSchema = z
   .string()
   .regex(/^sha256:[a-f0-9]{64}$/, 'Expected a sha256:<lowercase hexadecimal> digest');
 const utcTimestampSchema = z.iso.datetime({ offset: false, precision: 3 });
+const ociRepositorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .regex(
+    /^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[1-9]\d{0,4})?\/)?[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*$/u,
+    'Expected a valid OCI repository',
+  );
 
 const artifactUriSchema = z
   .string()
@@ -92,7 +101,7 @@ const runtimeDependencyArtifactSchema = fileArtifactSchema
 const imageArtifactSchema = z
   .object({
     required: z.boolean(),
-    repository: z.string().trim().min(1).max(512),
+    repository: ociRepositorySchema,
     digest: sha256DigestSchema,
   })
   .strict();

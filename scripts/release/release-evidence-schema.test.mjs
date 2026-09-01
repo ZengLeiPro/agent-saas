@@ -7,7 +7,7 @@ import {
 import { canonicalJson, digestBuffer } from './artifact-lib.mjs';
 import { validateReleaseEvidenceDocument } from './release-evidence-schema.mjs';
 
-test('accepts a complete Release Evidence v2 document with kept-component Runtime identities', () => {
+test('accepts a complete Release Evidence v2 document with kept-component Runtime and OCI identities', () => {
   assert.deepEqual(
     validateReleaseEvidenceDocument(createValidReleaseEvidence(), {
       expectedSha: RELEASE_EVIDENCE_SHA,
@@ -75,6 +75,10 @@ const invalidMutations = [
   ['component matrix', (value) => delete value.productionBaseline.acs],
   ['baseline artifact URI', (value) => (value.baselineArtifacts.webAssets.uri = 'relative.tgz')],
   ['baseline artifact size', (value) => (value.baselineArtifacts.serverBundle.size = 0)],
+  [
+    'baseline ACS image repository',
+    (value) => (value.baselineArtifacts.acsImage.repository = '.../'),
+  ],
   [
     'baseline artifact binding',
     (value) => (value.baselineArtifacts.serverBundle.digest = `sha256:${'9'.repeat(64)}`),

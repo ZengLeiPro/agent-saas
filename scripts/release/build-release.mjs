@@ -2,7 +2,13 @@
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-import { canonicalJson, digestBuffer, digestFile, SHA_PATTERN } from './artifact-lib.mjs';
+import {
+  canonicalJson,
+  digestBuffer,
+  digestFile,
+  OCI_IMAGE_REFERENCE_PATTERN,
+  SHA_PATTERN,
+} from './artifact-lib.mjs';
 import {
   ADMIN_RUNNER_ENTRIES,
   MANIFEST_KIND,
@@ -26,7 +32,7 @@ function options(argv) {
   if (!values.out) throw new Error('--out is required');
   if (values['include-acs'] && !values['acs-image'])
     throw new Error('--include-acs requires an immutable --acs-image=repository@sha256:...');
-  if (values['acs-image'] && !/@sha256:[a-f0-9]{64}$/u.test(String(values['acs-image'])))
+  if (values['acs-image'] && !OCI_IMAGE_REFERENCE_PATTERN.test(String(values['acs-image'])))
     throw new Error('--acs-image must use an immutable registry digest');
   return values;
 }

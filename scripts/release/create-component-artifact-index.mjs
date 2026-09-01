@@ -6,6 +6,7 @@ import {
   digestBuffer,
   digestFile,
   DIGEST_PATTERN,
+  OCI_IMAGE_REFERENCE_PATTERN,
   SHA_PATTERN,
 } from './artifact-lib.mjs';
 import { verifyRuntimeDependencyIdentity } from './runtime-dependency.mjs';
@@ -25,14 +26,15 @@ export async function createComponentArtifactIndex({
   const artifact = { path: basename(artifactPath), ...(await digestFile(resolve(artifactPath))) };
   let acsImage = null;
   if (imageReference) {
-    const match = String(imageReference).match(/@(?<digest>sha256:[a-f0-9]{64})$/u);
-    if (!match?.groups || !DIGEST_PATTERN.test(match.groups.digest)) {
-      throw new Error('ACS image reference must be immutable');
+    const reference = String(imageReference);
+    const digest = reference.split('@').at(-1);
+    if (!OCI_IMAGE_REFERENCE_PATTERN.test(reference) || !DIGEST_PATTERN.test(digest ?? '')) {
+      throw new Error('ACS image reference must use a valid immutable repository digest');
     }
     acsImage = {
       sourceSha,
-      reference: String(imageReference),
-      digest: match.groups.digest,
+      reference,
+      digest,
     };
   }
   let runtimeDependencies = null;

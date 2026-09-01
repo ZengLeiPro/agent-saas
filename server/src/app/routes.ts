@@ -128,7 +128,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
   const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
     config,
     processCwd,
-    processRole: runtime.processRole, recoveryGate: runtime.configRuntimeRecoveryGate, onConfigCommitted: (expectedText) => publishAdminCommittedConfigIdentity(runtime, expectedText), onConfigInvalidated: runtime.invalidateSharedConfigIdentity,
+    processRole: runtime.processRole, recoveryGate: runtime.configRuntimeRecoveryGate, onConfigCommitted: (text, permit) => publishAdminCommittedConfigIdentity(runtime, text, permit), onConfigInvalidated: runtime.invalidateSharedConfigIdentity,
   });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
   const legacyWriteGate = runtime.governanceWriteGate ?? {

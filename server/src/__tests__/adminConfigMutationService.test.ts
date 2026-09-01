@@ -7,6 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppConfig } from '../app/config.js';
 import {
+  ConfigRuntimeRecoveryGate,
+  type ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
+import {
   AdminConfigMutationService,
   ConfigConflictError,
   ConfigRuntimeRecoveryError,
@@ -20,7 +24,11 @@ afterEach(async () => {
 });
 
 async function fixture(callbacks: {
-  onCommitted?: (candidateText: string) => void | Promise<void>;
+  recoveryGate?: ConfigRuntimeRecoveryGate;
+  onCommitted?: (
+    candidateText: string,
+    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+  ) => void | Promise<void>;
   onRuntimeDirty?: () => void;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'admin-config-mutation-'));
@@ -96,6 +104,29 @@ describe('AdminConfigMutationService', () => {
     expect(applyRuntime).toHaveBeenCalledTimes(2);
     const audit = await readFile(join(test.root, 'data/config-governance/audit.jsonl'), 'utf8');
     expect(audit).toContain('"result":"rolled_back"');
+  });
+
+  it('keeps the shared gate closed until a successful rollback is published and audited', async () => {
+    const recoveryGate = new ConfigRuntimeRecoveryGate();
+    const onCommitted = vi.fn((_text: string, permit?: ConfigRuntimeRecoveryPermit) => {
+      expect(recoveryGate.isDirty()).toBe(true);
+      expect(recoveryGate.allowsRecoveryCompletion(permit)).toBe(true);
+    });
+    const test = await fixture({ recoveryGate, onCommitted });
+    const applyRuntime = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('runtime rejected candidate'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 40, {})),
+      applyRuntime,
+    })).rejects.toThrow('runtime rejected candidate');
+
+    expect(onCommitted).toHaveBeenCalledOnce();
+    expect(recoveryGate.isDirty()).toBe(false);
   });
 
   it('does not swallow a runtime rollback rejection or publish the restored disk identity', async () => {

@@ -2,7 +2,10 @@ import type { ConfigIdentitySummary } from '@agent/shared';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
+import {
+  ConfigRuntimeRecoveryGate,
+  type ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
@@ -35,7 +38,7 @@ export interface RuntimeConfigIdentityAssembly {
   recoveryGate: ConfigRuntimeRecoveryGate;
   modelResolverHooks: {
     validateConfigReload?: (next: AppConfig) => Promise<void>;
-    onConfigReloaded: () => void;
+    onConfigReloaded: (recoveryPermit?: ConfigRuntimeRecoveryPermit) => void;
   };
   invalidate: () => void;
   getSummary: () => ConfigIdentitySummary;
@@ -75,8 +78,11 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
       ...(runtimeIdentity.environment === 'production'
         ? { validateConfigReload: (next: AppConfig) => runtime.validateConfigReload(next) }
         : {}),
-      onConfigReloaded: () => {
-        if (recoveryGate.isDirty()) runtime.invalidateObservation();
+      onConfigReloaded: (recoveryPermit) => {
+        if (
+          recoveryGate.isDirty()
+          && !recoveryGate.allowsRecoveryCompletion(recoveryPermit)
+        ) runtime.invalidateObservation();
         else runtime.notifyConfigChanged('config_file_hot_reload');
       },
     },

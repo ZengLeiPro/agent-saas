@@ -1,5 +1,8 @@
 import type { AppConfig } from '../types/index.js';
-import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
@@ -251,9 +254,12 @@ export interface AppRuntime {
   /** 纯同步撤销 ConfigIdentity observation、取消在途计算并发布 not_collected。 */
   invalidateSharedConfigIdentity: () => void;
   /** 管理端原子提交后撤销旧 ConfigIdentity observation 并重算。 */
-  notifySharedConfigChanged: () => void;
+  notifySharedConfigChanged: (recoveryPermit?: ConfigRuntimeRecoveryPermit) => void;
   /** 管理端提交后按精确文本推进指纹；并发改写时返回 false 并强制重载。 */
-  acknowledgeSharedConfigApplied: (expectedConfigText: string) => boolean;
+  acknowledgeSharedConfigApplied: (
+    expectedConfigText: string,
+    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+  ) => boolean;
   /**
    * 公司级专职 Agent store（2026-07 唯恩批次）。仅 auth 启用时实例化
    * （与 agentStore 同生命周期）；routes 挂 /api/org-agents 用。

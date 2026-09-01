@@ -1,5 +1,8 @@
 import { AdminConfigMutationService } from '../config/adminConfigMutationService.js';
-import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import { buildEffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { AppConfig } from '../types/index.js';
@@ -11,7 +14,10 @@ export function createRuntimeConfigGovernance(options: {
   processCwd: string;
   processRole: AppRuntimeProcessRole;
   recoveryGate: ConfigRuntimeRecoveryGate;
-  onConfigCommitted?: (candidateText: string) => void | Promise<void>;
+  onConfigCommitted?: (
+    candidateText: string,
+    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+  ) => void | Promise<void>;
   onConfigInvalidated?: () => void;
 }) {
   const runtimeIdentity = readRuntimeIdentity();

@@ -3,6 +3,7 @@ import type { Express } from "express";
 import { createAudioTranscribeAdminRouter } from "../routes/audioTranscribeAdmin.js";
 import type { AppRuntime } from "./runtime.js";
 import type { AdminConfigMutationService } from "../config/adminConfigMutationService.js";
+import type { ConfigRuntimeRecoveryPermit } from "../config/runtimeRecoveryGate.js";
 
 type SharedConfigIdentityPublisherRuntime = Pick<
   AppRuntime,
@@ -17,9 +18,14 @@ type SharedConfigIdentityPublisherRuntime = Pick<
 export async function publishAdminCommittedConfigIdentity(
   runtime: SharedConfigIdentityPublisherRuntime,
   expectedConfigText: string,
+  recoveryPermit?: ConfigRuntimeRecoveryPermit,
 ): Promise<void> {
-  if (runtime.acknowledgeSharedConfigApplied(expectedConfigText)) {
-    runtime.notifySharedConfigChanged();
+  const acknowledged = recoveryPermit
+    ? runtime.acknowledgeSharedConfigApplied(expectedConfigText, recoveryPermit)
+    : runtime.acknowledgeSharedConfigApplied(expectedConfigText);
+  if (acknowledged) {
+    if (recoveryPermit) runtime.notifySharedConfigChanged(recoveryPermit);
+    else runtime.notifySharedConfigChanged();
     return;
   }
   runtime.invalidateSharedConfigIdentity();
@@ -28,7 +34,8 @@ export async function publishAdminCommittedConfigIdentity(
   }
   // SharedConfigRefresher 成功应用时也会 notify；再次通知是安全的，并确保
   // 自定义或测试 refresher 没有回调时，仍只按已应用的胜出内存配置重算。
-  runtime.notifySharedConfigChanged();
+  if (recoveryPermit) runtime.notifySharedConfigChanged(recoveryPermit);
+  else runtime.notifySharedConfigChanged();
 }
 
 export function registerAudioTranscribeAdminRoute(

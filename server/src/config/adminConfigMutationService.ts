@@ -15,7 +15,10 @@ import { basename, dirname, join } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 
 import { parseAppConfig, type AppConfig } from '../app/config.js';
-import type { ConfigRuntimeRecoveryGate } from './runtimeRecoveryGate.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from './runtimeRecoveryGate.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
 const LOCK_STALE_MS = 120_000;
@@ -138,7 +141,10 @@ export class AdminConfigMutationService {
       recoveryGate?: ConfigRuntimeRecoveryGate;
       now?: () => Date;
       /** durable commit 完成后发布实际落盘文本对应的运行时配置身份。 */
-      onCommitted?: (candidateText: string) => void | Promise<void>;
+      onCommitted?: (
+        candidateText: string,
+        recoveryPermit?: ConfigRuntimeRecoveryPermit,
+      ) => void | Promise<void>;
       /** runtime 与磁盘身份不再可信时，同步撤销当前身份 observation。 */
       onRuntimeDirty?: () => void;
     },
@@ -204,6 +210,8 @@ export class AdminConfigMutationService {
           backup: basename(backupPath),
         });
       } catch (error) {
+        // candidate 已可能污染执行切面；在任何异步磁盘恢复/rollback 前同步关门。
+        this.markRuntimeDirty();
         const currentDiskText = await readFile(this.options.configPath, 'utf8').catch(() => undefined);
         const candidateStillOwned = currentDiskText === candidateText;
         let recoveryError: unknown;
@@ -227,35 +235,57 @@ export class AdminConfigMutationService {
           rollbackError = runtimeRollbackError;
         }
 
-        if (diskRestored && rollbackError === undefined) {
+        const changedPaths = [...new Set(input.changedPaths)].sort();
+        let postRollbackStarted = false;
+        if (diskRestored && rollbackError === undefined && recoveryError === undefined) {
+          postRollbackStarted = true;
+          let permit: ConfigRuntimeRecoveryPermit | undefined;
+          let rollbackCompleted = false;
           try {
-            await this.options.onCommitted?.(currentText);
-          } catch (publishError) {
-            recoveryError = publishError;
+            permit = this.options.recoveryGate?.beginRecoveryCompletion();
+            await this.options.onCommitted?.(currentText, permit);
+            await this.appendAudit({
+              at: (this.options.now?.() ?? new Date()).toISOString(),
+              actor: input.actor,
+              environment: this.options.environment,
+              processRole: this.options.processRole,
+              changedPaths,
+              beforeFingerprint,
+              afterFingerprint: effectiveConfigFingerprint,
+              result: 'rolled_back',
+              backup: basename(backupPath),
+              error: auditError(error),
+              originalApplyError: auditError(error),
+              candidateStillOwned,
+              diskRestored,
+            });
+            if (permit) this.options.recoveryGate?.completeRecovery(permit);
+            rollbackCompleted = true;
+          } catch (postRollbackError) {
+            this.options.recoveryGate?.abortRecovery(permit);
+            recoveryError = postRollbackError;
           }
+          if (rollbackCompleted) throw error;
         }
 
-        const changedPaths = [...new Set(input.changedPaths)].sort();
-        const rollbackFailed = rollbackError !== undefined || recoveryError !== undefined;
-        if (rollbackFailed) {
-          this.runtimeRecovery = {
-            actor: input.actor,
-            changedPaths,
-            beforeFingerprint,
-            afterFingerprint: effectiveConfigFingerprint,
-            backup: basename(backupPath),
-            targetText: currentText,
-            targetConfig: previousConfig,
-            failedConfig: config,
-            applyRuntime: input.applyRuntime,
-            originalApplyError: error,
-            rollbackError,
-            recoveryError,
-            candidateStillOwned,
-            diskRestored,
-          };
-          this.markRuntimeDirty();
-        }
+        this.runtimeRecovery = {
+          actor: input.actor,
+          changedPaths,
+          beforeFingerprint,
+          afterFingerprint: effectiveConfigFingerprint,
+          backup: basename(backupPath),
+          targetText: currentText,
+          targetConfig: previousConfig,
+          failedConfig: config,
+          applyRuntime: input.applyRuntime,
+          originalApplyError: error,
+          rollbackError,
+          recoveryError,
+          candidateStillOwned,
+          diskRestored,
+        };
+        // trusted publish/audit 若在完成前失败，必须再次同步撤销 observation。
+        if (postRollbackStarted) this.markRuntimeDirty();
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: input.actor,
@@ -264,7 +294,7 @@ export class AdminConfigMutationService {
           changedPaths,
           beforeFingerprint,
           afterFingerprint: effectiveConfigFingerprint,
-          result: rollbackFailed ? 'rollback_failed' : 'rolled_back',
+          result: 'rollback_failed',
           backup: basename(backupPath),
           error: auditError(error),
           originalApplyError: auditError(error),
@@ -273,16 +303,13 @@ export class AdminConfigMutationService {
           candidateStillOwned,
           diskRestored,
         }).catch(() => undefined);
-        if (rollbackFailed) {
-          throw new ConfigRuntimeRecoveryError(
-            error,
-            rollbackError,
-            recoveryError,
-            candidateStillOwned,
-            diskRestored,
-          );
-        }
-        throw error;
+        throw new ConfigRuntimeRecoveryError(
+          error,
+          rollbackError,
+          recoveryError,
+          candidateStillOwned,
+          diskRestored,
+        );
       }
       // 身份/观察面发布失败时响应 fail closed，但 durable/runtime commit 保持，供后续强制刷新收敛。
       await input.onCommitted?.(candidateText);
@@ -308,11 +335,12 @@ export class AdminConfigMutationService {
     }
 
     if (recoveryError === undefined) {
+      let permit: ConfigRuntimeRecoveryPermit | undefined;
       try {
-        // 必须复用失败 mutation 原有 recipe，先恢复执行切面，再开放发布路径。
+        // 必须复用失败 mutation 原有 recipe；gate 在 publish 与 audit 完成前始终保持 dirty。
         await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
-        this.options.recoveryGate?.clearDirty();
-        await this.options.onCommitted?.(recovery.targetText);
+        permit = this.options.recoveryGate?.beginRecoveryCompletion();
+        await this.options.onCommitted?.(recovery.targetText, permit);
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
           actor: triggerActor,
@@ -330,14 +358,16 @@ export class AdminConfigMutationService {
           candidateStillOwned: recovery.candidateStillOwned,
           diskRestored: recovery.diskRestored,
         });
+        if (permit) this.options.recoveryGate?.completeRecovery(permit);
         this.runtimeRecovery = undefined;
         return;
       } catch (error) {
+        this.options.recoveryGate?.abortRecovery(permit);
         recoveryError = error;
       }
     }
 
-    // applyRuntime 失败时 gate 本就 dirty；发布或 audit 后续失败时必须立即重新关闭。
+    // applyRuntime、trusted publish 或 audit 任一步失败都保持门关闭并撤销 observation。
     this.markRuntimeDirty();
     await this.appendAudit({
       at: (this.options.now?.() ?? new Date()).toISOString(),

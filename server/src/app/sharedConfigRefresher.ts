@@ -17,7 +17,10 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { parse as parseJsonc } from 'jsonc-parser';
-import type { ConfigRuntimeRecoveryGate } from '../config/runtimeRecoveryGate.js';
+import type {
+  ConfigRuntimeRecoveryGate,
+  ConfigRuntimeRecoveryPermit,
+} from '../config/runtimeRecoveryGate.js';
 import type { AppConfig } from './config.js';
 import { getAppConfigPath, parseAppConfig } from './config.js';
 import type { TenantStore } from '../data/tenants/store.js';
@@ -146,7 +149,10 @@ export interface SharedConfigRefresher {
    */
   refreshIfChanged(force?: boolean): boolean | Promise<boolean>;
   /** 管理端提交后仅在稳定磁盘快照仍是本次精确文本时推进指纹。 */
-  acknowledgeConfigApplied(expectedConfigText: string): boolean;
+  acknowledgeConfigApplied(
+    expectedConfigText: string,
+    recoveryPermit?: ConfigRuntimeRecoveryPermit,
+  ): boolean;
   /** 供测试与诊断：返回已应用的磁盘指纹（不包含待修复的脏执行切面）。 */
   getAppliedStamps(): { config?: FileStamp; tenants?: FileStamp };
 }
@@ -653,8 +659,11 @@ export function createSharedConfigRefresher(params: {
         ? configFresh.then((fresh) => fresh && tenantsFresh)
         : configFresh && tenantsFresh;
     },
-    acknowledgeConfigApplied(expectedConfigText) {
-      if (recoveryGate?.isDirty()) {
+    acknowledgeConfigApplied(expectedConfigText, recoveryPermit) {
+      if (
+        recoveryGate?.isDirty()
+        && !recoveryGate.allowsRecoveryCompletion(recoveryPermit)
+      ) {
         configRefreshNeedsRetry = true;
         return false;
       }

@@ -259,6 +259,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
             parentSessionId: persisted!.sessionId,
           },
         });
+        await runs.markStatus(childRunId, 'running', 'subagent_started');
         await params.onChildRunCreated?.({ childSessionId, childRunId, model: 'test-model' });
         await params.beforeChildSideEffects?.({ childSessionId, childRunId });
         const active = await pool.query(

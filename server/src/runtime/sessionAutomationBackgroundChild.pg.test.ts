@@ -261,6 +261,22 @@ describePg('automation background child recovery on PostgreSQL', () => {
           },
         });
         await runs.markStatus(childRunId, 'running', 'subagent_started');
+        const authority = await pool.query(
+          `SELECT a.status AS automation_status,a.active_run_id,e.state AS execution_state,
+                  parent_run.status AS parent_status,parent_run.session_id AS parent_session_id,
+                  child_run.status AS child_status,child_run.session_id AS child_session_id
+             FROM ${store.tables.automations} a
+             JOIN ${store.tables.executions} e ON e.tenant_id=a.tenant_id AND e.automation_id=a.automation_id
+             LEFT JOIN ${runs.runsTable} parent_run ON parent_run.tenant_id=a.tenant_id AND parent_run.run_id=$3
+             LEFT JOIN ${runs.runsTable} child_run ON child_run.tenant_id=a.tenant_id AND child_run.run_id=$4
+            WHERE a.tenant_id=$1 AND a.automation_id=$2`,
+          [tenantId, setup.automationId, persisted!.runId, childRunId],
+        );
+        expect(authority.rows[0]).toMatchObject({
+          automation_status: 'active', active_run_id: setup.dispatch.targetRunId, execution_state: 'running',
+          parent_status: 'running', parent_session_id: persisted!.sessionId,
+          child_status: 'running', child_session_id: childSessionId,
+        });
         await params.onChildRunCreated?.({ childSessionId, childRunId, model: 'test-model' });
         await params.beforeChildSideEffects?.({ childSessionId, childRunId });
         const active = await pool.query(

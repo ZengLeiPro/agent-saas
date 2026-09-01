@@ -556,7 +556,7 @@ export async function disablePgRunStoreLegacyWriterCapability(
     await client.query(ddl.rows[0]!.sql);
     await client.query(`UPDATE ${store.runsTable}_writer_capabilities
       SET enabled=false,disabled_at=clock_timestamp() WHERE db_role=$1`, [dbRole]);
-    await client.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+    await client.query(`SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity
       WHERE usename=$1 AND pid<>pg_backend_pid()`, [dbRole]);
     const active = await client.query<{ count: number }>(
       `SELECT COUNT(*)::int count FROM pg_stat_activity WHERE usename=$1`, [dbRole]);

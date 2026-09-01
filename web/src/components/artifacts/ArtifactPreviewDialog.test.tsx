@@ -4,7 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import { ArtifactPreviewDialog } from "./ArtifactPreviewDialog";
 
 vi.mock("@/lib/artifactShareApi", () => ({
-  getArtifactContentUrl: vi.fn(() => new Promise<string>(() => {})),
+  ArtifactReadError: class ArtifactReadError extends Error {},
+  getArtifactReadGrant: vi.fn(() => new Promise(() => {})),
+}));
+
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => ({ identity: { tenantId: "kaiyan", userId: "u1", generation: 1 } }),
 }));
 
 vi.mock("@/components/artifacts/ArtifactContentViewer", () => ({

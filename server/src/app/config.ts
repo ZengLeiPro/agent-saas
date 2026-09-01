@@ -666,7 +666,7 @@ const auditConfigSchema = z.object({
 
 const artifactBaseConfigSchema = z.object({
   signedUrlSecret: z.string().min(16).optional(),
-  readUrlTtlSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+  readUrlTtlSeconds: z.number().int().positive().max(5 * 60).optional(),
   maxBlobBytes: z.number().int().positive().optional(),
   retentionDays: z.number().int().positive().optional(),
   gcIntervalMs: z.number().int().positive().optional(),

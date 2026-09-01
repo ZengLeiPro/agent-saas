@@ -432,7 +432,7 @@
   //   "endpoint": "https://oss-cn-shenzhen.aliyuncs.com",
   //   "prefix": "agent-saas/artifacts",
   //   "signedUrlSecret": "<至少 16 字符，生产应固定>",
-  //   "readUrlTtlSeconds": 900,
+  //   "readUrlTtlSeconds": 60, // 最大 300 秒；过期后客户端仅自动重授权一次
   //   "maxBlobBytes": 104857600,
   //   "retentionDays": 90,
   //   "gcIntervalMs": 86400000

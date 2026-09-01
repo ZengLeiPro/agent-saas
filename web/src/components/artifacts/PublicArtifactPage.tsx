@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { CircleAlert, Download, FileBox, Loader2 } from "lucide-react";
 
-import { ArtifactContentViewer } from "@/components/artifacts/ArtifactContentViewer";
 import { Button } from "@/components/ui/button";
 import { formatFileSize } from "@/components/types";
 import { fetchPublicArtifactShare, type PublicArtifactShareResponse } from "@/lib/artifactShareApi";
@@ -66,8 +65,10 @@ export function PublicArtifactPage({ token }: PublicArtifactPageProps) {
           ) : null}
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        <ArtifactContentViewer contentUrl={contentUrl} fileName={artifact.fileName} mimeType={artifact.mimeType} allowDownload={allowDownload} className="h-full" />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-hidden px-6 text-center">
+        <CircleAlert className="size-9 text-amber-500" />
+        <h2 className="font-medium">公开分享内容不在线执行</h2>
+        <p className="max-w-lg text-sm text-muted-foreground">为防止 HTML、SVG、脚本或伪装格式执行，此公开 Artifact 仅允许按分享策略下载。</p>
       </div>
       <footer className="shrink-0 border-t bg-card px-4 py-2 text-center text-[11px] text-muted-foreground">公开只读 Artifact · 请谨慎处理分享内容</footer>
     </main>

@@ -84,6 +84,7 @@ import { MessageErrorBoundary } from '../ErrorBoundary';
 import { ImageLightbox } from './ImageLightbox';
 import { TextSelectModal } from './TextSelectModal';
 import { createMarkdownStyles } from './markdownStyles';
+import { fetchMobileArtifactGrant, mobileArtifactWarning, selectMobileArtifactViewer } from '../../lib/artifactViewAdapter';
 import { createMarkdownRules } from './markdownRules';
 import { hapticLight } from '../../lib/haptics';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
@@ -1535,15 +1536,25 @@ function FileDownloadCard({ message, onPreviewMd }: {
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     try {
-      // Artifact 走签名 URL 直下：/api/artifacts/:id/read-url 拿 15 min URL,
-      // 交给 expo-sharing 打开分享面板（原生下载/保存/发送）。
+      // Artifact only accepts artifactId. The server owns MIME+magic policy and returns a
+      // short, principal-bound grant. Mobile never executes artifact HTML in a WebView.
       if (artifactId) {
-        const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await res.json() as { url?: string };
-        if (!body.url) throw new Error('signed url missing');
+        let grant = await fetchMobileArtifactGrant(artifactId);
+        if (selectMobileArtifactViewer(grant) === 'download-only') {
+          const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
+            '确认下载此文件？',
+            mobileArtifactWarning(grant),
+            [
+              { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+              { text: '仍要下载', style: 'destructive', onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          ));
+          if (!confirmed) return;
+          grant = await fetchMobileArtifactGrant(artifactId, true);
+        }
         const { openOrShareUrl } = await import('../../utils/openOrShareFile');
-        await openOrShareUrl(body.url, message.fileName);
+        await openOrShareUrl(grant.readUrl, grant.descriptor.name);
         return;
       }
       const { openOrShareFile } = await import('../../utils/openOrShareFile');
@@ -1552,8 +1563,10 @@ function FileDownloadCard({ message, onPreviewMd }: {
       );
       await openOrShareFile(uri);
     } catch (err: any) {
-      console.error('File download/share failed:', err, 'filePath:', message.filePath);
-      Alert.alert('下载失败', `${err?.message || String(err)}\n\npath: ${message.filePath}`);
+      // Never emit signed URLs/tokens to console, analytics, crash logs or user-visible errors.
+      const messageText = artifactId ? 'Artifact 暂时无法安全打开，请稍后重试' : (err?.message || String(err));
+      if (!artifactId) console.error('File download/share failed for legacy workspace file');
+      Alert.alert('下载失败', messageText);
     } finally {
       setDownloading(false);
     }

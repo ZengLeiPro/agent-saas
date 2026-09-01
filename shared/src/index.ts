@@ -1,5 +1,29 @@
 export * from './types/correlation';
 
+// M50-02 canonical Artifact safe-view descriptor, policy and cross-platform viewer state.
+export {
+  ARTIFACT_TEXT_MAX_BYTES,
+  ARTIFACT_VIEW_POLICY_VERSION,
+  artifactViewerError,
+  createArtifactViewerState,
+  evaluateArtifactPolicy,
+  isArtifactGrantExpired,
+  parseArtifactReadGrant,
+  reduceArtifactViewer,
+} from './lib/artifactViewModel';
+export type {
+  ArtifactPolicyInput,
+  ArtifactPolicyResult,
+  ArtifactReadGrant,
+  ArtifactViewKind,
+  ArtifactViewModel,
+  ArtifactViewerError,
+  ArtifactViewerErrorCode,
+  ArtifactViewerEvent,
+  ArtifactViewerState,
+  ArtifactViewPosition,
+} from './lib/artifactViewModel';
+
 export {
   AGENT_TARGET_BINDING_VERSION,
   NO_AVAILABLE_AGENT_TARGET,

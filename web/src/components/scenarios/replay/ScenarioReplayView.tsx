@@ -10,6 +10,7 @@ import {
 } from "@agent/shared";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FloatingPanel, FLOATING_PANEL_SURFACE } from "@/components/ui/floating-panel";
 import { MessageList } from "@/components/MessageList";
 import { ResizablePanelDivider } from "@/components/ResizablePanelDivider";
 import { FilePreviewProvider } from "@/contexts/FilePreviewContext";
@@ -31,10 +32,6 @@ const UndoIcon = ActionIcons.undo;
 /** 模拟真实模型流式输出：短回答逐字，长回答按小块输出，单条约 1～3 秒。 */
 const DEFAULT_TYPEWRITER_INTERVAL_MS = 24;
 const TYPEWRITER_TARGET_TICKS = 120;
-
-// 与正式会话的主区域、文件预览和系统面板保持同一档浮动卡片表面。
-const REPLAY_FLOATING_PANEL_SURFACE =
-  "bg-card ring-1 ring-border/60 shadow-[0_2px_6px_rgba(15,23,42,0.05),0_10px_28px_-10px_rgba(15,23,42,0.10)]";
 
 function splitText(content: string): string[] {
   return Array.from(content);
@@ -364,7 +361,7 @@ export function ScenarioReplayView({
         data-scenario-replay-conversation
         className={cn(
           "flex min-h-0 flex-col overflow-hidden rounded-xl",
-          REPLAY_FLOATING_PANEL_SURFACE,
+          FLOATING_PANEL_SURFACE,
           rightOpen ? "min-w-0" : "w-full",
         )}
         style={rightOpen ? {
@@ -487,12 +484,9 @@ export function ScenarioReplayView({
               onDoubleClick={onDividerDoubleClick}
             />
           </div>
-          <div
+          <FloatingPanel
             data-scenario-replay-panel
-            className={cn(
-              "flex min-h-0 shrink-0 flex-col overflow-hidden rounded-xl",
-              REPLAY_FLOATING_PANEL_SURFACE,
-            )}
+            className="flex min-h-0 shrink-0 flex-col"
             style={{ flexBasis: `calc(${splitRatio * 100}% - 5px)`, flexGrow: 0, flexShrink: 0 }}
           >
               {rightPanelKind === "business-step" ? (
@@ -513,7 +507,7 @@ export function ScenarioReplayView({
               {rightPanelKind === "system" && snapshot ? (
                 <SystemPanel snapshot={snapshot} pulse={pulse} onSelectView={selectView} className="min-h-0 flex-1" />
               ) : null}
-            </div>
+            </FloatingPanel>
           </>
         )}
     </div>

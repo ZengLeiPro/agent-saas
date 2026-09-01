@@ -782,6 +782,14 @@ describe("useChatAppState queue delivery lifecycle", () => {
     harness.session.sessionId = "session-permission";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (payload as { action?: string }).action === "resume")).toBe(true));
+    const resume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    act(() => emit({ type: "active_stream", sessionId: "session-permission", active: true, status: "running", streamId: "stream-permission", runId: "run-permission", requestId: resume?.requestId }));
+    act(() => emit({ type: "pending_interactions", interactions: [{
+      type: "permission_request", interactionId: "permission-1", version: 1, toolName: "Shell", toolInput: { command: "echo test" },
+    }] }));
 
     const pending = result.current.handlePermissionResponse("permission-1", true);
     await waitFor(() => expect(harness.sends).toHaveBeenCalledWith(expect.objectContaining({

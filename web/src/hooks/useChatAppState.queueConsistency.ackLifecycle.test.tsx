@@ -130,6 +130,14 @@ function interactionPayloads(): Array<Record<string, unknown>> {
     .filter((payload) => payload.action === "respond");
 }
 
+async function settleInitialResume(sessionId: string): Promise<void> {
+  await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (payload as { action?: string }).action === "resume")).toBe(true));
+  const resume = harness.sends.mock.calls
+    .map(([payload]) => payload as { action?: string; requestId?: string })
+    .find((payload) => payload.action === "resume");
+  act(() => emit({ type: "active_stream", sessionId, active: true, status: "running", streamId: `stream-${sessionId}`, runId: `run-${sessionId}`, requestId: resume?.requestId }));
+}
+
 beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
@@ -157,6 +165,7 @@ describe("useChatAppState ACK lifecycle", () => {
     harness.session.sessionId = "session-remote";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-remote");
     const answers = { "Choose a path": "Continue" };
 
     act(() => emit({
@@ -170,6 +179,7 @@ describe("useChatAppState ACK lifecycle", () => {
           options: [{ label: "Continue", description: "Proceed" }],
           multiSelect: false,
         }],
+        version: 1,
       }],
     }));
 
@@ -199,11 +209,13 @@ describe("useChatAppState ACK lifecycle", () => {
     harness.session.sessionId = "session-remote";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-remote");
     act(() => emit({
       type: "pending_interactions",
       interactions: [{
         type: "permission_request",
         interactionId: "approval-canonical",
+        version: 1,
         toolName: "Shell",
         toolInput: { command: "echo test" },
       }],

@@ -90,20 +90,31 @@ async function isRealDirectory(path: string): Promise<boolean> {
   }
 }
 
-async function listDirectoryIds(root: string): Promise<Set<string>> {
+interface SkillSourceInventory {
+  validIds: Set<string>;
+  invalidIds: string[];
+}
+
+async function inspectSkillSourceDirectories(root: string): Promise<SkillSourceInventory> {
   try {
     const entries = await readdir(root, { withFileTypes: true });
-    return new Set(
-      entries
-        .filter((entry) => (
-          entry.isDirectory()
-          && !entry.name.startsWith('.')
-          && !entry.name.startsWith('_')
-        ))
-        .map((entry) => entry.name),
-    );
+    const candidates = entries.filter((entry) => (
+      entry.isDirectory()
+      && !entry.name.startsWith('.')
+      && !entry.name.startsWith('_')
+    ));
+    const validIds = new Set<string>();
+    const invalidIds: string[] = [];
+    for (const entry of candidates) {
+      const skillEntries = await readdir(join(root, entry.name), { withFileTypes: true })
+        .catch(() => []);
+      const skillDoc = skillEntries.find((candidate) => candidate.name === 'SKILL.md');
+      if (skillDoc?.isFile()) validIds.add(entry.name);
+      else invalidIds.push(entry.name);
+    }
+    return { validIds, invalidIds };
   } catch {
-    return new Set();
+    return { validIds: new Set(), invalidIds: [] };
   }
 }
 
@@ -127,7 +138,10 @@ export class SkillWorkspaceMaterializer {
   private readonly logger = serverLogger.child('SkillMaterializer');
   private sourceDigestCacheVersion = -1;
   private readonly sourceDigestCache = new Map<string, string>();
+  private sourceInventoryCacheVersion = -1;
+  private readonly sourceInventoryCache = new Map<string, Set<string>>();
   private readonly validatedConfigVersions = new Map<string, number>();
+  private readonly reportedInvalidSkillSources = new Set<string>();
 
   constructor(private readonly options: SkillMaterializerOptions) {}
 
@@ -191,6 +205,8 @@ export class SkillWorkspaceMaterializer {
     if (input.forceSourceRefresh) {
       this.sourceDigestCacheVersion = -1;
       this.sourceDigestCache.clear();
+      this.sourceInventoryCacheVersion = -1;
+      this.sourceInventoryCache.clear();
     }
     const skillsDir = agentSkillsDir(userCwd);
     const runtimeDir = agentPath(userCwd, 'runtime');
@@ -232,7 +248,9 @@ export class SkillWorkspaceMaterializer {
           tenantsRootDir: this.options.tenantSkillsRootDir ?? join(this.options.sharedDir, 'tenants'),
           currentTenantId: user.tenantId,
           userId: user.id,
-          poolSkillIds: await listDirectoryIds(resolveAgentPath(this.options.sharedDir, 'skills-pool')),
+          poolSkillIds: await this.listSkillSourceIds(
+            resolveAgentPath(this.options.sharedDir, 'skills-pool'),
+          ),
           resolveTenantSkillHistoricalProvenance: this.options.resolveTenantSkillHistoricalProvenance,
           resolveUserPersonalSkillIds: this.options.resolveUserPersonalSkillIds
             ? () => this.options.resolveUserPersonalSkillIds!(user)
@@ -326,7 +344,7 @@ export class SkillWorkspaceMaterializer {
     requiredSkillIds: readonly string[],
   ): Promise<DesiredSkill[]> {
     const poolDir = resolveAgentPath(this.options.sharedDir, 'skills-pool');
-    const poolIds = await listDirectoryIds(poolDir);
+    const poolIds = await this.listSkillSourceIds(poolDir);
     if (poolIds.size === 0) {
       throw new Error(`技能池为空或不存在：${poolDir}`);
     }
@@ -337,7 +355,7 @@ export class SkillWorkspaceMaterializer {
       tenantDir = this.options.tenantSkillsRootDir
         ? resolveTenantSkillsDirFromRoot(this.options.tenantSkillsRootDir, user.tenantId)
         : resolveTenantSkillsDir(this.options.sharedDir, user.tenantId);
-      tenantIds = await listDirectoryIds(tenantDir);
+      tenantIds = await this.listSkillSourceIds(tenantDir);
       for (const poolId of poolIds) tenantIds.delete(poolId);
     }
 
@@ -368,6 +386,30 @@ export class SkillWorkspaceMaterializer {
       });
     }
     return desired;
+  }
+
+  private async listSkillSourceIds(root: string): Promise<Set<string>> {
+    const configVersion = this.options.skillConfigStore.getConfigVersion();
+    if (configVersion !== this.sourceInventoryCacheVersion) {
+      this.sourceInventoryCacheVersion = configVersion;
+      this.sourceInventoryCache.clear();
+    }
+    const cached = this.sourceInventoryCache.get(root);
+    if (cached) return new Set(cached);
+
+    const inventory = await inspectSkillSourceDirectories(root);
+    if (inventory.invalidIds.length > 0) {
+      const invalidIds = inventory.invalidIds.sort();
+      const reportKey = `${root}\0${invalidIds.join('\0')}`;
+      if (!this.reportedInvalidSkillSources.has(reportKey)) {
+        this.reportedInvalidSkillSources.add(reportKey);
+        this.logger.warn(
+          `忽略缺少有效 SKILL.md 的技能源目录：root=${root} skills=${invalidIds.join(',')}`,
+        );
+      }
+    }
+    this.sourceInventoryCache.set(root, inventory.validIds);
+    return new Set(inventory.validIds);
   }
 
   private async resolveKnownManagedSkillIds(

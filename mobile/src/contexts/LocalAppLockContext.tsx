@@ -4,6 +4,7 @@ import {
   DEFAULT_LOCAL_LOCK_BACKGROUND_MS,
   INITIAL_LOCAL_APP_LOCK_STATE,
   authFetchForLocalUnlockValidation,
+  fenceAuthSideEffects,
   localAppLockReducer,
   setSensitiveTransportAllowed,
   wsClient,
@@ -43,6 +44,7 @@ export function LocalAppLockProvider({ children }: { children: React.ReactNode }
 
   const applyTransportGate = useCallback((allowed: boolean) => {
     setSensitiveTransportAllowed(allowed);
+    if (!allowed) void fenceAuthSideEffects();
     if (allowed) wsClient.unfreezeSending();
     else {
       wsClient.freezeSending();

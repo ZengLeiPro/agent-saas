@@ -33,7 +33,7 @@ import { textContentCache } from '../services/textContentCache';
 import { clearVoiceMediaTempCache } from '../services/voiceMediaTempCache';
 import { clearFileListCache } from '../hooks/useFileList';
 import { cancelNativeOAuthTransaction } from '../services/nativeOAuthHandoff';
-import { clearGroupsCache, getPlatform, setSensitiveTransportAllowed } from '@agent/shared';
+import { clearGroupsCache, fenceAuthSideEffects, getPlatform, setSensitiveTransportAllowed } from '@agent/shared';
 import { clearAllLocalAppLockPolicies } from '../platform/localAppLockStorage';
 
 const CACHED_USER_KEY = 'agentChat.cachedUser';
@@ -106,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }),
     {
       fenceGeneration: async () => {
+        await fenceAuthSideEffects();
         setSensitiveTransportAllowed(false);
         wsClient.freezeSending();
         if (identityRef.current.identity) await transitionIdentity({ type: 'logout' });
@@ -196,7 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Journal recovery precedes every cached-token or reconnect decision.
         await lifecycle.resume();
         await lifecycle.failClosedIncompleteLogin({
-          fenceUntilCommit: () => { setSensitiveTransportAllowed(false); wsClient.freezeSending(); },
+          fenceUntilCommit: async () => { await fenceAuthSideEffects(); setSensitiveTransportAllowed(false); wsClient.freezeSending(); },
           persistTokenAndBinding: () => undefined,
           installAuthenticatedState: () => undefined,
           commitConnections: () => undefined,
@@ -323,6 +324,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const switchingOwner = !!current && (current.userId !== principal.userId || current.tenantId !== principal.tenantId);
     await lifecycle.login({ authEpoch: data.authEpoch, generation: data.generation }, {
       fenceUntilCommit: async () => {
+        await fenceAuthSideEffects();
         setSensitiveTransportAllowed(false);
         wsClient.freezeSending();
         if (switchingOwner) {

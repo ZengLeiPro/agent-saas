@@ -359,6 +359,7 @@ export type {
 
 export {
   authFetchForLocalUnlockValidation,
+  fenceAuthSideEffects,
   isSensitiveTransportAllowed,
   setSensitiveTransportAllowed,
 } from './lib/authFetch';

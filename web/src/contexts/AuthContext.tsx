@@ -9,6 +9,7 @@ import {
   INITIAL_IDENTITY_STATE,
   clearGroupsCache,
   createStorageJournalStore,
+  fenceAuthSideEffects,
   identityReducer,
   isDebugModeAvailable,
   resetChatStore,
@@ -163,7 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       removeItem: (key) => localStorage.removeItem(key),
     }),
     {
-      fenceGeneration: () => {
+      fenceGeneration: async () => {
+        await fenceAuthSideEffects();
         wsClient.freezeSending();
         if (identityRef.current.identity) transitionIdentity({ type: 'logout' });
         setUser(null);
@@ -259,7 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       await lifecycle.resume();
       await lifecycle.failClosedIncompleteLogin({
-        fenceUntilCommit: () => wsClient.freezeSending(),
+        fenceUntilCommit: async () => { await fenceAuthSideEffects(); wsClient.freezeSending(); },
         persistTokenAndBinding: () => undefined,
         installAuthenticatedState: () => undefined,
         commitConnections: () => undefined,
@@ -305,7 +307,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const nextUser = normalizeAuthUser(data.user);
     const isSwitching = user !== null && getAccountKey(user) !== getAccountKey(nextUser);
     await lifecycle.login({ authEpoch: data.authEpoch, generation: data.generation }, {
-      fenceUntilCommit: () => {
+      fenceUntilCommit: async () => {
+        await fenceAuthSideEffects();
         wsClient.freezeSending();
         if (isSwitching) clearAccountScopedState();
       },

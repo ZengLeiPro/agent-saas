@@ -4,13 +4,32 @@ import { AUTH_SESSION_KEY } from './authLifecycle';
 
 let onUnauthorized: (() => void) | null = null;
 let sensitiveTransportAllowed = true;
-let sensitiveTransportGeneration = 0;
+let authSideEffectGeneration = 0;
+let credentialMutationTail: Promise<void> = Promise.resolve();
+
+function authIdentityChanged(): Error {
+  return new Error('AUTH_IDENTITY_CHANGED');
+}
+
+function isAuthIdentityChanged(error: unknown): boolean {
+  return error instanceof Error && error.message === 'AUTH_IDENTITY_CHANGED';
+}
+
+/**
+ * Invalidates every earlier HTTP side effect synchronously, then waits until an
+ * already-started credential mutation has either committed or failed closed.
+ * Auth lifecycle transitions must await this before writing the next identity.
+ */
+export function fenceAuthSideEffects(): Promise<void> {
+  authSideEffectGeneration += 1;
+  return credentialMutationTail;
+}
 
 /** Mobile M30-02 gate. Locked/offline-shell modes fail closed before reading tokens. */
 export function setSensitiveTransportAllowed(allowed: boolean): void {
   if (sensitiveTransportAllowed !== allowed) {
     sensitiveTransportAllowed = allowed;
-    sensitiveTransportGeneration += 1;
+    authSideEffectGeneration += 1;
   }
 }
 
@@ -31,6 +50,95 @@ function requestUrl(input: RequestInfo | URL): string {
   return String(input);
 }
 
+function serializeCredentialMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  const result = credentialMutationTail.then(mutation, mutation);
+  credentialMutationTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function assertRequestIdentity(
+  platform: ReturnType<typeof getPlatform>,
+  requestGeneration: number,
+  token: string | null,
+  authBinding: string | null,
+): Promise<void> {
+  const [currentToken, currentAuthBinding] = await Promise.all([
+    platform.secureStorage.getItem(TOKEN_KEY),
+    platform.secureStorage.getItem(AUTH_SESSION_KEY),
+  ]);
+  if (
+    requestGeneration !== authSideEffectGeneration
+    || currentToken !== token
+    || currentAuthBinding !== authBinding
+  ) {
+    throw authIdentityChanged();
+  }
+}
+
+async function clearStaleCredentialWrite(
+  platform: ReturnType<typeof getPlatform>,
+  refreshToken: string,
+  previousBinding: string | null,
+  nextBinding: string | null,
+): Promise<void> {
+  const [currentToken, currentBinding] = await Promise.all([
+    platform.secureStorage.getItem(TOKEN_KEY),
+    platform.secureStorage.getItem(AUTH_SESSION_KEY),
+  ]);
+  const removals: Promise<void>[] = [];
+  if (currentToken === refreshToken) {
+    removals.push(Promise.resolve(platform.secureStorage.removeItem(TOKEN_KEY)));
+  }
+  if (currentBinding === previousBinding || (nextBinding !== null && currentBinding === nextBinding)) {
+    removals.push(Promise.resolve(platform.secureStorage.removeItem(AUTH_SESSION_KEY)));
+  }
+  await Promise.allSettled(removals);
+}
+
+async function persistRefreshIfCurrent(input: {
+  platform: ReturnType<typeof getPlatform>;
+  requestGeneration: number;
+  token: string | null;
+  authBinding: string | null;
+  refreshToken: string;
+  nextBinding: string | null;
+}): Promise<void> {
+  const {
+    platform,
+    requestGeneration,
+    token,
+    authBinding,
+    refreshToken,
+    nextBinding,
+  } = input;
+  await serializeCredentialMutation(async () => {
+    await assertRequestIdentity(platform, requestGeneration, token, authBinding);
+    try {
+      await platform.secureStorage.setItem(TOKEN_KEY, refreshToken);
+      if (requestGeneration !== authSideEffectGeneration) {
+        await clearStaleCredentialWrite(platform, refreshToken, authBinding, nextBinding);
+        throw authIdentityChanged();
+      }
+      if (nextBinding !== null) {
+        await platform.secureStorage.setItem(AUTH_SESSION_KEY, nextBinding);
+        if (requestGeneration !== authSideEffectGeneration) {
+          await clearStaleCredentialWrite(platform, refreshToken, authBinding, nextBinding);
+          throw authIdentityChanged();
+        }
+      }
+    } catch (error) {
+      if (isAuthIdentityChanged(error)) throw error;
+      await Promise.allSettled([
+        platform.secureStorage.removeItem(TOKEN_KEY),
+        platform.secureStorage.removeItem(AUTH_SESSION_KEY),
+      ]);
+      console.warn('[authFetch] Failed to persist refreshed auth generation:', error);
+      onUnauthorized?.();
+      throw new Error('AUTH_BINDING_PERSIST_FAILED');
+    }
+  });
+}
+
 async function guardedAuthFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -41,70 +149,51 @@ async function guardedAuthFetch(
   }
   const platform = getPlatform();
 
-  // Prepend baseUrl for relative paths (RN needs absolute URLs), then enforce
-  // the final transport policy before even reading a credential.
   let url: RequestInfo | URL = input;
   if (typeof input === 'string' && input.startsWith('/')) {
     url = platform.platformConfig.getBaseUrl() + input;
   }
   platform.platformConfig.assertTrustedUrl?.(requestUrl(url), 'http');
 
-  const requestTransportGeneration = sensitiveTransportGeneration;
+  const requestGeneration = authSideEffectGeneration;
   const [token, authBinding] = await Promise.all([
     platform.secureStorage.getItem(TOKEN_KEY),
     platform.secureStorage.getItem(AUTH_SESSION_KEY),
   ]);
-  if (requestTransportGeneration !== sensitiveTransportGeneration) {
-    throw new Error('AUTH_IDENTITY_CHANGED');
-  }
+  if (requestGeneration !== authSideEffectGeneration) throw authIdentityChanged();
   const headers = new Headers(init?.headers);
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
+  if (token) headers.set('Authorization', `Bearer ${token}`);
 
   const response = await fetch(url, { ...init, headers });
-  const [currentToken, currentAuthBinding] = await Promise.all([
-    platform.secureStorage.getItem(TOKEN_KEY),
-    platform.secureStorage.getItem(AUTH_SESSION_KEY),
-  ]);
-  if (
-    requestTransportGeneration !== sensitiveTransportGeneration
-    || currentToken !== token
-    || currentAuthBinding !== authBinding
-  ) {
-    throw new Error('AUTH_IDENTITY_CHANGED');
-  }
+  await assertRequestIdentity(platform, requestGeneration, token, authBinding);
   if (response.status === 401) {
     onUnauthorized?.();
   } else if (response.status === 403) {
     try {
-      const cloned = response.clone();
-      const body = await cloned.json() as { code?: string };
-      if (body.code === 'USER_DISABLED') {
-        onUnauthorized?.();
-      }
-    } catch { /* ignore parse errors */ }
+      const body = await response.clone().json() as { code?: string };
+      await assertRequestIdentity(platform, requestGeneration, token, authBinding);
+      if (body.code === 'USER_DISABLED') onUnauthorized?.();
+    } catch (error) {
+      if (isAuthIdentityChanged(error)) throw error;
+    }
   }
 
-  // Sliding expiry and N-1 upgrade are one fail-closed persistence boundary.
   const refreshToken = response.headers.get('X-Refresh-Token');
   const authEpoch = Number(response.headers.get('X-Auth-Epoch'));
   const generation = Number(response.headers.get('X-Auth-Generation'));
+  const nextBinding = Number.isSafeInteger(authEpoch) && authEpoch > 0
+    && Number.isSafeInteger(generation) && generation > 0
+    ? JSON.stringify({ authEpoch, generation })
+    : null;
   if (refreshToken && sensitiveTransportAllowed) {
-    try {
-      await platform.secureStorage.setItem(TOKEN_KEY, refreshToken);
-      if (Number.isSafeInteger(authEpoch) && authEpoch > 0 && Number.isSafeInteger(generation) && generation > 0) {
-        await platform.secureStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch, generation }));
-      }
-    } catch (error) {
-      await Promise.allSettled([
-        platform.secureStorage.removeItem(TOKEN_KEY),
-        platform.secureStorage.removeItem(AUTH_SESSION_KEY),
-      ]);
-      console.warn('[authFetch] Failed to persist refreshed auth generation:', error);
-      onUnauthorized?.();
-      throw new Error('AUTH_BINDING_PERSIST_FAILED');
-    }
+    await persistRefreshIfCurrent({
+      platform,
+      requestGeneration,
+      token,
+      authBinding,
+      refreshToken,
+      nextBinding,
+    });
   }
 
   return response;

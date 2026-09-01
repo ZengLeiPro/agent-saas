@@ -4,7 +4,13 @@ import { initPlatform } from '../platform/context';
 import type { PlatformDeps } from '../platform/types';
 import { TOKEN_KEY } from './constants';
 import { AUTH_SESSION_KEY } from './authLifecycle';
-import { authFetch, authFetchForLocalUnlockValidation, setOnUnauthorized, setSensitiveTransportAllowed } from './authFetch';
+import {
+  authFetch,
+  authFetchForLocalUnlockValidation,
+  fenceAuthSideEffects,
+  setOnUnauthorized,
+  setSensitiveTransportAllowed,
+} from './authFetch';
 
 // ── 构造一个最小可用的 platform，用真实的 initPlatform 注入 ──────────────
 // secureStorage 用 in-memory 版，platformConfig 可注入最终传输策略。
@@ -58,12 +64,14 @@ function makeResponse(opts: {
 }
 
 describe('authFetch', () => {
+  let platform: PlatformDeps;
   let store: Map<string, string>;
 
   beforeEach(() => {
     const built = makePlatform();
+    platform = built.platform;
     store = built.store;
-    initPlatform(built.platform);
+    initPlatform(platform);
     setOnUnauthorized(() => {}); // 复位回调，避免测试间串扰
     setSensitiveTransportAllowed(true);
     vi.restoreAllMocks();
@@ -134,6 +142,35 @@ describe('authFetch', () => {
     await authFetch('/api/foo');
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('M30-01 fences USER_DISABLED after delayed body parsing crosses an identity switch', async () => {
+    store.set(TOKEN_KEY, 'token-a');
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 1 }));
+    const onUnauthorized = vi.fn();
+    setOnUnauthorized(onUnauthorized);
+    let releaseBody!: (body: { code: string }) => void;
+    const body = new Promise<{ code: string }>((resolve) => { releaseBody = resolve; });
+    const json = vi.fn(() => body);
+    const response = {
+      status: 403,
+      headers: new Headers(),
+      clone: () => ({ json }),
+    } as unknown as Response;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+
+    const staleRequest = authFetch('/api/foo');
+    await vi.waitFor(() => expect(json).toHaveBeenCalledTimes(1));
+    setSensitiveTransportAllowed(false);
+    await fenceAuthSideEffects();
+    store.set(TOKEN_KEY, 'token-b');
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 2, generation: 2 }));
+    setSensitiveTransportAllowed(true);
+    releaseBody({ code: 'USER_DISABLED' });
+
+    await expect(staleRequest).rejects.toThrow('AUTH_IDENTITY_CHANGED');
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(store.get(TOKEN_KEY)).toBe('token-b');
   });
 
   it('403 但非 USER_DISABLED 时不触发 onUnauthorized', async () => {
@@ -229,6 +266,49 @@ describe('authFetch', () => {
     }));
 
     await expect(staleRequest).rejects.toThrow('AUTH_IDENTITY_CHANGED');
+    expect(store.get(TOKEN_KEY)).toBe('token-b');
+    expect(JSON.parse(store.get(AUTH_SESSION_KEY)!)).toEqual({ authEpoch: 2, generation: 2 });
+  });
+
+  it('M30-01 serializes a delayed refresh write before the next identity commits', async () => {
+    store.set(TOKEN_KEY, 'token-a');
+    store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 1 }));
+    const onUnauthorized = vi.fn();
+    setOnUnauthorized(onUnauthorized);
+    let releaseWrite!: () => void;
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => { markWriteStarted = resolve; });
+    const originalSetItem = platform.secureStorage.setItem.bind(platform.secureStorage);
+    platform.secureStorage.setItem = async (key, value) => {
+      if (key === TOKEN_KEY && value === 'stale-token-a') {
+        markWriteStarted();
+        await new Promise<void>((resolve) => { releaseWrite = resolve; });
+      }
+      await originalSetItem(key, value);
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeResponse({
+      status: 200,
+      headers: {
+        'X-Refresh-Token': 'stale-token-a',
+        'X-Auth-Epoch': '1',
+        'X-Auth-Generation': '2',
+      },
+    })));
+
+    const staleRequest = authFetch('/api/auth/me');
+    const staleRejected = expect(staleRequest).rejects.toThrow('AUTH_IDENTITY_CHANGED');
+    await writeStarted;
+    setSensitiveTransportAllowed(false);
+    const switchToB = fenceAuthSideEffects().then(() => {
+      store.set(TOKEN_KEY, 'token-b');
+      store.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 2, generation: 2 }));
+      setSensitiveTransportAllowed(true);
+    });
+    releaseWrite();
+
+    await staleRejected;
+    await switchToB;
+    expect(onUnauthorized).not.toHaveBeenCalled();
     expect(store.get(TOKEN_KEY)).toBe('token-b');
     expect(JSON.parse(store.get(AUTH_SESSION_KEY)!)).toEqual({ authEpoch: 2, generation: 2 });
   });

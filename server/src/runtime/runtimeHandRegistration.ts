@@ -27,6 +27,12 @@ import {
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
 
+/** Stable tenant-native Hand identity; the store still applies an independent tenant SQL fence. */
+export function deriveTenantHandId(tenantId: string, sessionId: string, providerId: string): string {
+  const tenantKey = createHash('sha256').update(tenantId).digest('hex').slice(0, 16);
+  return `th_${tenantKey}:${sessionId}:${providerId}`;
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -199,7 +205,7 @@ export async function ensureRuntimeHandRegistered(params: {
     eventStore: params.eventStore,
     tenantId: eventTenantId,
   });
-  const defaultHandId = `${params.sessionId}:${params.executionTarget}`;
+  const defaultHandId = deriveTenantHandId(eventTenantId, params.sessionId, params.executionTarget);
   const currentEnvironmentInstance = params.environmentStore && params.userTenantId
     ? await params.environmentStore.getInstance(params.userTenantId, defaultHandId)
     : null;
@@ -271,7 +277,7 @@ export async function ensureRuntimeHandRegistered(params: {
   recipe.provisionKey = provisionKey;
   const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const existingDefaultHand = typeof params.handStore.get === 'function'
-    ? await params.handStore.get(defaultHandId)
+    ? await params.handStore.get(defaultHandId, eventTenantId)
     : null;
   const reuseReadyDefaultHand = existingDefaultHand?.status === 'ready'
     && existingDefaultHand.recipeDigest === recipeDigest
@@ -385,6 +391,7 @@ export async function ensureRuntimeHandRegistered(params: {
       defaultProvisionGeneration,
       defaultFinalStatus,
       defaultFinalMetadata,
+      eventTenantId,
     );
   if (!completedDefaultHand) return;
   if (defaultProvisionFailure) {
@@ -447,7 +454,7 @@ export async function ensureRuntimeHandRegistered(params: {
     userTenantId: params.userTenantId,
   })) {
     const remoteWorkspaceId = params.workspaceId;
-    const handId = `${params.sessionId}:${hand.id}`;
+    const handId = deriveTenantHandId(eventTenantId, params.sessionId, hand.id);
 
     let status: 'provisioning' | 'unhealthy' = 'provisioning';
     let failure: string | undefined;
@@ -499,7 +506,7 @@ export async function ensureRuntimeHandRegistered(params: {
     const tenantRecipeDigest = createHash('sha256').update(canonicalJson(tenantRecipe)).digest('hex');
     const tenantProvisionGeneration = tenantProvisionKey;
     // Unknown external results remain parked only within their generation until an explicit reconciler clears the durable fence.
-    const existingTenantHand = await params.handStore.get(handId);
+    const existingTenantHand = await params.handStore.get(handId, eventTenantId);
     const reuseReadyTenantHand = existingTenantHand?.status === 'ready'
       && existingTenantHand.recipeDigest === tenantRecipeDigest
       && existingTenantHand.metadata.provisionKey === tenantProvisionKey;
@@ -513,7 +520,7 @@ export async function ensureRuntimeHandRegistered(params: {
         provisionFailure: 'tenant remote provision result unknown; reconciliation required',
         provisionResult: 'result_unknown',
         reconcileRequired: true,
-      });
+      }, eventTenantId);
       continue;
     }
     const persistedTenantHand = !reuseReadyTenantHand ? await manager.provision({
@@ -570,6 +577,7 @@ export async function ensureRuntimeHandRegistered(params: {
           tenantProvisionGeneration,
           dispatchToken,
           persistedTenantHand.updatedAt,
+          eventTenantId,
         )
         : null;
       if (!dispatchClaim || !params.handStore.completeProvisionDispatch) {
@@ -729,6 +737,7 @@ async function provisionTenantRemoteHand(args: {
       args.dispatchToken,
       status,
       metadata,
+      args.tenantId,
     ) ?? null;
   };
   let transportStarted = false;

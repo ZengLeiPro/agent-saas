@@ -1134,9 +1134,9 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     handStore: pgHandStore,
     path: config.clientDaemon?.path,
     authToken: resolvedClientDaemonAuthToken,
-    // C1: per-device registry — PG backend only. file/dev backend keeps the
-    // shared bearer flow with no behavior change.
+    // Device auth + session catalog are authoritative for the fail-closed daemon tenant fence.
     ...(pgClientDaemonRegistry ? { deviceRegistry: pgClientDaemonRegistry, deviceSecretVault: secretVault } : {}),
+    sessionCatalog,
     helloTimeoutMs: config.clientDaemon?.helloTimeoutMs,
     heartbeatTimeoutMs: config.clientDaemon?.heartbeatTimeoutMs,
     heartbeatScanIntervalMs: config.clientDaemon?.heartbeatScanIntervalMs,

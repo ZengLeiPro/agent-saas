@@ -116,6 +116,55 @@ describe('SessionAutomationTools execution gate', () => {
     expect(store.beginTerminalDrainLocked).not.toHaveBeenCalled();
   });
 
+  it('rejects continue after the locked automation lineage changes without touching wakeups', async () => {
+    const flags = liveSource(true);
+    const goal = { ...snapshot, spec: { kind: 'goal', mode: 'goal' } };
+    const changed = { ...goal, incarnationId: 'replacement-incarnation', generation: goal.generation + 1 };
+    const client = { query: vi.fn() };
+    const store = {
+      get: vi.fn(async () => goal),
+      tx: vi.fn(async (fn: (c: typeof client) => unknown) => fn(client)),
+      getLocked: vi.fn(async () => changed),
+      hasLockedExecutionLineage: vi.fn(),
+      scheduleTx: vi.fn(),
+    };
+    const tools = new SessionAutomationTools(store as never, flags.source);
+
+    await expect(tools.updateGoal({
+      tenantId: goal.tenantId, sessionId: goal.sessionId, automationId: goal.automationId,
+      incarnationId: goal.incarnationId, generation: goal.generation, specVersion: goal.specVersion,
+      executionId: 'execution-1', runId: goal.activeRunId, action: 'continue', summary: 'checkpoint',
+    })).resolves.toEqual({ accepted: false, reason: 'stale_fence' });
+    expect(store.getLocked).toHaveBeenCalledWith(client, goal.tenantId, goal.sessionId, goal.automationId);
+    expect(store.hasLockedExecutionLineage).not.toHaveBeenCalled();
+    expect(client.query).not.toHaveBeenCalled();
+    expect(store.scheduleTx).not.toHaveBeenCalled();
+  });
+
+  it('validates execution and active-run lineage under lock before replacing the continuation', async () => {
+    const flags = liveSource(true);
+    const goal = { ...snapshot, spec: { kind: 'goal', mode: 'goal' } };
+    const order: string[] = [];
+    const client = { query: vi.fn(async () => { order.push('write'); return { rows: [] }; }) };
+    const store = {
+      tables: { wakeups: 'wakeups', automations: 'automations' },
+      get: vi.fn(async () => goal),
+      tx: vi.fn(async (fn: (c: typeof client) => unknown) => fn(client)),
+      getLocked: vi.fn(async () => { order.push('lock'); return goal; }),
+      hasLockedExecutionLineage: vi.fn(async () => { order.push('execution'); return true; }),
+      scheduleTx: vi.fn(async () => { order.push('schedule'); }),
+    };
+    const tools = new SessionAutomationTools(store as never, flags.source);
+
+    await expect(tools.updateGoal({
+      tenantId: goal.tenantId, sessionId: goal.sessionId, automationId: goal.automationId,
+      incarnationId: goal.incarnationId, generation: goal.generation, specVersion: goal.specVersion,
+      executionId: 'execution-1', runId: goal.activeRunId, action: 'continue', summary: 'checkpoint',
+    })).resolves.toEqual({ accepted: true });
+    expect(store.hasLockedExecutionLineage).toHaveBeenCalledWith(client, goal, 'execution-1', goal.activeRunId);
+    expect(order).toEqual(['lock', 'execution', 'write', 'write', 'schedule']);
+  });
+
   it('keeps blocked goal work in drain instead of clearing the active slot', async () => {
     const flags = liveSource(true);
     const goal = { ...snapshot, spec: { kind: 'goal', mode: 'goal' } };

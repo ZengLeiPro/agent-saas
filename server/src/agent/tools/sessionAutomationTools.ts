@@ -95,20 +95,27 @@ export class SessionAutomationTools {
       if (accepted) return { accepted: true };
       return this.flagSource.executionEnabled() ? { accepted: false, reason: 'stale_fence' } : executionDisabled;
     }
-    const epoch = Date.now();
     const accepted = await this.store.tx(async c => {
+      const locked = await this.store.getLocked(c, input.tenantId, input.sessionId, input.automationId);
+      if (!locked || locked.spec.kind !== 'goal'
+        || locked.tenantId !== input.tenantId || locked.sessionId !== input.sessionId || locked.automationId !== input.automationId
+        || locked.incarnationId !== input.incarnationId || locked.generation !== input.generation
+        || locked.specVersion !== input.specVersion || locked.activeRunId !== input.runId
+        || !(await this.store.hasLockedExecutionLineage(c, locked, input.executionId, input.runId))) return false;
       if (!this.flagSource.executionEnabled()) return false;
-      await c.query(`UPDATE ${this.store.tables.wakeups} SET state='superseded' WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`, [current.tenantId, current.automationId]);
-      await c.query(`UPDATE ${this.store.tables.automations} SET continuation_epoch=$3 WHERE tenant_id=$1 AND automation_id=$2`, [current.tenantId, current.automationId, epoch]);
+      const epoch = Date.now();
+      await c.query(`UPDATE ${this.store.tables.wakeups} SET state='superseded' WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`, [locked.tenantId, locked.automationId]);
+      await c.query(`UPDATE ${this.store.tables.automations} SET continuation_epoch=$3 WHERE tenant_id=$1 AND automation_id=$2`, [locked.tenantId, locked.automationId, epoch]);
       await this.store.scheduleTx(c, {
-        tenantId: current.tenantId, sessionId: current.sessionId, automationId: current.automationId,
-        incarnationId: current.incarnationId, generation: current.generation, specVersion: current.specVersion,
-        continuationEpoch: epoch, triggerKey: `goal:${current.automationId}:g${current.generation}:e${epoch}:from:${input.runId}`,
+        tenantId: locked.tenantId, sessionId: locked.sessionId, automationId: locked.automationId,
+        incarnationId: locked.incarnationId, generation: locked.generation, specVersion: locked.specVersion,
+        continuationEpoch: epoch, triggerKey: `goal:${locked.automationId}:g${locked.generation}:e${epoch}:from:${input.runId}`,
         dueAt: new Date(), payload: { summary: input.summary },
       });
       return true;
     });
-    return accepted ? { accepted: true } : executionDisabled;
+    if (accepted) return { accepted: true };
+    return this.flagSource.executionEnabled() ? { accepted: false, reason: 'stale_fence' } : executionDisabled;
   }
 }
 

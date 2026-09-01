@@ -14,7 +14,7 @@ export interface HandManagerOptions {
   transportRegistry: ExecutionTransportRegistry;
   eventStore?: EventStore;
   /** Authoritative session tenant supplied by runtime dispatch. */
-  tenantId?: string;
+  tenantId: string;
   healthCheck?: (hand: HandRecord) => Promise<HandHealth>;
 }
 
@@ -35,6 +35,7 @@ export class HandManager {
   async provision(input: RegisterHandInput & { recipe?: WorkspaceRecipe }): Promise<HandRecord> {
     const record = await this.options.handStore.register({
       ...input,
+      tenantId: this.options.tenantId,
       metadata: { ...(input.metadata ?? {}), ...(input.recipe ? { recipe: input.recipe } : {}) },
     });
     if (record.sessionId) {
@@ -51,18 +52,18 @@ export class HandManager {
   }
 
   list(sessionId: string): Promise<HandRecord[]> {
-    return this.options.handStore.listBySession(sessionId);
+    return this.options.handStore.listBySession(sessionId, this.options.tenantId);
   }
 
   async health(handId: string): Promise<HandHealth> {
-    const hand = await this.options.handStore.get(handId);
+    const hand = await this.options.handStore.get(handId, this.options.tenantId);
     if (!hand) return { status: 'unhealthy', detail: `hand not found: ${handId}` };
     const health = this.options.healthCheck
       ? await this.options.healthCheck(hand)
       : { status: hand.status === 'ready' ? 'ok' as const : 'unhealthy' as const, detail: hand.status };
     const nextStatus = health.status === 'ok' ? 'ready' : 'unhealthy';
     if (hand.status !== nextStatus) {
-      await this.options.handStore.updateStatus(handId, nextStatus, { lastHealth: health });
+      await this.options.handStore.updateStatus(handId, nextStatus, { lastHealth: health }, this.options.tenantId);
       if (hand.sessionId) {
         await this.options.eventStore?.append({
           type: 'hand_health_changed',
@@ -78,7 +79,7 @@ export class HandManager {
   }
 
   async destroy(handId: string, reason?: string): Promise<HandRecord | null> {
-    const record = await this.options.handStore.updateStatus(handId, 'destroyed', reason ? { destroyReason: reason } : {});
+    const record = await this.options.handStore.updateStatus(handId, 'destroyed', reason ? { destroyReason: reason } : {}, this.options.tenantId);
     if (record) {
       if (record.sessionId) {
         await this.options.eventStore?.append({

@@ -11,7 +11,7 @@ import type {
   WorkspaceRecipe,
 } from '../runtime/handStore.js';
 import { HandHealthScanner } from '../runtime/handHealthScanner.js';
-import { deriveProvisionIdentity, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
+import { deriveProvisionIdentity, deriveTenantHandId, ensureRuntimeHandRegistered } from '../runtime/runtimeHandRegistration.js';
 
 // Single-record store covers default-hand CAS; tenant dispatch claims and completion certainty use the map fixture below.
 class CasMemoryHandStore implements HandStore {
@@ -21,6 +21,7 @@ class CasMemoryHandStore implements HandStore {
     const now = new Date().toISOString();
     this.record = {
       handId: input.handId,
+      tenantId: input.tenantId,
       sessionId: input.sessionId,
       workspaceId: input.workspaceId,
       type: input.type,
@@ -74,7 +75,7 @@ class MapMemoryHandStore implements HandStore {
     const previous = this.records.get(input.handId);
     const now = new Date().toISOString();
     const record: HandRecord = {
-      handId: input.handId, sessionId: input.sessionId, workspaceId: input.workspaceId, type: input.type,
+      handId: input.handId, tenantId: input.tenantId, sessionId: input.sessionId, workspaceId: input.workspaceId, type: input.type,
       status: input.status ?? 'ready', endpoint: input.endpoint, capabilities: input.capabilities ?? [],
       recipeDigest: input.recipeDigest, createdAt: previous?.createdAt ?? now, updatedAt: now,
       metadata: { ...(previous?.metadata ?? {}), ...(input.metadata ?? {}) },
@@ -358,7 +359,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     });
     let claimedToken: unknown;
     const beforeDispatch = vi.fn(async () => {
-      const claimed = handStore.records.get('scanner-race-session:tenant-ecs')!;
+      const claimed = handStore.records.get(deriveTenantHandId('tenant-a', 'scanner-race-session', 'tenant-ecs'))!;
       claimedToken = claimed.metadata.provisionDispatchClaim;
       expect(claimed).toMatchObject({ status: 'unhealthy', metadata: {
         provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
@@ -377,7 +378,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
       tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
       beforeTenantRemoteProvision: beforeDispatch,
     });
-    await vi.waitFor(() => expect(handStore.records.get('scanner-race-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'scanner-race-session', 'tenant-ecs'))).toMatchObject({
       status: 'ready', metadata: { reconcileRequired: false, dispatchAuthorized: false, provisionResult: 'ok' },
     }));
 
@@ -411,7 +412,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     };
     await ensureRuntimeHandRegistered(params);
     await acceptedPromise;
-    const first = handStore.records.get('tenant-child-session:tenant-ecs')!;
+    const first = handStore.records.get(deriveTenantHandId('tenant-a', 'tenant-child-session', 'tenant-ecs'))!;
     expect(first).toMatchObject({ status: 'unhealthy', metadata: {
       provisionKey: expect.any(String), provisionGeneration: expect.any(String),
       provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
@@ -422,7 +423,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     await ensureRuntimeHandRegistered(params);
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(beforeDispatch).toHaveBeenCalledOnce();
-    expect(handStore.records.get('tenant-child-session:tenant-ecs')).toMatchObject({
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'tenant-child-session', 'tenant-ecs'))).toMatchObject({
       status: 'unhealthy', metadata: { provisionResult: 'result_unknown', reconcileRequired: true,
         provisionGeneration: first.metadata.provisionGeneration,
         provisionDispatchClaim: first.metadata.provisionDispatchClaim },
@@ -474,7 +475,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     };
     await ensureRuntimeHandRegistered(g1Params);
     await acceptedG1Promise;
-    const g1 = handStore.records.get('cross-generation-session:tenant-ecs')!;
+    const g1 = handStore.records.get(deriveTenantHandId('tenant-a', 'cross-generation-session', 'tenant-ecs'))!;
     expect(g1).toMatchObject({ status: 'unhealthy', metadata: {
       provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
       provisionDispatchClaim: expect.any(String),
@@ -487,7 +488,7 @@ describe('runtime Hand atomic provision attempt authority', () => {
     };
     await ensureRuntimeHandRegistered(g2Params);
     await acceptedG2Promise;
-    const g2 = handStore.records.get('cross-generation-session:tenant-ecs')!;
+    const g2 = handStore.records.get(deriveTenantHandId('tenant-a', 'cross-generation-session', 'tenant-ecs'))!;
     expect(g2.metadata.provisionGeneration).not.toBe(g1.metadata.provisionGeneration);
     expect(g2).toMatchObject({ status: 'unhealthy', metadata: {
       provisionResult: 'result_unknown', reconcileRequired: true, dispatchAuthorized: true,
@@ -534,22 +535,22 @@ describe('runtime Hand atomic provision attempt authority', () => {
     };
 
     await ensureRuntimeHandRegistered(params);
-    await vi.waitFor(() => expect(handStore.records.get('claim-barrier-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))).toMatchObject({
       status: 'unhealthy', metadata: {
         provisionResult: 'not_dispatched', reconcileRequired: false,
         dispatchAuthorized: false, provisionDispatchClaim: null,
       },
     }));
     expect(fetchImpl).not.toHaveBeenCalled();
-    const stableKey = handStore.records.get('claim-barrier-session:tenant-ecs')!.metadata.provisionKey;
+    const stableKey = handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))!.metadata.provisionKey;
 
     live = true;
     await ensureRuntimeHandRegistered(params);
-    await vi.waitFor(() => expect(handStore.records.get('claim-barrier-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))).toMatchObject({
       status: 'ready', metadata: { provisionResult: 'ok', reconcileRequired: false },
     }));
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(handStore.records.get('claim-barrier-session:tenant-ecs')!.metadata.provisionKey).toBe(stableKey);
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'claim-barrier-session', 'tenant-ecs'))!.metadata.provisionKey).toBe(stableKey);
     vi.unstubAllGlobals();
   });
 
@@ -574,13 +575,13 @@ describe('runtime Hand atomic provision attempt authority', () => {
       tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
     });
 
-    await vi.waitFor(() => expect(handStore.records.get('known-error-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))).toMatchObject({
       status: 'unhealthy', metadata: {
         provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
         dispatchAuthorized: false, provisionDispatchClaim: null,
       },
     }));
-    const stableKey = handStore.records.get('known-error-session:tenant-ecs')!.metadata.provisionKey;
+    const stableKey = handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))!.metadata.provisionKey;
     await ensureRuntimeHandRegistered({
       handStore,
       eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
@@ -590,11 +591,11 @@ describe('runtime Hand atomic provision attempt authority', () => {
       tenantRemoteHands: [{ id: 'tenant-ecs', baseUrl: 'https://tenant.example', tenantIds: ['tenant-a'] }],
       tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
     });
-    await vi.waitFor(() => expect(handStore.records.get('known-error-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))).toMatchObject({
       status: 'ready', metadata: { provisionResult: 'ok', reconcileRequired: false },
     }));
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(handStore.records.get('known-error-session:tenant-ecs')!.metadata.provisionKey).toBe(stableKey);
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'known-error-session', 'tenant-ecs'))!.metadata.provisionKey).toBe(stableKey);
     vi.unstubAllGlobals();
   });
 
@@ -616,13 +617,13 @@ describe('runtime Hand atomic provision attempt authority', () => {
       tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
     });
 
-    await vi.waitFor(() => expect(handStore.records.get('unknown-result-session:tenant-ecs')).toMatchObject({
+    await vi.waitFor(() => expect(handStore.records.get(deriveTenantHandId('tenant-a', 'unknown-result-session', 'tenant-ecs'))).toMatchObject({
       status: 'unhealthy', metadata: {
         provisionFailure: 'response lost', provisionResult: 'result_unknown', reconcileRequired: true,
       },
     }));
     expect(fetchImpl).toHaveBeenCalledOnce();
-    expect(handStore.records.get('unknown-result-session:tenant-ecs')?.metadata.dispatchAuthorized).toBe(false);
+    expect(handStore.records.get(deriveTenantHandId('tenant-a', 'unknown-result-session', 'tenant-ecs'))?.metadata.dispatchAuthorized).toBe(false);
     vi.unstubAllGlobals();
   });
 
@@ -657,6 +658,41 @@ describe('runtime Hand atomic provision attempt authority', () => {
 
     expect(beforeTenantRemoteProvision).toHaveBeenCalledOnce();
     expect(fetchImpl).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the same session/provider isolated across concurrent tenants', async () => {
+    const handStore = new MapMemoryHandStore();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const base = {
+      handStore,
+      eventStore: { append: vi.fn().mockResolvedValue(undefined) } as never,
+      executionTransportRegistry: { has: () => true, get: () => ({ listInternalTools: () => [] }) } as never,
+      executionTarget: 'server-local' as const,
+      sessionId: 'shared-session', runId: 'shared-run', workspaceId: 'shared-workspace',
+      userId: 'shared-user',
+      tenantRemoteHandResolver: { resolveForRegister: vi.fn(async () => ({ authToken: 'token', source: 'inline' })) } as never,
+    };
+    await Promise.all([
+      ensureRuntimeHandRegistered({
+        ...base, tenantId: 'tenant-a', userTenantId: 'tenant-a',
+        tenantRemoteHands: [{ id: 'shared-provider', baseUrl: 'https://a.example', tenantIds: ['tenant-a'] }],
+      }),
+      ensureRuntimeHandRegistered({
+        ...base, tenantId: 'tenant-b', userTenantId: 'tenant-b',
+        tenantRemoteHands: [{ id: 'shared-provider', baseUrl: 'https://b.example', tenantIds: ['tenant-b'] }],
+      }),
+    ]);
+    const handA = deriveTenantHandId('tenant-a', 'shared-session', 'shared-provider');
+    const handB = deriveTenantHandId('tenant-b', 'shared-session', 'shared-provider');
+    expect(handA).not.toBe(handB);
+    await vi.waitFor(() => expect(handStore.records.get(handA)?.status).toBe('ready'));
+    await vi.waitFor(() => expect(handStore.records.get(handB)?.status).toBe('ready'));
+    expect(handStore.records.get(handA)?.endpoint).toBe('https://a.example');
+    expect(handStore.records.get(handB)?.endpoint).toBe('https://b.example');
     vi.unstubAllGlobals();
   });
 

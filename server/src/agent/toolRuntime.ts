@@ -548,14 +548,13 @@ export class LocalWorkspaceProvider implements WorkspaceProvider {
     };
   }
 }
-
+function toolCallTenantId(context: ToolCallContext): string | undefined { return context.workspace.tenantId ?? context.runtimeIsolationRequirement?.tenantId ?? context.channelContext.user?.tenantId ?? context.channelContext.sessionOwner?.tenantId; }
 function isTenantRemoteHand(hand: import('../runtime/handStore.js').HandRecord): boolean {
   return hand.type === 'server-remote'
     && hand.status !== 'destroyed'
     && typeof hand.metadata?.tenantRemoteHandId === 'string'
     && (hand.metadata.tenantRemoteHandId as string).length > 0;
 }
-
 function selectCurrentTenantRemoteHand(hands: ReadonlyArray<HandRecord>): HandRecord | undefined {
   return hands.find((hand) => hand.status === 'ready')
     ?? hands.find((hand) => hand.status === 'provisioning')
@@ -1152,7 +1151,8 @@ class WorkspaceToolProvider implements ToolProvider {
     const sessionId = context.sessionId ?? context.workspace.sessionId;
     if (!sessionId) return { kind: 'none' };
     try {
-      const hands = await this.handStore.listBySession(sessionId);
+      const tenantId = toolCallTenantId(context); if (!tenantId) return { kind: 'blocked', message: 'RUNTIME_HAND_TENANT_MISSING' };
+      const hands = await this.handStore.listBySession(sessionId, tenantId);
       const decision = selectRuntimeHandRoute(hands, { runId: context.runId, executionTarget: context.workspace.executionTarget, runtimeIsolationRequirement: context.runtimeIsolationRequirement });
       if (decision.kind === 'ready') return { kind: 'ready', handId: decision.handId };
       if (decision.kind === 'blocked') return decision;
@@ -1192,12 +1192,12 @@ class WorkspaceToolProvider implements ToolProvider {
         message: 'No session id is available, so no dedicated workspace runtime can be resolved.',
       });
     }
-
+    const tenantId = toolCallTenantId(context); if (!tenantId) return workspaceReadyStatusResponse({ status: 'unavailable', executionTarget: context.workspace.executionTarget, message: 'Workspace tenant boundary is unavailable.' });
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let lastHands: import('../runtime/handStore.js').HandRecord[] = [];
     do {
       try {
-        lastHands = await this.handStore.listBySession(sessionId);
+        lastHands = await this.handStore.listBySession(sessionId, tenantId);
       } catch (err) {
         return workspaceReadyStatusResponse({
           status: 'unavailable',
@@ -1254,7 +1254,6 @@ class WorkspaceToolProvider implements ToolProvider {
       message: 'Current workspace runtime is still preparing.',
     });
   }
-
   private async transportFor(context: ToolCallContext, handId?: string): Promise<{
     transport: ExecutionTransport;
     workspace?: WorkspaceRef;
@@ -1263,7 +1262,8 @@ class WorkspaceToolProvider implements ToolProvider {
       if (!this.handStore) {
         throw new Error(`handId routing requested but no HandStore is configured: ${handId}`);
       }
-      const hand = await this.handStore.get(handId);
+      const tenantId = toolCallTenantId(context); if (!tenantId) throw new Error('hand routing requires tenant boundary');
+      const hand = await this.handStore.get(handId, tenantId);
       if (!hand) {
         throw new Error(`hand not found: ${handId}`);
       }

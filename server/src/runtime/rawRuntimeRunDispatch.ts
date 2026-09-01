@@ -149,6 +149,7 @@ import {
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement } from './runtimeHandRegistration.js';
 import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import { finalizeWakeTerminalRun, releaseWakeLeaseAfterDispatch } from './wakeTerminalCoordinator.js';
 import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 import {
@@ -1394,7 +1395,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
       logger: config.logger,
     });
     if (typeof message.metadata?.environmentTemplateVersionId === 'string') config.sandboxWarmup?.(sessionId);
-    const availableHands = config.handStore ? await config.handStore.listBySession(sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(sessionId, tenantIdForRun) : [];
     await appendResolvedRunSnapshot({
       config,
       runId,
@@ -1999,7 +2000,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       }), runtimeIsolationRequirement,
       logger: config.logger,
     });
-    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId, eventTenantId) : [];
     await appendResolvedRunSnapshot({
       config,
       runId: resumeRunId,
@@ -2482,7 +2483,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       }), runtimeIsolationRequirement,
       logger: config.logger,
     });
-    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId) : [];
+    const availableHands = config.handStore ? await config.handStore.listBySession(request.sessionId, eventTenantId) : [];
     await appendResolvedRunSnapshot({
       config,
       runId: resumeRunId,
@@ -2768,8 +2769,8 @@ export async function wakeRuntimeSession(
     )
   ));
   if (cancelRequested) {
-    await options.lease?.release('cancelled', 'cancel_requested_before_wake');
-    await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'cancelled', run.status, 'cancel_requested_before_wake', { tenantId: eventTenantId });
+    await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+      status: 'cancelled', reason: 'cancel_requested_before_wake' });
     return;
   }
   // 隐藏记忆审查由 engine 持有写锁与状态；通用 scheduler 不得跨崩溃重放。
@@ -2849,8 +2850,8 @@ export async function wakeRuntimeSession(
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      await options.lease?.release('failed', `workspace_provision_failed:${reason}`);
-      await appendRunStateChanged(eventStore, run.sessionId, run.runId, 'failed', run.status, `workspace_provision_failed:${reason}`, { tenantId: eventTenantId });
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: 'failed', reason: `workspace_provision_failed:${reason}` });
       return;
     }
   }
@@ -2867,7 +2868,9 @@ export async function wakeRuntimeSession(
       && event.approvalId === resumeApproval.approvalId
     ));
     if (!hasInteractionResolved || hasApprovalResolved) {
-      await options.lease?.release(hasApprovalResolved ? 'completed' : 'failed', hasApprovalResolved ? 'approval_already_resolved' : 'missing_interaction_resolved_command');
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: hasApprovalResolved ? 'completed' : 'failed',
+        reason: hasApprovalResolved ? 'approval_already_resolved' : 'missing_interaction_resolved_command' });
       return;
     }
     await config.runStore?.markStatus(run.runId, 'running', 'approval_resume_wake_started', {
@@ -2926,10 +2929,8 @@ export async function wakeRuntimeSession(
         drainHandoff,
         onOutboundEvent: options.onOutboundEvent,
       })) return;
-      const current = await config.runStore?.get(run.runId);
-      if (current) {
-        await options.lease?.release(current.status, current.statusReason ?? 'approval_resume_wake_completed');
-      }
+      await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+        defaultReason: 'approval_resume_wake_completed' });
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -2940,7 +2941,8 @@ export async function wakeRuntimeSession(
   if (resumeInteraction) {
     const resolution = getInteractionResolution(events, run.sessionId, resumeInteraction.interactionId);
     if (!resolution) {
-      await options.lease?.release('failed', 'missing_interaction_resolved_command');
+      await finalizeWakeTerminalRun({ config, eventStore, run, lease: options.lease,
+        status: 'failed', reason: 'missing_interaction_resolved_command' });
       return;
     }
     await config.runStore?.markStatus(run.runId, 'running', 'interaction_resume_wake_started', {
@@ -2999,10 +3001,8 @@ export async function wakeRuntimeSession(
         drainHandoff,
         onOutboundEvent: options.onOutboundEvent,
       })) return;
-      const current = await config.runStore?.get(run.runId);
-      if (current) {
-        await options.lease?.release(current.status, current.statusReason ?? 'interaction_resume_wake_completed');
-      }
+      await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+        defaultReason: 'interaction_resume_wake_completed' });
     } finally {
       if (renewTimer) clearInterval(renewTimer);
       runtimeRunController.unregister(run.runId);
@@ -3068,10 +3068,8 @@ export async function wakeRuntimeSession(
       drainHandoff,
       onOutboundEvent: options.onOutboundEvent,
     })) return;
-    const current = await config.runStore?.get(run.runId);
-    if (current) {
-      await options.lease?.release(current.status, current.statusReason ?? 'wake_completed');
-    }
+    await releaseWakeLeaseAfterDispatch({ config, eventStore, run, lease: options.lease,
+      defaultReason: 'wake_completed' });
   } finally {
     if (renewTimer) clearInterval(renewTimer);
     runtimeRunController.unregister(run.runId);

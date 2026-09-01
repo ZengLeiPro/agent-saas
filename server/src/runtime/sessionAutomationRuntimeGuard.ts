@@ -323,13 +323,16 @@ export class SessionAutomationRuntimeGuard {
         inputTokens,outputTokens:maxOutputTokens,cacheReadTokens:0,cacheCreationTokens:0,
       }, budget.maxCredits !== undefined);
       const totals = await client.query<{turns:string;tokens:string;credits:string}>(
-        `SELECT COALESCE(SUM(turns),0)::text turns,COALESCE(SUM(tokens),0)::text tokens,COALESCE(SUM(credits),0)::text credits FROM ${this.tables.usage} WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
+        `SELECT COALESCE(SUM(turns),0)::text turns,COALESCE(SUM(tokens),0)::text tokens,COALESCE(SUM(credits),0)::text credits
+           FROM ${this.tables.usage}
+          WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
         [lineage.tenantId,lineage.automationId],
       );
       const reserved = await client.query<{turns:string;tokens:string;credits:string}>(
         `SELECT COALESCE(SUM(amount) FILTER(WHERE budget_kind='turns'),0)::text turns,COALESCE(SUM(amount) FILTER(WHERE budget_kind='tokens'),0)::text tokens,COALESCE(SUM(amount) FILTER(WHERE budget_kind='credits'),0)::text credits FROM ${this.tables.budgetReservations} WHERE tenant_id=$1 AND automation_id=$2 AND purpose='work' AND state IN ('reserved','result_unknown','reconcile')`,
         [lineage.tenantId,lineage.automationId],
       );
+      // automation_run rows contain terminal-minus-provider deltas, so all non-evaluation usage is additive.
       const used=totals.rows[0]!, held=reserved.rows[0]!;
       const maxCreditsMicro = budget.maxCredits === undefined ? undefined : creditsToMicrocredits(budget.maxCredits);
       if (budget.maxCredits !== undefined && maxCreditsMicro === undefined) budgetReason='credits_unverifiable';

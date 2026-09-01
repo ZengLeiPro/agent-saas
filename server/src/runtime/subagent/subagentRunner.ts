@@ -446,7 +446,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       session: childRecord,
       modelRef: refToResolve ?? model,
       executionTarget,
-      hands: config.handStore ? await config.handStore.listBySession(childSessionId) : [],
+      hands: config.handStore ? await config.handStore.listBySession(childSessionId, tenantId) : [],
     });
     await params.lifecycleCheckpoint?.('hand');
 

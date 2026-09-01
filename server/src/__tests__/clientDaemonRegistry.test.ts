@@ -127,14 +127,14 @@ describe('clientDaemonRegistry (C1)', () => {
     });
   });
 
-  describe('ClientDaemonGateway per-device auth (C1)', () => {
+  describe('ClientDaemonGateway per-device auth and tenant resolution (C1)', () => {
     it('accepts a connection presenting the per-device bearer over hello payload', async () => {
       const vault = new InMemorySecretVault();
       const registry = new InMemoryClientDaemonRegistry();
       const { bearer } = await issueClientDaemonDeviceCredential({
         registry,
         vault,
-        input: { deviceId: 'edge-A' },
+        input: { deviceId: 'edge-A', metadata: { tenantId: 'tenant-edge-a' } },
       });
 
       const server = http.createServer((_req, res) => res.end('ok'));
@@ -173,13 +173,53 @@ describe('clientDaemonRegistry (C1)', () => {
       }
     });
 
+    it('accepts an empty-metadata legacy device when a valid session supplies the tenant', async () => {
+      const vault = new InMemorySecretVault();
+      const registry = new InMemoryClientDaemonRegistry();
+      const { bearer } = await issueClientDaemonDeviceCredential({
+        registry,
+        vault,
+        input: { deviceId: 'edge-legacy-empty', metadata: {} },
+      });
+      const server = http.createServer((_req, res) => res.end('ok'));
+      const gateway = new ClientDaemonGateway({
+        transport: new ClientDaemonTransport(),
+        deviceRegistry: registry,
+        deviceSecretVault: vault,
+        sessionCatalog: {
+          get: async (sessionId) => sessionId === 'legacy-bound-session'
+            ? ({ tenantId: 'tenant-from-session', workspaceId: 'workspace-from-session' } as any)
+            : null,
+        },
+      });
+      gateway.attach(server);
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('missing address');
+      try {
+        const ws = new WebSocket(`ws://127.0.0.1:${address.port}/daemon`);
+        await waitOpen(ws);
+        ws.send(serializeClientDaemonMessage({
+          type: 'daemon_hello', protocolVersion: 1, daemonId: 'edge-legacy-empty',
+          handId: 'legacy-hand', sessionId: 'legacy-bound-session', authToken: bearer,
+          capabilities: [],
+        }));
+        const reply = await new Promise<string>((resolve) => ws.once('message', (message) => resolve(message.toString())));
+        expect(reply).toContain('daemon_registered');
+        ws.close();
+      } finally {
+        gateway.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
     it('rejects a connection that presents a wrong per-device bearer', async () => {
       const vault = new InMemorySecretVault();
       const registry = new InMemoryClientDaemonRegistry();
       await issueClientDaemonDeviceCredential({
         registry,
         vault,
-        input: { deviceId: 'edge-B' },
+        input: { deviceId: 'edge-B', metadata: { tenantId: 'tenant-edge-b' } },
       });
 
       const server = http.createServer((_req, res) => res.end('ok'));

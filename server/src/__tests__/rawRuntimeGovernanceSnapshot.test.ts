@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 
 import { appendResolvedRunSnapshot, ensureRuntimeHandRegistered } from '../runtime/rawRuntimeRunDispatch.js';
+import { deriveTenantHandId } from '../runtime/runtimeHandRegistration.js';
 import { RUNTIME_ISOLATION_POLICY_DIGEST } from '../runtime/runtimeIsolationEvidence.js';
 
 function input(result: Record<string, unknown>, append = vi.fn().mockResolvedValue(undefined)) {
@@ -69,7 +70,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
     });
     expect(events).toContainEqual(expect.objectContaining({
       type: 'hand_failure',
-      handId: 'session-1:server-local',
+      handId: deriveTenantHandId('tenant-a', 'session-1', 'server-local'),
       classifiedAs: 'unhealthy',
     }));
   });
@@ -81,7 +82,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
       updatedAt: NOW,
     }));
     const completeProvisionAttempt = vi.fn().mockImplementation(async (_handId, generation, status, metadata) => ({
-      handId: 'session-1:server-local',
+      handId: deriveTenantHandId('tenant-a', 'session-1', 'server-local'),
       sessionId: 'session-1',
       workspaceId: 'workspace-1',
       type: 'server-local',
@@ -105,7 +106,8 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
     }));
     const generation = (register.mock.calls[0]![0].metadata as Record<string, unknown>).provisionGeneration;
     expect(completeProvisionAttempt).toHaveBeenCalledWith(
-      'session-1:server-local', generation, 'ready', expect.objectContaining({ provisionGeneration: generation }),
+      deriveTenantHandId('tenant-a', 'session-1', 'server-local'), generation, 'ready',
+      expect.objectContaining({ provisionGeneration: generation }), 'tenant-a',
     );
   });
 
@@ -280,7 +282,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
     expect(resolveForRegister).not.toHaveBeenCalled();
     expect(register).toHaveBeenCalledTimes(2);
     expect(register).toHaveBeenCalledWith(expect.objectContaining({
-      handId: 'session-1:server-remote',
+      handId: deriveTenantHandId('tenant-a', 'session-1', 'server-remote'),
       runId: 'run-1',
       metadata: expect.objectContaining({
         runtimeIsolationAttested: true,

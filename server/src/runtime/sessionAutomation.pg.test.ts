@@ -9,7 +9,7 @@ import { parseWholeNumeric, SessionAutomationRuntimeGuard } from './sessionAutom
 import { createLifecycleAdapters } from '../app/sessionAutomationRuntime.js';
 import { PgSessionAutomationAttributionStore } from './sessionAutomationAttribution.js';
 import { SessionAutomationTerminalProjector } from './sessionAutomationTerminalProjector.js';
-import { SessionAutomationToolProvider } from '../agent/tools/sessionAutomationTools.js';
+import { SessionAutomationToolProvider, SessionAutomationTools } from '../agent/tools/sessionAutomationTools.js';
 const {Pool}=pg;
 const url=process.env.TEST_DATABASE_URL;
 const describePg=url?describe:describe.skip; // Real PostgreSQL is required for concurrency, migration, and crash tests.
@@ -53,6 +53,54 @@ describePg('session automation real PostgreSQL integration',()=>{
  });
  it('cancel/generation fence prevents stale dispatch',async()=>{await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);await wake('old-generation');await store.claimDue();await pool.query(`UPDATE ${store.tables.automations} SET generation=2,status='cancelled' WHERE automation_id=$1`,[automation]);expect(await store.claimDispatch()).toEqual([]);});
  it('tool visibility requires matching host fence',()=>{const provider=new SessionAutomationToolProvider({} as never,{read:()=>({controlEnabled:true,executionEnabled:true,fixedLoopEnabled:true,adaptiveLoopEnabled:true,goalEnabled:true,evaluatorEnforced:true}),executionEnabled:()=>true});expect(provider.list()).toEqual([]);const base={channelContext:{channel:'web'},workspace:{root:'.',executionTarget:'server-local'},sessionId:session,runId:'run-a'} as any;expect(provider.list(base)).toEqual([]);expect(provider.list({...base,automationFence:{automationId:automation,incarnationId:incarnation,generation:2,specVersion:1,executionId:'e',runId:'run-a'}}).map(t=>t.id)).toEqual(['ScheduleWakeup','UpdateGoal']);});
+ it.each(['clear','replace','pause'] as const)('UpdateGoal continue loses safely to a concurrent %s under the automation row lock',async(action)=>{
+  const caseSession=`goal-race-${action}-${randomUUID()}`,runId=randomUUID(),executionId=randomUUID(),outboxId=randomUUID();
+  const goal=await store.tx(c=>store.create(c,{tenantId:tenant,sessionId:caseSession,ownerUserId:'user-a'},{kind:'goal',mode:'goal',prompt:'finish the goal',budget:{}},new Date()));
+  await runs.createPending({runId,sessionId:caseSession,tenantId:tenant,userId:'user-a'});
+  const initialWakeup=await pool.query(`SELECT wakeup_id,trigger_key FROM ${store.tables.wakeups} WHERE tenant_id=$1 AND automation_id=$2 AND state='pending'`,[tenant,goal.automationId]);
+  await pool.query(`UPDATE ${store.tables.wakeups} SET state='consumed' WHERE wakeup_id=$1`,[initialWakeup.rows[0].wakeup_id]);
+  await pool.query(`INSERT INTO ${store.tables.outbox}(outbox_id,wakeup_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,continuation_epoch,trigger_key,target_run_id,payload,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,'{}'::jsonb,'dispatched')`,[outboxId,initialWakeup.rows[0].wakeup_id,tenant,caseSession,goal.automationId,goal.incarnationId,goal.generation,goal.specVersion,initialWakeup.rows[0].trigger_key,runId]);
+  await pool.query(`INSERT INTO ${store.tables.executions}(execution_id,tenant_id,session_id,automation_id,incarnation_id,generation,spec_version,outbox_id,run_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running')`,[executionId,tenant,caseSession,goal.automationId,goal.incarnationId,goal.generation,goal.specVersion,outboxId,runId]);
+  await pool.query(`UPDATE ${store.tables.automations} SET phase='running',active_run_id=$3,next_wakeup_at=NULL WHERE tenant_id=$1 AND automation_id=$2`,[tenant,goal.automationId,runId]);
+
+  let initialRead!:()=>void;
+  const readDone=new Promise<void>(resolve=>{initialRead=resolve;});
+  const toolStore=Object.create(store) as PgSessionAutomationStore;
+  toolStore.get=async(...args:Parameters<PgSessionAutomationStore['get']>)=>{const value=await store.get(...args);initialRead();return value;};
+  const flags={read:()=>({controlEnabled:true,executionEnabled:true,fixedLoopEnabled:true,adaptiveLoopEnabled:true,goalEnabled:true,evaluatorEnforced:true}),executionEnabled:()=>true};
+  const tools = new SessionAutomationTools(toolStore,flags);
+  const locker=await pool.connect();
+  try{
+   await locker.query('BEGIN');
+   const locked=await store.getLocked(locker,tenant,caseSession,goal.automationId);
+   const continuing=tools.updateGoal({tenantId:tenant,sessionId:caseSession,automationId:goal.automationId,incarnationId:goal.incarnationId,generation:goal.generation,specVersion:goal.specVersion,executionId,runId,action:'continue',summary:'old run checkpoint'});
+   await readDone;
+   let waitingOnAutomationLock=false;
+   for(let attempt=0;attempt<100&&!waitingOnAutomationLock;attempt++){
+    const waiting=await pool.query(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE $1) AS blocked`,[`%${store.tables.automations}%FOR UPDATE OF a%`]);
+    waitingOnAutomationLock=waiting.rows[0]?.blocked===true;
+    if(!waitingOnAutomationLock)await new Promise(resolve=>setTimeout(resolve,10));
+   }
+   expect(waitingOnAutomationLock).toBe(true);
+   if(action==='replace')await store.replace(locker,locked!,{kind:'goal',mode:'goal',prompt:'replacement goal',budget:{}});
+   else await store.control(locker,locked!,action);
+   await locker.query('COMMIT');
+   await expect(continuing).resolves.toEqual({accepted:false,reason:'stale_fence'});
+  }finally{
+   await locker.query('ROLLBACK').catch(()=>undefined);
+   locker.release();
+  }
+  const stale=await pool.query(`SELECT count(*)::int count FROM ${store.tables.wakeups} WHERE tenant_id=$1 AND automation_id=$2 AND trigger_key LIKE 'goal:%'`,[tenant,goal.automationId]);
+  expect(stale.rows[0].count).toBe(0);
+  const after=await store.get(tenant,caseSession,goal.automationId);
+  expect(after?.generation).toBe(goal.generation+1);
+  if(action==='replace'){
+   expect(after).toMatchObject({status:'active',phase:'running'});
+   const replacement=await pool.query(`SELECT state,generation FROM ${store.tables.wakeups} WHERE tenant_id=$1 AND automation_id=$2 AND state='pending'`,[tenant,goal.automationId]);
+   expect(replacement.rows).toEqual([expect.objectContaining({state:'pending',generation:String(goal.generation+1)})]);
+  }else if(action==='pause')expect(after).toMatchObject({status:'paused',phase:'running'});
+  else expect(after).toMatchObject({status:'cancelling',phase:'draining'});
+ });
  it('fixed terminal schedules from the durable wakeup slot and advances the projection',async()=>{
   const dueAt=new Date(Date.now()-1_000);
   await pool.query(`UPDATE ${store.tables.outbox} SET state='dead'`);

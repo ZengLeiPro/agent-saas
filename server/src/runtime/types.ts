@@ -26,11 +26,8 @@ export type {
   ModelUsage,
   ModelWireMode,
 } from './modelRequestTypes.js';
-export type { ModelRetryBlockedReason, ModelRetryReason } from './modelRetryTypes.js';
-export interface RuntimeConnection {
-  apiKey?: string;
-  baseUrl?: string;
-}
+export type { ModelRetryBlockedReason, ModelRetryReason } from './modelRetryTypes.js'; export interface RuntimeConnection { apiKey?: string; baseUrl?: string; }
+export type SuccessfulCompletionDecision = { action: 'allow' } | { action: 'continue'; prompt: string } | { action: 'reject'; error: string };
 /** 已完成附件解析、可直接注入下一次模型请求的插话消息。 */
 export interface QueuedInterjection {
   inputId: string;
@@ -84,6 +81,7 @@ export interface RunContext {
   recordModelRequestDiagnostic?: (event: ModelRequestDiagnostic) => Promise<boolean | void>;
   /** 每次真正发起模型请求前执行计费重检；拒绝时抛错并由 loop 正常收尾。 */
   authorizeModelTurn?: () => Promise<void>;
+  /** 最终文本落库后、成功终态写入前执行；可要求继续模型轮或拒绝成功收尾。 */ checkSuccessfulCompletion?: () => Promise<SuccessfulCompletionDecision>;
   /** Trusted host metadata for an automation execution; never sourced from model input. */
   automationFence?: { automationId:string; incarnationId:string; generation:number; specVersion:number; executionId:string; runId:string; rootSessionId?:string; rootRunId?:string };
   /** 在模型轮边界读取本 run 尚未消费的 durable 插话消息。 */

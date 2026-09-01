@@ -51,7 +51,7 @@ describe('orphanUnrecoverableSubagentWake', () => {
       tenantId: record.tenantId!,
     });
 
-    expect(release).toHaveBeenCalledWith('orphaned', 'subagent_run_not_recoverable');
+    expect(release).toHaveBeenCalledWith(undefined, 'subagent_run_not_recoverable');
     expect(record.status).toBe('orphaned');
     expect(markStatus).toHaveBeenCalledWith(record.sessionId, 'error');
   });

@@ -19,11 +19,29 @@ export interface AutomationTerminalEvent {
   modelUsage?: Record<string, SdkResultModelUsage>;
 }
 
+function nonNegativeInteger(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+}
+
 function totalTokens(modelUsage?: Record<string, SdkResultModelUsage>): number {
   return Object.values(modelUsage ?? {}).reduce((total, usage) => total
-    + Number(usage.inputTokens ?? 0)
-    + Number(usage.outputTokens ?? 0)
-    + Number(usage.reasoningTokens ?? 0), 0);
+    + nonNegativeInteger(usage.inputTokens)
+    + nonNegativeInteger(usage.outputTokens)
+    + nonNegativeInteger(usage.reasoningTokens), 0);
+}
+
+function totalCredits(modelUsage?: Record<string, SdkResultModelUsage>): number {
+  return Object.values(modelUsage ?? {}).reduce((total, usage) => {
+    const costUsd = Number(usage.costUSD ?? 0);
+    return total + (Number.isFinite(costUsd) ? Math.max(0, Math.round(costUsd * 1_000_000)) : 0);
+  }, 0);
+}
+
+function nextContinuationEpoch(value: unknown): number {
+  const epoch = Number(value);
+  if (!Number.isSafeInteger(epoch) || epoch < 0) throw new Error('invalid_wakeup_continuation_epoch');
+  return epoch + 1;
 }
 
 export class SessionAutomationTerminalProjector {
@@ -66,6 +84,7 @@ export class SessionAutomationTerminalProjector {
 
       const execution = await client.query(
         `SELECT e.*,w.due_at AS wakeup_due_at,w.continuation_epoch AS wakeup_continuation_epoch,
+                w.trigger_key AS wakeup_trigger_key,
                 a.status,a.mode,a.active_run_id,a.desired_terminal_status,a.no_progress_count,a.last_progress_fingerprint,
                 a.incarnation_id AS current_incarnation,a.generation AS current_generation,
                 a.control_version AS current_control_version,s.spec
@@ -118,16 +137,28 @@ export class SessionAutomationTerminalProjector {
             WHERE wakeup_id=(SELECT wakeup_id FROM ${this.store.tables.outbox} WHERE outbox_id=$1)`,
           [row.outbox_id],
         );
-        await this.store.recordUsage({
-          tenantId: event.tenantId,
-          sessionId: event.sessionId,
-          automationId: row.automation_id,
-          executionId: row.execution_id,
-          sourceKey: `run:${event.runId}`,
-          sourceKind: 'automation_run',
-          turns: event.numTurns ?? 0,
-          tokens: totalTokens(event.modelUsage),
-        }, client);
+        // Persist only the positive gap between the terminal aggregate and provider-attempt
+        // rows. Budget accounting can sum model + automation_run without undercounting or
+        // double-counting an execution that persisted only part of its provider usage.
+        await client.query(
+          `WITH provider AS (
+             SELECT COALESCE(SUM(turns),0) AS turns,COALESCE(SUM(tokens),0) AS tokens,
+                    COALESCE(SUM(credits),0) AS credits
+               FROM ${this.store.tables.usage}
+              WHERE tenant_id=$1 AND automation_id=$2 AND execution_id=$3 AND source_kind='model'
+           )
+           INSERT INTO ${this.store.tables.usage}
+             (usage_id,tenant_id,session_id,automation_id,execution_id,source_key,source_kind,turns,tokens,credits)
+           SELECT $4,$1,$5,$2,$3,$6,'automation_run',
+                  GREATEST($7::bigint-provider.turns,0),
+                  GREATEST($8::bigint-provider.tokens,0),
+                  GREATEST($9::numeric-provider.credits,0)
+             FROM provider
+           ON CONFLICT(tenant_id,automation_id,source_key) DO NOTHING`,
+          [event.tenantId, row.automation_id, row.execution_id, randomUUID(), event.sessionId,
+            `run:${event.runId}`, nonNegativeInteger(event.numTurns), totalTokens(event.modelUsage),
+            totalCredits(event.modelUsage)],
+        );
 
         const ownsActiveRun = row.active_run_id === event.runId;
         const fenced = row.incarnation_id === row.current_incarnation
@@ -171,7 +202,7 @@ export class SessionAutomationTerminalProjector {
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
               [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
             );
-          } else if (row.mode === 'fixed') {
+          } else if (row.mode === 'fixed' && !String(row.wakeup_trigger_key).startsWith('manual:')) {
             const interval = Number(row.spec.intervalMs);
             const anchorDueAt = new Date(row.wakeup_due_at).getTime();
             const elapsedSlots = Math.floor((Date.now() - anchorDueAt) / interval) + 1;
@@ -200,7 +231,11 @@ export class SessionAutomationTerminalProjector {
           } else {
             await client.query(
               `UPDATE ${this.store.tables.automations}
-                  SET phase='idle',active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
+                  SET phase=CASE WHEN EXISTS (
+                        SELECT 1 FROM ${this.store.tables.wakeups} w
+                         WHERE w.tenant_id=$1 AND w.automation_id=$2 AND w.state IN ('pending','claimed')
+                      ) THEN 'waiting' ELSE 'idle' END,
+                      active_run_id=NULL,no_progress_count=$3,last_progress_fingerprint=$4,
                       projection_version=projection_version+1,updated_at=now()
                 WHERE tenant_id=$1 AND automation_id=$2 AND active_run_id=$5`,
               [event.tenantId, row.automation_id, noProgress.count, fingerprint, event.runId],
@@ -216,6 +251,41 @@ export class SessionAutomationTerminalProjector {
                 row.current_incarnation, row.current_generation, row.spec_version],
             );
             const frozen = candidate.rows[0];
+            const existingContinuation = await client.query(
+              `SELECT 1 FROM ${this.store.tables.wakeups}
+                WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+                  AND incarnation_id=$4 AND generation=$5 AND spec_version=$6
+                  AND state IN ('pending','claimed')
+                  AND (trigger_key LIKE $7 OR payload->>'sourceRunId'=$8)
+                LIMIT 1`,
+              [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
+                row.current_generation, row.spec_version,
+                `goal:${row.automation_id}:g${row.current_generation}:e%:from:${event.runId}`,
+                event.runId],
+            );
+            if (!frozen && !existingContinuation.rowCount && !noProgress.pause) {
+              const continuationEpoch = nextContinuationEpoch(row.wakeup_continuation_epoch);
+              await this.store.scheduleTx(client, {
+                tenantId: event.tenantId,
+                sessionId: event.sessionId,
+                automationId: row.automation_id,
+                incarnationId: row.current_incarnation,
+                generation: Number(row.current_generation),
+                specVersion: Number(row.spec_version),
+                continuationEpoch,
+                triggerKey: `goal:${row.automation_id}:g${row.current_generation}:e${continuationEpoch}:no_checkpoint`,
+                dueAt: new Date(),
+                payload: { sourceRunId: event.runId, reason: 'no_checkpoint' },
+              });
+              await client.query(
+                `UPDATE ${this.store.tables.automations}
+                    SET phase='waiting',continuation_epoch=$6,projection_version=projection_version+1,updated_at=now()
+                  WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+                    AND incarnation_id=$4 AND generation=$5 AND status='active' AND active_run_id IS NULL`,
+                [event.tenantId, event.sessionId, row.automation_id, row.current_incarnation,
+                  row.current_generation, continuationEpoch],
+              );
+            }
             const validation = frozen
               ? await this.evidenceValidator.validateEvidenceManifest(client, frozen.evidence_manifest, String(frozen.evidence_manifest_hash), {
                 tenantId: event.tenantId, sessionId: event.sessionId, automationId: row.automation_id,
@@ -277,7 +347,10 @@ export class SessionAutomationTerminalProjector {
         }
         if(fenced)await this.store.tryFinalizeLocked(client,event.tenantId,event.sessionId,row.automation_id);
         const next=await this.store.getLocked(client,event.tenantId,event.sessionId,row.automation_id);
-        if(next)await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
+        if(next){
+          await this.store.event(client,next,'automation_execution_changed',{runId:event.runId,status:event.status,snapshot:next});
+          this.store.publish(next,'automation_execution_changed');
+        }
       }
 
       await client.query(
@@ -289,8 +362,7 @@ export class SessionAutomationTerminalProjector {
     });
   }
 
-  private async publishRunState(event:AutomationTerminalEvent):Promise<void>{const result=await this.store.pool.query(`SELECT automation_id FROM ${this.store.tables.executions} WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3`,[event.tenantId,event.sessionId,event.runId]);const automationId=result.rows[0]?.automation_id;if(!automationId)return;const snapshot=await this.store.get(event.tenantId,event.sessionId,String(automationId));if(snapshot)this.store.publish(snapshot,'automation_execution_changed');}
-
+  /** Explicit administration path for a proven deterministic, unrecoverable event only. */
   async quarantine(sequence: number, event: PlatformEvent, error: unknown): Promise<void> {
     await this.store.tx(async client => {
       await client.query(
@@ -369,11 +441,8 @@ export class SessionAutomationTerminalProjector {
           );
           continue;
         }
-        try {
-          const frozenTerminal = await this.progressEvidence(eventStore, terminal);
-          await this.project(frozenTerminal);
-          await this.publishRunState(frozenTerminal);
-        } catch (error) { await this.quarantine(after, event, error); }
+        const frozenTerminal = await this.progressEvidence(eventStore, terminal);
+        await this.project(frozenTerminal);
         processed++;
       }
       if (!page.hasMore) break;

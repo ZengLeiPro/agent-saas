@@ -32,6 +32,7 @@ export function creditsToMicrocredits(value: string | number): bigint | undefine
   return match[1] === '-' ? -magnitude : magnitude;
 }
 
+/** Parse non-negative integral NUMERIC aggregates without crossing the JS number boundary. */
 function wholeNumericToBigInt(value: unknown): bigint | undefined {
   const match = /^(\d+)(?:\.0+)?$/.exec(String(value ?? '0').trim());
   return match ? BigInt(match[1]!) : undefined;
@@ -56,9 +57,10 @@ export async function resolveAutomationBudgetReason(input: {
   const row = rowResult.rows[0];
   if (!row) return 'not_found';
   const usageResult = await input.client.query(
-    `SELECT COALESCE(SUM(turns),0) AS turns,COALESCE(SUM(tokens),0) AS tokens,
-            COALESCE(SUM(credits),0)::text AS credits
-       FROM ${input.tables.usage} WHERE tenant_id=$1 AND automation_id=$2 AND source_kind<>'goal_evaluation'`,
+    `SELECT COALESCE(SUM(u.turns),0) AS turns,COALESCE(SUM(u.tokens),0) AS tokens,
+            COALESCE(SUM(u.credits),0)::text AS credits
+       FROM ${input.tables.usage} u
+      WHERE u.tenant_id=$1 AND u.automation_id=$2 AND u.source_kind<>'goal_evaluation'`,
     [input.tenantId, input.automationId],
   );
   const totals = usageResult.rows[0] ?? {};
@@ -127,7 +129,7 @@ export interface RunProgressEvidence {
   fingerprint: string;
 }
 
-/** Build evidence only from immutable host events; transport/run identifiers never enter the hash. */
+/** Build progress evidence only from immutable host events; transport/run identifiers never enter the hash. */
 export function extractRunProgressEvidence(events: readonly PlatformEvent[], terminalStatus: string): RunProgressEvidence {
   const evidenceRefs: string[] = [];
   const facts: Array<Record<string, unknown>> = [];

@@ -176,7 +176,7 @@ export class HandHealthScanner {
                 lastStatus: 'result_unknown',
                 lastAttemptAt: new Date().toISOString(),
               },
-            })
+            }, requireHandTenantId(hand))
             : null;
           if (parked) {
             await this.appendHealthEvent(hand, 'unhealthy', 'tenant_provision_result_unknown');
@@ -202,13 +202,13 @@ export class HandHealthScanner {
               'unhealthy',
               { lastHealthCheckAt: new Date().toISOString() },
             );
-            hand = converged ?? await store.get(hand.handId) ?? hand;
+            hand = converged ?? await store.get(hand.handId, requireHandTenantId(hand)) ?? hand;
             if (converged) {
               await this.appendHealthEvent(scannedHand, 'unhealthy', 'provision_failure_pending');
               flipped += 1;
             }
           } else {
-            hand = await store.get(hand.handId) ?? hand;
+            hand = await store.get(hand.handId, requireHandTenantId(hand)) ?? hand;
           }
         }
         if (!hand.endpoint) continue;
@@ -249,7 +249,7 @@ export class HandHealthScanner {
                   lastStatus: targetStatus === 'ready' ? 'ok' : 'error',
                   lastAttemptAt: new Date().toISOString(),
                 },
-              })
+              }, requireHandTenantId(hand))
               : null;
             if (!completed) continue;
             await this.appendHealthEvent(hand, targetStatus, 'provisioning_process_recovered');
@@ -364,7 +364,7 @@ export class HandHealthScanner {
       const capacityKey = `${hand.endpoint}\u0000${this.options.defaultServerRemoteAuthToken ?? ''}`;
       if (this.recoveryCapacityBlocksThisScan.has(capacityKey)) return false;
     }
-    const latest = await this.options.handStore.get(hand.handId);
+    const latest = await this.options.handStore.get(hand.handId, requireHandTenantId(hand));
     if (latest) {
       if (latest.status === 'ready' && !hasUnresolvedHandProvisionFailure(latest)) return false;
       hand = latest;
@@ -562,6 +562,7 @@ export class HandHealthScanner {
       metadataPatch,
       hand.updatedAt,
       typeof provisionGeneration === 'string' ? provisionGeneration : undefined,
+      requireHandTenantId(hand),
     );
   }
 
@@ -576,6 +577,7 @@ export class HandHealthScanner {
       recoveryToken,
       status,
       metadataPatch,
+      requireHandTenantId(hand),
     );
   }
 

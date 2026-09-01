@@ -335,12 +335,12 @@ export class RawAgentLoop implements AgentLoop {
     };
   }
 
-  private async autoSelectTenantHandId(sessionId?: string, runId?: string, executionTarget?: import('../agent/toolRuntime.js').ExecutionTargetKind): Promise<string | undefined> {
+  private async autoSelectTenantHandId(tenantId: string, sessionId?: string, runId?: string, executionTarget?: import('../agent/toolRuntime.js').ExecutionTargetKind): Promise<string | undefined> {
     if (!this.handStore || !sessionId) {
       if (this.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_HAND_STORE_MISSING'); else return undefined;
     }
     try {
-      const hands = await this.handStore.listBySession(sessionId);
+      const hands = await this.handStore.listBySession(sessionId, tenantId);
       const decision = selectRuntimeHandRoute(hands, {
         runId, executionTarget, runtimeIsolationRequirement: this.runtimeIsolationRequirement,
       });
@@ -2941,7 +2941,7 @@ export class RawAgentLoop implements AgentLoop {
         }
       },
     };
-    const autoHandId = await this.autoSelectTenantHandId(args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
+    const autoHandId = await this.autoSelectTenantHandId(resolveRunTenantId(args.context), args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
     const effectiveHandId = autoHandId;
     toolContext.correlation = createInvocationCorrelation({ sessionId: args.context.sessionId, runId: args.context.runId, toolCallId: args.call.id, invocationId, ...(effectiveHandId ? { handId: effectiveHandId } : {}) });
     const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);

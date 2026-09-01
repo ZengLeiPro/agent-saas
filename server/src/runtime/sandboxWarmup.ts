@@ -2,6 +2,7 @@ import { deriveSandboxScopeId, deriveWorkspaceMountSubPath, type TenantRemoteHan
 import { selectTenantRemoteHandsForRegistration, type TenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
 import type { SessionCatalog } from './sessionCatalog.js';
 import type { HandStore } from './handStore.js';
+import { deriveTenantHandId } from './runtimeHandRegistration.js';
 import { applySandboxProfileResources, isSandboxProfile, sandboxResourcesFromHand } from './sandboxProfile.js';
 import { controlPlaneFetch } from './controlPlaneFetch.js';
 
@@ -103,7 +104,12 @@ export class SandboxWarmupService {
       ?? deriveSandboxScopeId({ workspaceId, mountSubPath, topLevelSessionId: sessionId });
 
     // 已注册 hand 的 recipe 是 Environment Template 合并后的最终事实；首次注册前回退会话 profile。
-    const registeredHand = await this.options.handStore?.get(`${sessionId}:server-remote`);
+    const registeredHand = record.tenantId
+      ? await this.options.handStore?.get(
+          deriveTenantHandId(record.tenantId, sessionId, 'server-remote'),
+          record.tenantId,
+        )
+      : null;
     const resources = sandboxResourcesFromHand(registeredHand) ?? resourcesForSandboxProfile(record);
     const scopeKey = `${entry.id}:${sandboxScopeId}`;
     const now = Date.now();

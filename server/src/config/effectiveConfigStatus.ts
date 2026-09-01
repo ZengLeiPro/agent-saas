@@ -5,6 +5,14 @@ import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
 export const EFFECTIVE_CONFIG_SCHEMA_VERSION = 1;
 
+export type EffectiveConfigTarget = 'models' | 'tools' | 'memory' | 'system' | 'execution';
+
+export interface EffectiveConfigSecretItem {
+  path: string;
+  status: 'reference' | 'legacy_inline' | 'missing';
+  target: EffectiveConfigTarget | null;
+}
+
 export interface EffectiveConfigStatus {
   configSchemaVersion: number;
   effectiveConfigFingerprint: string;
@@ -18,6 +26,7 @@ export interface EffectiveConfigStatus {
     references: number;
     inlineLegacy: number;
     missing: number;
+    items: EffectiveConfigSecretItem[];
   };
 }
 
@@ -48,27 +57,67 @@ function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
 }
 
+function targetForSecret(path: string): EffectiveConfigTarget | null {
+  if (path.startsWith('models.') || path.startsWith('codexSubscription.')) return 'models';
+  if (
+    path.startsWith('webTools.') ||
+    path.startsWith('imageGenTools.') ||
+    path.startsWith('stt.') ||
+    path.startsWith('toolControls.')
+  )
+    return 'tools';
+  if (path.startsWith('memory.')) return 'memory';
+  if (path.startsWith('tenantRemoteHands.')) return 'execution';
+  if (
+    path.startsWith('cron.') ||
+    path.startsWith('systemMonitor.') ||
+    path.startsWith('runtimeEventRetention.')
+  )
+    return 'system';
+  return null;
+}
+
 function secretSummary(value: unknown): EffectiveConfigStatus['secrets'] {
-  const summary = { references: 0, inlineLegacy: 0, missing: 0 };
-  const visit = (current: unknown): void => {
+  const summary: EffectiveConfigStatus['secrets'] = {
+    references: 0,
+    inlineLegacy: 0,
+    missing: 0,
+    items: [],
+  };
+  const addItem = (path: string, status: EffectiveConfigSecretItem['status']): void => {
+    summary.items.push({ path, status, target: targetForSecret(path) });
+  };
+  const visit = (current: unknown, parentPath = ''): void => {
     if (Array.isArray(current)) {
-      current.forEach(visit);
+      current.forEach((child, index) => visit(child, `${parentPath}[${index}]`));
       return;
     }
     if (!current || typeof current !== 'object') return;
     for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
+      const path = parentPath ? `${parentPath}.${key}` : key;
       if (!SAFE_SECRET_METADATA.has(key) && SECRET_REF_KEY.test(key)) {
-        if (child === undefined || child === null || child === '') summary.missing++;
-        else summary.references++;
+        if (child === undefined || child === null || child === '') {
+          summary.missing++;
+          addItem(path, 'missing');
+        } else {
+          summary.references++;
+          addItem(path, 'reference');
+        }
       } else if (!SAFE_SECRET_METADATA.has(key) && SECRET_KEY.test(key)) {
-        if (child === undefined || child === null || child === '') summary.missing++;
-        else summary.inlineLegacy++;
+        if (child === undefined || child === null || child === '') {
+          summary.missing++;
+          addItem(path, 'missing');
+        } else {
+          summary.inlineLegacy++;
+          addItem(path, 'legacy_inline');
+        }
       } else {
-        visit(child);
+        visit(child, path);
       }
     }
   };
   visit(value);
+  summary.items.sort((left, right) => left.path.localeCompare(right.path));
   return summary;
 }
 

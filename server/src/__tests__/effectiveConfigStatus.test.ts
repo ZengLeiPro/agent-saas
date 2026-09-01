@@ -20,6 +20,8 @@ describe('effective config status', () => {
         ],
       },
       webTools: { enabled: true, search: { provider: 'brave', apiKeyRef: 'vault/secret-ref' } },
+      stt: { enabled: false, apiKeyRef: '' },
+      dingtalk: { robots: [{ appSecret: 'must-also-not-leak' }] },
     } as never;
     const status = buildEffectiveConfigStatus({
       config,
@@ -29,9 +31,20 @@ describe('effective config status', () => {
     });
     expect(status.effectiveConfigFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
     expect(status.capabilityFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/u);
-    expect(status.secretReadiness).toBe('legacy_inline');
-    expect(status.secrets).toEqual({ references: 1, inlineLegacy: 1, missing: 0 });
+    expect(status.secretReadiness).toBe('missing');
+    expect(status.secrets).toEqual({
+      references: 1,
+      inlineLegacy: 2,
+      missing: 1,
+      items: [
+        { path: 'dingtalk.robots[0].appSecret', status: 'legacy_inline', target: null },
+        { path: 'models.groups[0].apiKey', status: 'legacy_inline', target: 'models' },
+        { path: 'stt.apiKeyRef', status: 'missing', target: 'tools' },
+        { path: 'webTools.search.apiKeyRef', status: 'reference', target: 'tools' },
+      ],
+    });
     expect(JSON.stringify(status)).not.toContain('must-not-leak');
+    expect(JSON.stringify(status)).not.toContain('must-also-not-leak');
     expect(JSON.stringify(status)).not.toContain('vault/secret-ref');
   });
 });

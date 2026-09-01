@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const memory = vi.hoisted(() => new Map<string, string>());
 const storage = vi.hoisted(() => ({
@@ -19,8 +19,14 @@ function callback(tx: { state: string; provider: string; redirectUri: string }, 
 }
 
 beforeEach(() => {
-  memory.clear(); vi.clearAllMocks(); service.resetNativeOAuthHandoffForTests();
+  memory.clear(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.useRealTimers();
+  service.resetNativeOAuthHandoffForTests();
   authFetch.mockResolvedValue({ ok: true, json: async () => ({ connectorId: 'google-workspace', status: 'succeeded' }) });
+});
+
+afterEach(() => {
+  vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); memory.clear();
+  service.resetNativeOAuthHandoffForTests();
 });
 
 describe('M30-01 native OAuth thin bridge', () => {
@@ -32,10 +38,55 @@ describe('M30-01 native OAuth thin bridge', () => {
     expect(binding.nativePkceChallenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
-  it('100-way device initialization is single-flight', async () => {
+  it('100-way device initialization remains single-flight before callback stress', async () => {
     const ids = await Promise.all(Array.from({ length: 100 }, () => service.getOrCreateNativeOAuthDeviceId()));
     expect(new Set(ids).size).toBe(1);
     expect(storage.setItem.mock.calls.filter(([key]) => key === 'native-oauth-device-id-v1')).toHaveLength(1);
+  });
+
+  it.each([1, 2])('100 concurrent starts produce unique state/nonces and fail closed for 99 stale callbacks (same-process run %i)', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+    let uuidSequence = 0;
+    vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() => {
+      const suffix = (++uuidSequence).toString(16).padStart(12, '0');
+      return `00000000-0000-4000-8000-${suffix}`;
+    });
+
+    const starts = await Promise.all(Array.from(
+      { length: 100 },
+      () => service.beginNativeOAuthTransaction('google-workspace', identity),
+    ));
+    const transactions = storage.setItem.mock.calls
+      .filter(([key]) => key === 'native-oauth-transaction-v2')
+      .map(([, raw]) => JSON.parse(raw));
+    const active = JSON.parse(memory.get('native-oauth-transaction-v2')!);
+
+    expect(starts).toHaveLength(100);
+    expect(transactions).toHaveLength(100);
+    expect(new Set(starts.map(start => start.nativeState)).size).toBe(100);
+    expect(new Set(transactions.map(tx => tx.state)).size).toBe(100);
+    expect(new Set(transactions.map(tx => tx.pkceVerifier)).size).toBe(100);
+    expect(new Set(transactions.flatMap(tx => [tx.state, tx.pkceVerifier])).size).toBe(200);
+
+    const outcomes = await Promise.all(transactions.map(async tx => {
+      try {
+        const result = await service.consumeNativeOAuthCallback(callback(tx), identity);
+        return { state: tx.state, status: 'succeeded' as const, result };
+      } catch (error) {
+        return { state: tx.state, status: 'failed' as const, error: (error as Error).message };
+      }
+    }));
+    const succeeded = outcomes.filter(outcome => outcome.status === 'succeeded');
+    const failed = outcomes.filter(outcome => outcome.status === 'failed');
+
+    expect(succeeded).toEqual([expect.objectContaining({
+      state: active.state,
+      result: { connectorId: 'google-workspace', status: 'succeeded' },
+    })]);
+    expect(failed).toHaveLength(99);
+    expect(failed.every(outcome => outcome.error === 'OAUTH_STATE_MISMATCH')).toBe(true);
+    expect(authFetch).toHaveBeenCalledTimes(1);
+    expect(memory.has('native-oauth-transaction-v2')).toBe(false);
   });
 
   it('concurrent and duplicate warm/cold callback exchange only once', async () => {
@@ -63,9 +114,9 @@ describe('M30-01 native OAuth thin bridge', () => {
   it('rejects expired transaction and A-account start/B-account return', async () => {
     await service.beginNativeOAuthTransaction('google-workspace', identity);
     let tx = JSON.parse(memory.get('native-oauth-transaction-v2')!);
-    vi.spyOn(Date, 'now').mockReturnValue(700_001);
+    vi.useFakeTimers(); vi.setSystemTime(700_001);
     await expect(service.consumeNativeOAuthCallback(callback(tx), identity)).rejects.toThrow('EXPIRED');
-      await service.beginNativeOAuthTransaction('google-workspace', identity);
+    await service.beginNativeOAuthTransaction('google-workspace', identity);
     tx = JSON.parse(memory.get('native-oauth-transaction-v2')!);
     await expect(service.consumeNativeOAuthCallback(callback(tx), { ...identity, userId: 'user-b' })).rejects.toThrow('IDENTITY_BOUNDARY');
   });

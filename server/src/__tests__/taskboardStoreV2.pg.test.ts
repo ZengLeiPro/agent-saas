@@ -74,7 +74,6 @@ describePg('PgTaskboardStore V2 integration contract', () => {
           autoResolveConflicts: true,
           maxAutomaticRemediationRounds: 3,
           maxTransientRetries: 3,
-          requireGreenChecks: true,
           deleteRemoteBranch: false,
           deploy: false,
         },

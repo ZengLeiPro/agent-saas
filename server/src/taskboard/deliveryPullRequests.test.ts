@@ -169,3 +169,74 @@ describe('Integration Agent pull request attachment', () => {
     expect(updateSql).not.toContain('admission_receipt');
   });
 });
+
+describe('Delivery pull request attachment identity', () => {
+  function attachmentHost(currentProviderPullRequestId: string | null) {
+    const context = {
+      query: vi.fn(async () => ({ rows: [{
+        task_id: 'delivery-1', kind: 'delivery', task_branch: 'fix/task-32',
+        provider_pull_request_id: currentProviderPullRequestId,
+        execution_id: 'execution-32', purpose: 'work', execution_status: 'running',
+        transitioned_at: null, superseded_at: null,
+        repository: {
+          provider: 'github', repositoryId: 'github:acme/repo', owner: 'acme', name: 'repo',
+          baseBranch: 'main', allowForkPullRequest: false,
+        },
+        owner_user_id: identity.ownerUserId,
+      }] })),
+      release: vi.fn(),
+    };
+    const now = new Date('2026-09-01T12:00:00.000Z');
+    const transaction = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql.includes('SELECT id FROM tasks')) return { rows: [{ id: 'delivery-1' }] };
+        if (sql.includes('SELECT id FROM executions')) return { rows: [{ id: 'execution-32' }] };
+        if (sql.includes('UPDATE tasks') && sql.includes('provider_pull_request_id=$2')) {
+          const requested = String(values?.[1]);
+          return { rows: currentProviderPullRequestId === null || currentProviderPullRequestId === requested
+            ? [{ id: 'delivery-1' }]
+            : [] };
+        }
+        if (sql.includes('SELECT t.*')) return { rows: [{
+          id: 'delivery-1', board_id: 'board-1', identifier: 'TASK-32', kind: 'delivery',
+          title: 'Delivery', description: '', attachments: [], status: 'in_progress',
+          priority: 'high', labels: [], sort_order: 1, stage_models: {}, workflow_version: 3,
+          workflow_epoch: 1, next_action: 'none', next_action_revision: 0,
+          provider_pull_request_id: '32', pull_request_number: 32, head_oid: 'head-32', base_oid: 'base-32',
+          comment_count: 0, version: 1, created_at: now, updated_at: now,
+        }] };
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const clients = [context, transaction];
+    const value = {
+      ...host({ getPullRequest: vi.fn(async () => snapshot), mergePullRequest: vi.fn() }),
+      pool: { connect: vi.fn(async () => clients.shift()!) },
+    } as unknown as DeliveryPullRequestHost;
+    return { value, transaction };
+  }
+
+  it.each([
+    { current: null, label: 'first attachment' },
+    { current: '32', label: 'same PR refresh' },
+  ])('allows $label', async ({ current }) => {
+    const { value, transaction } = attachmentHost(current);
+
+    await expect(attachExecutionPullRequest(value, identity, 'run-delivery-32', '32'))
+      .resolves.toMatchObject({ id: 'delivery-1', providerPullRequestId: '32' });
+
+    const updateSql = transaction.query.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('UPDATE tasks') && sql.includes('provider_pull_request_id=$2')) ?? '';
+    expect(updateSql).toContain('provider_pull_request_id IS NULL OR provider_pull_request_id=$2');
+    expect(updateSql).toContain('RETURNING id');
+  });
+
+  it('rejects replacing an already bound Delivery PR', async () => {
+    const { value } = attachmentHost('31');
+
+    await expect(attachExecutionPullRequest(value, identity, 'run-delivery-32', '32'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+  });
+});

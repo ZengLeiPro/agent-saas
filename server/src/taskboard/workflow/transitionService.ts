@@ -21,6 +21,7 @@ import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentit
 import { fenceTaskExecutions, loadWorkflowFacts } from './commandService.js';
 import { EXECUTION_TRANSITIONED_REASON } from './cancellationOutbox.js';
 import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
+import { recordExecutionFinishComment } from './finishComment.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
@@ -31,7 +32,7 @@ export async function finishExecutionV2(
   input: TaskBoardExecutionFinishInput,
 ): Promise<TaskBoardTask> {
   if (input.targetStatus === 'ready_to_merge') {
-    const reconciled = await reconcileExecutionPullRequestMerge(options, identity, runId);
+    const reconciled = await reconcileExecutionPullRequestMerge(options, identity, runId, input.body);
     if (reconciled) return reconciled;
   }
   return withTransaction(options, async (client) => {
@@ -175,28 +176,6 @@ function assertActiveExecution(row: Record<string, unknown>, execution: TaskBoar
   if (!ACTIVE.includes(String(row.status)) || row.transitioned_at || execution.supersededAt) {
     throw new TaskboardValidationError('Taskboard execution is no longer active', 'TASKBOARD_EXECUTION_FENCED');
   }
-}
-
-async function recordExecutionFinishComment(
-  options: TaskboardV2StoreOptions,
-  client: PoolClient,
-  execution: TaskBoardExecution,
-  body: string,
-): Promise<void> {
-  const normalized = body.trim();
-  if (!normalized) {
-    throw new TaskboardValidationError('Execution finish comment is required', 'TASKBOARD_EXECUTION_COMMENT_REQUIRED');
-  }
-  const result = await client.query(
-    `INSERT INTO ${options.commentsTable}
-       (id,task_id,body,author_type,author_id,author_name,continuation_eligible,version)
-     VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)
-     RETURNING id`,
-    [randomUUID(), execution.taskId, normalized, execution.runId],
-  );
-  await appendChange(options, client, execution.taskId, 'execution.comment', 'agent', execution.runId, {
-    commentId: String(result.rows[0]!.id),
-  });
 }
 
 async function markTransitioned(options: TaskboardV2StoreOptions, client: PoolClient, execution: TaskBoardExecution, status: string): Promise<void> {

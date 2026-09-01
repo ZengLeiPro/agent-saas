@@ -168,7 +168,6 @@ export interface TaskBoardIntegrationPolicy {
     autoResolveConflicts: true;
     maxAutomaticRemediationRounds: number;
     maxTransientRetries: number;
-    requireGreenChecks: true;
     deleteRemoteBranch: false;
     deploy: false;
   };

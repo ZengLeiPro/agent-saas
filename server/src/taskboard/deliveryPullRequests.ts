@@ -4,13 +4,15 @@ import type { TaskBoardTask } from '../../../shared/src/types/taskboard.js';
 import { finalizeMergedSource } from './integrationFinalization.js';
 import type { IntegrationFinalizationHost } from './integrationFinalizationHost.js';
 import { integrationAgentTableNames } from './integrationAgentSchema.js';
-import type {
-  RepositoryProvider,
-  RepositoryPullRequestInspection,
-  RepositoryPullRequestSnapshot,
+import {
+  isRepositoryProviderUnavailableError,
+  type RepositoryProvider,
+  type RepositoryPullRequestInspection,
+  type RepositoryPullRequestSnapshot,
 } from './repositoryProvider.js';
 import { rowToTask, visibleCommentPredicate } from './storeHelpers.js';
 import { fenceTaskExecutions } from './workflow/commandService.js';
+import { recordExecutionFinishComment } from './workflow/finishComment.js';
 import {
   TaskboardNotFoundError,
   TaskboardValidationError,
@@ -140,12 +142,13 @@ export async function attachExecutionPullRequest(
           'TASKBOARD_SUBJECT_STALE',
         );
     } else {
-      await client.query(
+      const updated = await client.query(
         `UPDATE ${host.tasksTable}
             SET provider_pull_request_id=$2, pull_request_number=$3,
                 head_oid=$4, base_oid=$5,
                 version=version+1, updated_at=now()
-          WHERE id=$1`,
+          WHERE id=$1 AND (provider_pull_request_id IS NULL OR provider_pull_request_id=$2)
+          RETURNING id`,
         [
           context.taskId,
           pullRequest.providerPullRequestId,
@@ -154,6 +157,12 @@ export async function attachExecutionPullRequest(
           pullRequest.baseOid,
         ],
       );
+      if (!updated.rows[0]) {
+        throw new TaskboardValidationError(
+          'Delivery task is already bound to a different pull request',
+          'TASKBOARD_SUBJECT_STALE',
+        );
+      }
     }
     const result = await client.query(
       `SELECT t.*, (SELECT count(*)::int FROM ${host.commentsTable} c
@@ -192,6 +201,7 @@ export async function reconcileExecutionPullRequestMerge(
   host: DeliveryPullRequestHost,
   identity: TaskboardIdentity,
   runId: string,
+  finishBody: string,
 ): Promise<TaskBoardTask | undefined> {
   const context = await loadContext(host, identity, runId, ['review']);
   if (!context.providerPullRequestId) return undefined;
@@ -202,8 +212,9 @@ export async function reconcileExecutionPullRequestMerge(
       context.providerPullRequestId,
       context.boardOwnerUserId,
     );
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isRepositoryProviderUnavailableError(error)) return undefined;
+    throw error;
   }
   assertObservedPullRequestIdentity(context, pullRequest);
   if (pullRequest.state !== 'merged') return undefined;
@@ -216,13 +227,14 @@ export async function reconcileExecutionPullRequestMerge(
   return reconcileExternallyMergedPullRequest(host, context, {
     ...pullRequest,
     mergeCommitOid: pullRequest.mergeCommitOid,
-  });
+  }, finishBody);
 }
 
 async function reconcileExternallyMergedPullRequest(
   host: DeliveryPullRequestHost,
   context: Awaited<ReturnType<typeof loadContext>>,
   pullRequest: RepositoryPullRequestSnapshot & { mergeCommitOid: string },
+  finishBody: string,
 ): Promise<TaskBoardTask> {
   const sourceClient = await host.pool.connect();
   try {
@@ -242,6 +254,7 @@ async function reconcileExternallyMergedPullRequest(
           providerPullRequestId: context.providerPullRequestId!,
           executionId: context.executionId,
         },
+        finishComment: { taskId: context.taskId, runId: context.runId, body: finishBody },
       });
       return finalized.task;
     }
@@ -263,6 +276,10 @@ async function reconcileExternallyMergedPullRequest(
         'TASKBOARD_SUBJECT_STALE',
       );
     }
+    await recordExecutionFinishComment(host, client, {
+      taskId: context.taskId,
+      runId: context.runId,
+    }, finishBody);
     const result = await client.query(
       `UPDATE ${host.tasksTable}
           SET status='done', pull_request_number=$2, head_oid=$3, base_oid=$4,

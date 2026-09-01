@@ -601,7 +601,6 @@ describe("TaskBoardView", () => {
           autoResolveConflicts: true,
           maxAutomaticRemediationRounds: 2,
           maxTransientRetries: 3,
-          requireGreenChecks: true,
           deleteRemoteBranch: false,
           deploy: false,
         },

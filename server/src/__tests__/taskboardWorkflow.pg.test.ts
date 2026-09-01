@@ -297,7 +297,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
         batch: { maxTasks: 5, selection: 'priority_then_ready_at' },
         execution: {
           mergeMethod: 'merge', continueIndependentSources: true, autoResolveConflicts: true,
-          maxAutomaticRemediationRounds: 1, maxTransientRetries: 1, requireGreenChecks: true,
+          maxAutomaticRemediationRounds: 1, maxTransientRetries: 1,
           deleteRemoteBranch: false, deploy: false,
         },
       },

@@ -10,6 +10,7 @@ import {
   completeRemediationAfterMerge,
   fenceTaskExecutions,
 } from './workflow/commandService.js';
+import { recordExecutionFinishComment } from './workflow/finishComment.js';
 
 export async function finalizeMergedSource(
   host: IntegrationFinalizationHost,
@@ -26,6 +27,7 @@ export async function finalizeMergedSource(
       providerPullRequestId: string;
       executionId: string;
     };
+    finishComment?: { taskId: string; runId: string; body: string };
   },
 ): Promise<{ source: TaskBoardIntegrationSource; task: ReturnType<typeof rowToTask>; receipt: Record<string, unknown> }> {
   return withIntegrationTransaction(host, async (client) => {
@@ -91,6 +93,9 @@ export async function finalizeMergedSource(
       if (!execution.rows[0]) {
         throw new TaskboardValidationError('Taskboard execution changed');
       }
+    }
+    if (input.finishComment) {
+      await recordExecutionFinishComment(host, client, input.finishComment, input.finishComment.body);
     }
     const alreadyMerged = sourceRow.state === 'merged';
     if (alreadyMerged && String(sourceRow.merged_commit_oid ?? '') !== input.mergedCommitOid) {

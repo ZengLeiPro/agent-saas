@@ -188,7 +188,7 @@ describe('Taskboard routes', () => {
     const captured: Captured = { identities: [], taskFilters: [], createBoards: [] };
     const rig = await makeRig(makeService(captured), USER, captured);
     const repository = { provider: 'github', repositoryId: 'github:acme/app', owner: 'acme', name: 'app', baseBranch: 'main', allowForkPullRequest: false };
-    const integrationPolicy = { schemaVersion: 1, enabled: true, revision: 'client', trigger: { mode: 'manual', allowedRoles: ['owner'] }, batch: { maxTasks: 10, selection: 'priority_then_ready_at' }, execution: { mergeMethod: 'squash', continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true, deleteRemoteBranch: false, deploy: false } };
+    const integrationPolicy = { schemaVersion: 1, enabled: true, revision: 'client', trigger: { mode: 'manual', allowedRoles: ['owner'] }, batch: { maxTasks: 10, selection: 'priority_then_ready_at' }, execution: { mergeMethod: 'squash', continueIndependentSources: true, autoResolveConflicts: true, maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, deleteRemoteBranch: false, deploy: false } };
     expect((await rig.request('/api/taskboard/boards', postJson({ name: 'Agent-first', repository, integrationPolicy }))).status).toBe(201);
     expect(captured.createBoards.at(-1)).toMatchObject({ integrationPolicy: { workflowVersion: 3 } });
     expect((await rig.request('/api/taskboard/boards', postJson({ name: 'Legacy selectable', repository, integrationPolicy: { ...integrationPolicy, workflowVersion: 2 } }))).status).toBe(400);

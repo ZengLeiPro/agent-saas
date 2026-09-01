@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  RepositoryProviderPolicyError,
+  RepositoryProviderUnavailableError,
+} from '../repositoryProvider.js';
 import { finishExecutionV2 } from './transitionService.js';
 
 // Shared identity for Integration and Delivery transaction-level workflow tests.
@@ -230,7 +234,9 @@ describe('TASK-359 ordinary Delivery finish transitions', () => {
   it('moves Review to ready_to_merge with an attached PR even when Provider is unavailable', async () => {
     const client = deliveryClient('in_review', 'review', '400');
     const provider = {
-      getPullRequest: vi.fn(async () => { throw new Error('github unavailable'); }),
+      getPullRequest: vi.fn(async () => {
+        throw new RepositoryProviderUnavailableError('github unavailable');
+      }),
       inspectPullRequest: vi.fn(),
     };
 
@@ -241,6 +247,23 @@ describe('TASK-359 ordinary Delivery finish transitions', () => {
     expectNoLegacyDeliveryGateSql(client.query);
     expect(provider.getPullRequest).toHaveBeenCalledOnce();
     expect(provider.inspectPullRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects Review handoff when Provider reports a repository policy mismatch', async () => {
+    const client = deliveryClient('in_review', 'review', '400');
+    const provider = {
+      getPullRequest: vi.fn(async () => {
+        throw new RepositoryProviderPolicyError('Pull request targets a different repository');
+      }),
+      inspectPullRequest: vi.fn(),
+    };
+
+    await expect(finishExecutionV2(options(client, provider), identity, 'run-359', {
+      targetStatus: 'ready_to_merge', body: 'Independent review approved the delivery.',
+    })).rejects.toBeInstanceOf(RepositoryProviderPolicyError);
+
+    expect(provider.getPullRequest).toHaveBeenCalledOnce();
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('UPDATE tasks'))).toBe(false);
   });
 
   it('still rejects Work to in_review when no PR is attached', async () => {

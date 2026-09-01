@@ -72,7 +72,16 @@ export function boardIntegrationMigrationSql(boardsTable: string): string {
   return `
     ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS repository JSONB;
     ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS integration_policy JSONB;
-    ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS integration_next_run_at TIMESTAMPTZ
+    ALTER TABLE ${boardsTable} ADD COLUMN IF NOT EXISTS integration_next_run_at TIMESTAMPTZ;
+    UPDATE ${boardsTable}
+       SET integration_policy=jsonb_set(
+         integration_policy,
+         '{execution}',
+         (integration_policy->'execution')-'requireGreenChecks',
+         false
+       )
+     WHERE jsonb_typeof(integration_policy->'execution')='object'
+       AND (integration_policy->'execution')?'requireGreenChecks'
   `;
 }
 
@@ -177,10 +186,15 @@ export function rowToBoard(row: Record<string, unknown>, currentUserId: string):
   const ownerUserId = String(row.owner_user_id);
   const role = resolveBoardRole(row, currentUserId);
   const repository = parseJsonObject<TaskBoardRepositoryConfig>(row.repository);
-  const storedIntegrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy & { featureFlags?: unknown; ciPolicy?: unknown }>(row.integration_policy);
+  const storedIntegrationPolicy = parseJsonObject<TaskBoardIntegrationPolicy & {
+    featureFlags?: unknown;
+    ciPolicy?: unknown;
+    execution: TaskBoardIntegrationPolicy['execution'] & { requireGreenChecks?: unknown };
+  }>(row.integration_policy);
   const integrationPolicy = storedIntegrationPolicy ? (() => {
-    const { featureFlags: _ignored, ciPolicy: _legacyCiPolicy, ...policy } = storedIntegrationPolicy;
-    return { ...policy, workflowVersion: 3 as const };
+    const { featureFlags: _ignored, ciPolicy: _legacyCiPolicy, execution, ...policy } = storedIntegrationPolicy;
+    const { requireGreenChecks: _legacyRequireGreenChecks, ...normalizedExecution } = execution;
+    return { ...policy, execution: normalizedExecution, workflowVersion: 3 as const };
   })() : undefined;
   const stageModels = parseStageModels(row.stage_models);
   const stagePrompts = parseStagePrompts(row.stage_prompts);

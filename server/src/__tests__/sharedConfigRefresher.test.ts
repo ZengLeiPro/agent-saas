@@ -228,11 +228,11 @@ describe('createSharedConfigRefresher', () => {
       now: () => clock,
     });
 
-    const before = refresher.getAppliedStamps().config;
     clock += 5_000;
     refresher.refreshIfChanged();
+    const applied = refresher.getAppliedStamps().config;
     refresher.refreshIfChanged();
-    expect(refresher.getAppliedStamps().config).toEqual(before);
+    expect(refresher.getAppliedStamps().config).toEqual(applied);
     expect(config.models!.groups).toHaveLength(1);
   });
 
@@ -534,6 +534,31 @@ describe('createSharedConfigRefresher', () => {
     clock += 5_000;
     expect(source.executionEnabled()).toBe(false);
     expect(source.read().controlEnabled).toBe(false);
+  });
+
+  it('首次 attach 会比对已加载内容，不把启动窗口内的新文件 stamp 当作基线', () => {
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({
+      agent: { cwd: '.' }, server: { port: 3200 },
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: false },
+    }), 'utf-8');
+    const config = {
+      models: { groups: [BASE_GROUP], default: 'ark-agents/glm-5.2' },
+      sessionAutomation: { controlEnabled: true, executionEnabled: true },
+    } as unknown as AppConfig;
+    const source = createSessionAutomationFlagSource(config);
+    let clock = 10_000;
+    const refresher = createSharedConfigRefresher({
+      config, processCwd: dir,
+      target: { updateGuardrailModelConfigs: () => {}, titleGeneratorConfigs: [] },
+      now: () => clock,
+    });
+
+    source.attachRefresh(refresher.refreshIfChanged);
+
+    expect(source.executionEnabled()).toBe(false);
+    expect(refresher.getAppliedStamps().config).toBeDefined();
+    clock += 5_000;
   });
 
   it('webTools 未变化时不触发回调', () => {

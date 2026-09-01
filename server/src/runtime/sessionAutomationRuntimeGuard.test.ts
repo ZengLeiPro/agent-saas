@@ -34,6 +34,9 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
   creditReservationAmounts: unknown[] = [];
   onCommit?: () => void;
   providerAttemptState: 'dispatched' | 'cancelled' | 'result_unknown' = 'dispatched';
+  backgroundAutomationStatus = 'active';
+  backgroundExecutionState = 'running';
+  onBackgroundAuthorityLocked?: () => void;
 
   async connect(): Promise<pg.PoolClient> {
     return { query: this.query.bind(this), release() {} } as unknown as pg.PoolClient;
@@ -84,6 +87,15 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
     }
     if (normalized.includes('SELECT prepared_dispatch_attempt_id')) {
       return { rows: [{ prepared_dispatch_attempt_id: '44444444-4444-4444-8444-444444444444' }] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith('SELECT 1 FROM runtime_session_automations a') && normalized.includes('parent_run.status')) {
+      this.onBackgroundAuthorityLocked?.();
+      return this.backgroundAutomationStatus === 'active' && this.backgroundExecutionState === 'running'
+        ? { rows: [{ '?column?': 1 }] as T[], rowCount: 1 }
+        : { rows: [] as T[], rowCount: 0 };
+    }
+    if (normalized.startsWith("UPDATE runtime_session_automation_background_resources SET state='active'")) {
+      return { rows: [{ state: 'active' }] as T[], rowCount: 1 };
     }
     return { rows: [] as T[], rowCount: 1 };
   }
@@ -316,6 +328,52 @@ describe('SessionAutomationRuntimeGuard', () => {
     enabled = true;
     await expect(guard.assertBackgroundResourcePrepared(context, 'background-run', identity)).resolves.toBeUndefined();
     expect(pool.statements.at(-1)).toContain('runtime_session_automation_background_resources');
+  });
+
+  it('remote dispatch gate atomically checks automation/execution and parent+child running before prepared→active', async () => {
+    const pool = new FakePool();
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true, 'runtime', 'runtime_runs');
+    const identity = { childSessionId: 'child-session', childRunId: 'child-run' };
+
+    await expect(guard.recordBackgroundResource(context, 'background-run', identity, 'active')).resolves.toBeUndefined();
+    const joined = pool.statements.join('\n');
+    expect(joined).toContain("a.status='active'");
+    expect(joined).toContain("e.state='running'");
+    expect(joined).toContain("parent_run.status='running'");
+    expect(joined).toContain("child_run.status='running'");
+    expect(joined).toContain("SET state='active'");
+    expect(pool.statements.filter(sql => sql === 'BEGIN')).toHaveLength(1);
+    expect(pool.statements.at(-1)).toBe('COMMIT');
+  });
+
+  it('rechecks the live execution switch after locking authority and before prepared→active', async () => {
+    const pool = new FakePool();
+    let enabled = true;
+    pool.onBackgroundAuthorityLocked = () => { enabled = false; };
+    const guard = new SessionAutomationRuntimeGuard(
+      pool as unknown as pg.Pool, () => enabled, 'runtime', 'runtime_runs',
+    );
+
+    await expect(guard.recordBackgroundResource(context, 'background-run', {
+      childSessionId: 'child-session', childRunId: 'child-run',
+    }, 'active')).rejects.toMatchObject({ reason: 'execution_disabled' });
+    expect(pool.statements.some(sql => sql.includes("SET state='active'"))).toBe(false);
+    expect(pool.statements.at(-1)).toBe('ROLLBACK');
+  });
+
+  it.each([
+    ['pause/clear', 'cancelling', 'running'],
+    ['execution terminal', 'active', 'terminal'],
+  ])('%s race rejects remote dispatch without activating resource', async (_label, automationStatus, executionState) => {
+    const pool = new FakePool();
+    pool.backgroundAutomationStatus = automationStatus;
+    pool.backgroundExecutionState = executionState;
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true, 'runtime', 'runtime_runs');
+    await expect(guard.recordBackgroundResource(context, 'background-run', {
+      childSessionId: 'child-session', childRunId: 'child-run',
+    }, 'active')).rejects.toMatchObject({ reason: 'background_dispatch_authority_lost' });
+    expect(pool.statements.some(sql => sql.includes("SET state='active'"))).toBe(false);
+    expect(pool.statements.at(-1)).toBe('ROLLBACK');
   });
 
   it('pre-transport release 幂等恢复 allowance，已释放 attempt 不会被误标 result_unknown', async () => {

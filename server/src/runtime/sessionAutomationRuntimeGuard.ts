@@ -561,31 +561,84 @@ export class SessionAutomationRuntimeGuard {
       rootRunId: lineage.executionRunId,
     });
     const values = [lineage.tenantId, resourceKey, identity.childRunId, identity.childSessionId];
-    const result = state === 'prepared'
-      ? await this.pool.query(
-        `INSERT INTO ${this.tables.backgroundResources}
-          (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,'prepared',$11)
-         ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
-           SET version=${this.tables.backgroundResources}.version+1,updated_at=now()
-           WHERE ${this.tables.backgroundResources}.provider_resource_id=EXCLUDED.provider_resource_id
-             AND ${this.tables.backgroundResources}.metadata->>'childSessionId'=EXCLUDED.metadata->>'childSessionId'
-             AND ${this.tables.backgroundResources}.automation_id=EXCLUDED.automation_id
-             AND ${this.tables.backgroundResources}.incarnation_id=EXCLUDED.incarnation_id
-             AND ${this.tables.backgroundResources}.generation=EXCLUDED.generation
-         RETURNING state`,
-        [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-          lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, metadata],
-      )
-      : await this.pool.query(
-        `UPDATE ${this.tables.backgroundResources}
-            SET state=$5,version=version+1,updated_at=now()
-          WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$2
-            AND provider_resource_id=$3 AND metadata->>'childSessionId'=$4
-            AND state = ANY($6::text[]) RETURNING state`,
-        [...values, state, state === 'active' ? ['prepared', 'active'] : ['prepared', 'active', 'released']],
-      );
-    if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
+    if (state === 'active') {
+      // Final durable boundary before tenant /provision: validate and lock the
+      // whole authority chain, then consume prepared intent in this transaction.
+      const client = await this.pool.connect();
+      let committed = false;
+      try {
+        await client.query('BEGIN');
+        const authority = await client.query(
+          `SELECT 1
+             FROM ${this.tables.automations} a
+             JOIN ${this.tables.executions} e
+               ON e.tenant_id=a.tenant_id AND e.session_id=a.session_id
+              AND e.automation_id=a.automation_id AND e.incarnation_id=a.incarnation_id
+              AND e.generation=a.generation
+             JOIN ${this.runsTable} parent_run ON parent_run.tenant_id=a.tenant_id AND parent_run.run_id=$9
+             JOIN ${this.runsTable} child_run ON child_run.tenant_id=a.tenant_id AND child_run.run_id=$10
+            WHERE a.tenant_id=$1 AND a.session_id=$2 AND a.automation_id=$3
+              AND a.incarnation_id=$4 AND a.generation=$5 AND a.spec_version=$6
+              AND a.status='active' AND a.active_run_id=$8
+              AND e.execution_id=$7 AND e.run_id=$8 AND e.state='running'
+              AND parent_run.session_id=$11 AND parent_run.status='running'
+              AND child_run.session_id=$12 AND child_run.status='running'
+            FOR UPDATE OF a,e,parent_run,child_run`,
+          [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+            lineage.generation, lineage.specVersion, lineage.executionId, lineage.executionRunId,
+            lineage.invokingRunId, identity.childRunId, lineage.invokingSessionId, identity.childSessionId],
+        );
+        if (authority.rowCount !== 1) throw new AutomationFenceRejectedError('background_dispatch_authority_lost');
+        // The execution switch is process-local and cannot participate in the SQL
+        // predicate. Re-read the same authoritative source after BEGIN + locks and
+        // immediately before consuming prepared intent; a false result rolls back.
+        this.assertExecutionEnabled();
+        const activated = await client.query(
+          `UPDATE ${this.tables.backgroundResources}
+              SET state='active',version=version+1,updated_at=now()
+            WHERE tenant_id=$1 AND automation_id=$2 AND incarnation_id=$3 AND generation=$4
+              AND execution_id=$5 AND run_id=$6 AND resource_kind='child_run' AND resource_key=$7
+              AND provider_resource_id=$8 AND metadata->>'childSessionId'=$9
+              AND state IN ('prepared','active') RETURNING state`,
+          [lineage.tenantId, lineage.automationId, lineage.incarnationId, lineage.generation,
+            lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, identity.childSessionId],
+        );
+        if (activated.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
+        await client.query('COMMIT');
+        committed = true;
+      } catch (error) {
+        if (!committed) await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else {
+      const result = state === 'prepared'
+        ? await this.pool.query(
+          `INSERT INTO ${this.tables.backgroundResources}
+            (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,'prepared',$11)
+           ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
+             SET version=${this.tables.backgroundResources}.version+1,updated_at=now()
+             WHERE ${this.tables.backgroundResources}.provider_resource_id=EXCLUDED.provider_resource_id
+               AND ${this.tables.backgroundResources}.metadata->>'childSessionId'=EXCLUDED.metadata->>'childSessionId'
+               AND ${this.tables.backgroundResources}.automation_id=EXCLUDED.automation_id
+               AND ${this.tables.backgroundResources}.incarnation_id=EXCLUDED.incarnation_id
+               AND ${this.tables.backgroundResources}.generation=EXCLUDED.generation
+           RETURNING state`,
+          [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+            lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, metadata],
+        )
+        : await this.pool.query(
+          `UPDATE ${this.tables.backgroundResources}
+              SET state=$5,version=version+1,updated_at=now()
+            WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$2
+              AND provider_resource_id=$3 AND metadata->>'childSessionId'=$4
+              AND state = ANY($6::text[]) RETURNING state`,
+          [...values, state, ['prepared', 'active', 'released']],
+        );
+      if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
+    }
     if(state==='released'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource' AND object_id IN (SELECT background_resource_id::text FROM ${this.tables.backgroundResources} WHERE tenant_id=$1 AND resource_kind='child_run' AND resource_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,resourceKey]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
   }
 

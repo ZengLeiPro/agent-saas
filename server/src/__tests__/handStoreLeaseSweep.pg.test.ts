@@ -9,7 +9,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () => {
+describePg('PgHandStore lease 与 provision authority 治理', () => {
   const prefix = `handsweep_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   let pool: InstanceType<typeof Pool>;
   let store: PgHandStore;
@@ -96,7 +96,7 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     expect((await store.get('leased-hand'))?.status).toBe('ready');
   });
 
-  it('provision recovery claim/complete 只允许当前 token 原子更新', async () => {
+  it('provision recovery claim/complete 只允许当前 token 且排除 reconcileRequired', async () => {
     await seed('recover-race', { status: 'unhealthy' });
     await pool.query(
       `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
@@ -123,6 +123,16 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     );
     expect(await store.claimProvisionRecovery('recover-destroyed', 'token-destroyed')).toBeNull();
 
+    await seed('recover-reconcile-required', { status: 'unhealthy' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['recover-reconcile-required', JSON.stringify({
+        provisionFailure: 'result unknown', provisionResult: 'result_unknown', reconcileRequired: true,
+      })],
+    );
+    expect(await store.claimProvisionRecovery('recover-reconcile-required', 'scanner-token')).toBeNull();
+    expect((await store.get('recover-reconcile-required'))?.metadata.reconcileRequired).toBe(true);
+
     await seed('normal-generation', { status: 'ready' });
     await pool.query(
       `UPDATE ${prefix}_hands SET status = 'provisioning', metadata = $2::jsonb WHERE hand_id = $1`,
@@ -130,6 +140,55 @@ describePg('PgHandStore.sweepLeases（2026-08-03 P1 hands 租约治理）', () =
     );
     expect(await store.completeProvisionAttempt('normal-generation', 'generation-1', 'unhealthy')).toBeNull();
     expect(await store.completeProvisionAttempt('normal-generation', 'generation-2', 'ready')).not.toBeNull();
+  });
+
+  it('dispatch claim 原子持久化未知结果且只有同 generation/token 可按结果确定性完成', async () => {
+    await seed('dispatch-authority', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['dispatch-authority', JSON.stringify({ provisionGeneration: 'generation-1' })],
+    );
+    const before = await store.get('dispatch-authority');
+    const claimed = await store.claimProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-1', before!.updatedAt,
+    );
+    expect(claimed).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionDispatchClaim: 'dispatch-token-1', provisionResult: 'result_unknown',
+      reconcileRequired: true, dispatchAuthorized: true,
+    } });
+    expect(await store.claimProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-2', claimed!.updatedAt,
+    )).toBeNull();
+    expect(await store.completeProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'wrong-token', 'ready',
+    )).toBeNull();
+    expect(await store.completeProvisionDispatch(
+      'dispatch-authority', 'generation-1', 'dispatch-token-1', 'ready', {
+        provisionDispatchClaim: null, dispatchAuthorized: false,
+        provisionResult: 'ok', reconcileRequired: false,
+      },
+    )).toMatchObject({ status: 'ready', metadata: {
+      provisionDispatchClaim: null, dispatchAuthorized: false,
+      provisionResult: 'ok', reconcileRequired: false,
+    } });
+
+    await seed('dispatch-known-error', { status: 'provisioning' });
+    await pool.query(
+      `UPDATE ${prefix}_hands SET metadata = $2::jsonb WHERE hand_id = $1`,
+      ['dispatch-known-error', JSON.stringify({ provisionGeneration: 'generation-error' })],
+    );
+    const errorBefore = await store.get('dispatch-known-error');
+    await store.claimProvisionDispatch(
+      'dispatch-known-error', 'generation-error', 'dispatch-token-error', errorBefore!.updatedAt,
+    );
+    expect(await store.completeProvisionDispatch(
+      'dispatch-known-error', 'generation-error', 'dispatch-token-error', 'unhealthy', {
+        provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
+      },
+    )).toMatchObject({ status: 'unhealthy', metadata: {
+      provisionDispatchClaim: null, dispatchAuthorized: false,
+      provisionFailure: 'provider rejected', provisionResult: 'error', reconcileRequired: false,
+    } });
   });
 
   it('register upsert 可复活 destroyed 记录（lease 治理无永久误杀）', async () => {

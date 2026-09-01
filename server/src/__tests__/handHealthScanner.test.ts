@@ -67,6 +67,7 @@ class InMemoryHandStore implements HandStore {
   ): Promise<HandRecord | null> {
     const hand = this.hands.get(handId);
     if (!hand || !['ready', 'unhealthy'].includes(hand.status)) return null;
+    if (hand.metadata.reconcileRequired === true) return null;
     if (expectedUpdatedAt && hand.updatedAt !== expectedUpdatedAt) return null;
     if (expectedProvisionGeneration && hand.metadata.provisionGeneration !== expectedProvisionGeneration) return null;
     const token = hand.metadata.provisionRecoveryToken;
@@ -269,9 +270,7 @@ describe('HandHealthScanner (B4)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-
-
-  it('replays cached recipe for an unhealthy hand when health stays down', async () => {
+  it('replays cached recipe with its provision key when an unhealthy hand stays down', async () => {
     const handStore = new InMemoryHandStore();
     const eventStore = new InMemoryEventStore();
     await handStore.register({
@@ -281,7 +280,7 @@ describe('HandHealthScanner (B4)', () => {
       type: 'server-remote',
       status: 'unhealthy',
       endpoint: 'http://hand.example',
-      metadata: { recipe: { workspaceId: 'w-r', setupCommands: ['true'] } },
+      metadata: { recipe: { workspaceId: 'w-r', setupCommands: ['true'], provisionKey: 'stable-recovery-key' } },
     });
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const href = String(url);
@@ -298,7 +297,9 @@ describe('HandHealthScanner (B4)', () => {
     expect(handStore.hands.get('h-reprovision')?.metadata.provision).toMatchObject({ attempts: 0, lastStatus: 'ok', recipeHash: 'abc' });
     const [, provisionInit] = (fetchImpl as unknown as { mock: { calls: Array<[any, RequestInit]> } }).mock.calls[1]!;
     expect(provisionInit.method).toBe('POST');
-    expect(JSON.parse(String(provisionInit.body))).toMatchObject({ workspaceId: 'w-r', recipe: { workspaceId: 'w-r', setupCommands: ['true'] } });
+    expect(provisionInit.headers).toMatchObject({ 'idempotency-key': 'stable-recovery-key' });
+    expect(JSON.parse(String(provisionInit.body))).toMatchObject({ workspaceId: 'w-r',
+      recipe: { workspaceId: 'w-r', setupCommands: ['true'], provisionKey: 'stable-recovery-key' } });
   });
 
   it('backs off cached recipe reprovision failures instead of hammering the hand', async () => {

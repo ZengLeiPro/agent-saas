@@ -36,6 +36,7 @@ import {
   deriveBackgroundTaskAutomationFence,
 } from './backgroundTaskAutomationContext.js';
 import { BACKGROUND_COMMAND_MONITOR_HANDOFF_REASON } from './backgroundTaskRuntime.js';
+import { assertBackgroundRemoteDispatchBarrier } from './backgroundRemoteDispatchBarrier.js';
 import {
   deriveBackgroundRuntimeIsolationRequirement, metadataString,
   parseBackgroundTaskMetadata, resolvePreparedChildIdentity,
@@ -78,10 +79,8 @@ const CANCEL_POLL_MS = 2_000;
 export function resolveBackgroundSkillUsername(session: Pick<RuntimeSessionRecord, 'username' | 'orgAgentSnapshot'>): string | undefined {
   return session.orgAgentSnapshot ? undefined : session.username;
 }
-
 export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
   private readonly runSubagentImpl: typeof runSubagent;
-
   constructor(
     private readonly config: RawRuntimeRunDispatchConfig,
     options: { runSubagentImpl?: typeof runSubagent } = {},
@@ -464,7 +463,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       });
       const agentType = getSubagentType(metadata.agentType);
       if (!agentType) throw new Error(`未知后台 agent_type：${metadata.agentType}`);
-      const outcome = await this.runSubagentImpl({
+      const outcome = await this.runSubagentImpl({ // authority callbacks must precede external side effects
         config: this.config,
         executionTransportRegistry: executionRegistry,
         tenantHandResolver,
@@ -480,6 +479,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         },
         preparedChildIdentity: preparedIdentity,
         beforeChildSideEffects: identity => automationResource.assertPrepared(identity),
+        beforeTenantRemoteProvision: identity => assertBackgroundRemoteDispatchBarrier(this.config.runStore,
+          record.runId, abortController.signal, identity, () => automationResource.active(identity)),
         onChildRunCreated: async (identity) => { await automationResource.active(identity);
           await this.config.runStore?.markStatus(record.runId, 'running', 'background_task_started', {
             executionChildSessionId: identity.childSessionId, executionChildRunId: identity.childRunId,

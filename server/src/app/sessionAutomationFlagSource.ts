@@ -14,7 +14,7 @@ export function createSessionAutomationFlagSource(
 ): AttachableSessionAutomationFlagSource {
   let refreshIfChanged = () => {};
   const source: AttachableSessionAutomationFlagSource = {
-    attachRefresh: (refresh) => { refreshIfChanged = refresh; },
+    attachRefresh: (refresh) => { refreshIfChanged = refresh; refreshIfChanged(); },
     read: () => {
       refreshIfChanged();
       return resolveSessionAutomationFlags(config.sessionAutomation);

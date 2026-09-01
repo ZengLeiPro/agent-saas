@@ -514,10 +514,10 @@ describe('HttpTransport hand lifecycle helpers', () => {
 
 
 
-  it('provisions /provision with Bearer auth and workspace recipe', async () => {
-    let captured: { url?: string | URL; init?: RequestInit } = {};
+  it('replays /provision with the same key in the API header and workspace recipe', async () => {
+    const captured: Array<{ url?: string | URL; init?: RequestInit }> = [];
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      captured = { url, init };
+      captured.push({ url, init });
       return new Response(JSON.stringify({ status: 'ok', workspaceId: 'session-abc' }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -525,17 +525,19 @@ describe('HttpTransport hand lifecycle helpers', () => {
     }) as unknown as typeof fetch;
     const transport = new HttpTransport({ baseUrl: 'http://h', authToken: 'secret-token-12345', fetchImpl });
 
-    await expect(transport.provision({ workspaceId: 'session-abc', sandboxScopeId: 'ws_kaiyan__u-1', setupCommands: ['true'] })).resolves.toEqual({
-      status: 'ok',
-      metadata: { status: 'ok', workspaceId: 'session-abc' },
-    });
-    expect(captured.url).toBe('http://h/provision');
-    expect(captured.init?.method).toBe('POST');
-    expect((captured.init?.headers as Record<string, string>).authorization).toBe('Bearer secret-token-12345');
-    expect(JSON.parse(captured.init?.body as string)).toEqual({
-      workspaceId: 'session-abc',
-      recipe: { workspaceId: 'session-abc', sandboxScopeId: 'ws_kaiyan__u-1', setupCommands: ['true'] },
-    });
+    const recipe = { workspaceId: 'session-abc', sandboxScopeId: 'ws_kaiyan__u-1', setupCommands: ['true'], provisionKey: 'fixed-key' };
+    await expect(transport.provision(recipe)).resolves.toMatchObject({ status: 'ok' });
+    await expect(transport.provision(recipe)).resolves.toMatchObject({ status: 'ok' });
+    expect(captured).toHaveLength(2);
+    for (const request of captured) {
+      expect(request.url).toBe('http://h/provision');
+      expect(request.init?.method).toBe('POST');
+      expect((request.init?.headers as Record<string, string>)).toMatchObject({
+        authorization: 'Bearer secret-token-12345',
+        'idempotency-key': 'fixed-key',
+      });
+      expect(JSON.parse(request.init?.body as string)).toEqual({ workspaceId: 'session-abc', recipe });
+    }
   });
 
   it('discovers /tools but keeps local descriptor schemas as source of truth', async () => {

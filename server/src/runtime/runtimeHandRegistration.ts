@@ -27,6 +27,57 @@ import {
 } from './runtimeIsolationEvidence.js';
 export { integrationRuntimeIsolationRequirement };
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function normalizeRepositoryIdentity(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    // URL canonicalization deliberately excludes credentials and transport-only
+    // query/fragment data while retaining protocol, host (including port), and path.
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    // Git's SCP-like syntax is not accepted by WHATWG URL. Strip userinfo and
+    // transport suffixes but retain host/port/path so distinct repos cannot alias.
+    const withoutTransportSuffix = rawUrl.split(/[?#]/, 1)[0] ?? '';
+    return withoutTransportSuffix.replace(/^[^@/]+@(?=[^/]+[:/])/, '');
+  }
+}
+
+export function deriveProvisionIdentity(handId: string, childRunId: string, recipe: WorkspaceRecipe): string {
+  // Identity is deliberately allow-listed: signed download URLs and rotating
+  // credentials are transport data, while normalized repository location is identity.
+  const identityRecipe = {
+    workspaceId: recipe.workspaceId,
+    runtimeIsolationRequirement: recipe.runtimeIsolationRequirement,
+    sandboxScopeId: recipe.sandboxScopeId,
+    sessionId: recipe.sessionId,
+    mountSubPath: recipe.mountSubPath,
+    repo: recipe.repo && {
+      url: normalizeRepositoryIdentity(recipe.repo.url),
+      ref: recipe.repo.ref,
+      remote: recipe.repo.remote,
+    },
+    files: recipe.files?.map(({ artifactId, path }) => ({ artifactId, path })),
+    packages: recipe.packages,
+    envKeys: recipe.envKeys,
+    setupCommands: recipe.setupCommands,
+    resources: recipe.resources,
+  };
+  return createHash('sha256')
+    .update(canonicalJson({ handId, childRunId, recipe: identityRecipe }))
+    .digest('hex');
+}
+
 /**
  * Sandbox 归属键。决定「哪些执行流共享同一个 ACS Sandbox pod」。
  *
@@ -115,6 +166,10 @@ export async function ensureRuntimeHandRegistered(params: {
   /** Server-derived Integration Work/Review identity; never accepted from clients. */
   runtimeIsolationRequirement?: RuntimeIsolationRequirement;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+  /** Persist the caller's side-effect/reconciliation fence before a tenant appliance is contacted. */
+  beforeTenantRemoteProvision?: (identity: {
+    handId: string; childRunId: string; provisionKey: string;
+  }) => Promise<void>;
 }): Promise<void> {
   if (!params.handStore) {
     if (params.runtimeIsolationRequirement) throw new Error('RUNTIME_ISOLATION_EVIDENCE_MISSING:handStore');
@@ -211,12 +266,8 @@ export async function ensureRuntimeHandRegistered(params: {
     }
     recipe.runtimeIsolationRequirement = params.runtimeIsolationRequirement;
   }
-  // Fixed run identity gives transport retries one stable provisioning key.
-  const provisionKey = createHash('sha256').update(JSON.stringify({
-    handId: defaultHandId,
-    runId: params.runId ?? params.sessionId,
-    recipe,
-  })).digest('hex');
+  // Fixed child-run identity gives transport retries one stable provisioning key.
+  const provisionKey = deriveProvisionIdentity(defaultHandId, params.runId ?? params.sessionId, recipe);
   recipe.provisionKey = provisionKey;
   const recipeDigest = createHash('sha256').update(JSON.stringify(recipe)).digest('hex');
   const existingDefaultHand = typeof params.handStore.get === 'function'
@@ -442,9 +493,30 @@ export async function ensureRuntimeHandRegistered(params: {
       params.workspaceMountSubPath,
       params.topLevelSessionId,
     );
-    const tenantRecipeDigest = createHash('sha256').update(JSON.stringify(tenantRecipe)).digest('hex');
-    const tenantProvisionGeneration = randomUUID();
-    await manager.provision({
+    const fixedChildRunId = params.runId ?? params.sessionId;
+    const tenantProvisionKey = deriveProvisionIdentity(handId, fixedChildRunId, tenantRecipe);
+    tenantRecipe.provisionKey = tenantProvisionKey;
+    const tenantRecipeDigest = createHash('sha256').update(canonicalJson(tenantRecipe)).digest('hex');
+    const tenantProvisionGeneration = tenantProvisionKey;
+    // Unknown external results remain parked until an explicit reconciler clears the durable fence.
+    const existingTenantHand = await params.handStore.get(handId);
+    const reuseReadyTenantHand = existingTenantHand?.status === 'ready'
+      && existingTenantHand.recipeDigest === tenantRecipeDigest
+      && existingTenantHand.metadata.provisionKey === tenantProvisionKey;
+    const reconcileBlockedTenantAttempt = existingTenantHand?.metadata.reconcileRequired === true
+      && existingTenantHand.metadata.provisionGeneration === tenantProvisionGeneration;
+    if (reconcileBlockedTenantAttempt) continue;
+    const unresolvedTenantAttempt = existingTenantHand?.status === 'provisioning'
+      && existingTenantHand.metadata.provisionGeneration === tenantProvisionGeneration;
+    if (unresolvedTenantAttempt) {
+      await params.handStore.updateStatus(handId, 'unhealthy', {
+        provisionFailure: 'tenant remote provision result unknown; reconciliation required',
+        provisionResult: 'result_unknown',
+        reconcileRequired: true,
+      });
+      continue;
+    }
+    const persistedTenantHand = !reuseReadyTenantHand ? await manager.provision({
       handId,
       sessionId: params.sessionId,
       workspaceId: remoteWorkspaceId,
@@ -463,6 +535,7 @@ export async function ensureRuntimeHandRegistered(params: {
         registeredBy: 'tenantRemoteHands',
         tenantRemoteHandId: hand.id,
         tenantRemoteHandTokenSource: tokenSource,
+        provisionKey: tenantProvisionKey,
         provisionGeneration: tenantProvisionGeneration,
         provisionFailure: failure ?? null,
         provisionRecoveryToken: null,
@@ -477,9 +550,23 @@ export async function ensureRuntimeHandRegistered(params: {
         ...(hand.invokeTimeoutMs ? { invokeTimeoutMs: hand.invokeTimeoutMs } : {}),
         ...(hand.networkPolicy ? { networkPolicy: hand.networkPolicy } : {}),
       },
-    });
+    }) : existingTenantHand;
 
-    if (resolvedToken) {
+    if (resolvedToken && !reuseReadyTenantHand) {
+      const dispatchToken = randomUUID();
+      const dispatchClaim = persistedTenantHand && params.handStore.claimProvisionDispatch
+        ? await params.handStore.claimProvisionDispatch(
+          handId,
+          tenantProvisionGeneration,
+          dispatchToken,
+          persistedTenantHand.updatedAt,
+        )
+        : null;
+      if (!dispatchClaim || !params.handStore.completeProvisionDispatch) {
+        throw new Error(
+          `TENANT_HAND_PROVISION_DISPATCH_FENCE_REJECTED: handId=${handId} generation=${tenantProvisionGeneration}`,
+        );
+      }
       const tenantTransport = new HttpTransport({
         baseUrl: hand.baseUrl,
         authToken: resolvedToken,
@@ -492,9 +579,15 @@ export async function ensureRuntimeHandRegistered(params: {
         transport: tenantTransport,
         recipe: tenantRecipe,
         provisionGeneration: tenantProvisionGeneration,
+        dispatchToken,
         sessionId: params.sessionId,
         handId,
         workspaceId: remoteWorkspaceId,
+        beforeTransport: () => params.beforeTenantRemoteProvision?.({
+          handId,
+          childRunId: fixedChildRunId,
+          provisionKey: tenantProvisionKey,
+        }) ?? Promise.resolve(),
         logger: params.logger,
       });
     }
@@ -612,20 +705,26 @@ async function provisionTenantRemoteHand(args: {
   transport: HttpTransport;
   recipe: WorkspaceRecipe;
   provisionGeneration: string;
+  dispatchToken: string;
   sessionId: string;
   handId: string;
   workspaceId: string;
+  beforeTransport?: () => Promise<void>;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 }): Promise<void> {
   const complete = async (status: 'ready' | 'unhealthy', metadata: Record<string, unknown>) => {
-    return await args.handStore.completeProvisionAttempt(
+    return await args.handStore.completeProvisionDispatch?.(
       args.handId,
       args.provisionGeneration,
+      args.dispatchToken,
       status,
       metadata,
-    );
+    ) ?? null;
   };
+  let transportStarted = false;
   try {
+    await args.beforeTransport?.();
+    transportStarted = true;
     const result = await args.transport.provision(args.recipe);
     await appendProvisioningLogs({
       eventStore: args.eventStore,
@@ -640,6 +739,10 @@ async function provisionTenantRemoteHand(args: {
       const error = result.error ?? 'tenant remote hand provision failed';
       const completed = await complete('unhealthy', {
         provisionFailure: error,
+        provisionDispatchClaim: null,
+        dispatchAuthorized: false,
+        provisionResult: 'error',
+        reconcileRequired: false,
         provisionRecoveryToken: null,
         provisionRecoveryClaimedAtMs: null,
         provision: {
@@ -672,6 +775,10 @@ async function provisionTenantRemoteHand(args: {
 
     const completed = await complete('ready', {
       provisionFailure: null,
+      provisionDispatchClaim: null,
+      dispatchAuthorized: false,
+      provisionResult: 'ok',
+      reconcileRequired: false,
       provisionRecoveryToken: null,
       provisionRecoveryClaimedAtMs: null,
       provision: {
@@ -697,11 +804,15 @@ async function provisionTenantRemoteHand(args: {
     const error = err instanceof Error ? err.message : String(err);
     const completed = await complete('unhealthy', {
       provisionFailure: error,
+      provisionDispatchClaim: null,
+      dispatchAuthorized: false,
+      provisionResult: transportStarted ? 'result_unknown' : 'not_dispatched',
+      reconcileRequired: transportStarted,
       provisionRecoveryToken: null,
       provisionRecoveryClaimedAtMs: null,
       provision: {
         attempts: 0,
-        lastStatus: 'error',
+        lastStatus: transportStarted ? 'result_unknown' : 'not_dispatched',
         lastAttemptAt: new Date().toISOString(),
         lastError: error,
       },
@@ -714,7 +825,7 @@ async function provisionTenantRemoteHand(args: {
       workspaceId: args.workspaceId,
       handId: args.handId,
       error,
-      classifiedAs: 'unknown',
+      classifiedAs: transportStarted ? 'unknown' : 'unhealthy',
     }, { tenantId: args.tenantId }).catch(() => undefined);
     await args.eventStore.append({
       type: 'hand_health_changed',
@@ -724,7 +835,9 @@ async function provisionTenantRemoteHand(args: {
       status: 'unhealthy',
       detail: error,
     }, { tenantId: args.tenantId }).catch(() => undefined);
-    args.logger?.warn(`tenant_hand_provision_failed handId=${args.handId}: ${error}`);
+    args.logger?.warn(
+      `tenant_hand_provision_${transportStarted ? 'result_unknown' : 'not_dispatched'} handId=${args.handId}: ${error}`,
+    );
   }
 }
 

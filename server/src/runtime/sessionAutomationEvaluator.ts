@@ -546,6 +546,7 @@ export class SessionAutomationEvaluator {
       if (!execution.rowCount) return { queued: false, reason: 'stale_fence' };
       const frozen = await this.freezeEvidenceManifest(client, input);
       if (!frozen.manifest) return { queued: false, reason: frozen.reason ?? 'evidence_ref_unsupported' };
+      if (!this.executionEnabled()) return { queued: false, reason: 'execution_disabled' };
       const inserted = await client.query(
         `INSERT INTO ${this.store.tables.goalCompletionCandidates}
           (candidate_id,tenant_id,session_id,automation_id,execution_id,incarnation_id,generation,spec_version,run_id,summary,evidence_refs,evidence_manifest,evidence_manifest_hash)

@@ -196,4 +196,32 @@ describe('SessionAutomationEvaluator execution and evidence gating', () => {
     expect(store.tx).not.toHaveBeenCalled();
     expect(model.evaluate).not.toHaveBeenCalled();
   });
+
+  it('fails closed at the goal candidate INSERT boundary after evidence freeze', async () => {
+    const client = { query: vi.fn().mockResolvedValue({ rowCount: 1, rows: [{ '?column?': 1 }] }) };
+    const store = {
+      tablePrefix: 'runtime', runsTable: 'runs',
+      tables: { executions: 'executions', goalCompletionCandidates: 'goal_candidates' },
+      getLocked: vi.fn(async () => ({
+        spec: { kind: 'goal' }, status: 'active', activeRunId: 'run', incarnationId: 'incarnation',
+        generation: 1, specVersion: 1,
+      })),
+      tx: vi.fn(async (callback: (input: typeof client) => Promise<unknown>) => callback(client)),
+    };
+    const executionEnabled = vi.fn(() => false);
+    const evaluator = new SessionAutomationEvaluator(store as never, { evaluate: vi.fn() } as never, executionEnabled);
+    vi.spyOn(evaluator as any, 'freezeEvidenceManifest').mockResolvedValue({
+      manifest: { entries: [{ ref: 'event:e1' }], canonicalHash: 'hash' },
+    });
+
+    await expect(evaluator.nominate({
+      tenantId: 'tenant', sessionId: 'session', automationId: 'automation', executionId: 'execution',
+      runId: 'run', incarnationId: 'incarnation', generation: 1, specVersion: 1,
+      summary: 'done', evidenceRefs: ['event:e1'],
+    })).resolves.toEqual({ queued: false, reason: 'execution_disabled' });
+    expect(executionEnabled).toHaveBeenCalledTimes(1);
+    expect(client.query).toHaveBeenCalledTimes(1);
+    expect(client.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO goal_candidates'), expect.anything());
+  });
+
 });

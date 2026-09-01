@@ -211,13 +211,28 @@ export interface HandStore {
   init?(): Promise<void>;
   register(input: RegisterHandInput): Promise<HandRecord>;
   updateStatus(handId: string, status: HandStatus, metadataPatch?: Record<string, unknown>): Promise<HandRecord | null>;
-  /** Atomically claims an unresolved provision failure for one scanner recovery attempt. */
+  /** Atomically claims a recoverable provision failure; reconcile-required results are excluded. */
   claimProvisionRecovery(
     handId: string,
     recoveryToken: string,
     metadataPatch?: Record<string, unknown>,
     expectedUpdatedAt?: string,
     expectedProvisionGeneration?: string,
+  ): Promise<HandRecord | null>;
+  /** Atomically persists durable intent and claims authority for one remote /provision dispatch. */
+  claimProvisionDispatch?(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    expectedUpdatedAt: string,
+  ): Promise<HandRecord | null>;
+  /** Completes a claimed remote dispatch only for its exact generation/token and persisted outcome certainty. */
+  completeProvisionDispatch?(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    status: 'ready' | 'unhealthy',
+    metadataPatch?: Record<string, unknown>,
   ): Promise<HandRecord | null>;
   /** Completes a normal provision attempt only while its generation still owns the Hand. */
   completeProvisionAttempt(
@@ -392,6 +407,7 @@ export class PgHandStore implements HandStore {
           updated_at = now()
       WHERE hand_id = $1
         AND status IN ('ready', 'unhealthy')
+        AND metadata->'reconcileRequired' IS DISTINCT FROM 'true'::jsonb
         AND (lease_expires_at IS NULL OR lease_expires_at > now())
         AND ($4::timestamptz IS NULL OR date_trunc('milliseconds', updated_at) = $4::timestamptz)
         AND ($5::text IS NULL OR metadata->>'provisionGeneration' = $5)
@@ -412,6 +428,63 @@ export class PgHandStore implements HandStore {
       expectedUpdatedAt ?? null,
       expectedProvisionGeneration ?? null,
     ]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async claimProvisionDispatch(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    expectedUpdatedAt: string,
+  ): Promise<HandRecord | null> {
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = 'unhealthy',
+          metadata = metadata || jsonb_build_object(
+            'provisionDispatchClaim', $3::text,
+            'provisionDispatchClaimedAt', now(),
+            'provisionResult', 'result_unknown',
+            'reconcileRequired', true,
+            'dispatchAuthorized', true
+          ),
+          updated_at = now()
+      WHERE hand_id = $1
+        AND status = 'provisioning'
+        AND metadata->>'provisionGeneration' = $2
+        AND COALESCE(metadata->>'provisionDispatchClaim', '') = ''
+        AND metadata->'reconcileRequired' IS DISTINCT FROM 'true'::jsonb
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND date_trunc('milliseconds', updated_at) = $4::timestamptz
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, dispatchToken, expectedUpdatedAt]);
+    return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
+  }
+
+  async completeProvisionDispatch(
+    handId: string,
+    provisionGeneration: string,
+    dispatchToken: string,
+    status: 'ready' | 'unhealthy',
+    metadataPatch: Record<string, unknown> = {},
+  ): Promise<HandRecord | null> {
+    const patch = {
+      ...metadataPatch,
+      provisionDispatchClaim: null,
+      dispatchAuthorized: false,
+      provisionResult: status === 'ready' ? 'ok' : (metadataPatch.provisionResult ?? 'error'),
+      reconcileRequired: metadataPatch.reconcileRequired ?? status !== 'ready',
+    };
+    const result = await this.pool.query<{ row_json: unknown }>(`
+      UPDATE ${this.handsTable}
+      SET status = $4, metadata = metadata || $5::jsonb, updated_at = now()
+      WHERE hand_id = $1
+        AND status IN ('provisioning', 'unhealthy')
+        AND (lease_expires_at IS NULL OR lease_expires_at > now())
+        AND metadata->>'provisionGeneration' = $2
+        AND metadata->>'provisionDispatchClaim' = $3
+        AND metadata->'dispatchAuthorized' = 'true'::jsonb
+      RETURNING row_to_json(${this.handsTable}.*) AS row_json
+    `, [handId, provisionGeneration, dispatchToken, status, JSON.stringify(patch)]);
     return result.rows[0] ? normalizeHandRecord(result.rows[0].row_json) : null;
   }
 

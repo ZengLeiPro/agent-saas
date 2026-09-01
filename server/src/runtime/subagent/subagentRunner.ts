@@ -178,6 +178,8 @@ export interface RunSubagentParams {
   preparedChildIdentity?: { childSessionId: string; childRunId: string };
   /** Called before child session/run/lease/hand/provider side effects so the caller can assert durable intent. */
   beforeChildSideEffects?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Durable fence immediately before a tenant remote provision request leaves the process. */
+  beforeTenantRemoteProvision?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
   /** Crash/recovery contract checkpoints; production callers normally leave this unset. */
   lifecycleCheckpoint?: (checkpoint: 'prepared' | 'session' | 'run' | 'lease' | 'hand' | 'before_active') => Promise<void> | void;
   /** 子 session/run 已建好、即将起跑时回调（AgentToolProvider 用它发 durable subagent_started）。 */
@@ -434,6 +436,9 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       username,
       userTenantId: config.resolveUserTenantId?.({ userId, username }),
       logger: config.logger,
+      beforeTenantRemoteProvision: async () => {
+        await params.beforeTenantRemoteProvision?.(childIdentity);
+      },
     });
     await appendResolvedRunSnapshot({
       config,

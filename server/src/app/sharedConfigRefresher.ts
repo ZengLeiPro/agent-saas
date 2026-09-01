@@ -91,10 +91,11 @@ export function createSharedConfigRefresher(params: {
   } = params;
 
   const configPath = getAppConfigPath(processCwd);
-  // 进程启动时已经读过一次盘，把当时的指纹作为基线，避免首次调用做无谓重载。
-  let appliedConfigStamp = readStamp(configPath);
+  // config 可能早于 refresher 很久加载；首次刷新必须把当前磁盘内容与已加载内容比对，
+  // 不能把 attach 时的文件 stamp 误当成那份内存内容的基线而吞掉启动窗口内的更新。
+  let appliedConfigStamp: FileStamp | undefined;
   let appliedTenantsStamp = tenantsFilePath ? readStamp(tenantsFilePath) : undefined;
-  let lastCheckedAtMs = 0;
+  let lastCheckedAtMs = Number.NEGATIVE_INFINITY;
 
   function refreshConfigFile(): void {
     const stamp = readStamp(configPath);

@@ -82,7 +82,7 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     executionEnabled = true;
     await expect(service.command(identity, input))
       .resolves.toMatchObject({ result: 'created' });
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(3);
     expect(store.create).toHaveBeenCalledWith({}, identity, expect.objectContaining({ mode: 'adaptive' }), expect.any(Date));
   });
 
@@ -122,4 +122,51 @@ describe('SessionAutomationCommandService live kill-switch controls', () => {
     })).rejects.toMatchObject({ code: 'AUTOMATION_DRAINING' });
     expect(store.replace).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['create', '/loop -- work', undefined],
+    ['replace', '/loop replace -- work', snapshot],
+    ['resume', '/loop resume', snapshot],
+    ['run', '/loop run', snapshot],
+  ] as const)('rechecks %s after authorization at the final transaction write boundary', async (_action, command, live) => {
+    let executionEnabled = true;
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLiveForOwner: vi.fn(async () => live), create: vi.fn(async () => snapshot),
+      replace: vi.fn(async () => snapshot), control: vi.fn(async () => snapshot), recordCommand: vi.fn(), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, { read: () => resolveSessionAutomationFlags({
+      controlEnabled: true, executionEnabled, fixedLoopEnabled: true, adaptiveLoopEnabled: true,
+      goalEnabled: true, evaluatorEnforced: true,
+    }) }, { authorize: vi.fn(async () => { executionEnabled = false; }) });
+
+    await expect(service.command(identity, { clientMessageId: `boundary-${_action}`, command }))
+      .rejects.toMatchObject({ code: 'EXECUTION_DISABLED' });
+    expect(store.create).not.toHaveBeenCalled();
+    expect(store.replace).not.toHaveBeenCalled();
+    expect(store.control).not.toHaveBeenCalled();
+  });
+
+  it('rechecks after the locked row wait and permits a fresh true after true-to-false-to-true', async () => {
+    let executionEnabled = true;
+    const transitions: boolean[] = [];
+    const store = {
+      tx: vi.fn(async (fn: (c: object) => unknown) => fn({})), findCommand: vi.fn(async () => undefined),
+      getLiveForOwner: vi.fn(async () => {
+        executionEnabled = false; transitions.push(executionEnabled);
+        executionEnabled = true; transitions.push(executionEnabled);
+        return undefined;
+      }),
+      create: vi.fn(async () => snapshot), recordCommand: vi.fn(async () => 'cursor-1'), publish: vi.fn(),
+    };
+    const service = new SessionAutomationCommandService(store as never, { read: () => resolveSessionAutomationFlags({
+      controlEnabled: true, executionEnabled, adaptiveLoopEnabled: true,
+    }) }, { authorize: vi.fn(async () => undefined) });
+
+    await expect(service.command(identity, { clientMessageId: 'toggle-create', command: '/loop -- work' }))
+      .resolves.toMatchObject({ result: 'created' });
+    expect(transitions).toEqual([false, true]);
+    expect(store.create).toHaveBeenCalledTimes(1);
+  });
+
 });

@@ -202,9 +202,6 @@ function statusMeta(todo: TodoItem): {
   Icon: typeof Circle;
   spin?: boolean;
 } {
-  if (todo.status === "completed" && todo.outcome?.tone === "warn") {
-    return { label: "已完成，有例外", tone: "warning", Icon: TriangleAlert };
-  }
   if (todo.status === "completed" && todo.outcome?.tone === "fail") {
     return { label: "完成结果异常", tone: "danger", Icon: CircleX };
   }

@@ -173,7 +173,7 @@ describe("BusinessStepDetailPanel", () => {
     expect(screen.getByRole("button", { name: "批准" })).toHaveProperty("disabled", true);
   });
 
-  it("步骤标签显示同步状态和两位序号，并可直接切换步骤", () => {
+  it("步骤标签与主导航同步状态并可直接切换步骤", () => {
     const callbacks = props();
     render(<BusinessStepDetailPanel {...callbacks} />);
 
@@ -181,7 +181,7 @@ describe("BusinessStepDetailPanel", () => {
     const second = screen.getByRole("tab", { name: "第 02 步：写入结果" });
     expect(first.getAttribute("aria-selected")).toBe("true");
     expect(second.getAttribute("aria-selected")).toBe("false");
-    expect(within(first).getByLabelText("已完成，有例外")).toBeTruthy();
+    expect(within(first).getByLabelText("已完成")).toBeTruthy();
     expect(within(second).getByLabelText("进行中")).toBeTruthy();
 
     fireEvent.click(second);

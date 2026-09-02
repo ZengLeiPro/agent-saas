@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UserInfo } from '@agent/shared';
-import { selectUserDetailProfile } from './userDetailAccess';
+import { isMatchingSelfProfile, selectUserDetailProfile } from './userDetailAccess';
 
 function user(id: string): UserInfo {
   return { id, username: id, role: 'user', tenantId: 'tenant-1' } as UserInfo;
@@ -27,6 +27,18 @@ describe('M30-01 production user-detail identity isolation', () => {
       selfProfile: current,
       users: [user('stale-b')],
     })).toBe(current);
+  });
+
+  it('rejects a stale self response from A after the active identity changes to B', () => {
+    const staleResponse = user('admin-a');
+    expect(isMatchingSelfProfile('user-b', 'user-b', staleResponse)).toBe(false);
+    expect(selectUserDetailProfile({
+      profile: 'production',
+      currentUserId: 'user-b',
+      requestedUserId: 'user-b',
+      selfProfile: staleResponse,
+      users: [],
+    })).toBeNull();
   });
 
   it('keeps preview administrator lookup available outside production', () => {

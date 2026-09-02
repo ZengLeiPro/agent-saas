@@ -164,9 +164,9 @@ export class AuthLifecycleTransaction {
         updatedAt: new Date().toISOString(),
         binding,
       };
-      await effects.fenceUntilCommit();
-      await this.store.write(journal);
       try {
+        await effects.fenceUntilCommit();
+        await this.store.write(journal);
         await effects.persistTokenAndBinding(binding);
         journal = await this.checkpoint(journal, 1);
         await effects.installAuthenticatedState(binding);
@@ -179,7 +179,11 @@ export class AuthLifecycleTransaction {
       } catch (error) {
         await effects.failClosed();
         const failed = { ...journal, status: 'failed_fenced' as const, failure: { step: 'login', message: errorMessage(error) }, updatedAt: new Date().toISOString() };
-        await this.store.write(failed);
+        try {
+          await this.store.write(failed);
+        } catch {
+          // failClosed is authoritative when the journal store itself is unavailable.
+        }
         throw error;
       }
     });

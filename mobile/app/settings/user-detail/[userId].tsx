@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,7 +22,7 @@ import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
 import { isV1RouteAllowed } from '../../../src/v1/v1Capabilities';
 import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
-import { selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
+import { isMatchingSelfProfile, selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {
@@ -52,22 +52,30 @@ export default function UserDetailScreen() {
 
   // For non-admin viewing self, fetch from /api/auth/me
   const [selfProfile, setSelfProfile] = useState<UserInfo | null>(null);
+  const selfProfileRequestId = useRef(0);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
 
   const fetchSelfProfile = useCallback(async () => {
+    const expectedUserId = currentUser?.id;
+    if (!expectedUserId || userId !== expectedUserId) return;
+    const requestId = ++selfProfileRequestId.current;
     try {
       const res = await authFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json() as UserInfo;
-        setSelfProfile(data);
+        if (requestId === selfProfileRequestId.current
+          && isMatchingSelfProfile(expectedUserId, userId, data)) {
+          setSelfProfile(data);
+        }
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [currentUser?.id, userId]);
 
   useEffect(() => {
-    if (isSelf) {
-      void fetchSelfProfile();
-    }
+    selfProfileRequestId.current += 1;
+    setSelfProfile(null);
+    if (isSelf) void fetchSelfProfile();
+    return () => { selfProfileRequestId.current += 1; };
   }, [isSelf, fetchSelfProfile]);
 
   const user = useMemo(() => selectUserDetailProfile({

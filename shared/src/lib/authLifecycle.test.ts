@@ -192,6 +192,52 @@ describe('M30-01 canonical auth lifecycle transaction', () => {
     expect(f.store.journal).toBeNull();
   });
 
+  it.each(['fence', 'journal'] as const)('fails closed and remains retryable when login %s setup fails', async (failure) => {
+    const f = fixture();
+    const tx = f.engine();
+    let transportAllowed = true;
+    let token = 'old-token';
+    const failClosed = vi.fn(() => {
+      transportAllowed = false;
+      token = '';
+    });
+    if (failure === 'journal') {
+      const write = f.store.write.bind(f.store);
+      let rejectFirstWrite = true;
+      f.store.write = async (journal) => {
+        if (rejectFirstWrite) {
+          rejectFirstWrite = false;
+          throw new Error('journal unavailable');
+        }
+        await write(journal);
+      };
+    }
+
+    await expect(tx.login({ authEpoch: 2, generation: 2 }, {
+      fenceUntilCommit: () => {
+        transportAllowed = false;
+        if (failure === 'fence') throw new Error('cache clear failed');
+      },
+      persistTokenAndBinding: () => { token = 'new-token'; },
+      installAuthenticatedState: vi.fn(),
+      commitConnections: () => { transportAllowed = true; },
+      failClosed,
+    })).rejects.toThrow(failure === 'fence' ? 'cache clear failed' : 'journal unavailable');
+    expect(failClosed).toHaveBeenCalledTimes(1);
+    expect(transportAllowed).toBe(false);
+    expect(token).toBe('');
+
+    await expect(tx.login({ authEpoch: 3, generation: 3 }, {
+      fenceUntilCommit: () => { transportAllowed = false; },
+      persistTokenAndBinding: () => { token = 'retry-token'; },
+      installAuthenticatedState: vi.fn(),
+      commitConnections: () => { transportAllowed = true; },
+      failClosed,
+    })).resolves.toMatchObject({ status: 'committed' });
+    expect(transportAllowed).toBe(true);
+    expect(token).toBe('retry-token');
+  });
+
   it.each(['web', 'mobile'])('%s adapter observes identical canonical checkpoints', async () => {
     const f = fixture();
     await f.engine().logout();

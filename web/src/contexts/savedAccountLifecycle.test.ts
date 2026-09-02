@@ -10,7 +10,7 @@ import {
   setSensitiveTransportAllowed,
   type PlatformDeps,
 } from '@agent/shared';
-import { runSavedAccountLifecycle } from './savedAccountLifecycle';
+import { runLogoutToSavedAccountLifecycle, runSavedAccountLifecycle } from './savedAccountLifecycle';
 
 function responseWithRefresh(token: string): Response {
   return {
@@ -135,6 +135,53 @@ describe('Web saved-account lifecycle', () => {
       'switch:pre-work:start', 'switch:pre-work:end', 'switch:persist',
       'switch:install', 'switch:commit', 'logout:commit',
     ]);
+  });
+
+  it('keeps a newer login authoritative while an older logout waits for its server receipt', async () => {
+    credentials.set(TOKEN_KEY, 'token-a');
+    credentials.set(AUTH_SESSION_KEY, JSON.stringify({ authEpoch: 1, generation: 1 }));
+    const events: string[] = [];
+    let releaseServerFence!: () => void;
+    const serverFence = new Promise<void>((resolve) => { releaseServerFence = resolve; });
+    const logoutToB = runLogoutToSavedAccountLifecycle(
+      lifecycle,
+      { authEpoch: 2, generation: 2 },
+      serverFence,
+      {
+        fenceUntilCommit: () => { events.push('B:fence'); },
+        persistTokenAndBinding: (binding) => {
+          credentials.set(TOKEN_KEY, 'token-b');
+          credentials.set(AUTH_SESSION_KEY, JSON.stringify(binding));
+          events.push('B:persist');
+        },
+        installAuthenticatedState: () => { events.push('B:install'); },
+        commitConnections: () => { events.push('B:commit'); },
+        failClosed: () => { events.push('B:fail'); },
+      },
+    );
+    const loginC = lifecycle.login({ authEpoch: 3, generation: 3 }, {
+      fenceUntilCommit: () => { events.push('C:fence'); },
+      persistTokenAndBinding: (binding) => {
+        credentials.set(TOKEN_KEY, 'token-c');
+        credentials.set(AUTH_SESSION_KEY, JSON.stringify(binding));
+        events.push('C:persist');
+      },
+      installAuthenticatedState: () => { events.push('C:install'); },
+      commitConnections: () => { events.push('C:commit'); },
+      failClosed: () => { events.push('C:fail'); },
+    });
+
+    await vi.waitFor(() => expect(credentials.has(TOKEN_KEY)).toBe(false));
+    expect(events).toEqual([]);
+    releaseServerFence();
+    await Promise.all([logoutToB, loginC]);
+
+    expect(events).toEqual([
+      'B:fence', 'B:persist', 'B:install', 'B:commit',
+      'C:fence', 'C:persist', 'C:install', 'C:commit',
+    ]);
+    expect(credentials.get(TOKEN_KEY)).toBe('token-c');
+    expect(credentials.get(AUTH_SESSION_KEY)).toBe(JSON.stringify({ authEpoch: 3, generation: 3 }));
   });
 
   it('queues a parallel logout after saved-account activation and ends fail closed', async () => {

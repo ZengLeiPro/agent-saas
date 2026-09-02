@@ -26,3 +26,21 @@ export function runSavedAccountLifecycle(
     },
   });
 }
+
+/** Enqueues the post-logout account before awaiting the old server receipt. */
+export async function runLogoutToSavedAccountLifecycle(
+  lifecycle: AuthLifecycleTransaction,
+  binding: AuthSessionBinding,
+  serverFence: Promise<void>,
+  effects: SavedAccountLifecycleEffects,
+): Promise<void> {
+  const logout = lifecycle.logout();
+  const activation = runSavedAccountLifecycle(lifecycle, binding, {
+    ...effects,
+    fenceUntilCommit: async () => {
+      await serverFence;
+      await effects.fenceUntilCommit();
+    },
+  });
+  await Promise.all([logout, activation]);
+}

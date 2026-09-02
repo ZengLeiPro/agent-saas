@@ -24,7 +24,7 @@ import { clearAllMessageCache, setMessageCacheIdentity } from "@/lib/messageCach
 import { clearAllComposerAttachmentDrafts } from "@/lib/composerDraftStorage";
 import { clearWebCacheV2Namespace } from "@/platform/webCacheAdapter";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
-import { runSavedAccountLifecycle } from "./savedAccountLifecycle";
+import { runLogoutToSavedAccountLifecycle, runSavedAccountLifecycle } from "./savedAccountLifecycle";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -217,9 +217,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logoutAllAccounts = useCallback(async () => {
     const serverFence = requestServerLogout();
     await lifecycle.logout();
-    await serverFence;
     clearSavedAccounts();
     setAccounts([]);
+    await serverFence;
   }, [lifecycle, requestServerLogout]);
 
   const logoutCurrentAccount = useCallback(async (nextAccountKey?: string) => {
@@ -228,17 +228,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const targetAccount = nextAccountKey
       ? remainingAccounts.find((account) => account.key === nextAccountKey)
       : remainingAccounts[0];
-    const serverFence = requestServerLogout();
-    await lifecycle.logout();
-    await serverFence;
-    setAccounts(remainingAccounts);
     const nextAuth = targetAccount ? getSavedAccountAuth(targetAccount.key) : null;
-    if (nextAuth) {
-      localStorage.setItem(TOKEN_KEY, nextAuth.token);
-      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(nextAuth.binding));
-      window.location.replace('/');
+    const serverFence = requestServerLogout();
+    if (!nextAuth) {
+      await lifecycle.logout();
+      setAccounts(remainingAccounts);
+      await serverFence;
+      return;
     }
-  }, [lifecycle, requestServerLogout, user]);
+    const nextUser = normalizeAuthUser(nextAuth.user);
+    await runLogoutToSavedAccountLifecycle(lifecycle, nextAuth.binding, serverFence, {
+      fenceUntilCommit: () => {
+        wsClient.freezeSending();
+        clearAccountScopedState();
+      },
+      persistTokenAndBinding: (binding) => {
+        localStorage.setItem(TOKEN_KEY, nextAuth.token);
+        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+      },
+      installAuthenticatedState: () => {
+        setAccounts(remainingAccounts);
+        setUser(nextUser);
+        transitionIdentity({
+          type: 'principal-switched',
+          principal: { userId: nextUser.id, tenantId: nextUser.tenantId },
+        });
+      },
+      commitConnections: () => wsClient.unfreezeSending(),
+      failClosed: () => {
+        wsClient.freezeSending();
+        wsClient.disconnect();
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        setUser(null);
+      },
+    });
+  }, [lifecycle, requestServerLogout, transitionIdentity, user]);
 
   const logout = useCallback(async () => {
     await logoutCurrentAccount();

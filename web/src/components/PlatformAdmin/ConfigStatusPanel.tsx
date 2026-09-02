@@ -11,7 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 import { platformAdminApi } from './api';
-import { ConfigStatusCapabilities, ConfigStatusSecrets } from './ConfigStatusDetails';
+import { ConfigStatusCapabilities } from './ConfigStatusCapabilities';
+import { ConfigStatusSecrets } from './ConfigStatusDetails';
 import type { EffectiveConfigStatus } from './types';
 
 function shortFingerprint(value: string | undefined): string {
@@ -119,7 +120,10 @@ export function ConfigStatusPanel() {
         </div>
         {status ? (
           <>
-            <ConfigStatusCapabilities capabilities={status.capabilities} />
+            <ConfigStatusCapabilities
+              capabilities={status.capabilities}
+              capabilityStates={status.capabilityStates}
+            />
             <ConfigStatusSecrets secrets={status.secrets} />
           </>
         ) : (

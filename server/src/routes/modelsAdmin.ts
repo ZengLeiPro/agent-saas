@@ -375,7 +375,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         },
       });
       await revokeModelRefs(options.secretVault, replacedRefs);
-      res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
+      res.setHeader('ETag', `"${result.rawConfigFingerprint}"`);
       res.json({
         models: redactModels(result.config.models!),
         memoryIndex: redactMemoryIndex(options.config.memory?.index ?? null),

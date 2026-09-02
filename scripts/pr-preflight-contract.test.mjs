@@ -128,7 +128,6 @@ test('M60-01 Mobile gate 固定工具链、全量顺序且只上传失败日志'
     /cancel-in-progress: \$\{\{ github\.event_name != 'workflow_dispatch' \}\}/u,
   );
 });
-});
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

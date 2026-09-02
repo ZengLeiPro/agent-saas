@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type {
   ApiSessionListItem,
   BoundaryIdentity,
@@ -33,6 +33,7 @@ import {
   loadSessionListCache,
 } from "../lib/sessionListCache";
 import { injectCompactionMessages } from "../lib/compaction";
+import { createMobileMessageCacheForIdentity } from "../platform/mobileMessageCache";
 
 export interface SessionCallbacks {
   resetMessages: () => void;
@@ -120,6 +121,11 @@ export function useSession(
     : 'anonymous';
   const identityKeyRef = useRef(identityKey);
   identityKeyRef.current = identityKey;
+  // 每个 hook 固定其身份 namespace，避免旧异步响应跟随全局 active identity 漂移。
+  const messageCache = useMemo(
+    () => createMobileMessageCacheForIdentity(identity),
+    [identityKey], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
   );
@@ -178,6 +184,13 @@ export function useSession(
     setSessionOwner(null);
     setTokenUsage(null);
     setContextUsage(null);
+    return () => {
+      loadNonceRef.current += 1;
+      if (identityKeyRef.current === identityKey) {
+        identityKeyRef.current = `disposed:${identityKey}`;
+      }
+      cbRef.current.cancelActiveStream();
+    };
   }, [identityKey]); // identity generation 是强制内存边界
 
   const sessionsRef = useRef(sessions);
@@ -311,7 +324,7 @@ export function useSession(
       // preserveTail 场景（done 后同会话刷新）：本地内存里已有最新尾部，cached 反而是更旧的快照，
       // 跳过以免闪回。
       if (!canPreserveTail) {
-        const cached = await platform.messageCache.load(id);
+        const cached = await messageCache.load(id);
         if (isStale()) return;
         if (cached) {
           cbRef.current.setMessages(cached);
@@ -437,9 +450,9 @@ export function useSession(
           });
           setHasMoreHistory(pageHasMore);
           void fetchTokenUsage(id);
-          platform.messageCache.save(id, finalMsgs);
+          messageCache.save(id, finalMsgs);
         } else if (response.status === 404 || response.status === 403) {
-          void platform.messageCache.clear(id);
+          void messageCache.clear(id);
           void platform.storage.removeItem(`agentChat.model.${id}`);
           removeSession(id);
           setSessionOwner(null);
@@ -451,7 +464,7 @@ export function useSession(
         if (!isStale()) setIsLoadingMessages(false);
       }
     },
-    [fetchTokenUsage],
+    [fetchTokenUsage, messageCache],
   );
 
   const loadEarlierMessages = useCallback(async () => {
@@ -511,7 +524,7 @@ export function useSession(
         if (!response.ok) return;
 
         const platform = getPlatform();
-        await platform.messageCache.clear(idToDelete);
+        await messageCache.clear(idToDelete);
         await platform.storage.removeItem(`agentChat.model.${idToDelete}`);
 
         setDeleteSessionId(null);
@@ -533,7 +546,7 @@ export function useSession(
         console.error("删除会话失败:", err);
       }
     },
-    [deleteSessionId, loadSessionDetail, loadSessions, sessionId, sessions],
+    [deleteSessionId, loadSessionDetail, loadSessions, messageCache, sessionId, sessions],
   );
 
   const updateSessionTitle = useCallback((targetId: string, title: string) => {

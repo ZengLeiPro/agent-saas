@@ -35,6 +35,11 @@ import { clearFileListCache } from '../hooks/useFileList';
 import { cancelNativeOAuthTransaction } from '../services/nativeOAuthHandoff';
 import { clearGroupsCache, fenceAuthSideEffects, getPlatform, setSensitiveTransportAllowed } from '@agent/shared';
 import { clearAllLocalAppLockPolicies } from '../platform/localAppLockStorage';
+import {
+  assertAuthRequestBoundary,
+  captureAuthRequestBoundary,
+  StaleAuthRequestError,
+} from '../lib/authRequestFence';
 
 const CACHED_USER_KEY = 'agentChat.cachedUser';
 const IDENTITY_META_KEY = 'agentChat.identity.v1';
@@ -381,25 +386,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
+    const requestBoundary = captureAuthRequestBoundary(
+      identityRef.current.generation,
+      currentConfig.apiOrigin,
+    );
+    const assertRequestCurrent = () => {
+      const snapshot = getServiceConfigSnapshot();
+      assertAuthRequestBoundary(
+        requestBoundary,
+        identityRef.current.generation,
+        snapshot.ready ? snapshot.apiOrigin : null,
+      );
+    };
+
     try {
       // Logged-out transport is reopened only for the trusted login endpoint;
-      // WS remains fenced until the shared transaction commits.
+      // WS remains fenced until the shared transaction commits; stale service responses never enter it.
       setSensitiveTransportAllowed(true);
       const res = await timedAuthFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      assertRequestCurrent();
 
       if (!res.ok) {
         const responseBody = await res.json().catch(() => ({})) as { error?: string };
+        assertRequestCurrent();
         return { ok: false, error: responseBody.error || '登录失败' };
       }
 
       const data = await res.json() as { token: string; authEpoch: number; generation: number; user: AuthUser };
+      assertRequestCurrent();
       await applyLoginResponse(data);
       return { ok: true };
-    } catch {
+    } catch (error) {
+      if (error instanceof StaleAuthRequestError) {
+        return { ok: false, error: '登录期间服务配置已变化，请重新登录。' };
+      }
       return { ok: false, error: '无法连接可信服务，请检查网络或 TLS 配置后重试' };
     }
   }, [applyLoginResponse]);

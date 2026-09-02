@@ -660,19 +660,19 @@ describe('processWsEvent - 基础交互事件', () => {
 
   it.each([[true, 'allowed'], [false, 'denied']] as const)('interaction_resolved：canonical allow=%s → %s', (allow, status) => {
       const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'x1', toolName: 'T', toolInput: '', status: 'pending' }]);
-      dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x1', response: { allow } }, makeCtx(ctrl).ctx);
+      dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x1', response: { allow } }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
       expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe(status);
   });
 
   it('interaction_resolved：应用 canonical AskUser answers', () => {
     const ctrl = makeController([{ id: 'a', type: 'ask_user', interactionId: 'x2', questions: [], status: 'pending' }]);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2', response: { answers: { q: '否' } } }, makeCtx(ctrl).ctx);
+    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'x2', response: { answers: { q: '否' } } }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
     expect(ctrl.messages[0]).toMatchObject({ type: 'ask_user', status: 'answered', answers: { q: '否' } });
   });
 
   it('interaction_resolved：兼容旧事件但不臆造审批结果', () => {
     const ctrl = makeController([{ id: 'p', type: 'permission_request', interactionId: 'legacy', toolName: 'T', toolInput: '', status: 'pending' }]);
-    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'legacy' }, makeCtx(ctrl).ctx);
+    dispatch({ type: 'interaction_resolved', sessionId: 's', interactionId: 'legacy' }, makeCtx(ctrl).ctx, freshBlock(), { value: 's' }, 's');
     expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe('pending');
   });
 
@@ -684,6 +684,7 @@ describe('processWsEvent - 基础交互事件', () => {
     dispatch(
       {
         type: 'pending_interactions',
+        sessionId: 's',
         interactions: [
           { interactionId: 'exist', type: 'permission_request', toolName: 'T' }, // 已存在 → 跳过
           { interactionId: 'new-p', type: 'permission_request', toolName: 'Bash', toolInput: { cmd: 'ls' } },
@@ -691,12 +692,39 @@ describe('processWsEvent - 基础交互事件', () => {
         ],
       },
       ctx,
+      freshBlock(),
+      { value: 's' },
+      's',
     );
     // 原 1 条 + 等待状态 + 新增 2 条
     expect(ctrl.messages).toHaveLength(4);
     expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
     expect(ctrl.messages[2]).toMatchObject({ type: 'permission_request', interactionId: 'new-p' });
     expect(ctrl.messages[3]).toMatchObject({ type: 'ask_user', interactionId: 'new-a' });
+  });
+
+  it('A 的恢复事件不会修改当前 B 会话的 interaction 卡片', () => {
+    const ctrl = makeController([
+      { id: 'b', type: 'ask_user', interactionId: 'b-card', questions: [], status: 'pending' },
+    ]);
+    const { ctx } = makeCtx(ctrl);
+    dispatch(
+      { type: 'pending_interactions', sessionId: 'A', interactions: [] },
+      ctx,
+      freshBlock(),
+      { value: 'B' },
+      'B',
+    );
+    dispatch(
+      { type: 'interaction_resolved', sessionId: 'A', interactionId: 'b-card', response: { answers: { q: 'wrong' } } },
+      ctx,
+      freshBlock(),
+      { value: 'B' },
+      'B',
+    );
+    expect(ctrl.messages).toEqual([
+      { id: 'b', type: 'ask_user', interactionId: 'b-card', questions: [], status: 'pending' },
+    ]);
   });
 });
 

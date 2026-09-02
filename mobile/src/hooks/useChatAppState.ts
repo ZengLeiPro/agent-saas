@@ -59,6 +59,8 @@ import {
 } from "../lib/chatSubmissionAdapter";
 import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chatTelemetry';
 import { telemetryClient } from '../telemetry/runtime';
+import { shouldProjectInteractionEvent } from '../lib/interactionProjectionFence';
+import { replaceRetryBubble } from '../lib/retryBubbleTransition';
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
@@ -976,10 +978,11 @@ export function useChatAppStateCore(): ChatAppState {
       showBubble: boolean,
       voice?: CanonicalVoiceSubmission,
       existingClientMsgId?: string,
-    ) => {
+      retryMessageId?: string,
+    ): Promise<boolean> => {
       if (localAppLock.locked || localAppLock.offlineShell || connectionState === 'disconnected') {
         Alert.alert('无法发送', localAppLock.locked ? '请先解锁应用' : '当前离线，消息未发送');
-        return;
+        return false;
       }
       const activeSessionId = sessionIdRef.current;
       const agentTarget = activeSessionId
@@ -991,7 +994,7 @@ export function useChatAppStateCore(): ChatAppState {
         : agentTargetCatalogReason;
       if (!agentTarget || unavailableReason) {
         Alert.alert('仅支持查看', unavailableReason?.message ?? '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
-        return;
+        return false;
       }
       const clientMsgId = existingClientMsgId || genClientMsgId();
       const normalized = buildMobileChatSubmission({
@@ -1005,7 +1008,7 @@ export function useChatAppStateCore(): ChatAppState {
       });
       if (!normalized.ok) {
         fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
-        return;
+        return false;
       }
       const submission = normalized.value;
       markChatSubmit(clientMsgId, activeSessionId ?? undefined);
@@ -1018,7 +1021,7 @@ export function useChatAppStateCore(): ChatAppState {
 
       if (showBubble) {
         msgRef.current.triggerScroll();
-        wsUserMsgIndexRef.current = msgRef.current.addMessage({
+        const nextBubble: MessageItemInput = {
           type: "user",
           content: inputText,
           ...(submission.attachments.length > 0
@@ -1027,7 +1030,16 @@ export function useChatAppStateCore(): ChatAppState {
           status: "pending",
           timestamp: Date.now(),
           clientMsgId,
-        });
+        };
+        const retryTransition = retryMessageId
+          ? replaceRetryBubble(msgRef.current.messagesRef.current, retryMessageId, nextBubble)
+          : null;
+        if (retryTransition) {
+          wsUserMsgIndexRef.current = retryTransition.index;
+          msgRef.current.setMessages(retryTransition.messages);
+        } else {
+          wsUserMsgIndexRef.current = msgRef.current.addMessage(nextBubble);
+        }
         if (activeSessionId) {
           sessionRef.current.updateSessionMeta(activeSessionId, {
             preview: inputText.slice(0, 200),
@@ -1095,9 +1107,10 @@ export function useChatAppStateCore(): ChatAppState {
         );
         wsAttachedRef.current = false;
         setLoading(false);
-      } else {
-        armAckTimeout(clientMsgId);
+        return false;
       }
+      armAckTimeout(clientMsgId);
+      return true;
     },
     [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState, agentTargetCatalogReason],
   );
@@ -1166,8 +1179,8 @@ export function useChatAppStateCore(): ChatAppState {
   useEffect(() => {
     const projectSessionListInteraction = (event: WsEvent) => {
       const fallbackSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-      if (event.type === 'pending_interactions' && (event.sessionId ?? fallbackSessionId)) {
-        const authoritativeSessionId = event.sessionId ?? fallbackSessionId!;
+      if (event.type === 'pending_interactions' && event.sessionId) {
+        const authoritativeSessionId = event.sessionId;
         sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
         event.interactions.forEach((interaction, index) => {
           sessionRef.current.applySessionInteractionEvent?.({
@@ -1193,6 +1206,8 @@ export function useChatAppStateCore(): ChatAppState {
       }
     };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
+      const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current.value)) return;
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
         session: sessionRef.current,
@@ -1298,7 +1313,11 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(inline.runtime.active);
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({ type: "pending_interactions", interactions: inline.pendingInteractions });
+          projectRecoveredInteraction({
+            type: "pending_interactions",
+            sessionId: inline.sessionId,
+            interactions: inline.pendingInteractions,
+          });
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void sessionRef.current.loadSessions(true, { fresh: true });
@@ -1518,6 +1537,18 @@ export function useChatAppStateCore(): ChatAppState {
           );
         },
       };
+
+      if (
+        (data.type === 'pending_interactions' || data.type === 'permission_request'
+          || data.type === 'ask_user' || data.type === 'interaction_resolved')
+        && !shouldProjectInteractionEvent(
+          data,
+          immediateSessionIdRef.current ?? sessionIdRef.current,
+          wsLatestSessionIdRef.current.value,
+        )
+      ) {
+        return;
+      }
 
       const result = processWsEvent(
         data,
@@ -1920,13 +1951,7 @@ export function useChatAppStateCore(): ChatAppState {
         setInput(text);
         return;
       }
-      const msgs = msg.messagesRef.current;
-      const idx = msgs.findIndex((m) => m.id === message.id);
-      if (idx >= 0) {
-        msgs.splice(idx, 1);
-        msg.setMessages([...msgs]);
-      }
-      // 结果未知时复用原 clientMsgId，服务端幂等键保持不变，避免 ACK 丢失后重复 run。
+      // 结果未知时复用原 clientMsgId，服务端幂等键保持不变；只有进入发送 attempt 后才原位替换气泡。
       setInput("");
       void sendChatViaWs(
         text,
@@ -1934,6 +1959,7 @@ export function useChatAppStateCore(): ChatAppState {
         true,
         retryOutboxEntry?.voice,
         message.clientMsgId,
+        message.id,
       );
     },
     [msg, sendChatViaWs, fileUpload],

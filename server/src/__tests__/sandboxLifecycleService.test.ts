@@ -7,6 +7,7 @@ import {
   type SandboxLifecycleIdentity,
 } from '../runtime/sandboxLifecycleService.js';
 import { createTenantRemoteHandAuthTokenResolver } from '../runtime/tenantRemoteHandResolver.js';
+import { sandboxRunAdmissionFenceSql } from '../runtime/sandboxRunAdmissionFence.js';
 import type { RuntimeSessionRecord } from '../runtime/sessionCatalog.js';
 
 const identity: SandboxLifecycleIdentity = {
@@ -37,6 +38,43 @@ function cleanup(generation = 'generation-1') {
 }
 
 describe('PgSandboxLifecycleStore terminal candidate contract', () => {
+  it('delivered and legacy null-tenant cleanup fences admission until restore advances generation', async () => {
+    const admissionSql = sandboxRunAdmissionFenceSql('runtime_runs').join('\n');
+    expect(admissionSql).toContain("'prepared','cancelling','pending','claimed','delivered'");
+
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('WITH cleanup_identity AS')) {
+        return {
+          rows: [{
+            run_id: 'run-cleanup', tenant_id: 'tenant-1', user_id: 'u-1', username: 'alice',
+            cleanup: {
+              state: 'cancelled', workspaceId: 'ws-1', sessionId: 'session-1', sandboxScopeId: 'scope-1',
+              tenantId: 'tenant-1', targetHandId: 'agent-saas-acs',
+              previousDeletionGeneration: 'generation-delivered', deletionGeneration: 'generation-restored',
+            },
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    const store = new PgSandboxLifecycleStore({
+      connect: async () => ({ query, release }),
+    } as never, 'runtime_runs', 'runtime_steering_inputs');
+
+    await expect(store.cancelCleanup('session-1', 'tenant-1', 'generation-restored')).resolves.toEqual([
+      expect.objectContaining({
+        runId: 'run-cleanup', previousDeletionGeneration: 'generation-delivered',
+        deletionGeneration: 'generation-restored',
+      }),
+    ]);
+    const cancelSql = query.mock.calls.map((call) => String(call[0])).find((sql) => sql.includes('WITH cleanup_identity AS'));
+    expect(cancelSql).toContain("IN ('prepared','cancelling','pending','claimed','delivered','cancelled')");
+    expect(cancelSql).toContain("COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1");
+    expect(cancelSql).toContain('run.tenant_id=$2 OR run.tenant_id IS NULL');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it('ranks all terminal rows before delivered/due filtering and binds the fixed scan clock', async () => {
     const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
     const fixed = new Date('2026-09-01T00:00:00.000Z');

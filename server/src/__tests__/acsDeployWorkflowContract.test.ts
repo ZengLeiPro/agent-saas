@@ -10,6 +10,7 @@ const workflowPath = fileURLToPath(
   new URL('../../../.github/workflows/acs-sandbox.yml', import.meta.url),
 );
 const workflow = readFileSync(workflowPath, 'utf-8');
+const ciWorkflow = readFileSync(fileURLToPath(new URL('../../../.github/workflows/ci.yml', import.meta.url)), 'utf-8');
 const classifierPath = fileURLToPath(
   new URL('../../../.github/scripts/acs-classify.sh', import.meta.url),
 );
@@ -34,7 +35,60 @@ function classify(paths: string[]): Record<string, string> {
   }
 }
 
-describe('ACS deploy workflow contract', () => {
+const classificationCases = [
+  { path: 'web/src/App.tsx', publish: 'false', contractCheck: 'false' },
+
+  { path: 'acs-orchestrator/src/config.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'scripts/release/deploy-staging-release.sh', publish: 'true', contractCheck: 'false' },
+  { path: 'scripts/release/deploy-production-release.sh', publish: 'true', contractCheck: 'false' },
+  { path: '.github/workflows/acs-sandbox.yml', publish: 'true', contractCheck: 'false' },
+  { path: '.github/workflows/ci.yml', publish: 'true', contractCheck: 'false' },
+  // Workload wire/content changes mirrored into the ACS image remain explicit publish paths.
+  { path: 'server/src/agent/toolRuntime.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'server/src/runtime/httpTransport.ts', publish: 'true', contractCheck: 'false' },
+  { path: 'server/src/runtime/handStore.ts', publish: 'true', contractCheck: 'false' },
+  // Web/application admission code, config and helpers ship in the ACS image and must run lifecycle contracts.
+  { path: 'server/src/app/runtime.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'server/src/channels/web/channel.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'server/src/channels/web/channelConfig.ts', publish: 'true', contractCheck: 'true' },
+  { path: 'server/src/channels/web/channelHelpers.ts', publish: 'true', contractCheck: 'true' },
+
+  { path: '.github/workflows/deploy-staging.yml', publish: 'false', contractCheck: 'true' },
+  { path: '.github/workflows/promote-release.yml', publish: 'false', contractCheck: 'true' },
+  { path: 'scripts/release/staging-workflow.test.mjs', publish: 'false', contractCheck: 'true' },
+  { path: 'scripts/release/promotion-workflow.test.mjs', publish: 'false', contractCheck: 'true' },
+
+  { path: 'shared/src/types/sandboxWorkload.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'shared/src/types/index.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'shared/src/index.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/agent/types.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/sandboxRunAdmissionFence.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/sandboxScopeActivity.pg.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/__tests__/webChannelPersistentInteractionRecovery.test.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runtimeHandRegistration.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runtimeWakeSessionRestore.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/rawRuntimeRunDispatch.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/sessionCatalog.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/sandboxRunAdmissionFence.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/sandboxWarmup.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/sandboxTerminalOutboxStore.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/sandboxLifecycleService.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/runStore.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/types.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/subagent/subagentRunner.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/background/backgroundTaskMetadata.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/runtime/background/backgroundTaskService.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/taskboard/executionSession.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/dws/businessToolProvider.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/feishu/authFlow.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/context/sync/dwsContextRuntime.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/cron/executor.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/memory/consolidation/engine.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/notion/authFlow.ts', publish: 'false', contractCheck: 'true' },
+  { path: 'server/src/data/transcripts/meta.ts', publish: 'false', contractCheck: 'true' },
+] as const;
+
+describe('ACS deployment and classifier contract', () => {
   it('为所有 main PR 提供固定名称且不读取生产 secret 的 ACS Impact Gate', () => {
     expect(workflow).toContain('pull_request:\n    branches: [main]');
     expect(workflow).toContain('acs-impact-gate:');
@@ -50,50 +104,45 @@ describe('ACS deploy workflow contract', () => {
     expect(gate).not.toContain('workflow_dispatch');
   });
 
-  it('对普通 UI、ACS 源码、release lifecycle 与 Workflow fixture 给出稳定分类', () => {
-    expect(classify(['web/src/App.tsx'])).toMatchObject({
-      publish: 'false',
-      contract_check: 'false',
-      reason: 'none',
-    });
-    expect(classify(['acs-orchestrator/src/config.ts'])).toMatchObject({
-      publish: 'true',
-      contract_check: 'false',
-    });
-    for (const releaseScript of [
-      'scripts/release/deploy-staging-release.sh',
-      'scripts/release/deploy-production-release.sh',
-    ]) {
-      expect(classify([releaseScript])).toMatchObject({
-        publish: 'true',
-        contract_check: 'false',
-      });
-    }
-    for (const contractTest of [
-      '.github/workflows/deploy-staging.yml',
-      '.github/workflows/promote-release.yml',
-      'scripts/release/staging-workflow.test.mjs',
-      'scripts/release/promotion-workflow.test.mjs',
-    ]) {
-      expect(classify([contractTest])).toMatchObject({
-        publish: 'false',
-        contract_check: 'true',
-      });
-    }
-    expect(classify(['.github/workflows/acs-sandbox.yml'])).toMatchObject({
-      publish: 'true',
-      contract_check: 'false',
-    });
-    expect(classify(['.github/workflows/ci.yml'])).toMatchObject({
-      publish: 'true',
-      contract_check: 'false',
-    });
+  it('让所有 main push 进入 changes job，并由 classifier 独占路径分类', () => {
+    const pushStart = workflow.indexOf('  push:');
+    const dispatchStart = workflow.indexOf('  workflow_dispatch:', pushStart);
+
+    expect(pushStart).toBeGreaterThan(-1);
+    expect(dispatchStart).toBeGreaterThan(pushStart);
+    const pushTrigger = workflow.slice(pushStart, dispatchStart);
+    expect(pushTrigger).toContain('branches: [main]');
+    expect(pushTrigger).not.toContain('paths:');
   });
 
-  it('在 required、contract 与 publish gate 中执行 Staging/Production lifecycle 契约', () => {
+  it.each(classificationCases)(
+    '$path => publish=$publish contract_check=$contractCheck',
+    ({ path, publish, contractCheck }) => {
+      const result = classify([path]);
+      expect(result.publish).toBe(publish);
+      expect(result.contract_check).toBe(contractCheck);
+    },
+  );
+
+  it('在 required、contract 与 publish gate 中执行完整 Server、Staging 与 Production lifecycle 契约', () => {
+    const serverContracts = [
+      'acsDeployWorkflowContract', 'executionDispatchValidation', 'runtimeTombstoneAdmission',
+      'runtimeWakeSessionRestore', 'sandboxLifecycleService', 'sandboxRunAdmissionFence',
+      'sandboxWarmup', 'sessionCatalog', 'webChannelPersistentInteractionRecovery',
+    ];
+    expect(workflow.match(/- name: Test server ACS lifecycle and admission contracts/gu)).toHaveLength(3);
+    for (const contract of serverContracts) {
+      expect(workflow.match(new RegExp(`src/__tests__/${contract}\\.test\\.ts`, 'gu'))).toHaveLength(3);
+    }
     expect(workflow.match(/- name: Test ACS staging and production lifecycle gates/gu)).toHaveLength(3);
-    expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(4);
-    expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(4);
+    expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(3);
+    expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);
+  });
+
+  it('由带 PostgreSQL 的 Server coverage 验证 sandboxScopeActivity PG 集成契约', () => {
+    expect(ciWorkflow).toContain('workspace: [shared, server, web]');
+    expect(ciWorkflow).toContain('TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test');
+    expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"');
   });
 
   it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {

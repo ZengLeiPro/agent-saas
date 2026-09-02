@@ -21,12 +21,14 @@ export async function establishInvocationCompletionFence(
   name: string,
   leaseKey: string,
   expectedUid: string,
+  completedAt: Date,
 ): Promise<void> {
   const mutationWindowMs = 3 * (15_000 + Math.max(1, config.sandboxWaitTimeoutMs));
   const requiredRemainingMs = mutationWindowMs + MUTATION_CONFIRM_MARGIN_MS;
   const leaseUntilMs = Date.now() + mutationWindowMs + requiredRemainingMs;
   await sandboxManager.setActiveInvocationLease(
-    name, leaseKey, new Date(leaseUntilMs).toISOString(), expectedUid,
+    name, leaseKey, new Date(leaseUntilMs).toISOString(), expectedUid, undefined,
+    'completion_pending', completedAt.toISOString(),
   );
   if (leaseUntilMs - Date.now() < requiredRemainingMs) {
     throw new Error('invocation completion fence expired before persistence confirmation');
@@ -47,7 +49,7 @@ export async function recoverInvocationCompletion(input: CompletionRecoveryInput
       continue;
     }
     try {
-      await establishInvocationCompletionFence(config, sandboxManager, sandboxName, leaseKey, expectedUid);
+      await establishInvocationCompletionFence(config, sandboxManager, sandboxName, leaseKey, expectedUid, completedAt);
       await sandboxManager.completeInvocation(sandboxName, leaseKey, completedAt, expectedUid);
       logger.info(`invocation_completion_recovery_completed sandbox=${sandboxName}`);
       return;

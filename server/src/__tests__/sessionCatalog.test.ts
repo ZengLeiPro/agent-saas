@@ -58,19 +58,43 @@ describe('FileSessionCatalog compatibility', () => {
     });
   });
 
-  it('defaults newly-created and legacy records without workload facts to interactive', async () => {
+  it('defaults new records to interactive but preserves missing workload on legacy projections', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-workload-'));
     cleanupDirs.add(cwd);
     const sessionId = randomUUID();
     const catalog = new FileSessionCatalog({ agentCwd: cwd });
     const created = createRuntimeSessionRecord({ sessionId, userId: 'u1', username: 'alice', channel: 'web', cwd });
+    // 新建默认值与 legacy 缺省投影分别覆盖两条兼容路径。
     expect(created.sandboxWorkloadDescriptor).toEqual({ kind: 'interactive' });
     cleanupDirs.add(dirname(created.transcriptPath));
     const { sandboxWorkloadDescriptor: _legacyMissing, ...legacy } = created;
     await catalog.upsert(legacy);
-    await expect(catalog.get(sessionId)).resolves.toMatchObject({
+    expect((await catalog.get(sessionId))?.sandboxWorkloadDescriptor).toBeUndefined();
+  });
+
+  it('does not overwrite a persisted workload descriptor with an older Run projection', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'session-catalog-sticky-workload-'));
+    cleanupDirs.add(cwd);
+    const sessionId = randomUUID();
+    const catalog = new FileSessionCatalog({ agentCwd: cwd });
+    const current = createRuntimeSessionRecord({
+      sessionId,
+      userId: 'u1',
+      username: 'alice',
+      channel: 'web',
+      cwd,
       sandboxWorkloadDescriptor: { kind: 'interactive' },
     });
+    cleanupDirs.add(dirname(current.transcriptPath));
+    await catalog.upsert(current);
+
+    await catalog.upsert({
+      ...current,
+      updatedAt: new Date(Date.parse(current.updatedAt) + 1_000).toISOString(),
+      sandboxWorkloadDescriptor: { kind: 'cron' },
+    });
+
+    expect((await catalog.get(sessionId))?.sandboxWorkloadDescriptor).toEqual({ kind: 'interactive' });
   });
 
   it('recovers agent-dws-session（钉钉成员会话）meta，使后台 Agent 派发能解析到父会话', async () => {

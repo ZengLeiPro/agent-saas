@@ -4,9 +4,11 @@ import {
   applyBackgroundShellProtection,
   applyInvocationLease,
   clearExpiredInvocationLeases,
+  clearMalformedInvocationLeases,
   completeInvocationLease,
   SandboxMutationPreconditionError,
 } from './sandboxLifecycleMutations.js';
+import type { ActiveInvocationLeaseState } from './sandboxLifecyclePolicy.js';
 import {
   BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
   BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION,
@@ -29,17 +31,26 @@ export class SandboxInvocationMutationFacade {
     leaseUntil?: string,
     expectedUid?: string,
     activityGeneration?: string,
+    leaseState: ActiveInvocationLeaseState = 'executing',
+    completedAt?: string,
   ): Promise<string> {
     if (leaseUntil && !Number.isFinite(Date.parse(leaseUntil))) {
       throw new Error('invocation leaseUntil 必须是合法 ISO 时间');
     }
+    if (completedAt && !Number.isFinite(Date.parse(completedAt))) {
+      throw new Error('invocation completedAt 必须是合法 ISO 时间');
+    }
+    if (leaseUntil && leaseState === 'completion_pending' && !completedAt) {
+      throw new Error('completion_pending invocation lease 必须包含 completedAt');
+    }
     const { config, kubectl } = this.context;
     return await applyInvocationLease(
       config, kubectl, this.context.resourceName(name), invocationKey, leaseUntil,
-      () => this.context.getStatus(name), expectedUid, activityGeneration,
+      () => this.context.getStatus(name), expectedUid, activityGeneration, leaseState, completedAt,
     );
   }
 
+  /** Removes one UID-fenced lease and advances activity atomically. */
   async completeInvocation(
     name: string,
     invocationKey: string,
@@ -53,11 +64,19 @@ export class SandboxInvocationMutationFacade {
     );
   }
 
-  async clearExpired(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> {
+  async clearExpired(name: string, now = new Date(), expectedUid?: string): Promise<{ active: boolean; removed: number }> {
     const { config, kubectl } = this.context;
     return await clearExpiredInvocationLeases(
       config, kubectl, this.context.resourceName(name), now.getTime(),
-      () => this.context.getStatus(name),
+      () => this.context.getStatus(name), expectedUid,
+    );
+  }
+
+  async clearMalformed(name: string, expectedUid?: string, now = new Date()): Promise<number> {
+    const { config, kubectl } = this.context;
+    return await clearMalformedInvocationLeases(
+      config, kubectl, this.context.resourceName(name),
+      () => this.context.getStatus(name), expectedUid, now.getTime(),
     );
   }
 

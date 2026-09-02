@@ -35,6 +35,7 @@ import {
   canViewContextUsageDetails,
   canViewContextUsageDetailsForUser,
   isPlatformAdminUser,
+  isWebSessionDeleted,
   redactContextUsageDetails,
 } from './channelHelpers.js';
 import {
@@ -99,39 +100,10 @@ import {
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
-import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
+import type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
-export type { ModelResolver } from './channelConfig.js';
+export type { ModelResolver, WebChannelConfig } from './channelConfig.js';
 
-/**
- * Public WebChannel construction contract.
- *
- * Web-facing paths and adapters stay beside the channel orchestrator, while
- * runtime/store integrations live in channelConfig.ts to keep this file under
- * its grandfathered line ceiling without changing the exported API.
- * Keeping this facade here also preserves existing type-only import paths.
- * Consumers do not need to know how the contract is partitioned internally.
- */
-export interface WebChannelConfig extends WebChannelRuntimeConfig {
-  /** Server timezone used when formatting channel output. */
-  timezone?: string;
-  /** Optional overrides for web message rendering. */
-  displayConfig?: WebMessageDisplayConfig;
-  /** Default agent workspace root. */
-  agentCwd?: string;
-  /** Shared resource root. */
-  sharedDir?: string;
-  /** Login activity JSONL path. */
-  loginLogFilePath?: string;
-  /** Tenant-aware model reference resolver. */
-  modelResolver?: ModelResolver;
-  /** User lookup used for channel identity and preferences. */
-  userStore?: UserStore;
-  /** Secret used to authenticate WebSocket connections when authEnabled is true. */
-  jwtSecret?: string;
-  /** Reports whether shutdown draining has begun. */
-  getIsDraining?: () => boolean;
-}
 export { buildChatMessageActivityDetail } from './channelHelpers.js';
 
 interface ActiveStreamEntry {
@@ -1186,14 +1158,25 @@ export class WebChannel implements BaseChannel {
   }
 
   private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
-    // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
+    const sessionId = interactionStore.get(interactionId)?.sessionId ?? interactionStore.getSessionId(interactionId) ?? fallbackSessionId;
+    const admissionLock = this.config.withSessionAdmissionLock;
+    const resolve = (lockHeld: boolean) => this.resolveInteractionAdmitted(client, interactionId, response, sessionId, lockHeld, clientAttemptId);
+    return sessionId && admissionLock ? admissionLock(sessionId, () => resolve(true)) : resolve(false);
+  }
+
+  private async resolveInteractionAdmitted(client: WsClient, interactionId: string, response: Record<string, unknown>, admittedSessionId: string | undefined, admissionLockHeld: boolean, clientAttemptId?: string): Promise<void> {
+    // resolve 会删除 entry；锁内重读 sessionId，避免等待期间陈旧。
     const pendingInteraction = interactionStore.get(interactionId);
-    const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
+    const currentSessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
+    if (currentSessionId && currentSessionId !== admittedSessionId) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction session changed; please retry'); return; }
+    if (currentSessionId && this.config.withSessionAdmissionLock && !admissionLockHeld) { this.sendRespond(client, interactionId, clientAttemptId, 'Interaction session admission lock was not acquired'); return; }
+    const sessionId = admittedSessionId ?? currentSessionId;
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
     if (orgAgentAccessError) {
       this.sendRespond(client, interactionId, clientAttemptId, orgAgentAccessError);
       return;
     }
+    if (sessionId && await isWebSessionDeleted(this.config, sessionId)) { this.sendRespond(client, interactionId, clientAttemptId, 'Session has been deleted'); return; }
     if (
       pendingInteraction?.type === 'permission_request'
       && pendingInteraction.runId
@@ -1225,7 +1208,7 @@ export class WebChannel implements BaseChannel {
     }
     const resolved = interactionStore.resolve(interactionId, durableResponse);
     if (!resolved) {
-      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, fallbackSessionId, clientAttemptId);
+      const resumed = await this.tryResumePersistedInteraction(client, interactionId, durableResponse as Record<string, unknown>, sessionId, clientAttemptId);
       if (!resumed) {
         this.sendRespond(client, interactionId, clientAttemptId, 'Interaction not found or expired');
       }
@@ -2296,6 +2279,11 @@ export class WebChannel implements BaseChannel {
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
+    const process = () => this.processChatMessageAdmitted(client, msg);
+    return msg.sessionId && this.config.withSessionAdmissionLock ? this.config.withSessionAdmissionLock(msg.sessionId, process) : process();
+  }
+
+  private async processChatMessageAdmitted(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
     const { message, sessionId, attachments, model, voiceFile } = msg;
     let deliveryMode: 'queue' | 'steer' = msg.deliveryMode === 'steer' && !isCompactCommand(message)
@@ -2381,6 +2369,8 @@ export class WebChannel implements BaseChannel {
       return;
     }
 
+
+    if (sessionId && await isWebSessionDeleted(this.config, sessionId)) { this.sendChatRejected(ws, clientMsgId, 'access_denied', '会话已删除，请先恢复会话'); return; }
 
     // 1) Drain 拦截（服务端优雅关闭期间）
     if (this.config.getIsDraining?.()) {

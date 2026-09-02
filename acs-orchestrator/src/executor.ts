@@ -21,6 +21,7 @@ import {
   InvocationLeaseMonitor,
 } from './invocationLeaseMonitor.js';
 import { establishInvocationCompletionFence, recoverInvocationCompletion } from './invocationCompletionRecovery.js';
+import { reconcileInvocationRestartRecovery } from './invocationRestartRecovery.js';
 
 interface InvocationEntry {
   controller: AbortController;
@@ -38,6 +39,7 @@ interface InvocationProtectionState {
     protectedUntil?: string;
     taskIds: string[];
     reason: string;
+    launchUncertain?: true;
   };
 }
 
@@ -142,6 +144,7 @@ export class AcsExecutor {
       const leaseUntilMs = Date.now() + ACTIVE_INVOCATION_LEASE_MS;
       sandboxUid = await this.sandboxManager.setActiveInvocationLease(
         ref.name, leaseKey, new Date(leaseUntilMs).toISOString(), undefined, leaseKey,
+        backgroundShellRequested ? 'background_pending' : 'executing',
       );
       if (!sandboxUid) throw new Error('invocation lease mutation did not return Sandbox UID');
       leasePersisted = true;
@@ -152,7 +155,8 @@ export class AcsExecutor {
       leaseMonitor = new InvocationLeaseMonitor(
         async (leaseUntil) => {
           await this.sandboxManager.setActiveInvocationLease(
-            ref.name, leaseKey, leaseUntil, sandboxUid,
+            ref.name, leaseKey, leaseUntil, sandboxUid, undefined,
+            backgroundShellRequested ? 'background_pending' : 'executing',
           );
         },
         failForLease,
@@ -237,6 +241,7 @@ export class AcsExecutor {
           protectedUntil: new Date(Date.now() + UNKNOWN_BACKGROUND_SHELL_PROTECTION_MS).toISOString(),
           taskIds: [],
           reason: 'background shell runner ended without protection metadata',
+          launchUncertain: true,
         };
         finalResponse = {
           status: 'error',
@@ -255,14 +260,18 @@ export class AcsExecutor {
           ref, leaseKey, invocationKey, protectionState.recovery, leaseMonitor,
         );
       } else {
-        if (shouldCompleteInvocation && sandboxUid && !leaseMonitor?.failure) {
+        // Stop heartbeats before the durable terminal transition so no in-flight
+        // executing/background_pending renewal can overwrite completion_pending.
+        leaseFailure = await leaseMonitor?.finish();
+        if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure) {
           try {
-            await establishInvocationCompletionFence(this.config, this.sandboxManager, ref.name, leaseKey, sandboxUid);
+            await establishInvocationCompletionFence(
+              this.config, this.sandboxManager, ref.name, leaseKey, sandboxUid, completedAt,
+            );
           } catch (err) {
             completionFenceError = err;
           }
         }
-        leaseFailure = await leaseMonitor?.finish();
       }
       options.signal?.removeEventListener('abort', onExternalAbort);
       if (shouldCompleteInvocation && sandboxUid && completedAt && !leaseFailure) {
@@ -316,47 +325,21 @@ export class AcsExecutor {
   }
 
   async reconcileBackgroundShellProtections(): Promise<{ checked: number; failed: number }> {
-    const sandboxes = await this.sandboxManager.listManagedSandboxes();
-    let failed = 0;
-    for (const sandbox of sandboxes) {
-      let activeInvocationLease = false;
-      try {
-        ({ active: activeInvocationLease } = await this.sandboxManager.clearExpiredInvocationLeases(
-          sandbox.name,
-        ));
-      } catch (err) {
-        failed += 1;
-        this.logger.warn(`invocation_lease_sweep_failed sandbox=${sandbox.name}: ${errorMessage(err)}`);
-        continue;
-      }
-      // An expired invocation-only residue must not execute a runner (and therefore
-      // must not touch last-active or create another invocation annotation).
-      if (!sandbox.backgroundShellProtectedUntil && !activeInvocationLease) continue;
-      if (!sandbox.workspaceId || !sandbox.sessionId) {
-        failed += 1;
-        continue;
-      }
-      const response = await this.execute({
-        toolName: '__BackgroundShellReconcile',
-        input: { fail_closed: true },
-        context: {
-          workspace: {
-            id: sandbox.workspaceId,
-            sessionId: sandbox.sessionId,
-            sandboxScopeId: sandbox.sandboxScopeId,
-            mountSubPath: sandbox.mountSubPath,
-          },
-        },
-      }).catch((err) => ({
-        status: 'error' as const,
-        error: err instanceof Error ? err.message : String(err),
-      }));
-      if (response.status === 'error') {
-        failed += 1;
-        this.logger.warn(`background_shell_reconcile_failed sandbox=${sandbox.name}: ${response.error}`);
-      }
-    }
-    return { checked: sandboxes.length, failed };
+    return await reconcileInvocationRestartRecovery({
+      config: this.config, sandboxManager: this.sandboxManager, logger: this.logger,
+      inventory: (ref) => this.reconcileBackgroundTaskInventory(ref),
+      reconcilePersistedProtection: async (sandbox) => {
+        if (!sandbox.workspaceId || !sandbox.sessionId) throw new Error('Sandbox 缺少 workspace/session identity');
+        const response = await this.execute({
+          toolName: '__BackgroundShellReconcile', input: { fail_closed: true },
+          context: { workspace: {
+            id: sandbox.workspaceId, sessionId: sandbox.sessionId,
+            sandboxScopeId: sandbox.sandboxScopeId, mountSubPath: sandbox.mountSubPath,
+          } },
+        });
+        if (response.status === 'error') throw new Error(response.error);
+      },
+    });
   }
 
   /** Persist workspace protection or terminate only tasks owned by this invocation. */
@@ -376,6 +359,7 @@ export class AcsExecutor {
       taskId?: unknown;
       status?: unknown;
       protectedUntil?: unknown;
+      requestOwned?: unknown;
       activeTaskIds?: unknown;
     };
     const protectedUntil = typeof background.protectedUntil === 'string' ? background.protectedUntil : undefined;
@@ -389,8 +373,8 @@ export class AcsExecutor {
     const aggregateTaskIds = activeTaskIds.length > 0
       ? [...new Set(activeTaskIds)]
       : currentTaskActive ? [background.taskId as string] : [];
-    const ownedTaskIds: string[] = currentTaskActive && ownedBackgroundTaskId
-      && background.taskId === ownedBackgroundTaskId ? [ownedBackgroundTaskId] : [];
+    const ownedTaskIds: string[] = currentTaskActive && background.requestOwned === true
+      && ownedBackgroundTaskId && background.taskId === ownedBackgroundTaskId ? [ownedBackgroundTaskId] : [];
     const aggregateProtectionActive = aggregateTaskIds.length > 0
       || this.hasSafeBackgroundProtection(protectedUntilMs);
     const failClosedOrRecover = async (reason: string): Promise<never> => {
@@ -437,7 +421,7 @@ export class AcsExecutor {
     let leaseError: unknown;
     try {
       await this.sandboxManager.setActiveInvocationLease(
-        sandboxName, leaseKey, protectedUntil, expectedUid,
+        sandboxName, leaseKey, protectedUntil, expectedUid, undefined, 'background_pending',
       );
     } catch (err) {
       leaseError = err;
@@ -512,7 +496,7 @@ export class AcsExecutor {
     const requiredRemainingMs = this.backgroundTerminationWindowMs();
     const leaseUntilMs = Date.now() + this.config.sandboxWaitTimeoutMs + requiredRemainingMs;
     await this.sandboxManager.setActiveInvocationLease(
-      name, leaseKey, new Date(leaseUntilMs).toISOString(), expectedUid,
+      name, leaseKey, new Date(leaseUntilMs).toISOString(), expectedUid, undefined, 'background_pending',
     );
     if (leaseUntilMs - Date.now() < requiredRemainingMs) {
       throw new Error('termination fence expired before persistence confirmation');
@@ -608,6 +592,8 @@ export class AcsExecutor {
           leaseKey,
           new Date(Date.now() + ACTIVE_INVOCATION_LEASE_MS).toISOString(),
           recovery.expectedUid,
+          undefined,
+          'background_pending',
         );
       } catch (err) {
         this.logger.warn(`background_shell_recovery_lease_renew_failed sandbox=${ref.name}: ${errorMessage(err)}`);
@@ -632,7 +618,8 @@ export class AcsExecutor {
         try {
           const inventory = await this.reconcileBackgroundTaskInventory(ref);
           if (inventory.activeTaskIds.length === 0) {
-            safe = true;
+            // 调用断连后远端 launch 仍可能迟到；空快照不能证明从未启动。
+            safe = recovery.launchUncertain !== true;
           } else if (inventory.protectedUntil) {
             const inventoryUntilMs = Date.parse(inventory.protectedUntil);
             if (this.hasSafeBackgroundProtection(inventoryUntilMs)) {
@@ -699,7 +686,7 @@ export class AcsExecutor {
     if (this.options.reconcileBackgroundTasks) return await this.options.reconcileBackgroundTasks(ref);
     const response = await this.invokeDirectRunner(ref, {
       toolName: '__BackgroundShellReconcile',
-      input: {},
+      input: { fail_closed: true },
       workspace: {
         id: ref.workspaceId,
         sessionId: ref.sessionId,
@@ -709,8 +696,7 @@ export class AcsExecutor {
     });
     if (response.status === 'error') throw new Error(response.error);
     const raw = response.metadata?.backgroundShell as {
-      protectedUntil?: unknown;
-      activeTaskIds?: unknown;
+      protectedUntil?: unknown; activeTaskIds?: unknown;
     } | undefined;
     if (!Array.isArray(raw?.activeTaskIds)
       || raw.activeTaskIds.some((taskId) => typeof taskId !== 'string')) {

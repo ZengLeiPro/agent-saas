@@ -41,18 +41,21 @@ function finishBackground(
   child: ReturnType<typeof fakeChild>,
   taskId: string,
   protectedUntil: string,
+  requestOwned = true,
 ): void {
   child.stdout.end(`${JSON.stringify({
     kind: 'final',
     response: {
       status: 'success', content: '{}',
-      metadata: { backgroundShell: { taskId, status: 'running', protectedUntil } },
+      metadata: { backgroundShell: {
+        taskId, status: 'running', protectedUntil, requestOwned,
+      } },
     },
   })}\n`);
   child.emit('close', 0, null);
 }
 
-describe('AcsExecutor background termination fence', () => {
+describe('AcsExecutor request ownership and termination fence', () => {
   it('keeps recovery without name-based termination when the termination fence cannot renew', async () => {
     vi.useFakeTimers();
     try {
@@ -112,6 +115,48 @@ describe('AcsExecutor background termination fence', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not claim or terminate an idempotently returned task owned by another invocation', async () => {
+    const sandboxRef = ref('as-background-idempotent-existing');
+    const child = fakeChild();
+    const protectedUntil = '2099-07-20T00:10:00.000Z';
+    const setActiveInvocationLease = vi.fn()
+      .mockResolvedValueOnce('uid-1')
+      .mockRejectedValueOnce(new Error('lease CAS exhausted'))
+      .mockResolvedValue('uid-1');
+    const terminateBackgroundTasks = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => sandboxRef,
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+      getSandboxUid: vi.fn(async () => 'uid-1'),
+      touch: vi.fn(async () => undefined),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager, noopLogger, undefined,
+      { persistentRunner: false, terminateBackgroundTasks, backgroundRecoveryRetryMs: 1,
+        reconcileBackgroundTasks: async () => ({ activeTaskIds: [] }) },
+    );
+
+    const resultPromise = executor.execute({
+      toolName: 'Shell', input: {
+        command: 'sleep 60', mode: 'background', taskId: 'shell-bg-existing',
+      },
+      context: { invocationId: 'inv-idempotent-existing', workspace: {
+        id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
+        sandboxScopeId: sandboxRef.sandboxScopeId,
+      } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    finishBackground(child, 'shell-bg-existing', protectedUntil, false);
+
+    await expect(resultPromise).rejects.toThrow(/不终止无所有权任务/u);
+    await vi.waitFor(() => expect(executor.backgroundRecoveryCount()).toBe(0));
+    expect(terminateBackgroundTasks).not.toHaveBeenCalled();
   });
 
   it('does not terminate when a UID-bound fence returns after its usable window elapsed', async () => {

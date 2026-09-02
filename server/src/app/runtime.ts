@@ -1489,15 +1489,14 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     vault: secretVault,
     logger: serverLogger.child('TenantHand'),
   });
-  // Sandbox 预热（2026-07-31 冷启动治理）：用户打开会话页即 fire-and-forget 预热
-  // ACS Sandbox，让 30s+ 冷启动与打字/LLM 首轮并行。未配置 tenantRemoteHands
-  // 的环境（本地开发/测试）service 内部找不到 ACS hand 自然跳过。
+  // 用户打开会话页即 fire-and-forget 预热 ACS Sandbox；未配置 tenantRemoteHands 时自然跳过。
   const sandboxWarmupService = new SandboxWarmupService({
     agentCwd,
     sessionCatalog, handStore: pgHandStore,
     tenantRemoteHands: () => config.tenantRemoteHands?.hands,
     tenantRemoteHandResolver,
     isExecutionEnabled: isRuntimeExecutionEnabled,
+    ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
     logger: serverLogger.child('SandboxWarmup'),
   }); if (pgRunStore) sandboxLifecycleService = new SandboxLifecycleService({ agentCwd, store: new PgSandboxLifecycleStore(pgRunStore.pool, pgRunStore.runsTable, pgRunStore.steeringInputsTable), runStore: pgRunStore, sessionCatalog, handStore: pgHandStore, tenantRemoteHands: () => config.tenantRemoteHands?.hands, tenantRemoteHandResolver, logger: serverLogger.child('SandboxLifecycle') });
   // A4: serverRemote 凭证在装配层解析为 plaintext，下游 dispatch / cancel delivery
@@ -2579,9 +2578,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     billingService: () => billingService,
     tenantStore,
     allowedOrigins: config.server.corsOrigins,
-    // 专职 Agent + LLM 话题门禁（2026-07 唯恩批次）。getGuardrailModelConfigs
-    // 必须是 getter：热更后 channel 每次调用都取到最新链。guardrailEventStore
-    // 仅 PG backend 存在，file backend 降级 log。
+    // 专职 Agent + LLM 话题门禁：模型链用 getter 热更；guardrailEventStore 仅 PG backend 存在。
     orgAgentStore,
     getGuardrailModelConfigs: () => guardrailModelConfigs,
     guardrailEventStore,
@@ -2600,6 +2597,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     memoryWriteDelegationEnabled: (tenantId) => tenantId
       ? getTenantMemoryFeatureStatus(tenantId).memoryWriteDelegationEnabled.effective
       : false,
+    ...(artifactShareStore ? { withSessionAdmissionLock: <T>(sessionId: string, operation: () => Promise<T>) => artifactShareStore!.withSessionLock(sessionId, operation) } : {}),
     ...(runtimeScheduler && pgRunStore ? {
       enqueueRuntime: {
         scheduler: runtimeScheduler,

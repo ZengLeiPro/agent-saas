@@ -61,7 +61,7 @@ function setup(activeRegistry?: ActiveSandboxRegistry) {
 }
 
 describe('SandboxManager lifecycle mutations', () => {
-  // Cleanup and capacity eviction share one serialized, fresh-state deletion gate.
+  // Cleanup and capacity eviction share one serialized fresh-state deletion gate.
   it('atomically advances activity generation when an existing scope becomes active again', async () => {
     const { manager, run } = setup();
     vi.spyOn(manager, 'getStatus').mockResolvedValueOnce(status({
@@ -97,7 +97,27 @@ describe('SandboxManager lifecycle mutations', () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it('touches last-active behind observed UID and resourceVersion tests without a pinned UID', async () => {
+  it('preserves the first persisted workload descriptor when a stale Run arrives later', async () => {
+    const { manager, run } = setup();
+    vi.spyOn(manager, 'getStatus').mockResolvedValueOnce(status({
+      'agent-saas.kaiyan.net/workload-descriptor': JSON.stringify({ class: 'interactive' }),
+    }));
+
+    await (manager as any).patchWorkloadDescriptor('as-task', { class: 'cron' });
+
+    const patchArgs = run.mock.calls.at(-1)![0];
+    const payload = JSON.parse(patchArgs[4]!) as Array<{ op: string; path: string; value?: unknown }>;
+    expect(payload).toEqual(expect.arrayContaining([
+      expect.objectContaining({ op: 'add', path: expect.stringContaining('workload-class'), value: 'interactive' }),
+      expect.objectContaining({
+        op: 'add', path: expect.stringContaining('workload-descriptor'),
+        value: JSON.stringify({ class: 'interactive' }),
+      }),
+    ]));
+    expect(payload).not.toContainEqual(expect.objectContaining({ value: JSON.stringify({ class: 'cron' }) }));
+  });
+
+  it('writes last-active behind observed UID and resourceVersion tests without a pinned UID', async () => {
     const { manager, run } = setup();
     vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
       'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:00:00.000Z',
@@ -118,6 +138,17 @@ describe('SandboxManager lifecycle mutations', () => {
         value: now.toISOString(),
       },
     ]));
+  });
+
+  it('keeps last-active monotonic when a delayed touch arrives after newer activity', async () => {
+    const { manager, run } = setup();
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+      'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:10:00.000Z',
+    }));
+
+    await manager.touch('as-touch-stale', new Date('2026-08-30T00:05:00.000Z'), 'sandbox-uid-1');
+
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('rejects delayed touch when the Sandbox is recreated with the same name', async () => {

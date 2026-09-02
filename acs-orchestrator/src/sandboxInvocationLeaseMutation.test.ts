@@ -68,6 +68,9 @@ describe('Sandbox invocation completion and background protection mutation fence
     const patch = JSON.parse(patchArgs[4]!) as Array<{ op: string; path: string; value?: unknown }>;
     expect(patch).toEqual(expect.arrayContaining([
       expect.objectContaining({ op: 'add', path: expect.stringContaining('activity-generation'), value: 'activity-new' }),
+      expect.objectContaining({ op: 'add', value: JSON.stringify({
+        invocationKey: 'inv-new', until: '2026-08-30T00:10:00.000Z', state: 'executing',
+      }) }),
       expect.objectContaining({ op: 'remove', path: expect.stringContaining('terminal-state') }),
       expect.objectContaining({ op: 'remove', path: expect.stringContaining('terminal-at') }),
     ]));
@@ -96,7 +99,36 @@ describe('Sandbox invocation completion and background protection mutation fence
     await expect(manager.setActiveInvocationLease(
       'as-protected', invocationKey, requested,
     )).resolves.toBe('uid-1');
-    expect(run).not.toHaveBeenCalled();
+    const patchArgs = (run.mock.calls as unknown[][])[0]![0] as string[];
+    const patch = JSON.parse(patchArgs[4]!) as Array<{ value?: unknown }>;
+    expect(patch).toEqual(expect.arrayContaining([expect.objectContaining({
+      value: JSON.stringify({ invocationKey, until: newer, state: 'executing' }),
+    })]));
+  });
+
+  it('does not sweep expired background/completion pending leases and reports them busy', async () => {
+    const executing = activeInvocationLeaseAnnotationKey('expired-executing');
+    const background = activeInvocationLeaseAnnotationKey('pending-background');
+    const completion = activeInvocationLeaseAnnotationKey('pending-completion');
+    const annotations = {
+      [executing]: JSON.stringify({ invocationKey: 'expired-executing', until: '2026-08-30T00:00:00.000Z', state: 'executing' }),
+      [background]: JSON.stringify({ invocationKey: 'pending-background', until: '2026-08-30T00:00:00.000Z', state: 'background_pending' }),
+      [completion]: JSON.stringify({ invocationKey: 'pending-completion', until: '2026-08-30T00:00:00.000Z', state: 'completion_pending', completedAt: '2026-08-29T23:59:00.000Z' }),
+    };
+    const run = vi.fn(async () => ok());
+    const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
+    vi.spyOn(manager, 'getStatus').mockResolvedValue({ phase: 'Running', raw: { metadata: {
+      uid: 'uid-1', resourceVersion: 'rv-1', annotations,
+    } } });
+
+    await expect(manager.clearExpiredInvocationLeases(
+      'as-pending', new Date('2026-08-30T00:05:00.000Z'),
+    )).resolves.toEqual({ active: true, removed: 1 });
+    const patchArgs = (run.mock.calls as unknown[][])[0]![0] as string[];
+    const patch = JSON.parse(patchArgs[4]!) as Array<{ path: string }>;
+    expect(patch.some((entry) => entry.path.includes(executing.replaceAll('/', '~1')))).toBe(true);
+    expect(patch.some((entry) => entry.path.includes(background.replaceAll('/', '~1')))).toBe(false);
+    expect(patch.some((entry) => entry.path.includes(completion.replaceAll('/', '~1')))).toBe(false);
   });
 
   it('batch-sweeps expired invocation leases with UID/resourceVersion conflict retry', async () => {
@@ -146,7 +178,7 @@ describe('Sandbox invocation completion and background protection mutation fence
     expect(getStatus).toHaveBeenCalledTimes(3);
   });
 
-  it('rejects protection writes and lease clears when the expected Sandbox UID was replaced', async () => {
+  it('rejects protection writes and lease sweeps when the expected Sandbox UID was replaced', async () => {
     const run = vi.fn(async () => ok());
     const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
     vi.spyOn(manager, 'getStatus').mockResolvedValue({
@@ -159,6 +191,9 @@ describe('Sandbox invocation completion and background protection mutation fence
     )).rejects.toThrow(/同名重建/u);
     await expect(manager.setActiveInvocationLease(
       'as-recreated', 'inv-old', undefined, 'uid-old',
+    )).rejects.toThrow(/同名重建/u);
+    await expect(manager.clearExpiredInvocationLeases(
+      'as-recreated', new Date('2026-08-30T00:05:00.000Z'), 'uid-old',
     )).rejects.toThrow(/同名重建/u);
     expect(run).not.toHaveBeenCalled();
   });
@@ -179,6 +214,25 @@ describe('Sandbox invocation completion and background protection mutation fence
     await expect(manager.setBackgroundShellProtection(
       'as-protected', undefined, 'uid-1', staleGeneration,
     )).resolves.toBe('uid-1');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('keeps the generation bound to the later protection deadline during reverse-order writes', async () => {
+    const laterDeadline = '2026-08-30T00:10:00.000Z';
+    const run = vi.fn(async (_args: string[]) => ok());
+    const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
+    vi.spyOn(manager, 'getStatus').mockResolvedValue({
+      phase: 'Running',
+      raw: { metadata: { uid: 'uid-1', resourceVersion: 'rv-2', annotations: {
+        [BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]: laterDeadline,
+        [BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION]: 'generation-later',
+      } } },
+    });
+
+    await expect(manager.setBackgroundShellProtection(
+      'as-protected', '2026-08-30T00:05:00.000Z', 'uid-1', undefined, 'generation-earlier',
+    )).resolves.toBe('uid-1');
+
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -206,7 +260,7 @@ describe('Sandbox invocation completion and background protection mutation fence
     ]));
   });
 
-  it('atomically removes only the completed lease and advances last-active', async () => {
+  it('atomically removes only the completed lease and advances last-active on first completion', async () => {
     const completedAt = new Date('2026-09-02T04:00:00.000Z');
     const invocationKey = 'inv-complete';
     const leaseKey = activeInvocationLeaseAnnotationKey(invocationKey);
@@ -236,6 +290,23 @@ describe('Sandbox invocation completion and background protection mutation fence
       { op: 'add', path: expect.stringContaining(LAST_ACTIVE_AT_ANNOTATION.replaceAll('/', '~1')), value: completedAt.toISOString() },
     ]));
     expect(patch.some((entry) => entry.path.includes(otherLeaseKey.replaceAll('/', '~1')))).toBe(false);
+  });
+
+  it('accepts an ambiguous retry when the lease is gone and completedAt already persisted', async () => {
+    const completedAt = new Date('2026-09-02T04:00:00.000Z');
+    const run = vi.fn(async () => ok());
+    const manager = new SandboxManager(baseConfig(), { run } as unknown as Kubectl, noopLogger);
+    vi.spyOn(manager, 'getStatus').mockResolvedValue({
+      phase: 'Running',
+      raw: { metadata: { uid: 'uid-1', resourceVersion: 'rv-2', annotations: {
+        [LAST_ACTIVE_AT_ANNOTATION]: completedAt.toISOString(),
+      } } },
+    });
+
+    await expect(manager.completeInvocation(
+      'as-complete', 'inv-complete', completedAt, 'uid-1',
+    )).resolves.toBe('uid-1');
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('never moves last-active backward after a conflict reveals newer activity', async () => {

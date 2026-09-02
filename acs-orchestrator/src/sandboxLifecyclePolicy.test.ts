@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   decideSandboxLifecycle,
+  isActiveInvocationLeaseProtected,
+  lifecycleStateFromMetadata,
   parseWorkloadDescriptor,
   terminalDeadlineAt,
   type SandboxTerminalState,
@@ -109,7 +111,41 @@ describe('workload-aware sandbox lifecycle policy', () => {
     expect(terminalDeadlineAt('taskboard', iso(0))).toBe(iso(5 * 60_000));
   });
 
-  it('protects active registry, invocation lease and background work before deadlines', () => {
+  it('keeps well-formed pending lease states lifecycle-busy after their until fence expires', () => {
+    for (const state of ['background_pending', 'completion_pending'] as const) {
+      const lifecycle = lifecycleStateFromMetadata({}, {
+        'agent-saas.kaiyan.net/active-invocation-pending': JSON.stringify({
+          invocationKey: `lease-${state}`, state, until: iso(1),
+          ...(state === 'completion_pending' ? { completedAt: iso(2) } : {}),
+        }),
+      });
+      expect(lifecycle.activeInvocationLeaseRecoveryPending).toBe(true);
+      expect(isActiveInvocationLeaseProtected(lifecycle, BASE + 90 * 60_000)).toBe(true);
+      expect(decideSandboxLifecycle({
+        ...lifecycle, workloadClass: 'interactive', createdAt: iso(0), lastActiveAt: iso(0),
+        nowMs: BASE + 90 * 60_000,
+      })).toMatchObject({ delete: false, decision: 'retain-active' });
+    }
+  });
+
+  it.each([
+    ['invalid JSON', '{not-json'],
+    ['unknown state', JSON.stringify({ invocationKey: 'lease-unknown', state: 'future', until: iso(1) })],
+  ])('keeps %s lease residues lifecycle-busy until strict recovery clears them', (_case, raw) => {
+    const lifecycle = lifecycleStateFromMetadata({}, {
+      'agent-saas.kaiyan.net/active-invocation-malformed': raw,
+    });
+    expect(lifecycle.activeInvocationLeases).toHaveLength(1);
+    expect(lifecycle.activeInvocationLeases?.[0]?.malformed).toBe(true);
+    expect(lifecycle.activeInvocationLeaseRecoveryPending).toBe(true);
+    expect(isActiveInvocationLeaseProtected(lifecycle, BASE + 90 * 60_000)).toBe(true);
+    expect(decideSandboxLifecycle({
+      ...lifecycle, workloadClass: 'interactive', createdAt: iso(0), lastActiveAt: iso(0),
+      nowMs: BASE + 90 * 60_000,
+    })).toMatchObject({ delete: false, decision: 'retain-active' });
+  });
+
+  it('protects active registry, invocation lease and background work through their deadlines', () => {
     expect(decision({ workloadClass: 'interactive', nowMinutes: 90, active: true })).toMatchObject({ delete: false, decision: 'retain-active' });
     expect(decision({ workloadClass: 'interactive', nowMinutes: 90, backgroundProtected: true })).toMatchObject({ delete: false, decision: 'retain-background-protected' });
     expect(decideSandboxLifecycle({

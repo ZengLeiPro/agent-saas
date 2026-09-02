@@ -434,9 +434,11 @@ describe('AcsExecutor active sandbox tracking', () => {
     })).rejects.toThrow('runner spawn failed');
     await vi.waitFor(() => expect(completeInvocation).toHaveBeenCalledTimes(2));
     expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
-      ref.name, expect.any(String), expect.any(String), 'uid-1',
+      ref.name, expect.any(String), expect.any(String), 'uid-1', undefined,
+      'completion_pending', expect.any(String),
     );
     const recoveryFence = (setActiveInvocationLease.mock.calls as unknown[][]).at(-1)?.[2] as string;
+    expect((setActiveInvocationLease.mock.calls as unknown[][]).at(-1)?.[6]).toEqual(expect.any(String));
     expect(Date.parse(recoveryFence) - Date.now()).toBeGreaterThan(50_000);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('invocation_completion_failed'));
   });

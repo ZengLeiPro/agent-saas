@@ -215,6 +215,8 @@ export class FileSessionCatalog implements SessionCatalog {
       requested: record.sandboxProfile,
       ...(taskboardExecution ? { forceProfile: 'coding' as const } : {}),
     });
+    const sandboxWorkloadDescriptor = existing?.sandboxWorkloadDescriptor
+      ?? record.sandboxWorkloadDescriptor;
     return {
       ...(existing ?? {}),
       userId: record.userId,
@@ -239,7 +241,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(memoryPolicyVersion ? { memoryPolicyVersion } : {}),
       ...(record.sessionSource ? { sessionSource: record.sessionSource } : {}),
       ...(memoryAutomationEligible !== undefined ? { memoryAutomationEligible } : {}),
-      ...(record.sandboxWorkloadDescriptor ? { sandboxWorkloadDescriptor: record.sandboxWorkloadDescriptor } : {}),
+      ...(sandboxWorkloadDescriptor ? { sandboxWorkloadDescriptor } : {}),
       ...(record.profileId ? { profileId: record.profileId } : {}),
       ...(record.profileKey ? { profileKey: record.profileKey } : {}),
       ...(record.profileVersionId ? { profileVersionId: record.profileVersionId } : {}),
@@ -253,6 +255,7 @@ export class FileSessionCatalog implements SessionCatalog {
   private toRecord(sessionId: string, transcriptPath: string, meta: SessionMeta): RuntimeSessionRecord {
     const now = new Date().toISOString();
     const orgAgentSnapshot = parseOrgAgentSessionSnapshot(meta.orgAgentSnapshot);
+    const sandboxWorkloadDescriptor = parseSandboxWorkloadDescriptor(meta.sandboxWorkloadDescriptor);
     return {
       sessionId,
       userId: meta.userId,
@@ -282,8 +285,7 @@ export class FileSessionCatalog implements SessionCatalog {
       ...(typeof meta.memoryAutomationEligible === 'boolean'
         ? { memoryAutomationEligible: meta.memoryAutomationEligible }
         : {}),
-      sandboxWorkloadDescriptor: parseSandboxWorkloadDescriptor(meta.sandboxWorkloadDescriptor)
-        ?? { kind: 'interactive' },
+      ...(sandboxWorkloadDescriptor ? { sandboxWorkloadDescriptor } : {}),
       ...(meta.deletedAt ? { deletedAt: meta.deletedAt } : {}),
       ...(meta.profileId ? { profileId: meta.profileId } : {}),
       ...(meta.profileKey ? { profileKey: meta.profileKey } : {}),

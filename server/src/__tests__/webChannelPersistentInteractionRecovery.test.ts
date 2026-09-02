@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { WebChannel, type WebChannelConfig } from '../channels/web/channel.js';
+import { interactionStore } from '../channels/web/interactionStore.js';
 import type { OutboundEvent } from '../types/index.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import { FileSessionCatalog } from '../runtime/sessionCatalog.js';
@@ -81,7 +82,7 @@ describe('WebChannel persistent interaction recovery', () => {
   afterAll(async () => {
     await rm(join(AGENT_LEGACY_TRANSCRIPTS_ROOT, TENANT), { recursive: true, force: true });
   });
-  describe('持久化交互恢复', () => {
+  describe('持久化交互恢复与 tombstone 准入', () => {
     function resumeRig(runStore: MemoryRunStore, tmp: string, activations: string[], eventStore?: { list: FileEventStore['list']; append: FileEventStore['append'] }): Rig {
       return makeRig({
         agentCwd: tmp,
@@ -100,6 +101,112 @@ describe('WebChannel persistent interaction recovery', () => {
         },
       });
     }
+
+    it('真实 Web interaction 对软删除 Session fail-close，且不 claim、写事件或激活 scheduler', async () => {
+      const tmp = await makeTmp('cov-deleted-interaction-');
+      const deletedAt = new Date().toISOString();
+      const { sessionId, eventStore } = await seedRuntimeSession(USER, {
+        deletedAt,
+        model: 'm-deleted',
+      });
+      await eventStore.append({
+        type: 'interaction_requested', sessionId, runId: 'run-deleted', toolCallId: 'call-deleted',
+        interactionId: 'ask-deleted', interactionType: 'ask_user', userId: USER.sub,
+        questions: [{ question: '不得恢复?', header: '删除', options: [{ label: '否', description: '' }], multiSelect: false }],
+      }, { tenantId: TENANT });
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-deleted', sessionId, userId: USER.sub, model: 'm-deleted', channel: 'web' });
+      await runStore.markStatus('run-deleted', 'waiting_user');
+      const claimSpy = vi.spyOn(runStore, 'claimPersistedInteractionResume');
+      const activations: string[] = [];
+      const rig = resumeRig(runStore, tmp, activations);
+
+      await (rig.channel as any).resolveInteraction(
+        wsClient(rig.ws, USER), 'ask-deleted', { answers: { q1: '否' } }, sessionId, 'attempt-deleted',
+      );
+
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+        type: 'respond_error', interactionId: 'ask-deleted', error: 'Session has been deleted',
+      });
+      expect(claimSpy).not.toHaveBeenCalled();
+      expect(activations).toEqual([]);
+      expect((await eventStore.list(TENANT, sessionId)).some((event) => event.type === 'interaction_resolved')).toBe(false);
+    });
+
+    it('interaction 等锁期间丢失内存 entry 时不漂移到客户端 fallback Session', async () => {
+      const tmp = await makeTmp('cov-interaction-lock-drift-');
+      const sessionA = await seedRuntimeSession(USER, { model: 'm-a' });
+      const sessionB = await seedRuntimeSession(USER, { model: 'm-b' });
+      await sessionB.eventStore.append({
+        type: 'interaction_requested', sessionId: sessionB.sessionId, runId: 'run-lock-drift', toolCallId: 'call-lock-drift',
+        interactionId: 'ask-lock-drift', interactionType: 'ask_user', userId: USER.sub,
+        questions: [{ question: '不得跨锁?', header: '锁', options: [{ label: '否', description: '' }], multiSelect: false }],
+      }, { tenantId: TENANT });
+      const runStore = new MemoryRunStore();
+      await runStore.upsertPending({ runId: 'run-lock-drift', sessionId: sessionB.sessionId, userId: USER.sub, model: 'm-b', channel: 'web' });
+      await runStore.markStatus('run-lock-drift', 'waiting_user');
+      const claimSpy = vi.spyOn(runStore, 'claimPersistedInteractionResume');
+      const pending = interactionStore.create('ask-lock-drift', 'ask_user', { sessionId: sessionA.sessionId, userId: USER.sub });
+      void pending.catch(() => undefined);
+      const lockCalls: string[] = [];
+      const rig = resumeRig(runStore, tmp, []);
+      (rig.channel as any).config.withSessionAdmissionLock = async <T>(sessionId: string, operation: () => Promise<T>): Promise<T> => {
+        lockCalls.push(sessionId);
+        interactionStore.discard('ask-lock-drift', '模拟等锁期间 entry 消失');
+        return operation();
+      };
+
+      await (rig.channel as any).resolveInteraction(
+        wsClient(rig.ws, USER), 'ask-lock-drift', { answers: { q1: '否' } }, sessionB.sessionId, 'attempt-lock-drift',
+      );
+
+      expect(lockCalls).toEqual([sessionA.sessionId]);
+      expect(claimSpy).not.toHaveBeenCalled();
+      expect((await sessionB.eventStore.list(TENANT, sessionB.sessionId)).some((event) => event.type === 'interaction_resolved')).toBe(false);
+    });
+
+    it('真实 Web direct 消息在任何 durable 副作用前拒绝软删除 Session', async () => {
+      const tmp = await makeTmp('cov-deleted-direct-');
+      const sessionId = randomUUID();
+      const now = new Date().toISOString();
+      let deleted = false;
+      const getSession = vi.fn(async () => ({
+        sessionId, userId: USER.sub, username: USER.username, tenantId: TENANT,
+        channel: 'web', cwd: tmp, transcriptPath: join(tmp, `${sessionId}.jsonl`),
+        workspaceId: 'ws-deleted', createdAt: now, updatedAt: now,
+        ...(deleted ? { deletedAt: now } : {}),
+      }));
+      const lockCalls: string[] = [];
+      const withSessionAdmissionLock = async <T>(lockedSessionId: string, operation: () => Promise<T>): Promise<T> => {
+        lockCalls.push(lockedSessionId);
+        deleted = true;
+        return operation();
+      };
+      const upsertSession = vi.fn();
+      const runStore = new MemoryRunStore();
+      const upsertRun = vi.spyOn(runStore, 'upsertPending');
+      const rig = makeRig({
+        agentCwd: tmp,
+        withSessionAdmissionLock,
+        enqueueRuntime: {
+          enabled: true,
+          sessionCatalog: { get: getSession, upsert: upsertSession } as any,
+          runStore,
+          scheduler: {} as any,
+        },
+      });
+
+      await (rig.channel as any).processChatMessage(wsClient(rig.ws, USER), {
+        action: 'chat', message: '不得复活', sessionId, client_msg_id: 'msg-deleted-direct',
+      });
+
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({
+        type: 'chat_rejected', client_msg_id: 'msg-deleted-direct', reason_code: 'access_denied',
+      });
+      expect(lockCalls).toEqual([sessionId]);
+      expect(upsertSession).not.toHaveBeenCalled();
+      expect(upsertRun).not.toHaveBeenCalled();
+    });
 
     it('ask_user 并发恢复：CAS 只允许一次 event append/enqueue，live claim 拒绝竞争重试', async () => {
       const tmp = await makeTmp('cov-askresume-');

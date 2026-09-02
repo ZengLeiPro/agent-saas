@@ -21,6 +21,7 @@ export interface SandboxStatus {
 
 export interface ManagedSandbox extends SandboxLifecycleState {
   name: string;
+  uid?: string;
   workspaceId?: string;
   sessionId?: string;
   sandboxScopeId?: string;
@@ -39,6 +40,7 @@ export interface ManagedSandbox extends SandboxLifecycleState {
   lastActiveAt?: string;
   /** 后台 Shell 仍可能运行的最晚时间；生命周期在此之前不得 pause/delete/recreate，清除另受 generation 栅栏约束。 */
   backgroundShellProtectedUntil?: string;
+  backgroundShellProtectionGeneration?: string;
   /**
    * 当前 Sandbox spec 里 podTemplate 主容器的 image tag，用于 image drift 判定。
    */

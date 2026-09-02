@@ -32,7 +32,7 @@ async function waitForAdvisoryWaiters(
   throw new Error(`expected at least ${expected} waiter(s) for the prepared-intent advisory lock`);
 }
 
-describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
+describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contract', () => {
   const prefix = `scope_activity_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   let pool: InstanceType<typeof Pool>;
   let runStore: PgRunStore;
@@ -90,6 +90,81 @@ describePg('Sandbox lifecycle PostgreSQL locking and ordering contract', () => {
     await expect(rebuilt.hasActivity({
       sandboxScopeId, sessionId: topLevelSessionId, tenantId,
     })).resolves.toBe(false);
+  });
+
+  it('delivered cleanup fences admission and every explicit restore advances generation', async () => {
+    const runId = 'delivered-fence-carrier';
+    const sessionId = 'delivered-fence-session';
+    const sandboxScopeId = 'delivered-fence-scope';
+    await runStore.upsertPending({
+      runId, sessionId, tenantId: 'tenant-1', workspaceId: 'workspace-delivered', sandboxScopeId, metadata: {},
+    });
+    await runStore.markStatus(runId, 'cancelled', 'session deleted');
+    await pool.query(`UPDATE ${prefix}_runs SET metadata=jsonb_set(metadata,
+      '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, [runId, JSON.stringify({
+      state: 'delivered', workspaceId: 'workspace-delivered', sessionId, sandboxScopeId,
+      tenantId: 'tenant-1', targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-delivered',
+    })]);
+
+    await expect(runStore.upsertPending({
+      runId: 'delivered-fence-blocked', sessionId: 'delivered-fence-child', tenantId: 'tenant-1',
+      workspaceId: 'workspace-delivered', sandboxScopeId, metadata: { topLevelSessionId: sessionId },
+    })).rejects.toThrow(/Sandbox cleanup is active/u);
+
+    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await expect(store.cancelCleanup(sessionId, 'tenant-1', 'generation-restored')).resolves.toEqual([
+      expect.objectContaining({
+        runId, previousDeletionGeneration: 'generation-delivered', deletionGeneration: 'generation-restored',
+      }),
+    ]);
+    await expect(store.cancelCleanup(sessionId, 'tenant-1', 'generation-restored-again')).resolves.toEqual([
+      expect.objectContaining({
+        runId, previousDeletionGeneration: 'generation-restored', deletionGeneration: 'generation-restored-again',
+      }),
+    ]);
+    await expect(runStore.upsertPending({
+      runId: 'delivered-fence-restored', sessionId: 'delivered-fence-child', tenantId: 'tenant-1',
+      workspaceId: 'workspace-delivered', sandboxScopeId, metadata: { topLevelSessionId: sessionId },
+    })).resolves.toEqual(expect.objectContaining({ runId: 'delivered-fence-restored' }));
+  });
+
+  it('legacy null-tenant cleanup fences admission until explicit restore cancels the delivered carrier', async () => {
+    const sessionId = 'legacy-cleanup-session';
+    const sandboxScopeId = 'legacy-cleanup-scope';
+    await runStore.upsertPending({
+      runId: 'legacy-staged-run', sessionId, tenantId: 'tenant-1',
+      workspaceId: 'workspace-legacy', sandboxScopeId,
+      metadata: { schedulerState: 'staged' },
+    });
+    await runStore.upsertPending({
+      runId: 'legacy-cleanup-carrier', sessionId: 'legacy-cleanup-carrier-session', tenantId: 'tenant-1',
+      workspaceId: 'workspace-legacy', sandboxScopeId: 'legacy-cleanup-carrier-scope', metadata: {},
+    });
+    await runStore.markStatus('legacy-cleanup-carrier', 'cancelled', 'legacy cleanup');
+    await pool.query(`UPDATE ${prefix}_runs SET tenant_id=NULL, metadata=jsonb_set(metadata,
+      '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, ['legacy-cleanup-carrier', JSON.stringify({
+      state: 'delivered', workspaceId: 'workspace-legacy', sessionId, sandboxScopeId,
+      targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-legacy',
+    })]);
+
+    await expect(runStore.activateStagedRun('legacy-staged-run')).rejects.toThrow(/Sandbox cleanup is active/u);
+    await expect(runStore.upsertPending({
+      runId: 'legacy-new-tenant-run', sessionId, tenantId: 'tenant-2',
+      workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
+    })).rejects.toThrow(/Sandbox cleanup is active/u);
+
+    const store = new PgSandboxLifecycleStore(pool as never, `${prefix}_runs`, `${prefix}_steering_inputs`);
+    await expect(store.cancelCleanup(sessionId, 'tenant-1', 'generation-legacy-restored')).resolves.toEqual([
+      expect.objectContaining({
+        runId: 'legacy-cleanup-carrier', previousDeletionGeneration: 'generation-legacy',
+        deletionGeneration: 'generation-legacy-restored',
+      }),
+    ]);
+    await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toBe(true);
+    await expect(runStore.upsertPending({
+      runId: 'legacy-restored-run', sessionId, tenantId: 'tenant-2',
+      workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
+    })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-restored-run' }));
   });
 
   it('prepared cleanup fences late admission and guarded cancellation avoids carrier Run self-lock', async () => {

@@ -82,6 +82,18 @@ export interface SandboxScopeDeletion extends SandboxLifecycleIdentity {
   deletionGeneration: string;
 }
 
+export type ActiveInvocationLeaseState = 'executing' | 'background_pending' | 'completion_pending';
+
+export interface ActiveInvocationLeaseSnapshot {
+  annotationKey: string;
+  raw: string;
+  invocationKey?: string;
+  until?: string;
+  state: ActiveInvocationLeaseState | 'unknown';
+  completedAt?: string;
+  malformed: boolean;
+}
+
 export interface SandboxLifecycleState {
   workloadClass?: SandboxWorkloadClass;
   workloadDescriptor?: SandboxWorkloadDescriptor;
@@ -91,6 +103,10 @@ export interface SandboxLifecycleState {
   retentionDeadline?: string;
   deletionGeneration?: string;
   activeInvocationLeaseUntil?: string;
+  /** Full persisted snapshots are retained for restart recovery before residue sweeping. */
+  activeInvocationLeases?: ActiveInvocationLeaseSnapshot[];
+  /** Restart-owned transitions remain lifecycle-busy even after their time fence expires. */
+  activeInvocationLeaseRecoveryPending?: boolean;
 }
 
 export type SandboxLifecycleDecisionName =
@@ -163,43 +179,76 @@ export function activeInvocationLeaseAnnotationKey(invocationKey: string): strin
   return `${ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX}${createHash('sha256').update(invocationKey).digest('hex').slice(0, 24)}`;
 }
 
+export function activeInvocationLeaseSnapshots(
+  annotations: Record<string, unknown>,
+): ActiveInvocationLeaseSnapshot[] {
+  return Object.entries(annotations)
+    .filter(([key]) => key.startsWith(ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX))
+    .map(([annotationKey, rawValue]) => parseInvocationLeaseSnapshot(annotationKey, rawValue));
+}
+
 export function activeInvocationLeaseUntil(annotations: Record<string, unknown>): string | undefined {
   let latestMs: number | undefined;
   let latest: string | undefined;
-  for (const [key, raw] of Object.entries(annotations)) {
-    if (!key.startsWith(ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX) || typeof raw !== 'string') continue;
-    const until = invocationLeaseUntil(raw);
-    if (!until) continue;
-    const at = Date.parse(until);
+  for (const snapshot of activeInvocationLeaseSnapshots(annotations)) {
+    if (!snapshot.until) continue;
+    const at = Date.parse(snapshot.until);
     if (!Number.isFinite(at) || (latestMs !== undefined && at <= latestMs)) continue;
     latestMs = at;
-    latest = until;
+    latest = snapshot.until;
   }
   return latest;
 }
 
-/** Returns invocation annotations that cannot protect work at `nowMs`. */
+/** Returns expired executing/legacy residues, but never pending or future-fenced annotations. */
 export function expiredActiveInvocationLeaseAnnotationKeys(
   annotations: Record<string, unknown>,
   nowMs: number,
 ): string[] {
-  return Object.entries(annotations)
-    .filter(([key, raw]) => {
-      if (!key.startsWith(ACTIVE_INVOCATION_LEASE_ANNOTATION_PREFIX)) return false;
-      if (typeof raw !== 'string') return true;
-      const until = invocationLeaseUntil(raw);
-      const untilMs = until ? Date.parse(until) : Number.NaN;
+  return activeInvocationLeaseSnapshots(annotations)
+    .filter((snapshot) => {
+      if (snapshot.malformed) return !snapshot.until || Date.parse(snapshot.until) <= nowMs;
+      if (snapshot.state !== 'executing') return false;
+      const untilMs = snapshot.until ? Date.parse(snapshot.until) : Number.NaN;
       return !Number.isFinite(untilMs) || untilMs <= nowMs;
     })
-    .map(([key]) => key);
+    .map((snapshot) => snapshot.annotationKey);
 }
 
-function invocationLeaseUntil(raw: string): string | undefined {
+/** Returns malformed annotations whose own fence no longer delays recovery cleanup. */
+export function malformedActiveInvocationLeaseAnnotationKeys(
+  annotations: Record<string, unknown>,
+  nowMs = Date.now(),
+): string[] {
+  return activeInvocationLeaseSnapshots(annotations)
+    .filter((snapshot) => snapshot.malformed
+      && (!snapshot.until || Date.parse(snapshot.until) <= nowMs))
+    .map((snapshot) => snapshot.annotationKey);
+}
+
+function parseInvocationLeaseSnapshot(annotationKey: string, rawValue: unknown): ActiveInvocationLeaseSnapshot {
+  const raw = typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
+  if (typeof rawValue !== 'string') return { annotationKey, raw, state: 'unknown', malformed: true };
   try {
-    const value = JSON.parse(raw) as { until?: unknown };
-    return typeof value.until === 'string' ? value.until : undefined;
+    const value = JSON.parse(rawValue) as Record<string, unknown>;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { annotationKey, raw, state: 'unknown', malformed: true };
+    }
+    const invocationKey = typeof value.invocationKey === 'string' ? value.invocationKey : undefined;
+    const until = typeof value.until === 'string' && Number.isFinite(Date.parse(value.until)) ? value.until : undefined;
+    const state = value.state === undefined ? 'executing'
+      : ['executing', 'background_pending', 'completion_pending'].includes(String(value.state))
+        ? value.state as ActiveInvocationLeaseState : 'unknown';
+    const completedAt = typeof value.completedAt === 'string' && Number.isFinite(Date.parse(value.completedAt))
+      ? value.completedAt : undefined;
+    const malformed = state === 'unknown' || !invocationKey || !until
+      || (state === 'completion_pending' && !completedAt);
+    return {
+      annotationKey, raw, state, malformed,
+      ...(invocationKey ? { invocationKey } : {}), ...(until ? { until } : {}), ...(completedAt ? { completedAt } : {}),
+    };
   } catch {
-    return undefined;
+    return { annotationKey, raw, state: 'unknown', malformed: true };
   }
 }
 
@@ -227,16 +276,25 @@ export function lifecycleStateFromMetadata(
     ...(typeof annotations[RETENTION_DEADLINE_ANNOTATION] === 'string' ? { retentionDeadline: annotations[RETENTION_DEADLINE_ANNOTATION] as string } : {}),
     ...(typeof annotations[DELETION_GENERATION_ANNOTATION] === 'string' ? { deletionGeneration: annotations[DELETION_GENERATION_ANNOTATION] as string } : {}),
     ...(() => {
+      const leases = activeInvocationLeaseSnapshots(annotations);
       const until = activeInvocationLeaseUntil(annotations);
-      return until ? { activeInvocationLeaseUntil: until } : {};
+      // Every residue is restart-owned until strict reconcile proves it safe.
+      // Malformed/unknown states fail closed instead of becoming sweepable by TTL.
+      const recoveryPending = leases.length > 0;
+      return {
+        ...(until ? { activeInvocationLeaseUntil: until } : {}),
+        ...(leases.length > 0 ? { activeInvocationLeases: leases } : {}),
+        ...(recoveryPending ? { activeInvocationLeaseRecoveryPending: true } : {}),
+      };
     })(),
   };
 }
 
 export function isActiveInvocationLeaseProtected(
-  sandbox: Pick<SandboxLifecycleState, 'activeInvocationLeaseUntil'>,
+  sandbox: Pick<SandboxLifecycleState, 'activeInvocationLeaseUntil' | 'activeInvocationLeaseRecoveryPending'>,
   nowMs: number,
 ): boolean {
+  if (sandbox.activeInvocationLeaseRecoveryPending) return true;
   const leaseMs = sandbox.activeInvocationLeaseUntil ? Date.parse(sandbox.activeInvocationLeaseUntil) : Number.NaN;
   return Number.isFinite(leaseMs) && leaseMs > nowMs;
 }

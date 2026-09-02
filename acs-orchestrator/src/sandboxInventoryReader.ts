@@ -5,6 +5,7 @@ import { lifecycleStateFromMetadata } from './sandboxLifecyclePolicy.js';
 import { SANDBOX_NETWORK_CLEANUP_FINALIZER } from './sandboxDeletion.js';
 import {
   BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION,
+  BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION,
   brokenSandboxStateReason,
   optionalString,
   pausedConditionLastTransition,
@@ -70,6 +71,7 @@ export function managedSandboxFromResource(
       ? resources.limits as Record<string, unknown> : {};
     return {
       name: typeof metadata.name === 'string' ? metadata.name : '',
+      uid: stringValue(metadata.uid),
       workspaceId: stringValue(annotations[WORKSPACE_ANNOTATION]) ?? stringValue(labels[WORKSPACE_LABEL]),
       sessionId: stringValue(annotations[SESSION_ANNOTATION]) ?? stringValue(labels[SESSION_LABEL]),
       sandboxScopeId: stringValue(annotations[SANDBOX_SCOPE_ANNOTATION]) ?? stringValue(labels[SANDBOX_SCOPE_LABEL]),
@@ -82,6 +84,7 @@ export function managedSandboxFromResource(
       createdAt: stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
       lastActiveAt: stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]) ?? stringValue(annotations[CREATED_AT_ANNOTATION]) ?? stringValue(metadata.creationTimestamp),
       backgroundShellProtectedUntil: stringValue(annotations[BACKGROUND_SHELL_PROTECTED_UNTIL_ANNOTATION]),
+      backgroundShellProtectionGeneration: stringValue(annotations[BACKGROUND_SHELL_PROTECTION_GENERATION_ANNOTATION]),
       ...lifecycleStateFromMetadata(labels, annotations),
       image: primaryContainer ? stringValue(primaryContainer.image) : undefined,
       cpuRequest: stringValue(requests.cpu), cpuLimit: stringValue(limits.cpu),

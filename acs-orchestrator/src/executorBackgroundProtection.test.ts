@@ -37,7 +37,7 @@ function ref(name: string): SandboxRef {
   };
 }
 
-/** Completes a one-shot runner with background metadata. */
+/** Completes a one-shot runner with request-owned background metadata. */
 function finishBackground(
   child: ReturnType<typeof fakeChild>,
   taskId: string,
@@ -48,7 +48,7 @@ function finishBackground(
     kind: 'final',
     response: {
       status: 'success', content: '{}',
-      metadata: { backgroundShell: { taskId, status, protectedUntil } },
+      metadata: { backgroundShell: { taskId, status, protectedUntil, requestOwned: true } },
     },
   })}\n`);
   child.emit('close', 0, null);
@@ -84,14 +84,17 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(touch).not.toHaveBeenCalled();
   });
 
-  it('requests strict reconciliation when lifecycle protection is scanned', async () => {
+  it('enforces strict reconciliation when lifecycle protection is scanned', async () => {
     const sandboxRef = ref('as-protected-reconcile');
     const child = fakeChild();
     const setBackgroundShellProtection = vi.fn(async () => undefined);
     const sandboxManager = {
       listManagedSandboxes: vi.fn(async () => [{
-        ...sandboxRef,
-        backgroundShellProtectedUntil: '2099-07-20T00:00:00.000Z',
+        ...sandboxRef, uid: 'uid-1',
+        activeInvocationLeases: [{
+          annotationKey: 'agent-saas.kaiyan.net/active-invocation-restart', raw: '{}', invocationKey: 'inv-restart', until: '2000-01-01T00:00:00.000Z',
+          state: 'executing', malformed: false,
+        }],
       }]),
       clearExpiredInvocationLeases: vi.fn(async () => ({ active: false, removed: 0 })),
       ref: () => sandboxRef,
@@ -123,6 +126,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     child.emit('close', 0, null);
 
     await expect(resultPromise).resolves.toEqual({ checked: 1, failed: 0 });
+    expect(sandboxManager.clearExpiredInvocationLeases).not.toHaveBeenCalled();
   });
 
   it('persists background protection before returning and clearing the invocation lease', async () => {
@@ -238,12 +242,13 @@ describe('AcsExecutor background shell protection handoff', () => {
     });
     await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
     finishBackground(child, 'shell-bg-fallback', protectedUntil);
+    expect((setActiveInvocationLease.mock.calls as unknown[][])[0]?.[5]).toBe('background_pending');
 
     await expect(resultPromise).resolves.toMatchObject({ status: 'success' });
     const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]![1] as string;
     expect(setActiveInvocationLease).toHaveBeenCalledTimes(2);
     expect(setActiveInvocationLease).toHaveBeenNthCalledWith(
-      2, sandboxRef.name, leaseKey, protectedUntil, 'uid-1',
+      2, sandboxRef.name, leaseKey, protectedUntil, 'uid-1', undefined, 'background_pending',
     );
     expect(touch).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('background_shell_protection_fallback'));
@@ -342,7 +347,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     child.stdout.end(`${JSON.stringify({
       kind: 'final',
       response: { status: 'success', content: '{}', metadata: { backgroundShell: {
-        taskId: 'shell-bg-a', status: 'running',
+        taskId: 'shell-bg-a', status: 'running', requestOwned: true,
         activeTaskIds: ['shell-bg-a', 'shell-bg-b'],
         protectedUntil: '2099-07-20T00:10:00.000Z',
       } } },
@@ -574,7 +579,7 @@ describe('AcsExecutor background shell protection handoff', () => {
         const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]![1] as string;
         child.stdout.end(`${JSON.stringify({
           kind: 'final', response: { status: 'success', content: '{}', metadata: { backgroundShell: {
-            taskId: `shell-recovery-${proof}`, status: 'running', protectedUntil,
+            taskId: `shell-recovery-${proof}`, status: 'running', protectedUntil, requestOwned: true,
             activeTaskIds: [`shell-recovery-${proof}`],
           } } },
         })}\n`);
@@ -617,7 +622,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     },
   );
 
-  it('recovers a detached worker with conservative aggregate protection after its final is lost', async () => {
+  it('does not trust an empty early inventory and recovers with conservative protection after final loss', async () => {
     const sandboxRef = ref('as-background-final-lost');
     const child = fakeChild();
     let protectionAvailable = false;
@@ -641,7 +646,7 @@ describe('AcsExecutor background shell protection handoff', () => {
         persistentRunner: false,
         terminateBackgroundTasks,
         backgroundRecoveryRetryMs: 1,
-        reconcileBackgroundTasks: async () => { throw new Error('inventory unavailable'); },
+        reconcileBackgroundTasks: async () => ({ activeTaskIds: [] }),
       },
     );
 
@@ -778,7 +783,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       response: {
         status: 'success', content: '{}',
         metadata: { backgroundShell: {
-          taskId: 'shell-bg-fail-closed', status: 'running', protectedUntil,
+          taskId: 'shell-bg-fail-closed', status: 'running', protectedUntil, requestOwned: true,
           activeTaskIds: ['shell-bg-fail-closed'],
         } },
       },

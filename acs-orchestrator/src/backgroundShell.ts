@@ -19,6 +19,7 @@ export const MAX_BACKGROUND_SHELL_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_BACKGROUND_SHELL_READ_BYTES = 64 * 1024;
 
 const BACKGROUND_SHELL_WORKER_START_TIMEOUT_MS = 10_000;
+const UNREADABLE_BACKGROUND_SHELL_GRACE_MS = 60_000;
 const TASK_ID_PATTERN = /^shell-bg-[A-Za-z0-9-]{8,160}$/;
 const TASK_ROOT_SEGMENTS = ['.ky-agent', 'runtime', 'background-shell', 'tasks'] as const;
 const TERMINAL_STATUSES = new Set<BackgroundShellStatus>([
@@ -111,6 +112,7 @@ export interface BackgroundShellOutput {
   signal?: string | null;
   error?: string;
   protectedUntil?: string;
+  requestOwned?: boolean;
   activeTaskIds: string[];
 }
 
@@ -128,7 +130,10 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
     if (existing.commandHash !== commandHash) {
       throw new Error(`background shell task id collision: ${input.taskId}`);
     }
-    return await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId });
+    return {
+      ...(await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId })),
+      requestOwned: false,
+    };
   }
 
   const requestedAt = now.toISOString();
@@ -185,7 +190,10 @@ export async function startBackgroundShell(input: BackgroundShellStartInput): Pr
     throw err;
   }
   worker.unref();
-  return await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId });
+  return {
+    ...(await getBackgroundShellOutput({ workspaceRoot: input.workspaceRoot, taskId: input.taskId })),
+    requestOwned: true,
+  };
 }
 
 async function terminateUnacknowledgedWorker(worker: ChildProcess): Promise<void> {
@@ -342,7 +350,7 @@ export async function terminateBackgroundShellsFailClosed(
 
 export async function reconcileBackgroundShells(
   workspaceRoot: string,
-  options: { strict?: boolean } = {},
+  options: { strict?: boolean; now?: () => Date } = {},
 ): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
   const root = backgroundShellTaskRoot(workspaceRoot);
   let entries: string[];
@@ -361,9 +369,17 @@ export async function reconcileBackgroundShells(
       if (!isBackgroundShellTerminal(state.status)) active.push(state);
     } catch (error) {
       // 生命周期恢复必须把损坏/尚未写完的 task 视为未知活动；普通 inventory
-      // 仍可跳过单个坏记录，避免阻断其他任务的可观测性。
+      // 仍可跳过单个坏记录，避免阻断其他任务的可观测性。超过 worker
+      // 最大寿命仍不可读时，持久化为 lost，避免坏目录永久钉住 Sandbox。
       if (options.strict) {
-        throw new Error(`background shell task state is unreadable: ${taskId}`, { cause: error });
+        const settled = await settleStaleUnreadableBackgroundShell(
+          join(root, taskId),
+          taskId,
+          options.now?.() ?? new Date(),
+        );
+        if (!settled) {
+          throw new Error(`background shell task state is unreadable: ${taskId}`, { cause: error });
+        }
       }
     }
   }
@@ -380,6 +396,36 @@ export async function reconcileBackgroundShells(
 
 export async function activeBackgroundShellProtectedUntil(workspaceRoot: string): Promise<string | undefined> {
   return (await reconcileBackgroundShells(workspaceRoot)).protectedUntil;
+}
+
+async function settleStaleUnreadableBackgroundShell(
+  taskDir: string,
+  taskId: string,
+  now: Date,
+): Promise<boolean> {
+  const taskDirStat = await stat(taskDir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (!taskDirStat) return true;
+  if (now.getTime() - taskDirStat.mtimeMs <= MAX_BACKGROUND_SHELL_TIMEOUT_MS + UNREADABLE_BACKGROUND_SHELL_GRACE_MS) {
+    return false;
+  }
+
+  const timestamp = now.toISOString();
+  await writeBackgroundShellState(taskDir, {
+    version: 1,
+    taskId,
+    commandHash: 'unreadable',
+    status: 'lost',
+    requestedAt: new Date(taskDirStat.mtimeMs).toISOString(),
+    updatedAt: timestamp,
+    expiresAt: timestamp,
+    timeoutMs: MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+    completedAt: timestamp,
+    error: 'Background shell state remained unreadable beyond the maximum worker lifetime',
+  });
+  return true;
 }
 
 export async function readBackgroundShellState(taskDir: string): Promise<BackgroundShellState> {

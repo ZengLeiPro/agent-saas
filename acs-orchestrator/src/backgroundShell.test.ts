@@ -12,6 +12,8 @@ import {
   getBackgroundShellOutput,
   isBackgroundShellTerminal,
   killBackgroundShell,
+  MAX_BACKGROUND_SHELL_TIMEOUT_MS,
+  readBackgroundShellState,
   reconcileBackgroundShells,
   startBackgroundShell,
   terminateBackgroundShellsFailClosed,
@@ -30,6 +32,7 @@ describe('background shell runtime', () => {
       env: process.env,
     });
     expect(started.taskId).toBe(taskId);
+    expect(started.requestOwned).toBe(true);
     expect(['starting', 'running', 'completed']).toContain(started.status);
     const completed = await waitForTerminal(root, taskId);
     expect(completed).toMatchObject({ status: 'completed', exitCode: 0 });
@@ -46,7 +49,7 @@ describe('background shell runtime', () => {
       timeoutMs: 5_000,
       env: process.env,
     });
-    expect(idempotent.status).toBe('completed');
+    expect(idempotent).toMatchObject({ status: 'completed', requestOwned: false });
   });
 
   it('strict reconciliation treats a partially written task as unknown activity', async () => {
@@ -60,6 +63,25 @@ describe('background shell runtime', () => {
       /task state is unreadable/u,
     );
     await expect(reconcileBackgroundShells(root)).resolves.toEqual({ activeTaskIds: [] });
+  });
+
+  it('strict reconciliation settles a stale unreadable task after the maximum worker lifetime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-stale-'));
+    const taskId = `shell-bg-test-${randomUUID()}`;
+    const taskDir = backgroundShellTaskDir(root, taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, 'state.json'), '{not-json', 'utf8');
+    const settledAt = new Date(Date.now() + MAX_BACKGROUND_SHELL_TIMEOUT_MS + 61_000);
+
+    await expect(reconcileBackgroundShells(root, {
+      strict: true,
+      now: () => settledAt,
+    })).resolves.toEqual({ activeTaskIds: [] });
+    await expect(readBackgroundShellState(taskDir)).resolves.toMatchObject({
+      taskId,
+      status: 'lost',
+      completedAt: settledAt.toISOString(),
+    });
   });
 
   it('preserves the injected PATH instead of resetting it through a login shell', async () => {

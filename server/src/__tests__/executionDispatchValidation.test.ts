@@ -9,6 +9,7 @@ import {
   canonicalizeDispatchPayload,
   InvalidTaskboardDispatchPayloadError,
 } from '../taskboard/executionDispatchValidation.js';
+import { rowToExecutionDispatch } from '../taskboard/storeHelpers.js';
 import type { TaskboardExecutionDispatch } from '../taskboard/types.js';
 
 const AGENT_CWD = '/workspace';
@@ -76,6 +77,8 @@ function makeDispatch(): TaskboardExecutionDispatch {
     executionId: EXECUTION_ID,
     outboxExecutionId: EXECUTION_ID,
     taskId: 'task-1',
+    taskKind: 'delivery',
+    purpose: 'review',
     sessionId: SESSION_ID,
     tenantId: TENANT_ID,
     ownerUserId: OWNER_USER_ID,
@@ -84,6 +87,20 @@ function makeDispatch(): TaskboardExecutionDispatch {
     leaseId: 'lease-1',
   };
 }
+
+function freezeLegacyV1Dispatch(): TaskboardExecutionDispatch {
+  const dispatch = makeDispatch();
+  delete dispatch.payload.session.sandboxWorkloadDescriptor;
+  delete dispatch.payload.run.metadata!.sandboxWorkloadDescriptor;
+  delete dispatch.payload.run.metadata!.sandboxWorkloadTopLevel;
+  Object.freeze(dispatch.payload.session);
+  Object.freeze(dispatch.payload.run.metadata);
+  Object.freeze(dispatch.payload.run);
+  Object.freeze(dispatch.payload);
+  return Object.freeze(dispatch);
+}
+
+const LEGACY_V1_DISPATCH_FIXTURE = freezeLegacyV1Dispatch();
 
 describe('canonicalizeDispatchPayload（review 独立 Session 首跑重建契约）', () => {
   it('canonical run.metadata 携带 username/userRole/modelRef，满足 wake metadata 重建', () => {
@@ -121,6 +138,65 @@ describe('canonicalizeDispatchPayload（review 独立 Session 首跑重建契约
       memoryPolicyVersion: 'v2',
       sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' },
     });
+  });
+
+  it('冻结的升级前 legacy v1 fixture 可执行，并安全补全完整 workload', () => {
+    expect(Object.isFrozen(LEGACY_V1_DISPATCH_FIXTURE)).toBe(true);
+
+    const canonical = canonicalizeDispatchPayload(LEGACY_V1_DISPATCH_FIXTURE, AGENT_CWD);
+
+    expect(canonical.session.sandboxWorkloadDescriptor).toEqual({
+      kind: 'taskboard', taskKind: 'delivery', purpose: 'review',
+    });
+    expect(canonical.run.metadata).toMatchObject({
+      sandboxWorkloadTopLevel: true,
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'review' },
+    });
+  });
+
+  it.each([
+    ['session descriptor', (dispatch: TaskboardExecutionDispatch) => {
+      delete dispatch.payload.session.sandboxWorkloadDescriptor;
+    }],
+    ['run metadata descriptor', (dispatch: TaskboardExecutionDispatch) => {
+      delete dispatch.payload.run.metadata!.sandboxWorkloadDescriptor;
+    }],
+    ['sandboxWorkloadTopLevel', (dispatch: TaskboardExecutionDispatch) => {
+      delete dispatch.payload.run.metadata!.sandboxWorkloadTopLevel;
+    }],
+  ] as const)('拒绝部分缺失 workload：%s', (_label, omitField) => {
+    const dispatch = makeDispatch();
+    omitField(dispatch);
+    expect(() => canonicalizeDispatchPayload(dispatch, AGENT_CWD)).toThrow(InvalidTaskboardDispatchPayloadError);
+  });
+
+  it.each([
+    ['task kind', { taskKind: 'advisory' as const }],
+    ['purpose', { purpose: 'work' as const }],
+  ])('拒绝 payload descriptor 与 DB %s 不一致', (_label, trusted) => {
+    const dispatch = Object.assign(makeDispatch(), trusted);
+    expect(() => canonicalizeDispatchPayload(dispatch, AGENT_CWD)).toThrow(InvalidTaskboardDispatchPayloadError);
+  });
+
+  it('SQL row mapper 严格映射可信 task kind/purpose 枚举', () => {
+    const row = {
+      run_id: RUN_ID,
+      actual_execution_id: EXECUTION_ID,
+      execution_id: EXECUTION_ID,
+      actual_task_id: 'task-1',
+      actual_task_kind: 'delivery',
+      actual_purpose: 'review',
+      actual_session_id: SESSION_ID,
+      tenant_id: TENANT_ID,
+      owner_user_id: OWNER_USER_ID,
+      payload: makeDispatch().payload,
+      attempt_count: 1,
+      lease_id: 'lease-1',
+    };
+
+    expect(rowToExecutionDispatch(row)).toMatchObject({ taskKind: 'delivery', purpose: 'review' });
+    expect(() => rowToExecutionDispatch({ ...row, actual_task_kind: 'forged' })).toThrow(/task kind/);
+    expect(() => rowToExecutionDispatch({ ...row, actual_purpose: 'forged' })).toThrow(/purpose/);
   });
 
   it('拒绝伪造或不一致的 Taskboard workload', () => {

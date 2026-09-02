@@ -29,6 +29,7 @@ import {
   reconcileBackgroundShells,
   startBackgroundShell,
   terminateBackgroundShellsFailClosed,
+  type BackgroundShellOutput,
 } from './backgroundShell.js';
 
 const PYTHON_RUNTIME_CONTRACT_VERSION = 2;
@@ -566,7 +567,7 @@ async function executeBackgroundShellTool(input: {
   }
 }
 
-function backgroundShellResponse(output: Awaited<ReturnType<typeof getBackgroundShellOutput>>): ToolInvocationResponse {
+function backgroundShellResponse(output: BackgroundShellOutput): ToolInvocationResponse {
   return {
     status: 'success',
     content: JSON.stringify(output),
@@ -575,6 +576,7 @@ function backgroundShellResponse(output: Awaited<ReturnType<typeof getBackground
         taskId: output.taskId,
         status: output.status,
         ...(output.protectedUntil ? { protectedUntil: output.protectedUntil } : {}),
+        ...(typeof output.requestOwned === 'boolean' ? { requestOwned: output.requestOwned } : {}),
         activeTaskIds: output.activeTaskIds,
       },
     },

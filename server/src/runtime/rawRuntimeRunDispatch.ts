@@ -149,7 +149,7 @@ import {
   type TenantRemoteHandAuthTokenResolver,
 } from './tenantRemoteHandResolver.js';
 import { deriveSandboxScopeId, ensureRuntimeHandRegistered, integrationRuntimeIsolationRequirement, resolveSandboxWorkloadDescriptor, toAcsSandboxWorkloadDescriptor } from './runtimeHandRegistration.js';
-import { restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
+import { cancelDeletedSessionWake, cancelDeletedSessionWakeIfPresent, deletedSessionResumeError, restoreRuntimeSessionForWake } from './runtimeWakeSessionRestore.js';
 import { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 export { resolveRuntimeModelOptions, resolveRuntimeModelRef, resolveWakeModelRef } from './runtimeModelResolution.js';
 import {
@@ -1032,6 +1032,7 @@ export function createRawRuntimeRunDispatch(config: RawRuntimeRunDispatchConfig)
     }
     const resumeSessionId = options.resumeSessionId ?? context.resumeSessionId;
     const existingSession = resumeSessionId ? await sessionCatalog.get(resumeSessionId) : null;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(resumeSessionId!);
     const identitySource = context.sessionOwner || context.user;
     const replayResolution = await resolveMemoryConsolidationReplaySource(
       sessionCatalog,
@@ -1764,8 +1765,8 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
       return;
     }
     const existingSession = await sessionCatalog.get(request.sessionId);
-    const cwd = request.cwd ?? existingSession?.cwd;
-    const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(request.sessionId);
+    const cwd = request.cwd ?? existingSession?.cwd; const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
     if (!cwd || !transcriptPath) {
       yield { type: 'error', error: `Raw approval resume 找不到 session 元数据: ${request.sessionId}` };
       return;
@@ -2239,8 +2240,8 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
       return;
     }
     const existingSession = await sessionCatalog.get(request.sessionId);
-    const cwd = request.cwd ?? existingSession?.cwd;
-    const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
+    if (existingSession?.deletedAt) return yield deletedSessionResumeError(request.sessionId);
+    const cwd = request.cwd ?? existingSession?.cwd; const transcriptPath = request.transcriptPath ?? existingSession?.transcriptPath;
     if (!cwd || !transcriptPath) {
       yield { type: 'error', error: `Raw interaction resume 找不到 session 元数据: ${request.sessionId}` };
       return;
@@ -2695,8 +2696,7 @@ export async function loadRawRuntimeWakeState(
   config: RawRuntimeRunDispatchConfig,
   sessionId: string,
 ): Promise<RawRuntimeWakeState | null> {
-  const sessionCatalog = resolveSessionCatalog(config);
-  const session = await sessionCatalog.get(sessionId);
+  const sessionCatalog = resolveSessionCatalog(config); const session = await sessionCatalog.get(sessionId);
   if (!session) return null;
   const eventStore = createEventStoreForSession(config, session);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, undefined, `wake state ${sessionId}`);
@@ -2706,7 +2706,6 @@ export async function loadRawRuntimeWakeState(
   const replayState = buildRuntimeReplayState(events, approvals, sessionId);
   return { session, events, approvals, replayState };
 }
-
 export async function wakeRuntimeSession(
   config: RawRuntimeRunDispatchConfig,
   run: RunRecord,
@@ -2715,17 +2714,18 @@ export async function wakeRuntimeSession(
   config.refreshSharedConfig?.();
   const sessionCatalog = resolveSessionCatalog(config);
   const session = await restoreRuntimeSessionForWake(sessionCatalog, run);
-  if (!session) {
-    throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
-  }
+  if (!session) throw new Error(`wake context restore failed: session metadata not found for ${run.sessionId}`);
+  if (session.deletedAt) return cancelDeletedSessionWake(run, options.lease, config.runStore);
   const eventTenantId = resolveEventTenantId(config, session.tenantId, run.tenantId, `wake run ${run.runId}`);
   // durable 后台 Agent 走独立子 loop；仅 pending 首跑 execute，过期 running 由 scheduler 先冻结。
   if (run.metadata?.backgroundTask === true) {
+    if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return;
     if (!config.backgroundTasks) throw new Error('background task runtime is not configured');
     await config.backgroundTasks.execute(run, options.lease);
     return;
   }
   if (session.kind === 'subagent' || run.metadata?.subagent === true) {
+    if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return;
     await orphanUnrecoverableSubagentWake({
       runStore: config.runStore,
       eventStore: new RunStateTrackingEventStore(
@@ -3018,7 +3018,7 @@ export async function wakeRuntimeSession(
     sessionOwner,
     targetCwd: session.cwd,
   };
-  const dispatch = createRawRuntimeRunDispatch(config);
+  if (await cancelDeletedSessionWakeIfPresent(sessionCatalog, run, options.lease, config.runStore)) return; const dispatch = createRawRuntimeRunDispatch(config);
   const abortController = new AbortController();
   const drainHandoff: RuntimeDrainHandoffState = { requested: false };
   runtimeRunController.register(run.runId, abortController, {

@@ -29,6 +29,7 @@ import {
   WORKLOAD_CLASS_LABEL, WORKLOAD_DESCRIPTOR_ANNOTATION,
   decideSandboxLifecycle, sandboxLifecycleMetrics,
   isActiveInvocationLeaseProtected,
+  type ActiveInvocationLeaseState,
   type SandboxDeletionGenerationUpdate,
   type SandboxLifecycleUpdate,
   type SandboxScopeDeletion,
@@ -695,20 +696,19 @@ export class SandboxManager {
       if (this.deleteInFlight.get(name) === promise) this.deleteInFlight.delete(name);
     }
   }
-
-  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string, activityGeneration?: string): Promise<string> {
-    return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid, activityGeneration);
+  async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string, activityGeneration?: string, leaseState: ActiveInvocationLeaseState = 'executing', completedAt?: string): Promise<string> {
+    return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid, activityGeneration, leaseState, completedAt);
   }
   async completeInvocation(name: string, invocationKey: string, completedAt: Date, expectedUid: string): Promise<string> { return await this.invocationMutations.completeInvocation(name, invocationKey, completedAt, expectedUid); }
-  async clearExpiredInvocationLeases(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now); }
-
+  async clearExpiredInvocationLeases(name: string, now = new Date(), expectedUid?: string): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now, expectedUid); }
+  async clearMalformedInvocationLeases(name: string, expectedUid?: string, now = new Date()): Promise<number> { return await this.invocationMutations.clearMalformed(name, expectedUid, now); }
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
     await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload, () => this.getStatus(name));
   }
 
   /**
    * Updates last-active through UID/resourceVersion CAS.
-   * Invocation completion uses completeInvocation so lease removal and touch share one CAS.
+   * completeInvocation makes lease removal and activity touch share one CAS.
    * Callers without a pinned UID still retry only within one observed UID.
    * The mutation helper rejects resources already entering deletion.
    */

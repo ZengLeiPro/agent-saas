@@ -43,7 +43,7 @@ function catalog(existing: RuntimeSessionRecord | null = null): SessionCatalog &
   };
 }
 
-describe('restoreRuntimeSessionForWake', () => {
+describe('restoreRuntimeSessionForWake durable recovery', () => {
   it('优先使用已有 Session，不改写文件投影', async () => {
     const existing: RuntimeSessionRecord = {
       sessionId: 'session-1', userId: 'account-1', username: 'agent-dws:org-kaikai',
@@ -93,6 +93,22 @@ describe('restoreRuntimeSessionForWake', () => {
     expect(resolveWakeSessionOwner(config, serviceSession, serviceSession.userId).tenantId).toBeUndefined();
   });
 
+  it('软删除 Session 在身份兼容校验和回填前原样返回', async () => {
+    const existing: RuntimeSessionRecord = {
+      sessionId: 'session-1', userId: '', username: 'deleted-user', channel: 'web',
+      cwd: '/workspace/deleted', transcriptPath: '/data/deleted.jsonl', workspaceId: 'workspace-deleted',
+      deletedAt: '2026-08-14T09:00:00.000Z', createdAt: '2026-08-14T08:00:00.000Z',
+      updatedAt: '2026-08-14T09:00:00.000Z',
+    };
+    const store = catalog(existing);
+
+    await expect(restoreRuntimeSessionForWake(store, run({
+      username: 'different-user', orgAgentId: 'different-agent',
+    }))).resolves.toBe(existing);
+    expect(store.backfillIdentity).not.toHaveBeenCalled();
+    expect(store.upsert).not.toHaveBeenCalled();
+  });
+
   it('已有 Session 缺治理身份时从同一 durable Run 安全补齐', async () => {
     const existing: RuntimeSessionRecord = {
       sessionId: 'session-1', userId: '', username: 'agent-dws:org-kaikai',
@@ -140,6 +156,28 @@ describe('restoreRuntimeSessionForWake', () => {
     expect(store.upsert).not.toHaveBeenCalled();
   });
 
+  it('已有 legacy Session 缺 workload 时从 durable Run 回填分类', async () => {
+    const existing: RuntimeSessionRecord = {
+      sessionId: 'session-1', userId: 'account-1', username: 'agent-dws:org-kaikai',
+      tenantId: 'kaiyan', orgAgentId: 'org-kaikai', channel: 'dingtalk',
+      cwd: '/workspace/kaiyan/.agent-org-kaikai', transcriptPath: '/data/session-1.jsonl',
+      workspaceId: 'ws_kaiyan__account-1', status: 'running',
+      createdAt: '2026-08-14T08:00:00.000Z', updatedAt: '2026-08-14T08:00:00.000Z',
+    };
+    const store = catalog(existing);
+
+    const restored = await restoreRuntimeSessionForWake(store, run({
+      username: 'agent-dws:org-kaikai', orgAgentId: 'org-kaikai',
+      sandboxWorkloadDescriptor: { kind: 'cron' },
+    }));
+
+    expect(restored?.sandboxWorkloadDescriptor).toEqual({ kind: 'cron' });
+    expect(store.backfillIdentity).not.toHaveBeenCalled();
+    expect(store.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      sandboxWorkloadDescriptor: { kind: 'cron' },
+    }));
+  });
+
   it('文件投影缺失时从 durable Run metadata 重建组织 Agent Session', async () => {
     const store = catalog();
     const restored = await restoreRuntimeSessionForWake(store, run({
@@ -149,6 +187,7 @@ describe('restoreRuntimeSessionForWake', () => {
       username: 'agent-dws:org-kaikai',
       userRole: 'user',
       orgAgentId: 'org-kaikai',
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'work' },
       profile: {
         profileId: 'arp_system_org_agent', profileKey: 'org_agent_default',
         profileVersionId: 'arpv-1', versionNumber: 1, configDigest: 'digest-1',
@@ -160,6 +199,7 @@ describe('restoreRuntimeSessionForWake', () => {
       sessionId: 'session-1', userId: 'account-1', username: 'agent-dws:org-kaikai',
       tenantId: 'kaiyan', orgAgentId: 'org-kaikai', modelRef: 'codex/gpt-5.6-sol-high',
       executionTarget: 'server-container', workspaceId: 'ws_kaiyan__account-1',
+      sandboxWorkloadDescriptor: { kind: 'taskboard', taskKind: 'delivery', purpose: 'work' },
       profileId: 'arp_system_org_agent', profileBindingKey: 'org_agent', profileResolution: 'builtin',
     });
     expect(store.upsert).toHaveBeenCalledWith(restored);

@@ -144,16 +144,25 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     childA.emit('close', 0, null);
     await expect(first).resolves.toMatchObject({ status: 'success' });
     expect(setLeaseA).toHaveBeenCalledTimes(2);
-    expect(setLeaseA).toHaveBeenLastCalledWith(ref.name, leaseA, expect.any(String), 'uid-lease');
+    expect(setLeaseA).toHaveBeenLastCalledWith(
+      ref.name, leaseA, expect.any(String), 'uid-lease', undefined, 'completion_pending', expect.any(String),
+    );
     expect(completeA).toHaveBeenCalledWith(ref.name, leaseA, expect.any(Date), 'uid-lease');
+    const completionCallA = (completeA.mock.calls as unknown[][])[0]!;
+    const completionFenceCallA = (setLeaseA.mock.calls as unknown[][]).at(-1)!;
+    expect((completionCallA[2] as Date).toISOString()).toBe(completionFenceCallA[6]);
     expect(setLeaseB).toHaveBeenCalledOnce();
 
     childB.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'b' } })}\n`);
     childB.emit('close', 0, null);
     await expect(second).resolves.toMatchObject({ status: 'success' });
     expect(setLeaseB).toHaveBeenCalledTimes(2);
-    expect(setLeaseB).toHaveBeenLastCalledWith(ref.name, leaseB, expect.any(String), 'uid-lease');
+    expect(setLeaseB).toHaveBeenLastCalledWith(
+      ref.name, leaseB, expect.any(String), 'uid-lease', undefined, 'completion_pending', expect.any(String),
+    );
     expect(completeB).toHaveBeenCalledWith(ref.name, leaseB, expect.any(Date), 'uid-lease');
+    expect(((completeB.mock.calls as unknown[][])[0]![2] as Date).toISOString())
+      .toBe((setLeaseB.mock.calls as unknown[][]).at(-1)![6]);
   });
 });
 

@@ -24,11 +24,11 @@ export async function acquireSandboxCleanupClaimGuard(
 }
 
 const ACTIVE_RUN_STATUSES = "'pending','running','waiting_approval','waiting_user','waiting_hand'";
-const ACTIVE_CLEANUP_STATES = "'prepared','cancelling','pending','claimed'";
+const ACTIVE_CLEANUP_STATES = "'prepared','cancelling','pending','claimed','delivered'";
 
 /**
  * 在 runs 表安装 admission trigger：Run 插入或转入 active 状态与 Sandbox cleanup 共享
- * top-level session + sandbox scope advisory locks，禁止 cleanup active 后再插入/恢复同 scope Run。
+ * top-level session + sandbox scope advisory locks，禁止 cleanup durable 后再插入、激活或恢复同 scope Run。
  */
 export function sandboxRunAdmissionFenceSql(runsTable: string): string[] {
   const base = `${runsTable}_sandbox_admission`.replace(/[^a-zA-Z0-9_]/gu, '_');
@@ -36,17 +36,10 @@ export function sandboxRunAdmissionFenceSql(runsTable: string): string[] {
   const triggerName = `${base}_trigger`.slice(0, 63);
   return [
     `CREATE OR REPLACE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE scope_session TEXT; old_scope_session TEXT;
+DECLARE scope_session TEXT;
 BEGIN
   IF NEW.status NOT IN (${ACTIVE_RUN_STATUSES}) THEN RETURN NEW; END IF;
   scope_session := COALESCE(NULLIF(NEW.metadata->>'topLevelSessionId',''), NEW.session_id);
-  IF TG_OP='UPDATE' THEN
-    old_scope_session := COALESCE(NULLIF(OLD.metadata->>'topLevelSessionId',''), OLD.session_id);
-    IF NEW.status IS NOT DISTINCT FROM OLD.status
-      AND scope_session IS NOT DISTINCT FROM old_scope_session
-      AND NEW.tenant_id IS NOT DISTINCT FROM OLD.tenant_id
-      AND NEW.sandbox_scope_id IS NOT DISTINCT FROM OLD.sandbox_scope_id THEN RETURN NEW; END IF;
-  END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(lock_key, 0))
   FROM (
     SELECT DISTINCT unnest(ARRAY[scope_session, NEW.sandbox_scope_id]) AS lock_key
@@ -55,11 +48,12 @@ BEGIN
   WHERE lock_key IS NOT NULL;
   IF EXISTS (
     SELECT 1 FROM ${runsTable} AS cleanup
-    WHERE cleanup.metadata->'sandboxCleanupOutbox'->>'state' IN (${ACTIVE_CLEANUP_STATES})
+    WHERE cleanup.run_id<>NEW.run_id
+      AND cleanup.metadata->'sandboxCleanupOutbox'->>'state' IN (${ACTIVE_CLEANUP_STATES})
       AND (cleanup.metadata->'sandboxCleanupOutbox'->>'sessionId'=scope_session
         OR (NEW.sandbox_scope_id IS NOT NULL
           AND cleanup.metadata->'sandboxCleanupOutbox'->>'sandboxScopeId'=NEW.sandbox_scope_id))
-      AND (NEW.tenant_id IS NULL OR cleanup.tenant_id=NEW.tenant_id)
+      AND (NEW.tenant_id IS NULL OR cleanup.tenant_id IS NULL OR cleanup.tenant_id=NEW.tenant_id)
   ) THEN
     RAISE EXCEPTION 'Sandbox cleanup is active for session %', scope_session USING ERRCODE='55000';
   END IF;

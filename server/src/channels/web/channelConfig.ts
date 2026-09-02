@@ -6,6 +6,7 @@ import type { GuardrailEventStore } from '../../data/guardrail/pgGuardrailEventS
 import type { OrgAgentStore } from '../../data/orgAgents/store.js';
 import type { SessionReadStateStore } from '../../data/sessionReadStateStore.js';
 import type { TenantStore } from '../../data/tenants/store.js';
+import type { UserStore } from '../../data/users/store.js';
 import type { TokenUsageStore } from '../../data/usage/store.js';
 import type { SttConfig } from '../../integrations/stt/sttClient.js';
 import type { RawApprovalResumeRequest } from '../../runtime/rawRuntimeRunDispatch.js';
@@ -17,10 +18,23 @@ import type { SessionCatalog } from '../../runtime/sessionCatalog.js';
 import type { ToolInvocationStore } from '../../runtime/toolInvocationStore.js';
 import type { EventStore } from '../../runtime/types.js';
 import type { UserOverrides } from '../../security/extraDirs.js';
-import type { OutboundEvent } from '../../types/index.js';
+import type { OutboundEvent, WebMessageDisplayConfig } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
+
+/** Public WebChannel construction contract. */
+export interface WebChannelConfig extends WebChannelRuntimeConfig {
+  timezone?: string;
+  displayConfig?: WebMessageDisplayConfig;
+  agentCwd?: string;
+  sharedDir?: string;
+  loginLogFilePath?: string;
+  modelResolver?: ModelResolver;
+  userStore?: UserStore;
+  jwtSecret?: string;
+  getIsDraining?: () => boolean;
+}
 
 export interface WebChannelRuntimeConfig {
   /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
@@ -68,8 +82,10 @@ export interface WebChannelRuntimeConfig {
   runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore;
   /** 仅共享 PG EventStore 可在缺少 transcriptPath 时按 sessionId 读取。 */
   runtimeEventStoreSupportsPathless?: boolean;
-  /** 新普通会话记忆写入职责 resolver；enqueue 首落库必须显式 pin。 */
+  /** 新普通会话记忆写入职责 resolver；enqueue 首次落库必须显式 pin。 */
   memoryWriteDelegationEnabled?: (tenantId: string | undefined) => boolean;
+  /** 与软删除共用的跨进程 Session 锁，保证 resume 副作用与 tombstone 串行。 */
+  withSessionAdmissionLock?: <T>(sessionId: string, operation: () => Promise<T>) => Promise<T>;
   /** Web chat enqueue-only runtime。 */
   enqueueRuntime?: {
     scheduler: RuntimeScheduler;

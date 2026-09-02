@@ -55,7 +55,7 @@ export function canonicalizeDispatchPayload(
     throw new InvalidTaskboardDispatchPayloadError(`执行派发 payload 关联字段不一致：${dispatch.runId}`);
   }
   const canonicalUserRole = userRole as 'admin' | 'user';
-  const workload = requireTaskboardWorkload(session.sandboxWorkloadDescriptor, run.metadata);
+  const workload = requireTaskboardWorkload(dispatch, session.sandboxWorkloadDescriptor, run.metadata);
   const executionTarget = run.executionTarget as 'server-local' | 'server-container' | 'server-remote' | 'client';
   const workspaceUser = {
     id: dispatch.ownerUserId,
@@ -211,22 +211,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function requireTaskboardWorkload(value: unknown, metadata: unknown): Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }> {
-  if (!isRecord(value) || value.kind !== 'taskboard'
-    || (value.taskKind !== undefined && !['delivery', 'advisory', 'integration', 'remediation'].includes(String(value.taskKind)))
-    || (value.purpose !== undefined && !['work', 'review', 'merge'].includes(String(value.purpose)))) {
-    throw new InvalidTaskboardDispatchPayloadError('执行派发 payload Taskboard workload 不合法');
+function requireTaskboardWorkload(
+  dispatch: TaskboardExecutionDispatch,
+  sessionDescriptor: unknown,
+  metadata: unknown,
+): Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }> {
+  if (!isTaskboardTaskKind(dispatch.taskKind) || !isTaskboardExecutionPurpose(dispatch.purpose)) {
+    throw new InvalidTaskboardDispatchPayloadError('执行派发数据库 workload 不合法');
   }
-  const workload = {
+  const expected = {
     kind: 'taskboard' as const,
-    ...(value.taskKind ? { taskKind: value.taskKind as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['taskKind'] } : {}),
-    ...(value.purpose ? { purpose: value.purpose as Extract<SandboxWorkloadDescriptor, { kind: 'taskboard' }>['purpose'] } : {}),
+    taskKind: dispatch.taskKind,
+    purpose: dispatch.purpose,
   };
   const runMetadata = isRecord(metadata) ? metadata : {};
-  if (runMetadata.sandboxWorkloadTopLevel !== true || !sameWorkload(runMetadata.sandboxWorkloadDescriptor, workload)) {
+  const runDescriptor = runMetadata.sandboxWorkloadDescriptor;
+  const topLevel = runMetadata.sandboxWorkloadTopLevel;
+  const legacyV1 = sessionDescriptor === undefined && runDescriptor === undefined && topLevel === undefined;
+  if (legacyV1) return expected;
+  if (
+    topLevel !== true
+    || !sameWorkload(sessionDescriptor, expected)
+    || !sameWorkload(runDescriptor, expected)
+  ) {
     throw new InvalidTaskboardDispatchPayloadError('执行派发 payload workload 关联字段不一致');
   }
-  return workload;
+  return expected;
+}
+
+function isTaskboardTaskKind(value: unknown): value is TaskboardExecutionDispatch['taskKind'] {
+  return value === 'delivery' || value === 'advisory' || value === 'integration' || value === 'remediation';
+}
+
+function isTaskboardExecutionPurpose(value: unknown): value is TaskboardExecutionDispatch['purpose'] {
+  return value === 'work' || value === 'review' || value === 'merge';
 }
 
 function sameWorkload(left: unknown, right: unknown): boolean {

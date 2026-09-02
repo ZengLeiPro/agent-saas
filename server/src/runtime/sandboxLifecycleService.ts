@@ -189,7 +189,7 @@ export class PgSandboxLifecycleStore {
     }
   }
 
-  // preparation/delivery 的任一 durable 状态均可由 restore 取消，历史 cycle 不得回退 generation fence。
+  // preparation/delivery（含 delivered/cancelled）的任一 durable 状态均由显式 restore 推进 generation fence。
   async cancelCleanup(sessionId: string, tenantId: string | undefined, deletionGeneration: string): Promise<CleanupCandidate[]> {
     const client = await this.pool.connect();
     try {
@@ -198,7 +198,8 @@ export class PgSandboxLifecycleStore {
       WITH cleanup_identity AS (
         SELECT DISTINCT run.metadata->'sandboxCleanupOutbox'->>'sandboxScopeId' AS sandbox_scope_id
         FROM ${this.runsTable} AS run
-        WHERE run.session_id=$1 AND ($2::text IS NULL OR run.tenant_id=$2)
+        WHERE COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
+          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
       ), lock_keys AS (
         SELECT $1::text AS lock_key
         UNION SELECT sandbox_scope_id FROM cleanup_identity
@@ -214,15 +215,17 @@ export class PgSandboxLifecycleStore {
             'deletionGeneration',$4::text, 'claimId',NULL
           )), updated_at=NOW()
         WHERE (SELECT COUNT(*) FROM locked) > 0
-          AND session_id=$1 AND ($2::text IS NULL OR tenant_id=$2)
-          AND run.metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling','pending','claimed')
+          AND COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
+          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
+          AND run.metadata->'sandboxCleanupOutbox'->>'state' IN ('prepared','cancelling','pending','claimed','delivered','cancelled')
         RETURNING run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
                   run.metadata->'sandboxCleanupOutbox' AS cleanup
       ), existing AS (
         SELECT run.run_id, run.tenant_id, run.user_id, run.metadata->>'username' AS username,
                run.metadata->'sandboxCleanupOutbox' AS cleanup
         FROM ${this.runsTable} AS run
-        WHERE run.session_id=$1 AND ($2::text IS NULL OR run.tenant_id=$2)
+        WHERE COALESCE(run.metadata->'sandboxCleanupOutbox'->>'sessionId', run.session_id)=$1
+          AND ($2::text IS NULL OR run.tenant_id=$2 OR run.tenant_id IS NULL)
           AND run.metadata->'sandboxCleanupOutbox'->>'state'='cancelled'
           AND NOT EXISTS (SELECT 1 FROM updated)
         ORDER BY run.updated_at DESC LIMIT 1

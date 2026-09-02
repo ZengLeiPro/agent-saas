@@ -113,6 +113,10 @@ test('classifies root dependency files while explicitly ignoring release-only go
     components: [],
     blockingReason: null,
   });
+  assert.deepEqual(classifyPath('scripts/coverage-workspace-plan.mjs'), {
+    components: [],
+    blockingReason: null,
+  });
   assert.deepEqual(classifyPath('scripts/generate-dws-command-policy.mjs'), {
     components: [],
     blockingReason: null,

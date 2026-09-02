@@ -48,6 +48,7 @@ const NON_RUNTIME_FILES = new Set([
   'docker-compose.yml',
   'eas.json',
   'eslint.config.mjs',
+  'scripts/coverage-workspace-plan.mjs',
   'scripts/format-new-staged-files.mjs',
   'scripts/generate-dws-command-policy.mjs',
   'scripts/pr-preflight-contract.test.mjs',

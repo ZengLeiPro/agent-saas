@@ -2799,48 +2799,145 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   }
   const unwrapResourceExpression = (node) => {
     let current = node;
-    while (
-      ts.isParenthesizedExpression(current) ||
-      ts.isAsExpression(current) ||
-      ts.isTypeAssertionExpression(current) ||
-      ts.isNonNullExpression(current) ||
-      ts.isSatisfiesExpression(current)
-    )
-      current = current.expression;
-    return current;
+    while (true) {
+      if (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isTypeAssertionExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isSatisfiesExpression(current)
+      ) {
+        current = current.expression;
+        continue;
+      }
+      if (
+        ts.isBinaryExpression(current) &&
+        current.operatorToken.kind === ts.SyntaxKind.CommaToken
+      ) {
+        current = current.right;
+        continue;
+      }
+      return current;
+    }
   };
   const readFileNames = new Set();
   const fsObjectNames = new Set();
   const readMethodNames = new Set(['readFile', 'readFileSync']);
+  const fsModuleNames = new Set(['fs', 'fs/promises', 'node:fs', 'node:fs/promises']);
   for (const statement of sourceFile.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      !['fs', 'fs/promises', 'node:fs', 'node:fs/promises'].includes(
-        statement.moduleSpecifier.text,
-      ) ||
+      !fsModuleNames.has(statement.moduleSpecifier.text) ||
       !statement.importClause ||
       statement.importClause.isTypeOnly
     )
       continue;
+    const moduleName = statement.moduleSpecifier.text;
     if (statement.importClause.name) fsObjectNames.add(statement.importClause.name.text);
     const bindings = statement.importClause.namedBindings;
     if (bindings && ts.isNamespaceImport(bindings)) fsObjectNames.add(bindings.name.text);
     if (bindings && ts.isNamedImports(bindings))
-      for (const element of bindings.elements)
-        if (readMethodNames.has((element.propertyName ?? element.name).text))
-          readFileNames.add(element.name.text);
+      for (const element of bindings.elements) {
+        const importedName = (element.propertyName ?? element.name).text;
+        if (readMethodNames.has(importedName)) readFileNames.add(element.name.text);
+        if (importedName === 'promises' && ['fs', 'node:fs'].includes(moduleName))
+          fsObjectNames.add(element.name.text);
+      }
   }
+  const bindingNameCounts = new Map();
+  const addBindingName = (name) => {
+    bindingNameCounts.set(name, (bindingNameCounts.get(name) ?? 0) + 1);
+  };
+  const collectBindingNames = (name) => {
+    if (ts.isIdentifier(name)) addBindingName(name.text);
+    else if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name))
+      for (const element of name.elements)
+        if (ts.isBindingElement(element)) collectBindingNames(element.name);
+  };
+  const visitBindingNames = (node) => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) collectBindingNames(node.name);
+    else if (ts.isImportClause(node) && node.name) addBindingName(node.name.text);
+    else if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node))
+      addBindingName(node.name.text);
+    else if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node)) &&
+      node.name
+    )
+      addBindingName(node.name.text);
+    ts.forEachChild(node, visitBindingNames);
+  };
+  visitBindingNames(sourceFile);
+  const staticStringInitializers = new Map();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isVariableStatement(statement) ||
+      (statement.declarationList.flags & ts.NodeFlags.Const) === 0
+    )
+      continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+      staticStringInitializers.set(declaration.name.text, declaration.initializer);
+    }
+  }
+  const staticStringValue = (node, seen = new Set()) => {
+    const current = unwrapResourceExpression(node);
+    if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current))
+      return current.text;
+    if (
+      !ts.isIdentifier(current) ||
+      seen.has(current.text) ||
+      bindingNameCounts.get(current.text) !== 1
+    )
+      return undefined;
+    const initializer = staticStringInitializers.get(current.text);
+    if (!initializer) return undefined;
+    return staticStringValue(initializer, new Set([...seen, current.text]));
+  };
   const staticPropertyName = (node) => {
     const current = unwrapResourceExpression(node);
     if (ts.isPropertyAccessExpression(current)) return current.name.text;
+    if (ts.isElementAccessExpression(current) && current.argumentExpression)
+      return staticStringValue(current.argumentExpression);
+    return undefined;
+  };
+  const staticBindingPropertyName = (element) => {
+    const propertyName = element.propertyName ?? element.name;
+    if (ts.isComputedPropertyName(propertyName)) return staticStringValue(propertyName.expression);
+    return ts.isIdentifier(propertyName) ||
+      ts.isStringLiteral(propertyName) ||
+      ts.isNoSubstitutionTemplateLiteral(propertyName)
+      ? propertyName.text
+      : undefined;
+  };
+  const staticAssignmentPropertyName = (property) => {
+    if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property))
+      return undefined;
+    const propertyName = property.name;
+    if (ts.isComputedPropertyName(propertyName)) return staticStringValue(propertyName.expression);
+    return ts.isIdentifier(propertyName) ||
+      ts.isStringLiteral(propertyName) ||
+      ts.isNoSubstitutionTemplateLiteral(propertyName)
+      ? propertyName.text
+      : undefined;
+  };
+  const assignmentTargetName = (node) => {
+    const current = unwrapExpression(node);
+    if (ts.isIdentifier(current)) return current.text;
     if (
-      ts.isElementAccessExpression(current) &&
-      current.argumentExpression &&
-      (ts.isStringLiteral(current.argumentExpression) ||
-        ts.isNoSubstitutionTemplateLiteral(current.argumentExpression))
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(current.left)
     )
-      return current.argumentExpression.text;
+      return current.left.text;
+    return undefined;
+  };
+  const assignmentPropertyTargetName = (property) => {
+    if (ts.isPropertyAssignment(property)) return assignmentTargetName(property.initializer);
+    if (ts.isShorthandPropertyAssignment(property)) return property.name.text;
     return undefined;
   };
   const propertyOwner = (node) => {
@@ -2852,12 +2949,22 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const isFsObjectExpression = (node) => {
     const current = unwrapResourceExpression(node);
     if (ts.isIdentifier(current)) return fsObjectNames.has(current.text);
+    if (ts.isConditionalExpression(current))
+      return isFsObjectExpression(current.whenTrue) || isFsObjectExpression(current.whenFalse);
+    if (
+      ts.isBinaryExpression(current) &&
+      [
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)
+    )
+      return isFsObjectExpression(current.left) || isFsObjectExpression(current.right);
     const owner = propertyOwner(current);
     return (
       staticPropertyName(current) === 'promises' &&
       owner !== undefined &&
-      ts.isIdentifier(owner) &&
-      fsObjectNames.has(owner.text)
+      isFsObjectExpression(owner)
     );
   };
   const isFsReadExpression = (node) => {
@@ -2888,17 +2995,24 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         if (ts.isIdentifier(node.name)) classifyAlias(node.name.text, node.initializer);
         if (ts.isObjectBindingPattern(node.name) && isFsObjectExpression(node.initializer))
           for (const element of node.name.elements) {
-            const importedName = (element.propertyName ?? element.name).getText(sourceFile);
-            if (ts.isIdentifier(element.name) && readMethodNames.has(importedName))
+            const importedName = staticBindingPropertyName(element);
+            if (!ts.isIdentifier(element.name)) continue;
+            if (importedName && readMethodNames.has(importedName))
               addAlias(readFileNames, element.name.text);
+            if (importedName === 'promises') addAlias(fsObjectNames, element.name.text);
           }
       }
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left)
-      )
-        classifyAlias(node.left.text, node.right);
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (ts.isIdentifier(node.left)) classifyAlias(node.left.text, node.right);
+        if (ts.isObjectLiteralExpression(node.left) && isFsObjectExpression(node.right))
+          for (const property of node.left.properties) {
+            const importedName = staticAssignmentPropertyName(property);
+            const targetName = assignmentPropertyTargetName(property);
+            if (!importedName || !targetName) continue;
+            if (readMethodNames.has(importedName)) addAlias(readFileNames, targetName);
+            if (importedName === 'promises') addAlias(fsObjectNames, targetName);
+          }
+      }
       ts.forEachChild(node, visitAliases);
     };
     visitAliases(sourceFile);
@@ -2937,21 +3051,131 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       return staticModuleRelativeUrl(current.arguments[0]);
     return undefined;
   };
+  const directInvocationMethodNames = new Set(['call', 'apply']);
+  const topLevelCalledIdentifiers = new Set();
+  const visitTopLevelCalls = (node) => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapResourceExpression(node.expression);
+      if (ts.isIdentifier(callee)) topLevelCalledIdentifiers.add(callee.text);
+      const owner = propertyOwner(callee);
+      if (
+        owner &&
+        ts.isIdentifier(owner) &&
+        directInvocationMethodNames.has(staticPropertyName(callee))
+      )
+        topLevelCalledIdentifiers.add(owner.text);
+    }
+    ts.forEachChild(node, visitTopLevelCalls);
+  };
+  for (const statement of sourceFile.statements) visitTopLevelCalls(statement);
+  const enclosingFunction = (node) => {
+    let scope = node.parent;
+    while (scope && scope !== sourceFile) {
+      if (ts.isFunctionLike(scope)) return scope;
+      scope = scope.parent;
+    }
+    return undefined;
+  };
+  const outerFunctionExpression = (scope) => {
+    let wrapped = scope;
+    while (
+      wrapped.parent &&
+      (ts.isParenthesizedExpression(wrapped.parent) ||
+        ts.isAsExpression(wrapped.parent) ||
+        ts.isTypeAssertionExpression(wrapped.parent) ||
+        ts.isNonNullExpression(wrapped.parent) ||
+        ts.isSatisfiesExpression(wrapped.parent) ||
+        (ts.isBinaryExpression(wrapped.parent) &&
+          wrapped.parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+          wrapped.parent.right === wrapped))
+    )
+      wrapped = wrapped.parent;
+    return wrapped;
+  };
+  const functionBindingName = (scope) => {
+    if (scope.name && ts.isIdentifier(scope.name)) return scope.name.text;
+    const parent = outerFunctionExpression(scope).parent;
+    if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(parent.left)
+    )
+      return parent.left.text;
+    return undefined;
+  };
+  const isImmediatelyInvokedFunction = (scope) => {
+    const wrapped = outerFunctionExpression(scope);
+    if (
+      wrapped.parent &&
+      ts.isCallExpression(wrapped.parent) &&
+      unwrapResourceExpression(wrapped.parent.expression) === scope
+    )
+      return true;
+    const member = wrapped.parent;
+    return Boolean(
+      member &&
+      (ts.isPropertyAccessExpression(member) || ts.isElementAccessExpression(member)) &&
+      directInvocationMethodNames.has(staticPropertyName(member)) &&
+      member.parent &&
+      ts.isCallExpression(member.parent) &&
+      unwrapResourceExpression(member.parent.expression) === member,
+    );
+  };
+  const mustFailUnprovenFsAccess = (node) => {
+    const scope = enclosingFunction(node);
+    if (!scope) return true;
+    const bindingName = functionBindingName(scope);
+    return (
+      isImmediatelyInvokedFunction(scope) ||
+      (bindingName !== undefined && topLevelCalledIdentifiers.has(bindingName))
+    );
+  };
   const visitResourceReads = (node) => {
+    if (ts.isElementAccessExpression(node)) {
+      const owner = propertyOwner(node);
+      if (
+        owner !== undefined &&
+        isFsObjectExpression(owner) &&
+        staticPropertyName(node) === undefined &&
+        mustFailUnprovenFsAccess(node)
+      )
+        throw new Error(`Migration dependency ${path} accesses an unproven dynamic fs member`);
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      isFsObjectExpression(node.initializer) &&
+      mustFailUnprovenFsAccess(node) &&
+      node.name.elements.some(
+        (element) =>
+          element.propertyName &&
+          ts.isComputedPropertyName(element.propertyName) &&
+          staticBindingPropertyName(element) === undefined,
+      )
+    )
+      throw new Error(`Migration dependency ${path} accesses an unproven dynamic fs member`);
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isObjectLiteralExpression(node.left) &&
+      isFsObjectExpression(node.right) &&
+      mustFailUnprovenFsAccess(node) &&
+      node.left.properties.some(
+        (property) =>
+          (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+          ts.isComputedPropertyName(property.name) &&
+          staticAssignmentPropertyName(property) === undefined,
+      )
+    )
+      throw new Error(`Migration dependency ${path} accesses an unproven dynamic fs member`);
     if (ts.isCallExpression(node)) {
       const callee = unwrapExpression(node.expression);
       if (isFsReadExpression(callee)) {
         const specifier = node.arguments[0] && staticReadFileSpecifier(node.arguments[0]);
-        let scope = node.parent;
-        let insideFunction = false;
-        while (scope && scope !== sourceFile) {
-          if (ts.isFunctionLike(scope)) {
-            insideFunction = true;
-            break;
-          }
-          scope = scope.parent;
-        }
-        if (!specifier && !insideFunction)
+        if (!specifier && mustFailUnprovenFsAccess(node))
           throw new Error(`Migration dependency ${path} reads an unproven dynamic resource path`);
         if (specifier)
           dependencies.push({

@@ -247,7 +247,7 @@ Promotion 会同时核对：
 - Staging Deployment 与 Staging Workflow 均成功，七项确定性门禁齐全。
 - 当前生产基线没有漂移，rollback target 仍成立。
 - 所选 Server/Web/ACS 压缩包及 ACR 镜像 digest 全部匹配 Manifest。
-- 数据库迁移只允许 `none` 或 `expand`；`contract` 必须另发版本。migration 闭包同时跟踪静态 import 的 JSON/其他非代码资源，以及可静态证明为 `readFile/readFileSync(new URL(..., import.meta.url))` 的 `node:fs` / `node:fs/promises` 资源；资源可位于非 migration 命名目录，并支持 named、namespace、default import 及简单对象、方法、解构 alias。权威 runner 顶层 `fs` 读取若无法静态证明资源路径则 fail closed；函数内部的运行时文件读取不视为仓库 migration 依赖。
+- 数据库迁移只允许 `none` 或 `expand`；`contract` 必须另发版本。migration 闭包同时跟踪静态 import 的 JSON/其他非代码资源，以及可静态证明为 `readFile/readFileSync(new URL(..., import.meta.url))` 的 `node:fs` / `node:fs/promises` 资源；资源可位于非 migration 命名目录，并支持 named、namespace、default import、named `promises`、`promises` 解构及简单对象/方法 alias；computed method 仅在顶层 `const` 字符串可唯一折叠时按静态成员处理。可静态证明的 `new URL(..., import.meta.url)` 资源不受函数嵌套影响，仍进入 closure。权威 runner 顶层、顶层直接调用的本地函数或 IIFE 中，`fs` 读取若无法静态证明资源路径，或 `fs` computed member 无法静态证明具体成员，均 fail closed；未从顶层执行流调用的函数内部动态 runtime-input 路径/成员选择不视为仓库 migration 依赖。
 
 任何一项前置证据不一致都会在修改生产前 fail closed；进入物理写入后的异常按真实 reconcile 状态记录，不宣称所有后置故障都能自动回滚。
 

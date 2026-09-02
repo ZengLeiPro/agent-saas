@@ -2423,6 +2423,12 @@ test('classifies aliased default node:fs resource reads outside migration direct
     "import fs from 'node:fs';\nconst load = fs.readFileSync;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
     "import fs from 'node:fs';\nconst { readFileSync: load } = fs;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
     "import fs from 'node:fs';\nconst io = fs.promises;\nexport const statements = JSON.parse(await io.readFile(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import { promises as fsp } from 'node:fs';\nexport const statements = JSON.parse(await fsp.readFile(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst { promises: fsp } = fs;\nexport const statements = JSON.parse(await fsp.readFile(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst method = 'readFileSync';\nexport const statements = JSON.parse(fs[method](new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst method = 'readFileSync';\nconst load = fs[method];\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst method = 'readFileSync';\nconst { [method]: load } = fs;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nlet load;\n({ ['readFileSync']: load } = fs);\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
   ]) {
     const result = plan(providerSource, addedSourceDiff(providerSource), {
       changedPaths: [provider],
@@ -2437,19 +2443,54 @@ test('classifies aliased default node:fs resource reads outside migration direct
   }
 });
 
-test('fails closed for an unproven resource path in an authoritative migration runner', () => {
+test('fails closed for unproven top-level fs resource paths and members', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const provider = 'server/src/data/sql/provider.json';
   const providerSource = '["DROP TABLE users"]';
-  const dynamicRoot =
-    "import fs from 'node:fs';\nconst io = fs;\nexport const statements = JSON.parse(io.readFileSync(process.env.PROVIDER_PATH, 'utf8'));";
-  const dynamic = plan(providerSource, addedSourceDiff(providerSource), {
+  for (const dynamicRoot of [
+    "import fs from 'node:fs';\nconst io = fs;\nexport const statements = JSON.parse(io.readFileSync(process.env.PROVIDER_PATH, 'utf8'));",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse(fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst load = fs[process.env.READ_METHOD];\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst { [process.env.READ_METHOD]: load } = fs;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse((0, fs)[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst method = 'statSync';\nlet statements;\n{ const method = process.env.READ_METHOD; statements = JSON.parse(fs[method](new URL('../sql/provider.json', import.meta.url), 'utf8')); }\nexport { statements };",
+    "import fs from 'node:fs';\nfunction load() { return fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'); }\nexport const statements = JSON.parse(load());",
+    "import fs from 'node:fs';\nfunction load() { return fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'); }\nexport const statements = JSON.parse(load.call(null));",
+    "import fs from 'node:fs';\nconst load = (() => fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'));\nexport const statements = JSON.parse(load());",
+    "import fs from 'node:fs';\nlet load;\n({ [process.env.READ_METHOD]: load } = fs);\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse((() => fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'))());",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse((function () { return fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'); }).call(null));",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse((0, () => fs[process.env.READ_METHOD](new URL('../sql/provider.json', import.meta.url), 'utf8'))());",
+  ]) {
+    const dynamic = plan(providerSource, addedSourceDiff(providerSource), {
+      changedPaths: [provider],
+      baselines: { [root]: dynamicRoot, [provider]: '["SELECT 1"]' },
+      targets: { [root]: dynamicRoot, [provider]: providerSource },
+      diffs: { [provider]: addedSourceDiff(providerSource) },
+      nameStatus: `M\t${provider}`,
+    });
+    assert.equal(dynamic.ok, false, dynamicRoot);
+    assert.match(
+      dynamic.blockingReasons.join('\n'),
+      /unproven dynamic (?:resource path|fs member)/u,
+      dynamicRoot,
+    );
+  }
+});
+
+test('ignores function-scoped runtime fs member selection as a repository dependency', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/sql/provider.json';
+  const providerSource = '["DROP TABLE users"]';
+  const runtimeRoot =
+    "import fs from 'node:fs';\nexport function readRuntime(path) { return fs[process.env.READ_METHOD](path, 'utf8'); }";
+  const result = plan(providerSource, addedSourceDiff(providerSource), {
     changedPaths: [provider],
-    baselines: { [root]: dynamicRoot, [provider]: '["SELECT 1"]' },
-    targets: { [root]: dynamicRoot, [provider]: providerSource },
+    baselines: { [root]: runtimeRoot, [provider]: '["SELECT 1"]' },
+    targets: { [root]: runtimeRoot, [provider]: providerSource },
     diffs: { [provider]: addedSourceDiff(providerSource) },
     nameStatus: `M\t${provider}`,
   });
-  assert.equal(dynamic.ok, false);
-  assert.match(dynamic.blockingReasons.join('\n'), /unproven dynamic resource path/u);
+  assert.equal(result.ok, true, result.blockingReasons.join('\n'));
+  assert.equal(result.migrationPlan.phase, 'none');
 });

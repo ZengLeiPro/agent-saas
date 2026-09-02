@@ -50,17 +50,15 @@ describe("reconcileQueuedInterjections", () => {
     })]);
   });
 
-  it("硬刷新后从权威附件 DTO 重建可编辑和重发的 UploadedFile", () => {
+  it("硬刷新后从 path-free 权威附件 DTO 以同一 attachmentId 重建重发状态", () => {
     const next = reconcileQueuedInterjections([], [{
       sourceRunId: "queued-run-attachment",
       clientMsgId: "client-attachment",
       content: "带附件",
       acceptedAt: "2026-08-15T01:00:00.000Z",
       attachments: [{
-        attachmentId: "att-1",
+        attachmentId: "11111111-1111-4111-8111-111111111111",
         name: "合同.pdf",
-        savedPath: "/workspace/uploads/att-1/合同.pdf",
-        relativePath: "uploads/att-1/合同.pdf",
         size: 2048,
         mimeType: "application/pdf",
         isImage: false,
@@ -70,10 +68,9 @@ describe("reconcileQueuedInterjections", () => {
     expect(next[0]).toMatchObject({
       sessionId: "session-1",
       uploadedFiles: [{
-        attachmentId: "att-1",
+        attachmentId: "11111111-1111-4111-8111-111111111111",
         originalName: "合同.pdf",
-        savedPath: "/workspace/uploads/att-1/合同.pdf",
-        relativePath: "uploads/att-1/合同.pdf",
+        relativePath: "",
         size: 2048,
         mimeType: "application/pdf",
         isImage: false,

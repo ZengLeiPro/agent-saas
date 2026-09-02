@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "runnerContractVersion": 1,
+  "requiredCapabilities": [
+    "fresh-install-zero-prompts-login",
+    "identity-a-logout-b-no-a-cache",
+    "personal-org-agent-switch-running-queued-confirm",
+    "text-chat-server-queue",
+    "picker-attachment-id",
+    "share-intent-attachment-id",
+    "ask-user-fixed-zone",
+    "approval-fixed-zone",
+    "background-3s",
+    "background-30s",
+    "network-offline-online-recovery",
+    "artifact-image",
+    "artifact-pdf",
+    "artifact-html-download-warning",
+    "microphone-deny-text-fallback",
+    "upgrade-old-pending-failed-upgrade"
+  ],
+  "flows": [
+    { "id": "fresh-install-login", "file": "01-fresh-install-login.yaml", "fixture": "fresh-install-login", "capabilities": ["fresh-install-zero-prompts-login"] },
+    { "id": "identity-boundary", "file": "02-identity-boundary.yaml", "fixture": "identity-boundary", "capabilities": ["identity-a-logout-b-no-a-cache"] },
+    { "id": "agent-switch", "file": "03-agent-switch.yaml", "fixture": "agent-switch", "capabilities": ["personal-org-agent-switch-running-queued-confirm"] },
+    { "id": "text-chat-queue", "file": "04-text-chat-queue.yaml", "fixture": "text-chat-queue", "capabilities": ["text-chat-server-queue"] },
+    { "id": "attachments", "file": "05-attachments.yaml", "fixture": "attachments", "capabilities": ["picker-attachment-id"] },
+    { "id": "share-intent", "file": "05b-share-intent.yaml", "fixture": "share-intent", "capabilities": ["share-intent-attachment-id"] },
+    { "id": "interaction-zone", "file": "06-interaction-zone.yaml", "fixture": "interaction-zone", "capabilities": ["ask-user-fixed-zone", "approval-fixed-zone"] },
+    {
+      "id": "lifecycle-recovery",
+      "file": "07-lifecycle-background.yaml",
+      "fixture": "lifecycle-recovery",
+      "segments": [
+        { "file": "07-lifecycle-background.yaml" },
+        { "file": "07b-network-offline.yaml", "providerPhase": "network-offline" },
+        { "file": "07c-network-online.yaml", "providerPhase": "network-online" }
+      ],
+      "capabilities": ["background-3s", "background-30s", "network-offline-online-recovery"]
+    },
+    { "id": "artifacts", "file": "08-artifacts.yaml", "fixture": "artifact-viewers", "capabilities": ["artifact-image", "artifact-pdf", "artifact-html-download-warning"] },
+    { "id": "permission-deny", "file": "09-permission-deny.yaml", "fixture": "permission-deny", "capabilities": ["microphone-deny-text-fallback"] },
+    { "id": "upgrade-pending", "file": "10-upgrade-pending.yaml", "fixture": "upgrade-pending", "capabilities": ["upgrade-old-pending-failed-upgrade"] }
+  ]
+}

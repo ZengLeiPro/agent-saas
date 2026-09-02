@@ -2,7 +2,7 @@ import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { createTenantRemoteHandsAdminRouter } from '../routes/tenantRemoteHandsAdmin.js';
@@ -71,7 +71,13 @@ async function readJson(response: Response) {
 }
 
 describe('tenant remote hands admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     while (servers.length > 0) servers.pop()?.close();
   });
 

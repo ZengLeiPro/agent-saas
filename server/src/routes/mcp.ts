@@ -11,7 +11,7 @@ import { resolveUserCwd } from '../workspace/resolver.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { McpOAuthService } from '../mcp/oauthService.js';
-import type { NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
+import { nativeOAuthStartBindingSchema, type NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 
 export interface McpRouterDeps {
   store: McpConfigStore;
@@ -131,8 +131,10 @@ function validateConnectorSecretValue(server: ManagedMcpServer, key: string, val
 }
 const oauthStartSchema = z.object({
   returnTo: z.string().min(1).max(4000).optional(),
-  nativeDeviceId: z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/).optional(),
-}).strict();
+}).merge(nativeOAuthStartBindingSchema.partial()).superRefine((value, ctx) => {
+  const nativeKeys = Object.keys(value).filter(key => key.startsWith('native'));
+  if (nativeKeys.length !== 0 && nativeKeys.length !== 7) ctx.addIssue({ code: 'custom', message: 'Native OAuth binding must be complete' });
+});
 const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
@@ -306,11 +308,20 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!oauthService) return res.status(503).send('MCP OAuth is not configured');
     const state = stringQuery(req.query.state, 1000);
     if (!state) return res.status(400).send('Missing OAuth state');
+    const callbackCode = stringQuery(req.query.code, 20000);
+    const callbackError = stringQuery(req.query.error, 500);
+    if (callbackCode && callbackError) {
+      const nativeRedirect = await deps.nativeOAuthHandoff?.complete(state, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_AMBIGUOUS',
+      }).catch(() => null);
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
+      return res.status(400).send('OAuth callback code/error parameters are mutually exclusive');
+    }
     try {
       const result = await oauthService.finish({
         state,
-        code: stringQuery(req.query.code, 20000),
-        error: stringQuery(req.query.error, 500),
+        code: callbackCode,
+        error: callbackError,
         errorDescription: stringQuery(req.query.error_description, 1000),
       });
       if (!result) return res.status(400).send('OAuth state is invalid or has already been used');
@@ -459,6 +470,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
           await deps.nativeOAuthHandoff!.begin({
             providerState: state, userId: req.user!.sub, tenantId,
             connectorId: server.id, deviceId: parsed.data.nativeDeviceId,
+            clientState: parsed.data.nativeState!, pkceChallenge: parsed.data.nativePkceChallenge!,
+            provider: parsed.data.nativeProvider!, redirectUri: parsed.data.nativeRedirectUri!,
+            identityGeneration: parsed.data.nativeIdentityGeneration!, createdAt: parsed.data.nativeCreatedAt!,
           });
         } catch (error) {
           await oauthService.disconnect(username, tenantId, server.id);

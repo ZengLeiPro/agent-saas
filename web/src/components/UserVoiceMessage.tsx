@@ -17,7 +17,7 @@ interface UserVoiceMessageProps {
   audioUrl: string;
   duration: number;          // 秒
   transcribedText?: string;
-  status: 'uploading' | 'transcribing' | 'sent' | 'failed';
+  status: 'uploading' | 'transcribing' | 'ready' | 'sent' | 'failed';
   playState: VoicePlayState;
   onPlay: () => void;
   onTogglePause: () => void;
@@ -62,7 +62,7 @@ export function UserVoiceMessage({
         className="flex items-center gap-2 rounded-lg px-3 py-2 bg-user-bubble text-foreground cursor-pointer select-none"
         style={{ minWidth: '100px', maxWidth: '70%', width: getBubbleWidth(duration) }}
         onClick={() => {
-          if (status !== 'sent' || isLoading) return;
+          if ((status !== 'sent' && status !== 'ready') || isLoading) return;
           if (playState === 'idle') onPlay();
           else onTogglePause();
         }}
@@ -116,7 +116,7 @@ export function UserVoiceMessage({
       )}
 
       {/* 转写文字 (可折叠) */}
-      {transcribedText && status === 'sent' && (
+      {transcribedText && (status === 'sent' || status === 'ready') && (
         <button
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           onClick={() => setShowText(prev => !prev)}

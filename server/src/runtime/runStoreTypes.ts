@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
+import type { LivenessReapResult, RunHeartbeatSource, RunLiveness } from './runLiveness.js';
 
 const { Pool } = pg;
 export type PgPool = InstanceType<typeof Pool>;
@@ -36,6 +37,8 @@ export interface RunRecord {
   cancelledAt?: string;
   workerId?: string;
   leaseExpiresAt?: string;
+  /** M40-02 server-authoritative liveness；legacy rows without a version project as unknown. */
+  liveness?: RunLiveness;
   idempotencyKey?: string;
   executionTarget?: ExecutionTargetKind;
   workspaceId?: string;
@@ -202,6 +205,8 @@ export interface RunStore {
   enqueueSteeringAware?(input: UpsertRunInput): Promise<RunRecord>;
   /** 当前会话尚未开始执行的普通/插话消息，按服务端接受顺序返回。 */
   listPendingUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
+  /** M20-02：会话内所有 durable V1 用户提交，供统一 queue/runtime snapshot 投影。 */
+  listUserMessagesBySession?(sessionId: string): Promise<RunRecord[]>;
   listPendingSteeringInputs?(targetRunId: string): Promise<SteeringInputRecord[]>;
   /** 在写入 durable user_message、构造模型上下文前原子取得输入所有权。 */
   reserveSteeringInputs?(targetRunId: string, sourceRunIds: string[]): Promise<string[]>;
@@ -332,7 +337,42 @@ export interface RunStore {
     maxConcurrentRuns?: number,
     admission?: RunLeaseAdmission,
   ): Promise<RunRecord | null>;
-  renewLease?(runId: string, workerId: string, leaseMs: number, now?: Date): Promise<RunRecord | null>;
+  renewLease?(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    now?: Date,
+    source?: RunHeartbeatSource,
+  ): Promise<RunRecord | null>;
+  /** Immediate activity pulse used by stream/tool/subagent execution paths (server-owned). */
+  heartbeatRun?(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    source: RunHeartbeatSource,
+    now?: Date,
+  ): Promise<RunRecord | null>;
+  /** Explicit disconnect signal; CAS-fenced by owner and terminal-sticky. */
+  markLivenessStale?(
+    runId: string,
+    workerId: string,
+    reasonCode: string,
+    now?: Date,
+  ): Promise<RunRecord | null>;
+  /** Two-phase lease-expiry reaper. A run must be durably stale before it can become orphaned. */
+  reapExpiredLiveness?(now: Date, staleGraceMs: number, limit?: number): Promise<LivenessReapResult>;
+  /** Explicit, idempotent recovery; never automatically replays an uncertain external tool. */
+  retryOrphanedUserMessage?(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    now?: Date,
+  ): Promise<RunRecord | null>;
+  cancelUserMessageByClientMsgId?(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    reason?: string,
+    now?: Date,
+  ): Promise<RunRecord | null>;
   releaseLease?(runId: string, workerId: string, finalStatus?: RunStatus, reason?: string): Promise<RunRecord | null>;
   /**
    * RFC v1 P0.4：增量更新 Responses API session state。

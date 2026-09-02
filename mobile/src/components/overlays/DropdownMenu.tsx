@@ -137,6 +137,8 @@ export function DropdownMenu({
                       <View style={styles.separator} />
                     )}
                     <Pressable
+                      testID={`dropdown-action-${item.id.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+                      accessibilityLabel={item.label}
                       style={({ pressed }) => [styles.actionItem, pressed && { backgroundColor: colors.accent }]}
                       onPress={() => handleDrillDownItemPress(item.id)}
                     >
@@ -164,6 +166,8 @@ export function DropdownMenu({
                     return (
                       <Pressable
                         key={action.id}
+                        testID={`dropdown-action-${action.id.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')}`}
+                        accessibilityLabel={action.label}
                         style={({ pressed }) => [
                           hasCheck ? styles.modelItem : styles.actionItem,
                           pressed && { backgroundColor: colors.accent },

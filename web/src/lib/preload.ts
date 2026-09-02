@@ -6,9 +6,12 @@ import { apiUrl } from "./apiBase";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
 import type { TenantFeatureFlags, UserPreferences } from "@agent/shared";
 import { TOKEN_KEY } from "./constants";
+import { AUTH_SESSION_KEY } from '@agent/shared';
 
-const token = localStorage.getItem(TOKEN_KEY);
-const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+function currentAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 // --- Auth 预取（带重试，等待后端就绪） ---
 
@@ -31,8 +34,23 @@ function getRetryDelay(attempt: number): number {
 async function fetchAuth(): Promise<AuthPreloadResult> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const res = await fetch(apiUrl("/api/auth/me"), { headers });
+      const res = await fetch(apiUrl("/api/auth/me"), { headers: currentAuthHeaders() });
       if (res.ok) {
+        const refreshedToken = res.headers.get('X-Refresh-Token');
+        const authEpoch = Number(res.headers.get('X-Auth-Epoch'));
+        const generation = Number(res.headers.get('X-Auth-Generation'));
+        if (refreshedToken) {
+          try {
+            localStorage.setItem(TOKEN_KEY, refreshedToken);
+            if (Number.isSafeInteger(authEpoch) && authEpoch > 0 && Number.isSafeInteger(generation) && generation > 0) {
+              localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ authEpoch, generation }));
+            }
+          } catch {
+            localStorage.removeItem(TOKEN_KEY);
+            localStorage.removeItem(AUTH_SESSION_KEY);
+            return { status: 'unauthenticated' };
+          }
+        }
         const data = await res.json() as { id: string; username: string; role: "admin" | "user"; tenantId: string; tenantName?: string; isSuperAdmin?: boolean; realName?: string; position?: string; phone?: string; phoneVerifiedAt?: string; avatar?: string; avatarVersion?: number; debugMode?: boolean; tenantFeatures?: TenantFeatureFlags; preferences?: UserPreferences };
         return { status: "authenticated", user: data };
       }
@@ -62,7 +80,7 @@ export const authPreload: Promise<AuthPreloadResult> = fetchAuth();
 
 export const sessionsPreload: Promise<{ sessions: unknown[]; hasMore: boolean } | null> = authPreload.then((result) => {
   if (result.status === "unauthenticated" || result.status === "error") return null;
-  return fetch(apiUrl("/api/sessions?limit=500&fresh=1"), { headers, cache: "no-store" })
+  return fetch(apiUrl("/api/sessions?limit=500&fresh=1"), { headers: currentAuthHeaders(), cache: "no-store" })
     .then(async (res) => {
       if (res.ok) {
         const data = await res.json();
@@ -80,7 +98,7 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export const usersPreload: Promise<unknown[] | null> = authPreload.then(async (result) => {
   if (result.status === "authenticated" && result.user.role === "admin") {
     await delay(2000);
-    return fetch(apiUrl("/api/auth/users"), { headers })
+    return fetch(apiUrl("/api/auth/users"), { headers: currentAuthHeaders() })
       .then(async (r) => (r.ok ? ((await r.json()).users || []) : null))
       .catch(() => null);
   }
@@ -95,7 +113,7 @@ export const tenantsPreload: Promise<unknown[] | null> = authPreload.then(async 
     result.user.tenantId === DEFAULT_TENANT_ID
   ) {
     await delay(2000);
-    return fetch(apiUrl("/api/tenants"), { headers })
+    return fetch(apiUrl("/api/tenants"), { headers: currentAuthHeaders() })
       .then(async (r) => (r.ok ? ((await r.json()).tenants || []) : null))
       .catch(() => null);
   }

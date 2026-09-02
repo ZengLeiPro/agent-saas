@@ -1,0 +1,24 @@
+appId: ${APP_ID}
+name: 06 AskUser and approval remain in fixed canonical zone
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- assertVisible:
+    id: "canonical-interaction-zone"
+- tapOn: "E2E option"
+- tapOn:
+    id: "ask-user-submit"
+- extendedWaitUntil:
+    visible:
+      id: "canonical-interaction-zone"
+    timeout: 10000
+- assertVisible: "待处理权限请求"
+- tapOn:
+    id: "permission-allow-button"
+- extendedWaitUntil:
+    visible: "M60_INTERACTION_COMPLETE"
+    timeout: 15000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/06-interaction-zone

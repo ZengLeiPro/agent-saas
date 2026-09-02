@@ -1,0 +1,15 @@
+appId: ${APP_ID}
+name: 01 fresh install, zero startup prompts, OTP login
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- assertVisible:
+    id: "login-screen"
+- assertNotVisible: "Allow .* to track your activity"
+- assertNotVisible: "Allow .* to access your microphone"
+- assertNotVisible: "Allow .* to send you notifications"
+- assertNotVisible: "允许.*使用麦克风"
+- assertNotVisible: "允许.*发送通知"
+- runFlow: ../helpers/login-a-otp.yaml
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/01-fresh-install-login

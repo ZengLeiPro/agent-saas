@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-01-rc-evidence-v1.json",
+  "title": "M70-01 mobile RC evidence bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mode", "explicitContractMock", "planId", "planDigest", "commitSha", "profile", "expiresAt", "m60", "caseResults", "summary", "integrity"],
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "mode": {"enum": ["production", "contract"]},
+    "explicitContractMock": {"type": "boolean"},
+    "planId": {"const": "M70-01-RC"},
+    "planDigest": {"$ref": "#/$defs/digest"},
+    "commitSha": {"pattern": "^[0-9a-f]{40}$"},
+    "profile": {"type": "string", "minLength": 1, "maxLength": 128},
+    "expiresAt": {"format": "date-time"},
+    "m60": {"type": "object"},
+    "caseResults": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+    "summary": {"type": "object"},
+    "integrity": {
+      "type": "object", "additionalProperties": false, "required": ["algorithm", "payloadSha256", "hmacSha256"],
+      "properties": {"algorithm": {"const": "HMAC-SHA256"}, "payloadSha256": {"pattern": "^[0-9a-f]{64}$"}, "hmacSha256": {"pattern": "^[0-9a-f]{64}$"}}
+    }
+  },
+  "$defs": {"digest": {"pattern": "^sha256:[0-9a-f]{64}$"}}
+}

@@ -2,6 +2,7 @@ import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useColors, spacing, typography, radius } from '../theme';
 import type { ThemeColors } from '../theme';
+import { captureJsCrash } from '../telemetry/capture';
 
 interface Props {
   children: ReactNode;
@@ -70,6 +71,7 @@ class AppErrorBoundaryInner extends Component<InternalProps, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    captureJsCrash(error, 'react-error-boundary');
     console.error('AppErrorBoundary caught:', error, info.componentStack);
   }
 

@@ -176,7 +176,7 @@ function getGroupSummary(items: MessageItem[], isActive: boolean, debugMode: boo
   };
 }
 
-function ActivityItem({ item, debugMode = true, onSwitchModel }: { item: MessageItem; debugMode?: boolean; onSwitchModel?: () => void }) {
+function ActivityItem({ item, debugMode = true, rawPresentationMode = debugMode, onSwitchModel }: { item: MessageItem; debugMode?: boolean; rawPresentationMode?: boolean; onSwitchModel?: () => void }) {
   switch (item.type) {
     case 'runtime_status':
       return <RuntimeStatusBlock status={item.status} content={item.content} />;
@@ -184,13 +184,10 @@ function ActivityItem({ item, debugMode = true, onSwitchModel }: { item: Message
       if (!debugMode) return <ExecutionHiddenPlaceholder isActive={item.streaming} durationMs={item.durationMs} />;
       return <ThinkingBlock content={item.content} streaming={item.streaming} durationMs={item.durationMs} />;
     case 'tool_use':
-      if (!debugMode && !item.presentation) {
-        return <ExecutionHiddenPlaceholder isActive={item.streaming || item.executionStatus === 'running'} durationMs={item.durationMs} hasIssue={item.executionStatus === 'failed'} />;
-      }
-      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} executionStatus={item.executionStatus} durationMs={item.durationMs} lastProgress={item.lastProgress} error={item.error} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
+      return <ToolBlock toolName={item.toolName} toolInput={item.toolInput} streaming={item.streaming} result={item.result} resultReady={item.resultReady} executionStatus={item.executionStatus} durationMs={item.durationMs} lastProgress={item.lastProgress} error={item.error} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={rawPresentationMode} />;
     case 'tool_result':
       if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder />;
-      return <ToolResultBlock toolName={item.toolName} result={item.result} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={debugMode} />;
+      return <ToolResultBlock toolName={item.toolName} result={item.result} {...(item.presentation ? { presentation: item.presentation } : {})} debugMode={rawPresentationMode} />;
     case 'subagent':
       if (!debugMode && !item.presentation) return <ExecutionHiddenPlaceholder isActive={item.status === 'running'} durationMs={item.durationMs} hasIssue={item.status === 'failed' || item.status === 'timeout'} />;
       return <SubagentBlock {...item} onSwitchModel={onSwitchModel} />;
@@ -204,6 +201,7 @@ interface ActivityGroupBlockProps {
   isActive: boolean;
   isLast?: boolean;
   debugMode?: boolean;
+  rawPresentationMode?: boolean;
   onSwitchModel?: () => void;
   /** 透传给折叠行外壳（壳自身不带流向外边距，间距由容器 gap 统一承担）。 */
   className?: string;
@@ -226,7 +224,7 @@ export function ExecutionHiddenPlaceholder({ isActive, durationMs, hasIssue }: {
   );
 }
 
-export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, onSwitchModel, className }: ActivityGroupBlockProps) {
+export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isActive, debugMode = true, rawPresentationMode = debugMode, onSwitchModel, className }: ActivityGroupBlockProps) {
   // 折叠行已提供分组摘要，具体工具详情由用户按需展开，避免长会话默认铺满执行细节。
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -236,7 +234,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
     // [&>*]:my-0 继续作为防御性约束，避免后续子组件重新引入流向 margin。
     return (
       <div className={cn('[&>*]:my-0', className)}>
-        <ActivityItem item={items[0]} debugMode={debugMode} onSwitchModel={onSwitchModel} />
+        <ActivityItem item={items[0]} debugMode={debugMode} rawPresentationMode={rawPresentationMode} onSwitchModel={onSwitchModel} />
       </div>
     );
   }
@@ -273,7 +271,7 @@ export const ActivityGroupBlock = memo(function ActivityGroupBlock({ items, isAc
     >
       <div className="flex flex-col gap-3 [&>*]:my-0">
         {items.map(item => (
-          <ActivityItem key={item.id} item={item} debugMode={debugMode} />
+          <ActivityItem key={item.id} item={item} debugMode={debugMode} rawPresentationMode={rawPresentationMode} />
         ))}
       </div>
     </AgentActivityShell>

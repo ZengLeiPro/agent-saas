@@ -12,6 +12,23 @@ import type { UploadedFileInfo } from '../types/index.js';
 import type { TaskBoardAttachment, TaskBoardUploadAttachment } from '../../../shared/src/types/taskboard.js';
 import { uploadLogger } from '../utils/logger.js';
 import { mimeTypeForAsset, validateAssetPath, validateAttachmentStatePath } from './assetReference.js';
+import { inspectUploadedFile } from './uploadSecurity.js';
+import {
+  ATTACHMENT_ID_RE,
+  AttachmentUnavailableError,
+  isSafeTaskScopeSegment,
+  resolveAttachmentReferences,
+  resolveLegacyAttachmentReferences,
+  taskAttachmentFilename,
+  trustedRelative,
+  validateTaskAttachmentPath,
+} from './attachmentValidation.js';
+import {
+  readAttachmentStates,
+  readCompletedUploadRequest,
+  writeAttachmentState,
+  writeCompletedUploadRequest,
+} from './uploadLedger.js';
 import {
   atomicWriteTrustedFile,
   openTrustedDirectory,
@@ -29,9 +46,11 @@ export const MAX_UPLOAD_FILES_PER_REQUEST = SHARED_MAX_UPLOAD_FILES_PER_REQUEST;
 export const DEFAULT_STAGED_RETENTION_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
-const ATTACHMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 export type UploadRequestOutcome = 'success' | 'failed' | 'aborted';
+
+export type AttachmentUnavailableCode = 'ATTACHMENT_NOT_FOUND' | 'ATTACHMENT_EXPIRED' | 'ATTACHMENT_DELETED';
+
+export { AttachmentUnavailableError } from './attachmentValidation.js';
 
 export interface AttachmentState {
   version: 1;
@@ -63,6 +82,16 @@ export interface UploadFinalizeFile {
 export interface UploadReference {
   sessionId?: string;
   clientMessageId?: string;
+}
+
+
+export interface AttachmentContent {
+  attachmentId: string;
+  absolutePath: string;
+  originalName: string;
+  size: number;
+  mimeType: string;
+  isImage: boolean;
 }
 
 export interface FinalizedUpload {
@@ -214,6 +243,14 @@ export class UploadManager {
     return { activeUploads: this.activeRequests.size, ...this.metrics };
   }
 
+  async getCompletedRequest(
+    userCwd: string,
+    requestId: string,
+    sessionId?: string,
+  ): Promise<UploadedFileInfo[] | undefined> {
+    return readCompletedUploadRequest(userCwd, requestId, sessionId);
+  }
+
   async beginRequest(userCwd: string, requestId: string): Promise<string> {
     if (this.draining) throw new UploadDrainingError();
     if (this.activeRequests.has(requestId)) throw new Error(`Duplicate upload request: ${requestId}`);
@@ -274,7 +311,14 @@ export class UploadManager {
           }
           const attachmentId = randomUUID();
           const originalName = basename(relativePath);
-          const mimeType = mimeTypeForAsset(originalName);
+          const declaredMimeType = mimeTypeForAsset(originalName);
+          const security = await inspectUploadedFile({
+            path: resolve(userCwd, relativePath),
+            originalName,
+            size,
+            mimetype: declaredMimeType,
+          });
+          const mimeType = security.mimeType;
           const state: AttachmentState = {
             version: 1,
             attachmentId,
@@ -289,7 +333,7 @@ export class UploadManager {
             ...(refs.sessionId ? { sessionIds: [refs.sessionId] } : {}),
             ...(refs.clientMessageId ? { clientMessageIds: [refs.clientMessageId] } : {}),
           };
-          await this.writeState(userCwd, state, 'uploads/.state');
+          await writeAttachmentState(userCwd, state, 'uploads/.state');
           createdStateIds.push(attachmentId);
           referenced.push({
             attachmentId,
@@ -297,7 +341,7 @@ export class UploadManager {
             relativePath,
             size,
             mimeType,
-            isImage: isSupportedImage(mimeType),
+            isImage: security.isImage,
           });
         }
         return referenced;
@@ -346,13 +390,12 @@ export class UploadManager {
           ...(refs.clientMessageId ? { clientMessageIds: [refs.clientMessageId] } : {}),
         };
         completed.push({ filename: file.filename, attachmentId: file.attachmentId });
-        await this.writeState(active.userCwd, state, 'uploads/.state');
+        await writeAttachmentState(active.userCwd, state, 'uploads/.state');
         finalized.push({
           absolutePath: finalPath,
           info: {
             attachmentId: file.attachmentId,
             originalName: file.originalName,
-            ...(file.isVoiceUpload ? { savedPath: finalPath } : {}),
             relativePath,
             size: file.size,
             mimeType: file.mimeType,
@@ -361,6 +404,13 @@ export class UploadManager {
         });
       }
 
+      await writeCompletedUploadRequest(
+        active.userCwd,
+        requestId,
+        finalized.map(({ info }) => info),
+        new Date(this.now()).toISOString(),
+        refs.sessionId,
+      );
       await this.closeActiveRequest(requestId, active, true);
       this.metrics.completedRequests += 1;
       this.metrics.uploadedBytes += files.reduce((sum, file) => sum + file.size, 0);
@@ -375,6 +425,14 @@ export class UploadManager {
       await this.finishFailedRequest(requestId, 'failed');
       throw error;
     }
+  }
+
+  async cancelRequest(userCwd: string, requestId: string): Promise<'cancelled' | 'not_found' | 'uploaded'> {
+    if (await this.getCompletedRequest(userCwd, requestId)) return 'uploaded';
+    const active = this.activeRequests.get(requestId);
+    if (!active || active.userCwd !== userCwd) return 'not_found';
+    await this.finishFailedRequest(requestId, 'aborted');
+    return 'cancelled';
   }
 
   async finishFailedRequest(requestId: string, outcome: Exclude<UploadRequestOutcome, 'success'>): Promise<void> {
@@ -402,45 +460,40 @@ export class UploadManager {
     }
   }
 
+  /** Resolve V1 IDs against the authenticated user's upload state. */
   async resolveAttachments(
     userCwd: string,
     attachmentIds: readonly string[],
     refs: Pick<UploadReference, 'sessionId'> = {},
   ): Promise<UploadedFileInfo[]> {
     this.knownUserCwds.add(userCwd);
-    return this.withUserMutation(userCwd, async () => {
-      const resolved: UploadedFileInfo[] = [];
-      for (const attachmentId of attachmentIds) {
-        if (!ATTACHMENT_ID_RE.test(attachmentId)) throw new Error('Invalid attachment id');
-        let state: AttachmentState;
-        try {
-          state = JSON.parse(await readTrustedFile(userCwd, `uploads/.state/${attachmentId}.json`, 'utf8') as string) as AttachmentState;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            throw new Error(`Attachment not found: ${attachmentId}`);
-          }
-          throw error;
-        }
-        if (state.attachmentId !== attachmentId || basename(state.filename) !== state.filename) {
-          throw new Error(`Invalid attachment state: ${attachmentId}`);
-        }
-        validateAttachmentStatePath(userCwd, state);
-        if (refs.sessionId && !state.sessionIds?.includes(refs.sessionId)) {
-          throw new Error(`Attachment does not belong to session: ${attachmentId}`);
-        }
-        const opened = await openTrustedFile(userCwd, state.relativePath);
-        await opened.handle.close();
-        resolved.push({
-          attachmentId,
-          originalName: state.originalName,
-          relativePath: state.relativePath,
-          size: state.size,
-          mimeType: state.mimeType,
-          isImage: isSupportedImage(state.mimeType),
-        });
-      }
-      return resolved;
-    });
+    return this.withUserMutation(userCwd, () => resolveAttachmentReferences(
+      userCwd, attachmentIds, refs, this.now, this.stagedRetentionMs,
+    ));
+  }
+
+  async getAttachmentContent(userCwd: string, attachmentId: string): Promise<AttachmentContent> {
+    const [resolved] = await this.resolveAttachments(userCwd, [attachmentId]);
+    if (!resolved) throw new AttachmentUnavailableError('ATTACHMENT_NOT_FOUND', 'Attachment not found');
+    return {
+      attachmentId,
+      absolutePath: resolve(userCwd, resolved.relativePath),
+      originalName: resolved.originalName,
+      size: resolved.size,
+      mimeType: resolved.mimeType,
+      isImage: resolved.isImage,
+    };
+  }
+
+  /** N-1 adapter: legacy paths are lookup hints; server state remains authoritative. */
+  async resolveLegacyAttachments(
+    userCwd: string,
+    attachments: readonly UploadedFileInfo[],
+  ): Promise<UploadedFileInfo[]> {
+    this.knownUserCwds.add(userCwd);
+    return this.withUserMutation(userCwd, async () => (
+      resolveLegacyAttachmentReferences(userCwd, attachments, await readAttachmentStates(userCwd))
+    ));
   }
 
   async materializeTaskAttachments(
@@ -507,7 +560,7 @@ export class UploadManager {
     this.knownUserCwds.add(targetCwd);
     await this.withUserMutation(targetCwd, async () => {
       for (const attachment of attachments) {
-        const relativePath = this.validateTaskAttachmentPath(taskId, attachment);
+        const relativePath = validateTaskAttachmentPath(taskId, attachment);
         try {
           await removeTrustedPath(targetCwd, relativePath);
         } catch (error) {
@@ -522,27 +575,8 @@ export class UploadManager {
     taskId: string,
     attachment: Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>,
   ): Promise<TrustedFile> {
-    return openTrustedFile(userCwd, this.validateTaskAttachmentPath(taskId, attachment));
+    return openTrustedFile(userCwd, validateTaskAttachmentPath(taskId, attachment));
   }
-
-  private validateTaskAttachmentPath(
-    taskId: string,
-    attachment: Pick<TaskBoardAttachment, 'attachmentId' | 'relativePath'>,
-  ): string {
-    if (!attachment.attachmentId || !ATTACHMENT_ID_RE.test(attachment.attachmentId)) {
-      throw new Error('Invalid task attachment id');
-    }
-    if (!isSafeTaskScopeSegment(taskId)) throw new Error('Invalid task attachment scope');
-    const normalized = attachment.relativePath.split('\\').join('/');
-    const prefix = `taskboard/attachments/${taskId}/`;
-    const leaf = normalized.slice(prefix.length);
-    if (!normalized.startsWith(prefix) || !leaf || leaf.includes('/')
-      || !leaf.startsWith(`${attachment.attachmentId}-`)) {
-      throw new Error('Task attachment is not in its task scope');
-    }
-    return normalized;
-  }
-
 
   async markReferenced(
     userCwd: string,
@@ -577,17 +611,17 @@ export class UploadManager {
         if (refs.clientMessageId) state.clientMessageIds = appendUnique(state.clientMessageIds, refs.clientMessageId);
         updates.push(state);
       }
-      for (const state of updates) await this.writeState(userCwd, state, 'uploads/.state');
+      for (const state of updates) await writeAttachmentState(userCwd, state, 'uploads/.state');
     });
   }
 
   async getUsage(userCwd: string): Promise<UploadUsageSnapshot> {
     this.knownUserCwds.add(userCwd);
-    const states = await this.readStates(userCwd);
+    const states = await readAttachmentStates(userCwd);
     const statusByFilename = new Map(
       states.filter((state) => state.source !== 'asset').map((state) => [state.filename, state.status]),
     );
-    const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
+    const regularFiles = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state', '.requests', '.tombstones']));
     const partialFiles = await listFilesRecursive(userCwd, 'uploads/.partial');
 
     let stagedBytes = 0;
@@ -633,7 +667,7 @@ export class UploadManager {
 
   private async cleanupUserStagedLocked(userCwd: string, olderThanMs: number): Promise<UploadCleanupResult> {
     const cutoff = this.now() - olderThanMs;
-    const states = await this.readStates(userCwd);
+    const states = await readAttachmentStates(userCwd);
     let deletedFiles = 0;
     let deletedBytes = 0;
 
@@ -661,6 +695,12 @@ export class UploadManager {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         }
       }
+      await atomicWriteTrustedFile(
+        userCwd,
+        `uploads/.tombstones/${state.attachmentId}.json`,
+        `${JSON.stringify({ version: 1, attachmentId: state.attachmentId, code: olderThanMs >= this.stagedRetentionMs ? 'ATTACHMENT_EXPIRED' : 'ATTACHMENT_DELETED', at: new Date(this.now()).toISOString() })}\n`,
+        { encoding: 'utf8', createParents: true, mode: 0o600 },
+      );
       await removeTrustedPath(userCwd, `uploads/.state/${state.attachmentId}.json`).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
@@ -677,7 +717,8 @@ export class UploadManager {
   async purgeUserUploads(userCwd: string): Promise<UploadCleanupResult> {
     this.knownUserCwds.add(userCwd);
     return this.withUserMutation(userCwd, async () => {
-      const files = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state']));
+      const states = await readAttachmentStates(userCwd);
+      const files = await listFilesRecursive(userCwd, 'uploads', new Set(['.partial', '.state', '.requests', '.tombstones']));
       let deletedFiles = 0;
       let deletedBytes = 0;
       for (const file of files) {
@@ -692,6 +733,17 @@ export class UploadManager {
       await removeTrustedPath(userCwd, 'uploads/.state').catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       });
+      await removeTrustedPath(userCwd, 'uploads/.requests').catch((error) => {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      });
+      for (const state of states) {
+        await atomicWriteTrustedFile(
+          userCwd,
+          `uploads/.tombstones/${state.attachmentId}.json`,
+          `${JSON.stringify({ version: 1, attachmentId: state.attachmentId, code: 'ATTACHMENT_DELETED', at: new Date(this.now()).toISOString() })}\n`,
+          { encoding: 'utf8', createParents: true, mode: 0o600 },
+        );
+      }
       return { deletedFiles, deletedBytes };
     });
   }
@@ -789,41 +841,6 @@ export class UploadManager {
     }
   }
 
-  private async writeState(root: string, state: AttachmentState, stateDirectory = '.state'): Promise<void> {
-    await atomicWriteTrustedFile(
-      root,
-      `${stateDirectory}/${state.attachmentId}.json`,
-      `${JSON.stringify(state)}\n`,
-      { encoding: 'utf8', createParents: true, mode: 0o664 },
-    );
-  }
-
-  private async readStates(userCwd: string): Promise<AttachmentState[]> {
-    let stateDirectory: Awaited<ReturnType<typeof openTrustedDirectory>>;
-    try {
-      stateDirectory = await openTrustedDirectory(userCwd, 'uploads/.state');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    }
-    try {
-      const entries = await readdir(stateDirectory.fdPath, { withFileTypes: true });
-      const states: AttachmentState[] = [];
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
-        try {
-          const parsed = JSON.parse(await readPinnedFile(stateDirectory.fdPath, entry.name, 'utf8') as string) as AttachmentState;
-          if (parsed.version === 1 && ATTACHMENT_ID_RE.test(parsed.attachmentId)) states.push(parsed);
-        } catch (error) {
-          uploadLogger.warn(`Skip invalid attachment state ${entry.name}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-      return states;
-    } finally {
-      await stateDirectory.handle.close();
-    }
-  }
-
   private async withUserMutation<T>(userCwd: string, task: () => Promise<T>): Promise<T> {
     const previous = this.userMutationTails.get(userCwd) ?? Promise.resolve();
     let release!: () => void;
@@ -842,30 +859,6 @@ export class UploadManager {
 
 function appendUnique(values: string[] | undefined, value: string): string[] {
   return values?.includes(value) ? values : [...(values ?? []), value];
-}
-
-function isSafeTaskScopeSegment(value: string): boolean {
-  return /^[A-Za-z0-9_-]{1,128}$/.test(value);
-}
-
-function taskAttachmentFilename(attachment: TaskBoardUploadAttachment): string {
-  const sourceName = basename(attachment.originalName) || basename(attachment.relativePath) || 'attachment';
-  const safeName = sourceName.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'attachment';
-  return `${attachment.attachmentId}-${safeName}`;
-}
-
-function isSupportedImage(mimeType: string): boolean {
-  return mimeType === 'image/png'
-    || mimeType === 'image/jpeg'
-    || mimeType === 'image/gif'
-    || mimeType === 'image/webp';
-}
-
-function trustedRelative(root: string, relativePath: string): string {
-  if (!relativePath || isAbsolute(relativePath) || relativePath.includes('\0') || relativePath.includes('\\')) {
-    throw new UnsafeFilePathError('Invalid trusted relative path');
-  }
-  return relativeToTrustedRoot(root, resolve(root, relativePath));
 }
 
 async function isDirectory(path: string): Promise<boolean> {

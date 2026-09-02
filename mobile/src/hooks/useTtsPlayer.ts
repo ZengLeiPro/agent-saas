@@ -1,7 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { AppState } from 'react-native';
 import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
-import { File, Paths } from 'expo-file-system';
-import { authFetch, getPlatform } from '@agent/shared';
+import { File } from 'expo-file-system';
+import { authFetch, getPlatform, isTtsCapabilityAvailable } from '@agent/shared';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  createVoiceMediaTempFile,
+  protectVoiceMediaFile,
+  releaseVoiceMediaFile,
+  sweepVoiceMediaTempCache,
+} from '../services/voiceMediaTempCache';
 
 export type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -23,18 +31,19 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
   const [autoPlay, setAutoPlay] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [stateMap, setStateMap] = useState<Record<string, TtsState>>({});
-
   const activeKeyRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const tempFileRef = useRef<File | null>(null);
+  const requestGenerationRef = useRef(0);
   const player = useAudioPlayer(null);
+  const { user } = useAuth();
+  const ownerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
 
   useEffect(() => {
     authFetch('/api/health')
-      .then(r => r.ok ? r.json() as Promise<{ data?: { ttsAvailable?: boolean } }> : null)
-      .then(data => {
-        if (data?.data?.ttsAvailable) setAvailable(true);
-      })
-      .catch(() => {});
+      .then(async (response) => response.ok ? isTtsCapabilityAvailable(await response.json()) : false)
+      .then(setAvailable)
+      .catch(() => setAvailable(false));
 
     void (async () => {
       const stored = await getPlatform().storage.getItem(TTS_AUTOPLAY_KEY);
@@ -47,69 +56,61 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
   }, []);
 
   const stopCurrent = useCallback(() => {
+    requestGenerationRef.current += 1;
     abortRef.current?.abort();
     abortRef.current = null;
     player.pause();
-    if (activeKeyRef.current) {
-      setState(activeKeyRef.current, 'idle');
-    }
+    releaseVoiceMediaFile(tempFileRef.current);
+    tempFileRef.current = null;
+    if (activeKeyRef.current) setState(activeKeyRef.current, 'idle');
     activeKeyRef.current = null;
     setActiveKey(null);
   }, [player, setState]);
 
   const play = useCallback((key: string, text: string, voice?: string, speed?: number) => {
+    // The authenticated health contract is authoritative; absent capability means no synthesis request.
+    if (!available) return;
     void (async () => {
       stopCurrent();
-
+      const generation = requestGenerationRef.current;
       activeKeyRef.current = key;
       setActiveKey(key);
       setState(key, 'loading');
-
       const controller = new AbortController();
       abortRef.current = controller;
-
       try {
         await setAudioModeAsync({ playsInSilentMode: true });
-
         const response = await authFetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice, speed }),
-          signal: controller.signal,
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice, speed }), signal: controller.signal,
         });
-
         if (!response.ok) throw new Error(`TTS failed: ${response.status}`);
-        if (activeKeyRef.current !== key) return;
-
         const blob = await response.blob();
-        const tempFile = new File(Paths.cache, `tts_${Date.now()}.mp3`);
-        const arrayBuffer = await blob.arrayBuffer();
-        tempFile.write(new Uint8Array(arrayBuffer));
-
-        if (activeKeyRef.current !== key) return;
-
+        if (requestGenerationRef.current !== generation || activeKeyRef.current !== key) return;
+        const tempFile = createVoiceMediaTempFile(ownerKey, 'tts', 'mp3');
+        tempFile.write(new Uint8Array(await blob.arrayBuffer()));
+        if (requestGenerationRef.current !== generation || activeKeyRef.current !== key) {
+          releaseVoiceMediaFile(tempFile);
+          return;
+        }
+        tempFileRef.current = tempFile;
+        protectVoiceMediaFile(tempFile);
         player.replace({ uri: tempFile.uri });
         player.play();
         setState(key, 'playing');
       } catch (error) {
         if ((error as Error).name === 'AbortError') return;
-        console.error('TTS play error:', error);
         setState(key, 'error');
         activeKeyRef.current = null;
         setActiveKey(null);
       }
     })();
-  }, [stopCurrent, setState, player]);
+  }, [available, ownerKey, player, setState, stopCurrent]);
 
   const togglePause = useCallback((key: string) => {
     if (activeKeyRef.current !== key) return;
-    if (player.playing) {
-      player.pause();
-      setState(key, 'paused');
-    } else {
-      player.play();
-      setState(key, 'playing');
-    }
+    if (player.playing) { player.pause(); setState(key, 'paused'); }
+    else { player.play(); setState(key, 'playing'); }
   }, [player, setState]);
 
   const toggleAutoPlay = useCallback(() => {
@@ -120,9 +121,17 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
     });
   }, []);
 
-  const getState = useCallback((key: string): TtsState => {
-    return stateMap[key] || 'idle';
-  }, [stateMap]);
+  const getState = useCallback((key: string): TtsState => stateMap[key] || 'idle', [stateMap]);
+
+  useEffect(() => {
+    sweepVoiceMediaTempCache();
+    return stopCurrent;
+  }, [ownerKey, stopCurrent]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', next => { if (next !== 'active') stopCurrent(); });
+    return () => { subscription.remove(); stopCurrent(); };
+  }, [stopCurrent]);
 
   return { activeKey, getState, play, togglePause, stop: stopCurrent, autoPlay, toggleAutoPlay, available };
 }

@@ -5,7 +5,7 @@ import {
   type GoogleWorkspaceOAuthService,
 } from '../connectors/googleWorkspace.js';
 import type { UserStore } from '../data/users/store.js';
-import type { NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
+import { nativeOAuthStartBindingSchema, type NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 
 export interface GoogleWorkspaceRouterOptions {
   oauthService?: GoogleWorkspaceOAuthService;
@@ -27,6 +27,8 @@ export interface GoogleWorkspaceRouterOptions {
     assertLegacyWriteAllowed(input: { actor: 'user' | 'service'; compatibilityProjection: boolean }): Promise<void>;
   };
 }
+
+const googleOAuthStartSchema = nativeOAuthStartBindingSchema.optional();
 
 export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOptions): Router {
   const router = Router();
@@ -124,12 +126,10 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
       res.status(503).json({ error: 'Google Workspace 连接服务或 OAuth Grant 权威尚未配置' });
       return;
     }
-    const nativeDeviceId = typeof req.body?.nativeDeviceId === 'string' ? req.body.nativeDeviceId : undefined;
-    if (nativeDeviceId && !/^[A-Za-z0-9._:-]{8,200}$/.test(nativeDeviceId)) {
-      res.status(400).json({ error: 'Invalid native OAuth deviceId' });
-      return;
-    }
-    if (nativeDeviceId && !options.nativeOAuthHandoff) {
+    const nativeParsed = googleOAuthStartSchema.safeParse(req.body && Object.keys(req.body).length ? req.body : undefined);
+    if (!nativeParsed.success) { res.status(400).json({ error: 'Invalid native OAuth transaction binding' }); return; }
+    const nativeBinding = nativeParsed.data;
+    if (nativeBinding && !options.nativeOAuthHandoff) {
       res.status(503).json({ error: 'Native OAuth handoff is not configured', code: 'NATIVE_OAUTH_HANDOFF_UNAVAILABLE' });
       return;
     }
@@ -140,11 +140,14 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
     }
     try {
       const started = await options.oauthService.startAuthorization(user, connectorOAuthRedirectUrl(req));
-      if (nativeDeviceId) {
+      if (nativeBinding) {
         try {
           await options.nativeOAuthHandoff!.begin({
             providerState: started.state, userId: user.id, tenantId: user.tenantId,
-            connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID, deviceId: nativeDeviceId,
+            connectorId: GOOGLE_WORKSPACE_CONNECTOR_ID, deviceId: nativeBinding.nativeDeviceId,
+            clientState: nativeBinding.nativeState, pkceChallenge: nativeBinding.nativePkceChallenge,
+            provider: nativeBinding.nativeProvider, redirectUri: nativeBinding.nativeRedirectUri,
+            identityGeneration: nativeBinding.nativeIdentityGeneration, createdAt: nativeBinding.nativeCreatedAt,
           });
         } catch (error) {
           await options.oauthService.cancelUser(user.id);
@@ -171,6 +174,15 @@ export function createGoogleWorkspaceRouter(options: GoogleWorkspaceRouterOption
     const code = stringQuery(req.query.code, 8192);
     const oauthError = stringQuery(req.query.error_description, 1024)
       || stringQuery(req.query.error, 256);
+    if (oauthError && code) {
+      const rejected = state ? await options.oauthService.rejectAuthorization(state).catch(() => false) : false;
+      const nativeRedirect = rejected ? await options.nativeOAuthHandoff?.complete(state!, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_AMBIGUOUS',
+      }).catch(() => null) : null;
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
+      res.status(400).send(oauthResultPage(false, 'OAuth callback code/error 参数互斥', webBaseUrl));
+      return;
+    }
     if (oauthError) {
       const rejected = state ? await options.oauthService.rejectAuthorization(state).catch(() => false) : false;
       const nativeRedirect = rejected ? await options.nativeOAuthHandoff?.complete(state!, {

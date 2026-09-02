@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  GOVERNANCE_SCHEMA_VERSION,
   PgGovernanceMigrationRunner,
   type GovernancePgPool,
 } from '../data/governance-schema/migrations.js';
@@ -16,7 +17,7 @@ const { Pool } = pg;
 const testPgUrl = process.env.TEST_DATABASE_URL?.trim();
 const describePg = testPgUrl ? describe : describe.skip;
 
-describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
+describePg('Governance Schema V35 PostgreSQL 升级、身份迁移、约束与事务回滚', () => {
   const prefix = `govv17_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const v32RollbackPrefix = `v32rb_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const legacyV28Prefix = `legacy28_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -60,7 +61,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     }
   }, 30_000);
 
-  it('V17 中途失败回滚到 V16，重试升级到 V34 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
+  it('V17 中途失败回滚到 V16，重试升级到 V35 并建立 DWS、Context、租户隔离与 outbox trigger', async () => {
     let injected = false;
     const failingPool = {
       connect: async () => {
@@ -105,7 +106,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       `SELECT version FROM ${prefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 34 }, (_, index) => index + 1),
+      Array.from({ length: 35 }, (_, index) => index + 1),
     );
     const v18Tables = await pool.query<{ name: string | null }>(
       `SELECT to_regclass($1) AS name UNION ALL SELECT to_regclass($2) UNION ALL SELECT to_regclass($3) UNION ALL SELECT to_regclass($4)`,
@@ -273,10 +274,10 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     expect(Number(columns.rows[0]?.count)).toBe(0);
     await new PgGovernanceMigrationRunner(pool, v22Prefix).run();
     const retried = await pool.query<{ version: number }>(`SELECT MAX(version) AS version FROM ${v22Prefix}_governance_schema_versions`);
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
   }, 30_000);
 
-  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V34 仍幂等', async () => {
+  it('V18 遗留 org_memory 可升级，V23 已标记且旧 ledger 存在时后续升级至 V35 仍幂等', async () => {
     const legacyPrefix = `${prefix}_legacy`;
     const sets = `${legacyPrefix}_resource_assignment_sets`;
     const commits = `${legacyPrefix}_credential_commits`;
@@ -348,7 +349,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       SELECT MAX(version)::integer AS version,COUNT(*) FILTER (WHERE version=23)::text AS count
       FROM ${legacyPrefix}_governance_schema_versions
     `);
-    expect(versions.rows[0]).toMatchObject({ version: 34, count: '1' });
+    expect(versions.rows[0]).toMatchObject({ version: GOVERNANCE_SCHEMA_VERSION, count: '1' });
     await expect(pool.query(`INSERT INTO ${commits}
       (tenant_id,operation,idempotency_key,nonce_digest,request_digest,target_id,actor_user_id,status)
       VALUES ('tenant-a','create','idem-1','nonce-2','request-2','target-2','admin-1','running')`)).rejects.toThrow();
@@ -489,7 +490,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v18Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
     const unresolvedAfter = await pool.query<{ is_nullable: string; column_default: string }>(`
       SELECT is_nullable,column_default FROM information_schema.columns
       WHERE table_schema=current_schema() AND table_name=$1 AND column_name='unresolved_items_json'
@@ -580,7 +581,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       `SELECT version FROM ${legacyPrefix}_governance_schema_versions ORDER BY version`,
     );
     expect(appliedVersions.rows.map(row => Number(row.version))).toEqual(
-      Array.from({ length: 34 }, (_, index) => index + 1),
+      Array.from({ length: 35 }, (_, index) => index + 1),
     );
     const retentionTable = await pool.query<{ name: string | null }>(
       'SELECT to_regclass($1) AS name',
@@ -670,7 +671,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       .rejects.toMatchObject({ code: '23514' });
   }, 30_000);
 
-  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V34', async () => {
+  it('V32 requester expand 第二条 DDL 失败时整版回滚，重试后保留 legacy writer 并升级到 V35', async () => {
     const v32Prefix = v32RollbackPrefix;
     let injected = false;
     const failingPool = {
@@ -705,7 +706,7 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
     const retried = await pool.query<{ version: number }>(
       `SELECT MAX(version) AS version FROM ${v32Prefix}_governance_schema_versions`,
     );
-    expect(Number(retried.rows[0]?.version)).toBe(34);
+    expect(Number(retried.rows[0]?.version)).toBe(GOVERNANCE_SCHEMA_VERSION);
     const tables = await pool.query<{ legacy: string | null; requester: string | null }>(
       'SELECT to_regclass($1) AS legacy,to_regclass($2) AS requester',
       [
@@ -728,43 +729,46 @@ describePg('Governance Schema V34 PostgreSQL 升级、身份迁移、约束与�
       ON CONFLICT (tenant_id,user_id) DO NOTHING
     `);
     const grants = new PgOAuthGrantStore({ pool, tablePrefix: prefix });
+    const nativeBinding = { clientState: 's'.repeat(64), pkceChallenge: 'p'.repeat(43),
+      provider: 'google-workspace', redirectUri: 'https://mobile.example.test/oauth/callback',
+      identityGeneration: 3, createdAt: Date.now() };
     await grants.beginNativeHandoff({
       providerState: 'provider-state-native', userId: 'user-native', tenantId: 'tenant-native',
-      connectorId: 'google-workspace', deviceId: 'device-native-1',
+      connectorId: 'google-workspace', deviceId: 'device-native-1', ...nativeBinding,
     });
     const code = await grants.completeNativeHandoff({ providerState: 'provider-state-native', status: 'succeeded' });
-    expect(code).toHaveLength(48);
+    expect(code?.code).toHaveLength(48);
     const stored = await pool.query<{ provider_state_hash: string; code_hash: string }>(
       `SELECT provider_state_hash,code_hash FROM ${prefix}_native_oauth_handoffs WHERE tenant_id='tenant-native'`,
     );
     expect(JSON.stringify(stored.rows)).not.toContain('provider-state-native');
-    expect(JSON.stringify(stored.rows)).not.toContain(code);
+    expect(JSON.stringify(stored.rows)).not.toContain(code?.code);
     await expect(grants.completeNativeHandoff({ providerState: 'provider-state-native', status: 'failed', errorCode: 'REPLAY' }))
       .resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'wrong-user', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: code!.code, userId: 'wrong-user', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'wrong-tenant', deviceId: 'device-native-1',
+      code: code!.code, userId: 'user-native', tenantId: 'wrong-tenant', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
     await expect(grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'wrong-device',
+      code: code!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'wrong-device', ...nativeBinding,
     })).resolves.toBeNull();
     const attempts = await Promise.all(Array.from({ length: 8 }, () => grants.consumeNativeHandoff({
-      code: code!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: code!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })));
     expect(attempts.filter(Boolean)).toHaveLength(1);
     expect(attempts.find(Boolean)).toMatchObject({ connectorId: 'google-workspace', status: 'succeeded' });
 
     await grants.beginNativeHandoff({
       providerState: 'provider-state-expired', userId: 'user-native', tenantId: 'tenant-native',
-      connectorId: 'google-workspace', deviceId: 'device-native-1',
+      connectorId: 'google-workspace', deviceId: 'device-native-1', ...nativeBinding,
     });
     const expiredCode = await grants.completeNativeHandoff({ providerState: 'provider-state-expired', status: 'succeeded' });
     await pool.query(`UPDATE ${prefix}_native_oauth_handoffs SET code_expires_at=NOW()-INTERVAL '1 second'
       WHERE tenant_id='tenant-native' AND connector_id='google-workspace'`);
     await expect(grants.consumeNativeHandoff({
-      code: expiredCode!, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1',
+      code: expiredCode!.code, userId: 'user-native', tenantId: 'tenant-native', deviceId: 'device-native-1', ...nativeBinding,
     })).resolves.toBeNull();
   });
 

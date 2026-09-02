@@ -352,8 +352,9 @@
   },
 
   // ── TTS 语音合成（豆包）───────────────────────────────────
-  // 用于钉钉 [VOICE] 标记触发的文本转语音
+  // 默认关闭；只有 enabled=true 且凭据完整时，服务端与 Web/Mobile 才暴露能力
   "tts": {
+    "enabled": false,
     "doubaoAppId": "",
     "doubaoApiKey": "",
     "doubaoCluster": "volcengine_input_common",
@@ -432,7 +433,7 @@
   //   "endpoint": "https://oss-cn-shenzhen.aliyuncs.com",
   //   "prefix": "agent-saas/artifacts",
   //   "signedUrlSecret": "<至少 16 字符，生产应固定>",
-  //   "readUrlTtlSeconds": 900,
+  //   "readUrlTtlSeconds": 60, // 最大 300 秒；过期后客户端仅自动重授权一次
   //   "maxBlobBytes": 104857600,
   //   "retentionDays": 90,
   //   "gcIntervalMs": 86400000

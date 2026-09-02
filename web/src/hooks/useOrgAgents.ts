@@ -1,41 +1,60 @@
-/**
- * 员工侧专职 Agent 列表（GET /api/org-agents/mine，2026-07 唯恩批次）
- *
- * 未被指派任何专职 Agent 时返回空数组 → 侧边栏 section 零渲染。
- * 账号切换时必须先清空旧账号数据再拉取，避免专职 Agent 摘要跨账号残留。
- */
-import { useCallback, useEffect, useRef, useState } from 'react';
+/** M20-06 tenant-scoped Agent target catalog; legacy presentations are never selectable. */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { adaptAgentTargetCatalogResponse } from '@agent/shared';
+import type {
+  AgentTargetCatalog,
+  AgentTargetUnavailableReason,
+  OrgAgentSummary,
+} from '@agent/shared';
 import { useAuth } from '@/contexts/AuthContext';
 import { authFetch } from '@/lib/authFetch';
 import { registerRefresh, unregisterRefresh } from '@/lib/refreshBus';
-import type { OrgAgentSummary } from '@agent/shared';
 
 export function useOrgAgents() {
   const { user } = useAuth();
   const ownerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
   const ownerKeyRef = useRef(ownerKey);
   ownerKeyRef.current = ownerKey;
-  const [agents, setAgents] = useState<OrgAgentSummary[]>([]);
+  const [catalog, setCatalog] = useState<AgentTargetCatalog<OrgAgentSummary> | null>(null);
+  const [compatibilityReason, setCompatibilityReason] = useState<AgentTargetUnavailableReason | null>(null);
+  const [legacyAgents, setLegacyAgents] = useState<OrgAgentSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     const requestOwnerKey = ownerKey;
     try {
+      if (!user) return;
       const res = await authFetch('/api/org-agents/mine');
-      if (!res.ok) return;
-      const data = await res.json();
-      const list: OrgAgentSummary[] = Array.isArray(data) ? data : [];
+      if (!res.ok) throw new Error('target_catalog_unavailable');
+      const adapted = adaptAgentTargetCatalogResponse<OrgAgentSummary>(await res.json(), user.tenantId);
       if (ownerKeyRef.current !== requestOwnerKey) return;
-      setAgents(list);
+      if (adapted.kind === 'catalog') {
+        setCatalog(adapted.catalog);
+        setLegacyAgents([]);
+        setCompatibilityReason(null);
+      } else {
+        setCatalog(null);
+        setLegacyAgents(adapted.kind === 'legacy-unproven' ? adapted.presentations : []);
+        setCompatibilityReason(adapted.reason);
+      }
     } catch {
-      // 加载失败保持现状（缺省空数组 = 零渲染）
+      if (ownerKeyRef.current !== requestOwnerKey) return;
+      setCatalog(null);
+      setLegacyAgents([]);
+      setCompatibilityReason({
+        code: 'target_catalog_unavailable',
+        message: 'Agent 目录加载失败，暂时无法新建或继续发送，请稍后重试。',
+        contactAdmin: true,
+      });
     } finally {
       if (ownerKeyRef.current === requestOwnerKey) setLoading(false);
     }
-  }, [ownerKey]);
+  }, [ownerKey, user]);
 
   useEffect(() => {
-    setAgents([]);
+    setCatalog(null);
+    setLegacyAgents([]);
+    setCompatibilityReason(null);
     setLoading(true);
     void refresh();
   }, [ownerKey, refresh]);
@@ -45,5 +64,11 @@ export function useOrgAgents() {
     return () => unregisterRefresh('org-agents-mine');
   }, [refresh]);
 
-  return { agents, loading, refresh };
+  const agents = useMemo(() => catalog
+    ? catalog.orgAgents
+      .filter(option => option.availability.status === 'available' && option.presentation)
+      .map(option => option.presentation!)
+    : [], [catalog]);
+
+  return { agents, legacyAgents, catalog, compatibilityReason, loading, refresh };
 }

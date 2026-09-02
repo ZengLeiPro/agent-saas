@@ -1,51 +1,51 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { ApiSessionListItem } from '@agent/shared';
+import type { ApiSessionListItem, BoundaryIdentity } from '@agent/shared';
+import { CACHE_KEY_PREFIX, cacheKeyForIdentity, canonicalSerialize, parseCacheJson, scopedSensitiveKey } from '@agent/shared';
 
-const CACHE_KEY_PREFIX = 'sessionList:';
+const LEGACY_CACHE_KEY_PREFIX = 'sessionList:';
+interface CacheEntry { sessions: ApiSessionListItem[]; hasMore: boolean; }
 
-interface CacheEntry {
-  sessions: ApiSessionListItem[];
-  hasMore: boolean;
+function getCacheKey(viewAsParam: string, identity: BoundaryIdentity | null): string | null {
+  const view = !viewAsParam ? 'default' : (viewAsParam.match(/viewAs=([^&]+)/)?.[1] ?? 'default');
+  try { return cacheKeyForIdentity(identity, 'sessions', view); } catch { return null; }
 }
 
-function getCacheKey(viewAsParam: string): string {
-  if (!viewAsParam) return CACHE_KEY_PREFIX + 'default';
-  const match = viewAsParam.match(/viewAs=([^&]+)/);
-  return CACHE_KEY_PREFIX + (match?.[1] ?? 'default');
+export function saveSessionListCache(sessions: ApiSessionListItem[], hasMore: boolean, viewAsParam: string, identity: BoundaryIdentity | null): void {
+  const key = getCacheKey(viewAsParam, identity);
+  if (!key) return;
+  try {
+    void AsyncStorage.setItem(key, canonicalSerialize({ sessions, hasMore } satisfies CacheEntry)).catch(() => {});
+  } catch { /* invalid display cache is dropped */ }
 }
 
-/** 保存会话列表到本地缓存（fire-and-forget） */
-export function saveSessionListCache(
-  sessions: ApiSessionListItem[],
-  hasMore: boolean,
-  viewAsParam: string,
-): void {
-  const entry: CacheEntry = { sessions, hasMore };
-  void AsyncStorage.setItem(getCacheKey(viewAsParam), JSON.stringify(entry)).catch(() => {});
-}
-
-/** 清除所有会话列表缓存（登出时调用） */
 export async function clearSessionListCache(): Promise<void> {
   try {
-    const keys = await AsyncStorage.getAllKeys();
-    const cacheKeys = keys.filter(k => k.startsWith(CACHE_KEY_PREFIX));
-    if (cacheKeys.length > 0) {
-      await AsyncStorage.multiRemove(cacheKeys);
-    }
+    const keys = (await AsyncStorage.getAllKeys()).filter(k => k.startsWith(`${CACHE_KEY_PREFIX}:`) && k.includes(':resource=sessions:'));
+    if (keys.length) await AsyncStorage.multiRemove(keys);
   } catch { /* silent */ }
 }
 
-/** 读取本地缓存的会话列表 */
-export async function loadSessionListCache(
-  viewAsParam: string,
-): Promise<{ sessions: ApiSessionListItem[]; hasMore: boolean } | null> {
+export async function loadSessionListCache(viewAsParam: string, identity: BoundaryIdentity | null): Promise<CacheEntry | null> {
+  const key = getCacheKey(viewAsParam, identity);
+  if (!key) return null;
   try {
-    const raw = await AsyncStorage.getItem(getCacheKey(viewAsParam));
+    // N-1 ownerless keys cannot establish ownership and are discarded.
+    await AsyncStorage.removeItem(LEGACY_CACHE_KEY_PREFIX + (!viewAsParam ? 'default' : (viewAsParam.match(/viewAs=([^&]+)/)?.[1] ?? 'default')));
+    let raw = await AsyncStorage.getItem(key);
+    if (!raw) {
+      const legacyKey = scopedSensitiveKey(LEGACY_CACHE_KEY_PREFIX + (!viewAsParam ? 'default' : (viewAsParam.match(/viewAs=([^&]+)/)?.[1] ?? 'default')), identity);
+      const legacy = legacyKey ? await AsyncStorage.getItem(legacyKey) : null;
+      if (legacyKey) await AsyncStorage.removeItem(legacyKey);
+      if (legacy) {
+        const parsed = parseCacheJson(legacy) as CacheEntry;
+        if (Array.isArray(parsed.sessions)) {
+          raw = canonicalSerialize({ sessions: parsed.sessions, hasMore: false } satisfies CacheEntry);
+          await AsyncStorage.setItem(key, raw);
+        }
+      }
+    }
     if (!raw) return null;
-    const entry: CacheEntry = JSON.parse(raw);
-    if (!entry.sessions?.length) return null;
-    return { sessions: entry.sessions, hasMore: entry.hasMore };
-  } catch {
-    return null;
-  }
+    const entry = parseCacheJson(raw) as CacheEntry;
+    return entry.sessions?.length ? entry : null;
+  } catch { return null; }
 }

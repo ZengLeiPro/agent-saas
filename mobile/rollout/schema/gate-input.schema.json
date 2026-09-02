@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-03-gate-input-v1",
+  "type": "object",
+  "required": ["schemaVersion", "mode", "release", "targetStage", "currentState", "prerequisites", "cohortId", "approval", "adapterReceipt", "telemetrySnapshot", "supportSnapshot", "receiptNonce"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "mode": { "enum": ["production", "contract"] },
+    "release": { "$ref": "#/$defs/release" }, "targetStage": { "$ref": "#/$defs/stage" },
+    "currentState": { "type": "object", "required": ["lastPassedStage", "lastReceiptDigest"] }, "previousReceipt": { "type": ["object", "null"] },
+    "prerequisites": { "type": "object", "additionalProperties": false, "required": ["m60Build", "m60Submit", "telemetryProvider", "telemetryTestReceipt", "rcPass", "upgradePass"], "properties": { "m60Build": { "$ref": "#/$defs/evidence" }, "m60Submit": { "$ref": "#/$defs/evidence" }, "telemetryProvider": { "$ref": "#/$defs/evidence" }, "telemetryTestReceipt": { "$ref": "#/$defs/evidence" }, "rcPass": { "$ref": "#/$defs/evidence" }, "upgradePass": { "$ref": "#/$defs/evidence" } } },
+    "prerequisiteDocuments": { "type": "object" }, "cohortId": { "type": "string" }, "approval": { "type": "object" }, "adapterReceipt": { "type": "object" },
+    "telemetrySnapshot": { "$ref": "#/$defs/signedSnapshot" }, "supportSnapshot": { "$ref": "#/$defs/signedSnapshot" }, "receiptNonce": { "type": "string" }
+  },
+  "$defs": {
+    "stage": { "enum": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"] },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "release": { "type": "object", "additionalProperties": false, "required": ["sha", "releaseId", "artifactSetDigest"], "properties": { "sha": { "pattern": "^[0-9a-f]{40}$" }, "releaseId": { "type": "string" }, "artifactSetDigest": { "$ref": "#/$defs/digest" } } },
+    "evidence": { "type": "object", "required": ["kind", "digest", "releaseSha", "releaseId", "artifactSetDigest", "status", "evidenceKind"], "properties": { "kind": { "type": "string" }, "digest": { "$ref": "#/$defs/digest" }, "releaseSha": { "pattern": "^[0-9a-f]{40}$" }, "releaseId": { "type": "string" }, "artifactSetDigest": { "$ref": "#/$defs/digest" }, "status": { "const": "pass" }, "evidenceKind": { "enum": ["production", "explicit-non-production-fixture"] } } },
+    "signedSnapshot": { "type": "object", "required": ["snapshotId", "releaseSha", "releaseId", "artifactSetDigest", "stageId", "cohortId", "cohortDefinition", "observedFrom", "observedTo", "collectedAt", "signature"] }
+  }
+}

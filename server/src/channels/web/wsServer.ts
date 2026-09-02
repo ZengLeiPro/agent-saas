@@ -10,11 +10,14 @@ import type { Server as HttpServer, IncomingMessage } from 'http';
 import { URL } from 'url';
 import jwt from 'jsonwebtoken';
 import { chatLogger } from '../../utils/logger.js';
+import { buildStructuredError, canonicalFailureLogRecord } from '../../runtime/structuredError.js';
 import type { WsAuthMessage, WsInboundMessage, WsPingMessage } from './wsTypes.js';
 import type { UserStore } from '../../data/users/store.js';
 import type { TenantStore } from '../../data/tenants/store.js';
 import { checkTenantAccess } from '../../data/tenants/access.js';
 import { UserEventLog } from './userEventLog.js';
+import { buildSyncOverflowFrame } from './syncProtocol.js';
+import type { AuthEpochAuthority } from '../../auth/authEpochAuthority.js';
 
 export interface WsUser {
     sub: string;
@@ -23,6 +26,8 @@ export interface WsUser {
     /** Tenant 归属（多组织改造 PR 4）。WS 升级时由 JwtPayload.tenantId 透传。 */
     tenantId?: string;
     tokenExp?: number;
+    authEpoch?: number;
+    generation?: number;
 }
 
 export interface WsClient {
@@ -35,8 +40,6 @@ export interface WsClient {
     userAgent?: string;
     authenticated?: boolean;
     authenticationTimer?: ReturnType<typeof setTimeout>;
-    /** 旧客户端不发送 epoch；记录本 socket 已经 overflow 接受过的用户日志代际。 */
-    acceptedLegacyUserEventEpoch?: string;
 }
 
 export type WsMessageHandler = (client: WsClient, msg: WsInboundMessage) => void;
@@ -61,6 +64,8 @@ export interface WsServerConfig {
     tenantStore?: TenantStore;
     /** Browser Origin allowlist. Missing Origin remains allowed for non-browser clients/probes. */
     allowedOrigins?: string[];
+    /** M30-01 server authority; omitted only by N-1/unit harnesses. */
+    authEpochAuthority?: AuthEpochAuthority;
 }
 
 export function isWebSocketOriginAllowed(origin: string | undefined, allowedOrigins?: string[]): boolean {
@@ -101,10 +106,7 @@ export class WsServer {
         this.closeHandler = handler;
     }
 
-    /**
-     * 校验用户日志代际。旧客户端没有 epoch：同一 socket 每个用户代际只 overflow 一次，
-     * 随后把该代际视为已接受；TTL 重建换代后再 overflow 一次。
-     */
+    /** 校验用户日志代际。N-1 客户端不发送 epoch，继续使用保留窗口的连续性判定。 */
     hasUserEventEpochMismatch(
         client: WsClient,
         userId: string,
@@ -113,10 +115,7 @@ export class WsServer {
     ): boolean {
         if (lastSeq <= 0) return false;
         const currentEpoch = this.userEventLog.getEpoch(userId);
-        if (clientEpoch !== undefined) return clientEpoch !== currentEpoch;
-        if (client.acceptedLegacyUserEventEpoch === currentEpoch) return false;
-        client.acceptedLegacyUserEventEpoch = currentEpoch;
-        return true;
+        return clientEpoch !== undefined && clientEpoch !== currentEpoch;
     }
 
     /** Attach to an HTTP server for upgrade handling */
@@ -199,7 +198,9 @@ export class WsServer {
                             return;
                         }
                         const user = this.authenticateToken(msg.token);
-                        if (!user) {
+                        if (!user || (this.config.authEpochAuthority && (
+                            msg.authEpoch !== user.authEpoch || msg.generation !== user.generation
+                        ))) {
                             ws.close(4401, 'Authentication failed');
                             return;
                         }
@@ -217,6 +218,13 @@ export class WsServer {
                         return;
                     }
                     if (!this.refreshAuthoritativeUser(client)) return;
+                    if (this.config.authEpochAuthority) {
+                        const bound = msg as WsInboundMessage & { authEpoch?: number; generation?: number };
+                        if (bound.authEpoch !== client.user?.authEpoch || bound.generation !== client.user?.generation) {
+                            ws.close(4401, 'Stale authentication message');
+                            return;
+                        }
+                    }
                     if (msg.action === 'ping') {
                         client.alive = true;
                         const { lastSeq, epoch: clientEpoch, clientTs } = msg as WsPingMessage;
@@ -231,11 +239,11 @@ export class WsServer {
                             this.sendTo(ws, { data: { type: 'pong', seq: currentSeq, epoch: serverEpoch } });
                             if (typeof lastSeq === 'number') {
                                 if (this.hasUserEventEpochMismatch(client, userId, clientEpoch, lastSeq)) {
-                                    this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                    this.sendTo(ws, { data: buildSyncOverflowFrame(currentSeq, serverEpoch) });
                                 } else {
                                     const result = this.userEventLog.getEventsAfter(userId, lastSeq);
                                     if (result.gapDetected) {
-                                        this.sendTo(ws, { data: { type: 'sync_overflow', seq: currentSeq, epoch: serverEpoch } });
+                                        this.sendTo(ws, { data: buildSyncOverflowFrame(currentSeq, serverEpoch) });
                                     } else if (result.events.length > 0) {
                                         this.sendTo(ws, { data: { type: 'sync_ok', seq: currentSeq, epoch: serverEpoch, events: result.events } });
                                     }
@@ -250,7 +258,11 @@ export class WsServer {
                 } catch (err) {
                     chatLogger.warn('WS invalid message:', err);
                     if (!client.authenticated) ws.close(4401, 'Authentication required');
-                    else this.sendTo(ws, { data: { type: 'error', message: 'Invalid message format' } });
+                    else {
+                        const { failure, payload } = buildStructuredError({ source: 'ws', code: 'client_misconfigured', status: 400 });
+                        chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status: 400 })));
+                        this.sendTo(ws, { data: { type: 'error', ...payload } });
+                    }
                 }
             });
 
@@ -315,10 +327,18 @@ export class WsServer {
         this.pingTimer.unref();
     }
 
-    /** Send a downstream message to a specific WebSocket */
-    sendTo(ws: WebSocket, envelope: { eventId?: number; data: object }): void {
+    /** Send a downstream message only while its auth binding remains current. */
+    sendTo(ws: WebSocket, envelope: { eventId?: number; eventCursor?: string; seq?: number; data: object }): void {
+        const client = [...this.clients].find((candidate) => candidate.ws === ws);
+        if (client?.user && this.config.authEpochAuthority && !this.refreshAuthoritativeUser(client)) return;
         if (ws.readyState === ws.OPEN) {
-            ws.send(JSON.stringify(envelope));
+            ws.send(JSON.stringify({
+                ...envelope,
+                ...(client?.user?.authEpoch !== undefined ? {
+                    authEpoch: client.user.authEpoch,
+                    generation: client.user.generation,
+                } : {}),
+            }));
         }
     }
 
@@ -455,6 +475,10 @@ export class WsServer {
             snapshot.role = record.role;
             snapshot.tenantId = record.tenantId;
         }
+        if (this.config.authEpochAuthority && !this.config.authEpochAuthority.validates(snapshot.sub, snapshot)) {
+            client.ws.close(4401, 'Authentication generation revoked');
+            return false;
+        }
         const tenantAccess = checkTenantAccess(this.config.tenantStore, snapshot.tenantId);
         if (!tenantAccess.ok) {
             client.ws.close(4003, tenantAccess.message);
@@ -466,7 +490,7 @@ export class WsServer {
     private authenticateToken(token: string): WsUser | undefined {
         if (!this.config.authEnabled || !this.config.jwtSecret) return undefined;
         try {
-            const decoded = jwt.verify(token, this.config.jwtSecret) as { sub: string; username: string; role: string; tenantId?: string; exp?: number };
+            const decoded = jwt.verify(token, this.config.jwtSecret) as { sub: string; username: string; role: string; tenantId?: string; exp?: number; authEpoch?: number; generation?: number };
             let role = decoded.role;
             let username = decoded.username;
             let tenantId: string | undefined = decoded.tenantId;
@@ -479,7 +503,16 @@ export class WsServer {
             }
             const tenantAccess = checkTenantAccess(this.config.tenantStore, tenantId);
             if (!tenantAccess.ok) return undefined;
-            return { sub: decoded.sub, username, role: role as 'admin' | 'user', tenantId, tokenExp: decoded.exp };
+            if (this.config.authEpochAuthority && !this.config.authEpochAuthority.validates(decoded.sub, decoded)) return undefined;
+            return {
+                sub: decoded.sub,
+                username,
+                role: role as 'admin' | 'user',
+                tenantId,
+                tokenExp: decoded.exp,
+                authEpoch: decoded.authEpoch,
+                generation: decoded.generation,
+            };
         } catch {
             return undefined;
         }

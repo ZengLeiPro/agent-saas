@@ -14,10 +14,12 @@ import type { Express } from 'express';
 import type { WebSocket } from 'ws';
 import { getWebDisplayConfig, isDedicatedWebTool, projectArtifactDelivery } from './displayFilter.js';
 import { chatLogger } from '../../utils/logger.js';
+import { buildStructuredError, canonicalFailureLogRecord } from '../../runtime/structuredError.js';
 import type {
   WebMessageDisplayConfig,
   BaseChannel,
   InboundMessage,
+  InboundAttachmentInfo,
   ChannelContext,
   UploadedFileInfo,
   OutboundEvent,
@@ -45,12 +47,20 @@ import {
 } from './runtimeEventProjection.js';
 import { getTranscriptPath, sessionExists, findTranscriptOrMetaPathBySessionId } from '../../data/transcripts/index.js';
 import { appendTrustedTranscript } from '../../data/transcripts/trusted.js';
-import { readSessionMeta, writeSessionMeta, updateSessionMeta, addSessionCost, type SessionMeta } from '../../data/transcripts/meta.js';
+import {
+  readSessionMeta,
+  writeSessionMeta,
+  updateSessionMeta,
+  writeSessionMetaIfAbsent,
+  addSessionCost,
+  ensureSessionAgentTargetBinding,
+  resolveSessionAgentTarget,
+  type SessionMeta,
+} from '../../data/transcripts/meta.js';
 import { resolveUserCwd } from '../../workspace/resolver.js';
 import { resolveAgentPath } from '../../workspace/namespace.js';
 import type { UserStore } from '../../data/users/store.js';
 import { tenantAccessErrorMessage } from '../../data/tenants/access.js';
-import { speechToText } from '../../integrations/stt/sttClient.js';
 import { EventBufferStore } from './eventBuffer.js';
 import { clearSessionsListCache } from '../../routes/sessions.js';
 import { extractTitleContext, generateTitleWithFallback, shouldGenerateTitleFromFirstMessage } from '../../agent/titleGenerator.js';
@@ -63,7 +73,8 @@ import type { GuardrailEventVerdict } from '../../data/guardrail/pgGuardrailEven
 import { WsServer, type WsClient } from './wsServer.js';
 import { sensitiveActionAccessError, type SensitiveActionTarget } from './wsAuthorization.js';
 import { EventBus, type SessionContext } from './eventBus.js';
-import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
+import type { WsChatMessage, WsRespondMessage, WsAbortMessage, WsRunStatusMessage, WsResumeMessage, WsSyncMessage, WsQueueSnapshotMessage, WsAttachActiveStreamMessage, WsInboundMessage, ChatRejectReasonCode } from './wsTypes.js';
+import { buildSyncOverflowFrame, type SyncPendingInteractionSnapshot, type SyncSessionSnapshot } from './syncProtocol.js';
 import { appendLoginLog, detectLoginChannel } from '../../data/login-logs/index.js';
 import { getUserExtraDirs, isPathWithinAnyDirectory, isPathWithinDirectory } from '../../security/extraDirs.js';
 import { FileEventStore, getRuntimeEventLogPath } from '../../runtime/fileEventStore.js';
@@ -73,6 +84,7 @@ import { createRuntimeSessionRecord, resolveSessionMemoryPolicy } from '../../ru
 import { resolveSessionSandboxProfile } from '../../runtime/sandboxProfile.js';
 import { deriveStableWorkspaceId } from '../../runtime/workspaceIdentity.js';
 import type { RunRecord } from '../../runtime/runStore.js';
+import { projectRunLiveness, type RunLiveness } from '../../runtime/runLiveness.js';
 import { DEFAULT_TENANT_ID } from '../../data/tenants/types.js';
 import { runtimeRunController } from '../../runtime/runController.js';
 import { normalizeInteractionResponse } from '../../runtime/interactionProjection.js';
@@ -98,9 +110,32 @@ import {
 } from './channelRuntimeHelpers.js';
 import { handleWebChannelEvents, type WebChannelEventTitleContext } from './channelEventHandler.js';
 import { bindChatAttachments } from './attachmentBinding.js';
+import {
+  adaptWebChatSubmission,
+  chatSubmissionIssueReasonCode,
+} from './chatSubmissionAdapter.js';
+import {
+  canonicalAttachmentsToInbound,
+  ChatAttachmentResolutionError,
+  resolveChatSubmissionAttachments,
+} from './chatSubmissionAttachments.js';
+import {
+  CHAT_SUBMISSION_VERSION,
+  canonicalChatAttachmentToDisplay,
+  type CanonicalChatSubmission,
+} from '@agent/shared';
+import {
+  AGENT_TARGET_BINDING_VERSION,
+  sameAgentTarget,
+  type AgentTarget,
+  type MessageAttachmentDisplay,
+  type SandboxProfile,
+} from '@agent/shared';
 import { deriveSubmissionSessionId, resolveAuthoritativeSubmissionState } from './channelSubmissionHelpers.js';
+import { buildChatQueueSnapshot, projectChatQueueItem } from './chatQueueSnapshot.js';
 import type { ModelResolver, WebChannelRuntimeConfig } from './channelConfig.js';
 import { resolveResumeDurableBinding, type ResumeDurableBinding } from './resumeDurableBinding.js';
+import { getRuntimeStreamStatus, handleRuntimeStreamSocketClose, WebRuntimeRecovery } from './runtimeRecovery.js';
 export type { ModelResolver } from './channelConfig.js';
 
 /**
@@ -158,6 +193,8 @@ export class WebChannel implements BaseChannel {
   private chatProcessingTails = new WeakMap<WebSocket, Promise<void>>();
   /** 同进程跨 WS 的相同 clientMessageId 也要串行，避免重复 STT/门禁与 TOCTOU 入队竞争。 */
   private submissionProcessingTails = new Map<string, Promise<void>>();
+  /** Requests that opted into the M20-05 structured ACK protocol. */
+  private structuredInteractionRequestIds = new Set<string>();
 
   /** 返回当前活跃流数量（供 ChannelManager 聚合） */
   getActiveStreamCount(): number {
@@ -223,43 +260,13 @@ export class WebChannel implements BaseChannel {
     return undefined;
   }
 
-  /**
-   * 查询指定会话是否有活跃的 Agent 流。
-   *
-   * 事实源选择：主查 durable PG `runStore.getActiveBySession()`（run 是否活着的唯一真相）;
-   * `EventBufferStore` 只是内存传输缓存，进程重启/buffer 被 evict 都会丢，**不能**承担判活职责。
-   * 仅当 runStore 不可用或异常时退化看 buffer 信号。
-   *
-   * 这是 2026-06-25 "切会话后看不到积压消息" 问题的根因之一：原实现只看 buffer.isActive,
-   * buffer 在 chat 流结束后会 `complete` 但 PG run 仍可能 active（多 turn 场景）,导致 HTTP
-   * 误报 inactive,前端连锁忽略 active_stream 兜底,刷新才能看到新消息。
-   */
-  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string }> {
-    try {
-      const runStore = this.config.enqueueRuntime?.runStore;
-      if (runStore?.getActiveBySession) {
-        const activeRun = await runStore.getActiveBySession(sessionId);
-        if (activeRun) {
-          const streamId = this.findActiveStreamIdBySession(sessionId)
-            ?? (typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : undefined);
-          return {
-            active: true,
-            ...(streamId ? { streamId } : {}),
-            runId: activeRun.runId,
-            status: activeRun.status,
-          };
-        }
-        // runStore 明确说没在跑 → 即使 buffer 还 active 也按 runStore 为准
-        return { active: false };
-      }
-    } catch (err) {
-      chatLogger.warn(`[stream-status] runStore.getActiveBySession 异常,降级查 buffer: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    // 兜底：runStore 不可用时退化看 buffer
-    const active = this.eventBufferStore.isActive(sessionId);
-    if (!active) return { active: false };
-    const streamId = this.findActiveStreamIdBySession(sessionId);
-    return { active: true, ...(streamId ? { streamId } : {}) };
+  async getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }> {
+    return getRuntimeStreamStatus(
+      sessionId,
+      this.config.enqueueRuntime?.runStore,
+      this.eventBufferStore,
+      (id) => this.findActiveStreamIdBySession(id),
+    );
   }
   private streamIdCounter = 0;
   private eventBufferStore = new EventBufferStore();
@@ -329,6 +336,7 @@ export class WebChannel implements BaseChannel {
     meta: {
       sessionId?: string;
       runId?: string;
+      sourceRunId?: string;
       status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
       deliveryMode?: 'queue' | 'steer';
       queuePosition?: number;
@@ -340,16 +348,27 @@ export class WebChannel implements BaseChannel {
     else this.wsSend(ws, data);
   }
 
-  /** 发送消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
+  /** 发送结构化消息拒绝（服务端决定不处理），客户端据此将 pending 气泡翻为 failed */
   private sendChatRejected(ws: WebSocket, clientMsgId: string, reasonCode: ChatRejectReasonCode, reason: string): void {
     if (ws.readyState !== ws.OPEN) return;
-    const data = { type: 'chat_rejected' as const, client_msg_id: clientMsgId, reason_code: reasonCode, reason };
+    const { failure, payload } = buildStructuredError({ source: 'chat_rejected', code: reasonCode });
+    // Auditable metadata only: never log reason/body/credential.
+    chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'chat_rejected' })));
+    const data = {
+      type: 'chat_rejected' as const,
+      client_msg_id: clientMsgId,
+      reason_code: reasonCode,
+      // N-1 display fallback only. Current clients classify exclusively by code.
+      reason,
+      code: payload.code,
+      correlationId: payload.correlationId,
+      ...(payload.retryAfter !== undefined ? { retryAfter: payload.retryAfter } : {}),
+    };
     if (this.eventBus) {
       this.eventBus.emitReply(ws, data);
     } else {
       this.wsSend(ws, data);
     }
-    chatLogger.warn(`[chat_rejected] ${reasonCode}: ${reason} (client_msg_id=${clientMsgId})`);
   }
 
   /** 企业专家会话的后续动作统一重新鉴权，避免停用/取消指派后从特殊路径继续执行。 */
@@ -373,20 +392,13 @@ export class WebChannel implements BaseChannel {
       : '该企业专家当前不可用，请联系组织管理员';
   }
 
-  private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
-  /**
-   * 按 ws 串行化 resume 处理链。handleResumeAsync 内部有 await（runStore.getActiveBySession），
-   * 两条并发 resume（如前端重连时多个监听器各发一次）会在 await 处交错：都读到空的 prevUnsub，
-   * 都 eventBufferStore.subscribe，第二个 resumeSubscriptions.set 覆盖第一个的退订句柄，第一个
-   * EventBuffer listener 泄漏且无法退订 → 每个流式事件被投递两次（前端表现为逐字符重复）。
-   * 串行化保证后一条 resume 一定读到前一条已注册的订阅并先退订，同一 ws 只保留一个 listener。
-   */
-  private resumeChains = new WeakMap<WebSocket, Promise<void>>();
   /**
    * 追踪每个 WS 连接当前绑定的 streamId。
    * 用于防止用户切换会话后，旧会话的 handleEvents 继续向同一 WS 直接推送事件。
    * 事件仍会写入 EventBuffer，用户切回时通过 resume + replay 获取。
    */
+  private resumeSubscriptions = new WeakMap<WebSocket, () => void>();
+  private resumeChains = new WeakMap<WebSocket, Promise<void>>();
   private wsActiveStream = new WeakMap<WebSocket, string>();
   /**
    * WS → 当前查看会话的亲和映射（chat accept / resume 设置，detach 清除）。
@@ -394,21 +406,14 @@ export class WebChannel implements BaseChannel {
    * 用户切去别的会话后，退化 run 的接管不应劫持新会话视图的流绑定。
    */
   private wsSessionAffinity = new WeakMap<WebSocket, string>();
-
+  private readonly runtimeRecovery: WebRuntimeRecovery;
   private handleActiveStreamSocketClose(
     streamId: string,
     ws: WebSocket,
     connectionAbortController: AbortController,
     activeInteractionIds: Set<string>,
   ): void {
-    const entry = this.activeStreams.get(streamId);
-    // 断线不删除 activeStreams：Agent 可能仍在跑，重连 resume 需要同一个 streamId。
-    // 最终清理由 processChatMessage.finally 负责。
-    if (entry && entry.ws === ws) {
-      this.wsActiveStream.delete(ws);
-    }
-    connectionAbortController.abort();
-    interactionStore.rejectOnDisconnect(activeInteractionIds, 'WebSocket connection closed');
+    handleRuntimeStreamSocketClose(this.activeStreams.get(streamId)?.ws, ws, this.wsActiveStream, connectionAbortController, activeInteractionIds);
   }
 
   /** per-session 串行锁：确保同一 session 的 Agent run 不会并发执行 */
@@ -448,6 +453,25 @@ export class WebChannel implements BaseChannel {
     this.displayConfig = getWebDisplayConfig(config.displayConfig);
     this.modelResolver = config.modelResolver;
     this.userStore = config.userStore;
+    this.runtimeRecovery = new WebRuntimeRecovery({
+      config,
+      eventBufferStore: this.eventBufferStore,
+      wsActiveStream: this.wsActiveStream,
+      resumeSubscriptions: this.resumeSubscriptions,
+      resumeChains: this.resumeChains,
+      wsSessionAffinity: this.wsSessionAffinity,
+      getWsServer: () => this.wsServer,
+      getActiveStream: (streamId) => this.activeStreams.get(streamId),
+      findActiveStreamIdBySession: (sessionId) => this.findActiveStreamIdBySession(sessionId),
+      findActiveStreamByRunId: (runId) => this.findActiveStreamByRunId(runId),
+      sensitiveActionAccessError: (client, target) => this.sensitiveActionAccessError(client, target),
+      anonymousBindingAccessError: (client, ws) => this.anonymousBindingAccessError(client, ws),
+      eventStoreTenantForClient: (client, tenantId, userId) => this.eventStoreTenantForClient(client, tenantId, userId),
+      wsSend: (ws, data, eventId, eventCursor) => this.wsSend(ws, data, eventId, eventCursor),
+      sendQueueSnapshot: (client, sessionId, recovery) => this.sendQueueSnapshot(client, sessionId, recovery),
+      getStreamStatus: (sessionId) => this.getStreamStatus(sessionId),
+      getRuntimeEventStoreForSession: (sessionId, tenantId) => this.getRuntimeEventStoreForSession(sessionId, tenantId),
+    });
     // 定期清理 stale session locks，防止异常路径导致的 Map 泄漏
     this.lockCleanupTimer = setInterval(() => {
       const now = Date.now();
@@ -469,9 +493,10 @@ export class WebChannel implements BaseChannel {
       userStore: this.userStore,
       tenantStore: this.config.tenantStore,
       allowedOrigins: this.config.allowedOrigins,
+      authEpochAuthority: this.config.authEpochAuthority,
     });
 
-    // 创建 EventBus（所有 WS 下行事件的唯一出口）
+    // 创建 EventBus（所有 WS 下行事件的唯一出口及 auth binding gate）
     this.eventBus = new EventBus({
       eventBufferStore: this.eventBufferStore,
       userEventLog: this.wsServer.userEventLog,
@@ -481,9 +506,7 @@ export class WebChannel implements BaseChannel {
         return this.userStore.listAll().filter(u => u.role === 'admin').map(u => u.id);
       },
       sendTo: (ws, envelope) => {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify(envelope));
-        }
+        this.wsServer!.sendTo(ws, envelope as { eventId?: number; eventCursor?: string; seq?: number; data: object });
       },
       isActiveStream: (ws, streamId) => this.wsActiveStream.get(ws) === streamId,
     });
@@ -513,16 +536,28 @@ export class WebChannel implements BaseChannel {
           void this.handleRunStatus(client, msg);
           break;
         case 'resume':
-          this.handleResume(client, msg);
+          if (this.runtimeRecovery.admitRequest(client, msg)) this.runtimeRecovery.handleResume(client, msg);
+          break;
+        case 'queue_snapshot':
+          if (!this.runtimeRecovery.admitRequest(client, msg)) break;
+          void this.sendQueueSnapshot(client, msg.sessionId, msg).catch((err) => {
+            chatLogger.warn(`[queue_snapshot] recovery failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
+          break;
+        case 'attach_active_stream':
+          if (this.runtimeRecovery.admitRequest(client, msg)) this.runtimeRecovery.handleResume(client, msg, true);
           break;
         case 'detach':
-          this.handleDetach(client);
+          this.runtimeRecovery.handleDetach(client);
           break;
         case 'sync':
-          this.handleSync(client, msg);
+          if (!this.runtimeRecovery.admitRequest(client, msg)) break;
+          void this.runtimeRecovery.handleSync(client, msg).catch((err) => {
+            chatLogger.warn(`[sync] authoritative recovery failed: ${err instanceof Error ? err.message : String(err)}`);
+          });
           break;
         default:
-          this.wsSend(client.ws, { type: 'error', message: `Unknown action: ${(msg as any).action}` });
+          this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       }
     });
 
@@ -771,13 +806,7 @@ export class WebChannel implements BaseChannel {
         break;
       case 'permission_request':
       case 'ask_user':
-        if (input.userId) {
-          void this.markSessionUnread({
-            userId: input.userId,
-            sessionId: input.sessionId,
-            eventKey: `interaction:${input.event.interactionId}`,
-          });
-        }
+        // Active interaction has its own pending indicator; it is not an AI unread reply.
         emitSession({
           type: input.event.type,
           interactionId: input.event.interactionId,
@@ -912,17 +941,14 @@ export class WebChannel implements BaseChannel {
         type: 'session_read_state_changed',
         sessionId: event.sessionId,
         hasUnreadAiReply: event.hasUnreadAiReply,
+        readSeq: event.readSeq,
+        serverVersion: event.serverVersion,
+        updatedAt: event.updatedAt,
+        sourceSeq: event.sourceSeq,
       });
       return;
     }
-    if (event.type === 'interaction_requested' && event.userId && event.sessionId) {
-      void this.markSessionUnread({
-        userId: event.userId,
-        sessionId: event.sessionId,
-        eventKey: `interaction:${event.interactionId}`,
-        broadcastEvenIfUnchanged: true,
-      });
-    }
+    // interaction_requested is projected through activeInteraction/pending_interactions, not unread.
     const sessionId = event.sessionId;
     if (!sessionId) return;
     if (event.type === 'interjection_applied') {
@@ -1096,16 +1122,26 @@ export class WebChannel implements BaseChannel {
       }
     }
   }
-  // ── WS 辅助方法 ──────────────────────────────────────
+  // ── WS 辅助方法（统一经过 auth binding gate）──────────
 
   private wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({
-        ...(eventId !== undefined ? { eventId } : {}),
-        ...(eventCursor ? { eventCursor } : {}),
-        data,
-      }));
+    const envelope = {
+      ...(eventId !== undefined ? { eventId } : {}),
+      ...(eventCursor ? { eventCursor } : {}),
+      data,
+    };
+    if (this.wsServer && typeof this.wsServer.sendTo === 'function') {
+      this.wsServer.sendTo(ws, envelope);
+    } else if (ws.readyState === ws.OPEN) {
+      // Unit-only construction before start() or with a partial WsServer test double.
+      ws.send(JSON.stringify(envelope));
     }
+  }
+
+  private sendCanonicalWsError(ws: WebSocket, code: string, status?: number): void {
+    const { failure, payload } = buildStructuredError({ source: 'ws', code, ...(status ? { status } : {}) });
+    chatLogger.warn(JSON.stringify(canonicalFailureLogRecord({ failure, source: 'ws', status })));
+    this.wsSend(ws, { type: 'error', ...payload });
   }
 
   // ── 消息处理器 ──────────────────────────────────────
@@ -1113,7 +1149,7 @@ export class WebChannel implements BaseChannel {
   /** 处理 chat 消息（替代 POST /api/chat） */
   private handleChat(client: WsClient, msg: WsChatMessage): void {
     const previousWs = this.chatProcessingTails.get(client.ws) ?? Promise.resolve();
-    const clientMsgId = msg.client_msg_id?.trim();
+    const clientMsgId = adaptWebChatSubmission(msg).clientMsgId;
     const submissionKey = clientMsgId
       ? `${client.user?.tenantId ?? 'tenant'}|${client.user?.sub ?? 'anon'}|${clientMsgId}`
       : undefined;
@@ -1142,7 +1178,38 @@ export class WebChannel implements BaseChannel {
   }
 
   /** 处理 respond 消息（替代 POST /api/chat/respond） */
-  private sendRespond(client: WsClient, interactionId: string, clientAttemptId?: string, error?: string, canonicalResponse?: object): void { this.wsSend(client.ws, { type: error ? 'respond_error' : 'respond_ok', interactionId, ...(error ? { error } : {}), ...(typeof clientAttemptId === 'string' ? { clientAttemptId } : {}), ...(!error && canonicalResponse ? { response: normalizeInteractionResponse(canonicalResponse as Record<string, unknown>) as unknown as Record<string, unknown> } : {}) }); }
+  private sendRespond(
+    client: WsClient,
+    interactionId: string,
+    requestId?: string,
+    error?: string,
+    canonicalResponse?: object,
+    sessionId?: string,
+    statusOverride?: 'accepted' | 'duplicate' | 'resolved' | 'rejected' | 'not_found' | 'expired',
+  ): void {
+    const status = statusOverride ?? (error
+      ? (/not found/i.test(error) ? 'not_found' : /expired|timed out/i.test(error) ? 'expired' : 'rejected')
+      : 'resolved');
+    const structured = typeof requestId === 'string' && this.structuredInteractionRequestIds.has(requestId);
+    const retryable = Boolean(error && status !== 'expired' && !/Access denied|conflict|User denied/i.test(error));
+    const responseVersion = interactionStore.get(interactionId)?.version
+      ?? (sessionId ? interactionStore.getCompleted(sessionId, interactionId)?.version : undefined);
+    this.wsSend(client.ws, {
+      type: error ? 'respond_error' : 'respond_ok', interactionId,
+      ...(structured ? { status } : {}),
+      ...(structured && sessionId ? { sessionId } : {}),
+      ...(error ? { error, ...(structured ? { reason: error, retryable } : {}) } : {}),
+      ...(typeof requestId === 'string' ? { ...(structured ? { requestId } : {}), clientAttemptId: requestId } : {}),
+      ...(!error && canonicalResponse ? { response: normalizeInteractionResponse(canonicalResponse as Record<string, unknown>) as unknown as Record<string, unknown> } : {}),
+      ...(structured && responseVersion !== undefined ? { version: responseVersion } : {}),
+      ...(client.user?.authEpoch !== undefined ? { authEpoch: client.user.authEpoch } : {}),
+      ...(client.user?.generation !== undefined ? { generation: client.user.generation } : {}),
+    });
+  }
+
+  private interactionResponsesConflict(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+    return JSON.stringify(normalizeInteractionResponse(left)) !== JSON.stringify(normalizeInteractionResponse(right));
+  }
 
   private async activatePersistedInteractionClaim(runId: string, claim: PersistedInteractionClaimMetadata['persistedInteractionResumeClaim'], metadataPatch?: Record<string, unknown>): Promise<boolean> {
     const runtime = this.config.enqueueRuntime; if (!runtime?.scheduler.activateCreatedRun) return false;
@@ -1159,34 +1226,77 @@ export class WebChannel implements BaseChannel {
     return Boolean(rollback && await rollback.call(this.config.enqueueRuntime!.runStore, runId, claim, waitingStatus, reason));
   }
   private handleRespond(client: WsClient, msg: WsRespondMessage): void {
-    const { interactionId, sessionId, clientAttemptId, action: _, ...response } = msg;
+    const { interactionId, sessionId, requestId: explicitRequestId, clientAttemptId, version, authEpoch: _authEpoch, generation: _generation, response: nestedResponse, action: _, ...legacyResponse } = msg;
+    const requestId = typeof explicitRequestId === 'string' ? explicitRequestId : clientAttemptId;
+    if (typeof explicitRequestId === 'string') {
+      this.structuredInteractionRequestIds.add(explicitRequestId);
+      if (this.structuredInteractionRequestIds.size > 10_000) this.structuredInteractionRequestIds.delete(this.structuredInteractionRequestIds.values().next().value!);
+    }
+    const response = nestedResponse && typeof nestedResponse === 'object' && !Array.isArray(nestedResponse)
+      ? nestedResponse : legacyResponse;
     if (!interactionId) {
-      this.sendRespond(client, '', clientAttemptId, 'interactionId is required');
+      this.sendRespond(client, '', requestId, 'interactionId is required', undefined, typeof sessionId === 'string' ? sessionId : undefined);
       return;
     }
     const tenantAccessError = this.tenantAccessErrorForClient(client);
     if (tenantAccessError) {
-      this.sendRespond(client, interactionId, clientAttemptId, tenantAccessError);
+      this.sendRespond(client, interactionId, requestId, tenantAccessError);
       return;
     }
 
     const pendingInteraction = interactionStore.get(interactionId);
+    if (typeof explicitRequestId === 'string' && pendingInteraction && (!Number.isSafeInteger(version) || version !== pendingInteraction.version)) {
+      this.sendRespond(client, interactionId, requestId, 'Interaction version conflict', undefined, typeof sessionId === 'string' ? sessionId : pendingInteraction?.sessionId, 'rejected');
+      return;
+    }
     const actionAccessError = pendingInteraction && (pendingInteraction.userId
       ? this.sensitiveActionAccessError(client, { ownerUserId: pendingInteraction.userId })
       : this.anonymousBindingAccessError(client, pendingInteraction.boundWebSocket));
     if (actionAccessError) {
-      this.sendRespond(client, interactionId, clientAttemptId, actionAccessError);
+      this.sendRespond(client, interactionId, requestId, actionAccessError);
       return;
     }
 
-    void this.resolveInteraction(client, interactionId, response, typeof sessionId === 'string' ? sessionId : undefined, clientAttemptId).catch((error) => {
+    const pendingSessionId = pendingInteraction?.sessionId; // ownership/session fence
+    if (typeof sessionId === 'string' && pendingSessionId && sessionId !== pendingSessionId) {
+      this.sendRespond(client, interactionId, requestId, 'Interaction session conflict', undefined, sessionId, 'rejected');
+      return;
+    }
+    const stableSessionId = pendingSessionId ?? (typeof sessionId === 'string' ? sessionId : undefined);
+    if (stableSessionId) {
+      const completed = interactionStore.getCompleted(stableSessionId, interactionId);
+      if (completed) {
+        if (typeof explicitRequestId === 'string' && (!Number.isSafeInteger(version) || version !== completed.version)) {
+          this.sendRespond(client, interactionId, requestId, 'Interaction version conflict', undefined, stableSessionId, 'rejected');
+          return;
+        }
+        const canonical = normalizeInteractionResponse(response);
+        // A late/double response never rewrites the winner; replay the sole canonical receipt.
+        void canonical;
+        this.sendRespond(client, interactionId, requestId, undefined, completed.response, stableSessionId, 'duplicate');
+        return;
+      }
+    }
+    if (pendingInteraction && requestId) {
+      const claim = interactionStore.claimResponse(interactionId, requestId, normalizeInteractionResponse(response));
+      if (claim === 'conflict') {
+        this.sendRespond(client, interactionId, requestId, 'Interaction already has a concurrent response winner', undefined, stableSessionId, 'rejected');
+        return;
+      }
+      if (claim === 'duplicate') {
+        this.sendRespond(client, interactionId, requestId, undefined, undefined, stableSessionId, 'accepted');
+        return;
+      }
+    }
+    void this.resolveInteraction(client, interactionId, response, stableSessionId, requestId).catch((error) => {
+      if (requestId) interactionStore.releaseResponseClaim(interactionId, requestId);
       chatLogger.error(`interaction response failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`);
-      this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response failed; please retry');
+      this.sendRespond(client, interactionId, requestId, 'Interaction response failed; please retry');
     });
   }
 
   private async resolveInteraction(client: WsClient, interactionId: string, response: Record<string, unknown>, fallbackSessionId?: string, clientAttemptId?: string): Promise<void> {
-    // 在 resolve 之前获取 sessionId（resolve 会删除 entry）
+    // 在 resolve 前捕获 interaction revision/order（resolve 会删除 entry）。
     const pendingInteraction = interactionStore.get(interactionId);
     const sessionId = pendingInteraction?.sessionId ?? interactionStore.getSessionId(interactionId);
     const orgAgentAccessError = this.orgAgentActionAccessError(client, pendingInteraction?.orgAgentId);
@@ -1220,6 +1330,7 @@ export class WebChannel implements BaseChannel {
           runtimeEventStoreFor: this.config.runtimeEventStoreFor,
         }); durableResponse = normalizeInteractionResponse(canonical.response as Record<string, unknown>);
       } catch (error) {
+        if (clientAttemptId) interactionStore.releaseResponseClaim(interactionId, clientAttemptId);
         chatLogger.warn(`active interaction persistence failed interaction=${interactionId}: ${error instanceof Error ? error.message : String(error)}`); this.sendRespond(client, interactionId, clientAttemptId, 'Interaction response was not persisted; please retry'); return;
       }
     }
@@ -1231,16 +1342,18 @@ export class WebChannel implements BaseChannel {
       }
       return;
     }
-    this.sendRespond(client, interactionId, clientAttemptId, undefined, durableResponse);
+    if (sessionId) interactionStore.recordCompleted(sessionId, interactionId, clientAttemptId ?? `legacy:${interactionId}`, durableResponse, pendingInteraction?.version, pendingInteraction?.order, pendingInteraction?.userId ?? client.user?.sub);
+    this.sendRespond(client, interactionId, clientAttemptId, undefined, durableResponse, sessionId, 'resolved');
 
-    // 广播到同用户其他连接，让它们关闭弹窗
+    // 广播 canonical outcome 到同用户其他连接，让它们关闭固定区卡片。
     if (sessionId && this.eventBus) {
       for (const [, entry] of this.activeStreams) {
         if (entry.sessionId === sessionId && entry.userId) {
           this.eventBus!.emitUser(entry.userId, {
             type: 'interaction_resolved',
             sessionId,
-            interactionId, response: durableResponse,
+            interactionId, status: durableResponse.allow === false ? 'rejected' : 'resolved', response: durableResponse,
+            ...(durableResponse.allow === false ? { reason: durableResponse.message || 'User denied' } : {}),
           }, client.ws);
           break;
         }
@@ -1282,7 +1395,14 @@ export class WebChannel implements BaseChannel {
     if (!hasPendingApproval && !pendingAskUser) {
       const canonicalResponse = findCanonicalPersistedApprovalResponse(existingEvents, sessionId, interactionId);
       if (!canonicalResponse) return false;
-      this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse);
+      const failClosedMessage = canonicalResponse.allow === false && typeof canonicalResponse.message === 'string'
+        ? canonicalResponse.message
+        : '';
+      const wasServerFailClosed = failClosedMessage.startsWith('源 run 不可恢复（')
+        || failClosedMessage === '持久审批恢复需要 Runtime Scheduler；已安全拒绝，未恢复旧 Run';
+      // A recovered terminal receipt is the only final state; later payloads are ignored.
+      void wasServerFailClosed;
+      this.sendRespond(client, interactionId, clientAttemptId, undefined, canonicalResponse, sessionId, 'duplicate');
       return true;
     }
     const sourceRunId = pendingApprovalRunId ?? pendingAskUser?.runId;
@@ -1330,7 +1450,7 @@ export class WebChannel implements BaseChannel {
       const existingClaim = currentRun.metadata?.persistedInteractionResumeClaim;
       if (acceptedEvent && isPersistedInteractionClaim(existingClaim, sessionId, interactionId)) {
         const activated = (currentRun.status === 'pending' && currentRun.metadata?.schedulerState === 'ready') || await this.activatePersistedInteractionClaim(pendingAskUser.runId, existingClaim, { resumeInteraction: { interactionId, response: acceptedEvent.response } });
-        this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined);
+        this.sendRespond(client, interactionId, clientAttemptId, activated ? undefined : 'Interaction response is awaiting activation', activated ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : undefined, sessionId, activated ? 'duplicate' : undefined);
         return true;
       }
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingAskUser.runId, expectedStatus: 'waiting_user', reason: 'ask_user_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'ask_user', response: normalizedResponse });
@@ -1440,7 +1560,7 @@ export class WebChannel implements BaseChannel {
         return true;
       }
       // A durable event without its staged claim may be an uncertain append result; reclaim and activate it below instead of ACKing a waiting Run.
-      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, undefined, acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response)); return true; }
+      if (alreadyApplied) { this.sendRespond(client, interactionId, clientAttemptId, undefined, acceptedEvent?.type === 'interaction_resolved' ? normalizeInteractionResponse(acceptedEvent.response as Record<string, unknown>) : normalizeInteractionResponse(response), sessionId, 'duplicate'); return true; }
       const acceptedResponse = acceptedEvent?.type === 'interaction_resolved' ? acceptedEvent.response : undefined;
       const resumeResponse = acceptedResponse && typeof acceptedResponse === 'object' ? normalizeInteractionResponse(acceptedResponse as Record<string, unknown>) : normalizeInteractionResponse(response);
       let claim = await claimPersistedInteractionResume({ runStore: enqueueRuntime.runStore, runId: pendingApprovalRunId, expectedStatus: 'waiting_approval', reason: 'approval_resolved_enqueue_resume', sessionId, interactionId, interactionType: 'approval', response: resumeResponse, transcriptPath: transcriptPath ?? undefined });
@@ -1489,9 +1609,8 @@ export class WebChannel implements BaseChannel {
     // legacy 直连路径的 chat tail 覆盖整段模型流，abort 必须立即执行，不能排队到流结束。
     if (!this.config.enqueueRuntime) {
       void this.handleAbortAsync(client, msg).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        chatLogger.warn(`abort failed: ${message}`);
-        this.wsSend(client.ws, { type: 'error', message });
+        void err;
+        this.sendCanonicalWsError(client.ws, 'unknown');
       });
       return;
     }
@@ -1506,9 +1625,8 @@ export class WebChannel implements BaseChannel {
       }
     };
     void next.then(cleanup, (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      chatLogger.warn(`abort failed: ${message}`);
-      this.wsSend(client.ws, { type: 'error', message });
+      void err;
+      this.sendCanonicalWsError(client.ws, 'unknown');
       cleanup();
     });
   }
@@ -1517,14 +1635,14 @@ export class WebChannel implements BaseChannel {
     const runId = typeof msg.runId === 'string' && msg.runId.trim() ? msg.runId.trim() : undefined;
     const streamId = typeof msg.streamId === 'string' && msg.streamId.trim() ? msg.streamId.trim() : undefined;
     if (!runId && !streamId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
 
     const active = runId ? this.findActiveStreamByRunId(runId) : undefined;
     const legacyEntry = !runId && streamId ? this.activeStreams.get(streamId) : undefined;
     if (runId && streamId && active && active.streamId !== streamId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId and streamId do not match' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 409);
       return;
     }
     const entry = active?.entry ?? legacyEntry;
@@ -1545,7 +1663,7 @@ export class WebChannel implements BaseChannel {
         if (hasSensitiveTarget && this.sensitiveActionAccessError(client, {
           tenantId: record.tenantId, ownerUserId: record.userId,
         })) {
-          this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+          this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
           return;
         }
       }
@@ -1554,12 +1672,12 @@ export class WebChannel implements BaseChannel {
     if (entry?.userId) {
       hasSensitiveTarget = true;
       if (this.sensitiveActionAccessError(client, { ownerUserId: entry.userId })) {
-        this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+        this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
         return;
       }
     }
     if (!hasSensitiveTarget && this.anonymousBindingAccessError(client, entry?.ws)) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
 
@@ -1680,6 +1798,27 @@ export class WebChannel implements BaseChannel {
     }
   }
 
+  private async sendQueueSnapshot(
+    client: WsClient,
+    sessionId: string,
+    recovery?: { requestId?: string; networkGeneration?: number },
+  ): Promise<void> {
+    const runStore = this.config.enqueueRuntime?.runStore;
+    if (!runStore?.listUserMessagesBySession) return;
+    const runs = await runStore.listUserMessagesBySession(sessionId);
+    const first = runs[0];
+    if (first && this.sensitiveActionAccessError(client, {
+      tenantId: first.tenantId,
+      ownerUserId: first.userId,
+    })) return;
+    this.wsSend(client.ws, {
+      type: 'queue_snapshot',
+      snapshot: buildChatQueueSnapshot(sessionId, runs),
+      ...(recovery?.requestId ? { requestId: recovery.requestId } : {}),
+      ...(recovery?.networkGeneration !== undefined ? { networkGeneration: recovery.networkGeneration } : {}),
+    });
+  }
+
   /** 撤销一条仍在排队的插话（终态队列区的撤回按钮）。 */
   private async handleCancelQueued(client: WsClient, msg: import('./wsTypes.js').WsCancelQueuedMessage): Promise<void> {
     const runStore = this.config.enqueueRuntime?.runStore;
@@ -1697,7 +1836,7 @@ export class WebChannel implements BaseChannel {
       tenantId: record.tenantId,
       ownerUserId: record.userId,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const result = runStore.cancelPendingUserMessage
@@ -1712,12 +1851,24 @@ export class WebChannel implements BaseChannel {
         reason: 'user_withdrew',
       });
     }
+    const current = await runStore.get(sourceRunId);
+    const item = current ? projectChatQueueItem(current) : undefined;
+    const snapshot = result.sessionId && runStore.listUserMessagesBySession
+      ? buildChatQueueSnapshot(result.sessionId, await runStore.listUserMessagesBySession(result.sessionId))
+      : undefined;
     this.wsSend(client.ws, {
       type: 'cancel_queued_result',
       ok: result.ok,
       sourceRunId,
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      ...(result.clientMsgId ? { clientMsgId: result.clientMsgId } : {}),
+      ...(item ? { item } : {}),
+      ...(snapshot ? { snapshot } : {}),
       ...(result.reason ? { reason: result.reason } : {}),
     });
+    if (result.ok && current && item && current.userId && this.eventBus) {
+      this.eventBus.emitUser(current.userId, { type: 'queue_item_updated', item }, client.ws);
+    }
   }
 
   /** abort 联动：撤销 session 内全部排队插话并广播。 */
@@ -1826,18 +1977,18 @@ export class WebChannel implements BaseChannel {
 
   private async handleApprovalPolicy(client: WsClient, msg: import('./wsTypes.js').WsApprovalPolicyMessage): Promise<void> {
     if (!client.user) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const runStore = this.config.enqueueRuntime?.runStore;
     const runId = typeof msg.runId === 'string' ? msg.runId.trim() : '';
     if (!runStore || !runId) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
     const record = await runStore.get(runId);
     if (!record) {
-      this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 404);
       return;
     }
     // 归属校验：重新读取 actor；平台 admin 可跨租户，其他用户只能改自己的 run。
@@ -1846,11 +1997,11 @@ export class WebChannel implements BaseChannel {
       ownerUserId: record.userId,
       ownerOnly: true,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     if (msg.sessionId && record.sessionId !== msg.sessionId) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
     const approvalPolicy = wantsToolAutoApproval(msg.approvalPolicy)
@@ -1867,26 +2018,28 @@ export class WebChannel implements BaseChannel {
   private async handleRunStatus(client: WsClient, msg: WsRunStatusMessage): Promise<void> {
     const runId = typeof msg.runId === 'string' ? msg.runId.trim() : '';
     if (!runId || !this.config.enqueueRuntime?.runStore) {
-      this.wsSend(client.ws, { type: 'error', message: 'runId is required' });
+      this.sendCanonicalWsError(client.ws, 'client_misconfigured', 400);
       return;
     }
     const record = await this.config.enqueueRuntime.runStore.get(runId);
     if (!record) {
-      this.wsSend(client.ws, { type: 'error', message: 'Run not found' });
+      this.sendCanonicalWsError(client.ws, 'stale_generation', 404);
       return;
     }
     if (this.sensitiveActionAccessError(client, {
       tenantId: record.tenantId,
       ownerUserId: record.userId,
     })) {
-      this.wsSend(client.ws, { type: 'error', message: 'Access denied' });
+      this.sendCanonicalWsError(client.ws, 'auth_revoked', 403);
       return;
     }
+    // Status response carries the same server-owned liveness DTO as queue/detail/runtime snapshots.
     this.wsSend(client.ws, {
       type: 'session_status',
       sessionId: record.sessionId,
       status: record.status,
       runId: record.runId,
+      liveness: projectRunLiveness(record),
       ...(typeof record.metadata?.streamId === 'string' ? { streamId: record.metadata.streamId } : {}),
       ...(record.statusReason ? { reason: record.statusReason } : {}),
     });
@@ -1924,381 +2077,45 @@ export class WebChannel implements BaseChannel {
     await eventStore.append(event, { tenantId });
   }
 
-  /** 处理 resume 消息（替代 GET /api/chat/stream/:sessionId） */
-  private handleResume(client: WsClient, msg: WsResumeMessage): void {
-    // 串行化同一 ws 上的 resume，避免并发 handleResumeAsync 在 await 处交错导致
-    // 双 EventBuffer listener 泄漏、每个流式事件被投递两次（详见 resumeChains 注释）。
-    const ws = client.ws;
-    const run = () => this.handleResumeAsync(client, msg);
-    const pending = this.resumeChains.get(ws);
-    // 无在途 resume → 同步启动，保持单条 resume 的同步语义（回放/订阅在本 tick 生效）；
-    // 有在途 resume → 串到其后执行，后一条一定能读到前一条已注册的订阅并先退订。
-    const next = pending ? pending.then(run, run) : run();
-    this.resumeChains.set(ws, next);
-    // handleResumeAsync 内部已容错；此处仅防 unhandled rejection 断链。
-    void next.catch(() => { /* noop */ });
+  private handleResume(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot = false): void {
+    this.runtimeRecovery.handleResume(client, msg, skipQueueSnapshot);
   }
 
-  private async handleResumeAsync(client: WsClient, msg: WsResumeMessage): Promise<void> {
-    const { sessionId: sid, requestId, lastEventId, lastEventCursor, skipReplay } = msg;
-    this.wsSessionAffinity.set(client.ws, sid);
-
-    const prevUnsub = this.resumeSubscriptions.get(client.ws);
-    if (prevUnsub) {
-      prevUnsub();
-      this.resumeSubscriptions.delete(client.ws);
-    }
-
-    const bufferEntry = this.eventBufferStore.get(sid);
-    const activeStreamId = this.findActiveStreamIdBySession(sid);
-    const activeEntry = activeStreamId ? this.activeStreams.get(activeStreamId) : undefined;
-    const resumeBufferBoundary = bufferEntry ? bufferEntry.nextId - 1 : 0;
-    // durable runStore 是判活真源；buffer 只负责传输与同进程 WS 绑定。
-    let bufferActive = Boolean(bufferEntry && this.eventBufferStore.isActive(sid));
-    let durableBinding: ResumeDurableBinding | undefined;
-    if (bufferActive) {
-      try {
-        const runStore = this.config.enqueueRuntime?.runStore;
-        if (runStore?.getActiveBySession) durableBinding = await resolveResumeDurableBinding(
-          runStore.getActiveBySession.bind(runStore),
-          sid,
-          (run) => this.eventStoreTenantForClient(client, run.tenantId, run.userId) ?? undefined,
-        );
-        if (durableBinding?.active === false) {
-          this.eventBufferStore.complete(sid);
-          bufferActive = false;
-        }
-      } catch (err) {
-        chatLogger.warn(`[resume] runStore.getActiveBySession 异常,降级信 buffer: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (!bufferEntry || !bufferActive) {
-      const durableActive = await this.tryReplayDurableRuntimeEvents(client, sid, {
-        requestId, lastEventId, lastEventCursor, skipReplay: skipReplay === true,
-      });
-      if (!durableActive) this.wsSend(client.ws, {
-        type: 'active_stream', sessionId: sid, active: false,
-        ...(requestId ? { requestId } : {}),
-      });
-      const pendingAccessError = bufferEntry?.userId
-        ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
-        : this.anonymousBindingAccessError(client, activeEntry?.ws);
-      if (bufferEntry && !pendingAccessError) await this.pushPendingInteractions(client, sid);
-      return;
-    }
-
-    const bufferAccessError = durableBinding?.active && !durableBinding.accessError ? null
-      : bufferEntry.userId ? this.sensitiveActionAccessError(client, { ownerUserId: bufferEntry.userId })
-      : this.anonymousBindingAccessError(client, activeEntry?.ws);
-    if (durableBinding?.accessError || bufferAccessError) {
-      this.wsSend(client.ws, {
-        type: 'active_stream', sessionId: sid, active: false,
-        ...(requestId ? { requestId } : {}),
-      });
-      return;
-    }
-    const resumeStreamId = activeStreamId ?? durableBinding?.streamId;
-    const resumeRunId = activeEntry?.runId ?? durableBinding?.runId;
-    if (resumeStreamId) {
-      this.wsActiveStream.set(client.ws, resumeStreamId);
-    }
-
-    this.wsSend(client.ws, {
-      type: 'active_stream',
-      sessionId: sid,
-      active: true,
-      streamId: resumeStreamId,
-      ...(resumeRunId ? { runId: resumeRunId } : {}),
-      status: durableBinding?.status ?? 'running',
-      ...(requestId ? { requestId } : {}),
-    });
-
-    const alreadyDirectBound = Boolean(
-      activeStreamId
-      && activeEntry?.ws === client.ws
-      && this.wsActiveStream.get(client.ws) === activeStreamId,
-    );
-    if (alreadyDirectBound) {
-      await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
-      return;
-    }
-
-    // buffer id 只在当前实例有效；durable cursor 用于跨实例增量回放。
-    // 无游标时跳过全量回放，避免与客户端 transcript 快照重复。
-    const hasBufferCursor = typeof lastEventId === 'number' && lastEventId > 0;
-    const hasAnyCursor = hasBufferCursor || Boolean(lastEventCursor);
-    if (!skipReplay && !hasAnyCursor) {
-      chatLogger.warn(`[resume] replay requested without any cursor session=${sid}; skipping full replay to avoid duplicate content`);
-    }
-    let subscribeAfterId = resumeBufferBoundary;
-    let durableReplayCursor: string | undefined;
-    if (!skipReplay && hasAnyCursor) {
-      if (!hasBufferCursor && lastEventCursor) {
-        // The boundary was captured before async status lookup. Events pushed while either
-        // status lookup or durable replay is in flight are recovered by subscribeFrom below.
-        const tenantId = durableBinding?.tenantId ?? this.eventStoreTenantForClient(client, undefined, bufferEntry.userId) ?? undefined;
-        const store = tenantId ? await this.getRuntimeEventStoreForSession(sid, tenantId) : null;
-        if (store) {
-          durableReplayCursor = await this.replayDurableRuntimeEvents(client, sid, store, {
-            lastEventCursor, activeRunId: resumeRunId ?? '', tenantId,
-          });
-        }
-      } else {
-        const result = this.eventBufferStore.getEventsAfter(sid, lastEventId);
-        subscribeAfterId = lastEventId;
-        if (result) {
-          if (result.gapDetected) {
-            this.wsSend(client.ws, { type: 'buffer_overflow' });
-          }
-          for (const evt of result.events) {
-            if (client.ws.readyState !== client.ws.OPEN) break;
-            try {
-              const data = JSON.parse(evt.data);
-              this.wsSend(client.ws, data, evt.id, evt.eventCursor);
-            } catch { /* skip */ }
-            subscribeAfterId = evt.id;
-          }
-        }
-      }
-    }
-    // Atomically recover the replay→subscribe window and subscribe to future events.
-    const unsubscribe = this.eventBufferStore.subscribeFrom(
-      sid,
-      subscribeAfterId,
-      (event) => {
-        if (
-          durableReplayCursor
-          && event.eventCursor
-          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
-        ) return;
-        if (client.ws.readyState === client.ws.OPEN) {
-          try {
-            const data = JSON.parse(event.data);
-            this.wsSend(client.ws, data, event.id, event.eventCursor);
-          } catch { /* skip */ }
-        }
-      },
-      () => {
-        // Agent 完成； subscribeFrom may invoke this synchronously before returning null.
-        this.resumeSubscriptions.delete(client.ws);
-      },
-    );
-
-    if (unsubscribe) {
-      this.resumeSubscriptions.set(client.ws, unsubscribe);
-    }
-    // 仅首次 resume 注册 close listener（旧订阅存在说明已注册过）
-    if (!prevUnsub) {
-      client.ws.on('close', () => {
-        const closeSub = this.resumeSubscriptions.get(client.ws);
-        if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
-      });
-    }
-
-    await this.pushPendingInteractions(client, sid, durableBinding?.tenantId);
+  private handleResumeAsync(client: WsClient, msg: WsResumeMessage | WsAttachActiveStreamMessage, skipQueueSnapshot: boolean): Promise<void> {
+    return this.runtimeRecovery.handleResumeAsync(client, msg, skipQueueSnapshot);
   }
 
-  private async tryReplayDurableRuntimeEvents(
+  private getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
+    return this.runtimeRecovery.getRuntimeEventStoreForSession(sessionId, tenantId);
+  }
+
+  private replayDurableRuntimeEvents(
     client: WsClient,
     sessionId: string,
-    options: { requestId?: string; lastEventId?: number; lastEventCursor?: string; skipReplay?: boolean },
-  ): Promise<boolean> {
-    const runStore = this.config.enqueueRuntime?.runStore;
-    if (!runStore) return false;
-    const activeRun = await runStore.getActiveBySession?.(sessionId);
-    if (!activeRun) return false;
-    const active = this.findActiveStreamByRunId(activeRun.runId);
-    const accessError = activeRun.userId || (activeRun.tenantId && activeRun.tenantId !== DEFAULT_TENANT_ID)
-      ? this.sensitiveActionAccessError(client, { tenantId: activeRun.tenantId, ownerUserId: activeRun.userId })
-      : this.anonymousBindingAccessError(client, active?.entry.sessionId === sessionId ? active.entry.ws : undefined);
-    if (accessError) return false;
-    const tenantId = this.eventStoreTenantForClient(client, activeRun.tenantId, activeRun.userId);
-    if (!tenantId) return false;
-    const streamId = typeof activeRun.metadata?.streamId === 'string' ? activeRun.metadata.streamId : activeRun.runId;
-    this.eventBufferStore.create(sessionId, activeRun.userId);
-    this.wsActiveStream.set(client.ws, streamId);
-    this.wsSend(client.ws, {
-      type: 'active_stream',
-      sessionId,
-      active: true,
-      streamId,
-      runId: activeRun.runId,
-      status: activeRun.status,
-      ...(options.requestId ? { requestId: options.requestId } : {}),
-    });
-    // Capture before durable awaits so subscribeFrom recovers the replay window.
-    const subscribeAfterId = this.eventBufferStore.get(sessionId)!.nextId - 1;
-    let durableReplayCursor: string | undefined;
-    if (!options.skipReplay) {
-      const store = await this.getRuntimeEventStoreForSession(sessionId, tenantId);
-      if (store) {
-        durableReplayCursor = await this.replayDurableRuntimeEvents(client, sessionId, store, {
-          ...options, activeRunId: activeRun.runId, tenantId,
-        });
-      }
-    }
-    const unsubscribe = this.eventBufferStore.subscribeFrom(
-      sessionId,
-      subscribeAfterId,
-      (event) => {
-        if (
-          durableReplayCursor
-          && event.eventCursor
-          && isDurableCursorAtOrBefore(event.eventCursor, durableReplayCursor)
-        ) return;
-        if (client.ws.readyState === client.ws.OPEN) {
-          try { this.wsSend(client.ws, JSON.parse(event.data), event.id, event.eventCursor); } catch { /* skip */ }
-        }
-      },
-      () => {
-        // subscribeFrom may complete synchronously and return null; never install a noop.
-        this.resumeSubscriptions.delete(client.ws);
-      },
-    );
-    if (unsubscribe) this.resumeSubscriptions.set(client.ws, unsubscribe);
-    client.ws.once('close', () => {
-      const closeSub = this.resumeSubscriptions.get(client.ws);
-      if (closeSub) { closeSub(); this.resumeSubscriptions.delete(client.ws); }
-    });
-    await this.pushPendingInteractions(client, sessionId, tenantId);
-    return true;
-  }
-
-  private async getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null> {
-    if (!this.config.runtimeEventStoreFor) return null;
-    const transcriptPath = await findTranscriptOrMetaPathBySessionId(sessionId);
-    return this.config.runtimeEventStoreFor(transcriptPath ?? '', tenantId);
-  }
-
-  private async replayDurableRuntimeEvents(
-    client: WsClient,
-    sessionId: string, store: EventStore,
+    store: EventStore,
     options: { lastEventId?: number; lastEventCursor?: string; activeRunId: string; tenantId?: string },
   ): Promise<string | undefined> {
-    const tenantId = options.tenantId ?? this.eventStoreTenantForClient(client); if (!tenantId) return undefined;
-    let replayId = options.lastEventId ?? 0;
-    let replayedCursor = options.lastEventCursor;
-    const hasDurableCursor = Boolean(options.lastEventCursor);
-    const streamStates = new Map<string, RuntimeStreamProjectionState>();
-    // ws-only 接管时预热 cursor 前的投影状态，但不重发已在 DOM 的 batch。
-    if (hasDurableCursor && options.lastEventCursor && store.listByRun) {
-      const priorRunEvents = await store.listByRun(tenantId, sessionId, options.activeRunId);
-      for (const event of priorRunEvents) {
-        if (event.type !== 'assistant_stream_event') continue;
-        const eventCursor = getDurableEventCursor(event);
-        if (!eventCursor || !isDurableCursorAtOrBefore(eventCursor, options.lastEventCursor)) continue;
-        projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates });
-      }
-    }
-    if (store.listPage) {
-      let cursor: string | undefined = hasDurableCursor ? options.lastEventCursor : undefined;
-      while (true) {
-        const page = await store.listPage(tenantId, sessionId, {
-          afterCursor: cursor,
-          limit: 200,
-          // durable cursor 是会话级游标；没有游标时绝不能从会话开头回放，
-          // 否则重连会把历次 Agent 回复全部追加到当前消息流。
-          ...(!hasDurableCursor ? { runId: options.activeRunId } : {}),
-        });
-        for (const event of page.events) {
-          const eventCursor = getDurableEventCursor(event);
-          const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
-          for (const [index, data] of frames.entries()) {
-            replayId += 1;
-            const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
-            // replayId is synthetic, not an EventBuffer ID. Once the client has a durable
-            // cursor, attaching replayId would let a later resume accidentally enter the
-            // in-memory buffer-cursor path.
-            this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
-          }
-          // Do not cover buffered events with this cursor until every projected frame sent.
-          if (eventCursor) replayedCursor = eventCursor;
-        }
-        if (!page.hasMore || !page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-      return replayedCursor;
-    }
-    // 兼容没有分页能力的自定义 EventStore，同样把最坏影响限制在当前 run。
-    const events = store.listByRun
-      ? await store.listByRun(tenantId, sessionId, options.activeRunId)
-      : (await store.list(tenantId, sessionId)).filter(
-          (event) => 'runId' in event && event.runId === options.activeRunId,
-        );
-    for (const event of events) {
-      const eventCursor = getDurableEventCursor(event);
-      const frames = projectRuntimePlatformEvent(event, { expandStreamed: true, streamStates }).events;
-      for (const [index, data] of frames.entries()) {
-        replayId += 1;
-        const frameCursor = index === frames.length - 1 ? eventCursor : undefined;
-        if (replayId > (options.lastEventId ?? 0)) {
-          this.wsSend(client.ws, data, hasDurableCursor ? undefined : replayId, frameCursor);
-        }
-      }
-      if (eventCursor) replayedCursor = eventCursor;
-    }
-    return replayedCursor;
+    return this.runtimeRecovery.replayDurableRuntimeEvents(client, sessionId, store, options);
   }
 
-  /** 处理 detach 消息：客户端切换会话时立即取消 EventBuffer 订阅，防止旧会话事件串流 */
-  private handleDetach(client: WsClient): void {
-    // 清除 WS 活跃流绑定，阻止旧会话的 handleEvents/hooks send 继续向此 WS 直接推送
-    this.wsActiveStream.delete(client.ws);
-    this.wsSessionAffinity.delete(client.ws);
-    const prevUnsub = this.resumeSubscriptions.get(client.ws);
-    if (prevUnsub) {
-      prevUnsub();
-      this.resumeSubscriptions.delete(client.ws);
-    }
-  }
-
-  /** 处理 sync 消息：断线重连时回放漏掉的元数据事件 */
-  private handleSync(client: WsClient, msg: WsSyncMessage): void {
-    const userId = client.user?.sub;
-    if (!userId || !this.wsServer) return;
-
-    const eventLog = this.wsServer.userEventLog;
-    const epoch = eventLog.getEpoch(userId);
-    const currentSeq = eventLog.getCurrentSeq(userId);
-    if (this.wsServer.hasUserEventEpochMismatch(client, userId, msg.epoch, msg.lastSeq)) {
-      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
-      return;
-    }
-
-    const result = eventLog.getEventsAfter(userId, msg.lastSeq);
-    if (result.gapDetected) {
-      this.wsSend(client.ws, { type: 'sync_overflow', seq: currentSeq, epoch });
-    } else {
-      this.wsSend(client.ws, {
-        type: 'sync_ok',
-        seq: currentSeq,
-        epoch,
-        events: result.events,
-      });
-    }
-  }
-
-  private async pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
-    const pending = interactionStore.getPendingInteractions(sessionId);
-    const ownerIds = new Set(pending.map((entry) => interactionStore.get(entry.interactionId)?.userId).filter((id): id is string => Boolean(id)));
-    if (ownerIds.size > 1) return;
-    const ownerUserId = this.eventBufferStore.get(sessionId)?.userId ?? ownerIds.values().next().value;
-    const scopedTenantId = tenantId ?? this.eventStoreTenantForClient(client, undefined, ownerUserId) ?? undefined;
-    if (this.config.runtimeEventStoreFor && !scopedTenantId) return;
-    const resolvedIds = this.config.runtimeEventStoreFor ? await loadResolvedInteractionIds(await this.getRuntimeEventStoreForSession(sessionId, scopedTenantId!), scopedTenantId!, sessionId) : new Set<string>();
-    const unresolved = pending.filter((entry) => !resolvedIds.has(entry.interactionId));
-    const excluded = new Set([...resolvedIds, ...unresolved.map((entry) => entry.interactionId)]);
-
-    const recovered = scanBufferForPendingInteractions(this.eventBufferStore.getEventsAfter(sessionId, 0)?.events, excluded);
-    if (recovered.length > 0) unresolved.push(...recovered);
-    if (unresolved.length > 0) this.wsSend(client.ws, { type: 'pending_interactions', interactions: unresolved });
+  private pushPendingInteractions(client: WsClient, sessionId: string, tenantId?: string): Promise<void> {
+    return this.runtimeRecovery.pushPendingInteractions(client, sessionId, tenantId);
   }
 
   // ── 核心聊天处理逻辑 ──────────────────────────────────
   private async processChatMessage(client: WsClient, msg: WsChatMessage): Promise<void> {
     const steeringAcceptedAt = new Date().toISOString();
-    const { message, sessionId, attachments, model, voiceFile } = msg;
-    let deliveryMode: 'queue' | 'steer' = msg.deliveryMode === 'steer' && !isCompactCommand(message)
+    const adaptedSubmission = adaptWebChatSubmission(msg);
+    const message = adaptedSubmission.text;
+    const sessionId = adaptedSubmission.sessionId;
+    const model = adaptedSubmission.model;
+    const sandboxProfile = adaptedSubmission.sandboxProfile;
+    const requestedOrgAgentId = adaptedSubmission.orgAgentId;
+    const incomingAgentTarget = adaptedSubmission.agentTarget;
+    const canonicalVoice = adaptedSubmission.canonical?.voice;
+    let attachments: UploadedFileInfo[] | undefined;
+    let canonicalAttachments = adaptedSubmission.canonical?.attachments ?? [];
+    let deliveryMode: 'queue' | 'steer' = adaptedSubmission.deliveryMode === 'steer' && !isCompactCommand(message)
       ? 'steer'
       : 'queue';
     const ws = client.ws;
@@ -2310,7 +2127,7 @@ export class WebChannel implements BaseChannel {
       : undefined;
 
     // 读取（或为老客户端生成）客户端消息 ID —— 贯穿全链路的幂等/绑定键
-    let clientMsgId = msg.client_msg_id;
+    let clientMsgId = adaptedSubmission.clientMsgId;
     if (!clientMsgId) {
       clientMsgId = `srv-${Date.now()}-${++this.streamIdCounter}`;
       chatLogger.warn(`[chat] Legacy client without client_msg_id, generated ${clientMsgId}`);
@@ -2382,14 +2199,24 @@ export class WebChannel implements BaseChannel {
     }
 
 
+    // Canonical V1 is strict after the idempotency replay fence above: malformed new submissions fail closed.
+    if (adaptedSubmission.issue) {
+      const reasonCode = chatSubmissionIssueReasonCode(adaptedSubmission.issue);
+      this.sendChatRejected(ws, clientMsgId, reasonCode, adaptedSubmission.issue.message);
+      return;
+    }
+
     // 1) Drain 拦截（服务端优雅关闭期间）
     if (this.config.getIsDraining?.()) {
       this.sendChatRejected(ws, clientMsgId, 'server_draining', '服务即将关闭，请稍后重试');
       return;
     }
 
-    // 2) 空消息校验
-    if (!message && !voiceFile) {
+    // 2) 空消息校验（canonical attachment-only submissions are valid）
+    const hasSubmittedAttachments = adaptedSubmission.protocol === 'canonical_v1'
+      ? Boolean(adaptedSubmission.canonical?.attachments.length)
+      : Boolean(adaptedSubmission.legacyAttachments?.length);
+    if (!message && !canonicalVoice && !hasSubmittedAttachments) {
       this.sendChatRejected(ws, clientMsgId, 'empty_message', '消息内容不能为空');
       return;
     }
@@ -2522,48 +2349,23 @@ export class WebChannel implements BaseChannel {
     // 5) 此处仍未 accepted：STT、门禁、会话持久化和 durable enqueue 任一步都可能失败。
     // chat_ack 必须延后到 run 与幂等提交记录同事务落库之后。
 
-    // 6) 语音消息: STT 转文字
+    // 6) M50-04 voice is transcribed before submission. The server registry, not a local path or
+    // client status, proves that transcriptionId belongs to this owner and attachmentId. Edited text
+    // is accepted only after that authoritative linkage succeeds.
     let resolvedMessage = message || '';
-    if (voiceFile && this.config.sttConfig) {
-      try {
-        chatLogger.info(`Voice STT: processing ${voiceFile.savedPath} (${voiceFile.duration}ms)`);
-        const sttResult = await speechToText(voiceFile.savedPath, this.config.sttConfig);
-        if (sttResult.text) {
-          const displayText = sttResult.text;
-          resolvedMessage = VOICE_STT_TAG + displayText;
-          chatLogger.info(`Voice STT result: "${displayText}" (duration=${sttResult.duration}ms, hasText=true)`);
-          this.wsSend(ws, { type: 'voice_transcribed', text: displayText });
-        } else {
-          // STT 返回空文本（静音 / ASR 异常）→ 视为拒绝，不再送给 Agent
-          const reason = sttResult.duration === 0
-            ? '语音无法识别：未检测到语音'
-            : '语音无法识别：识别结果为空';
-          chatLogger.warn(`Voice STT empty: duration=${sttResult.duration}ms`);
-          this.wsSend(ws, { type: 'voice_transcribed', text: `[${reason}]`, error: true });
-          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-          this.sendChatRejected(ws, clientMsgId, 'stt_failed', reason);
-          return;
-        }
-      } catch (err) {
-        chatLogger.error('Voice STT failed:', err);
-        this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别失败]', error: true });
+    if (canonicalVoice) {
+      const cwd = resolveUserCwd(this.config.agentCwd!, user ? {
+        id: user.sub, username: user.username, role: user.role, tenantId: user.tenantId,
+      } : undefined);
+      const authoritativeVoice = this.config.voiceTranscriptionService?.getAuthoritative(cwd, canonicalVoice.transcriptionId);
+      if (!authoritativeVoice
+        || authoritativeVoice.attachmentId !== canonicalVoice.attachmentId
+        || !canonicalAttachments.some((attachment) => attachment.attachmentId === canonicalVoice.attachmentId)) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'stt_failed', '语音识别服务调用失败');
+        this.sendChatRejected(ws, clientMsgId, 'stt_failed', '语音转写结果无效或不属于当前用户');
         return;
       }
-    } else if (voiceFile && !this.config.sttConfig) {
-      chatLogger.warn('Voice message received but STT not configured (missing doubaoCluster)');
-      this.wsSend(ws, { type: 'voice_transcribed', text: '[语音识别未配置]', error: true });
-      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-      this.sendChatRejected(ws, clientMsgId, 'stt_not_configured', '服务端未配置语音识别');
-      return;
-    }
-
-    // Log attachment info
-    if (attachments && attachments.length > 0) {
-      const imageCount = attachments.filter((a: UploadedFileInfo) => a.isImage).length;
-      const fileCount = attachments.length - imageCount;
-      chatLogger.info(`Attachments: ${imageCount} image(s), ${fileCount} file(s)`);
+      resolvedMessage = VOICE_STT_TAG + canonicalVoice.transcript.text;
     }
 
     // 构造 ChannelContext
@@ -2649,27 +2451,62 @@ export class WebChannel implements BaseChannel {
       }
     }
 
+    let submissionAttachmentRefs: InboundAttachmentInfo[] | undefined;
+    try {
+      const resolvedAttachments = await resolveChatSubmissionAttachments({
+        adapted: adaptedSubmission,
+        uploadManager: this.config.uploadManager,
+        userCwd: this.config.agentCwd
+          ? resolveUserCwd(this.config.agentCwd, userIdentity)
+          : undefined,
+      });
+      attachments = resolvedAttachments.materialized.length ? resolvedAttachments.materialized : undefined;
+      canonicalAttachments = resolvedAttachments.canonical;
+      // New V1 and safely adapted production legacy clients enter runtime/durable replay by ID only.
+      submissionAttachmentRefs = canonicalAttachments.length === resolvedAttachments.materialized.length
+        ? canonicalAttachmentsToInbound(canonicalAttachments)
+        : attachments;
+    } catch (error) {
+      const resolutionError = error instanceof ChatAttachmentResolutionError ? error : undefined;
+      const reasonCode = resolutionError?.reason === 'not_found'
+        ? 'attachment_not_found'
+        : 'attachment_state_failed';
+      const reason = resolutionError?.message ?? '附件状态读取失败，请重试';
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+      this.sendChatRejected(ws, clientMsgId, reasonCode, reason);
+      return;
+    }
+
+    const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';
+    if (!resolvedMessage && attachments?.length) resolvedMessage = AI_FALLBACK_TEXT;
+    if (attachments?.length) {
+      const imageCount = attachments.filter((attachment) => attachment.isImage).length;
+      chatLogger.info(`Attachments: ${imageCount} image(s), ${attachments.length - imageCount} file(s)`);
+    }
+
     const inbound: InboundMessage = {
       channel: 'web',
       chatId: validSessionId || '',
       content: resolvedMessage,
-      attachments,
-      ...(!validSessionId && msg.sandboxProfile !== undefined ? { metadata: { sandboxProfile: msg.sandboxProfile } } : {}),
+      ...(submissionAttachmentRefs?.length ? { attachments: submissionAttachmentRefs } : {}),
+      ...(!validSessionId && sandboxProfile !== undefined ? { metadata: { sandboxProfile } } : {}),
     };
 
     // 构建用户消息展示内容（纯文本 + 结构化附件）
-    const AI_FALLBACK_TEXT = 'Please check the attachments I uploaded';
     const userDisplayContent = (resolvedMessage === AI_FALLBACK_TEXT && attachments?.length)
       ? ''
       : resolvedMessage;
-    const attachmentMeta = attachments?.length
-      ? attachments.map((a: UploadedFileInfo) => ({
-        name: a.originalName,
-        isImage: a.isImage,
-        // 前端点击预览/下载用（走 /api/file 端点，workspace 内路径校验）
-        relativePath: a.relativePath,
-      }))
-      : undefined;
+    const attachmentMeta = canonicalAttachments.length
+      ? canonicalAttachments.map(canonicalChatAttachmentToDisplay)
+      : attachments?.length
+        ? attachments.map((attachment) => ({
+          name: attachment.originalName,
+          ...(attachment.attachmentId ? { attachmentId: attachment.attachmentId } : {}),
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          isImage: attachment.isImage,
+        }))
+        : undefined;
 
     const context: ChannelContext = {
       channel: 'web',
@@ -2695,7 +2532,7 @@ export class WebChannel implements BaseChannel {
 
     // ── 公司级专职 Agent 解析与门禁（2026-07 唯恩批次，2026-07-18 蓝图 v2 § 4.3.1 加 shadow/enforce 三档）──
     // 0) /compact 等平台命令只跳过 LLM 话题门禁，企业专家授权校验仍必须执行
-    // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 msg.orgAgentId
+    // 1) 解析 orgAgentId：带 sessionId 以会话 meta 为准（忽略客户端值防伪造）；新会话取 canonical target
     // 2) org agent 校验：存在 + enabled + 同租户 + 被指派（admin 豁免 audience）→ 否则 org_agent_unavailable
     // 3) personalAgent gate：无 orgAgentId 且租户关闭个人 Agent 时普通用户被拒
     // 4) LLM 话题门禁三档（mode = off | shadow | enforce）：
@@ -2718,33 +2555,95 @@ export class WebChannel implements BaseChannel {
       /** 门禁模型自报确信度 0-1（usage-stats P50/P90 数据源） */
       confidence?: number;
     } | undefined;
+    const gateIdentity = sessionOwner ?? userIdentity;
+    const anonymousDefaultTenant = !(this.config.authEnabled ?? Boolean(this.config.jwtSecret)) && !user
+      ? DEFAULT_TENANT_ID
+      : undefined;
+    const gateTenantId = gateIdentity?.tenantId ?? anonymousDefaultTenant;
+    let agentTarget: AgentTarget;
     if (validSessionId) {
-      orgAgentId = gateSessionMeta?.orgAgentId;
-      if (msg.orgAgentId && msg.orgAgentId !== orgAgentId) {
-        chatLogger.warn(`[org-agent] client orgAgentId=${msg.orgAgentId} ignored, session meta wins (${orgAgentId ?? 'none'}, session=${validSessionId})`);
+      let resolvedTarget = resolveSessionAgentTarget(gateSessionMeta, gateTenantId);
+      if (
+        resolvedTarget.status === 'unproven'
+        && anonymousDefaultTenant
+        && gateTranscriptPath
+        && gateSessionMeta
+        && gateSessionMeta.agentTarget === undefined
+        && !gateSessionMeta.orgAgentId
+        && (gateSessionMeta.tenantId === undefined || gateSessionMeta.tenantId === anonymousDefaultTenant)
+      ) {
+        // No-auth ownerless sessions retain connection ownership semantics, but their legacy
+        // personal target is upgraded server-side to the one permitted default tenant.
+        // Do not synthesize a user/session owner: resume, abort and ask_user stay WS-bound.
+        agentTarget = { kind: 'personal', tenantId: anonymousDefaultTenant };
+        try {
+          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
+          resolvedTarget = { status: 'bound', target: agentTarget, needsMigration: false };
+        } catch {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
+          return;
+        }
+      }
+      if (resolvedTarget.status === 'unproven') {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '历史会话缺少可证明的 Agent 绑定，已阻止继续发送');
+        return;
+      }
+      agentTarget = resolvedTarget.target;
+      if (incomingAgentTarget && !sameAgentTarget(incomingAgentTarget, agentTarget)) {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '请求的 Agent 与会话已绑定 Agent 不一致');
+        return;
+      }
+      if (requestedOrgAgentId && (agentTarget.kind !== 'org-agent' || requestedOrgAgentId !== agentTarget.orgAgentId)) {
+        this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+        this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '请求的企业专家与会话已绑定 Agent 不一致');
+        return;
+      }
+      if (resolvedTarget.needsMigration && gateTranscriptPath) {
+        try {
+          gateSessionMeta = await ensureSessionAgentTargetBinding(gateTranscriptPath, agentTarget);
+        } catch {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '会话 Agent 绑定迁移失败，已阻止继续发送');
+          return;
+        }
       }
     } else {
-      orgAgentId = msg.orgAgentId;
+      if (adaptedSubmission.protocol === 'canonical_v1') {
+        if (!incomingAgentTarget) {
+          this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+          this.sendChatRejected(ws, clientMsgId, 'invalid_submission', '新会话必须明确指定 agentTarget');
+          return;
+        }
+        agentTarget = incomingAgentTarget;
+      } else {
+        // N-1 新会话保留其显式 wire 语义；no-auth 缺省由服务端限定默认 tenant，历史迁移不使用该缺省。
+        agentTarget = requestedOrgAgentId
+          ? { kind: 'org-agent', tenantId: gateTenantId ?? '', orgAgentId: requestedOrgAgentId }
+          : { kind: 'personal', tenantId: gateTenantId ?? '' };
+      }
     }
+    if (!gateTenantId || agentTarget.tenantId !== gateTenantId) {
+      this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
+      this.sendChatRejected(ws, clientMsgId, 'access_denied', 'Agent target 不属于当前组织');
+      return;
+    }
+    orgAgentId = agentTarget.kind === 'org-agent' ? agentTarget.orgAgentId : undefined;
     const isPlatformCommand = isCompactCommand(resolvedMessage);
     if (isPlatformCommand) deliveryMode = 'queue';
     if (orgAgentId) {
-      const record = this.config.orgAgentStore?.get(orgAgentId);
-      const gateIdentity = sessionOwner ?? userIdentity;
-      // admin 豁免 audience 收紧（2026-07 审查 F1a）：仅平台 admin 或与该 org agent
-      // 同租户的组织 admin；跨租户组织 admin → assigned=false → org_agent_unavailable（同码防枚举）
-      const adminExempt = user?.role === 'admin'
-        && (isPlatformAdminUser(user) || record?.tenantId === user.tenantId);
-      const assigned = !!record && !!parseOrgAgentAudience(record.audience) && (adminExempt || isAssignedToOrgAgent(record, gateIdentity?.username));
-      if (!record || !record.enabled || record.tenantId !== gateIdentity?.tenantId || !assigned) {
-        // 跨租户/缺失/停用/未指派一律同码防枚举（决策 8）；读留发禁（决策 1/3）
+      const accessError = this.orgAgentActionAccessError(client, orgAgentId, agentTarget.tenantId, gateIdentity?.username);
+      if (accessError) {
+        // 跨租户/缺失/停用/未指派一律同码防枚举；历史可读、发送阻断。
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
-        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', '该企业专家当前不可用，请联系组织管理员');
+        this.sendChatRejected(ws, clientMsgId, 'org_agent_unavailable', accessError);
         return;
       }
-      orgAgentRecord = record;
+      orgAgentRecord = this.config.orgAgentStore?.get(orgAgentId);
     }
-    if (!orgAgentId && !isPlatformCommand && user && user.role !== 'admin') {
+    if (agentTarget.kind === 'personal' && !isPlatformCommand && user && user.role !== 'admin') {
       const features = this.config.tenantStore?.getSettings(user.tenantId ?? DEFAULT_TENANT_ID)?.features;
       if (features?.personalAgentEnabled === false) {
         this.idempotencySet(user?.sub, clientMsgId, 'failed', '');
@@ -2838,7 +2737,7 @@ export class WebChannel implements BaseChannel {
                 orgAgent: orgAgentRecord,
                 model,
                 executionTarget: resolvedExecutionTarget,
-                sandboxProfile: msg.sandboxProfile,
+                sandboxProfile,
                 resolvedMessage,
                 userDisplayContent,
                 attachmentMeta,
@@ -2942,7 +2841,7 @@ export class WebChannel implements BaseChannel {
         ip: client.ip || 'unknown',
         userAgent: client.userAgent || 'unknown',
         channel: detectLoginChannel(client.userAgent || ''),
-        detail: buildChatMessageActivityDetail(validSessionId, attachments?.length ?? 0, voiceFile?.duration),
+        detail: buildChatMessageActivityDetail(validSessionId, attachments?.length ?? 0, canonicalVoice?.durationMs),
       }, this.config.loginLogFilePath).catch(() => {});
     }
 
@@ -2982,7 +2881,7 @@ export class WebChannel implements BaseChannel {
           channel: 'web',
           cwd: enqueueCwd,
           modelRef: model,
-          sandboxProfile: resolveSessionSandboxProfile({ existing: existingSessionRecord, requested: msg.sandboxProfile }),
+          sandboxProfile: resolveSessionSandboxProfile({ existing: existingSessionRecord, requested: sandboxProfile }),
           executionTarget: resolvedExecutionTarget,
           workspaceId: enqueueWorkspaceId,
           status: 'running',
@@ -2996,9 +2895,46 @@ export class WebChannel implements BaseChannel {
         });
         if (existingSessionRecord) {
           await enqueueRuntime.sessionCatalog.upsert(sessionRecord);
+          await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget, {
+            name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+            status: 'available',
+            version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+          });
         } else {
-          // ensure 通过跨进程原子首写保证并发首投只能有一个 policy 胜出。
+          // target 必须与 session policy 在同一次跨进程原子首写中发布；并发首投只能有一个绑定胜出。
+          const createdWithTarget = await writeSessionMetaIfAbsent(sessionRecord.transcriptPath, {
+            userId: sessionRecord.userId,
+            username: sessionRecord.username,
+            userRole: sessionRecord.userRole,
+            ...(sessionRecord.tenantId ? { tenantId: sessionRecord.tenantId } : {}),
+            channel: sessionRecord.channel,
+            createdAt: sessionRecord.createdAt,
+            updatedAt: sessionRecord.updatedAt,
+            cwd: sessionRecord.cwd,
+            transcriptPath: sessionRecord.transcriptPath,
+            workspaceId: sessionRecord.workspaceId,
+            runtimeStatus: sessionRecord.status,
+            ...(sessionRecord.modelRef ? { model: sessionRecord.modelRef } : {}),
+            sandboxProfile: sessionRecord.sandboxProfile,
+            ...(sessionRecord.executionTarget ? { executionTarget: sessionRecord.executionTarget } : {}),
+            ...(sessionRecord.orgAgentId ? { orgAgentId: sessionRecord.orgAgentId } : {}),
+            agentTarget,
+            agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+            agentTargetSnapshot: {
+              name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+              status: 'available',
+              version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+            },
+            ...(sessionRecord.memoryPolicyVersion ? { memoryPolicyVersion: sessionRecord.memoryPolicyVersion } : {}),
+          });
           await enqueueRuntime.sessionCatalog.ensure(sessionRecord);
+          if (!createdWithTarget) {
+            await ensureSessionAgentTargetBinding(sessionRecord.transcriptPath, agentTarget, {
+              name: orgAgentRecord?.name ?? (agentTarget.kind === 'personal' ? '个人 Agent' : '企业专家'),
+              status: 'available',
+              version: orgAgentRecord?.updatedAt ? Date.parse(orgAgentRecord.updatedAt) || 1 : 1,
+            });
+          }
         }
         sessionPersisted = true;
         // 门禁 uncertain/纯附件的 pass_flagged 落库：sessionId 到这里才确定
@@ -3042,6 +2978,20 @@ export class WebChannel implements BaseChannel {
             );
           }
         }
+        const authoritativeChatSubmission: CanonicalChatSubmission = {
+          version: CHAT_SUBMISSION_VERSION,
+          text: adaptedSubmission.canonical?.text ?? message,
+          clientMsgId,
+          target: {
+            sessionId: enqueueSessionId,
+            ...(sessionRecord.sandboxProfile ? { sandboxProfile: sessionRecord.sandboxProfile } : {}),
+            agentTarget,
+            ...(orgAgentId ? { orgAgentId } : {}),
+          },
+          deliveryMode,
+          ...(model ? { model } : {}),
+          attachments: canonicalAttachments,
+        };
         const enqueuedRun = await enqueueRuntime.scheduler.enqueue({
           runId: enqueueRunId,
           sessionId: enqueueSessionId,
@@ -3062,6 +3012,7 @@ export class WebChannel implements BaseChannel {
             ...(approvalPolicy ? { approvalPolicy } : {}),
             ...(guardrailMark ? { guardrail: guardrailMark } : {}),
             outputTransactionMode: context.outputTransactionMode,
+            chatSubmission: authoritativeChatSubmission,
             wakeMessage: {
               channel: inbound.channel,
               chatId: enqueueSessionId,
@@ -3136,7 +3087,7 @@ export class WebChannel implements BaseChannel {
             runId: acceptedRunId,
             status: authoritative.status,
             deliveryMode: acceptedDeliveryMode,
-            ...(queuePosition ? { queuePosition } : {}),
+            ...(queuePosition !== undefined ? { queuePosition } : {}),
           });
           if (acceptedStreamId) {
             this.eventBus!.emitReply(ws, {
@@ -3146,7 +3097,7 @@ export class WebChannel implements BaseChannel {
               runId: acceptedRunId,
               client_msg_id: clientMsgId,
               ...(queuedTargetRunId
-                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) }
+                ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition !== undefined ? { queuePosition } : {}) }
                 : {}),
             });
           }
@@ -3205,7 +3156,7 @@ export class WebChannel implements BaseChannel {
           runId: acceptedRunId,
           status: authoritative.status,
           deliveryMode: acceptedDeliveryMode,
-          ...(queuePosition ? { queuePosition } : {}),
+          ...(queuePosition !== undefined ? { queuePosition } : {}),
         });
         send({
           type: 'stream_id',
@@ -3213,7 +3164,7 @@ export class WebChannel implements BaseChannel {
           sessionId: acceptedSessionId,
           runId: acceptedRunId,
           client_msg_id: clientMsgId,
-          ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition ? { queuePosition } : {}) } : {}),
+          ...(queuedTargetRunId ? { queued: true, deliveryMode: acceptedDeliveryMode, targetRunId: queuedTargetRunId, ...(queuePosition !== undefined ? { queuePosition } : {}) } : {}),
         });
         send({ type: 'session', sessionId: acceptedSessionId, client_msg_id: clientMsgId, sandboxProfile: sessionRecord.sandboxProfile });
         // 首条长消息不等待 Agent 输出；续聊时若仍无标题，也在本次输入后立即补偿。
@@ -3236,6 +3187,10 @@ export class WebChannel implements BaseChannel {
             client_msg_id: clientMsgId,
           }));
         }
+        if (user?.sub && this.eventBus) {
+          const queueItem = projectChatQueueItem(enqueuedRun, queuePosition);
+          if (queueItem) this.eventBus.emitUser(user.sub, { type: 'queue_item_updated', item: queueItem });
+        }
         if (user?.sub && this.eventBus && queuedTargetRunId) {
           // 多端统一队列快照：普通 queue 与显式 steer 都广播，按 clientMsgId 幂等 upsert。
           this.eventBus.emitUser(user.sub, {
@@ -3245,7 +3200,7 @@ export class WebChannel implements BaseChannel {
             clientMsgId,
             deliveryMode: acceptedDeliveryMode,
             targetRunId: queuedTargetRunId,
-            ...(queuePosition ? { queuePosition } : {}),
+            ...(queuePosition !== undefined ? { queuePosition } : {}),
             content: userDisplayContent ?? resolvedMessage,
             ...(attachmentMeta ? { attachments: attachmentMeta } : {}),
             timestamp: Date.now(),
@@ -3429,7 +3384,7 @@ export class WebChannel implements BaseChannel {
     // 将 streamId 作为首条事件发送给前端（透传 client_msg_id 以便客户端精确绑定 bubble）
     send({ type: 'stream_id', streamId, client_msg_id: clientMsgId });
 
-    // 追踪当前会话 ID
+    // 追踪当前会话 ID 与 target 绑定路径
     let resolvedSessionId: string | undefined = sessionId;
 
     // SDK warmup 过滤：CLI 在 session_init 之前会为内置 Agent（Explore/Plan/Bash）
@@ -3442,6 +3397,9 @@ export class WebChannel implements BaseChannel {
       onSessionStart: async (sid, transcriptPath) => {
         resolvedSessionId = sid;
         resolvedTranscriptPath = transcriptPath;
+        const bindingPath = transcriptPath ?? await findTranscriptOrMetaPathBySessionId(sid);
+        if (!bindingPath) throw new Error('SESSION_AGENT_TARGET_META_MISSING');
+        await ensureSessionAgentTargetBinding(bindingPath, agentTarget);
         sessionInitialized = true;
         const streamEntry = this.activeStreams.get(streamId);
         if (streamEntry) streamEntry.sessionId = sid;
@@ -3677,22 +3635,8 @@ export class WebChannel implements BaseChannel {
           });
         }
 
-        // WS 仍连接时正常推送事件给前端
-        if (!connectionAbortController.signal.aborted) {
-          send({
-            type: event.type,
-            interactionId: event.interactionId,
-            toolId: event.toolId,
-            toolName: event.toolName,
-            displayName: event.displayName,
-            toolInput: event.toolInput,
-            questions: event.questions,
-            ...(planContent ? { planContent } : {}),
-          });
-        }
         activeInteractionIds.add(event.interactionId);
-        try {
-          return await interactionStore.create(event.interactionId, event.type, {
+        const interactionPromise = interactionStore.create(event.interactionId, event.type, {
             sessionId: resolvedSessionId,
             runId: event.runId,
             toolCallId: event.toolCallId,
@@ -3706,7 +3650,37 @@ export class WebChannel implements BaseChannel {
             displayName: event.displayName,
             toolInput: event.toolInput,
             planContent,
+            onExpired: (expired) => {
+              if (!resolvedSessionId) return;
+              const reason = '等待用户响应超时，交互已过期';
+              const response = { message: reason };
+              void appendActiveInteractionResolved({
+                sessionId: resolvedSessionId, interactionId: event.interactionId,
+                pendingInteraction: expired, response,
+                tenantId: this.eventStoreTenantForClient(client, undefined, user?.sub) ?? undefined,
+                userId: user?.sub, runtimeEventStoreFor: this.config.runtimeEventStoreFor,
+              }).catch((error) => chatLogger.warn(`expired interaction persistence failed interaction=${event.interactionId}: ${error instanceof Error ? error.message : String(error)}`));
+              send({ type: 'interaction_resolved', sessionId: resolvedSessionId, interactionId: event.interactionId, status: 'expired', response, reason, retryable: false });
+            },
           });
+        const storedInteraction = interactionStore.get(event.interactionId)!;
+        // The fixed-zone request carries its canonical revision/order from first delivery.
+        if (!connectionAbortController.signal.aborted) {
+          send({
+            type: event.type,
+            interactionId: event.interactionId,
+            version: storedInteraction.version,
+            order: storedInteraction.order,
+            toolId: event.toolId,
+            toolName: event.toolName,
+            displayName: event.displayName,
+            toolInput: event.toolInput,
+            questions: event.questions,
+            ...(planContent ? { planContent } : {}),
+          });
+        }
+        try {
+          return await interactionPromise;
         } finally {
           activeInteractionIds.delete(event.interactionId);
         }
@@ -3892,10 +3866,10 @@ export class WebChannel implements BaseChannel {
     orgAgent: OrgAgentRecord;
     model?: string;
     executionTarget: ExecutionTargetKind;
-    sandboxProfile?: WsChatMessage['sandboxProfile'];
+    sandboxProfile?: SandboxProfile;
     resolvedMessage: string;
     userDisplayContent: string;
-    attachmentMeta?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+    attachmentMeta?: MessageAttachmentDisplay[];
     guardrailModel?: string;
     guardrailLatencyMs?: number;
     guardrailConfidence?: number;
@@ -3934,6 +3908,11 @@ export class WebChannel implements BaseChannel {
       transcriptPath = existing?.transcriptPath ?? record.transcriptPath;
       try {
         await enqueueRuntime.sessionCatalog.upsert({ ...record, transcriptPath });
+        await ensureSessionAgentTargetBinding(transcriptPath, {
+          kind: 'org-agent',
+          tenantId: owner?.tenantId ?? orgAgent.tenantId,
+          orgAgentId: orgAgent.id,
+        });
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         chatLogger.warn(`[guardrail] session upsert failed: ${errorMessage}`);
@@ -3962,6 +3941,11 @@ export class WebChannel implements BaseChannel {
           cwd: existingMeta?.cwd ?? cwd,
           sandboxProfile,
           orgAgentId: orgAgent.id,
+          agentTarget: { kind: 'org-agent', tenantId: owner?.tenantId ?? orgAgent.tenantId, orgAgentId: orgAgent.id },
+          agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+          agentTargetSnapshot: existingMeta?.agentTargetSnapshot ?? {
+            name: orgAgent.name, status: 'available', version: Date.parse(orgAgent.updatedAt) || 1,
+          },
           createdAt: existingMeta?.createdAt ?? now,
           updatedAt: now,
         });
@@ -4027,13 +4011,23 @@ export class WebChannel implements BaseChannel {
       if (this.eventBus) this.eventBus.emitSession(sessionCtx, data);
       else this.wsSend(ws, data);
     };
-    emitSession({ type: 'block_start', blockType: 'text' });
+    const moderationId = guardrailEventId ?? `guardrail:${args.clientMsgId}`;
+    const moderationMessageId = `assistant:${streamId}`;
+    const moderationBlockId = `moderation:${moderationId}`;
+    const projectionBase = { runId: streamId, messageId: moderationMessageId, blockId: moderationBlockId };
+    // Moderation is a dedicated domain fact. Never infer it from rejection text/tool output/errors.
+    emitSession({
+      type: 'moderation_outcome', moderationId, outcome: 'blocked', reasonCode: 'off_topic',
+      projection: { eventId: `${moderationId}:outcome`, domain: 'moderation', ...projectionBase },
+    });
+    emitSession({ type: 'block_start', blockType: 'text', projection: { eventId: `${moderationId}:start`, domain: 'message', ...projectionBase } });
     emitSession({
       type: 'text',
       content: rejectionMessage,
       ...(guardrailEventId ? { guardrailEventId } : {}),
+      projection: { eventId: `${moderationId}:text`, domain: 'message', ...projectionBase },
     });
-    emitSession({ type: 'block_end', blockType: 'text' });
+    emitSession({ type: 'block_end', blockType: 'text', projection: { eventId: `${moderationId}:end`, domain: 'message', ...projectionBase } });
     emitSession({ type: 'done', sessionId, streamId, client_msg_id: args.clientMsgId });
     this.eventBufferStore.complete(sessionId);
     if (user?.sub && this.eventBus) {
@@ -4075,6 +4069,11 @@ export class WebChannel implements BaseChannel {
       message: { role: 'assistant', content: [{ type: 'text', text: assistantContent }] },
       sessionId,
       ...(guardrailEventId ? { guardrailEventId } : {}),
+      moderation: {
+        eventId: guardrailEventId ?? `guardrail:${sessionId}`,
+        outcome: 'blocked',
+        reasonCode: 'off_topic',
+      },
       timestamp: new Date().toISOString(),
     }) + '\n';
     await appendTrustedTranscript(transcriptPath, lines, 'utf-8');

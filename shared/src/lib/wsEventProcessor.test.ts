@@ -334,10 +334,14 @@ describe('processWsEvent - 连接与消息生命周期', () => {
     );
     const user = ctrl.messages.find((m) => m.type === 'user') as Extract<MessageItem, { type: 'user' }>;
     expect(user.status).toBe('failed');
-    expect(user.failedReason).toBe('会话锁定');
+    expect(user.failedReason).toBe('该交互已被处理或更新，请刷新查看最新状态。');
     // runtime_status 被清掉
     expect(ctrl.messages.some((m) => m.type === 'runtime_status')).toBe(false);
-    expect(hooks.onChatRejected).toHaveBeenCalledWith('c1', 'session_locked', '会话锁定');
+    expect(hooks.onChatRejected).toHaveBeenCalledWith(
+      'c1',
+      'session_locked',
+      '该交互已被处理或更新，请刷新查看最新状态。',
+    );
   });
 
   it('user_message：正常新增并透传消费身份；client_msg_id 相同则去重', () => {
@@ -628,7 +632,7 @@ describe('processWsEvent - 工具执行与结果', () => {
   });
 });
 
-describe('processWsEvent - 交互事件', () => {
+describe('processWsEvent - 基础交互事件', () => {
   it('permission_request：新增 pending 卡片；EnterPlanMode 走中文映射', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);
@@ -988,16 +992,7 @@ describe('processWsEvent - 会话元数据事件', () => {
   });
 });
 
-describe('processWsEvent - 语音 / 文件 / 错误 / 溢出', () => {
-  it('error：清状态条并追加 Error 文本', () => {
-    const ctrl = makeController([{ id: 'r', type: 'runtime_status', status: 'running' }]);
-    const { ctx } = makeCtx(ctrl);
-    dispatch({ type: 'error', message: '出错了' }, ctx);
-    expect(ctrl.messages.some((m) => m.type === 'runtime_status')).toBe(false);
-    const text = ctrl.messages.find((m) => m.type === 'text') as Extract<MessageItem, { type: 'text' }>;
-    expect(text.content).toBe('Error: 出错了');
-  });
-
+describe('processWsEvent - 语音 / 文件 / 溢出', () => {
   it('buffer_overflow：返回 buffer_overflow', () => {
     const ctrl = makeController();
     const { ctx } = makeCtx(ctrl);

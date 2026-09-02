@@ -1,6 +1,14 @@
 import { useState, useMemo } from "react";
 import { formatJson } from './types';
-import { parseToolResult, getToolDisplayInfo, toolResultExitCode, type ToolPresentation, type ToolResultMetadata } from '@agent/shared';
+import {
+  normalizeToolPresentation,
+  parseToolResult,
+  selectToolPresentation,
+  toolResultExitCode,
+  type SharedPresentation,
+  type ToolPresentation,
+  type ToolResultMetadata,
+} from '@agent/shared';
 import { PresentationDetail } from './PresentationDetail';
 import { Wrench, ChevronRight, CircleCheck } from "lucide-react";
 import { StatusIcons } from "@/lib/icons";
@@ -64,11 +72,13 @@ interface ToolBlockProps {
   error?: string;
   /** 「给人看」摘要。有值时展开态默认呈现它，原始 payload 退居 debug 视图。 */
   presentation?: ToolPresentation;
+  /** MessageList adapter 已生成的 canonical model；缺省时本组件复用同一 selector。 */
+  canonicalPresentation?: SharedPresentation;
+  onRecovery?: () => void;
   /** 结构化执行事实（exitCode 等）。有退出码时 ✓/✗ 判定优先用它。 */
   toolMetadata?: ToolResultMetadata;
   /**
-   * 是否呈现原始 payload。
-   * 语义是「看不看得到原始数据」——无 presentation 时恒为真（否则展开将一片空白）。
+   * 是否呈现原始 payload。调用方只能传入共享三重门已经授权的结果。
    */
   debugMode?: boolean;
   /**
@@ -100,15 +110,6 @@ function resolveExecutionStatus(
   return status;
 }
 
-function getExecutionLabel(status?: ToolBlockProps["executionStatus"], resultReady?: boolean): string {
-  if (status === "running") return "执行中";
-  if (status === "pending") return "待执行";
-  if (status === "failed") return "有异常";
-  if (status === "cancelled") return "已取消";
-  if (status === "completed" || resultReady) return "已完成";
-  return "待执行";
-}
-
 function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultReady?: boolean, streaming?: boolean): ActivityStatusTone {
   if (status === "running" || streaming) return "active";
   if (status === "failed") return "warning";
@@ -117,18 +118,30 @@ function getExecutionTone(status?: ToolBlockProps["executionStatus"], resultRead
   return "pending";
 }
 
-export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus: rawExecutionStatus, durationMs, lastProgress, error, presentation, toolMetadata, debugMode = true, defaultExpanded = false }: ToolBlockProps) {
+export function ToolBlock({ toolName, toolInput, streaming, result, resultReady, executionStatus: rawExecutionStatus, durationMs, lastProgress, error, presentation, canonicalPresentation, toolMetadata, debugMode = false, defaultExpanded = false, onRecovery }: ToolBlockProps) {
   // 折叠行已展示业务摘要标题，详情由用户按需展开，避免工具调用密集时刷屏；
   // 剧本标记 defaultOpen 的高价值执行块（且带摘要）首次挂载即展开。
   const [isExpanded, setIsExpanded] = useState(defaultExpanded && !!presentation);
-  const showRaw = debugMode || !presentation;
 
   const executionStatus = resolveExecutionStatus(rawExecutionStatus, toolMetadata);
+  const canonical = canonicalPresentation ?? selectToolPresentation({
+    id: 'tool-card',
+    kind: 'tool_activity',
+    status: executionStatus ?? (streaming ? 'running' : 'pending'),
+    content: [{ type: 'tool', toolName, input: toolInput, result, presentation }],
+  }, debugMode ? {
+    debugBuild: true,
+    authenticatedAdmin: true,
+    explicitSessionToggle: true,
+  } : undefined);
+  const showRaw = canonical.showRaw;
+  const normalizedPresentation = useMemo(() => normalizeToolPresentation(presentation), [presentation]);
+  const displayTitle = normalizedPresentation?.connector ? `连接器 · ${canonical.title}` : canonical.title;
   const formatted = useMemo(() => formatJson(toolInput), [toolInput]);
-  const displayInfo = useMemo(() => getToolDisplayInfo(toolName, toolInput), [toolName, toolInput]);
   const duration = formatActivityDuration(durationMs);
-  const statusLabel = getExecutionLabel(executionStatus, resultReady);
-  const tone = getExecutionTone(executionStatus, resultReady, streaming);
+  // Visual legacy wording remains compact; a11y keeps the canonical status label.
+  const statusLabel = canonical.status === 'failed' ? '有异常' : canonical.statusLabel;
+  const tone = getExecutionTone(executionStatus, resultReady, canonical.busy);
 
   const icon = executionStatus === "running"
     ? <StatusIcons.running className={activityStatusIconClass("active", "size-3.5 shrink-0 animate-spin")} />
@@ -146,55 +159,52 @@ export function ToolBlock({ toolName, toolInput, streaming, result, resultReady,
     <div>
       <button
         onClick={() => setIsExpanded(v => !v)}
-        className="flex max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="flex min-h-11 max-w-full items-center gap-1.5 py-0.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        aria-label={`${displayTitle}，${canonical.statusLabel}${canonical.summary ? `，${canonical.summary}` : ''}，${isExpanded ? '收起详情' : '展开详情'}`}
+        aria-expanded={isExpanded}
       >
-        {icon}
+        <span aria-hidden="true">{icon}</span>
         <span className="flex min-w-0 max-w-sm items-baseline overflow-hidden whitespace-nowrap">
-          {presentation ? (
-            // 摘要标题是业务语言，视觉权重高于机械拼出的 "工具名: 入参"
-            <span className="min-w-0 truncate text-foreground">
-              {presentation.connector ? `连接器 · ${presentation.title}` : presentation.title}
-            </span>
-          ) : (
-            <>
-              <span className="shrink-0">{displayInfo.name}{displayInfo.detail ? ':' : ''}&nbsp;</span>
-              {displayInfo.detail && (
-                <span
-                  className="min-w-0 truncate"
-                  style={displayInfo.detailTruncate === 'start' ? { direction: 'rtl', textAlign: 'left' } : undefined}
-                >
-                  {displayInfo.detail}
-                </span>
-              )}
-            </>
-          )}
-          {(streaming || executionStatus === "running") && <span className="shrink-0 animate-pulse">...</span>}
+          <span className="min-w-0 truncate text-foreground">{displayTitle}</span>
+          {canonical.summary && <span className="ml-1 min-w-0 truncate text-muted-foreground">· {canonical.summary}</span>}
+          {canonical.busy && <span className="shrink-0 animate-pulse">...</span>}
         </span>
-        <span className={activityStatusBadgeClass(tone)}>
+        <span aria-hidden="true" className={activityStatusBadgeClass(tone)}>
           {duration && (executionStatus === "completed" || executionStatus === "failed" || executionStatus === "cancelled")
             ? `${statusLabel} ${duration}`
             : statusLabel}
         </span>
-        {presentation?.receipt && (
-          // 外部系统写回执是「AI 在动系统」的关键痕迹，折叠态也要可见
-          <span className={activityStatusBadgeClass(presentation.receipt.readBack ? "success" : "neutral", "inline-flex max-w-40 items-center gap-1")}>
-            <span className="truncate">→ {presentation.receipt.system}</span>
-            {presentation.receipt.readBack && <CircleCheck className="size-3 shrink-0" />}
+        {canonical.receipt && (
+          <span className={activityStatusBadgeClass(canonical.receipt.readBack ? "success" : "neutral", "inline-flex max-w-40 items-center gap-1")}>
+            <span className="truncate">→ {canonical.receipt.system}</span>
+            {canonical.receipt.readBack && <CircleCheck aria-hidden="true" className="size-3 shrink-0" />}
           </span>
         )}
-        <ChevronRight className={cn(
+        <ChevronRight aria-hidden="true" className={cn(
           "size-3.5 shrink-0 transition-transform",
           isExpanded && "rotate-90",
         )} />
       </button>
+      {canonical.recoveryAction && onRecovery && (
+        <button
+          type="button"
+          onClick={onRecovery}
+          className="min-h-11 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          aria-label={`${displayTitle}，${canonical.recoveryAction.label}`}
+        >
+          {canonical.recoveryAction.label}
+        </button>
+      )}
       {isExpanded && (
         <div>
-          {presentation && (
-            // 折叠行的状态徽章已表达技术终态（有异常/已取消），
-            // 摘要里不再重复一遍业务状态，避免同一条信息说两遍且措辞不一致
+          {(canonical.detail.length > 0 || canonical.receipt) && (
             <PresentationDetail
-              data={presentation}
-              hideStatus={executionStatus === 'failed' || executionStatus === 'cancelled'}
+              data={{
+                title: canonical.title,
+                ...(canonical.detail.length ? { detail: [...canonical.detail] } : {}),
+                ...(canonical.receipt ? { receipt: canonical.receipt } : {}),
+              }}
+              hideStatus
             />
           )}
           {showRaw && (
@@ -237,9 +247,9 @@ interface ToolResultBlockProps {
   debugMode?: boolean;
 }
 
-export function ToolResultBlock({ toolName, result, presentation, debugMode = true }: ToolResultBlockProps) {
+export function ToolResultBlock({ toolName, result, presentation, debugMode = false }: ToolResultBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const showRaw = debugMode || !presentation;
+  const showRaw = debugMode;
 
   return (
     <div>

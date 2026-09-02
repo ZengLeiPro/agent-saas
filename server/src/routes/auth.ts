@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { Router, type RequestHandler } from "express";
-import jwt, { type SignOptions } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 import multer from "multer";
 import { z } from "zod";
 import { requireAdmin, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
 import { getEffectivePlatformCapabilities, isSuperAdmin, normalizePlatformCapabilities, requireSuperAdmin } from "../auth/platformGovernance.js";
 import type { JwtPayload } from "../auth/types.js";
+import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 import { PLATFORM_CAPABILITIES } from "../../../shared/src/types/user.js";
 import { isDebugModeAvailable } from "../../../shared/src/types/tenant.js";
 import { isModelAllowedForTenant } from "../app/models.js";
@@ -15,13 +16,13 @@ import { registerAuthDebugModeRoute } from "./authDebugMode.js";
 import { validateTenantUserPolicy } from "./authUserPolicy.js";
 import type { UserStore } from "../data/users/store.js";
 import { ActiveRunApprovalPolicyConvergenceError, savePreferencesWithApprovalConvergence } from "../runtime/accountApprovalPreferenceService.js";
+import { sendStructuredHttpError } from "../runtime/structuredError.js";
 import type { RunStore } from "../runtime/runStoreTypes.js";
 import { withTenantDebugModeLock } from "../data/tenants/debugModeLock.js";
 import type { UserInfo, UserRecord } from "../data/users/types.js";
 import type { TenantStore } from "../data/tenants/store.js";
 import {
   DEFAULT_TENANT_ID,
-  DEFAULT_TENANT_SETTINGS,
   TENANT_SLUG_PATTERN,
 } from "../data/tenants/types.js";
 import { checkTenantAccess } from "../data/tenants/access.js";
@@ -51,6 +52,7 @@ import { resolveUserCwd, ensureUserWorkspace } from "../workspace/resolver.js";
 import { softDeleteUserResources } from "../data/users/cleanup.js";
 import type { McpOAuthService } from "../mcp/oauthService.js";
 import { ALLOWED_AVATAR_TYPES, buildAvatarUrl } from './authAvatar.js';
+import { createAuthResponseHelpers } from './authResponse.js';
 import { createLegacyAuthWriteGate, type LegacyAuthWriteGateDeps } from './authLegacyWriteGate.js';
 import { startLoginRateCleanup, type RateBucket } from './authLoginRate.js';
 
@@ -280,6 +282,10 @@ export interface AuthRouterDeps extends LegacyAuthWriteGateDeps {
   getModelsConfig?: () => ModelsConfig | undefined;
   /** TASK-256：账户批准档位变化时，服务端原子收敛该用户所有 active run metadata。 */
   runStore?: Pick<RunStore, "updateApprovalPolicyForActiveByUser">;
+  /** M30-01 durable token/session generation authority. */
+  authEpochAuthority?: AuthEpochAuthority;
+  /** Disconnects all sockets/active work after a generation is fenced. */
+  onAuthFenced?: (userId: string, reason: 'login' | 'logout' | 'revoke' | 'delete_account') => void | Promise<void>;
 }
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
@@ -310,68 +316,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     return creator ? creator.username : createdBy;
   }
 
-  function tenantFeatures(tenantId: string | undefined) {
-    return (
-      tenantStore?.getSettings(tenantId || DEFAULT_TENANT_ID)?.features ??
-      DEFAULT_TENANT_SETTINGS.features
-    );
-  }
-
-  /**
-   * 解析所属组织的人类可读名称（前端左下角头像行展示）。
-   * 组织不存在（极端配置）时回退 tenantId slug；tenantStore 未提供时返回 undefined。
-   */
-  function resolveTenantName(tenantId: string | undefined): string | undefined {
-    if (!tenantStore) return undefined;
-    const id = tenantId || DEFAULT_TENANT_ID;
-    return tenantStore.findById(id)?.name ?? id;
-  }
-
-  function buildAuthResponse(user: UserRecord) {
-    const tenantId = user.tenantId || DEFAULT_TENANT_ID;
-    const authPayload: JwtPayload = {
-      sub: user.id,
-      username: user.username,
-      role: user.role,
-      tenantId,
-      platformCapabilities: user.platformCapabilities,
-      platformCapabilityLimits: user.platformCapabilityLimits,
-    };
-    const token = jwt.sign(
-      {
-        sub: user.id,
-        username: user.username,
-        role: user.role,
-        tenantId,
-      },
-      jwtSecret,
-      { expiresIn: tokenExpiresIn } as SignOptions,
-    );
-    return {
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        tenantId,
-        tenantName: resolveTenantName(tenantId),
-        // 兼容旧客户端字段；所有平台管理员均返回 true。
-        isSuperAdmin: isSuperAdmin(authPayload),
-        platformCapabilities: getEffectivePlatformCapabilities(authPayload),
-        platformCapabilityLimits: user.platformCapabilityLimits,
-        realName: user.realName,
-        position: user.position,
-        phone: user.phone,
-        phoneVerifiedAt: user.phoneVerifiedAt,
-        avatar: buildAvatarUrl(user.id, user.avatar, user.avatarVersion),
-        avatarVersion: user.avatarVersion,
-        debugMode: user.debugMode === true
-          && isDebugModeAvailable(user.tenantId, tenantFeatures(user.tenantId)),
-        tenantFeatures: tenantFeatures(tenantId),
-        preferences: user.preferences ?? {},
-      },
-    };
-  }
+  const { buildAuthResponse, resolveTenantName, tenantFeatures } = createAuthResponseHelpers({
+    tenantStore,
+    jwtSecret,
+    tokenExpiresIn,
+    authEpochAuthority: deps.authEpochAuthority,
+  });
 
   interface SmsLoginRuntime {
     version: number;
@@ -728,7 +678,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         ).catch(() => {});
       }
 
-      res.json(buildAuthResponse(user));
+      const response = buildAuthResponse(user);
+      await deps.onAuthFenced?.(user.id, 'login');
+      res.json(response);
     } catch (err) {
       res
         .status(500)
@@ -763,10 +715,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
             loginLogFilePath,
           ).catch(() => {});
         }
-        res.set("Retry-After", String(rate.retryAfter));
-        res
-          .status(429)
-          .json({ error: `登录尝试过于频繁，请 ${rate.retryAfter} 秒后再试` });
+        sendStructuredHttpError(res, 429, {
+          code: "rate_limited",
+          retryAfterMs: (rate.retryAfter ?? 1) * 1000,
+        });
         return;
       }
 
@@ -860,7 +812,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         ).catch(() => {});
       }
 
-      res.json(buildAuthResponse(user));
+      const response = buildAuthResponse(user);
+      await deps.onAuthFenced?.(user.id, 'login');
+      res.json(response);
     } catch (err) {
       res
         .status(500)
@@ -868,7 +822,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
-  // GET /api/auth/me
+  // GET /api/auth/me (also confirms the active M30-01 binding)
   router.get("/me", (req, res) => {
     const startedAt = Date.now();
     if (!req.user) {
@@ -884,6 +838,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // /me handler 原先漏返。前端依赖此字段判断"当前组织"标签 / 是否平台 admin。
       // JWT payload 里有，所以直接透传 req.user.tenantId 即可。
       tenantId: req.user.tenantId,
+      authEpoch: req.user.authEpoch,
+      generation: req.user.generation,
       tenantName: resolveTenantName(req.user.tenantId),
       // 兼容旧客户端字段；所有平台管理员均返回 true。
       isSuperAdmin: isSuperAdmin(req.user),
@@ -1222,6 +1178,35 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     }
   });
 
+  // POST /api/auth/logout — duplicate-safe server fence; local teardown remains token-last.
+  router.post('/logout', async (req, res) => {
+    const bearer = req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : undefined;
+    let payload = req.user;
+    if (!payload && bearer) {
+      try { payload = jwt.verify(bearer, jwtSecret) as JwtPayload; }
+      catch { /* handled below */ }
+    }
+    const userId = payload?.sub;
+    if (!userId || !userStore.findById(userId)) {
+      res.status(401).json({ error: 'Invalid logout token' });
+      return;
+    }
+    const current = deps.authEpochAuthority?.current(userId);
+    const duplicate = !!current?.fenced
+      && typeof payload?.authEpoch === 'number'
+      && payload.authEpoch < current.authEpoch;
+    if (deps.authEpochAuthority && !duplicate && !deps.authEpochAuthority.validates(userId, payload)) {
+      res.status(401).json({ error: 'Authentication generation revoked', code: 'AUTH_EPOCH_REVOKED' });
+      return;
+    }
+    const binding = duplicate ? current : deps.authEpochAuthority?.fence(userId, 'logout');
+    if (!duplicate) await deps.onAuthFenced?.(userId, 'logout');
+    apiLogger.info(JSON.stringify({ event: 'auth_lifecycle', operation: 'logout', duplicate, userId, ...binding, at: new Date().toISOString() }));
+    res.json({ ok: true, duplicate, ...binding });
+  });
+
   // DELETE /api/auth/users/:id (admin only)
   router.delete("/users/:id", requireAdmin, async (req, res) => {
     try {
@@ -1247,7 +1232,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         res.status(403).json({ error: peerAdminError });
         return;
       }
-      // 最后有效管理员保护必须先于 Connector/Cron 等清理副作用。
+      // M30-01 deletion is fail-fenced: once accepted for processing, business
+      // cleanup failure must never resurrect the previous token/socket.
+      const deletionFence = deps.authEpochAuthority?.fence(target.id, 'delete_account');
+      await deps.onAuthFenced?.(target.id, 'delete_account');
+      apiLogger.info(JSON.stringify({ event: 'auth_lifecycle', operation: 'delete_account', userId: target.id, actorUserId: req.user!.sub, ...deletionFence, at: new Date().toISOString() }));
+      // 最后有效管理员保护及后续业务失败均保留上面的 fence。
       userStore.assertCanDelete(target.id);
       await deps.onUserDeleting?.(target);
       if (!deps.onUserDeleting) {

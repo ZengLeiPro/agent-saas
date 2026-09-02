@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-01-rc-plan-v1.json",
+  "title": "M70-01 mobile RC plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "planId", "title", "coveragePolicy", "dimensions", "invariants", "highRiskPairs", "cases"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "schemaVersion": {"const": "1.0.0"},
+    "planId": {"const": "M70-01-RC"},
+    "title": {"type": "string", "minLength": 1},
+    "coveragePolicy": {"const": "authoritative-values-plus-high-risk-pairwise"},
+    "dimensions": {"type": "object", "additionalProperties": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}},
+    "invariants": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "minLength": 1}},
+    "highRiskPairs": {"type": "array", "minItems": 7, "items": {"$ref": "#/$defs/highRiskPair"}},
+    "cases": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/case"}}
+  },
+  "$defs": {
+    "highRiskPair": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "scenario", "requires"],
+      "properties": {
+        "id": {"pattern": "^HR-[A-Z0-9-]+$"},
+        "scenario": {"type": "string", "minLength": 1},
+        "requires": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}
+      }
+    },
+    "case": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "platformSlot", "network", "account", "agent", "session", "permissionResource", "permissionDecision", "interaction", "artifact", "riskScenarios", "fixtureRefs", "expectedInvariants"],
+      "properties": {
+        "id": {"pattern": "^M70-RC-[0-9]{3}$"},
+        "platformSlot": {"type": "string"}, "network": {"type": "string"}, "account": {"type": "string"},
+        "agent": {"type": "string"}, "session": {"type": "string"}, "permissionResource": {"type": "string"},
+        "permissionDecision": {"type": "string"}, "interaction": {"type": "string"}, "artifact": {"type": "string"},
+        "riskScenarios": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "fixtureRefs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "expectedInvariants": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
+      }
+    }
+  }
+}

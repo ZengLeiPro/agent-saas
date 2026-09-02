@@ -12,7 +12,7 @@ beforeAll(() => {
 });
 
 describe('运行中断提示', () => {
-  it('使用低干扰状态并提供继续生成入口', () => {
+  it('未知运行错误 fail-safe 且不提供盲重试入口', () => {
     const onRetry = vi.fn();
     const message = {
       id: 'runtime-failure-1',
@@ -31,11 +31,9 @@ describe('运行中断提示', () => {
       </FilePreviewProvider>,
     );
 
-    expect(screen.getByRole('status').textContent).toContain('回复已中断');
-    expect(screen.queryByRole('alert')).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: '继续生成' }));
-    expect(onRetry).toHaveBeenCalledWith(message);
+    expect(screen.getByRole('alert').textContent).toContain('回复已中断');
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(onRetry).not.toHaveBeenCalled();
   });
 
   it('策略拒绝只提供切换模型入口，不继续使用原模型', () => {
@@ -59,10 +57,10 @@ describe('运行中断提示', () => {
       </FilePreviewProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '切换模型' }));
+    fireEvent.click(screen.getByRole('button', { name: /切换模型/ }));
     expect(onSwitchModel).toHaveBeenCalledTimes(1);
     expect(onRetry).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: '继续生成' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /继续生成/ })).toBeNull();
   });
 
   it('已有回复在运行时不重复提供续跑入口', () => {
@@ -82,6 +80,6 @@ describe('运行中断提示', () => {
       </FilePreviewProvider>,
     );
 
-    expect(screen.queryByRole('button', { name: '继续生成' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /继续生成/ })).toBeNull();
   });
 });

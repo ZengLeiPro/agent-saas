@@ -294,7 +294,84 @@ test('Production and Staging deploy modules enforce topology and private snapsho
   assert.ok(rollbackFence > rollbackInitialCheck);
   assert.ok(rollbackHelperCall > rollbackFence);
   assert.ok(rollbackCleanup > rollbackHelperCall);
-  assert.match(production, /restore_candidate_worker_authority "\$worker_idle" "\$worker_env"/u);
+  const workerRecoveryStart = production.indexOf('restore_candidate_worker_authority() {');
+  const workerRecoveryEnd = production.indexOf('deploy_acs() {', workerRecoveryStart);
+  const workerRecovery = production.slice(workerRecoveryStart, workerRecoveryEnd);
+  const stopOldWorker = workerRecovery.indexOf(
+    'revoke_systemd_authority "agent-saas-runtime-worker@$active_color"',
+  );
+  const startCandidateWorker = workerRecovery.indexOf(
+    'systemctl restart "agent-saas-runtime-worker@$candidate_color"',
+  );
+  assert.ok(stopOldWorker > -1);
+  assert.ok(startCandidateWorker > stopOldWorker);
+  assert.match(
+    workerRecovery,
+    /systemctl is-active --quiet "agent-saas-runtime-worker@\$candidate_color"[\s\S]*! systemctl is-active --quiet "agent-saas-runtime-worker@\$active_color"[\s\S]*<"\$marker"/u,
+  );
+  assert.match(production, /restore_candidate_worker_authority \\\n\s*"\$worker_active" "\$worker_idle" "\$worker_env"/u);
+  const initialApiCleanup = production.indexOf(
+    'rm -f "/run/agent-saas-server-$api_idle.pid"',
+  );
+  const initialApiSnapshotCleanup = production.indexOf(
+    '"/run/agent-saas-server-$api_idle.config-identity.json"',
+    initialApiCleanup,
+  );
+  const initialApiStart = production.indexOf(
+    'systemctl enable --now "agent-saas-server@$api_idle"',
+    initialApiCleanup,
+  );
+  assert.ok(initialApiCleanup > -1);
+  assert.ok(initialApiSnapshotCleanup > initialApiCleanup);
+  assert.ok(initialApiStart > initialApiSnapshotCleanup);
+
+  const apiCommitStart = production.indexOf('commit_rollback_api_authority() {');
+  const apiCommitEnd = production.indexOf('restore_candidate_api_authority() {');
+  const apiCommit = production.slice(apiCommitStart, apiCommitEnd);
+  const stopCandidateApi = apiCommit.indexOf(
+    'systemctl disable --now "agent-saas-server@$candidate_color"',
+  );
+  const restoreOldNginx = apiCommit.indexOf('cp -a "$old_nginx_backup" "$upstream"');
+  const commitOldApiMarker = apiCommit.indexOf('commit_api_active_color "$active_color"');
+  assert.ok(stopCandidateApi > -1);
+  assert.ok(restoreOldNginx > stopCandidateApi);
+  assert.ok(commitOldApiMarker > restoreOldNginx);
+  assert.match(
+    apiCommit,
+    /\[ "\$disable_status" -ne 0 \] \|\| \[ "\$candidate_stopped_ref" != true \]/u,
+  );
+  assert.match(apiCommit, /if \[ "\$nginx_changed" = true \]; then/u);
+
+  const apiRecoveryStart = apiCommitEnd;
+  const apiRecoveryEnd = production.indexOf('commit_worker_active_color() {', apiRecoveryStart);
+  const apiRecovery = production.slice(apiRecoveryStart, apiRecoveryEnd);
+  const recoveryApiSnapshotCleanup = apiRecovery.indexOf(
+    'agent-saas-server-$candidate_color.config-identity.json',
+  );
+  const recoveryApiStart = apiRecovery.indexOf(
+    'systemctl restart "agent-saas-server@$candidate_color"',
+  );
+  const restoreCandidateNginx = apiRecovery.indexOf(
+    'cp -a "$candidate_nginx_backup" "$upstream"',
+  );
+  assert.ok(recoveryApiSnapshotCleanup > -1);
+  assert.ok(recoveryApiStart > recoveryApiSnapshotCleanup);
+  const stopOldApi = apiRecovery.indexOf(
+    'revoke_systemd_authority "agent-saas-server@$active_color"',
+  );
+  assert.ok(restoreCandidateNginx > -1);
+  assert.ok(stopOldApi > restoreCandidateNginx);
+  assert.match(
+    apiRecovery,
+    /systemctl is-active --quiet "agent-saas-server@\$candidate_color"[\s\S]*<"\$marker"/u,
+  );
+  assert.match(production, /nginx-candidate-upstream\.conf/u);
+  assert.match(apiRecovery, /commit_api_active_color "\$candidate_color"/u);
+  assert.match(workerRecovery, /commit_worker_active_color "\$candidate_color"/u);
+  assert.match(production, /DEPLOY_APP_ROLLBACK_API_CANDIDATE_ADMITTED=true/u);
+  assert.match(production, /DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true/u);
+  assert.match(production, /\[ "\$api_candidate_admitted" = true \]/u);
+  assert.match(production, /\[ "\$worker_candidate_admitted" = true \]/u);
   assert.match(healthRoute, /摘要本身只走平台管理员 API \/ 私有运行态快照，不进匿名响应/u);
   assert.doesNotMatch(
     healthRoute.slice(

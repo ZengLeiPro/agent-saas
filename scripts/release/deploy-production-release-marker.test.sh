@@ -17,6 +17,7 @@ test -s "$lifecycle"
 bash -n "$lifecycle"
 
 # This harness executes the exact production arm/disarm/EXIT dispatcher while
+# preserving production authority topology assertions in dedicated harnesses.
 # replacing only phase-specific recovery operations with harmless sentinels.
 harness="$tmp/cleanup-harness.sh"
 cat > "$harness" <<'HARNESS'
@@ -184,12 +185,174 @@ done
 # EXIT trap that could capture function-local state.
 grep -F 'arm_deploy_rollback cleanup_acs_failure' "$deploy" >/dev/null
 grep -F 'arm_deploy_rollback cleanup_app_failure' "$deploy" >/dev/null
-# Candidate release/env cleanup stays gated by a successful topology stop + final commit.
+# Candidate release/env cleanup stays gated by a successful topology stop + final commit;
+# either marker state must be recoverable to one verified authority and release binding.
 grep -F 'elif commit_rollback_worker_authority "$worker_active" "$worker_idle"' "$deploy" >/dev/null
-grep -F '&& restore_candidate_worker_authority "$worker_idle" "$worker_env"' "$deploy" >/dev/null
+grep -F 'restore_candidate_worker_authority' "$deploy" >/dev/null
+grep -F 'commit_rollback_api_authority' "$deploy" >/dev/null
+grep -F 'restore_candidate_api_authority' "$deploy" >/dev/null
+
+api_helpers="$tmp/api-authority-helpers.sh"
+{
+  sed -n '/^revoke_systemd_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^validate_api_release_boundary() {/,/^}$/p' "$deploy"
+  sed -n '/^commit_api_active_color() {/,/^}$/p' "$deploy"
+  sed -n '/^commit_rollback_api_authority() {/,/^}$/p' "$deploy"
+  sed -n '/^restore_candidate_api_authority() {/,/^}$/p' "$deploy"
+} > "$api_helpers"
+test -s "$api_helpers"
+bash -n "$api_helpers"
+
+api_rollback_harness="$tmp/api-rollback-topology-harness.sh"
+cat > "$api_rollback_harness" <<'HARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$API_HELPERS"
+
+systemctl() {
+  local action="$1" unit="${*: -1}"
+  case "$action" in
+    disable)
+      if [[ "$unit" == *@green ]]; then
+        printf 'stop-candidate\n' >>"$ACTION_LOG"
+        CANDIDATE_ACTIVE=false
+        CANDIDATE_DISABLE_ATTEMPTS=$((CANDIDATE_DISABLE_ATTEMPTS + 1))
+        if [ "$CANDIDATE_DISABLE_ATTEMPTS" = 1 ]; then
+          return "$CANDIDATE_DISABLE_STATUS"
+        fi
+        return 0
+      fi
+      printf 'stop-old\n' >>"$ACTION_LOG"
+      OLD_ACTIVE=false
+      OLD_DISABLE_ATTEMPTS=$((OLD_DISABLE_ATTEMPTS + 1))
+      if [ "$OLD_DISABLE_ATTEMPTS" = 1 ]; then
+        return "$OLD_DISABLE_STATUS"
+      fi
+      return 0
+      ;;
+    is-active)
+      if [[ "$unit" == *@green ]]; then
+        test "$CANDIDATE_ACTIVE" = true
+      else
+        test "$OLD_ACTIVE" = true
+      fi
+      ;;
+    enable)
+      printf 'start-candidate\n' >>"$ACTION_LOG"
+      CANDIDATE_ACTIVE=true
+      if [ ! -e "$AGENT_SAAS_API_RUN_ROOT/agent-saas-server-green.config-identity.json" ]; then
+        printf 'fresh\n' >"$AGENT_SAAS_API_RUN_ROOT/agent-saas-server-green.config-identity.json"
+      fi
+      ;;
+    restart) return 0 ;;
+    is-enabled) return 1 ;;
+    reset-failed|reload) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+nginx() { return 0; }
+curl() { return 0; }
+node() {
+  test "$(cat "$AGENT_SAAS_API_RUN_ROOT/agent-saas-server-green.config-identity.json" 2>/dev/null)" = fresh
+}
+port_for_color() { [ "$1" = blue ] && echo 4001 || echo 4002; } # production helper dependency
+sleep() { return 0; }
+
+printf 'stale\n' >"$AGENT_SAAS_API_RUN_ROOT/agent-saas-server-green.config-identity.json"
+printf '%s\n' "$INITIAL_MARKER" >"$AGENT_SAAS_API_ACTIVE_COLOR_FILE"
+if [ "$CANDIDATE_ADMITTED" = true ]; then
+  printf '# active=green release=candidate\n' >"$AGENT_SAAS_NGINX_UPSTREAM_FILE"
+else
+  printf '# active=blue release=old\n' >"$AGENT_SAAS_NGINX_UPSTREAM_FILE"
+fi
+printf '# active=blue release=old\n' >"$OLD_NGINX_BACKUP"
+printf '# active=green release=candidate\n' >"$CANDIDATE_NGINX_BACKUP"
+printf 'candidate-link\n' >"$CANDIDATE_LINK_SENTINEL"
+printf 'candidate-env\n' >"$CANDIDATE_ENV_SENTINEL"
+OLD_ACTIVE=true
+CANDIDATE_ACTIVE=true
+OLD_DISABLE_ATTEMPTS=0
+CANDIDATE_DISABLE_ATTEMPTS=0
+candidate_stopped=false
+if commit_rollback_api_authority blue green "$OLD_NGINX_BACKUP" true true \
+  candidate_stopped; then
+  transition_status=0
+  rm "$CANDIDATE_LINK_SENTINEL" "$CANDIDATE_ENV_SENTINEL"
+else
+  transition_status=$?
+  if [ "$CANDIDATE_ADMITTED" = true ]; then
+    restore_candidate_api_authority blue green "$CANDIDATE_NGINX_BACKUP" '{}'
+  else
+    revoke_systemd_authority agent-saas-server@green
+  fi
+fi
+
+if [ "$EXPECTED_RESULT" = failure ]; then
+  test "$transition_status" -ne 0
+  test "$candidate_stopped" = true
+  test "$(cat "$CANDIDATE_LINK_SENTINEL")" = candidate-link
+  test "$(cat "$CANDIDATE_ENV_SENTINEL")" = candidate-env
+  if [ "$CANDIDATE_ADMITTED" = true ]; then
+    test "$OLD_ACTIVE" = false
+    test "$CANDIDATE_ACTIVE" = true
+    test "$(cat "$AGENT_SAAS_API_ACTIVE_COLOR_FILE")" = green
+    grep -F '# active=green ' "$AGENT_SAAS_NGINX_UPSTREAM_FILE" >/dev/null
+    test "$(grep -Fxc start-candidate "$ACTION_LOG")" = 1
+  else
+    test "$OLD_ACTIVE" = true
+    test "$CANDIDATE_ACTIVE" = false
+    test "$(cat "$AGENT_SAAS_API_ACTIVE_COLOR_FILE")" = blue
+    grep -F '# active=blue ' "$AGENT_SAAS_NGINX_UPSTREAM_FILE" >/dev/null
+    ! grep -Fx start-candidate "$ACTION_LOG" >/dev/null
+  fi
+else
+  test "$transition_status" = 0
+  test "$candidate_stopped" = true
+  test "$OLD_ACTIVE" = true
+  test "$CANDIDATE_ACTIVE" = false
+  test "$(cat "$AGENT_SAAS_API_ACTIVE_COLOR_FILE")" = blue
+  grep -F '# active=blue ' "$AGENT_SAAS_NGINX_UPSTREAM_FILE" >/dev/null
+  test ! -e "$CANDIDATE_LINK_SENTINEL"
+  test ! -e "$CANDIDATE_ENV_SENTINEL"
+  ! grep -Fx stop-old "$ACTION_LOG" >/dev/null
+  ! grep -Fx start-candidate "$ACTION_LOG" >/dev/null
+fi
+HARNESS
+chmod +x "$api_rollback_harness"
+run_api_rollback_case() {
+  local disable_status="$1" expected_result="$2" initial_marker="${3:-green}"
+  local admitted="${4:-true}" old_disable_status="${5:-0}"
+  local api_case="$tmp/api-disable-$disable_status-$expected_result-$initial_marker-$admitted-$old_disable_status"
+  mkdir -p "$api_case/etc" "$api_case/run"
+  API_HELPERS="$api_helpers" \
+    AGENT_SAAS_API_ACTIVE_COLOR_FILE="$api_case/etc/active-color" \
+    AGENT_SAAS_NGINX_UPSTREAM_FILE="$api_case/etc/upstream.conf" \
+    AGENT_SAAS_API_RUN_ROOT="$api_case/run" \
+    ACTION_LOG="$api_case/actions.log" \
+    OLD_NGINX_BACKUP="$api_case/old-upstream.conf" \
+    CANDIDATE_NGINX_BACKUP="$api_case/candidate-upstream.conf" \
+    CANDIDATE_LINK_SENTINEL="$api_case/candidate-link" \
+    CANDIDATE_ENV_SENTINEL="$api_case/candidate.env" \
+    CANDIDATE_DISABLE_STATUS="$disable_status" \
+    OLD_DISABLE_STATUS="$old_disable_status" \
+    CANDIDATE_ADMITTED="$admitted" \
+    EXPECTED_RESULT="$expected_result" \
+    INITIAL_MARKER="$initial_marker" \
+    GITHUB_RUN_ID=4242 \
+    GITHUB_RUN_ATTEMPT=7 \
+    MANIFEST_PATH="$api_case/manifest.json" \
+    config_identity_reader="$deploy" \
+    bash "$api_rollback_harness"
+}
+
+run_api_rollback_case 73 failure
+run_api_rollback_case 73 failure blue true 73
+run_api_rollback_case 73 failure blue false
+run_api_rollback_case 0 success
 
 worker_helpers="$tmp/worker-authority-helpers.sh"
 {
+  sed -n '/^revoke_systemd_authority() {/,/^}$/p' "$deploy"
   sed -n '/^acquire_config_governance_fence() {/,/^}$/p' "$deploy"
   sed -n '/^validate_worker_release_boundary() {/,/^}$/p' "$deploy"
   sed -n '/^commit_worker_active_color() {/,/^}$/p' "$deploy"
@@ -298,22 +461,36 @@ systemctl() {
   local action="$1" unit="${*: -1}"
   case "$action" in
     disable)
-      printf 'disable\n' >>"$ACTION_LOG"
-      CANDIDATE_ACTIVE=false
-      return "$DISABLE_STATUS"
+      if [[ "$unit" == *@green ]]; then
+        printf 'stop-candidate\n' >>"$ACTION_LOG"
+        CANDIDATE_ACTIVE=false
+        CANDIDATE_DISABLE_ATTEMPTS=$((CANDIDATE_DISABLE_ATTEMPTS + 1))
+        if [ "$CANDIDATE_DISABLE_ATTEMPTS" = 1 ]; then
+          return "$DISABLE_STATUS"
+        fi
+        return 0
+      fi
+      printf 'stop-old\n' >>"$ACTION_LOG"
+      OLD_ACTIVE=false
+      OLD_DISABLE_ATTEMPTS=$((OLD_DISABLE_ATTEMPTS + 1))
+      if [ "$OLD_DISABLE_ATTEMPTS" = 1 ]; then
+        return "$OLD_DISABLE_STATUS"
+      fi
+      return 0
       ;;
     is-active)
       if [[ "$unit" == *@green ]]; then
         test "$CANDIDATE_ACTIVE" = true
       else
-        return 0
+        test "$OLD_ACTIVE" = true
       fi
       ;;
     enable)
-      printf 'restore\n' >>"$ACTION_LOG"
+      printf 'restore-candidate\n' >>"$ACTION_LOG"
       CANDIDATE_ACTIVE=true
       write_worker_state green 5252
       ;;
+    is-enabled) return 1 ;;
     reset-failed) return 0 ;;
     show) printf 'AGENT_SAAS_ENVIRONMENT=production\n' ;;
     *) return 0 ;;
@@ -324,7 +501,11 @@ node() { return 0; }
 
 write_worker_state blue 4242
 write_worker_state green 5252
-printf 'green\n' >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
+OLD_ACTIVE=true
+CANDIDATE_ACTIVE=true
+OLD_DISABLE_ATTEMPTS=0
+CANDIDATE_DISABLE_ATTEMPTS=0
+printf '%s\n' "$INITIAL_MARKER" >"$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE"
 printf 'candidate-link\n' >"$CANDIDATE_LINK_SENTINEL"
 printf 'candidate-env\n' >"$CANDIDATE_ENV_SENTINEL"
 candidate_stopped=false
@@ -335,44 +516,62 @@ if commit_rollback_worker_authority blue green "$CANDIDATE_ENV_SENTINEL" \
   rm "$CANDIDATE_LINK_SENTINEL" "$CANDIDATE_ENV_SENTINEL"
 else
   transition_status=$?
-  if [ "$candidate_stopped" = true ]; then
-    restore_candidate_worker_authority green "$CANDIDATE_ENV_SENTINEL"
+  if [ "$CANDIDATE_ADMITTED" = true ]; then
+    restore_candidate_worker_authority blue green "$CANDIDATE_ENV_SENTINEL"
+  else
+    revoke_systemd_authority agent-saas-runtime-worker@green
   fi
 fi
 
 test "$candidate_stopped" = true
-test "$(grep -Fxc disable "$ACTION_LOG")" = 1
 if [ "$EXPECTED_RESULT" = failure ]; then
   test "$transition_status" -ne 0
   test "$worker_restored" = false
-  test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = green
   test "$(cat "$CANDIDATE_LINK_SENTINEL")" = candidate-link
   test "$(cat "$CANDIDATE_ENV_SENTINEL")" = candidate-env
-  test "$(grep -Fxc restore "$ACTION_LOG")" = 1
+  if [ "$CANDIDATE_ADMITTED" = true ]; then
+    test "$OLD_ACTIVE" = false
+    test "$CANDIDATE_ACTIVE" = true
+    test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = green
+    test "$(grep -Fxc restore-candidate "$ACTION_LOG")" = 1
+  else
+    test "$OLD_ACTIVE" = true
+    test "$CANDIDATE_ACTIVE" = false
+    test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = blue
+    ! grep -Fx restore-candidate "$ACTION_LOG" >/dev/null
+  fi
 else
   test "$transition_status" = 0
   test "$worker_restored" = true
+  test "$OLD_ACTIVE" = true
+  test "$CANDIDATE_ACTIVE" = false
   test "$(cat "$AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE")" = blue
   test ! -e "$CANDIDATE_LINK_SENTINEL"
   test ! -e "$CANDIDATE_ENV_SENTINEL"
-  ! grep -Fx restore "$ACTION_LOG" >/dev/null
+  ! grep -Fx stop-old "$ACTION_LOG" >/dev/null
+  ! grep -Fx restore-candidate "$ACTION_LOG" >/dev/null
 fi
 HARNESS
 chmod +x "$rollback_stop_harness"
 run_rollback_stop_case() {
-  local disable_status="$1" expected_result="$2"
-  local rollback_case="$tmp/rollback-disable-$disable_status-$expected_result"
-  mkdir -p "$rollback_case/run" "$rollback_case/etc"
+  local disable_status="$1" expected_result="$2" initial_marker="${3:-green}"
+  local admitted="${4:-true}" old_disable_status="${5:-0}"
+  local rollback_case="$tmp/rollback-disable-$disable_status-$expected_result-$initial_marker-$admitted-$old_disable_status"
+  mkdir -p "$rollback_case/run" "$rollback_case/etc" "$rollback_case/process"
   CLEANUP_LIFECYCLE="$lifecycle" \
     WORKER_HELPERS="$worker_helpers" \
     AGENT_SAAS_WORKER_RUN_ROOT="$rollback_case/run" \
     AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$rollback_case/etc/active-color" \
+    AGENT_SAAS_RUNTIME_DATA_ROOT="$rollback_case/process" \
     ACTION_LOG="$rollback_case/actions.log" \
     CANDIDATE_LINK_SENTINEL="$rollback_case/candidate-link" \
     CANDIDATE_ENV_SENTINEL="$rollback_case/candidate.env" \
     CANDIDATE_ACTIVE=true \
     DISABLE_STATUS="$disable_status" \
+    OLD_DISABLE_STATUS="$old_disable_status" \
+    CANDIDATE_ADMITTED="$admitted" \
     EXPECTED_RESULT="$expected_result" \
+    INITIAL_MARKER="$initial_marker" \
     GITHUB_RUN_ID=4242 \
     GITHUB_RUN_ATTEMPT=7 \
     config_identity_reader="$deploy" \
@@ -382,6 +581,8 @@ run_rollback_stop_case() {
 # Non-zero disable plus an inactive process must restore candidate authority and
 # preserve marker/release/env; only a zero disable may commit and clean up.
 run_rollback_stop_case 73 failure
+run_rollback_stop_case 73 failure blue true 73
+run_rollback_stop_case 73 failure blue false
 run_rollback_stop_case 0 success
 
 source "$lifecycle"

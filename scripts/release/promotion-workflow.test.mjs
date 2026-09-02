@@ -563,7 +563,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /DEPLOY_APP_ROLLBACK_COMMITTED=true/u);
   assert.match(
     deploy,
-    /systemctl disable --now "agent-saas-server@\$api_idle"[\s\S]{0,180}systemctl is-active --quiet "agent-saas-server@\$api_idle"/u,
+    /systemctl disable --now "agent-saas-server@\$candidate_color"[\s\S]{0,240}systemctl is-active --quiet "agent-saas-server@\$candidate_color"/u,
   );
   assert.match(
     deploy,
@@ -573,10 +573,12 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
     deploy,
     /systemctl disable --now "agent-saas-runtime-worker@\$candidate_color"[\s\S]{0,240}systemctl is-active --quiet "agent-saas-runtime-worker@\$candidate_color"/u,
   );
-  assert.match(deploy, /printf '%s\\n' "\$api_active" >\/etc\/agent-saas\/active-color/u);
+  assert.match(deploy, /commit_rollback_api_authority "\$api_active" "\$api_idle"/u);
+  assert.match(deploy, /restore_candidate_api_authority "\$api_active" "\$api_idle"/u);
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
+  assert.match(deploy, /nginx-candidate-upstream\.conf/u);
   assert.match(deploy, /had_nginx=false/u);
-  assert.match(deploy, /rm -f \/etc\/nginx\/conf\.d\/agent-saas-upstream\.conf/u);
+  assert.match(deploy, /rm -f "\$upstream"/u);
   assert.match(deploy, /exit 20/u);
   assert.doesNotMatch(deploy, /pnpm (?:install|build)/u);
   assert.match(acsUnit, /^User=root$/mu);

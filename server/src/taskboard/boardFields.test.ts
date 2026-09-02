@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { boardIntegrationMigrationSql, rowToBoard } from './boardFields.js';
+import { TASKBOARD_STAGE_DEFAULT_PROMPTS } from '../../../shared/src/types/taskboard.js';
+import { boardIntegrationMigrationSql, boardStagePromptsMigrationSql, rowToBoard } from './boardFields.js';
 
 describe('rowToBoard integration policy projection', () => {
   it('drops historical featureFlags and CI fallback while projecting workflow v3', () => {
@@ -27,6 +28,12 @@ describe('rowToBoard integration policy projection', () => {
     expect(board.integrationPolicy).not.toHaveProperty('featureFlags');
     expect(board.integrationPolicy).not.toHaveProperty('ciPolicy');
     expect(board.integrationPolicy?.execution).not.toHaveProperty('requireGreenChecks');
+  });
+
+  it('sets the three stage defaults for newly inserted board rows', () => {
+    const sql = boardStagePromptsMigrationSql('taskboards');
+    expect(sql).toContain(JSON.stringify(TASKBOARD_STAGE_DEFAULT_PROMPTS));
+    expect(sql).toContain('ALTER COLUMN stage_prompts SET DEFAULT');
   });
 
   it('removes requireGreenChecks from stored policy JSON during schema normalization', () => {

@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "1.0.0",
+  "evidenceKind": "deterministic-mock",
+  "receiptId": "3874b570ec0d999261fe215d80964b4d0c073387869f24a7bebe1f9173171840",
+  "contract": {
+    "platform": "ios",
+    "device": "mock-ios-minimum",
+    "osVersion": "mock-minimum",
+    "osRole": "minimum",
+    "deviceClass": "configured-ios",
+    "buildSha": "547f5f87a8cea7696135f611a42e2dcdcaebd9f5f",
+    "sourceHead": "547f5f87a8cea7696135f611a42e2dcdcaebd9f5f",
+    "appId": "mock.ios",
+    "version": "1.0.0-mock",
+    "signingFingerprint": "abababababababababababababababababababababababababababababababab",
+    "testRunId": "mock-run-ios-minimum",
+    "slot": "ios-minimum"
+  },
+  "device": {
+    "physical": false,
+    "virtual": true,
+    "browser": false,
+    "providerName": "deterministic-mock",
+    "providerRunId": "mock-provider-ios-minimum",
+    "deviceIdentifierHash": "084ef785f67ecaac8d425d4a10154ad7c4917aafb24c3f90a951739a4e4cd3b1",
+    "model": "non-device-fixture"
+  },
+  "run": {
+    "completedAt": "2026-09-01T00:00:00.000Z",
+    "status": "passed",
+    "fixtureVersion": "mock-v1"
+  },
+  "flowHash": "0b763d6ea992dd2c55a53b942c1d8af69bd4d8a3913b9099394a17f14f06f10b",
+  "flows": [
+    {
+      "id": "fresh-install-login",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "identity-boundary",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "agent-switch",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "text-chat-queue",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "attachments",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "share-intent",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "interaction-zone",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "lifecycle-recovery",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "artifacts",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "permission-deny",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "upgrade-pending",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    }
+  ],
+  "artifacts": {
+    "junit": {
+      "path": "junit.xml",
+      "sha256": "e2fb4544a51b09e500aa62fcbc7a264bc4f1930c978cad2e6c7fb4f225ca729e"
+    },
+    "screenshots": {
+      "path": "screenshots.json",
+      "count": 0
+    },
+    "limitedLog": {
+      "path": "maestro.sanitized.txt",
+      "bytes": 52,
+      "truncated": false
+    }
+  },
+  "integrity": {
+    "algorithm": "HMAC-SHA256",
+    "payloadSha256": "02bcbc9aa4d332ca7dbc645e46a0c1eff72f6ad93e64a5e6bc347671cadc3a5b",
+    "hmacSha256": "20f506b4612d2216ce612c376cfdeb486dc454a4d8507d6a6ad880a5a4debdc6"
+  }
+}

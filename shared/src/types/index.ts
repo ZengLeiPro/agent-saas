@@ -1,6 +1,19 @@
 export type {
+  AgentTarget,
+  AgentTargetAvailability,
+  AgentTargetCatalog,
+  AgentTargetCatalogAdapterResult,
+  AgentTargetOption,
+  AgentTargetSelection,
+  AgentTargetUnavailableReason,
+  AgentTargetUnavailableReasonCode,
+} from "../lib/agentTarget";
+
+// Shared public message contracts.
+export type {
   MessageItem,
   MessageItemInput,
+  MessageAttachmentDisplay,
   AskUserAnswerValue,
   AskUserAnswers,
   SubagentStatus,
@@ -9,6 +22,7 @@ export type {
   BusinessStepSection,
   RenderItem,
 } from "./message";
+// Message render/runtime exports.
 export { ACTIVITY_TYPES } from "./message";
 
 export type {
@@ -16,6 +30,8 @@ export type {
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,
+  SessionListActiveInteraction,
+  SessionListPage,
   ApiSessionDetail,
   TokenUsage,
   ContextUsageAccuracy,
@@ -39,9 +55,20 @@ export type {
   SessionSearchResponse,
 } from "./search";
 
-export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
+export type {
+  WsBlockType,
+  WsAskUserQuestion,
+  WsEvent,
+  WsSyncOverflowRecovery,
+  WsSyncPendingInteractionSnapshot,
+  WsSyncRuntimeSnapshot,
+  WsSyncSessionSnapshot,
+} from "./ws";
+export type {
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
+} from "./runtimeFailure";
 // Sandbox workload ownership is authored by the Server runtime.
-export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
 export type { SandboxWorkloadDescriptor } from "./sandboxWorkload";
 
 export type {
@@ -53,7 +80,11 @@ export type {
   UserPreferences,
   TenantFeatureFlags,
 } from "./auth";
-export type { ModelItem, ModelGroup, ModelList } from "./models";
+export type {
+  ModelItem,
+  ModelGroup,
+  ModelList,
+} from "./models";
 
 export type { ChatSessionIndexItem, AppTab, SessionRuntimeStatus } from "./sidebar";
 export { baseNavItems, getSidebarNavItems, formatShortDate, sourceDisplayText, getSessionWaitingLabel, getGroupWaitingRuntimeStatus } from "./sidebar";
@@ -247,6 +278,7 @@ export type {
   OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
+  OrgAgentMineResponse,
 } from "./orgAgent";
 
 export type {

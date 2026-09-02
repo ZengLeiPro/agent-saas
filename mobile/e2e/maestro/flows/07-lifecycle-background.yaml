@@ -1,0 +1,21 @@
+appId: ${APP_ID}
+name: 07a background 3s and 30s preserves chat state
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- pressKey: Home
+- runScript: ../scripts/wait-3s.js
+- launchApp
+- assertVisible:
+    id: "chat-composer-input"
+- pressKey: Home
+- runScript: ../scripts/wait-30s.js
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "chat-composer-input"
+    timeout: 10000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/07a-lifecycle-background

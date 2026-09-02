@@ -1,14 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { cancelActiveRunsByUser } from './runTerminalLifecycle.js';
-import { markRunStatusIfCurrent } from './runStatusCas.js';
+import { markRunStatus, markRunStatusIfCurrent } from './runStatusCas.js';
 import type { ActiveRunCounts, LatestResponseSessionState, ListBackgroundTasksOptions, PgPool, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus } from './runStoreTypes.js';
 import { normalizeRunRecord, parseCount } from './runStoreRecordHelpers.js';
+import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
+import { markRunLivenessStale, reapExpiredRunLiveness, renewRunLease } from './runStoreLivenessQueries.js';
 
+/** SQL implementation for authoritative Runtime Run state. */
 export class PgRunStoreQueries {
   constructor(
     readonly pool: PgPool,
     readonly runsTable: string,
     readonly messageSubmissionsTable: string,
     readonly steeringInputsTable: string,
+    readonly toolInvocationsTable: string = runsTable.replace(/_runs$/, '_tool_invocations'),
   ) {}
 
   async markStatus(runId: string, status: RunStatus, reason?: string, metadataPatch: Record<string, unknown> = {}): Promise<RunRecord | null> {
@@ -40,6 +45,12 @@ export class PgRunStoreQueries {
               status_reason = $2,
               updated_at = cancellation_time.now,
               cancelled_at = COALESCE(run.cancelled_at, cancellation_time.now),
+              worker_id = NULL,
+              lease_expires_at = NULL,
+              liveness_state = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+              liveness_reason_code = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE COALESCE($2, 'cancelled') END,
+              liveness_detected_at = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE cancellation_time.now END,
+              liveness_version = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE run.liveness_version + 1 END,
               metadata = ((run.metadata || $3::jsonb) - 'wakeMessage') || jsonb_build_object(
                 'sandboxLifecycleTerminalAt', COALESCE(
                   CASE WHEN run.status = 'cancelled' THEN run.metadata->>'sandboxLifecycleTerminalAt' END,
@@ -65,67 +76,13 @@ export class PgRunStoreQueries {
       }
     }
 
-    // 门禁加固：terminal 状态是 sink。已 completed/failed/cancelled/orphaned
-    // 的 run 不能被重新写回活跃态（防 lease 抢占重叠期内旧 worker 经事件路径覆盖
-    // 新 worker 状态 / 防终态被重激活）。terminal→相同 terminal 仍允许（幂等重写
-    // reason/metadata）。先取得行锁，再用数据库时间生成线性化时间，避免锁等待被算进 TTL。
-    const result = await this.pool.query<{ row_json: RunRecord }>(`
-      WITH locked AS MATERIALIZED (
-        SELECT run_id
-        FROM ${this.runsTable}
-        WHERE run_id = $1
-        FOR UPDATE
-      ), transition_time AS MATERIALIZED (
-        SELECT clock_timestamp() AS now FROM locked
-      ), updated AS (
-        UPDATE ${this.runsTable} run
-        SET status = $2,
-            status_reason = $3,
-            updated_at = CASE
-              WHEN run.status = $2 AND $2::text IN ('completed','failed','cancelled','orphaned') THEN run.updated_at
-              ELSE transition_time.now
-            END,
-            started_at = CASE WHEN $2 = 'running' AND run.started_at IS NULL THEN transition_time.now ELSE run.started_at END,
-            completed_at = CASE
-              WHEN $2 = 'completed' THEN COALESCE(run.completed_at, CASE WHEN run.status = 'completed' THEN run.updated_at END, transition_time.now)
-              ELSE run.completed_at
-            END,
-            failed_at = CASE
-              WHEN $2 = 'failed' THEN COALESCE(run.failed_at, CASE WHEN run.status = 'failed' THEN run.updated_at END, transition_time.now)
-              ELSE run.failed_at
-            END,
-            cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(run.cancelled_at, transition_time.now) ELSE run.cancelled_at END,
-            metadata = CASE
-              WHEN $2::text IN ('completed','failed','cancelled','orphaned')
-                THEN ((run.metadata || $4::jsonb) - 'wakeMessage') || jsonb_build_object(
-                  'sandboxLifecycleTerminalAt', COALESCE(
-                    CASE
-                      WHEN run.status IN ('completed','failed','cancelled','orphaned')
-                        THEN run.metadata->>'sandboxLifecycleTerminalAt'
-                    END,
-                    CASE
-                      WHEN run.status = 'completed' THEN run.completed_at::text
-                      WHEN run.status = 'failed' THEN run.failed_at::text
-                      WHEN run.status = 'cancelled' THEN COALESCE(run.cancelled_at::text, run.completed_at::text, run.failed_at::text)
-                      WHEN run.status = 'orphaned' THEN run.updated_at::text
-                    END,
-                    transition_time.now::text
-                  )
-                )
-              ELSE run.metadata || $4::jsonb
-            END
-        FROM transition_time
-        WHERE run.run_id = $1
-          AND (run.status NOT IN ('completed','failed','cancelled','orphaned') OR run.status = $2)
-        RETURNING row_to_json(run.*) AS row_json
-      )
-      SELECT row_json FROM updated
-      UNION ALL
-      SELECT row_to_json(current_run.*) AS row_json
-      FROM ${this.runsTable} current_run
-      WHERE current_run.run_id = $1 AND NOT EXISTS (SELECT 1 FROM updated)
-    `, [runId, status, reason ?? null, JSON.stringify(metadataPatch)]);
-    return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
+    return markRunStatus(
+      { pool: this.pool, runsTable: this.runsTable, normalizeRunRecord },
+      runId,
+      status,
+      reason,
+      metadataPatch,
+    );
   }
 
   async activateStagedRun(runId: string): Promise<RunRecord | null> {
@@ -150,6 +107,10 @@ export class PgRunStoreQueries {
           status_reason = $3,
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'active' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $3 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4::timestamptz END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           updated_at = $4,
           metadata = jsonb_set(metadata || $5::jsonb, '{schedulerState}', '"staged"'::jsonb, true)
       WHERE run_id = $1
@@ -202,6 +163,10 @@ export class PgRunStoreQueries {
           status_reason = $4,
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'waiting_interaction' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE clock_timestamp() END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           updated_at = clock_timestamp(),
           metadata = metadata
             - 'schedulerState'
@@ -254,6 +219,10 @@ export class PgRunStoreQueries {
           cancelled_at = COALESCE(cancelled_at, cancellation_time.now),
           worker_id = NULL,
           lease_expires_at = NULL,
+          liveness_state = CASE WHEN liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $2 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE cancellation_time.now END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           metadata = metadata - 'wakeMessage'
       FROM cancellation_time
       WHERE run_id = $1
@@ -484,13 +453,18 @@ export class PgRunStoreQueries {
     }
   }
 
+  /** Legacy expired rows remain recoverable; versioned M40 rows are owned exclusively by the two-phase reaper. */
   async listRecoverable(now = new Date()): Promise<RunRecord[]> {
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       SELECT row_to_json(run.*) AS row_json
       FROM ${this.runsTable} run
       WHERE (
         run.status = 'pending'
-        OR (run.status = 'running' AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1))
+        OR (
+          run.status = 'running'
+          AND run.liveness_version IS NULL
+          AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
+        )
       )
         AND NOT (
           run.status = 'pending'
@@ -658,6 +632,11 @@ export class PgRunStoreQueries {
         SET status = 'running',
             worker_id = $2,
             lease_expires_at = $3,
+            last_heartbeat_at = $4,
+            liveness_state = 'busy',
+            liveness_reason_code = NULL,
+            liveness_detected_at = $4,
+            liveness_version = COALESCE(candidate.liveness_version, 0) + 1,
             started_at = COALESCE(candidate.started_at, $4),
             updated_at = $4,
             metadata = CASE
@@ -667,7 +646,11 @@ export class PgRunStoreQueries {
         WHERE candidate.run_id = $1
           AND (
             candidate.status = 'pending'
-            OR (candidate.status = 'running' AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4))
+            OR (
+              candidate.status = 'running'
+              AND candidate.liveness_version IS NULL
+              AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
+            )
           )
           AND NOT (
             candidate.status = 'pending'
@@ -720,17 +703,154 @@ export class PgRunStoreQueries {
     }
   }
 
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
-    const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
+  async renewLease(
+    runId: string,
+    workerId: string,
+    leaseMs: number,
+    now = new Date(),
+    source: RunHeartbeatSource = 'worker',
+  ): Promise<RunRecord | null> {
+    return renewRunLease(this, runId, workerId, leaseMs, now, source);
+  }
+
+  async markLivenessStale(
+    runId: string,
+    workerId: string,
+    reasonCode: string,
+    now = new Date(),
+  ): Promise<RunRecord | null> {
+    return markRunLivenessStale(this, runId, workerId, reasonCode, now);
+  }
+
+  async reapExpiredLiveness(now: Date, staleGraceMs: number, limit = 50): Promise<LivenessReapResult> {
+    return reapExpiredRunLiveness(this, now, staleGraceMs, limit);
+  }
+
+  async retryOrphanedUserMessage(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    now = new Date(),
+  ): Promise<RunRecord | null> {
+    const scope = submitterUserId ?? '__anonymous__';
+    const retryRunId = `retry-${randomUUID()}`;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `${this.runsTable}:explicit-retry:${scope}:${clientMsgId}`,
+      ]);
+      const sourceResult = await client.query<{ row_json: RunRecord }>(`
+        SELECT row_to_json(run.*) AS row_json
+        FROM ${this.runsTable} run
+        JOIN ${this.messageSubmissionsTable} submission ON submission.run_id = run.run_id
+        WHERE submission.user_scope = $1 AND submission.client_message_id = $2
+        FOR UPDATE OF run
+      `, [scope, clientMsgId]);
+      const sourceRaw = sourceResult.rows[0]?.row_json;
+      if (!sourceRaw) { await client.query('COMMIT'); return null; }
+      const source = normalizeRunRecord(sourceRaw);
+      const existingRetryRunId = typeof source.metadata?.explicitRetryRunId === 'string'
+        ? source.metadata.explicitRetryRunId : undefined;
+      if (existingRetryRunId) {
+        const existing = await client.query<{ row_json: RunRecord }>(`
+          SELECT row_to_json(${this.runsTable}.*) AS row_json FROM ${this.runsTable} WHERE run_id = $1
+        `, [existingRetryRunId]);
+        await client.query('COMMIT');
+        return existing.rows[0] ? normalizeRunRecord(existing.rows[0].row_json) : null;
+      }
+      const unsafe = source.status !== 'orphaned'
+        || !source.liveness
+        || source.liveness.reasonCode === 'external_tool_outcome_unknown';
+      if (unsafe) { await client.query('COMMIT'); return null; }
+      const runningTool = await client.query<{ exists: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1 FROM ${this.toolInvocationsTable}
+          WHERE run_id = $1 AND status = 'running'
+        ) AS exists
+      `, [source.runId]);
+      if (runningTool.rows[0]?.exists) { await client.query('COMMIT'); return null; }
+      const created = await client.query<{ row_json: RunRecord }>(`
+        INSERT INTO ${this.runsTable}
+          (run_id, session_id, user_id, tenant_id, submitter_scope, status, status_reason, model, channel,
+           requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, metadata,
+           liveness_state, liveness_reason_code, liveness_detected_at, liveness_version)
+        SELECT $3, session_id, user_id, tenant_id, submitter_scope, 'pending', 'explicit_client_retry', model, channel,
+               $4::timestamptz, $4::timestamptz, $2, execution_target, workspace_id, sandbox_scope_id,
+               (metadata || jsonb_build_object('retryOf', run_id, 'explicitRetryAt', $4::text))
+                 - 'externalToolOutcomeUnknown' - 'livenessTerminalizedBy',
+               'active', 'explicit_client_retry', $4::timestamptz, 1
+        FROM ${this.runsTable}
+        WHERE run_id = $1
+        RETURNING row_to_json(${this.runsTable}.*) AS row_json
+      `, [source.runId, clientMsgId, retryRunId, now.toISOString()]);
+      if (!created.rows[0]) throw new Error(`Explicit retry source disappeared: ${source.runId}`);
+      await client.query(`
+        UPDATE ${this.runsTable}
+        SET metadata = metadata || jsonb_build_object('explicitRetryRunId', $2::text, 'explicitRetryAt', $3::text)
+        WHERE run_id = $1 AND status = 'orphaned'
+      `, [source.runId, retryRunId, now.toISOString()]);
+      await client.query('COMMIT');
+      return normalizeRunRecord(created.rows[0].row_json);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async cancelUserMessageByClientMsgId(
+    submitterUserId: string | undefined,
+    clientMsgId: string,
+    reason = 'explicit_client_cancel',
+    _now = new Date(),
+  ): Promise<RunRecord | null> {
+    const scope = submitterUserId ?? '__anonymous__';
     const result = await this.pool.query<{ row_json: RunRecord }>(`
-      UPDATE ${this.runsTable}
-      SET lease_expires_at = GREATEST(COALESCE(lease_expires_at, '-infinity'::timestamptz), $3::timestamptz),
-          updated_at = GREATEST(updated_at, $4::timestamptz)
-      WHERE run_id = $1
-        AND worker_id = $2
-        AND status = 'running'
-      RETURNING row_to_json(${this.runsTable}.*) AS row_json
-    `, [runId, workerId, leaseExpiresAt, now.toISOString()]);
+      WITH target AS MATERIALIZED (
+        SELECT submission.run_id
+        FROM ${this.messageSubmissionsTable} submission
+        WHERE submission.user_scope = $1 AND submission.client_message_id = $2
+      ), locked AS MATERIALIZED (
+        SELECT run.run_id
+        FROM ${this.runsTable} run
+        JOIN target ON target.run_id = run.run_id
+        FOR UPDATE OF run
+      ), cancellation_time AS MATERIALIZED (
+        SELECT clock_timestamp() AS now FROM locked
+      ), updated AS (
+        UPDATE ${this.runsTable} run
+        SET status = 'cancelled',
+            status_reason = $3,
+            worker_id = NULL,
+            lease_expires_at = NULL,
+            cancelled_at = COALESCE(run.cancelled_at, cancellation_time.now),
+            updated_at = cancellation_time.now,
+            liveness_state = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+            liveness_reason_code = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE $3 END,
+            liveness_detected_at = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE cancellation_time.now END,
+            liveness_version = CASE WHEN run.liveness_version IS NULL THEN NULL ELSE run.liveness_version + 1 END,
+            metadata = (run.metadata - 'wakeMessage') || jsonb_build_object(
+              'sandboxLifecycleTerminalAt', COALESCE(
+                run.metadata->>'sandboxLifecycleTerminalAt',
+                run.cancelled_at::text,
+                run.completed_at::text,
+                run.failed_at::text,
+                cancellation_time.now::text
+              )
+            )
+        FROM cancellation_time
+        WHERE run.run_id = (SELECT run_id FROM locked)
+          AND run.status NOT IN ('completed','failed','cancelled','orphaned')
+        RETURNING row_to_json(run.*) AS row_json
+      )
+      SELECT row_json FROM updated
+      UNION ALL
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      JOIN locked ON locked.run_id = run.run_id
+      WHERE NOT EXISTS (SELECT 1 FROM updated)
+    `, [scope, clientMsgId, reason]);
     return result.rows[0] ? normalizeRunRecord(result.rows[0].row_json) : null;
   }
 

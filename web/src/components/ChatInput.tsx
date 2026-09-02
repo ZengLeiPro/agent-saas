@@ -237,7 +237,8 @@ export function ChatInput({
   const showStop = !!loading && (!hasContent || !!stopping) && !!onStop;
   const disableAttach = uploading || isDisabled;
   const attachmentDisabled = disableAttach || voiceRecorder.isRecording;
-  const showVoice = !isDisabled && !!onSendVoice && voiceRecorder.isSupported;
+  // M50-04: Web may replay existing attachmentId voice, but creating Web recordings is out of scope.
+  const showVoice = false;
 
   // 会话已开始时锁定组
   const lockedGroupId = useMemo(() => {

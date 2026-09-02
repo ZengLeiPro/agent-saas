@@ -13,6 +13,13 @@ import type {
   WsEnvelope,
   WsProcessingContext,
   WsBlockState,
+  ChatQueueSnapshot,
+  ChatQueueItem,
+  CanonicalVoiceSubmission,
+  AgentTarget,
+  AgentTargetCatalog,
+  AgentTargetUnavailableReason,
+  OrgAgentSummary,
 } from "@agent/shared";
 import {
   wsClient,
@@ -23,6 +30,13 @@ import {
   useConnectionState,
   fetchAgentProfile,
   INPUT_DRAFT_KEY,
+  createChatClientState,
+  createInteractionRequestId,
+  reduceChatClientState,
+  selectChatClientQueueItems,
+  cacheKeyForIdentity,
+  adaptAgentTargetCatalogResponse,
+  resolveNewSessionAgentTarget,
 } from "@agent/shared";
 import type {
   ConnectionState,
@@ -33,16 +47,42 @@ import { useMessages } from "./useMessages";
 import { useSession } from "./useSession";
 import { useFileUpload } from "./useFileUpload";
 import { useAuth } from "../contexts/AuthContext";
+import { useLocalAppLock } from "../contexts/LocalAppLockContext";
 import { isCompactionStatusEvent } from "../lib/compaction";
 import { acknowledgedInteractionResponse } from "./interactionResponseAck";
 import type { MessageItemInput } from "@agent/shared";
+import { canonicalChatAttachmentToDisplay } from "@agent/shared";
+import {
+  buildMobileChatSubmission,
+  toMobileChatWireMessage,
+  validateMobileUploadedFiles,
+} from "../lib/chatSubmissionAdapter";
+import { markChatAck, markChatSubmit, observeChatEvent } from '../telemetry/chatTelemetry';
+import { telemetryClient } from '../telemetry/runtime';
 
 /** A response write is not an ACK; expire it so the interaction remains retryable. */
 const INTERACTION_RESPONSE_ACK_TIMEOUT_MS = 15_000;
 
+function voiceFailureAction(code: string): string {
+  switch (code.toLowerCase()) {
+    case 'upload_failed': return '语音上传失败，请重录；也可改用文字发送。';
+    case 'stt_silence': return '未识别到有效语音，请重录或改用文字发送。';
+    case 'stt_timeout': return '语音识别超时，请重试录音或改用文字发送。';
+    case 'stt_not_configured': return '语音识别暂不可用，请改用文字发送。';
+    default: return '语音处理失败，请重录；仍失败时可改用文字发送。';
+  }
+}
+
+function createVoiceId(): string {
+  const id = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto?.randomUUID?.();
+  if (!id) throw new Error('设备安全随机数能力不可用');
+  return id;
+}
+
 type PendingInteractionResponse = {
   type: "permission_request" | "ask_user";
   response: Record<string, unknown>;
+  version: number;
   generation: number;
   attemptId: string;
   ackTimer?: ReturnType<typeof setTimeout>;
@@ -50,6 +90,8 @@ type PendingInteractionResponse = {
 
 export interface ChatAppState {
   messages: MessageItem[];
+  /** Server-authoritative queue/runtime projection for queue UI and cold recovery. */
+  chatQueueItems: ChatQueueItem[];
   input: string;
   loading: boolean;
   sessionId: string | null;
@@ -64,6 +106,9 @@ export interface ChatAppState {
   isLoadingSessions: boolean;
   sessionsHydrated: boolean;
   isLoadingMessages: boolean;
+  hasMoreHistory: boolean;
+  isLoadingEarlier: boolean;
+  loadEarlierMessages: () => Promise<void>;
   // File upload
   uploadedFiles: UploadedFile[];
   uploading: boolean;
@@ -72,10 +117,18 @@ export interface ChatAppState {
   // Setters & actions
   setInput: (value: string) => void;
   newSession: () => void;
+  startAgentTargetSession: (target: AgentTarget) => void;
   selectSession: (id: string) => void;
+  agentTargetCatalog: AgentTargetCatalog<OrgAgentSummary> | null;
+  agentTargetCatalogReason: AgentTargetUnavailableReason | null;
+  agentTargetCatalogLoading: boolean;
+  activeAgentTarget: AgentTarget | null;
+  activeAgentTargetUnavailableReason: AgentTargetUnavailableReason | null;
   sendMessage: () => Promise<void>;
   stopping: boolean;
   stopGeneration: () => void;
+  /** Cancel queued work for Agent switching; true means transport accepted, terminal state still comes from canonical events. */
+  cancelAgentSwitchQueue: () => Promise<boolean>;
   retryMessage: (message: MessageItem) => void;
   forkFromMessage: (message: MessageItem) => Promise<string | null>;
   handlePermissionResponse: (
@@ -117,7 +170,8 @@ export interface ChatAppState {
     | undefined
   >;
   refreshCurrentSession: () => void;
-  // Agent profile
+  markCurrentSessionRead: () => Promise<void>;
+  // Agent profile and target catalog
   agentProfile: AgentProfile | null;
   // Session participants (admin 查看他人会话时的身份信息)
   sessionParticipants: SessionParticipants | null;
@@ -127,11 +181,59 @@ export interface ChatAppState {
 }
 
 export function useChatAppStateCore(): ChatAppState {
-  const { user } = useAuth();
+  const { user, identity } = useAuth();
+  const localAppLock = useLocalAppLock();
   const isAdmin = user?.role === "admin";
+  const [agentTargetCatalog, setAgentTargetCatalog] = useState<AgentTargetCatalog<OrgAgentSummary> | null>(null);
+  const [agentTargetCatalogReason, setAgentTargetCatalogReason] = useState<AgentTargetUnavailableReason | null>(null);
+  const [agentTargetCatalogLoading, setAgentTargetCatalogLoading] = useState(true);
+  const agentTargetCatalogOwnerKey = user ? `${user.tenantId}:${user.id}` : 'anonymous';
+  const agentTargetCatalogOwnerKeyRef = useRef(agentTargetCatalogOwnerKey);
+  agentTargetCatalogOwnerKeyRef.current = agentTargetCatalogOwnerKey;
+  const [pendingAgentTarget, setPendingAgentTargetState] = useState<AgentTarget | null>(null);
+  const pendingAgentTargetRef = useRef<AgentTarget | null>(null);
+  const setPendingAgentTarget = useCallback((target: AgentTarget | null) => {
+    pendingAgentTargetRef.current = target;
+    setPendingAgentTargetState(target);
+  }, []);
 
-  // ─── 输入草稿：AsyncStorage 持久化（2026-04-18）───
-  // 与 web 共用 INPUT_DRAFT_KEY='agentChat.inputDraft'，全局共享草稿（不按 sessionId 分）
+  const refreshAgentTargetCatalog = useCallback(async () => {
+    const requestOwnerKey = agentTargetCatalogOwnerKey;
+    if (!user) {
+      setAgentTargetCatalog(null);
+      setAgentTargetCatalogReason(null);
+      setAgentTargetCatalogLoading(false);
+      return;
+    }
+    setAgentTargetCatalogLoading(true);
+    try {
+      const response = await authFetch('/api/org-agents/mine');
+      if (!response.ok) throw new Error('target_catalog_unavailable');
+      const adapted = adaptAgentTargetCatalogResponse<OrgAgentSummary>(await response.json(), user.tenantId);
+      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
+      if (adapted.kind === 'catalog') {
+        setAgentTargetCatalog(adapted.catalog);
+        setAgentTargetCatalogReason(null);
+      } else {
+        setAgentTargetCatalog(null);
+        setAgentTargetCatalogReason(adapted.reason);
+      }
+    } catch {
+      if (agentTargetCatalogOwnerKeyRef.current !== requestOwnerKey) return;
+      setAgentTargetCatalog(null);
+      setAgentTargetCatalogReason({ code: 'target_catalog_unavailable', message: 'Agent 目录加载失败，暂时无法发送。', contactAdmin: true });
+    } finally {
+      if (agentTargetCatalogOwnerKeyRef.current === requestOwnerKey) setAgentTargetCatalogLoading(false);
+    }
+  }, [agentTargetCatalogOwnerKey, user]);
+
+  useEffect(() => {
+    setPendingAgentTarget(null);
+    void refreshAgentTargetCatalog();
+  }, [refreshAgentTargetCatalog, setPendingAgentTarget]);
+
+  // M20-04: drafts are account + tenant + generation scoped.
+  const draftStorageKey = (() => { try { return cacheKeyForIdentity(identity, 'draft-text', 'new'); } catch { return null; } })();
   const [input, setInputRaw] = useState("");
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLatestRef = useRef<string>("");
@@ -141,17 +243,17 @@ export function useChatAppStateCore(): ChatAppState {
     try {
       if (value) {
         void Promise.resolve(
-          getPlatform().storage.setItem(INPUT_DRAFT_KEY, value),
+          draftStorageKey ? getPlatform().storage.setItem(draftStorageKey, value) : Promise.resolve(),
         ).catch(() => {});
       } else {
         void Promise.resolve(
-          getPlatform().storage.removeItem(INPUT_DRAFT_KEY),
+          draftStorageKey ? getPlatform().storage.removeItem(draftStorageKey) : Promise.resolve(),
         ).catch(() => {});
       }
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [draftStorageKey]);
 
   const setInput = useCallback(
     (value: string) => {
@@ -176,7 +278,8 @@ export function useChatAppStateCore(): ChatAppState {
     let cancelled = false;
     void (async () => {
       try {
-        const saved = await getPlatform().storage.getItem(INPUT_DRAFT_KEY);
+        await getPlatform().storage.removeItem(INPUT_DRAFT_KEY);
+        const saved = draftStorageKey ? await getPlatform().storage.getItem(draftStorageKey) : null;
         if (!cancelled && saved) {
           setInputRaw(saved);
           draftLatestRef.current = saved;
@@ -223,7 +326,7 @@ export function useChatAppStateCore(): ChatAppState {
       compactionNoticeTimerRef.current = null;
       setCompactionNotice(null);
     }, 4000);
-  }, []);
+  }, [draftStorageKey, flushDraft]);
   useEffect(() => {
     return () => {
       if (compactionNoticeTimerRef.current) {
@@ -258,11 +361,12 @@ export function useChatAppStateCore(): ChatAppState {
     clientMsgId: string;
     input: string;
     attachments: UploadedFile[];
-    voiceFile?: { savedPath: string; relativePath: string; duration: number };
-    state: "queued" | "sending" | "acked";
+    voice?: CanonicalVoiceSubmission;
+    state: "sending" | "acked";
     createdAt: number;
   }
   const outboxRef = useRef<OutboxEntry[]>([]);
+  const pendingVoiceRef = useRef<{ base: CanonicalVoiceSubmission; serverText: string } | null>(null);
   const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -296,7 +400,7 @@ export function useChatAppStateCore(): ChatAppState {
     }
   }, [isAdmin, user?.username]);
 
-  // ---- Agent Profile ----
+  // ---- Agent Profile / owner projection ----
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   useEffect(() => {
     if (!user) {
@@ -310,7 +414,7 @@ export function useChatAppStateCore(): ChatAppState {
       .catch(() => setAgentProfile(null));
   }, [user, ownerFilter]);
 
-  // ---- Session Participants (admin 查看他人会话时的身份信息) ----
+  // ---- Session participants（admin 查看他人会话时的身份信息）----
   const [sessionParticipants, setSessionParticipants] =
     useState<SessionParticipants | null>(null);
 
@@ -335,8 +439,53 @@ export function useChatAppStateCore(): ChatAppState {
   }, [user?.username, fetchModelList]);
 
   const msg = useMessages();
-  const fileUpload = useFileUpload();
+  // M40-01: Mobile and Web share one queue/interaction lifecycle reducer. This hook only
+  // keeps composer/upload presentation and unacknowledged transport intents locally.
+  const chatClientStateRef = useRef(createChatClientState(identity));
+  const [chatQueueItems, setChatQueueItems] = useState<ChatQueueItem[]>([]);
+  const refreshSelectedQueue = useCallback(() => {
+    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, sessionIdRef.current));
+  }, []);
+  const applyAuthoritativeWsEvent = useCallback((event: WsEvent, fallbackSessionId?: string) => {
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
+      type: 'ws', event, fallbackSessionId, generation: chatClientStateRef.current.generation,
+    });
+    const authoritativeIds = new Set(Object.values(chatClientStateRef.current.queues)
+      .flatMap((queue) => Object.keys(queue.items)));
+    if (authoritativeIds.size > 0) {
+      outboxRef.current = outboxRef.current.filter((entry) => !authoritativeIds.has(entry.clientMsgId));
+      for (const clientMsgId of authoritativeIds) {
+        const timer = ackTimersRef.current.get(clientMsgId);
+        if (timer) { clearTimeout(timer); ackTimersRef.current.delete(clientMsgId); }
+      }
+    }
+    refreshSelectedQueue();
+  }, [refreshSelectedQueue]);
+  const applyQueueSnapshot = useCallback((sessionId: string, snapshot: ChatQueueSnapshot) => {
+    if (snapshot.sessionId !== sessionId) return;
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
+      type: 'queue', sessionId, event: { type: 'snapshot', snapshot }, generation: chatClientStateRef.current.generation,
+    });
+    refreshSelectedQueue();
+  }, [refreshSelectedQueue]);
+  useEffect(() => {
+    chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, { type: 'identity_boundary', identity });
+    refreshSelectedQueue();
+  }, [identity, refreshSelectedQueue]);
   const { connectionState, dispatchConnection } = useConnectionState();
+  const fileUpload = useFileUpload({
+    available: !localAppLock.locked && !localAppLock.offlineShell && connectionState !== 'disconnected',
+    identityKey: identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous',
+  });
+
+  const voiceIdentityKey = identity ? `${identity.tenantId}:${identity.userId}:${identity.generation}` : 'anonymous';
+  const voiceIdentityRef = useRef(voiceIdentityKey);
+  useEffect(() => {
+    if (voiceIdentityRef.current !== voiceIdentityKey) {
+      pendingVoiceRef.current = null;
+      voiceIdentityRef.current = voiceIdentityKey;
+    }
+  }, [voiceIdentityKey]);
 
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
@@ -378,43 +527,6 @@ export function useChatAppStateCore(): ChatAppState {
   const wsUserMsgIndexRef = useRef(-1);
   /** 是否已挂载到某个流（detach 后为 false，发起/订阅流时为 true） */
   const wsAttachedRef = useRef(false);
-  /** 引用 sendChatViaWs（定义在下面），用于在它之前定义的 callback 中 flush 排队消息 */
-  const sendChatViaWsRef = useRef<
-    | ((
-        inputText: string,
-        attachments: UploadedFile[],
-        showBubble: boolean,
-        voiceFile?: {
-          savedPath: string;
-          relativePath: string;
-          duration: number;
-        },
-        existingClientMsgId?: string,
-      ) => Promise<void>)
-    | null
-  >(null);
-
-  /**
-   * 在 loading reset 路径（ACK 超时 / chat_rejected / watchdog 后 done 到达）上推进
-   * outbox 队列头部——若不调用，queued 消息会永远留在数组里 bubble pending。
-   * stopping 状态下跳过（用户主动中止不自动续发）。
-   */
-  const flushQueuedHead = useCallback(() => {
-    if (stoppingRef.current) return;
-    const nextQueued = outboxRef.current.find((e) => e.state === "queued");
-    if (!nextQueued) return;
-    outboxRef.current = outboxRef.current.filter(
-      (e) => e.clientMsgId !== nextQueued.clientMsgId,
-    );
-    void sendChatViaWsRef.current?.(
-      nextQueued.input,
-      nextQueued.attachments,
-      false,
-      nextQueued.voiceFile,
-      nextQueued.clientMsgId,
-    );
-  }, []);
-
   const saveRuntimeForSession = useCallback(
     (sid: string | null = sessionIdRef.current) => {
       if (!sid) return;
@@ -492,7 +604,6 @@ export function useChatAppStateCore(): ChatAppState {
     });
     setStopping(true);
     // 停止时：丢弃 queued 但保留已发送的条目（让 ACK/rejected/done 继续处理）
-    outboxRef.current = outboxRef.current.filter((e) => e.state !== "queued");
 
     const nonceAtAbort = streamNonceRef.current;
     setTimeout(() => {
@@ -530,7 +641,6 @@ export function useChatAppStateCore(): ChatAppState {
     // 切会话：清 outbox 中 queued（未发）条目；清所有 ACK 超时定时器
     for (const t of ackTimersRef.current.values()) clearTimeout(t);
     ackTimersRef.current.clear();
-    outboxRef.current = outboxRef.current.filter((e) => e.state !== "queued");
     // 立即通知服务端取消当前订阅，防止旧会话事件串流；服务端 run 不会被 abort
     wsClient.send({ action: "detach" });
   }, [saveRuntimeForSession]);
@@ -548,6 +658,7 @@ export function useChatAppStateCore(): ChatAppState {
       triggerScroll: msg.triggerScroll,
       cancelActiveStream: detachFromStream,
       clearComposer,
+      onQueueSnapshot: applyQueueSnapshot,
     }),
     [
       msg.resetMessages,
@@ -556,15 +667,26 @@ export function useChatAppStateCore(): ChatAppState {
       msg.triggerScroll,
       detachFromStream,
       clearComposer,
+      applyQueueSnapshot,
     ],
   );
 
   const session = useSession(sessionCallbacks, {
     ownerFilter,
     isAdmin,
+    identity,
   });
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const currentSessionItem = session.sessionId
+    ? session.sessions.find(item => item.sessionId === session.sessionId)
+    : undefined;
+  const activeAgentTarget = currentSessionItem?.agentTarget ?? pendingAgentTarget;
+  const activeAgentTargetUnavailableReason: AgentTargetUnavailableReason | null = currentSessionItem
+    ? currentSessionItem.agentTargetUnavailableReason ?? (!currentSessionItem.agentTarget && !pendingAgentTarget
+      ? { code: 'legacy_binding_unproven', message: '该历史会话缺少可证明的 Agent 目标，仅支持查看', contactAdmin: true }
+      : null)
+    : agentTargetCatalogReason;
   const sessionOwner = useMemo(() => {
     if (!session.sessionId) return undefined;
     return session.sessions.find((s) => s.sessionId === session.sessionId)
@@ -573,7 +695,7 @@ export function useChatAppStateCore(): ChatAppState {
   const sessionOwnerRef = useRef(sessionOwner);
   sessionOwnerRef.current = sessionOwner;
 
-  // ---- sessionParticipants: 监听 sessionOwner 变化，加载对应 Agent Profile ----
+  // ---- sessionParticipants: 监听 session owner 变化，加载对应 Agent Profile ----
   useEffect(() => {
     const owner = session.sessionOwner;
     if (!owner || owner.username === user?.username) {
@@ -655,10 +777,10 @@ export function useChatAppStateCore(): ChatAppState {
     }, timeout);
   }, [dispatchConnection]);
 
-  // ---- Sync 序列号 ----
+  // ---- Sync 序列号（当前仅进程内，不持久化 generation/cursor） ----
   const lastUserSeqRef = useRef(0);
 
-  // WS connection (reference-counted for multi-screen safety)
+  // WS connection (reference-counted for multi-screen safety; recovery cursor stays process-local)
   useEffect(() => {
     let releaseRef: (() => void) | null = null;
     let unmounted = false;
@@ -674,8 +796,9 @@ export function useChatAppStateCore(): ChatAppState {
         dispatchConnection("connect");
         if (!modelListRef.current) fetchModelList();
 
-        // 发送 sync 请求恢复漏掉的元数据事件
-        wsClient.send({ action: "sync", lastSeq: lastUserSeqRef.current });
+        // 发送 sync 请求恢复漏掉的元数据事件；overflow 可内联当前会话权威快照。
+        wsClient.setSyncSessionId?.(sessionIdRef.current);
+        wsClient.send({ action: "sync", lastSeq: lastUserSeqRef.current, ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}) });
 
         if (loadingRef.current && sessionIdRef.current) {
           const targetSid = sessionIdRef.current;
@@ -825,12 +948,10 @@ export function useChatAppStateCore(): ChatAppState {
           clearRuntimeForSession();
           setLoading(false);
         }
-        // H-1 修复：ACK 超时路径必须主动推进排队消息
-        flushQueuedHead();
       }, ACK_TIMEOUT_MS);
       ackTimersRef.current.set(clientMsgId, timer);
     },
-    [markBubbleFailed, flushQueuedHead, clearRuntimeForSession],
+    [markBubbleFailed, clearRuntimeForSession],
   );
 
   // Send chat via WS
@@ -839,11 +960,41 @@ export function useChatAppStateCore(): ChatAppState {
       inputText: string,
       attachments: UploadedFile[],
       showBubble: boolean,
-      voiceFile?: { savedPath: string; relativePath: string; duration: number },
+      voice?: CanonicalVoiceSubmission,
       existingClientMsgId?: string,
     ) => {
+      if (localAppLock.locked || localAppLock.offlineShell || connectionState === 'disconnected') {
+        Alert.alert('无法发送', localAppLock.locked ? '请先解锁应用' : '当前离线，消息未发送');
+        return;
+      }
       const activeSessionId = sessionIdRef.current;
+      const agentTarget = activeSessionId
+        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget
+          ?? pendingAgentTargetRef.current
+        : pendingAgentTargetRef.current;
+      const unavailableReason = activeSessionId
+        ? sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTargetUnavailableReason
+        : agentTargetCatalogReason;
+      if (!agentTarget || unavailableReason) {
+        Alert.alert('仅支持查看', unavailableReason?.message ?? '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
+        return;
+      }
       const clientMsgId = existingClientMsgId || genClientMsgId();
+      const normalized = buildMobileChatSubmission({
+        text: inputText,
+        clientMsgId,
+        target: { ...(activeSessionId ? { sessionId: activeSessionId } : {}), agentTarget },
+        deliveryMode: 'queue',
+        model: selectedModelRef.current ?? undefined,
+        attachments,
+        ...(voice ? { voice } : {}),
+      });
+      if (!normalized.ok) {
+        fileUpload.reportUploadError(`附件不可发送：${normalized.issue.message}`);
+        return;
+      }
+      const submission = normalized.value;
+      markChatSubmit(clientMsgId, activeSessionId ?? undefined);
 
       wsLatestSessionIdRef.current = { value: activeSessionId };
       wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
@@ -856,13 +1007,8 @@ export function useChatAppStateCore(): ChatAppState {
         wsUserMsgIndexRef.current = msgRef.current.addMessage({
           type: "user",
           content: inputText,
-          ...(attachments.length > 0
-            ? {
-                attachments: attachments.map((f) => ({
-                  name: f.originalName,
-                  isImage: f.isImage,
-                })),
-              }
+          ...(submission.attachments.length > 0
+            ? { attachments: submission.attachments.map(canonicalChatAttachmentToDisplay) }
             : {}),
           status: "pending",
           timestamp: Date.now(),
@@ -882,7 +1028,7 @@ export function useChatAppStateCore(): ChatAppState {
           if (
             (m.type === "user" && m.status === "pending") ||
             (m.type === "user-voice" &&
-              (m.status === "transcribing" || m.status === "uploading"))
+              (m.status === "transcribing" || m.status === "uploading" || m.status === "ready"))
           ) {
             wsUserMsgIndexRef.current = i;
             msgRef.current.updateMessageAt(i, (prev) => {
@@ -898,8 +1044,15 @@ export function useChatAppStateCore(): ChatAppState {
       outboxRef.current.push({
         clientMsgId,
         input: inputText,
-        attachments,
-        ...(voiceFile ? { voiceFile } : {}),
+        attachments: submission.attachments.map((attachment) => ({
+          attachmentId: attachment.attachmentId,
+          originalName: attachment.display.originalName,
+          relativePath: '',
+          size: attachment.display.size ?? 0,
+          mimeType: attachment.display.mimeType ?? 'application/octet-stream',
+          isImage: attachment.display.isImage ?? false,
+        })),
+        ...(submission.voice ? { voice: submission.voice } : {}),
         state: "sending",
         createdAt: Date.now(),
       });
@@ -910,24 +1063,7 @@ export function useChatAppStateCore(): ChatAppState {
       dispatchConnection("connect");
 
       const ok = await wsClient.ensureConnectedSend({
-        action: "chat",
-        client_msg_id: clientMsgId,
-        message: inputText || "Please check the attachments I uploaded",
-        sessionId: activeSessionId || undefined,
-        model: selectedModelRef.current || undefined,
-        ...(attachments.length > 0
-          ? {
-              attachments: attachments.map((file) => ({
-                originalName: file.originalName,
-                savedPath: file.savedPath,
-                relativePath: file.relativePath,
-                size: file.size,
-                mimeType: file.mimeType,
-                isImage: file.isImage,
-              })),
-            }
-          : {}),
-        ...(voiceFile ? { voiceFile } : {}),
+        ...toMobileChatWireMessage(submission),
       });
 
       if (!ok) {
@@ -945,13 +1081,9 @@ export function useChatAppStateCore(): ChatAppState {
         armAckTimeout(clientMsgId);
       }
     },
-    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId],
+    [dispatchConnection, armAckTimeout, markBubbleFailed, genClientMsgId, localAppLock.locked, localAppLock.offlineShell, connectionState, agentTargetCatalogReason],
   );
 
-  // 同步 sendChatViaWs 到 ref，让 flushQueuedHead 等前置 callback 可调用
-  useEffect(() => {
-    sendChatViaWsRef.current = sendChatViaWs;
-  }, [sendChatViaWs]);
 
   const resolveInteractionResponse = useCallback((data: Extract<WsEvent, { type: "respond_ok" | "respond_error" }>) => {
     const pending = pendingInteractionResponsesRef.current.get(data.interactionId);
@@ -962,8 +1094,10 @@ export function useChatAppStateCore(): ChatAppState {
     const ackAttemptId = (data as unknown as { clientAttemptId?: unknown }).clientAttemptId;
     if (typeof ackAttemptId === "string" && ackAttemptId !== pending.attemptId) return;
     if (ackAttemptId === undefined && pending.generation > 1) return;
+    if (data.version !== undefined && data.version !== pending.version) return;
 
     if (pending.ackTimer) clearTimeout(pending.ackTimer);
+    if (data.type === 'respond_ok' && data.status === 'accepted') return; // accepted is non-terminal; wait for canonical outcome
     pendingInteractionResponsesRef.current.delete(data.interactionId);
 
     const idx = msgRef.current.messagesRef.current.findIndex((m) =>
@@ -998,11 +1132,60 @@ export function useChatAppStateCore(): ChatAppState {
     });
   }, []);
 
-  // WS message handler
+  // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
+    const projectSessionListInteraction = (event: WsEvent) => {
+      const fallbackSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      if (event.type === 'pending_interactions' && (event.sessionId ?? fallbackSessionId)) {
+        const authoritativeSessionId = event.sessionId ?? fallbackSessionId!;
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
+        event.interactions.forEach((interaction, index) => {
+          sessionRef.current.applySessionInteractionEvent?.({
+            type: 'requested', sessionId: authoritativeSessionId,
+            interaction: {
+              interactionId: interaction.interactionId,
+              type: interaction.type,
+              version: interaction.version ?? 0,
+              order: interaction.order ?? interaction.version ?? index,
+            },
+          });
+        });
+      } else if ((event.type === 'permission_request' || event.type === 'ask_user') && fallbackSessionId) {
+        sessionRef.current.applySessionInteractionEvent?.({
+          type: 'requested', sessionId: fallbackSessionId,
+          interaction: { interactionId: event.interactionId, type: event.type, version: event.version ?? 0, order: event.order ?? event.version ?? 0 },
+        });
+      } else if (event.type === 'interaction_resolved') {
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: event.sessionId, interactionId: event.interactionId });
+      } else if (event.type === 'session_status' && ['idle', 'completed', 'failed', 'cancelled', 'orphaned'].includes(event.status)) {
+        sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: event.sessionId });
+      }
+    };
+    const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
+      const ctx: WsProcessingContext = {
+        msg: msgRef.current,
+        session: sessionRef.current,
+        selectedModelRef,
+        voiceCallbackRef,
+        streamIdRef,
+        runIdRef,
+        handledTerminalKeysRef,
+        lastEventIdRef,
+        userMsgIndex: wsUserMsgIndexRef.current,
+        sessionOwnerRef,
+      };
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+    };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
+      observeChatEvent(data, sessionIdRef.current ?? undefined);
       if (!data || !data.type) return;
+      projectSessionListInteraction(data);
+      if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
+        || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
+        || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
+        applyAuthoritativeWsEvent(data, sessionIdRef.current ?? undefined);
+      }
 
       if (envelope.eventId != null) {
         lastEventIdRef.current = envelope.eventId;
@@ -1018,6 +1201,10 @@ export function useChatAppStateCore(): ChatAppState {
       }
 
       if (data.type === "respond_ok" || data.type === "respond_error") {
+        if (data.type === 'respond_ok') {
+          const sid = immediateSessionIdRef.current ?? sessionIdRef.current;
+          if (sid) sessionRef.current.applySessionInteractionEvent?.({ type: 'resolved', sessionId: sid, interactionId: data.interactionId });
+        }
         resolveInteractionResponse(data);
         return;
       }
@@ -1031,6 +1218,19 @@ export function useChatAppStateCore(): ChatAppState {
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
+          projectSessionListInteraction(e);
+          applyAuthoritativeWsEvent(e, sessionIdRef.current ?? undefined);
+          if (e.type === "session_status" && e.sessionId === sessionIdRef.current) {
+            runIdRef.current = e.runId ?? null;
+            streamIdRef.current = e.streamId ?? null;
+            const active = !["idle", "completed", "failed", "cancelled", "orphaned"].includes(e.status);
+            wsAttachedRef.current = active;
+            setLoading(active);
+          }
+          if (e.type === "pending_interactions" || e.type === "permission_request"
+            || e.type === "ask_user" || e.type === "interaction_resolved") {
+            projectRecoveredInteraction(e);
+          }
           if (e.type === "title_updated")
             sessionRef.current.updateSessionTitle(e.sessionId, e.title);
           else if (e.type === "session_updated") {
@@ -1058,9 +1258,25 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
       if (data.type === "sync_overflow") {
-        lastUserSeqRef.current = (data as any).seq;
-        wsClient.setLastSeq((data as any).seq);
-        void sessionRef.current.loadSessions(true, { fresh: true });
+        lastUserSeqRef.current = data.seq;
+        wsClient.setLastSeq(data.seq);
+        const inline = data.recovery?.session;
+        if (inline?.queueSnapshot) {
+          applyQueueSnapshot(inline.sessionId, inline.queueSnapshot);
+        }
+        if (inline?.runtime && inline.sessionId === sessionIdRef.current) {
+          runIdRef.current = inline.runtime.runId ?? null;
+          streamIdRef.current = inline.runtime.streamId ?? null;
+          wsAttachedRef.current = inline.runtime.active;
+          setLoading(inline.runtime.active);
+        }
+        if (inline?.pendingInteractions) {
+          projectRecoveredInteraction({ type: "pending_interactions", interactions: inline.pendingInteractions });
+        }
+        if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
+          void sessionRef.current.loadSessions(true, { fresh: true });
+          sessionRef.current.refreshCurrentSession();
+        }
         return;
       }
 
@@ -1099,10 +1315,7 @@ export function useChatAppStateCore(): ChatAppState {
           setLoading(false);
           setStopping(false);
           setCompacting(false);
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.state === "queued",
-          );
-          flushQueuedHead();
+          outboxRef.current = [];
           dispatchConnection("complete");
           sessionRef.current.refreshCurrentSession();
         }
@@ -1236,7 +1449,8 @@ export function useChatAppStateCore(): ChatAppState {
           // 接管场景：目标 run 的 done 已清掉 attached，这里恢复，后续流式内容才能过守卫
           wsAttachedRef.current = true;
         },
-        onChatAck: (clientMsgId) => {
+        onChatAck: (clientMsgId, event) => {
+          markChatAck(clientMsgId, event);
           const t = ackTimersRef.current.get(clientMsgId);
           if (t) {
             clearTimeout(t);
@@ -1264,8 +1478,6 @@ export function useChatAppStateCore(): ChatAppState {
             wsAttachedRef.current = false;
             setLoading(false);
           }
-          // H-2 修复：rejected 后必须推进排队消息
-          flushQueuedHead();
         },
         onChatDone: (clientMsgId) => {
           if (!clientMsgId) return;
@@ -1293,6 +1505,7 @@ export function useChatAppStateCore(): ChatAppState {
       }
 
       if (result === "buffer_overflow") {
+        telemetryClient()?.capture('sync_overflow', { correlationId: 'ws-sync-overflow', ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}) });
         wsBlockRef.current = { currentBlockIndex: -1, currentBlockType: null };
         sessionRef.current.refreshCurrentSession();
         const overflowSid = sessionIdRef.current;
@@ -1319,11 +1532,7 @@ export function useChatAppStateCore(): ChatAppState {
         // 已 detach（切换会话后）或 loading 已被其他路径清掉：
         // 仍需清理本轮 acked/sending，并推进排队消息。
         if (!loadingRef.current) {
-          // H-3 修复：done 晚到路径也要排空 outbox 并推进队列
-          outboxRef.current = outboxRef.current.filter(
-            (e) => e.state === "queued",
-          );
-          flushQueuedHead();
+          outboxRef.current = outboxRef.current.filter((e) => e.state !== "sending" && e.state !== "acked");
           return;
         }
         clearWatchdog();
@@ -1357,29 +1566,7 @@ export function useChatAppStateCore(): ChatAppState {
         setStopping(false);
         setCompacting(false);
 
-        // 从 outbox 移除已处理完的 acked/sending 条目
-        outboxRef.current = outboxRef.current.filter(
-          (e) => e.state === "queued",
-        );
-
-        // stopping 时不发排队消息，因为是用户主动中止
-        if (!stoppingRef.current) {
-          const nextQueued = outboxRef.current.find(
-            (e) => e.state === "queued",
-          );
-          if (nextQueued) {
-            outboxRef.current = outboxRef.current.filter(
-              (e) => e.clientMsgId !== nextQueued.clientMsgId,
-            );
-            void sendChatViaWs(
-              nextQueued.input,
-              nextQueued.attachments,
-              false,
-              nextQueued.voiceFile,
-              nextQueued.clientMsgId,
-            );
-          }
-        }
+        // M20-02: done only settles presentation; it never dispatches business work.
       }
     });
     return unsub;
@@ -1530,7 +1717,7 @@ export function useChatAppStateCore(): ChatAppState {
     }
   }, [session.sessionId, session.sessions, modelList]);
 
-  // ---- 压缩当前会话上下文 ----
+  // ---- 压缩当前会话上下文（同样走 canonical V1 chat boundary）----
   const compactSession = useCallback(async () => {
     const activeSessionId = sessionIdRef.current;
     if (!activeSessionId || loadingRef.current) return;
@@ -1547,134 +1734,145 @@ export function useChatAppStateCore(): ChatAppState {
     resetWatchdog();
     dispatchConnection("connect");
 
-    const ok = await wsClient.ensureConnectedSend({
-      action: "chat",
-      message: "/compact",
-      sessionId: activeSessionId,
+    const agentTarget = sessionRef.current.sessions.find(item => item.sessionId === activeSessionId)?.agentTarget;
+    if (!agentTarget) {
+      Alert.alert('仅支持查看', '该会话缺少可证明的 Agent 目标，请联系组织管理员。');
+      wsAttachedRef.current = false;
+      setLoading(false);
+      setCompacting(false);
+      return;
+    }
+    const compactSubmission = buildMobileChatSubmission({
+      text: "/compact",
+      clientMsgId: genClientMsgId(),
+      target: { sessionId: activeSessionId, agentTarget },
+      deliveryMode: "queue",
+      attachments: [],
     });
+    if (!compactSubmission.ok) {
+      wsAttachedRef.current = false;
+      setLoading(false);
+      setCompacting(false);
+      return;
+    }
+    const ok = await wsClient.ensureConnectedSend(toMobileChatWireMessage(compactSubmission.value));
 
     if (!ok) {
       wsAttachedRef.current = false;
       setLoading(false);
       setCompacting(false);
     }
-  }, [dispatchConnection]);
+  }, [dispatchConnection, genClientMsgId]);
 
   // Send message (text + files)
   const sendMessage = useCallback(async () => {
-    const trimmedInput = input.trim();
-    const capturedFiles = fileUpload.consumeFiles();
-    if (!trimmedInput && capturedFiles.length === 0) return;
-    setInput("");
-
-    if (loadingRef.current) {
-      // 排队：新一条消息入 outbox.queued + 渲染 pending bubble
-      const queuedClientMsgId = genClientMsgId();
-      outboxRef.current.push({
-        clientMsgId: queuedClientMsgId,
-        input: trimmedInput,
-        attachments: capturedFiles,
-        state: "queued",
-        createdAt: Date.now(),
-      });
-      msgRef.current.triggerScroll();
-      msgRef.current.addMessage({
-        type: "user",
-        content: trimmedInput,
-        ...(capturedFiles.length > 0
-          ? {
-              attachments: capturedFiles.map((f) => ({
-                name: f.originalName,
-                isImage: f.isImage,
-              })),
-            }
-          : {}),
-        status: "pending",
-        timestamp: Date.now(),
-        clientMsgId: queuedClientMsgId,
-      });
+    if (!activeAgentTarget || activeAgentTargetUnavailableReason) {
+      Alert.alert('无法发送', activeAgentTargetUnavailableReason?.message ?? '没有可用的 Agent 目标，请联系组织管理员。');
       return;
     }
+    const trimmedInput = input.trim();
+    const pendingFiles = fileUpload.uploadedFiles;
+    if (!trimmedInput && pendingFiles.length === 0) return;
+    const attachmentValidation = validateMobileUploadedFiles(pendingFiles);
+    if (!attachmentValidation.ok) {
+      fileUpload.reportUploadError(`附件不可发送：${attachmentValidation.issue.message}`);
+      // Fail closed before consuming attachments or clearing the text draft.
+      return;
+    }
+    const capturedFiles = fileUpload.consumeFiles();
+    const pendingVoice = pendingVoiceRef.current;
+    const voice = pendingVoice && capturedFiles.some((file) => file.attachmentId === pendingVoice.base.attachmentId)
+      ? { ...pendingVoice.base, transcript: { ...pendingVoice.base.transcript, text: trimmedInput, edited: trimmedInput !== pendingVoice.serverText } }
+      : undefined;
+    pendingVoiceRef.current = null;
+    if (voice) {
+      const voiceIndex = msg.messagesRef.current.findIndex((message) => message.type === 'user-voice' && message.attachmentId === voice.attachmentId);
+      if (voiceIndex >= 0) msg.updateMessageAt(voiceIndex, (message) => message.type === 'user-voice'
+        ? { ...message, transcribedText: voice.transcript.text }
+        : message);
+    }
+    setInput("");
 
-    void sendChatViaWs(trimmedInput, capturedFiles, true);
-  }, [input, fileUpload, sendChatViaWs, genClientMsgId]);
+    // Voice reaches chat only after the user reviews/edits the authoritative transcript and presses Send.
+    void sendChatViaWs(trimmedInput, capturedFiles, !voice, voice);
+  }, [activeAgentTarget, activeAgentTargetUnavailableReason, input, fileUpload, msg, sendChatViaWs]);
 
-  // Send voice message
-  const sendVoiceMessage = useCallback(
-    async (fileUri: string, durationMs: number) => {
-      const durationSec = Math.round(durationMs / 1000);
-      const voiceMsgIndex = msg.addMessage({
-        type: "user-voice",
-        audioUrl: "",
-        duration: durationSec,
-        status: "uploading",
-        timestamp: Date.now(),
+  // Record -> controlled M50-03 upload -> authoritative STT -> editable draft. No automatic dispatch.
+  const sendVoiceMessage = useCallback(async (fileUri: string, durationMs: number) => {
+    const voiceIntentId = createVoiceId();
+    const uploadRequestId = createVoiceId();
+    const transcriptionRequestId = createVoiceId();
+    const durationSec = Math.round(durationMs / 1000);
+    const voiceMsgIndex = msg.addMessage({
+      type: "user-voice", audioUrl: "", duration: durationSec, status: "uploading", timestamp: Date.now(),
+    });
+    msg.triggerScroll();
+    try {
+      const formData = new FormData();
+      formData.append("files", { uri: fileUri, name: `voice_${voiceIntentId}.wav`, type: "audio/wav" } as unknown as Blob);
+      const uploadRes = await authFetch("/api/upload", {
+        method: "POST", body: formData, headers: { "X-Upload-Request-Id": uploadRequestId },
       });
-      msg.triggerScroll();
-
-      let savedPath: string;
-      let relativePath: string;
-      try {
-        const formData = new FormData();
-        const filename = `voice_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.wav`;
-        formData.append("files", {
-          uri: fileUri,
-          name: filename,
-          type: "audio/wav",
-        } as unknown as Blob);
-
-        const uploadRes = await authFetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (!uploadRes.ok) throw new Error(`上传失败: ${uploadRes.status}`);
-        const uploadData = (await uploadRes.json()) as {
-          success: boolean;
-          files?: Array<{ savedPath: string; relativePath: string }>;
-        };
-        if (!uploadData.success || !uploadData.files?.[0])
-          throw new Error("上传响应无效");
-
-        savedPath = uploadData.files[0].savedPath;
-        relativePath = uploadData.files[0].relativePath;
-      } catch (err) {
-        console.error("Voice upload failed:", err);
-        msg.updateMessageAt(voiceMsgIndex, (m) =>
-          m.type === "user-voice" ? { ...m, status: "failed" as const } : m,
-        );
-        // Clean up temp file
-        try {
-          new File(fileUri).delete();
-        } catch {}
-        return;
-      }
-
-      // Update message with audio URL
-      const audioUrl = `/api/voice/play?path=${encodeURIComponent(relativePath)}`;
-      msg.updateMessageAt(voiceMsgIndex, (m) =>
-        m.type === "user-voice"
-          ? { ...m, audioUrl, status: "transcribing" as const }
-          : m,
-      );
-
-      // Clean up temp file
-      try {
-        new File(fileUri).delete();
-      } catch {}
-
-      // Send via WS
-      void sendChatViaWs("[voice message]", [], false, {
-        savedPath,
-        relativePath,
-        duration: durationMs,
+      const uploadData = await uploadRes.json() as { success?: boolean; files?: Array<{ attachmentId?: string; originalName?: string; size?: number; mimeType?: string; isImage?: boolean }> };
+      const uploaded = uploadData.files?.[0];
+      if (!uploadRes.ok || !uploadData.success || !uploaded?.attachmentId) throw new Error("upload_failed");
+      const audioUrl = `/api/attachments/${encodeURIComponent(uploaded.attachmentId)}/content`;
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, audioUrl, attachmentId: uploaded.attachmentId, voiceIntentId, uploadRequestId, status: "transcribing" as const }
+        : m);
+      const sttRes = await authFetch('/api/voice/transcriptions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: transcriptionRequestId, attachmentId: uploaded.attachmentId, durationMs }),
       });
-    },
-    [msg, sendChatViaWs],
-  );
+      const sttData = await sttRes.json() as { success?: boolean; result?: { transcriptionId: string; text: string; durationMs: number }; error?: { code?: string; message?: string } };
+      if (!sttRes.ok || !sttData.success || !sttData.result) throw new Error(sttData.error?.code || 'stt_provider_error');
+      const base: CanonicalVoiceSubmission = {
+        voiceIntentId, uploadRequestId, attachmentId: uploaded.attachmentId,
+        transcriptionId: sttData.result.transcriptionId, durationMs: sttData.result.durationMs,
+        transcript: { status: 'ready', text: sttData.result.text, edited: false, source: 'server_stt' },
+      };
+      pendingVoiceRef.current = { base, serverText: sttData.result.text };
+      fileUpload.addUploadedFiles([{
+        attachmentId: uploaded.attachmentId, originalName: uploaded.originalName || '语音.wav', relativePath: '',
+        size: uploaded.size ?? 0, mimeType: uploaded.mimeType || 'audio/wav', isImage: false,
+      }]);
+      setInput(sttData.result.text);
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, transcribedText: sttData.result!.text, transcriptionId: sttData.result!.transcriptionId, status: "ready" as const }
+        : m);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'stt_provider_error';
+      const reasonCode = ['upload_failed', 'stt_provider_error', 'transcription_failed'].includes(code.toLowerCase()) ? code.toLowerCase() : 'voice_failed';
+      telemetryClient()?.capture('voice_error', { correlationId: voiceIntentId, measurements: { reasonCode } });
+      msg.updateMessageAt(voiceMsgIndex, (m) => m.type === "user-voice"
+        ? { ...m, status: "failed" as const, failedReason: voiceFailureAction(code) }
+        : m);
+    } finally {
+      try { new File(fileUri).delete(); } catch {}
+    }
+  }, [fileUpload, msg]);
 
   const retryMessage = useCallback(
     (message: MessageItem) => {
       if (message.type !== "user" || message.status !== "failed") return;
+      const retryFiles: UploadedFile[] = (message.attachments ?? []).flatMap((attachment) => (
+        attachment.attachmentId
+          ? [{
+              attachmentId: attachment.attachmentId,
+              originalName: attachment.name,
+              relativePath: '',
+              size: attachment.size ?? 0,
+              mimeType: attachment.mimeType ?? 'application/octet-stream',
+              isImage: attachment.isImage ?? false,
+            }]
+          : []
+      ));
+      const retryValidation = validateMobileUploadedFiles(retryFiles);
+      if ((message.attachments?.length ?? 0) !== retryFiles.length || !retryValidation.ok) {
+        fileUpload.reportUploadError('附件标识已失效，请保留文字并重新上传附件');
+        setInput(typeof message.content === 'string' ? message.content : '');
+        return;
+      }
       const msgs = msg.messagesRef.current;
       const idx = msgs.findIndex((m) => m.id === message.id);
       if (idx >= 0) {
@@ -1692,34 +1890,15 @@ export function useChatAppStateCore(): ChatAppState {
         );
       }
       const text = typeof message.content === "string" ? message.content : "";
-      if (!text) {
+      if (!text && retryFiles.length === 0) {
         setInput(text);
         return;
       }
-      // 用户手动 retry：生成新 clientMsgId（避免服务端幂等返回旧结果）
-      if (loadingRef.current) {
-        setInput("");
-        const queuedClientMsgId = genClientMsgId();
-        outboxRef.current.push({
-          clientMsgId: queuedClientMsgId,
-          input: text,
-          attachments: [],
-          state: "queued",
-          createdAt: Date.now(),
-        });
-        msg.addMessage({
-          type: "user",
-          content: text,
-          status: "pending",
-          timestamp: Date.now(),
-          clientMsgId: queuedClientMsgId,
-        });
-      } else {
-        setInput("");
-        void sendChatViaWs(text, [], true);
-      }
+      // 用户手动 retry：生成新 clientMsgId；附件仍使用上传时的同一 attachmentId。
+      setInput("");
+      void sendChatViaWs(text, retryFiles, true);
     },
-    [msg, sendChatViaWs, genClientMsgId],
+    [msg, sendChatViaWs, genClientMsgId, fileUpload],
   );
 
   const respondToInteraction = useCallback(
@@ -1731,17 +1910,27 @@ export function useChatAppStateCore(): ChatAppState {
       // A live attempt owns the submit slot; timeout/disconnect/error releases it.
       if (pendingInteractionResponsesRef.current.has(interactionId)) return;
       const generation = (interactionResponseGenerationRef.current.get(interactionId) ?? 0) + 1;
+      const currentSessionId = sessionIdRef.current;
+      if (!currentSessionId) return;
+      const interactionMessage = msgRef.current.messagesRef.current.find((message) =>
+        (message.type === 'permission_request' || message.type === 'ask_user') && message.interactionId === interactionId,
+      ) as Extract<MessageItem, { type: 'permission_request' | 'ask_user' }> | undefined;
+      const version = interactionMessage?.interactionVersion;
+      if (!Number.isSafeInteger(version)) return; // fail closed until authoritative interaction detail is hydrated
       interactionResponseGenerationRef.current.set(interactionId, generation);
-      const attemptId = `${interactionId}:${generation}:${Date.now()}`;
-      pendingInteractionResponsesRef.current.set(interactionId, { type, response, generation, attemptId });
+      const attemptId = createInteractionRequestId(currentSessionId, interactionId, response);
+      pendingInteractionResponsesRef.current.set(interactionId, { type, response, version: version!, generation, attemptId });
 
       let ok = false;
       try {
         ok = await wsClient.ensureConnectedSend({
           action: "respond",
           interactionId,
-          sessionId: sessionIdRef.current,
+          sessionId: currentSessionId,
+          version,
+          requestId: attemptId,
           clientAttemptId: attemptId,
+          response,
           ...response,
         });
       } catch {
@@ -1781,15 +1970,41 @@ export function useChatAppStateCore(): ChatAppState {
   const selectSessionWrapped = useCallback(
     (id: string) => {
       immediateSessionIdRef.current = id;
+      setPendingAgentTarget(null);
       session.selectSession(id);
     },
-    [session.selectSession],
+    [session.selectSession, setPendingAgentTarget],
   );
 
-  const newSessionWrapped = useCallback(() => {
+  const startAgentTargetSession = useCallback((target: AgentTarget) => {
+    if (!user || target.tenantId !== user.tenantId) {
+      Alert.alert('无法新建会话', 'Agent 目标与当前组织不一致。');
+      return;
+    }
     immediateSessionIdRef.current = null;
-    session.newSession();
-  }, [session.newSession]);
+    setPendingAgentTarget(target);
+    session.newSession({ preserveComposer: true });
+  }, [session.newSession, setPendingAgentTarget, user]);
+
+  const cancelAgentSwitchQueue = useCallback(async (): Promise<boolean> => {
+    const queued = chatQueueItems.filter(item => item.status === 'queued');
+    const results = await Promise.all(queued.map(item => wsClient.ensureConnectedSend({
+      action: 'cancel_queued',
+      sourceRunId: item.sourceRunId,
+    }).catch(() => false)));
+    return results.every(Boolean);
+  }, [chatQueueItems]);
+
+  const newSessionWrapped = useCallback(() => {
+    if (!agentTargetCatalog) {
+      Alert.alert('无法新建会话', agentTargetCatalogReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
+      return;
+    }
+    const selection = resolveNewSessionAgentTarget({ catalog: agentTargetCatalog, activeTarget: activeAgentTarget });
+    if (selection.kind === 'selected') startAgentTargetSession(selection.target);
+    else if (selection.kind === 'picker') Alert.alert('请选择 Agent', '请从会话列表的新建入口选择要使用的企业专家。');
+    else Alert.alert('无法新建会话', selection.reason.message);
+  }, [activeAgentTarget, agentTargetCatalog, agentTargetCatalogReason, startAgentTargetSession]);
 
   // ---- Fork from message (从此编辑) ----
   const forkFromMessage = useCallback(
@@ -1829,6 +2044,7 @@ export function useChatAppStateCore(): ChatAppState {
 
   return {
     messages: msg.messages,
+    chatQueueItems,
     input,
     loading,
     sessionId: session.sessionId,
@@ -1838,28 +2054,40 @@ export function useChatAppStateCore(): ChatAppState {
     contextUsage: session.contextUsage,
     modelList,
     selectedModel,
-    hasMoreSessions: session.hasMore,
+    hasMoreSessions: session.hasMore, // session-list pager, distinct from history pager
     isLoadingMoreSessions: session.isLoadingMore,
     isLoadingSessions: session.isLoadingSessions,
     sessionsHydrated: session.sessionsHydrated,
     isLoadingMessages: session.isLoadingMessages,
+    hasMoreHistory: session.hasMoreHistory,
+    isLoadingEarlier: session.isLoadingEarlier,
+    loadEarlierMessages: session.loadEarlierMessages,
     uploadedFiles: fileUpload.uploadedFiles,
     uploading: fileUpload.uploading,
     uploadError: fileUpload.uploadError,
     dismissUploadError: fileUpload.dismissUploadError,
     setInput,
     newSession: newSessionWrapped,
+    startAgentTargetSession,
     selectSession: selectSessionWrapped,
+    agentTargetCatalog,
+    agentTargetCatalogReason,
+    agentTargetCatalogLoading,
+    activeAgentTarget,
+    activeAgentTargetUnavailableReason,
     sendMessage,
     stopping,
     stopGeneration: cancelActiveStream,
+    cancelAgentSwitchQueue,
     retryMessage,
     forkFromMessage,
     handlePermissionResponse,
     handleAskUserResponse,
     onModelChange: handleModelChange,
     loadMoreSessions: session.loadMoreSessions,
-    refreshSessions: () => session.loadSessions(false, { fresh: true }),
+    refreshSessions: async () => {
+      await Promise.all([session.loadSessions(false, { fresh: true }), refreshAgentTargetCatalog()]);
+    },
     confirmDeleteSession: session.confirmDeleteSession,
     cancelDeleteSession: session.cancelDeleteSession,
     handleDeleteSession: session.handleDeleteSession,
@@ -1870,7 +2098,7 @@ export function useChatAppStateCore(): ChatAppState {
     compacting,
     compactionNotice,
     shouldScrollRef: msg.shouldScrollRef,
-    isNearBottomRef: msg.isNearBottomRef,
+    isNearBottomRef: msg.isNearBottomRef, // canonical viewport authority for unread
     pickFile: fileUpload.pickFile,
     pickImage: fileUpload.pickImage,
     takePhoto: fileUpload.takePhoto,
@@ -1879,6 +2107,7 @@ export function useChatAppStateCore(): ChatAppState {
     sendVoiceMessage,
     voiceCallbackRef,
     refreshCurrentSession: session.refreshCurrentSession,
+    markCurrentSessionRead: () => session.sessionId ? session.markSessionRead(session.sessionId) : Promise.resolve(),
     agentProfile,
     sessionParticipants,
     ownerFilter,

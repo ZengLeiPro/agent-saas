@@ -1,6 +1,6 @@
 import type { ApiSessionDetail } from "@/lib/sessionsApi";
 import { authFetch } from "@/lib/authFetch";
-import type { SessionRuntimeStatus } from "@agent/shared";
+import type { RunLiveness, SessionRuntimeStatus } from "@agent/shared";
 import { wsClient, type WsResumeMessage } from "@/lib/wsClient";
 
 export type LastRunState = NonNullable<ApiSessionDetail["lastRunState"]>;
@@ -32,6 +32,7 @@ export type StreamStatusSnapshot = {
   streamId?: string;
   runId?: string;
   status?: string;
+  liveness?: RunLiveness;
 };
 
 export async function fetchSessionStreamStatus(sessionId: string): Promise<StreamStatusSnapshot | null> {

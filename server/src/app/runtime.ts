@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'path';
+import { basename, join, relative, resolve, sep } from 'path';
 import { serverLogger, configureLogger } from '../utils/logger.js';
 import type { AppConfig } from '../types/index.js';
 import {
@@ -92,6 +92,7 @@ import { WebChannel } from '../channels/web/channel.js';
 import { DingtalkChannel } from '../channels/dingtalk/channel.js';
 import { createDingtalkDeps } from '../channels/dingtalk/factory.js';
 import { createCronRuntime, withPgAdvisoryLock } from '../cron/bootstrap.js';
+import { initializeRuntimeAuth } from './runtimeAuthInitialization.js';
 import { reconcileMemoryPollJobs, MEMORY_POLL_DEFAULTS } from '../cron/memoryPoll.js';
 import { UserActivityService } from '../runtime/userActivityService.js';
 import { createCronNotifier } from '../cron/notifier.js';
@@ -132,11 +133,9 @@ import { CredentialBroker } from '../runtime/credentialBroker.js';
 import { RunPreflightService } from '../runtime/runPreflight.js';
 import { PgRunResolutionSnapshotStore } from '../runtime/runResolutionSnapshotStore.js';
 import { MemoryIndexService } from '../memory/index/service.js';
-import { UserStore } from '../data/users/store.js';
 import { createApprovalPreferenceResolvers } from './userPreferenceResolvers.js';
 import type { UserInfo } from '../data/users/types.js';
-import { TenantStore } from '../data/tenants/store.js';
-import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID, TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
+import { TENANT_SLUG_PATTERN } from '../data/tenants/types.js';
 import { tenantAccessErrorMessage, wrapDispatchWithTenantAccess } from '../data/tenants/access.js';
 import { AgentStore } from '../data/agents/store.js';
 import { GroupStore } from '../data/groups/store.js';
@@ -233,7 +232,6 @@ import { PgBillingStore } from '../data/billing/pgBillingStore.js';
 import { BillingService } from '../data/billing/service.js';
 import { clearSessionsListCache } from '../routes/sessions.js';
 import { setSessionMetaProjectionSink } from '../data/transcripts/meta.js';
-import { createAuthMiddleware } from '../auth/middleware.js';
 import { sanitizeUserOverrides } from '../security/extraDirs.js';
 import { initializeRuntimeGovernanceStores } from './runtimeGovernanceStores.js';
 import type { ContextStore } from '../context/store/index.js';
@@ -249,6 +247,7 @@ import {
 } from './runtimeGovernanceCredentials.js';
 import { initializeRuntimeGovernancePreflight } from './runtimeGovernancePreflight.js';
 import { resolveSttRuntimeConfig } from '../runtime/sttRuntimeConfig.js';
+import { VoiceTranscriptionService } from '../services/voiceTranscriptionService.js';
 import {
   SAFE_SKILL_NAME_RE,
   createMemoryIndexService,
@@ -393,35 +392,12 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     guardrail: config.guardrail,
     logger: serverLogger,
   });
-  // Auth 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
-  let userStore: UserStore | undefined;
-  let tenantStore: TenantStore | undefined;
+  // Auth 与 epoch authority 初始化（需要在 dispatch 之前，因为 agentStore 依赖 userStore）
   // 跨进程刷新用（见 sharedConfigRefresher）：runtime-worker 要能感知 ws-only
-  // 进程对 tenants.json 的改写，所以路径需要在这个 if 块之外可见。
-  let tenantsFilePath: string | undefined;
-  let authMiddleware: ReturnType<typeof createAuthMiddleware> | undefined;
-  if (config.auth?.enabled && config.auth.jwtSecret) {
-    const usersFilePath = resolve(processCwd, config.auth.usersFile || './data/users.json');
-    userStore = new UserStore(usersFilePath);
-    // Tenant store 与 user store 共生命周期；tenants.json 放在 users.json 同目录。
-    // 启动期保证平台根组织和开沿日常组织都始终存在。
-    tenantsFilePath = join(dirname(usersFilePath), 'tenants.json');
-    const tenantPgConfig = config.runtimeEventStore?.backend === 'pg'
-      ? config.runtimeEventStore
-      : undefined;
-    tenantStore = new TenantStore(tenantsFilePath, tenantPgConfig ? {
-      withLock: <T>(operation: () => Promise<T>) => withPgAdvisoryLock(
-        tenantPgConfig.connectionString,
-        `${tenantPgConfig.tablePrefix ?? 'agent_saas'}:tenant-store`,
-        operation,
-      ),
-    } : { useLocalLock: false });
-    await tenantStore.ensureDefaultTenant();
-    await tenantStore.ensureKaiyanTenant();
-    authMiddleware = createAuthMiddleware(config.auth.jwtSecret, userStore, tenantStore, config.auth.tokenExpiresIn || '30d');
-    serverLogger.info('Auth enabled');
-    serverLogger.info(`Tenant store loaded: ${tenantStore.count()} tenant(s), platform='${DEFAULT_TENANT_ID}', legacy='${LEGACY_TENANT_ID}'`);
-  }
+  // 进程对 tenants.json 的改写，所以路径需要在初始化结果中保留。
+  const { userStore, tenantStore, authEpochAuthority, tenantsFilePath, authMiddleware: initialAuthMiddleware } =
+    await initializeRuntimeAuth({ config, processCwd, logger: serverLogger });
+  let authMiddleware = initialAuthMiddleware;
   // Agent profiles store
   let agentStore: AgentStore | undefined;
   if (userStore) {
@@ -692,6 +668,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     resolvedFeishuConnector,
     feishuConnectorScopes,
   } = await initializeRuntimeGovernanceCredentials(config, processCwd);
+  const voiceTranscriptionService = new VoiceTranscriptionService({ uploadManager, sttConfig: resolvedSttRuntimeConfig.sttConfig });
   // P4 防御纵深（2026-06-22 落地，06-26 收敛 admin 容器 env）：把按 tenant 装配子进程 env 的规则统一塞进
   // ServerLocal / Container 两条路径。buildTenantScopedEnv 会按 workspace.tenantId
   // 决定是"匿名内部调用保留完整 process.env"还是"明确 tenant 先剔除敏感宿主
@@ -753,6 +730,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
       tenantStore,
       orgAgentStore,
       skillConfigStore,
+      authEpochAuthority,
     }));
     if (enableSchedulerWorker) {
       runtimeOutboundStreamRelay = new RuntimeOutboundStreamRelay(pgEventStore, {
@@ -2570,7 +2548,8 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     refreshSharedConfig: sharedConfigRefresher.refreshIfChanged,
     getTitleSystemPrompt: () => systemPromptRegistry.get('utility.title'),
     sttConfig: resolvedSttRuntimeConfig.sttConfig,
-    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret } : { authEnabled: false }),
+    voiceTranscriptionService,
+    ...(config.auth?.enabled ? { authEnabled: true, jwtSecret: config.auth.jwtSecret, authEpochAuthority } : { authEnabled: false }),
     userOverrides: config.agent.userOverrides,
     getIsDraining: () => channelManager.draining,
     uploadManager,
@@ -2920,7 +2899,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     sharedDir,
     tenantSkillsRootDir,
     uploadsDir,
-    uploadManager, sessionCatalog,
+    uploadManager, voiceTranscriptionService, sessionCatalog,
     channelManager,
     dispatchMetricsStore,
     dingtalkDeps,
@@ -2937,6 +2916,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
     codexDeviceAuthService,
     codexWebSocketShutdown: () => codexWebSocketPool.close(),
     userStore,
+    authEpochAuthority,
     dwsConnectionStore,
     dwsAuthFlowService,
     agentDwsAccountStore,

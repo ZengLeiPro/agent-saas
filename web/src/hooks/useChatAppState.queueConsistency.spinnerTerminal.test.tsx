@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
+import type { AgentTarget, CanonicalChatSubmissionWireMessage } from "@agent/shared";
 
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
@@ -12,6 +13,9 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    pendingAgentTargetRef: { current: { kind: 'personal', tenantId: 'tenant-a' } as AgentTarget | null },
+    pendingNewSessionGroupIdRef: { current: null as string | null },
+    reportUploadError: vi.fn(),
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -73,12 +77,24 @@ vi.mock("@/hooks/useSession", () => ({
     return harness.session;
   },
 }));
+vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
+  usePendingNewSessionTarget: () => ({
+    pendingAgentTargetRef: harness.pendingAgentTargetRef,
+    pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingAgentTarget: harness.pendingAgentTargetRef.current,
+    pendingOrgAgentId: null,
+    setPendingAgentTarget: vi.fn((target: AgentTarget | null) => { harness.pendingAgentTargetRef.current = target; }),
+    clearPendingOrgAgent: vi.fn(),
+    assignPendingGroup: vi.fn(async () => {}),
+  }),
+}));
 vi.mock("@/hooks/useFileUpload", () => ({
   useFileUpload: () => ({
     uploadedFiles: harness.currentFiles,
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: harness.reportUploadError,
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -131,8 +147,11 @@ beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockReset().mockResolvedValue(true);
+  harness.reportUploadError.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
+  harness.pendingAgentTargetRef.current = { kind: 'personal', tenantId: 'tenant-a' };
+  harness.pendingNewSessionGroupIdRef.current = null;
   harness.session.sessionId = null;
   harness.session.isNewSession = true;
   Object.values(harness.session).forEach((value) => {
@@ -146,7 +165,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// TASK-312/332 回归：终态必须最终清除，但 terminal -> next-run handoff 期间
+// TASK-312/332 回归：终态必须收敛清除，但 terminal -> next-run handoff 期间
 // 输入框与侧边栏共用同一 active latch；750ms 探活或下一 run lifecycle 再权威收敛。
 describe("useChatAppState sidebar spinner terminal convergence", () => {
   function startRunningSession(result: { current: ReturnType<typeof useChatAppState> }) {
@@ -519,8 +538,8 @@ describe("useChatAppState sidebar spinner terminal convergence", () => {
     act(() => result.current.setInput("排队插话"));
     await act(async () => { await result.current.sendMessage(); });
     const queuedClientId = harness.sends.mock.calls
-      .map(([payload]) => payload as { action?: string; client_msg_id?: string })
-      .find((payload) => payload.action === "chat")?.client_msg_id;
+      .map(([payload]) => payload as CanonicalChatSubmissionWireMessage)
+      .find((payload) => payload.action === "chat")?.submission.clientMsgId;
     expect(queuedClientId).toBeTypeOf("string");
     expect(result.current.queuedInterjections.find((entry) => entry.clientMsgId === queuedClientId)?.status).toBe("sending");
 

@@ -4,7 +4,7 @@ import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -48,7 +48,12 @@ function rawConfig() {
 const servers: Server[] = [];
 
 describe('Codex subscription admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     while (servers.length > 0) servers.pop()?.close();
   });

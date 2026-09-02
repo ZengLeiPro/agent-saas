@@ -46,8 +46,9 @@ import {
   createContextCitationsRouter,
   createContextAdminRouter,
 } from '../routes/index.js';
-import { createAuthRouter } from '../routes/auth.js';
+import { registerAuthConnectionRoutes } from './routesAuthConnections.js';
 import { createSignupRouters } from '../routes/signup.js';
+import { configuredMobileTelemetryRouter } from '../telemetry/mobileTelemetry.js';
 import { requireAdmin } from '../auth/middleware.js';
 import { createAgentsRouter } from '../routes/agents.js';
 import { createOrgAgentsRouter, createTenantExpertTemplatesRouter } from '../routes/orgAgents.js';
@@ -125,7 +126,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     dispatchMetricsStore,
   } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
-  const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
+  const { configMutationService, getEffectiveConfigStatus, getAdminConfigStatus } = createRuntimeConfigGovernance({
     config, processCwd, processRole: runtime.processRole,
   });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
@@ -135,8 +136,13 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     },
     enforcementMode: async () => 'enforce' as const,
   };
-  const nativeOAuthHandoff = runtime.oauthGrantStore
-    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, 'https://kaiyan.net/oauth/callback')
+  const nativeOAuthCallbackUrl = process.env.NATIVE_OAUTH_CALLBACK_URL?.trim();
+  const allowNonProductionCustomCallback = process.env.NODE_ENV !== 'production'
+    && process.env.NATIVE_OAUTH_ALLOW_CUSTOM_SCHEME === 'true';
+  const nativeOAuthHandoff = runtime.oauthGrantStore && nativeOAuthCallbackUrl
+    ? new NativeOAuthHandoffStore(runtime.oauthGrantStore, nativeOAuthCallbackUrl, {
+        allowCustomScheme: allowNonProductionCustomCallback,
+      })
     : undefined;
   if (nativeOAuthHandoff)
     app.use('/api/connectors', createNativeOAuthHandoffRouter(nativeOAuthHandoff));
@@ -164,7 +170,8 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
-  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
+  app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');
   app.use('/api', createAppUpdateRouter({ mobileDir }));
@@ -246,18 +253,20 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
       userStore: runtime.userStore,
     }),
   );
-  // Azeroth 透明反向代理：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
+  // Azeroth 透明反向代理层：mobile/web 通过 /api/azeroth/* 调用 azeroth API，
   // 由 server 注入对应员工的 PAT，新增 azeroth 接口零代码。
   // 依赖：index.ts 中 express.json() 已配置为跳过 /api/azeroth/* 路径
   app.use('/api', createAzerothProxyRouter());
-  // HTML Preview: token API 走 /api（需认证），文件服务走 /preview（自认证）
+  // Retired HTML preview: authenticated single-file grant; /preview only serves a static retirement page.
   const preview = createPreviewRoutes({
     agentCwd,
     userOverrides: config.agent.userOverrides,
+    userStore: runtime.userStore,
+    authEpochAuthority: runtime.authEpochAuthority,
   });
   app.use('/api', preview.tokenRouter);
   app.use('/preview', preview.serveRouter);
-  app.use('/api', createVoiceRouter({ agentCwd }));
+  app.use('/api', createVoiceRouter({ agentCwd, transcriptionService: runtime.voiceTranscriptionService }));
   app.use('/api', createTtsRouter({ tts: config.tts }));
   app.use('/api/search', createSearchRouter({ agentCwd, userStore: runtime.userStore }));
   // 场景库：预置场景卡片（所有登录用户可读；服务端过滤未上架条目并剥离内部 source 字段）
@@ -341,6 +350,9 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         : undefined,
       listPendingUserMessagesBySession: runtime.runtimeRunStore?.listPendingUserMessagesBySession
         ? (sessionId) => runtime.runtimeRunStore!.listPendingUserMessagesBySession!(sessionId)
+        : undefined,
+      listUserMessagesBySession: runtime.runtimeRunStore?.listUserMessagesBySession
+        ? (sessionId) => runtime.runtimeRunStore!.listUserMessagesBySession!(sessionId)
         : undefined,
       findRunByClientMessageId: runtime.runtimeRunStore
         ? (userId, clientMessageId) =>
@@ -832,37 +844,24 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
         return archivePersonalWorkspace(agentCwd, user, jobId, relativePaths);
       },
     });
-    app.use(
-      '/api/auth',
-      createAuthRouter({
-        userStore: runtime.userStore,
-        tenantStore: runtime.tenantStore,
-        jwtSecret: config.auth.jwtSecret,
-        tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
-        avatarsDir,
-        loginLogFilePath,
-        agentCwd,
-        sharedDir,
-        tenantSkillsRootDir,
-        onUserDisabled: async (userId: string) => {
-          const disabledUser = userStore.findById(userId);
-          if (disabledUser) await terminateAndRevokeUserConnectors(disabledUser);
-        },
-        onUserTenantChanging: terminateAndRevokeUserConnectors,
-        skillConfigStore: runtime.skillConfigStore,
-        onUserDeleting: async (target) => {
-          await Promise.all([
-            terminateAndRevokeUserConnectors(target),
-            cronRuntime.service?.removeByOwners([target.id]),
-          ]);
-        },
-        mcpOAuthService: runtime.mcpOAuthService,
-        signupConfigStore: runtime.signupConfigStore,
-        secretVault: runtime.secretVault,
-        getModelsConfig: () => config.models,
-        runStore: runtime.runtimeRunStore, legacyWriteGate,
-      }),
-    );
+    registerAuthConnectionRoutes({
+      app,
+      runtime,
+      jwtSecret: config.auth.jwtSecret,
+      tokenExpiresIn: config.auth.tokenExpiresIn || '30d',
+      avatarsDir,
+      loginLogFilePath,
+      agentCwd,
+      sharedDir,
+      tenantSkillsRootDir,
+      terminateAndRevokeUserConnectors,
+      disconnectWebUser: (userId) => webChannel?.disconnectUser(userId),
+      removeCronsByOwners: cronRuntime.service
+        ? (ownerIds) => cronRuntime.service!.removeByOwners(ownerIds)
+        : undefined,
+      nativeOAuthHandoffAvailable: Boolean(nativeOAuthHandoff),
+      legacyWriteGate,
+    });
     // 手机号自助注册试用（官网联动 MVP）。公开路径在 auth middleware PUBLIC_ROUTES
     // 放行；enabled 开关与频控在 router 内收口。配置走 SignupConfigStore 动态读
     // （platform-admin「注册管理」页可改，改完下一请求即生效，无需重启）。

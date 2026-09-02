@@ -106,6 +106,26 @@ describe("useFileUpload 并发隔离", () => {
     expect(mocks.authFetch).not.toHaveBeenCalled();
   });
 
+  it("离线或身份切换会 abort 并 fence 旧上传响应", async () => {
+    const pending = deferred<Response>();
+    mocks.authFetch.mockReturnValueOnce(pending.promise);
+    const { result, rerender } = renderHook(
+      ({ online, identityKey }) => useFileUpload("chat", undefined, { online, identityKey }),
+      { initialProps: { online: true, identityKey: "tenant-a:user-a" } },
+    );
+    let upload!: Promise<void>;
+    act(() => { upload = result.current.handlePaste(pasteEvent(new File(["x"], "x.txt"))); });
+    expect(mocks.authFetch).toHaveBeenCalledWith('/api/upload', expect.objectContaining({
+      headers: expect.objectContaining({ 'X-Upload-Request-Id': expect.any(String) }),
+      signal: expect.any(AbortSignal),
+    }));
+    rerender({ online: false, identityKey: "tenant-a:user-a" });
+    await waitFor(() => expect(result.current.uploading).toBe(false));
+    expect(result.current.uploadError).toContain('重新选择');
+    await act(async () => { pending.resolve(uploadResponse('x.txt')); await upload; });
+    expect(result.current.uploadedFiles).toEqual([]);
+  });
+
   it("清空或切换草稿后忽略旧上传响应", async () => {
     const pending = deferred<Response>();
     mocks.authFetch.mockReturnValueOnce(pending.promise);

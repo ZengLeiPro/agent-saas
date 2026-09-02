@@ -15,11 +15,16 @@ export interface JwtPayload {
    * 所有旧用户记录由迁移脚本补齐组织归属，新签发的 token 必带值。
    */
   tenantId: string;
+  /** M30-01 server-authoritative login epoch and generation. */
+  authEpoch?: number;
+  generation?: number;
   /** 由 auth middleware 每次按 UserStore 实时覆盖，不信任 JWT 存量声明。 */
   platformCapabilities?: PlatformCapability[];
   platformCapabilityLimits?: PlatformCapabilityLimits;
   iat?: number;
   exp?: number;
+  /** Unique JWT id for structured lifecycle audit correlation. */
+  jti?: string;
 }
 
 /**

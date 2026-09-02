@@ -131,7 +131,7 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "组织作用域" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "请先选择目标组织" })).toBeTruthy();
     expect(screen.queryByText(/组织预算面板 kaiyan-demo/)).toBeNull();
   });
 
@@ -305,6 +305,35 @@ describe("AdminShells V2 内容适配", () => {
     );
     expect(await screen.findByText("member-1")).toBeTruthy();
     expect(screen.queryByText("复用 UserManager")).toBeNull();
+  });
+
+  it("账号与登录叶子复用完整 UserManager 账号操作能力", () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div>复用 UserManager</div>}
+        governanceRoute={governanceRoute("organization.members.accounts", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByText("复用 UserManager")).toBeTruthy();
+  });
+
+  it("MCP 服务叶子复用完整 Connector Catalog 管理能力", () => {
+    const renderMcp = vi.fn((tenantId?: string, tenantName?: string) => (
+      <div>连接器管理器 {tenantId} {tenantName}</div>
+    ));
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        renderMcp={renderMcp}
+        governanceRoute={governanceRoute("organization.agents.mcp-catalog", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByText("连接器管理器 acme Acme")).toBeTruthy();
+    expect(renderMcp).toHaveBeenCalledWith("acme", "Acme");
   });
 
   it("组织记忆与知识叶子在原区域内接入 Context Center，不增加顶级路由", async () => {
@@ -498,6 +527,7 @@ describe("AdminShells V2 内容适配", () => {
   });
 
   it.each([
+    ["organization.settings.general", "功能与配额", ["模型策略", "品牌", "安全"]],
     ["organization.settings.brand", "品牌", ["功能开关", "模型策略", "安全"]],
     ["organization.settings.security", "登录与安全", ["功能开关", "模型策略", "品牌"]],
     ["organization.agents.model-tools", "模型与工具", ["功能开关", "品牌", "安全"]],
@@ -510,6 +540,19 @@ describe("AdminShells V2 内容适配", () => {
       />,
     );
     expect(screen.getAllByText(expectedTitle).length).toBeGreaterThan(0);
-    for (const title of unrelatedTitles) expect(screen.queryByText(title)).toBeNull();
+    const page = screen.getByTestId("organization-management-content").querySelector("main");
+    for (const title of unrelatedTitles) expect(page?.textContent).not.toContain(title);
+  });
+
+  it("模型与工具页同时挂载模型和工具 Entitlement 入口", () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.agents.model-tools", { orgId: "acme" })}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "模型可用范围" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "工具可用范围" })).toBeTruthy();
   });
 });

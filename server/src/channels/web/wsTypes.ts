@@ -5,7 +5,12 @@
  * 下行事件复用原 SSE 事件类型，包裹在带 eventId 的信封中。
  */
 
-import type { SandboxProfile } from '@agent/shared';
+import type { ChatQueueItem, ChatQueueSnapshot, MessageAttachmentDisplay, RunLiveness, SandboxProfile } from '@agent/shared';
+import type { SyncOverflowRecovery } from './syncProtocol.js';
+import type {
+    CanonicalChatSubmissionWireMessage,
+    ChatClientCapability,
+} from '@agent/shared';
 import type {
     UploadedFileInfo,
     ContextUsageData,
@@ -16,11 +21,14 @@ import type {
     RuntimeRecoveryAction,
 } from '../../types/index.js';
 
-// ── 上行消息（客户端 → 服务端）──────────────────────────────
+// ── 上行消息（客户端 → 服务端）─────────────────────────────
 
 export interface WsAuthMessage {
     action: 'auth';
     token: string;
+    /** M30-01 binding persisted from the login/legacy-upgrade response. */
+    authEpoch?: number;
+    generation?: number;
 }
 
 /**
@@ -36,31 +44,17 @@ export type ChatRejectReasonCode =
     | 'server_draining'        // 服务端优雅关闭中
     | 'model_not_allowed'      // 组织模型策略不允许使用所选模型
     | 'duplicate_inflight'     // 同 client_msg_id 已在处理
+    | 'invalid_submission'     // canonical V1 结构无效
+    | 'attachment_id_missing'  // V1 附件缺 attachmentId
+    | 'attachment_id_invalid'  // V1 attachmentId 格式错误
+    | 'attachment_not_found'   // attachmentId 非本用户上传状态（含伪造）
     | 'attachment_state_failed' // 附件引用状态持久化失败
     | 'personal_agent_disabled' // 租户关闭个人 Agent，普通用户仅可用专职 Agent
     | 'org_agent_unavailable'; // 专职 Agent 不存在/已禁用/未被指派（跨租户防枚举同码）
 
 export type ChatDeliveryMode = 'queue' | 'steer';
 
-export interface WsChatMessage {
-    action: 'chat';
-    /** 普通消息默认串行排队；只有用户显式选择插话时才允许注入当前 run。 */
-    deliveryMode?: ChatDeliveryMode;
-    /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
-    clientCapabilities?: Array<'replaceable_drafts'>;
-    /** 客户端生成的 UUID，贯穿全链路；老客户端可缺省，服务端生成占位 */
-    client_msg_id?: string;
-    message: string;
-    sessionId?: string;
-    /** 仅新会话首条消息生效；续聊以持久化值为准。 */
-    sandboxProfile?: SandboxProfile;
-    /**
-     * 公司级专职 Agent 绑定。**仅新会话首条消息生效**；带 sessionId 的消息
-     * 以会话 meta 为准（不一致时 log warn 采用 meta，防伪造/串线）。
-     */
-    orgAgentId?: string;
-    attachments?: UploadedFileInfo[];
-    model?: string;
+interface WsChatControlFields {
     /** 内部管理员验收开关：选择工具执行后端。普通 UI 不暴露。 */
     executionTarget?: 'server-local' | 'server-container';
     approvalPolicy?: {
@@ -69,19 +63,40 @@ export interface WsChatMessage {
         /** 「低风险常开」档（TASK-256）：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
         lowRiskOnly?: boolean;
     };
-    voiceFile?: {
-        savedPath: string;
-        relativePath: string;
-        duration: number;
-    };
 }
+
+export type CanonicalWsChatMessage = CanonicalChatSubmissionWireMessage & WsChatControlFields;
+
+/** @deprecated N-1 flat envelope. Paths are lookup hints only and never authoritative. */
+export interface LegacyWsChatMessage extends WsChatControlFields {
+    action: 'chat';
+    deliveryMode?: ChatDeliveryMode;
+    clientCapabilities?: ChatClientCapability[];
+    client_msg_id?: string;
+    message: string;
+    sessionId?: string;
+    sandboxProfile?: SandboxProfile;
+    orgAgentId?: string;
+    attachments?: UploadedFileInfo[];
+    model?: string;
+}
+
+export type WsChatMessage = CanonicalWsChatMessage | LegacyWsChatMessage;
 
 export interface WsRespondMessage {
     action: 'respond';
     interactionId: string;
     sessionId?: string;
-    /** Client-generated retry token, echoed only by the matching respond ACK. */
+    /** Stable idempotency key. Reuse it after an ACK loss. */
+    requestId?: string;
+    /** N-1 alias for requestId. */
     clientAttemptId?: string;
+    /** M40-03 interaction and identity fences. Required when requestId is present. */
+    version?: number;
+    authEpoch?: number;
+    generation?: number;
+    /** Current protocol payload; flattened fields below remain accepted from N-1 clients. */
+    response?: Record<string, unknown>;
     [key: string]: unknown;
 }
 
@@ -114,11 +129,23 @@ export interface WsResumeMessage {
     sessionId: string;
     /** Optional correlation id echoed by the active_stream response. */
     requestId?: string;
+    networkGeneration?: number;
     /** Legacy per-process EventBuffer id. */
     lastEventId: number;
     /** Durable runtime EventStore cursor (PG session_sequence as opaque string). */
     lastEventCursor?: string;
     skipReplay?: boolean;
+}
+
+export interface WsQueueSnapshotMessage {
+    action: 'queue_snapshot';
+    sessionId: string;
+    requestId: string;
+    networkGeneration: number;
+}
+
+export interface WsAttachActiveStreamMessage extends Omit<WsResumeMessage, 'action'> {
+    action: 'attach_active_stream';
 }
 
 export interface WsDetachMessage {
@@ -143,8 +170,12 @@ export interface WsPingMessage {
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    requestId?: string;
+    networkGeneration?: number;
     /** 客户端上次见到的用户日志代际；旧客户端可省略。 */
     epoch?: string;
+    /** 可选的当前会话，用于 overflow 时内联返回 queue/runtime/interaction 权威快照。 */
+    sessionId?: string;
 }
 
 export type WsInboundMessage =
@@ -155,6 +186,8 @@ export type WsInboundMessage =
     | WsApprovalPolicyMessage
     | WsRunStatusMessage
     | WsResumeMessage
+    | WsQueueSnapshotMessage
+    | WsAttachActiveStreamMessage
     | WsDetachMessage
     | WsPingMessage
     | WsSyncMessage
@@ -164,6 +197,9 @@ export type WsInboundMessage =
 
 /** 下行事件信封：每个事件可携带 eventId / seq 供断线重连和 gap 检测使用 */
 export interface WsOutboundEnvelope {
+    /** M30-01 binding; clients reject downstream ACK/replay from an old login. */
+    authEpoch?: number;
+    generation?: number;
     /** 递增事件 ID（per-session，缓冲模式下存在），用于断线重连回放 */
     eventId?: number;
     /** Durable runtime EventStore cursor for cross-process replay. */
@@ -186,9 +222,12 @@ export interface WsAskUserQuestion {
 export type WsDownstreamEvent =
     | { type: 'auth_ok' }
     | { type: 'stream_id'; streamId: string; runId?: string; client_msg_id?: string; queued?: boolean; deliveryMode?: ChatDeliveryMode; targetRunId?: string; sessionId?: string; queuePosition?: number }
-    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
-    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; timestamp: number; queuePosition?: number; targetRunId?: string }
-    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string }
+    | { type: 'chat_ack'; client_msg_id: string; server_recv_ts: number; sessionId?: string; runId?: string; sourceRunId?: string; status?: 'accepted' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'; deliveryMode?: ChatDeliveryMode; queuePosition?: number }
+    | { type: 'queue_snapshot'; snapshot: ChatQueueSnapshot; requestId?: string; networkGeneration?: number }
+    | { type: 'queue_item_updated'; item: ChatQueueItem }
+    | { type: 'message_queued'; sessionId: string; runId: string; clientMsgId: string; deliveryMode: ChatDeliveryMode; content: string; attachments?: MessageAttachmentDisplay[]; timestamp: number; queuePosition?: number; targetRunId?: string }
+    | { type: 'cancel_queued_result'; ok: boolean; sourceRunId: string; sessionId?: string; clientMsgId?: string; item?: ChatQueueItem; snapshot?: ChatQueueSnapshot; reason?: 'too_late' | 'not_found' | 'unsupported' | 'error' }
+    | { type: 'chat_rejected'; client_msg_id: string; reason_code: ChatRejectReasonCode; reason: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'session'; sessionId: string; client_msg_id?: string; sandboxProfile?: SandboxProfile }
     | { type: 'block_start'; blockType: WsBlockType; toolName?: string; toolId?: string; draftId?: string; runId?: string }
     | { type: 'draft_reset'; draftId: string; attempt?: number }
@@ -199,35 +238,36 @@ export type WsDownstreamEvent =
     | { type: 'block_end'; blockType: WsBlockType; toolName?: string }
     | { type: 'tool_execution'; phase: 'started' | 'progress' | 'completed'; toolName?: string; toolId?: string; invocationId?: string; status?: 'success' | 'error' | 'cancelled'; durationMs?: number; content?: string; error?: string }
     | { type: 'tool_result'; toolName?: string; toolId?: string; result?: string; isError?: boolean }
-    | { type: 'permission_request'; interactionId: string; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
-    | { type: 'ask_user'; interactionId: string; questions: WsAskUserQuestion[] }
+    | { type: 'permission_request'; interactionId: string; version?: number; order?: number; toolName: string; toolInput: Record<string, unknown>; toolId?: string; displayName?: string; planContent?: string }
+    | { type: 'ask_user'; interactionId: string; version?: number; order?: number; questions: WsAskUserQuestion[] }
     | { type: 'subagent_start'; toolId: string; agentType: string; childSessionId?: string; childRunId?: string; model?: string }
     | { type: 'subagent_end'; toolId: string; agentType?: string; status?: 'completed' | 'failed' | 'cancelled' | 'timeout'; childSessionId?: string; childRunId?: string; model?: string; durationMs?: number; totalTokens?: number; toolUseCount?: number; turnCount?: number; errorMessage?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; resultPreview?: string }
     | { type: 'file_download'; fileName: string; fileType: string; filePath: string; fileSize: number; owner?: string }
     | { type: 'artifact_created'; artifactId: string; fileName: string; kind: 'file' | 'screenshot' | 'patch' | 'log' | 'blob'; sourcePath?: string; sizeBytes?: number; mimeType?: string; sha256?: string; owner?: string }
     | { type: 'voice'; text: string; voice?: string; speed?: number; standalone?: boolean }
     | { type: 'voice_transcribed'; text: string; error?: boolean }
-    | { type: 'title_updated'; sessionId: string; title: string }
-    | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean }
+    | { type: 'title_updated'; sessionId: string; title: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
+    | { type: 'session_updated'; sessionId: string; preview?: string; updatedAtMs: number; title?: string; model?: string; username?: string; isNew?: boolean; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
     | { type: 'buffer_overflow' }
     | { type: 'done'; sessionId?: string; streamId?: string; runId?: string; client_msg_id?: string; error?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction; finalOutput?: boolean }
-    | { type: 'error'; message: string }
+    | { type: 'error'; message: string; code?: string; correlationId?: string; retryAfter?: number }
     | { type: 'respond_error'; interactionId: string; error: string; clientAttemptId?: string }
     | { type: 'respond_ok'; interactionId: string; clientAttemptId?: string }
     | { type: 'abort_ok'; streamId?: string; runId?: string }
-    | { type: 'pending_interactions'; interactions: Array<{ interactionId: string; type: string; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
-    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; requestId?: string }
+    | { type: 'pending_interactions'; sessionId?: string; interactions: Array<{ interactionId: string; type: string; version: number; order: number; runId?: string; toolCallId?: string; invocationId?: string; questions?: WsAskUserQuestion[]; toolId?: string; toolName?: string; displayName?: string; toolInput?: Record<string, unknown>; planContent?: string }> }
+    | { type: 'active_stream'; sessionId: string; active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness; requestId?: string; networkGeneration?: number }
     | { type: 'stream_started'; sessionId: string; streamId: string; runId?: string }
     | { type: 'interaction_resolved'; sessionId: string; interactionId: string; response?: Record<string, unknown> }
-    | { type: 'session_deleted'; sessionId: string }
-    | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }> }
-    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
+    | { type: 'session_deleted'; sessionId: string; serverVersion?: number; updatedAt?: string; sourceSeq?: number }
+    | { type: 'user_message'; content: string; timestamp: number; client_msg_id?: string; attachments?: MessageAttachmentDisplay[] }
+    | { type: 'session_status'; sessionId: string; status: 'busy' | 'idle' | 'queued' | 'running' | 'waiting_approval' | 'waiting_user' | 'waiting_hand' | 'completed' | 'failed' | 'cancelled' | 'orphaned'; streamId?: string; runId?: string; liveness?: RunLiveness; reason?: string; failureKind?: RuntimeFailureKind; recoveryAction?: RuntimeRecoveryAction }
     | { type: 'groups_changed' }
     // ── SDK 0.2.112+ 新增系统事件 ──
     | { type: 'context_usage'; contextUsage: ContextUsageData }
     | { type: 'plugin_install'; pluginInstall: PluginInstallData }
     | { type: 'notification'; notification: NotificationData }
     | { type: 'memory_recall'; memoryRecall: MemoryRecallData }
-    | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }> }
-    | { type: 'sync_overflow'; seq: number; epoch: string }
+    | { type: 'sync_ok'; seq: number; epoch: string; events: Array<{ seq: number; event: object }>; requestId?: string; networkGeneration?: number }
+    | { type: 'sync_overflow'; seq: number; epoch: string; recovery: SyncOverflowRecovery; code?: 'sync_overflow'; correlationId?: string; retryAfter?: number; requestId?: string; networkGeneration?: number }
+    | { type: 'recovery_rejected'; requestId: string; reason: 'stale_network_generation'; latestNetworkGeneration: number }
     | { type: 'pong'; seq?: number; epoch: string; probe?: boolean };

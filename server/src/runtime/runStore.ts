@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import type { ExecutionTargetKind } from '../agent/toolRuntime.js';
-import { DEFAULT_TENANT_ID, LEGACY_TENANT_ID } from '../data/tenants/types.js';
+import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { allocatePgEventSequences } from './pgEventCursorAllocator.js';
 import { encodePgEventNotifyPayload, lockPgEventGlobalSequence } from './pgEventStoreProtocol.js';
 import type { PlatformEvent, PlatformEventInput } from './types.js';
@@ -10,13 +10,16 @@ import { releaseRunLease } from './runTerminalLifecycle.js';
 import { ACTIVE_STEERING_TARGET_STATUSES, STEERING_TARGET_STATUS_SQL, STOPPABLE_RUN_STATUS_SQL } from './runStatusPolicy.js';
 import { normalizeRunRecord, parseCount, sanitizeIdentifier, serializeRuntimeEvent, stringMetadata } from './runStoreRecordHelpers.js';
 import { PgRunStoreQueries } from './runStoreQueries.js';
+import { initializePgRunStoreSchema } from './runStoreSchema.js';
 import { hasTaskboardSessionActivity } from './runStoreSessionActivity.js';
-import { acquireSandboxCleanupClaimGuard, sandboxRunAdmissionFenceSql } from './sandboxRunAdmissionFence.js';
+import { acquireSandboxCleanupClaimGuard } from './sandboxRunAdmissionFence.js';
 import { buildAppliedSteeringEventInputs, selectSteeringEventCandidates } from './steeringRuntimeEvents.js';
-const { Pool } = pg; type PgPoolClient = pg.PoolClient;
+const { Pool } = pg;
+type PgPoolClient = pg.PoolClient;
 export * from './runStoreTypes.js';
 import { BackgroundTaskLimitError, RunCreateConflictError } from './runStoreTypes.js';
 import type { ActiveRunCounts, CancelSteeringResult, EnqueueBackgroundTaskLimits, LatestResponseSessionState, ListBackgroundTasksOptions, MessageDeliveryMode, PgPool, PgRunStoreOptions, ResponseSessionStatePatch, RunLeaseAdmission, RunRecord, RunStatus, RunStore, SandboxCleanupClaimGuard, SteeringApplyInput, SteeringApplyResult, SteeringInputRecord, UpsertRunInput } from './runStoreTypes.js';
+import type { LivenessReapResult, RunHeartbeatSource } from './runLiveness.js';
 export class PgRunStore implements RunStore {
   readonly pool: PgPool;
   readonly runsTable: string;
@@ -27,7 +30,8 @@ export class PgRunStore implements RunStore {
   readonly eventCursorsTable: string;
   readonly toolInvocationsTable: string;
   readonly eventNotifyChannel: string;
-  private readonly ownsPool: boolean; private readonly queries: PgRunStoreQueries;
+  private readonly ownsPool: boolean;
+  private readonly queries: PgRunStoreQueries;
 
   constructor(options: PgRunStoreOptions) {
     if (!options.pool && !options.connectionString) {
@@ -44,176 +48,29 @@ export class PgRunStore implements RunStore {
     this.eventNotifyChannel = `${prefix}_events_notify`;
     this.pool = options.pool ?? new Pool({ connectionString: options.connectionString! });
     this.ownsPool = !options.pool;
-    this.queries = new PgRunStoreQueries(this.pool, this.runsTable, this.messageSubmissionsTable, this.steeringInputsTable);
+    this.queries = new PgRunStoreQueries(
+      this.pool,
+      this.runsTable,
+      this.messageSubmissionsTable,
+      this.steeringInputsTable,
+      this.toolInvocationsTable,
+    );
   }
 
   async init(): Promise<void> {
-    // 门禁加固（2026-06-22）：用 PG advisory lock 串行化并发 init。多进程（many-brains
-    // 多实例同时启动 / chaos 多 worker 同时 init）会并发跑 `CREATE INDEX IF NOT EXISTS`，
-    // 而 IF NOT EXISTS 对并发不原子——两端都判定"不存在"→ 都建 → 撞 pg_class 唯一约束
-    // (23505)。锁绑定单条 dedicated 连接，覆盖全部 DDL 后释放；后到者阻塞到先到者建完，
-    // 届时 IF NOT EXISTS 命中已存在→跳过。
-    const lockKey = `${this.runsTable}:init`;
-    const client = await this.pool.connect();
-    try {
-      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.runsTable} (
-          run_id TEXT PRIMARY KEY,
-          enqueue_seq BIGSERIAL NOT NULL,
-          session_id TEXT NOT NULL,
-          user_id TEXT,
-          submitter_scope TEXT,
-          status TEXT NOT NULL,
-          status_reason TEXT,
-          model TEXT,
-          channel TEXT,
-          requested_at TIMESTAMPTZ NOT NULL,
-          started_at TIMESTAMPTZ,
-          updated_at TIMESTAMPTZ NOT NULL,
-          completed_at TIMESTAMPTZ,
-          failed_at TIMESTAMPTZ,
-          cancelled_at TIMESTAMPTZ,
-          worker_id TEXT,
-          lease_expires_at TIMESTAMPTZ,
-          idempotency_key TEXT,
-          execution_target TEXT,
-          workspace_id TEXT,
-          metadata JSONB NOT NULL DEFAULT '{}'
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.messageSubmissionsTable} (
-          user_scope TEXT NOT NULL,
-          client_message_id TEXT NOT NULL,
-          run_id TEXT NOT NULL UNIQUE,
-          session_id TEXT NOT NULL,
-          delivery_mode TEXT NOT NULL,
-          accepted_at TIMESTAMPTZ NOT NULL,
-          PRIMARY KEY (user_scope, client_message_id)
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.steeringInputsTable} (
-          input_id TEXT PRIMARY KEY,
-          source_run_id TEXT NOT NULL UNIQUE,
-          target_run_id TEXT NOT NULL,
-          session_id TEXT NOT NULL,
-          state TEXT NOT NULL DEFAULT 'pending',
-          sequence BIGSERIAL NOT NULL,
-          accepted_at TIMESTAMPTZ NOT NULL,
-          reserved_at TIMESTAMPTZ,
-          applied_at TIMESTAMPTZ
-        )
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS ${this.steeringSessionsTable} (
-          session_id TEXT PRIMARY KEY,
-          stopped_at TIMESTAMPTZ
-        )
-      `);
-      await client.query(`ALTER TABLE ${this.steeringInputsTable} ADD COLUMN IF NOT EXISTS sequence BIGSERIAL`);
-      await client.query(`ALTER TABLE ${this.steeringInputsTable} ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMPTZ`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.steeringInputsTable}_target_sequence_idx ON ${this.steeringInputsTable} (target_run_id, state, sequence)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.steeringInputsTable}_source_idx ON ${this.steeringInputsTable} (source_run_id, state)`);
-      const existingColumns = new Set((await client.query<{ column_name: string }>(`
-        SELECT attname AS column_name
-        FROM pg_attribute
-        WHERE attrelid = $1::regclass
-          AND attnum > 0
-          AND NOT attisdropped
-      `, [this.runsTable])).rows.map((row) => row.column_name));
-      // 严格 FIFO 使用数据库分配的单调序号，避免同毫秒 client runId 的随机后缀打乱顺序。
-      if (!existingColumns.has('enqueue_seq')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN enqueue_seq BIGSERIAL`);
-        // BIGSERIAL 的默认回填取决于物理扫描顺序；按历史 requested_at 重排后再推进 sequence。
-        await client.query(`
-          WITH ordered AS (
-            SELECT run_id, ROW_NUMBER() OVER (ORDER BY requested_at ASC, run_id ASC) AS seq
-            FROM ${this.runsTable}
-          )
-          UPDATE ${this.runsTable} run
-          SET enqueue_seq = ordered.seq
-          FROM ordered
-          WHERE run.run_id = ordered.run_id
-        `);
-        await client.query(`
-          SELECT setval(
-            pg_get_serial_sequence('${this.runsTable}', 'enqueue_seq'),
-            COALESCE((SELECT MAX(enqueue_seq) FROM ${this.runsTable}), 1),
-            EXISTS (SELECT 1 FROM ${this.runsTable})
-          )
-        `);
-        await client.query(`ALTER TABLE ${this.runsTable} ALTER COLUMN enqueue_seq SET NOT NULL`);
-      }
-      // RFC v1 P0.4：Responses API session state 字段。先查 catalog 再按缺口 ALTER，
-      // 避免每次启动为已存在的列申请强表锁。
-      if (!existingColumns.has('last_response_id')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_id TEXT`);
-      }
-      if (!existingColumns.has('last_response_expire_at')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_expire_at TIMESTAMPTZ`);
-      }
-      if (!existingColumns.has('actual_model_seen')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN actual_model_seen TEXT`);
-      }
-      // 2026-07-02：接力身份键（切模型后跨后端接力必炸，见 findLatestResponseSessionStateBySession 调用方）
-      if (!existingColumns.has('last_response_model')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_model TEXT`);
-      }
-      if (!existingColumns.has('last_response_profile_digest')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN last_response_profile_digest TEXT`);
-      }
-      if (!existingColumns.has('cumulative_input_tokens')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN cumulative_input_tokens BIGINT NOT NULL DEFAULT 0`);
-      }
-      if (!existingColumns.has('sandbox_scope_id')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN sandbox_scope_id TEXT`);
-      }
-      // PR 3：多组织改造 — 加 tenant_id 列，旧数据回填 LEGACY_TENANT_ID，新 run 由
-      // dispatch 层（PR 4）显式传入；UpsertRunInput 已加可选 tenantId 字段。
-      if (!existingColumns.has('tenant_id')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT '${LEGACY_TENANT_ID}'`);
-      }
-      if (!existingColumns.has('submitter_scope')) {
-        await client.query(`ALTER TABLE ${this.runsTable} ADD COLUMN submitter_scope TEXT`);
-      }
-      await client.query(`UPDATE ${this.runsTable} SET sandbox_scope_id = metadata->>'sandboxScopeId' WHERE sandbox_scope_id IS NULL AND metadata ? 'sandboxScopeId'`);
-      // wakeMessage 是活跃 Run 的 durable 恢复载荷；Run 终态后已无恢复用途，启动时清理历史遗留正文。
-      await client.query(`UPDATE ${this.runsTable} SET metadata = metadata - 'wakeMessage' WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata ? 'wakeMessage'`);
-      await client.query(sandboxRunAdmissionFenceSql(this.runsTable).join(';\n'));
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_tenant_idx ON ${this.runsTable} (tenant_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_user_idx ON ${this.runsTable} (user_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_scope_idx ON ${this.runsTable} (sandbox_scope_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_sandbox_terminal_scope_idx ON ${this.runsTable} (tenant_id, workspace_id, sandbox_scope_id, updated_at DESC) WHERE status IN ('completed','failed','cancelled','orphaned') AND metadata->>'sandboxWorkloadTopLevel' = 'true'`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_status_idx ON ${this.runsTable} (status, updated_at)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_idx ON ${this.runsTable} (session_id, updated_at DESC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_enqueue_idx ON ${this.runsTable} (session_id, enqueue_seq)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_session_idx ON ${this.runsTable} ((metadata->>'parentSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_top_session_idx ON ${this.runsTable} ((metadata->>'topLevelSessionId'), requested_at DESC) WHERE metadata->>'backgroundTask' = 'true'`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_parent_run_idx ON ${this.runsTable} ((metadata->>'parentRunId'), status) WHERE metadata->>'backgroundTask' = 'true'`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_background_tenant_status_idx ON ${this.runsTable} (tenant_id, status, updated_at) WHERE metadata->>'backgroundTask' = 'true'`);
-      // RFC v1 P0.4：按 sessionId 找最近完成 run 的 last_response_id（跨 run 接力查询路径）
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_session_last_response_idx ON ${this.runsTable} (session_id, updated_at DESC) WHERE last_response_id IS NOT NULL`);
-      await client.query(`DROP INDEX IF EXISTS ${this.runsTable}_active_idempotency_idx`);
-      await client.query(`DROP INDEX IF EXISTS ${this.runsTable}_active_idempotency_v2_idx`);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${this.runsTable}_active_idempotency_v3_idx ON ${this.runsTable} ((COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key) WHERE idempotency_key IS NOT NULL AND status IN ('pending','running','waiting_approval','waiting_user','waiting_hand')`);
-      await client.query(`DROP INDEX IF EXISTS ${this.runsTable}_idempotency_lookup_idx`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.runsTable}_idempotency_lookup_v2_idx ON ${this.runsTable} ((COALESCE(submitter_scope, user_id, '__anonymous__')), idempotency_key, updated_at DESC) WHERE idempotency_key IS NOT NULL`);
-      await client.query(`CREATE INDEX IF NOT EXISTS ${this.messageSubmissionsTable}_session_idx ON ${this.messageSubmissionsTable} (session_id, accepted_at)`);
-    } finally {
-      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
-      client.release();
-    }
+    await initializePgRunStoreSchema(this);
   }
+
   async close(): Promise<void> { if (this.ownsPool) await this.pool.end(); }
 
   async upsertPending(input: UpsertRunInput): Promise<RunRecord> {
     const now = new Date().toISOString();
     const result = await this.pool.query<{ row_json: RunRecord }>(`
       INSERT INTO ${this.runsTable}
-        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+        (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+         liveness_state, liveness_detected_at, liveness_version)
+      VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+         'active',$7,1)
       ON CONFLICT (run_id) DO UPDATE SET
         updated_at = EXCLUDED.updated_at,
         status = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
@@ -224,6 +81,14 @@ export class PgRunStore implements RunStore {
                          THEN NULL ELSE ${this.runsTable}.worker_id END,
         lease_expires_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
                                 THEN NULL ELSE ${this.runsTable}.lease_expires_at END,
+        liveness_state = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                              THEN 'active' ELSE ${this.runsTable}.liveness_state END,
+        liveness_reason_code = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                    THEN NULL ELSE ${this.runsTable}.liveness_reason_code END,
+        liveness_detected_at = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                    THEN EXCLUDED.updated_at ELSE ${this.runsTable}.liveness_detected_at END,
+        liveness_version = CASE WHEN ${this.runsTable}.status IN ('waiting_approval','waiting_user','waiting_hand')
+                                THEN COALESCE(${this.runsTable}.liveness_version,0)+1 ELSE ${this.runsTable}.liveness_version END,
         sandbox_scope_id = COALESCE(EXCLUDED.sandbox_scope_id, ${this.runsTable}.sandbox_scope_id),
         submitter_scope = COALESCE(EXCLUDED.submitter_scope, ${this.runsTable}.submitter_scope),
         metadata = ${this.runsTable}.metadata || EXCLUDED.metadata
@@ -237,8 +102,10 @@ export class PgRunStore implements RunStore {
     try {
       result = await this.pool.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
-          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+          (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at, idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [input.runId, input.sessionId, input.userId ?? null, input.tenantId ?? null, input.model ?? null, input.channel ?? null, now, input.idempotencyKey ?? null, input.executionTarget ?? null, input.workspaceId ?? null, input.sandboxScopeId ?? null, input.submitterUserId ?? input.userId ?? null, JSON.stringify(input.metadata ?? {})]);
@@ -369,8 +236,10 @@ export class PgRunStore implements RunStore {
       const result = await client.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
           (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
-           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,COALESCE($4,'${DEFAULT_TENANT_ID}'),'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [
@@ -775,13 +644,16 @@ export class PgRunStore implements RunStore {
       }
       if (row.status !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const now = new Date().toISOString();
       await client.query(`
         UPDATE ${this.runsTable}
         SET status = 'cancelled', status_reason = $2, updated_at = $3, cancelled_at = $3,
-            worker_id = NULL, lease_expires_at = NULL, metadata = metadata - 'wakeMessage'
+            worker_id = NULL, lease_expires_at = NULL, metadata = (metadata || jsonb_build_object('cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [runId, reason, now]);
       await client.query('COMMIT');
@@ -815,6 +687,9 @@ export class PgRunStore implements RunStore {
       const clientMsgId = typeof row.metadata?.clientMsgId === 'string' ? row.metadata.clientMsgId : undefined;
       if (row.status !== 'pending' || row.metadata?.steeringState !== 'pending') {
         await client.query('ROLLBACK');
+        if (row.status === 'cancelled' && row.metadata?.cancelledByQueueRequest === true) {
+          return { ok: true, sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
+        }
         return { ok: false, reason: 'too_late', sessionId: row.session_id, ...(clientMsgId ? { clientMsgId } : {}) };
       }
       const inputUpdate = await client.query(`
@@ -834,7 +709,7 @@ export class PgRunStore implements RunStore {
             status_reason = $2,
             updated_at = $3,
             completed_at = $3,
-            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled')) - 'wakeMessage'
+            metadata = (metadata || jsonb_build_object('steeringState', 'cancelled', 'cancelledByQueueRequest', true)) - 'wakeMessage'
         WHERE run_id = $1 AND status = 'pending'
       `, [sourceRunId, reason, now]);
       await client.query('COMMIT');
@@ -859,13 +734,17 @@ export class PgRunStore implements RunStore {
     sessionId: string,
     reason: string,
     targetRunId: string | undefined,
-    event: PlatformEventInput, tenantId: string, cleanupGuard?: SandboxCleanupClaimGuard,
+    event: PlatformEventInput,
+    tenantId: string,
+    cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const result = await this.cancelSteeringBeforeDispatchInternal(
       sessionId,
       reason,
       targetRunId,
-      event, tenantId, cleanupGuard,
+      event,
+      tenantId,
+      cleanupGuard,
     );
     return {
       cancelled: result.cancelled,
@@ -879,7 +758,9 @@ export class PgRunStore implements RunStore {
     sessionId: string,
     reason: string,
     targetRunId: string | undefined,
-    event: PlatformEventInput | undefined, tenantId: string, cleanupGuard?: SandboxCleanupClaimGuard,
+    event: PlatformEventInput | undefined,
+    tenantId: string,
+    cleanupGuard?: SandboxCleanupClaimGuard,
   ): Promise<{ cancelled: SteeringInputRecord[]; targetCancelled: boolean; event?: PlatformEvent; eventCreated: boolean }> {
     const client = await this.pool.connect();
     let appended: Array<PlatformEvent & { sequence: number }> = [];
@@ -892,7 +773,8 @@ export class PgRunStore implements RunStore {
         `${this.runsTable}:message:${sessionId}`,
       ]);
       if (cleanupGuard && !await acquireSandboxCleanupClaimGuard(client, this.runsTable, cleanupGuard)) {
-        await client.query('COMMIT'); return { cancelled: [], targetCancelled: false, eventCreated: false };
+        await client.query('COMMIT');
+        return { cancelled: [], targetCancelled: false, eventCreated: false };
       }
       const now = new Date().toISOString();
       // 固定锁序：advisory(session) → target → source(run_id) → input(sequence)。
@@ -1099,6 +981,19 @@ export class PgRunStore implements RunStore {
     return result.rows.map((row) => normalizeRunRecord(row.row_json));
   }
 
+  async listUserMessagesBySession(sessionId: string): Promise<RunRecord[]> {
+    const result = await this.pool.query<{ row_json: RunRecord }>(`
+      SELECT row_to_json(run.*) AS row_json
+      FROM ${this.runsTable} run
+      WHERE run.session_id = $1
+        AND run.channel = 'web'
+        AND (run.metadata ? 'clientMsgId' OR run.idempotency_key IS NOT NULL)
+        AND COALESCE(run.metadata->>'backgroundTask', 'false') <> 'true'
+      ORDER BY run.enqueue_seq ASC
+    `, [sessionId]);
+    return result.rows.map((row) => normalizeRunRecord(row.row_json));
+  }
+
   async listPendingSteeringBySession(sessionId: string): Promise<SteeringInputRecord[]> {
     const result = await this.pool.query<{
       input_id: string;
@@ -1177,8 +1072,10 @@ export class PgRunStore implements RunStore {
       const result = await client.query<{ row_json: RunRecord }>(`
         INSERT INTO ${this.runsTable}
           (run_id, session_id, user_id, tenant_id, status, model, channel, requested_at, updated_at,
-           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata)
-        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb)
+           idempotency_key, execution_target, workspace_id, sandbox_scope_id, submitter_scope, metadata,
+           liveness_state, liveness_detected_at, liveness_version)
+        VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$7,$8,$9,$10,$11,$12,$13::jsonb,
+           'active',$7,1)
         ON CONFLICT (run_id) DO NOTHING
         RETURNING row_to_json(${this.runsTable}.*) AS row_json
       `, [
@@ -1332,8 +1229,24 @@ export class PgRunStore implements RunStore {
   async acquireLease(runId: string, workerId: string, leaseMs: number, now = new Date(), maxConcurrentRuns?: number, admission?: RunLeaseAdmission): Promise<RunRecord | null> {
     return this.queries.acquireLease(runId, workerId, leaseMs, now, maxConcurrentRuns, admission);
   }
-  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date()): Promise<RunRecord | null> {
-    return this.queries.renewLease(runId, workerId, leaseMs, now);
+  async renewLease(runId: string, workerId: string, leaseMs: number, now = new Date(), source: RunHeartbeatSource = 'worker'): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  }
+  async heartbeatRun(runId: string, workerId: string, leaseMs: number, source: RunHeartbeatSource, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.renewLease(runId, workerId, leaseMs, now, source);
+  }
+  async markLivenessStale(runId: string, workerId: string, reasonCode: string, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.markLivenessStale(runId, workerId, reasonCode, now);
+  }
+  /** Runs one bounded, CAS-fenced liveness reaper pass. */
+  async reapExpiredLiveness(now: Date, staleGraceMs: number, limit = 50): Promise<LivenessReapResult> {
+    return this.queries.reapExpiredLiveness(now, staleGraceMs, limit);
+  }
+  async retryOrphanedUserMessage(submitterUserId: string | undefined, clientMsgId: string, now = new Date()): Promise<RunRecord | null> {
+    return this.queries.retryOrphanedUserMessage(submitterUserId, clientMsgId, now);
+  }
+  async cancelUserMessageByClientMsgId(submitterUserId: string | undefined, clientMsgId: string, reason = 'explicit_client_cancel', now = new Date()): Promise<RunRecord | null> {
+    return this.queries.cancelUserMessageByClientMsgId(submitterUserId, clientMsgId, reason, now);
   }
   async updateResponseSessionState(runId: string, patch: ResponseSessionStatePatch): Promise<RunRecord | null> {
     return this.queries.updateResponseSessionState(runId, patch);

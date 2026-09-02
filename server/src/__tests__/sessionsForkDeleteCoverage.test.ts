@@ -534,7 +534,7 @@ describe('sessions fork/permanent-delete/source-index residual coverage', () => 
     const { baseUrl } = await startServer(OWNER);
     const res = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, softDeleted: true });
+    expect(await res.json()).toMatchObject({ ok: true, softDeleted: true, ack: { status: 'applied', deleted: true, serverVersion: expect.any(Number) } });
 
     // 副作用：stub meta 已落盘，归属请求者，且带软删标记
     const meta = await readSessionMeta(transcriptPath);

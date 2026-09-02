@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-02-rehearsal-plan-v1.json",
+  "title": "M70-02 cold install, upgrade and rollback rehearsal plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "planId", "cases"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "planId": { "const": "M70-02" },
+    "cases": {
+      "type": "array", "minItems": 21,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "platform", "action", "installMethod", "expectedOutcome", "artifactSlots"],
+        "properties": {
+          "id": { "pattern": "^M70-02-(IOS|ANDROID)-[0-9]{2}$" },
+          "platform": { "enum": ["ios", "android"] },
+          "action": { "enum": ["fresh_install", "same_version_reinstall", "n_minus_1_to_n_overlay", "cache_v1_to_v2", "expired_token", "revoked_token", "old_pending_same_protocol", "old_pending_protocol_upgrade", "server_epoch_restart", "store_pause_kill_compat_hotfix", "enterprise_signed_rollback"] },
+          "installMethod": { "enum": ["app-store", "testflight", "play-store", "managed-store", "enterprise-signed-apk"] },
+          "expectedOutcome": { "type": "string", "minLength": 1 },
+          "artifactSlots": { "type": "array", "const": ["previous", "current"] }
+        }
+      }
+    }
+  }
+}

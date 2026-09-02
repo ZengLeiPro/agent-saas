@@ -208,6 +208,120 @@ describe('WebChannel persistent interaction recovery', () => {
       expect(upsertRun).not.toHaveBeenCalled();
     });
 
+    it('handleChat 排队后复用首次适配结果，不因请求对象变更漂移 Session 锁键', async () => {
+      const tmp = await makeTmp('cov-chat-adapter-snapshot-');
+      const sessionId = randomUUID();
+      const driftedSessionId = randomUUID();
+      const now = new Date().toISOString();
+      const lockCalls: string[] = [];
+      const deletedSessions = new Set<string>();
+      const runStore = new MemoryRunStore();
+      const rig = makeRig({
+        agentCwd: tmp,
+        withSessionAdmissionLock: async <T>(lockedSessionId: string, operation: () => Promise<T>): Promise<T> => {
+          lockCalls.push(lockedSessionId);
+          deletedSessions.add(lockedSessionId);
+          return operation();
+        },
+        enqueueRuntime: {
+          enabled: true,
+          sessionCatalog: {
+            get: async (requestedSessionId: string) => ({
+              sessionId: requestedSessionId, userId: USER.sub, username: USER.username, tenantId: TENANT,
+              channel: 'web', cwd: tmp, transcriptPath: join(tmp, `${requestedSessionId}.jsonl`),
+              workspaceId: 'ws-adapter-snapshot', createdAt: now, updatedAt: now,
+              ...(deletedSessions.has(requestedSessionId) ? { deletedAt: now } : {}),
+            }),
+            upsert: vi.fn(),
+          } as any,
+          runStore,
+          scheduler: {} as any,
+        },
+      });
+      let releaseQueue!: () => void;
+      const queued = new Promise<void>((resolve) => { releaseQueue = resolve; });
+      (rig.channel as any).chatProcessingTails.set(rig.ws, queued);
+      const message = { action: 'chat', message: '保持首次适配', sessionId, client_msg_id: 'msg-adapter-snapshot' };
+
+      (rig.channel as any).handleChat(wsClient(rig.ws, USER), message);
+      message.sessionId = driftedSessionId;
+      releaseQueue();
+
+      await vi.waitFor(() => expect(lockCalls).toEqual([sessionId]));
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'chat_rejected', reason_code: 'access_denied' });
+    });
+
+    it('handleChat 在排队前快照完整 envelope，控制字段不会被外部对象漂移', async () => {
+      const rig = makeRig({});
+      let releaseQueue!: () => void;
+      const queued = new Promise<void>((resolve) => { releaseQueue = resolve; });
+      (rig.channel as any).chatProcessingTails.set(rig.ws, queued);
+      const processSpy = vi.spyOn(rig.channel as any, 'processChatMessage').mockResolvedValue(undefined);
+      const originalSessionId = randomUUID();
+      const message = {
+        action: 'chat', message: '固定 envelope', sessionId: originalSessionId, client_msg_id: 'msg-envelope-snapshot',
+        executionTarget: 'server-local', approvalPolicy: { autoApproveTools: false },
+        clientCapabilities: ['replaceable_drafts'],
+      };
+
+      (rig.channel as any).handleChat(wsClient(rig.ws, USER), message);
+      message.sessionId = randomUUID();
+      message.executionTarget = 'server-container';
+      message.approvalPolicy.autoApproveTools = true;
+      message.clientCapabilities.push('chat_submission_v1');
+      releaseQueue();
+
+      await vi.waitFor(() => expect(processSpy).toHaveBeenCalledTimes(1));
+      expect(processSpy.mock.calls[0]?.[1]).toMatchObject({
+        sessionId: originalSessionId,
+        executionTarget: 'server-local',
+        approvalPolicy: { autoApproveTools: false },
+        clientCapabilities: ['replaceable_drafts'],
+      });
+    });
+
+    it('legacy 消息夹带 canonical submission 时仍按适配后的 Session 获取准入锁', async () => {
+      const tmp = await makeTmp('cov-legacy-submission-spoof-');
+      const sessionId = randomUUID();
+      const spoofedSessionId = randomUUID();
+      const now = new Date().toISOString();
+      let deleted = false;
+      const lockCalls: string[] = [];
+      const runStore = new MemoryRunStore();
+      const upsertRun = vi.spyOn(runStore, 'upsertPending');
+      const rig = makeRig({
+        agentCwd: tmp,
+        withSessionAdmissionLock: async <T>(lockedSessionId: string, operation: () => Promise<T>): Promise<T> => {
+          lockCalls.push(lockedSessionId);
+          deleted = true;
+          return operation();
+        },
+        enqueueRuntime: {
+          enabled: true,
+          sessionCatalog: {
+            get: async () => ({
+              sessionId, userId: USER.sub, username: USER.username, tenantId: TENANT,
+              channel: 'web', cwd: tmp, transcriptPath: join(tmp, `${sessionId}.jsonl`),
+              workspaceId: 'ws-spoof', createdAt: now, updatedAt: now,
+              ...(deleted ? { deletedAt: now } : {}),
+            }),
+            upsert: vi.fn(),
+          } as any,
+          runStore,
+          scheduler: {} as any,
+        },
+      });
+
+      await (rig.channel as any).processChatMessage(wsClient(rig.ws, USER), {
+        action: 'chat', message: '不得锁错 Session', sessionId, client_msg_id: 'msg-legacy-spoof',
+        submission: { target: { sessionId: spoofedSessionId } },
+      });
+
+      expect(lockCalls).toEqual([sessionId]);
+      expect(rig.ws.sent.at(-1)?.data).toMatchObject({ type: 'chat_rejected', reason_code: 'access_denied' });
+      expect(upsertRun).not.toHaveBeenCalled();
+    });
+
     it('ask_user 并发恢复：CAS 只允许一次 event append/enqueue，live claim 拒绝竞争重试', async () => {
       const tmp = await makeTmp('cov-askresume-');
       const { sessionId, eventStore } = await seedRuntimeSession(USER, {

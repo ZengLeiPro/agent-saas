@@ -31,6 +31,7 @@ import { DEFAULT_TENANT_ID, DEFAULT_TENANT_SETTINGS, type TenantSettings } from 
 import { OrgAgentStore } from '../data/orgAgents/store.js';
 import { SkillConfigStore } from '../data/skills/index.js';
 import { createAuthMiddleware } from '../auth/middleware.js';
+import type { AuthEpochAuthority } from '../auth/authEpochAuthority.js';
 
 export interface RuntimeGovernanceStoreDeps {
   pgEventStore: PgEventStore;
@@ -40,6 +41,7 @@ export interface RuntimeGovernanceStoreDeps {
   tenantStore?: TenantStore;
   orgAgentStore?: OrgAgentStore;
   skillConfigStore?: SkillConfigStore;
+  authEpochAuthority?: AuthEpochAuthority;
 }
 
 const PERSONAL_SKILL_RESOURCE_ID_PATTERN = /^personal_[a-f0-9]{32}$/;
@@ -229,6 +231,7 @@ export async function initializeRuntimeGovernanceStores(deps: RuntimeGovernanceS
         tenantStore,
         config.auth.tokenExpiresIn || '30d',
         membershipStore,
+        deps.authEpochAuthority,
       );
     }
     entitlementStore = new PgEntitlementStore({

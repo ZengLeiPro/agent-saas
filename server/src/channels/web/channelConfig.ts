@@ -20,6 +20,8 @@ import type { EventStore } from '../../runtime/types.js';
 import type { UserOverrides } from '../../security/extraDirs.js';
 import type { OutboundEvent, WebMessageDisplayConfig } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';
+import type { VoiceTranscriptionService } from '../../services/voiceTranscriptionService.js';
+import type { AuthEpochAuthority } from '../../auth/authEpochAuthority.js';
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
@@ -39,6 +41,8 @@ export interface WebChannelConfig extends WebChannelRuntimeConfig {
 export interface WebChannelRuntimeConfig {
   /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
   authEnabled?: boolean;
+  /** M30-01 durable authority shared by HTTP tokens and WS. */
+  authEpochAuthority?: AuthEpochAuthority;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;
@@ -46,7 +50,9 @@ export interface WebChannelRuntimeConfig {
   refreshSharedConfig?: () => void;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
+  /** @deprecated legacy voice path channel only; M50-04 uses voiceTranscriptionService. */
   sttConfig?: SttConfig;
+  voiceTranscriptionService?: VoiceTranscriptionService;
   userOverrides?: UserOverrides;
   /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
   tokenUsageStore?: TokenUsageStore;

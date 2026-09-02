@@ -161,4 +161,15 @@ describe('Google Workspace OAuth callback handoff delivery', () => {
       status: 'failed', errorCode: 'OAUTH_CALLBACK_FAILED',
     });
   });
+  it('callback code/error 互斥，歧义输入不进入 exchange 并终结 transaction', async () => {
+    const test = fixture();
+    const response = await request(test.options, '/api/connectors/oauth/callback?state=state-12345678&code=oauth-code&error=access_denied');
+    expect(response.status).toBe(400);
+    expect(test.finishAuthorization).not.toHaveBeenCalled();
+    expect(test.rejectAuthorization).toHaveBeenCalledWith('state-12345678');
+    expect(test.complete).toHaveBeenCalledWith('state-12345678', {
+      status: 'failed', errorCode: 'OAUTH_CALLBACK_AMBIGUOUS',
+    });
+  });
+
 });

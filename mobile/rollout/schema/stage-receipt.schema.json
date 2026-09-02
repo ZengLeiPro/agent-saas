@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-03-stage-receipt-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "policyId", "policyDigest", "release", "stageId", "previousReceiptDigest", "approvalId", "telemetrySnapshotDigest", "supportSnapshotDigest", "adapterReceiptDigest", "evaluatedAt", "nonce", "status", "hardStops", "metricResults", "stopReason", "commandContract", "recommendations", "signature", "receiptDigest"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "policyId": { "const": "M70-03" }, "policyDigest": { "$ref": "#/$defs/digest" },
+    "release": { "type": "object", "additionalProperties": false, "required": ["sha", "releaseId", "artifactSetDigest"], "properties": { "sha": { "pattern": "^[0-9a-f]{40}$" }, "releaseId": { "type": "string" }, "artifactSetDigest": { "$ref": "#/$defs/digest" } } },
+    "stageId": { "enum": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"] },
+    "previousReceiptDigest": { "oneOf": [{ "const": "GENESIS" }, { "$ref": "#/$defs/digest" }] }, "approvalId": { "type": "string" },
+    "telemetrySnapshotDigest": { "$ref": "#/$defs/digest" }, "supportSnapshotDigest": { "$ref": "#/$defs/digest" }, "adapterReceiptDigest": { "$ref": "#/$defs/digest" },
+    "evaluatedAt": { "format": "date-time" }, "nonce": { "type": "string" }, "status": { "enum": ["passed", "paused", "stopped"] },
+    "hardStops": { "type": "object", "additionalProperties": false, "required": ["crossAccountIdentityLeak", "crossTenantIdentityLeak", "wrongAgentExecution", "signatureFailure", "upgradeFailure", "duplicateRunExecution"], "properties": { "crossAccountIdentityLeak": { "$ref": "#/$defs/zeroOrMore" }, "crossTenantIdentityLeak": { "$ref": "#/$defs/zeroOrMore" }, "wrongAgentExecution": { "$ref": "#/$defs/zeroOrMore" }, "signatureFailure": { "$ref": "#/$defs/zeroOrMore" }, "upgradeFailure": { "$ref": "#/$defs/zeroOrMore" }, "duplicateRunExecution": { "$ref": "#/$defs/zeroOrMore" } } },
+    "metricResults": { "type": "array" }, "stopReason": { "type": "array", "items": { "type": "string" } }, "commandContract": { "type": ["object", "null"] }, "recommendations": { "type": "array", "items": { "type": "string" } },
+    "signature": { "type": "object", "additionalProperties": false, "required": ["algorithm", "keyId", "value"], "properties": { "algorithm": { "const": "HMAC-SHA256" }, "keyId": { "type": "string" }, "value": { "pattern": "^[0-9a-f]{64}$" } } }, "receiptDigest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": { "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "zeroOrMore": { "type": "integer", "minimum": 0 } }
+}

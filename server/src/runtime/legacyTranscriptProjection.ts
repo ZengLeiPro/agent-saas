@@ -25,7 +25,7 @@ function jsonl(obj: unknown): string {
 function userLine(
   content: string,
   sessionId: string,
-  attachments?: ReadonlyArray<{ originalName: string; isImage: boolean; relativePath: string }>,
+  attachments?: ReadonlyArray<{ attachmentId: string; originalName: string; mimeType: string; sizeBytes: number; isImage: boolean }>,
   identity?: { clientMsgId?: string; interjectionSourceRunId?: string },
 ): string {
   return jsonl({
@@ -33,15 +33,15 @@ function userLine(
     message: { role: 'user', content },
     ...(identity?.clientMsgId ? { clientMsgId: identity.clientMsgId } : {}),
     ...(identity?.interjectionSourceRunId ? { interjectionSourceRunId: identity.interjectionSourceRunId } : {}),
-    // 刷新后前端历史回放的附件展示来源（parse.ts → prompt block.attachments）。
-    // relativePath 供前端点击预览/下载（走 /api/file 端点，workspace 内路径校验）；
-    // 完整 ModelAttachmentRef 仍在 PG event store。
+    // 刷新后的 replay contract 只携带 attachmentId + 展示元数据；路径留在服务端状态。
     ...(attachments?.length
       ? {
-        attachments: attachments.map((a) => ({
-          name: a.originalName,
-          isImage: a.isImage,
-          relativePath: a.relativePath,
+        attachments: attachments.map((attachment) => ({
+          name: attachment.originalName,
+          attachmentId: attachment.attachmentId,
+          mimeType: attachment.mimeType,
+          size: attachment.sizeBytes,
+          isImage: attachment.isImage,
         })),
       }
       : {}),

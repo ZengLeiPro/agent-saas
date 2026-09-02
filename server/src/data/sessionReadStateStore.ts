@@ -22,6 +22,9 @@ export interface SessionReadStateStore {
     userId: string;
     sessionIds: readonly string[];
   }): Promise<Set<string>>;
+  getState?(input: { tenantId: string; userId: string; sessionId: string }): Promise<{
+    attentionVersion: number; readVersion: number; updatedAt?: string;
+  }>;
 }
 
 export class PgSessionReadStateStore implements SessionReadStateStore {
@@ -89,6 +92,15 @@ export class PgSessionReadStateStore implements SessionReadStateStore {
       [input.tenantId, input.userId, input.sessionId],
     );
     return result.rowCount === 1;
+  }
+
+  async getState(input: { tenantId: string; userId: string; sessionId: string }): Promise<{ attentionVersion: number; readVersion: number; updatedAt?: string }> {
+    const result = await this.pool.query<{ attention_version: string; read_version: string; updated_at: Date }>(
+      `SELECT attention_version, read_version, updated_at FROM ${this.tableName} WHERE tenant_id = $1 AND user_id = $2 AND session_id = $3`,
+      [input.tenantId, input.userId, input.sessionId],
+    );
+    const row = result.rows[0];
+    return row ? { attentionVersion: Number(row.attention_version), readVersion: Number(row.read_version), updatedAt: row.updated_at.toISOString() } : { attentionVersion: 0, readVersion: 0 };
   }
 
   async listUnreadSessionIds(input: {
@@ -169,6 +181,12 @@ export class FileSessionReadStateStore implements SessionReadStateStore {
       this.data[key] = { ...current, readVersion: current.attentionVersion };
       return true;
     });
+  }
+
+  async getState(input: { tenantId: string; userId: string; sessionId: string }): Promise<{ attentionVersion: number; readVersion: number; updatedAt?: string }> {
+    await this.writeQueue;
+    const current = this.data[stateKey(input.tenantId, input.userId, input.sessionId)];
+    return current ? { attentionVersion: current.attentionVersion, readVersion: current.readVersion } : { attentionVersion: 0, readVersion: 0 };
   }
 
   async listUnreadSessionIds(input: {

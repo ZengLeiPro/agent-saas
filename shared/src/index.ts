@@ -1,4 +1,5 @@
 export * from './types/correlation';
+export * from './mobileV1';
 
 // Platform abstraction
 export { initPlatform, getPlatform } from './platform/context';

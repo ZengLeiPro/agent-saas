@@ -41,6 +41,19 @@ export async function markRunStatus(
             ELSE run.failed_at
           END,
           cancelled_at = CASE WHEN $2 = 'cancelled' THEN COALESCE(run.cancelled_at, transition_time.now) ELSE run.cancelled_at END,
+          worker_id = CASE WHEN $2::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE worker_id END,
+          lease_expires_at = CASE WHEN $2::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE lease_expires_at END,
+          liveness_state = CASE
+            WHEN liveness_version IS NULL THEN NULL
+            WHEN $2 = 'orphaned' THEN 'orphaned'
+            WHEN $2::text IN ('completed','failed','cancelled') THEN 'terminal'
+            WHEN $2::text IN ('waiting_approval','waiting_user') THEN 'waiting_interaction'
+            WHEN $2::text IN ('running','waiting_hand') THEN 'busy'
+            ELSE 'active'
+          END,
+          liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $3 END,
+          liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE transition_time.now END,
+          liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
           metadata = CASE
             WHEN $2::text IN ('completed','failed','cancelled','orphaned')
               THEN ((run.metadata || $4::jsonb) - 'wakeMessage') || jsonb_build_object(
@@ -111,6 +124,19 @@ export async function markRunStatusIfCurrent(
           ELSE run.failed_at
         END,
         cancelled_at = CASE WHEN $3 = 'cancelled' THEN COALESCE(run.cancelled_at, transition_time.now) ELSE run.cancelled_at END,
+        worker_id = CASE WHEN $3::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE worker_id END,
+        lease_expires_at = CASE WHEN $3::text IN ('waiting_approval','waiting_user','completed','failed','cancelled','orphaned') THEN NULL ELSE lease_expires_at END,
+        liveness_state = CASE
+          WHEN liveness_version IS NULL THEN NULL
+          WHEN $3 = 'orphaned' THEN 'orphaned'
+          WHEN $3::text IN ('completed','failed','cancelled') THEN 'terminal'
+          WHEN $3::text IN ('waiting_approval','waiting_user') THEN 'waiting_interaction'
+          WHEN $3::text IN ('running','waiting_hand') THEN 'busy'
+          ELSE 'active'
+        END,
+        liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE $4 END,
+        liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE transition_time.now END,
+        liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version + 1 END,
         metadata = CASE
           WHEN $3::text IN ('completed','failed','cancelled','orphaned')
             THEN ((run.metadata || $5::jsonb) - 'wakeMessage') || jsonb_build_object(

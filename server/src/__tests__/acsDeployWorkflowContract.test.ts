@@ -139,8 +139,9 @@ describe('ACS deployment and classifier contract', () => {
     expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(3);
   });
 
-  it('由带 PostgreSQL 的 Server coverage 验证 sandboxScopeActivity PG 集成契约', () => {
-    expect(ciWorkflow).toContain('workspace: [shared, server, web]');
+  it('由带 PostgreSQL 的动态 Server coverage 验证 sandboxScopeActivity PG 集成契约', () => {
+    expect(ciWorkflow).toContain('workspace: ${{ fromJSON(needs.coverage_scope.outputs.workspaces) }}');
+    expect(ciWorkflow).toContain("image: ${{ matrix.workspace == 'server' && 'postgres:16-alpine' || '' }}");
     expect(ciWorkflow).toContain('TEST_DATABASE_URL: postgresql://agent_test:ci-only-password@127.0.0.1:5432/agent_saas_test');
     expect(ciWorkflow).toContain('bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"');
   });

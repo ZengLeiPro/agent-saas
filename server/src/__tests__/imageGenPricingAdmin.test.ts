@@ -95,10 +95,13 @@ async function readJson(response: Response) {
 
 describe('image gen pricing admin router', () => {
   beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
     configureImageGenPricing(undefined);
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     configureImageGenPricing(undefined);
     while (servers.length > 0) servers.pop()?.close();
   });

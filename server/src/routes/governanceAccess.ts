@@ -777,18 +777,18 @@ export function createGovernanceAccessRouter(deps: {
     ...(deps.projectionOutbox ? { projectionOutbox: deps.projectionOutbox } : {}),
     ...(deps.projectionReconciler ? { projectionReconciler: deps.projectionReconciler } : {}),
   });
-
   router.get('/assignments/:resourceType/:resourceId', async (req, res) => {
     if (!canManageTenant(req)) return res.status(403).json({ error: 'Admin required' });
+    const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);
+    if (!resourceType.success) return res.status(400).json({ error: 'Unsupported assignment resource type' });
     const tenantId = tenantFor(req, typeof req.query.tenantId === 'string' ? req.query.tenantId : undefined);
     if (!tenantId) return res.status(403).json({ error: 'Tenant scope denied' });
-    const assignmentSet = await deps.assignments.getAssignmentSet(
-      tenantId, req.params.resourceType as AssignmentResourceType, req.params.resourceId,
-    );
-    if (!assignmentSet) return res.status(404).json({ error: 'Assignment set not found' });
-    res.json(assignmentSet);
+    const resourceError = await assignmentResourceError(tenantId, resourceType.data, req.params.resourceId);
+    if (resourceError) return res.status(resourceError.status).json(resourceError.body);
+    const assignmentSet = await deps.assignments.getAssignmentSet(tenantId, resourceType.data, req.params.resourceId);
+    res.json(assignmentSet ?? { tenantId, resourceType: resourceType.data, resourceId: req.params.resourceId,
+      source: 'governance', version: 0, assignments: [] });
   });
-
   router.post('/assignments/:resourceType/:resourceId/preview', async (req, res) => {
     if (personas.get(req) !== 'org_admin') return res.status(403).json({ error: 'Organization admin required' });
     const resourceType = assignmentResourceTypeSchema.safeParse(req.params.resourceType);

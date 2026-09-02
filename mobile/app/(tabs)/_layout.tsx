@@ -8,8 +8,8 @@ import { DEFAULT_TENANT_SETTINGS } from "@agent/shared";
 import { useColors, type ThemeColors } from "../../src/theme";
 import { useAuth } from "../../src/contexts/AuthContext";
 import { TabBarProvider, useTabBar } from "../../src/contexts/TabBarContext";
-import { getV1VisibleTabs } from "../../src/app/v1Capabilities";
-import { getV1BuildProfile } from "../../src/app/v1Runtime";
+import { getV1VisibleTabs } from "../../src/v1/v1Capabilities";
+import { getV1BuildProfile } from "../../src/v1/v1Runtime";
 
 // ── Tab definitions (shared) ─────────────────────────────────────────
 
@@ -49,7 +49,7 @@ function useVisibleTabs() {
   );
 }
 
-// ── iOS: NativeTabs (keep native experience) ─────────────────────────
+// ── iOS: NativeTabs (native labels are the stable accessibility selectors) ──
 
 function IOSTabs() {
   const colors = useColors();
@@ -130,6 +130,8 @@ function AndroidCustomTabBar({ state, descriptors, navigation }: any) {
         return (
           <Pressable
             key={route.key}
+            testID={`${route.name}-tab`}
+            accessibilityLabel={tab.label}
             accessibilityRole="button"
             accessibilityState={focused ? { selected: true } : undefined}
             onPress={onPress}

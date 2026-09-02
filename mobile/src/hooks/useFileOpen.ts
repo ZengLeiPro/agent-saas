@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { Alert } from 'react-native';
 import { fileCacheService } from '../services/fileCacheService';
 import { openOrShareFile } from '../utils/openOrShareFile';
+import { telemetryClient } from '../telemetry/runtime';
 
 interface FileOpenOptions {
   path: string;
@@ -26,6 +27,7 @@ export function useFileOpen() {
       );
       await openOrShareFile(uri);
     } catch (err: any) {
+      telemetryClient()?.capture('artifact_error', { correlationId: 'artifact-open', measurements: { reasonCode: 'open_failed' } });
       Alert.alert('下载失败', err?.message || String(err));
     } finally {
       setDownloading(false);

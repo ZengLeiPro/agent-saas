@@ -53,9 +53,11 @@ interface PermissionBlockProps {
   status: "pending" | "allowed" | "denied";
   onAllow: () => void;
   onDeny: () => void;
+  disabled?: boolean;
+  error?: string;
 }
 
-export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }: PermissionBlockProps) {
+export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny, disabled = false, error }: PermissionBlockProps) {
   const isPlanReview = toolName === PLAN_REVIEW_NAME && toolInput.length > 100;
   const [expanded, setExpanded] = useState(isPlanReview);
 
@@ -81,7 +83,7 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }
     <Card className="border-border bg-accent/50">
       <div className="flex items-center justify-between gap-2 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Shield className="size-4 text-primary" />
+          <Shield aria-hidden="true" className="size-4 text-primary" />
           <span className="text-sm font-medium">Permission: {toolName}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -106,16 +108,17 @@ export function PermissionBlock({ toolName, toolInput, status, onAllow, onDeny }
         {renderContent()}
         {status === "pending" && (
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" className="text-primary border-primary/30 hover:bg-primary/5" onClick={onAllow}>
-              <Check className="size-3.5" />
+            <Button size="sm" variant="outline" className="min-h-11 text-primary border-primary/30 hover:bg-primary/5" disabled={disabled} aria-label="Allow" onClick={onAllow}>
+              <Check aria-hidden="true" className="size-3.5" />
               Allow
             </Button>
-            <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={onDeny}>
-              <X className="size-3.5" />
+            <Button size="sm" variant="outline" className="min-h-11 text-destructive border-destructive/30 hover:bg-destructive/5" disabled={disabled} aria-label="Deny" onClick={onDeny}>
+              <X aria-hidden="true" className="size-3.5" />
               Deny
             </Button>
           </div>
         )}
+        {error ? <p role="alert" className="mt-2 text-sm text-destructive">{error}</p> : null}
       </CardContent>
     </Card>
   );

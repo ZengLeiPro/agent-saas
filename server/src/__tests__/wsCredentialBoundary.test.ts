@@ -19,12 +19,14 @@ describe('WebSocket credential transport boundary', () => {
     expect(sources).toContain("action: 'auth'");
   });
 
-  it('uses a query-free nginx access log format', () => {
+  it('uses a query-free nginx access log format and redacts preview bearer paths', () => {
     const nginx = repoFile('daemon-packaging/nginx/agent-api-kaiyan.conf.example');
     const format = nginx.match(/log_format agent_api_safe[\s\S]*?;/)?.[0] ?? '';
 
-    expect(format).toContain('$uri');
-    expect(format).not.toMatch(/\$request(?!_method)|\$request_uri|\$args|\$query_string/);
+    expect(format).toContain('$agent_api_log_uri');
+    expect(nginx).toMatch(/map \$uri \$agent_api_log_uri[\s\S]*~\^\/preview[\s\S]*\/preview\/\[REDACTED\]/);
+    expect(format).not.toMatch(/\$request(?!_method)|\$request_uri|\$args|\$query_string|\$http_referer/);
     expect(nginx).toContain('access.log agent_api_safe');
+    expect(format).toContain('"-"');
   });
 });

@@ -19,16 +19,28 @@ export type RuntimeFailureKind = 'policy_rejection';
 export type RuntimeRecoveryAction = 'switch_model';
 
 export interface UploadedFileInfo {
-  /** 服务端生成的不可猜附件标识；旧客户端/钉钉存量消息可能缺失。 */
+  /** 服务端生成的不可猜附件标识；canonical Web V1 必填，旧客户端/钉钉存量消息可能缺失。 */
   attachmentId?: string;
   originalName: string;
   /** 仅服务端通道（如钉钉下载）可提供；Web 客户端不再接收或回传宿主机绝对路径。 */
   savedPath?: string;
+  /** Server-resolved materialization path. */
   relativePath: string;
   size: number;
   mimeType: string;
   isImage: boolean;
 }
+
+/** Path-free Web V1 reference; runtime resolves its ID through UploadManager before materialization. */
+export interface CanonicalAttachmentInfo {
+  attachmentId: string;
+  originalName: string;
+  size: number;
+  mimeType: string;
+  isImage: boolean;
+}
+
+export type InboundAttachmentInfo = UploadedFileInfo | CanonicalAttachmentInfo;
 
 export interface InboundMessage {
   channel: ChannelType;
@@ -36,7 +48,7 @@ export interface InboundMessage {
   content: string;
   senderId?: string;
   senderName?: string;
-  attachments?: UploadedFileInfo[];
+  attachments?: InboundAttachmentInfo[];
   metadata?: Record<string, unknown>;
 }
 

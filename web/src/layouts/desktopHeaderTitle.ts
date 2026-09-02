@@ -1,0 +1,49 @@
+import type { LayoutProps } from './types';
+
+const TAB_TITLES: Partial<Record<LayoutProps['activeTab'], string>> = {
+  profile: '我的 Agent',
+  capabilities: '能力中心',
+  scenarios: '任务模板',
+  cron: '任务中心',
+  tenants: '组织分析',
+  'tenant-admin': '组织分析',
+  'platform-admin': '平台分析',
+  skills: '技能管理',
+  usage: 'Token 用量',
+  mcp: 'MCP 配置',
+  models: '模型管理',
+  trash: '回收站',
+};
+
+interface DesktopHeaderTitleOptions {
+  activeTab: LayoutProps['activeTab'];
+  isTrashPreview: boolean;
+  sidebarSessions: LayoutProps['sidebarSessions'];
+  sessionId: string | null;
+  activeAgentTargetLabel?: string;
+  activeOrgAgent: LayoutProps['activeOrgAgent'];
+  orgAgentIdentityLoading: boolean;
+  agentProfile: LayoutProps['agentProfile'];
+}
+
+export function getDesktopHeaderTitle({
+  activeTab,
+  isTrashPreview,
+  sidebarSessions,
+  sessionId,
+  activeAgentTargetLabel,
+  activeOrgAgent,
+  orgAgentIdentityLoading,
+  agentProfile,
+}: DesktopHeaderTitleOptions): string {
+  const tabTitle = TAB_TITLES[activeTab];
+  if (tabTitle) return tabTitle;
+  if (isTrashPreview) return '回收站预览';
+  const sessionTitle = sidebarSessions.find((session) => session.id === sessionId)?.title;
+  if (sessionTitle && activeAgentTargetLabel) return `${sessionTitle} · ${activeAgentTargetLabel}`;
+  return sessionTitle
+    || activeAgentTargetLabel
+    || activeOrgAgent?.name
+    || (orgAgentIdentityLoading ? '企业专家' : agentProfile?.name)
+    || 'KY Agent';
+}

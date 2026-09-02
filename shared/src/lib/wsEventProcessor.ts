@@ -12,6 +12,13 @@ import { normalizeToolResultMetadata } from './toolResultMetadata';
 import { formatPermissionInput, isDedicatedToolName, resolvePlanModeDisplay } from './wsToolDisplay';
 import { handleArtifactDeliveryToolResult } from './artifactDeliveryMessage';
 import { applyInteractionResolution } from './wsInteractionResolution';
+import { claimTerminalEvent } from './wsTerminalEventHelpers';
+import {
+  applyCanonicalProjection,
+  applyCanonicalTimelineProjection,
+  handleCanonicalChatRejected,
+  handleCanonicalWsError,
+} from './wsCanonicalEventHelpers';
 export { resolvePlanModeDisplay } from './wsToolDisplay';
 import {
   findUserMsgIndexByClientId,
@@ -138,26 +145,6 @@ export {
   type WsProcessingContext,
 } from './wsEventProcessorHelpers';
 
-const MAX_HANDLED_TERMINAL_KEYS = 500;
-
-function claimTerminalEvent(data: Extract<WsEvent, { type: 'done' }>, ctx: WsProcessingContext): boolean {
-  const key = data.runId
-    ? `run:${data.runId}`
-    : data.client_msg_id
-      ? `client:${data.client_msg_id}`
-      : null;
-  if (!key || !ctx.handledTerminalKeysRef) return true;
-
-  const handled = ctx.handledTerminalKeysRef.current;
-  if (handled.has(key)) return false;
-  handled.add(key);
-  if (handled.size > MAX_HANDLED_TERMINAL_KEYS) {
-    const oldest = handled.values().next().value;
-    if (oldest) handled.delete(oldest);
-  }
-  return true;
-}
-
 /** Process a single WS event. Returns 'done' or 'buffer_overflow' for special states. */
 export function processWsEvent(
   data: WsEvent,
@@ -271,35 +258,7 @@ export function processWsEvent(
   }
 
   if (data.type === "chat_rejected") {
-    // duplicate_inflight（2026-08-04 P2-9 配套）：重试复用原 clientMsgId 撞上
-    // 「服务端其实已处理完」——消息确实送达过，翻已发送而不是对着一条成功的消息报错。
-    if (data.reason_code === "duplicate_inflight") {
-      const dupIdx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
-      if (dupIdx >= 0) {
-        msg.updateMessageAt(dupIdx, (m) => (
-          (m.type === "user" || m.type === "user-voice")
-            ? { ...m, status: "sent" as const }
-            : m
-        ));
-      }
-      ctx.onChatRejected?.(data.client_msg_id, data.reason_code, data.reason);
-      return;
-    }
-    removeRuntimeStatusMessages(msg);
-    // 注意：必须在 removeRuntimeStatusMessages 之后再定位（它会改变数组索引）
-    const idx = findUserMsgIndexByClientId(msg.messagesRef.current, data.client_msg_id);
-    if (idx >= 0) {
-      msg.updateMessageAt(idx, (m) => {
-        if (m.type === "user") {
-          return { ...m, status: "failed" as const, failedReason: data.reason };
-        }
-        if (m.type === "user-voice") {
-          return { ...m, status: "failed" as const, failedReason: data.reason };
-        }
-        return m;
-      });
-    }
-    ctx.onChatRejected?.(data.client_msg_id, data.reason_code, data.reason);
+    handleCanonicalChatRejected(data, ctx, removeRuntimeStatusMessages);
     return;
   }
 
@@ -312,6 +271,8 @@ export function processWsEvent(
     }
     // 插话被消费进时间线：清理队列区同 clientMsgId 条目（多端一致的移除信号）。
     ctx.onUserMessageProjected?.(data.client_msg_id, data.sourceRunId);
+    if (applyCanonicalProjection(data, msg, block)) return;
+    // Legacy adapter: stable projection metadata was unavailable.
     // 去重：优先按 client_msg_id（精准），回退 content（兼容老 transcript）
     const msgs = msg.messagesRef.current;
     const isDup = msgs.some(m => {
@@ -394,6 +355,9 @@ export function processWsEvent(
     return;
   }
 
+  if (applyCanonicalTimelineProjection(data, msg, block, removeRuntimeStatusMessages)) return;
+
+  // Isolated compatibility adapter for old positional/string WS frames.
   if (data.type === "block_start") {
     removeRuntimeStatusMessages(msg);
     if (block.currentBlockIndex >= 0) {
@@ -565,9 +529,7 @@ export function processWsEvent(
   }
 
   if (data.type === "error") {
-    removeRuntimeStatusMessages(msg);
-    const owner = ctx.sessionOwnerRef?.current;
-    msg.addMessage({ type: "text", content: `Error: ${data.message || "Unknown error"}`, ...(owner ? { owner } : {}) });
+    handleCanonicalWsError(data, msg, removeRuntimeStatusMessages);
     return;
   }
 
@@ -624,6 +586,8 @@ export function processWsEvent(
     );
     msg.addMessage({
       type: "permission_request", interactionId: data.interactionId,
+      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
+      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
       toolName: name, toolInput: description, status: "pending",
     });
     return;
@@ -633,6 +597,8 @@ export function processWsEvent(
     upsertRuntimeStatusMessage(msg, "waiting_user");
     msg.addMessage({
       type: "ask_user", interactionId: data.interactionId,
+      ...(data.version !== undefined ? { interactionVersion: data.version } : {}),
+      ...(data.order !== undefined ? { interactionOrder: data.order } : {}),
       questions: data.questions, status: "pending",
     });
     return;
@@ -983,6 +949,13 @@ export function processWsEvent(
           // Legacy broadcasts carry no response; preserve pending instead of
           // inventing an approval decision.
           applyInteractionResolution(msg, i, data.response);
+          if ((data.status === 'rejected' || data.status === 'failed' || data.status === 'expired') && data.reason) {
+            msg.addMessage({
+              type: 'system-error', severity: 'error',
+              content: data.status === 'expired' ? `交互已超时：${data.reason}` : `交互未完成：${data.reason}`,
+              timestamp: Date.now(),
+            });
+          }
         }
         break;
       }
@@ -991,6 +964,14 @@ export function processWsEvent(
   }
 
   if (data.type === "pending_interactions") {
+    const authoritativeIds = new Set<string>(data.interactions.map((interaction) => interaction.interactionId));
+    // Snapshot replacement removes stale pending cards; local submit/outbox state is never trusted on recovery.
+    const staleIndexes = msg.messagesRef.current.flatMap((message, index) => (
+      (message.type === 'permission_request' || message.type === 'ask_user')
+      && message.status === 'pending' && !authoritativeIds.has(message.interactionId) ? [index] : []
+    )).reverse();
+    for (const index of staleIndexes) msg.messagesRef.current.splice(index, 1);
+    if (staleIndexes.length) msg.setMessages?.([...msg.messagesRef.current]);
     const existingIds = new Set(
       msg.messagesRef.current
         .filter(m => 'interactionId' in m && m.interactionId)
@@ -998,7 +979,7 @@ export function processWsEvent(
         .map(m => (m as any).interactionId as string)
     );
     for (const interaction of data.interactions) {
-      if (interaction.type === 'permission_request') {
+      if (interaction.type === 'permission_request' || interaction.type === 'approval') {
         upsertRuntimeStatusMessage(msg, 'waiting_approval');
       } else if (interaction.type === 'ask_user') {
         upsertRuntimeStatusMessage(msg, 'waiting_user');
@@ -1010,11 +991,13 @@ export function processWsEvent(
         );
         msg.addMessage({
           type: "permission_request", interactionId: interaction.interactionId,
+          interactionVersion: interaction.version, interactionOrder: interaction.order,
           toolName: name, toolInput: description, status: "pending",
         });
       } else if (interaction.type === 'ask_user' && interaction.questions) {
         msg.addMessage({
           type: "ask_user", interactionId: interaction.interactionId,
+          interactionVersion: interaction.version, interactionOrder: interaction.order,
           questions: interaction.questions, status: "pending",
         });
       }

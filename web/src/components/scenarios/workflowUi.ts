@@ -163,6 +163,19 @@ export interface WorkflowCta {
 }
 
 /**
+ * 卡片上的「立即试一试」统一进入聊天体验。
+ * D1/D2 尚未接入客户系统，必须明确限定为示例数据，避免把试用误解为生产执行。
+ */
+export function workflowTrialMessage(scenario: CatalogScenarioPublic): string {
+  if (scenario.launch.startMode === "chat") return scenario.launch.starterMessage;
+  return [
+    `请用示例数据带我体验「${scenario.title}」。`,
+    `从这个示例业务事件开始：${scenario.launch.entry.content}`,
+    "不要连接或写入任何真实业务系统；请展示会读取什么、如何判断、哪些动作需要人工确认，以及怎样回读并核验结果。",
+  ].join("\n");
+}
+
+/**
  * 有预定义剧本时补一个「看演示」入口；没有剧本时按服务端成熟度进入真实接入路径。
  * 展示能力与执行能力只共享 UI 契约，不共享 Runtime。
  *

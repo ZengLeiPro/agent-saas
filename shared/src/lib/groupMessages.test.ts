@@ -587,21 +587,11 @@ describe('groupMessages sectioning（章节化）', () => {
   });
 
   it('没有 artifactId 的普通文件仍只属于步骤过程', () => {
-    const ordinaryFile: MessageItem = {
-      id: 'ordinary-file', type: 'file_download', fileName: '过程文件.txt',
-      filePath: '过程文件.txt', fileType: 'text/plain', fileSize: 16,
-    };
-    const result = groupMessages([
-      user('ordinary-user'),
-      businessTodo('ordinary-start', [
-        { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
-      ]),
-      ordinaryFile,
-    ], false, opts);
-
-    expect(result.map(item => item.type)).toEqual([
-      'user', 'business_step', 'business_step_section',
-    ]);
+    const ordinaryFile: MessageItem = { id: 'ordinary-file', type: 'file_download', fileName: '过程文件.txt', filePath: '过程文件.txt', fileType: 'text/plain', fileSize: 16 };
+    const result = groupMessages([user('ordinary-user'), businessTodo('ordinary-start', [
+      { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
+    ]), ordinaryFile], false, opts);
+    expect(result.map(item => item.type)).toEqual(['user', 'business_step', 'business_step_section']);
     expect((result[2] as BusinessStepSection).items).toEqual([ordinaryFile]);
   });
 

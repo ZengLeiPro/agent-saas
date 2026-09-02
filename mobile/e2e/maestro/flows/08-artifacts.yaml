@@ -1,0 +1,19 @@
+appId: ${APP_ID}
+name: 08 Artifact image PDF and HTML download warning
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- tapOn: ${E2E_ARTIFACT_IMAGE_NAME}
+- assertVisible: ${E2E_ARTIFACT_IMAGE_NAME}
+- pressKey: Back
+- tapOn: ${E2E_ARTIFACT_PDF_NAME}
+- assertVisible: ${E2E_ARTIFACT_PDF_NAME}
+- pressKey: Back
+- tapOn: ${E2E_ARTIFACT_HTML_NAME}
+- assertVisible: "确认下载此文件？"
+- assertVisible: "不会在应用内执行"
+- tapOn: "取消"
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/08-artifacts

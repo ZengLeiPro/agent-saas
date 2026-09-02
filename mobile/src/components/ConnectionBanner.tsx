@@ -55,13 +55,16 @@ export function ConnectionBanner({ connectionState, isOnline }: ConnectionBanner
 
   return (
     <Animated.View
+      testID="connection-banner"
+      accessibilityRole="alert"
+      accessibilityLabel={label}
       style={[
         styles.banner,
         { backgroundColor: bgColor, transform: [{ translateY: slideAnim }] },
       ]}
       pointerEvents="none"
     >
-      <Text style={styles.text}>{label}</Text>
+      <Text style={styles.text} testID="connection-banner-label">{label}</Text>
     </Animated.View>
   );
 }

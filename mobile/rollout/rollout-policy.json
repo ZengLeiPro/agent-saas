@@ -1,0 +1,94 @@
+{
+  "schemaVersion": "1.0.0",
+  "policyId": "M70-03",
+  "status": "pending_external_approval",
+  "testFixture": false,
+  "authoritativeOrder": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"],
+  "hardStops": [
+    "crossAccountIdentityLeak",
+    "crossTenantIdentityLeak",
+    "wrongAgentExecution",
+    "signatureFailure",
+    "upgradeFailure",
+    "duplicateRunExecution"
+  ],
+  "metrics": {
+    "crashFreeUsers": { "direction": ">=", "unit": "ratio" },
+    "androidAnrRate": { "direction": "<=", "unit": "ratio" },
+    "loginSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "wsReconnectRecoveryRate": { "direction": ">=", "unit": "ratio" },
+    "messageAckSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "duplicateRunRate": { "direction": "<=", "unit": "ratio" },
+    "uploadSuccessRate": { "direction": ">=", "unit": "ratio" },
+    "identityTenantAgentIncidentCount": { "direction": "<=", "unit": "count" },
+    "visibleErrorRate": { "direction": "<=", "unit": "ratio" },
+    "supportTicketCount": { "direction": "<=", "unit": "count" }
+  },
+  "stages": [
+    {
+      "id": "employee-dogfood",
+      "cohort": { "kind": "employee", "definition": "pending_external_approval" },
+      "traffic": { "unit": "users", "min": "pending_external_approval", "max": "pending_external_approval" },
+      "observationWindowSeconds": "pending_external_approval",
+      "snapshotFreshnessSeconds": "pending_external_approval",
+      "minimumSampleSize": "pending_external_approval",
+      "metricChecks": "all",
+      "approvedThresholdSource": "pending_external_approval",
+      "manualApproval": { "required": true, "environment": "mobile-rollout-gate-employee-dogfood" },
+      "entryEvidence": ["m60-build", "m60-submit", "m60-telemetry-provider", "m60-telemetry-test-receipt", "m70-01-rc-pass", "m70-02-upgrade-pass"],
+      "exitReceipt": "signed-stage-receipt-v1"
+    },
+    {
+      "id": "closed-test",
+      "cohort": { "kind": "closed-test", "definition": "pending_external_approval" },
+      "traffic": { "unit": "users", "min": "pending_external_approval", "max": "pending_external_approval" },
+      "observationWindowSeconds": "pending_external_approval",
+      "snapshotFreshnessSeconds": "pending_external_approval",
+      "minimumSampleSize": "pending_external_approval",
+      "metricChecks": "all",
+      "approvedThresholdSource": "pending_external_approval",
+      "manualApproval": { "required": true, "environment": "mobile-rollout-gate-closed-test" },
+      "entryEvidence": ["previous-stage-pass-receipt"],
+      "exitReceipt": "signed-stage-receipt-v1"
+    },
+    {
+      "id": "small-percentage",
+      "cohort": { "kind": "percentage", "definition": "pending_external_approval" },
+      "traffic": { "unit": "percent", "min": "pending_external_approval", "max": "pending_external_approval" },
+      "observationWindowSeconds": "pending_external_approval",
+      "snapshotFreshnessSeconds": "pending_external_approval",
+      "minimumSampleSize": "pending_external_approval",
+      "metricChecks": "all",
+      "approvedThresholdSource": "pending_external_approval",
+      "manualApproval": { "required": true, "environment": "mobile-rollout-gate-small-percentage" },
+      "entryEvidence": ["previous-stage-pass-receipt"],
+      "exitReceipt": "signed-stage-receipt-v1"
+    },
+    {
+      "id": "expanded",
+      "cohort": { "kind": "percentage", "definition": "pending_external_approval" },
+      "traffic": { "unit": "percent", "min": "pending_external_approval", "max": "pending_external_approval" },
+      "observationWindowSeconds": "pending_external_approval",
+      "snapshotFreshnessSeconds": "pending_external_approval",
+      "minimumSampleSize": "pending_external_approval",
+      "metricChecks": "all",
+      "approvedThresholdSource": "pending_external_approval",
+      "manualApproval": { "required": true, "environment": "mobile-rollout-gate-expanded" },
+      "entryEvidence": ["previous-stage-pass-receipt"],
+      "exitReceipt": "signed-stage-receipt-v1"
+    },
+    {
+      "id": "full",
+      "cohort": { "kind": "all-eligible", "definition": "pending_external_approval" },
+      "traffic": { "unit": "percent", "min": "pending_external_approval", "max": "pending_external_approval" },
+      "observationWindowSeconds": "pending_external_approval",
+      "snapshotFreshnessSeconds": "pending_external_approval",
+      "minimumSampleSize": "pending_external_approval",
+      "metricChecks": "all",
+      "approvedThresholdSource": "pending_external_approval",
+      "manualApproval": { "required": true, "environment": "mobile-rollout-gate-full" },
+      "entryEvidence": ["previous-stage-pass-receipt"],
+      "exitReceipt": "signed-stage-receipt-v1"
+    }
+  ]
+}

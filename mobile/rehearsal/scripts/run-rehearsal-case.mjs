@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+import { spawn } from 'node:child_process';import { readFile,writeFile,mkdir,stat } from 'node:fs/promises';import path from 'node:path';
+const args=Object.fromEntries(process.argv.slice(2).reduce((all,item,index,array)=>index%2===0?[...all,[item.replace(/^--/,''),array[index+1]]]:all,[]));
+for(const key of ['caseId','providerExecutable','artifactBinding','output'])if(!args[key])throw new Error(`--${key} required`);const executable=path.resolve(args.providerExecutable);if(!(await stat(executable)).isFile())throw new Error('configured provider executable missing');
+const plan=JSON.parse(await readFile(new URL('../rehearsal-plan.json',import.meta.url),'utf8'));const planned=plan.cases.find((item)=>item.id===args.caseId);if(!planned)throw new Error('unknown case');const artifacts=JSON.parse(await readFile(args.artifactBinding,'utf8'));const request={schemaVersion:'1.0.0',planId:'M70-02',case:planned,artifacts,outputDir:path.dirname(path.resolve(args.output))};
+const result=await new Promise((resolve,reject)=>{const child=spawn(executable,[],{stdio:['pipe','pipe','inherit'],env:{PATH:process.env.PATH??''}});let stdout='';child.stdout.setEncoding('utf8');child.stdout.on('data',(chunk)=>stdout+=chunk);child.on('error',reject);child.on('close',(code)=>code===0?resolve(JSON.parse(stdout)):reject(new Error(`provider exited ${code}`)));child.stdin.end(JSON.stringify(request));});
+await mkdir(path.dirname(args.output),{recursive:true});await writeFile(args.output,JSON.stringify(result,null,2)+'\n',{mode:0o600});

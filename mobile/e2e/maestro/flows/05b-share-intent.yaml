@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: 05b Share Intent preserves server attachmentId
+---
+# Provider prepare-flow authenticates account A through the app, sends the injected native
+# share fixture, and leaves the physical device at the share target. This is not a deep-link mock.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "share-target-screen"
+    timeout: 10000
+- assertVisible: ${E2E_SHARE_FILE_NAME}
+- tapOn:
+    id: "share-target-send"
+- extendedWaitUntil:
+    visible: ${E2E_ATTACHMENT_ID}
+    timeout: 15000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/05b-share-intent

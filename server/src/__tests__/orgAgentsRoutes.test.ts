@@ -339,22 +339,63 @@ describe('org-agents 路由权限', () => {
     await h.request('/api/org-agents', postBody({ name: '停用的助手', enabled: false }));
 
     h.setCaller(WAIN_USER);
-    for (const path of ['/api/org-agents', '/api/org-agents/mine']) {
-      const res = await h.request(path);
-      expect(res.status).toBe(200);
-      const list = await res.json() as Array<Record<string, unknown>>;
-      expect(list).toHaveLength(1);
-      expect(Object.keys(list[0]).sort()).toEqual(['description', 'id', 'name', 'skillCount', 'starterPrompts']);
-      expect(list[0].id).toBe(created.id);
-      expect(list[0].description).toBe('帮助成员完成产品选型与参数查询。');
-      expect(list[0].starterPrompts).toEqual(['帮我推荐一个型号']);
-      expect(list[0].skillCount).toBe(1);
-    }
+    const res = await h.request('/api/org-agents');
+    expect(res.status).toBe(200);
+    const list = await res.json() as Array<Record<string, unknown>>;
+    expect(list).toHaveLength(1);
+    expect(Object.keys(list[0]).sort()).toEqual(['description', 'id', 'name', 'skillCount', 'starterPrompts']);
+    expect(list[0].id).toBe(created.id);
+    expect(list[0].description).toBe('帮助成员完成产品选型与参数查询。');
+    expect(list[0].starterPrompts).toEqual(['帮我推荐一个型号']);
+    expect(list[0].skillCount).toBe(1);
+
+    const mine = await (await h.request('/api/org-agents/mine')).json() as any;
+    expect(mine).toMatchObject({
+      version: 1,
+      tenantId: 'wain',
+      personal: {
+        target: { kind: 'personal', tenantId: 'wain' },
+        availability: { status: 'available' },
+      },
+      agents: [{ id: created.id }],
+    });
+    expect(mine.orgAgents).toEqual([expect.objectContaining({
+      target: { kind: 'org-agent', tenantId: 'wain', orgAgentId: created.id },
+      availability: { status: 'available' },
+      presentation: expect.objectContaining({ id: created.id }),
+    })]);
+    expect(mine.selectableTargets).toEqual([
+      { kind: 'personal', tenantId: 'wain' },
+      { kind: 'org-agent', tenantId: 'wain', orgAgentId: created.id },
+    ]);
     // 被指派用户 GET /:id 也只拿到裁剪视图
     const detail = await (await h.request(`/api/org-agents/${created.id}`)).json() as Record<string, unknown>;
     expect(detail.instructions).toBeUndefined();
     expect(detail.guardrail).toBeUndefined();
     expect(detail.audience).toBeUndefined();
+  });
+
+  it('GET /mine 在个人 Agent 关闭且无指派 target 时返回结构化不可用原因', async () => {
+    await h.tenantStore.updateSettings('wain', { features: { personalAgentEnabled: false } });
+    h.setCaller(WAIN_USER);
+
+    const response = await h.request('/api/org-agents/mine');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      version: 1,
+      tenantId: 'wain',
+      personal: {
+        target: { kind: 'personal', tenantId: 'wain' },
+        availability: {
+          status: 'unavailable',
+          reason: { code: 'personal_agent_disabled', contactAdmin: true },
+        },
+      },
+      orgAgents: [],
+      selectableTargets: [],
+      unavailableReason: { code: 'no_available_target', contactAdmin: true },
+      agents: [],
+    });
   });
 
   it('公开资料边界：trim 输入、拒绝空白/超长/重复，并允许 PATCH 清空示例问题', async () => {

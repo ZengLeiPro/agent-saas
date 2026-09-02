@@ -1,6 +1,7 @@
 /** Cohesive message state helpers and contracts for the WS event processor. */
 import type { MessageItem, MessageItemInput } from '../types/message';
 import type { WsEvent } from '../types/ws';
+import type { ActivityMessageProjectionState } from './activityMessageProjection';
 
 /** Messages controller interface — platform-agnostic subset */
 export interface MessagesController {
@@ -87,4 +88,6 @@ export function findUserMsgIndexByClientId(msgs: MessageItem[], clientMsgId: str
 export interface WsBlockState {
   currentBlockIndex: number;
   currentBlockType: string | null;
+  /** Canonical identity state for modern frames; positional fields above are legacy-only. */
+  projectionState?: ActivityMessageProjectionState;
 }

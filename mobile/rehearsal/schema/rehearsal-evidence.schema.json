@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-02-rehearsal-evidence-v1.json",
+  "title": "M70-02 immutable rehearsal evidence",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "planId", "mode", "explicitContractMock", "commitSha", "previousCommitSha", "caseResults"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "planId": { "const": "M70-02" },
+    "mode": { "enum": ["contract", "production"] }, "explicitContractMock": { "type": "boolean" },
+    "commitSha": { "pattern": "^[0-9a-f]{40}$" }, "previousCommitSha": { "pattern": "^[0-9a-f]{40}$" },
+    "caseResults": { "type": "array", "minItems": 21, "items": { "$ref": "#/$defs/result" } }
+  },
+  "$defs": {
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["profile", "sourceSha", "digest", "appId", "version", "buildNumber", "versionCode", "signerDigest", "evidenceKind", "m60EvidenceRef"], "properties": {
+      "profile": { "enum": ["ios-store", "android-store", "android-enterprise"] }, "sourceSha": { "pattern": "^[0-9a-f]{40}$" }, "digest": { "pattern": "^sha256:[0-9a-f]{64}$" }, "appId": { "type": "string", "minLength": 3 }, "version": { "type": "string", "minLength": 1 }, "buildNumber": { "type": ["string", "null"], "pattern": "^[1-9][0-9]*$" }, "versionCode": { "type": ["integer", "null"], "minimum": 1 }, "signerDigest": { "pattern": "^sha256:[0-9a-f]{64}$" }, "evidenceKind": { "enum": ["m60-verified-artifact", "test-fixture"] }, "m60EvidenceRef": { "type": "string", "minLength": 1 }
+    }},
+    "file": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "pattern": "^[0-9a-f]{64}$" } } },
+    "result": { "type": "object", "additionalProperties": false, "required": ["caseId", "commitSha", "device", "previousArtifact", "currentArtifact", "installMethod", "action", "startedAt", "completedAt", "result", "observedOutcome", "receiptId", "testRunId", "log", "screenshot"], "properties": {
+      "caseId": { "type": "string" }, "commitSha": { "pattern": "^[0-9a-f]{40}$" },
+      "device": { "type": "object", "additionalProperties": false, "required": ["platform", "evidenceKind", "provider", "deviceId", "model", "osVersion"], "properties": { "platform": { "enum": ["ios", "android"] }, "evidenceKind": { "enum": ["real-device", "simulator"] }, "provider": { "type": "string", "minLength": 1 }, "deviceId": { "type": "string", "minLength": 1 }, "model": { "type": "string", "minLength": 1 }, "osVersion": { "type": "string", "minLength": 1 } } },
+      "previousArtifact": { "$ref": "#/$defs/artifact" }, "currentArtifact": { "$ref": "#/$defs/artifact" }, "installMethod": { "type": "string", "minLength": 1 }, "action": { "type": "string", "minLength": 1 }, "startedAt": { "format": "date-time" }, "completedAt": { "format": "date-time" }, "result": { "enum": ["passed", "failed", "blocked"] }, "observedOutcome": { "type": "string", "minLength": 1 }, "receiptId": { "type": "string", "minLength": 1 }, "testRunId": { "type": "string", "minLength": 1 }, "log": { "$ref": "#/$defs/file" }, "screenshot": { "$ref": "#/$defs/file" }
+    }}
+  }
+}

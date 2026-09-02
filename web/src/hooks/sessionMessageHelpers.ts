@@ -2,7 +2,9 @@ import type { MessageItem } from "@/components/types";
 
 export interface PendingInteraction {
   interactionId: string;
-  type: "ask_user" | "permission_request";
+  type: "ask_user" | "permission_request" | "approval";
+  version: number;
+  order: number;
   questions?: Array<{
     question: string;
     header: string;
@@ -76,10 +78,12 @@ export function appendPendingInteractions(
         id: `pending-${pending.interactionId}`,
         type: "ask_user",
         interactionId: pending.interactionId,
+        interactionVersion: pending.version,
+        interactionOrder: pending.order,
         questions: pending.questions,
         status: "pending",
       });
-    } else if (pending.type === "permission_request" && pending.toolName) {
+    } else if ((pending.type === "permission_request" || pending.type === "approval") && pending.toolName) {
       const label = planLabels[pending.toolName] ?? {
         name: pending.toolName,
         fallback: "",
@@ -88,6 +92,8 @@ export function appendPendingInteractions(
         id: `pending-${pending.interactionId}`,
         type: "permission_request",
         interactionId: pending.interactionId,
+        interactionVersion: pending.version,
+        interactionOrder: pending.order,
         toolName: pending.displayName || label.name,
         toolInput:
           pending.planContent ||

@@ -1,6 +1,11 @@
 import type { AgentProfile } from './agent';
+import type { MessageAttachmentDisplay } from './message';
 import type { ToolPresentation } from '../lib/toolPresentation';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
+import type { ChatQueueSnapshot } from '../lib/chatQueue';
+import type { RunLiveness } from '../lib/runLiveness';
+import type { AgentTarget, AgentTargetIdentitySnapshot, AgentTargetUnavailableReason } from '../lib/agentTarget';
+import type { CanonicalInteractionReceipt } from '../lib/activeInteraction';
 
 /** ACS sandbox resource tier persisted on each session. */
 export type SandboxProfile = 'daily' | 'coding';
@@ -22,6 +27,17 @@ export interface SessionParticipants {
   agent: AgentProfile | null;
 }
 
+export interface SessionListActiveInteraction {
+  interactionId: string;
+  type: 'ask_user' | 'permission_request' | 'approval';
+  /** Stable monotonic server revision. */
+  version: number;
+  /** Stable FIFO server order; never derive from local timestamps. Optional only for N-1 servers. */
+  order?: number;
+  createdAt?: number;
+  receipt?: CanonicalInteractionReceipt;
+}
+
 /** API session list item */
 export interface ApiSessionListItem {
   sessionId: string;
@@ -29,6 +45,12 @@ export interface ApiSessionListItem {
   updatedAtMs: number;
   createdAtMs?: number;
   hasUnreadAiReply?: boolean;
+  /** M20-07 monotonic metadata/read ordering fields. Optional for N-1 servers. */
+  version?: number;
+  readSeq?: number;
+  readAt?: string;
+  serverUpdatedAt?: string;
+  sourceSeq?: number;
   title?: string;
   preview?: string;
   source?: { type: "web" | "dingtalk" | "cron"; label: string };
@@ -44,10 +66,26 @@ export interface ApiSessionListItem {
   orgAgentName?: string;
   /** 当前登录用户是否仍可续聊该专职 Agent 会话；false 时前端进入只读态 */
   orgAgentAvailable?: boolean;
+  /** M20-06 持久 Agent target；不得由 owner filter 推断。 */
+  agentTarget?: AgentTarget;
+  agentTargetBindingVersion?: number;
+  /** Server-persisted authoritative header/list identity; never sourced from the current picker. */
+  agentTargetSnapshot?: AgentTargetIdentitySnapshot;
+  /** 历史可读、发送阻断时的结构化原因。 */
+  agentTargetUnavailableReason?: AgentTargetUnavailableReason;
+  /** M20-07 O(1) pending interaction summary; event history is never scanned by selectors. */
+  activeInteraction?: SessionListActiveInteraction;
   /** 软删除时间戳，仅回收站列表返回 */
   deletedAt?: string;
   /** 执行删除的用户名，仅回收站列表返回 */
   deletedBy?: string;
+}
+
+export interface SessionListPage {
+  sessions: ApiSessionListItem[];
+  hasMore: boolean;
+  /** Opaque base64url cursor encoding {v:1, updatedAtMs, sessionId}. */
+  nextCursor?: string;
 }
 
 /** 最近一次 run 的终态。后端从 EventStore 最末一条 run_state_changed 派生。 */
@@ -61,6 +99,8 @@ export interface ApiLastRunState {
   recoveryAction?: RuntimeRecoveryAction;
   /** 该 run_state_changed 事件的 ISO timestamp */
   finishedAt?: string;
+  /** Server-owned M40-02 projection; absent means legacy unknown. */
+  liveness?: RunLiveness;
 }
 
 /** API session detail */
@@ -84,6 +124,11 @@ export interface ApiSessionDetail {
   oldestCursor?: string;
   /** 当前客户端已加载到 transcript 起点。 */
   historyComplete?: boolean;
+  /** M40-02 canonical history pager. Cursor encodes sequence/event index + stable id. */
+  nextCursor?: string;
+  hasMore?: boolean;
+  /** Fences old in-flight pages after transcript compaction/replacement. */
+  historyRevision?: string;
   /** delta 响应所基于的客户端游标。 */
   after?: string;
   /** before 响应所基于的客户端最早游标。 */
@@ -91,12 +136,20 @@ export interface ApiSessionDetail {
   owner?: SessionOwnerInfo;
   source?: { type: string; label: string };
   sandboxProfile?: SandboxProfile;
+  /** M30-03 authoritative identity for the detail header. */
+  agentTarget?: AgentTarget;
+  agentTargetBindingVersion?: number;
+  agentTargetSnapshot?: AgentTargetIdentitySnapshot;
+  agentTargetUnavailableReason?: AgentTargetUnavailableReason;
   /**
    * 最近一次 run 的终态。前端进会话时用于对账"后端早结束/失败、UI 仍在转" 的鬼状态。
    * 旧 transcript（无 run_state_changed 事件）会缺省此字段,前端走 legacy 路径。
    */
   lastRunState?: ApiLastRunState;
+  /** M20-02 structured server-authoritative queue/runtime snapshot. */
+  queueSnapshot?: ChatQueueSnapshot;
   /**
+   * @deprecated N-1 pending-only projection. V1 clients consume queueSnapshot.
    * 服务端已持久接收、尚未开始执行的消息。普通 queue 与显式 steer 共用该权威快照，
    * 刷新、切会话和重连都据此恢复，客户端本地临时状态不得覆盖它。
    */
@@ -108,11 +161,10 @@ export interface ApiSessionDetail {
     targetRunId?: string;
     queuePosition?: number;
     content: string;
+    /** Canonical queue snapshot: attachmentId + display metadata, never a path. */
     attachments?: Array<{
       name: string;
-      attachmentId?: string;
-      savedPath?: string;
-      relativePath?: string;
+      attachmentId: string;
       size?: number;
       mimeType?: string;
       isImage?: boolean;
@@ -301,7 +353,7 @@ export interface ApiTranscriptBlock {
   subagent?: ApiSubagentActivity;
   isVoiceTranscript?: boolean;
   /** prompt block：用户消息携带的附件元数据（transcript user 行结构化字段） */
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachments?: MessageAttachmentDisplay[];
   /** prompt block：用户消息客户端幂等 ID。 */
   clientMsgId?: string;
   /** prompt block：插话来源 run ID，用于与服务端队列真源对账。 */
@@ -314,6 +366,8 @@ export interface ApiTranscriptBlock {
   finalOutput?: boolean;
   /** text block：门禁拒答气泡关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /** Explicit moderation outcome hydrated from trusted transcript metadata. */
+  moderation?: { eventId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string };
   /** 演示剧本入口事件直接完整展示，不模拟 Agent 流式输出。 */
   replayInstant?: boolean;
   /**
@@ -328,6 +382,8 @@ export interface ApiTranscriptBlock {
   toolMetadata?: unknown;
   /** 公开分享安全活动摘要：跳过 AskUser/Plan/Agent 的交互历史恢复，不读取原始 payload。 */
   publicActivityOnly?: boolean;
+  /** M40-02 canonical semantic order; never derived from tsMs. */
+  semanticOrder?: { sequence: number; eventIndex: number; stableId: string };
   /**
    * text block：附加呈现块。类型为 unknown——本字段来自不可信来源
    * （transcript 文件 / 演示剧本 / 工具产出），权威校验器是 normalizeDisplay。

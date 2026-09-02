@@ -32,7 +32,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react-native";
-import * as ImagePicker from "expo-image-picker";
+import { launchPhotoLibraryForUserAction } from "../../platform/jitMediaPermissions";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors, spacing, typography, radius } from "../../theme";
 import { useAuth } from "../../contexts/AuthContext";
@@ -49,8 +49,8 @@ import {
   DEFAULT_TENANT_SETTINGS,
 } from "@agent/shared";
 import { getServerUrl } from "../../platform/mobileConfig";
-import { isV1RouteAllowed } from "../../app/v1Capabilities";
-import { getV1BuildProfile } from "../../app/v1Runtime";
+import { isV1RouteAllowed } from "../../v1/v1Capabilities";
+import { getV1BuildProfile } from "../../v1/v1Runtime";
 
 interface AgentProfileEditorProps {
   username?: string;
@@ -150,7 +150,7 @@ export function AgentProfileEditor({
 
   const handlePickAvatar = useCallback(async () => {
     if (!username) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const result = await launchPhotoLibraryForUserAction({
       mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],

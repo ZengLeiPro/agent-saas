@@ -1,4 +1,5 @@
 export * from './types/correlation';
+export * from './mobileV1';
 
 // Platform abstraction
 export { initPlatform, getPlatform } from './platform/context';
@@ -270,7 +271,9 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_DEFAULT_WORK_PROMPT,
+  TASKBOARD_DEFAULT_REVIEW_PROMPT,
+  TASKBOARD_DEFAULT_MERGE_PROMPT,
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
   buildScenarioPrompt,
 } from './types/index';

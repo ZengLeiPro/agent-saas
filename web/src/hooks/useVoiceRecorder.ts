@@ -6,12 +6,12 @@
  * 录制完成后编码为 WAV Blob。
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** 最短录音时长（秒） */
 const MIN_DURATION = 1;
 /** 最长录音时长（秒） */
-const MAX_DURATION = 1800;
+const MAX_DURATION = 180;
 /** 目标采样率 */
 const TARGET_SAMPLE_RATE = 16000;
 
@@ -94,6 +94,7 @@ export function useVoiceRecorder(options: {
   const startTimeRef = useRef<number>(0);
   const cancelledRef = useRef(false);
   const recordingRef = useRef(false);
+  const startingRef = useRef(false);
 
   const isSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
   const permissionGrantedRef = useRef(false);
@@ -133,6 +134,7 @@ export function useVoiceRecorder(options: {
     }
     chunksRef.current = [];
     recordingRef.current = false;
+    startingRef.current = false;
     setIsRecording(false);
     setDuration(0);
   }, []);
@@ -170,7 +172,8 @@ export function useVoiceRecorder(options: {
   }, [cleanup, onVoiceSend, onTooShort]);
 
   const startRecording = useCallback(async () => {
-    if (recordingRef.current) return;
+    if (recordingRef.current || startingRef.current) return;
+    startingRef.current = true;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -202,6 +205,7 @@ export function useVoiceRecorder(options: {
       processor.connect(ctx.destination);
 
       recordingRef.current = true;
+      startingRef.current = false;
       startTimeRef.current = Date.now();
       setIsRecording(true);
       setDuration(0);
@@ -232,6 +236,18 @@ export function useVoiceRecorder(options: {
     }
     finishRecording();
   }, [finishRecording, cleanup]);
+
+  useEffect(() => {
+    const fence = () => cancelRecording();
+    const onVisibility = () => { if (document.visibilityState !== 'visible') fence(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', fence);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', fence);
+      cleanup();
+    };
+  }, [cancelRecording, cleanup]);
 
   return {
     isRecording,

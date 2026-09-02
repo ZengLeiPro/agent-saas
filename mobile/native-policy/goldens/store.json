@@ -1,0 +1,110 @@
+{
+  "android": {
+    "application": {
+      "allowBackup": "false",
+      "dataExtractionRules": "@xml/m10_05_data_extraction_rules",
+      "debuggable": null,
+      "fullBackupContent": "@xml/m10_05_backup_rules",
+      "networkSecurityConfig": null,
+      "usesCleartextTraffic": "false"
+    },
+    "backupRules": [
+      {
+        "path": "android/app/src/main/res/xml/m10_05_backup_rules.xml",
+        "root": "full-backup-content",
+        "scopes": [
+          {
+            "excludes": [
+              "database:.",
+              "device_database:.",
+              "device_file:.",
+              "device_root:.",
+              "device_sharedpref:.",
+              "external:.",
+              "file:.",
+              "root:.",
+              "sharedpref:."
+            ],
+            "scope": "full-backup-content"
+          }
+        ]
+      },
+      {
+        "path": "android/app/src/main/res/xml/m10_05_data_extraction_rules.xml",
+        "root": "data-extraction-rules",
+        "scopes": [
+          {
+            "excludes": [
+              "database:.",
+              "device_database:.",
+              "device_file:.",
+              "device_root:.",
+              "device_sharedpref:.",
+              "external:.",
+              "file:.",
+              "root:.",
+              "sharedpref:."
+            ],
+            "scope": "cloud-backup"
+          },
+          {
+            "excludes": [
+              "database:.",
+              "device_database:.",
+              "device_file:.",
+              "device_root:.",
+              "device_sharedpref:.",
+              "external:.",
+              "file:.",
+              "root:.",
+              "sharedpref:."
+            ],
+            "scope": "device-transfer"
+          }
+        ]
+      }
+    ],
+    "components": [
+      {
+        "authorities": null,
+        "exported": "true",
+        "grantUriPermissions": null,
+        "intentActions": [
+          "android.intent.action.MAIN",
+          "android.intent.action.SEND",
+          "android.intent.action.SEND_MULTIPLE",
+          "android.intent.action.VIEW"
+        ],
+        "kind": "activity",
+        "name": ".MainActivity"
+      }
+    ],
+    "gradle": {
+      "artifactType": "aab",
+      "buildTypes": {
+        "release": {
+          "debuggable": null,
+          "signingConfig": "signingConfigs.release"
+        }
+      },
+      "distribution": "store",
+      "flavors": "store",
+      "signingConfigs": {
+        "release": true
+      }
+    },
+    "namespace": "com.agentsaas.mobile",
+    "package": "com.agentsaas.mobile",
+    "permissions": [
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.MODIFY_AUDIO_SETTINGS",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.USE_FINGERPRINT",
+      "android.permission.VIBRATE"
+    ]
+  },
+  "profile": "store",
+  "schemaVersion": 1
+}

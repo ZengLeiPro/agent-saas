@@ -1,134 +1,176 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import NetInfo from "@react-native-community/netinfo";
-import type { IPlatformConfig } from "@agent/shared";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { IPlatformConfig, TrustedUrlKind } from '@agent/shared';
+import {
+  assertTrustedServiceUrl,
+  decideServiceOriginChange,
+  resolveMobileServicePolicy,
+  TrustedServiceConfigurationError,
+  type MobileServiceBuildInput,
+  type MobileServicePolicy,
+  type ServiceOriginChangeDecision,
+} from './trustedServiceOrigin';
 
-const SERVER_URL_KEY = "agentChat.serverUrl";
-const LAN_URL_KEY = "agentChat.lanUrl";
-const DEFAULT_BASE_URL = "https://agent-saas.example.com";
+const SERVER_URL_KEY = 'agentChat.serverUrl';
+const LEGACY_LAN_URL_KEY = 'agentChat.lanUrl';
+const TRUSTED_ORIGIN_BINDING_KEY = 'agentChat.trustedServiceOrigin';
+const SERVICE_PROBE_TIMEOUT_MS = 10_000;
 
-let _baseUrl: string = DEFAULT_BASE_URL;
-const DEFAULT_LAN_URL = "http://agent.local:3000";
-let _lanUrl: string = DEFAULT_LAN_URL;
-let _lanReachable: boolean = false;
-
-// ── Server URL (external) ──────────────────────────────────────────
-
-/** Load saved server URL from storage (call during app init) */
-export async function loadServerUrl(): Promise<void> {
-  const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
-  if (saved) {
-    _baseUrl = saved;
-  }
+function readBuildInput(): MobileServiceBuildInput {
+  return {
+    dev: typeof __DEV__ !== 'undefined' && __DEV__,
+    profileEnv: process.env.EXPO_PUBLIC_V1_PROFILE,
+    apiOrigin: process.env.EXPO_PUBLIC_MOBILE_API_ORIGIN,
+    apiAllowlist: process.env.EXPO_PUBLIC_MOBILE_API_ALLOWLIST,
+    wsAllowlist: process.env.EXPO_PUBLIC_MOBILE_WS_ALLOWLIST,
+  };
 }
 
-/** Update server URL */
-export async function setServerUrl(url: string): Promise<void> {
-  _baseUrl = url.replace(/\/+$/, "");
-  await AsyncStorage.setItem(SERVER_URL_KEY, _baseUrl);
-}
-
-/** Get current server URL (always the external/primary URL) */
-export function getServerUrl(): string {
-  return _baseUrl;
-}
-
-// ── LAN URL ────────────────────────────────────────────────────────
-
-/** Load saved LAN URL from storage (call during app init) */
-export async function loadLanUrl(): Promise<void> {
-  const saved = await AsyncStorage.getItem(LAN_URL_KEY);
-  if (saved) {
-    _lanUrl = saved;
-  }
-}
-
-/** Update LAN URL. Pass empty string to disable. */
-export async function setLanUrl(url: string): Promise<void> {
-  _lanUrl = url ? url.replace(/\/+$/, "") : "";
-  if (_lanUrl) {
-    await AsyncStorage.setItem(LAN_URL_KEY, _lanUrl);
-    await probeLan();
-  } else {
-    await AsyncStorage.removeItem(LAN_URL_KEY);
-    _lanReachable = false;
-  }
-}
-
-/** Get configured LAN URL (empty string if not set) */
-export function getLanUrl(): string {
-  return _lanUrl;
-}
-
-/** Whether LAN is currently reachable and being used */
-export function isLanActive(): boolean {
-  return !!_lanUrl && _lanReachable;
-}
-
-// ── LAN reachability probe ─────────────────────────────────────────
-
-/** Probe LAN URL with 2s timeout via lightweight /healthz endpoint */
-async function probeLan(): Promise<boolean> {
-  if (!_lanUrl) {
-    _lanReachable = false;
-    return false;
-  }
-  try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 2000);
-    const res = await fetch(`${_lanUrl}/healthz`, {
-      method: "GET",
-      signal: controller.signal,
-    });
-    clearTimeout(tid);
-    _lanReachable = res.ok;
-    return _lanReachable;
-  } catch {
-    _lanReachable = false;
-    return false;
-  }
-}
-
-let _probeTimer: ReturnType<typeof setInterval> | null = null;
-let _netInfoUnsub: (() => void) | null = null;
-
-/** Start periodic LAN probe + listen for network changes. No-op if LAN URL is not configured. */
-export function startLanProbe(intervalMs = 30_000): void {
-  stopLanProbe();
-  if (!_lanUrl) return;
-  void probeLan();
-  _probeTimer = setInterval(() => void probeLan(), intervalMs);
-  // Probe immediately on any network change (WiFi connect/disconnect, cellular switch)
-  _netInfoUnsub = NetInfo.addEventListener(() => {
-    void probeLan();
-  });
-}
-
-/** Stop periodic LAN probe and network listener */
-export function stopLanProbe(): void {
-  if (_probeTimer) {
-    clearInterval(_probeTimer);
-    _probeTimer = null;
-  }
-  if (_netInfoUnsub) {
-    _netInfoUnsub();
-    _netInfoUnsub = null;
-  }
-}
-
-// ── Resolved base URL ──────────────────────────────────────────────
-
-/** Returns LAN URL if reachable, otherwise external URL */
-function resolveBaseUrl(): string {
-  return _lanUrl && _lanReachable ? _lanUrl : _baseUrl;
-}
-
+let servicePolicy = resolveMobileServicePolicy(readBuildInput());
 const authEnabledByBaseUrl = new Map<string, Promise<boolean>>();
 
+function clonePolicy(policy: MobileServicePolicy): MobileServicePolicy {
+  return {
+    ...policy,
+    apiAllowlist: [...policy.apiAllowlist],
+    wsAllowlist: [...policy.wsAllowlist],
+    issue: policy.issue ? { ...policy.issue } : null,
+  };
+}
+
+function requireReadyPolicy(): MobileServicePolicy {
+  if (!servicePolicy.ready || !servicePolicy.apiOrigin || !servicePolicy.wsUrl) {
+    throw new TrustedServiceConfigurationError(
+      servicePolicy.issue?.code ?? 'CONFIG_NOT_READY',
+      servicePolicy.issue?.message ?? '可信服务配置尚未就绪。',
+    );
+  }
+  return servicePolicy;
+}
+
+function requireResolvedCandidate(policy: MobileServicePolicy): MobileServicePolicy {
+  if (!policy.ready || !policy.apiOrigin || !policy.wsUrl) {
+    throw new TrustedServiceConfigurationError(
+      policy.issue?.code ?? 'CONFIG_NOT_READY',
+      policy.issue?.message ?? '可信服务配置尚未就绪。',
+    );
+  }
+  return policy;
+}
+
+export type ServiceOriginInvalidator = () => Promise<void>;
+
+export interface SetServerUrlResult extends ServiceOriginChangeDecision {
+  policy: MobileServicePolicy;
+}
+
+/** Current immutable diagnostic snapshot, safe to render before login. */
+export function getServiceConfigSnapshot(): MobileServicePolicy {
+  return clonePolicy(servicePolicy);
+}
+
+/**
+ * Load the selected service origin. Production ignores and removes every
+ * user-saved override. Invalid, changed, or legacy-unbound configuration
+ * invalidates the account before any origin can become active.
+ */
+export async function loadServerUrl(
+  invalidateSession: ServiceOriginInvalidator,
+): Promise<MobileServicePolicy> {
+  const input = readBuildInput();
+  const saved = await AsyncStorage.getItem(SERVER_URL_KEY);
+  // LAN auto-routing was removed by M10-01; delete any legacy probe target so
+  // it cannot silently return in a later code path.
+  await AsyncStorage.removeItem(LEGACY_LAN_URL_KEY);
+  let next = resolveMobileServicePolicy(input, saved);
+
+  if (next.profile === 'production' && saved) {
+    await AsyncStorage.removeItem(SERVER_URL_KEY);
+  } else if (saved && !next.ready) {
+    // A stale development/preview override must not brick a build whose
+    // build-time default is valid. Drop it and still force re-auth below.
+    const buildDefault = resolveMobileServicePolicy(input);
+    if (buildDefault.ready) {
+      next = buildDefault;
+      await AsyncStorage.removeItem(SERVER_URL_KEY);
+    }
+  }
+
+  const previousBinding = await AsyncStorage.getItem(TRUSTED_ORIGIN_BINDING_KEY);
+  if (!next.ready || !next.apiOrigin) {
+    // Invalid configuration invalidates auth even when a legacy install has no
+    // binding marker; retaining a token is unnecessary and risks later reuse.
+    await invalidateSession();
+    if (previousBinding) {
+      await AsyncStorage.removeItem(TRUSTED_ORIGIN_BINDING_KEY);
+    }
+  } else if (previousBinding !== next.apiOrigin) {
+    // Missing binding includes upgrades from the legacy arbitrary-origin code.
+    await invalidateSession();
+    await AsyncStorage.setItem(TRUSTED_ORIGIN_BINDING_KEY, next.apiOrigin);
+  }
+
+  servicePolicy = next;
+  authEnabledByBaseUrl.clear();
+  return clonePolicy(servicePolicy);
+}
+
+/**
+ * Change origin only inside a development/preview build allowlist.
+ * Security ordering is intentional: disconnect/clear auth first, persist the
+ * new device selection second, expose it in memory last. Any partial failure
+ * therefore leaves credentials unusable rather than sending them cross-origin.
+ */
+export async function setServerUrl(
+  rawUrl: string,
+  invalidateSession: ServiceOriginInvalidator,
+): Promise<SetServerUrlResult> {
+  if (!servicePolicy.editable) {
+    throw new TrustedServiceConfigurationError(
+      'ORIGIN_EDIT_DISABLED',
+      '生产版本的服务地址由构建配置锁定，不能在应用内修改。',
+    );
+  }
+
+  const candidate = requireResolvedCandidate(
+    resolveMobileServicePolicy(readBuildInput(), rawUrl.trim()),
+  );
+  const decision = decideServiceOriginChange(
+    servicePolicy.apiOrigin,
+    candidate.apiOrigin!,
+  );
+
+  if (decision.requiresReauthentication) {
+    await invalidateSession();
+    await AsyncStorage.setItem(SERVER_URL_KEY, candidate.apiOrigin!);
+    await AsyncStorage.setItem(
+      TRUSTED_ORIGIN_BINDING_KEY,
+      candidate.apiOrigin!,
+    );
+    servicePolicy = candidate;
+    authEnabledByBaseUrl.clear();
+  }
+
+  return { ...decision, policy: clonePolicy(servicePolicy) };
+}
+
+/** Get the selected, policy-validated API origin. */
+export function getServerUrl(): string {
+  return requireReadyPolicy().apiOrigin!;
+}
+
 function isAuthEnabled(): Promise<boolean> {
-  const baseUrl = resolveBaseUrl();
+  const baseUrl = getServerUrl();
+  const url = `${baseUrl}/api/auth/me`;
+  assertTrustedServiceUrl(servicePolicy, url, 'http');
+
   let result = authEnabledByBaseUrl.get(baseUrl);
   if (!result) {
-    const request: Promise<boolean> = fetch(`${baseUrl}/api/auth/me`)
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      SERVICE_PROBE_TIMEOUT_MS,
+    );
+    const request: Promise<boolean> = fetch(url, { signal: controller.signal })
       .then((response) => {
         const enabled = response.status !== 404;
         if (!enabled && authEnabledByBaseUrl.get(baseUrl) === request) {
@@ -137,9 +179,12 @@ function isAuthEnabled(): Promise<boolean> {
         return enabled;
       })
       .catch(() => {
-        if (authEnabledByBaseUrl.get(baseUrl) === request) authEnabledByBaseUrl.delete(baseUrl);
+        if (authEnabledByBaseUrl.get(baseUrl) === request) {
+          authEnabledByBaseUrl.delete(baseUrl);
+        }
         return true;
-      });
+      })
+      .finally(() => clearTimeout(timeout));
     authEnabledByBaseUrl.set(baseUrl, request);
     result = request;
   }
@@ -147,14 +192,17 @@ function isAuthEnabled(): Promise<boolean> {
 }
 
 export const mobileConfig: IPlatformConfig = {
-  platform: "mobile",
+  platform: 'mobile',
   getBaseUrl(): string {
-    return resolveBaseUrl();
+    return getServerUrl();
   },
   getWsUrl(): string {
-    const httpUrl = resolveBaseUrl();
-    const wsUrl = httpUrl.replace(/^http/, "ws");
-    return `${wsUrl}/ws`;
+    const wsUrl = requireReadyPolicy().wsUrl!;
+    assertTrustedServiceUrl(servicePolicy, wsUrl, 'websocket');
+    return wsUrl;
+  },
+  assertTrustedUrl(url: string, kind: TrustedUrlKind): void {
+    assertTrustedServiceUrl(servicePolicy, url, kind);
   },
   isAuthEnabled,
 };

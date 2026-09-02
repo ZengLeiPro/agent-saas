@@ -5,12 +5,18 @@ import { governanceV22Statements } from './v22Migration.js';
 import { governanceV23Statements } from './v23Migration.js';
 import { governanceV32Statements, governanceV33Statements } from './v32V33Migration.js';
 import { governanceV34Statements } from './v34Migration.js';
+import { governanceV35Statements } from './v35Migration.js';
+
 import { governanceV18Statements } from './v18Migration.js';
 import { governanceV30ChangeJobStatements } from './v30ChangeJobMigration.js';
 import { buildContextMigrationSql } from '../../context/store/migration.js';
 import { buildContextPhase23MigrationSql } from '../../context/phase23/migration.js';
 import { buildContextPhase4MigrationSql } from '../../context/phase4/migration.js';
 import { buildContextRetentionMigrationSql, buildContextRetentionRetryMigrationSql } from '../../context/lifecycle/migration.js';
+import { governanceTablePrefix } from './governanceTablePrefix.js';
+export { governanceTablePrefix } from './governanceTablePrefix.js';
+
+export const GOVERNANCE_SCHEMA_VERSION = 35;
 
 export type GovernancePgPool = pg.Pool;
 
@@ -18,15 +24,6 @@ type GovernanceMigration = {
   version: number;
   statements: string[];
 };
-
-const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-export function governanceTablePrefix(value = 'runtime'): string {
-  if (!IDENTIFIER_PATTERN.test(value)) {
-    throw new Error(`Invalid PostgreSQL identifier: ${value}`);
-  }
-  return value;
-}
 
 function migrations(prefix: string): GovernanceMigration[] {
   const versions = `${prefix}_governance_schema_versions`;
@@ -932,7 +929,7 @@ function migrations(prefix: string): GovernanceMigration[] {
       ],
     },
     {
-      // Kept before v31: v30 owns change-job evidence/execution ordering; v31 only upgrades retention retry state.
+      // Keep before v31: v30 owns change-job evidence/execution ordering; v31 only upgrades retention retry state.
       version: 30,
       statements: governanceV30ChangeJobStatements(changeJobs, changeJobDomains),
     },
@@ -947,6 +944,7 @@ function migrations(prefix: string): GovernanceMigration[] {
     { version: 32, statements: governanceV32Statements(prefix) },
     { version: 33, statements: governanceV33Statements(assignments) },
     { version: 34, statements: governanceV34Statements(prefix) },
+    { version: GOVERNANCE_SCHEMA_VERSION, statements: governanceV35Statements(prefix) },
   ];
 }
 

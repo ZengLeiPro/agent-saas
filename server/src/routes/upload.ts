@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { createReadStream } from 'node:fs';
 import { basename, extname, join } from 'path';
 import multer from 'multer';
 import { Router, type Request } from 'express';
@@ -8,10 +9,13 @@ import { uploadLogger } from '../utils/logger.js';
 import {
   MAX_UPLOAD_FILE_BYTES,
   MAX_UPLOAD_FILES_PER_REQUEST,
+  AttachmentUnavailableError,
   UploadDrainingError,
   type UploadManager,
 } from '../uploads/manager.js';
+import { attachmentResponseHeaders, inspectUploadedFile, UploadPolicyError } from '../uploads/uploadSecurity.js';
 import type { SessionCatalog } from '../runtime/sessionCatalog.js';
+import { INCOMING_SHARE_MAX_ITEMS, INCOMING_SHARE_MAX_TOTAL_BYTES, incomingShareKind } from '../../../shared/src/lib/incomingShare.js';
 
 /**
  * 修复 multer 中文文件名编码问题（浏览器发送 UTF-8，multer 默认用 latin1 解析）
@@ -32,6 +36,38 @@ function safeUploadFilename(originalName: string): string {
   return `${randomUUID()}_${baseName || 'file'}${ext}`;
 }
 
+
+const UPLOAD_REQUEST_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const INLINE_AUDIO_MIME_TYPES = new Set(['audio/wav', 'audio/x-wav', 'audio/mpeg']);
+
+type ByteRange = { start: number; end: number };
+function parseAttachmentRange(raw: string | undefined, size: number): ByteRange | null | 'invalid' {
+  if (!raw) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(raw.trim());
+  if (!match || size <= 0 || (!match[1] && !match[2])) return 'invalid';
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return 'invalid';
+    return { start: Math.max(0, size - suffix), end: size - 1 };
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd)
+    || start < 0 || requestedEnd < start || start >= size) return 'invalid';
+  return { start, end: Math.min(size - 1, requestedEnd) };
+}
+
+function uploadRequestId(req: Request): string {
+  const supplied = typeof req.headers['x-upload-request-id'] === 'string'
+    ? req.headers['x-upload-request-id'].trim()
+    : '';
+  if (!supplied) return randomUUID();
+  if (!UPLOAD_REQUEST_ID_RE.test(supplied)) {
+    throw Object.assign(new Error('Invalid upload request id'), { statusCode: 400, code: 'UPLOAD_REQUEST_ID_INVALID' });
+  }
+  return supplied;
+}
+
 export interface UploadRouterOptions {
   /** Agent 工作目录（绝对路径） */
   agentCwd: string;
@@ -41,6 +77,10 @@ export interface UploadRouterOptions {
 
 interface UploadRequest extends Request {
   uploadPartialDir?: string;
+}
+
+function isIncomingShare(req: Request): boolean {
+  return req.headers['x-upload-source'] === 'incoming-share';
 }
 
 function resolveRequestUserCwd(agentCwd: string, req: Request): string {
@@ -106,6 +146,14 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
     },
   });
 
+  const incomingShareUpload = multer({
+    storage,
+    limits: {
+      fileSize: INCOMING_SHARE_MAX_TOTAL_BYTES,
+      files: INCOMING_SHARE_MAX_ITEMS,
+    },
+  });
+
   router.post('/upload/assets', async (req, res) => {
     const requestId = randomUUID();
     try {
@@ -153,29 +201,45 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
 
   router.post('/upload', async (req, res) => {
     const uploadReq = req as UploadRequest;
-    const requestId = randomUUID();
+    let requestId = '';
     let completionStarted = false;
     let sessionId: string | undefined;
 
     try {
+      requestId = uploadRequestId(req);
       sessionId = await assertSessionOwnership(req);
       const userCwd = resolveRequestUserCwd(agentCwd, req);
       ensureWorkspaceRuntimeLayout(userCwd);
+      const replay = await uploadManager.getCompletedRequest(userCwd, requestId, sessionId);
+      if (replay) {
+        res.setHeader('X-Upload-Request-Id', requestId);
+        res.json({ success: true, requestId, idempotentReplay: true, files: replay });
+        return;
+      }
       uploadReq.uploadPartialDir = await uploadManager.beginRequest(userCwd, requestId);
       // 允许 20 × 2 GiB 的合法请求持续传输；nginx 仍负责连接空闲超时。
       req.setTimeout(12 * 60 * 60 * 1000);
     } catch (error) {
+      const statusCode = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : 0;
+      if (statusCode === 400) {
+        res.status(400).json({ success: false, error: 'uploadRequestId 格式无效', code: 'UPLOAD_REQUEST_ID_INVALID' });
+        return;
+      }
+      if (statusCode === 409 || (error instanceof Error && error.message.startsWith('Duplicate upload request'))) {
+        res.status(409).json({ success: false, error: '相同 uploadRequestId 正在处理中', code: 'UPLOAD_REQUEST_IN_PROGRESS' });
+        return;
+      }
       if (error instanceof UploadDrainingError) {
         res.setHeader('Retry-After', '10');
         res.status(503).json({ success: false, error: '服务正在更新，请稍后重试', code: 'SERVER_DRAINING' });
         return;
       }
-      if (error && typeof error === 'object' && 'statusCode' in error && error.statusCode === 403) {
-        res.status(403).json({ success: false, error: '上传会话不属于当前用户' });
+      if (statusCode === 403) {
+        res.status(403).json({ success: false, error: '上传会话不属于当前用户', code: 'UPLOAD_SESSION_FORBIDDEN' });
         return;
       }
       uploadLogger.error('Failed to prepare upload:', error);
-      res.status(500).json({ success: false, error: 'Upload failed' });
+      res.status(500).json({ success: false, error: 'Upload failed', code: 'UPLOAD_PREPARE_FAILED' });
       return;
     }
 
@@ -183,30 +247,27 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       if (completionStarted) return;
       void uploadManager.finishFailedRequest(requestId, 'aborted');
     });
-
-    // 客户端断开兜底：现代 Node 客户端断开触发 req 'close' 而非 'aborted'，
-    // 只监听 aborted 会让 activeRequests 计数泄漏、drain 永不归零（2026-08-17
-    // 生产 blue 色 drain 死锁根因）。'close' 在正常完成后也会触发，且客户端
-    // "发完即关写端"时可能早于 multer 回调，因此延迟判定：宽限期内 multer
-    // 正常回调会置 completionStarted，只有宽限后仍未开始完成流程且响应未
-    // 结束的连接才判定为断开失败。finishFailedRequest 幂等，双触发安全。
     req.once('close', () => {
       if (completionStarted || res.writableEnded) return;
-      const closeGraceMs = 5_000;
       const timer = setTimeout(() => {
         if (completionStarted || res.writableEnded) return;
         uploadLogger.warn(`Upload connection closed before completion request=${requestId}; releasing drain counter`);
         void uploadManager.finishFailedRequest(requestId, 'aborted');
-      }, closeGraceMs);
+      }, 5_000);
       timer.unref?.();
     });
 
-    upload.array('files', MAX_UPLOAD_FILES_PER_REQUEST)(req, res, async (uploadError) => {
+    const uploadMiddleware = isIncomingShare(req)
+      ? incomingShareUpload.array('files', INCOMING_SHARE_MAX_ITEMS)
+      : upload.array('files', MAX_UPLOAD_FILES_PER_REQUEST);
+    uploadMiddleware(req, res, async (uploadError) => {
       completionStarted = true;
       if (uploadError) {
         await uploadManager.finishFailedRequest(requestId, req.aborted ? 'aborted' : 'failed');
-        const response = uploadErrorResponse(uploadError);
-        uploadLogger.warn(`Upload rejected request=${requestId} code=${response.code ?? 'unknown'} error=${uploadError instanceof Error ? uploadError.message : String(uploadError)}`);
+        const response = isIncomingShare(req) && uploadError instanceof multer.MulterError
+          ? { status: 413, message: '系统分享最多 5 项且总大小不能超过 20 MB', code: 'UPLOAD_SHARE_LIMIT' }
+          : uploadErrorResponse(uploadError);
+        uploadLogger.warn(`Upload rejected request=${requestId} code=${response.code ?? 'unknown'}`);
         if (!res.headersSent && !res.writableEnded) {
           res.status(response.status).json({ success: false, error: response.message, ...(response.code ? { code: response.code } : {}) });
         }
@@ -216,38 +277,135 @@ export function createUploadRouter(options: UploadRouterOptions): Router {
       const files = req.files as Express.Multer.File[] | undefined;
       if (!files || files.length === 0) {
         await uploadManager.finishFailedRequest(requestId, 'failed');
-        res.status(400).json({ success: false, error: 'No files uploaded' });
+        res.status(400).json({ success: false, error: 'No files uploaded', code: 'UPLOAD_EMPTY' });
         return;
       }
 
       try {
-        const supportedImageTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-        const finalized = await uploadManager.completeRequest(requestId, files.map((file) => {
-          const fixedOriginalName = fixFilename(file.originalname);
-          const attachmentId = file.filename.slice(0, file.filename.indexOf('_'));
+        if (isIncomingShare(req)) {
+          const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+          if (files.length > INCOMING_SHARE_MAX_ITEMS || totalBytes > INCOMING_SHARE_MAX_TOTAL_BYTES) {
+            throw new UploadPolicyError('UPLOAD_SIZE_EXCEEDED', '系统分享最多 5 项且总大小不能超过 20 MB', 413);
+          }
+          for (const file of files) {
+            const kind = incomingShareKind(file.mimetype || 'application/octet-stream');
+            if (kind !== 'image' && kind !== 'pdf') {
+              throw new UploadPolicyError('UPLOAD_MIME_BLOCKED', '系统分享仅支持图片与 PDF 文件', 422);
+            }
+          }
+        }
+        const inspected = await Promise.all(files.map(async (file) => {
+          const originalName = fixFilename(file.originalname);
           return {
-            attachmentId,
-            filename: file.filename,
-            partialPath: file.path,
-            originalName: fixedOriginalName,
-            size: file.size,
-            mimeType: file.mimetype,
-            isImage: file.mimetype.startsWith('image/') && supportedImageTypes.has(file.mimetype),
-            isVoiceUpload: file.mimetype.startsWith('audio/') || /\.(wav|mp3|m4a|amr|ogg)$/i.test(fixedOriginalName),
+            file,
+            originalName,
+            security: await inspectUploadedFile({ path: file.path, originalName, size: file.size, mimetype: file.mimetype }),
           };
-        }), sessionId ? { sessionId } : {});
+        }));
+        const finalized = await uploadManager.completeRequest(requestId, inspected.map(({ file, originalName, security }) => ({
+          attachmentId: file.filename.slice(0, file.filename.indexOf('_')),
+          filename: file.filename,
+          partialPath: file.path,
+          originalName,
+          size: file.size,
+          mimeType: security.mimeType,
+          isImage: security.isImage,
+          isVoiceUpload: security.mimeType.startsWith('audio/') || /\.(wav|mp3|m4a|ogg)$/i.test(originalName),
+        })), sessionId ? { sessionId } : {});
         const uploadedFiles = finalized.map((file) => file.info);
-        uploadLogger.info(`Upload complete request=${requestId} files=${uploadedFiles.length} bytes=${uploadedFiles.reduce((sum, file) => sum + file.size, 0)} names=${uploadedFiles.map((file) => file.originalName).join(', ')}`);
-        if (!res.writableEnded) res.json({ success: true, files: uploadedFiles });
+        uploadLogger.info(`Upload complete request=${requestId} files=${uploadedFiles.length} bytes=${uploadedFiles.reduce((sum, file) => sum + file.size, 0)}`);
+        if (!res.writableEnded) {
+          res.setHeader('X-Upload-Request-Id', requestId);
+          res.json({ success: true, requestId, files: uploadedFiles });
+        }
       } catch (error) {
+        await uploadManager.finishFailedRequest(requestId, 'failed');
+        if (error instanceof UploadPolicyError) {
+          uploadLogger.warn(`Upload policy rejected request=${requestId} code=${error.code}`);
+          if (!res.headersSent && !res.writableEnded) {
+            res.status(error.statusCode).json({ success: false, error: error.message, code: error.code });
+          }
+          return;
+        }
         uploadLogger.error(`Upload finalize failed request=${requestId}:`, error);
         if (!res.headersSent && !res.writableEnded) {
-          res.status(500).json({ success: false, error: 'Upload failed' });
+          res.status(500).json({ success: false, error: 'Upload failed', code: 'UPLOAD_FINALIZE_FAILED' });
         }
       }
     });
   });
 
+  router.get('/uploads/requests/:requestId', async (req, res) => {
+    const requestId = req.params.requestId;
+    if (!UPLOAD_REQUEST_ID_RE.test(requestId)) {
+      res.status(400).json({ success: false, code: 'UPLOAD_REQUEST_ID_INVALID', error: 'uploadRequestId 格式无效' });
+      return;
+    }
+    const userCwd = resolveRequestUserCwd(agentCwd, req);
+    const files = await uploadManager.getCompletedRequest(userCwd, requestId);
+    if (!files) {
+      res.status(404).json({ success: false, requestId, code: 'UPLOAD_REQUEST_NOT_FOUND' });
+      return;
+    }
+    res.json({ success: true, requestId, files });
+  });
+
+  router.post('/upload/:requestId/cancel', async (req, res) => {
+    const requestId = req.params.requestId;
+    if (!UPLOAD_REQUEST_ID_RE.test(requestId)) {
+      res.status(400).json({ success: false, code: 'UPLOAD_REQUEST_ID_INVALID', error: 'uploadRequestId 格式无效' });
+      return;
+    }
+    const userCwd = resolveRequestUserCwd(agentCwd, req);
+    const outcome = await uploadManager.cancelRequest(userCwd, requestId);
+    res.status(outcome === 'not_found' ? 404 : 200).json({ success: outcome !== 'not_found', requestId, outcome });
+  });
+
+  const serveAttachmentContent = async (req: Request, res: import('express').Response): Promise<void> => {
+    try {
+      const userCwd = resolveRequestUserCwd(agentCwd, req);
+      const content = await uploadManager.getAttachmentContent(userCwd, req.params.attachmentId);
+      const audio = INLINE_AUDIO_MIME_TYPES.has(content.mimeType.toLowerCase());
+      const inline = req.query.download !== '1' && (content.isImage || audio);
+      for (const [name, value] of Object.entries(attachmentResponseHeaders({
+        originalName: content.originalName, mimeType: content.mimeType, inline,
+      }))) res.setHeader(name, value);
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      const range = parseAttachmentRange(typeof req.headers.range === 'string' ? req.headers.range : undefined, content.size);
+      if (range === 'invalid') {
+        res.setHeader('Content-Range', `bytes */${content.size}`);
+        res.status(416).end();
+        return;
+      }
+      const start = range?.start ?? 0;
+      const end = range?.end ?? Math.max(0, content.size - 1);
+      if (range) {
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${content.size}`);
+      } else {
+        res.status(200);
+      }
+      res.setHeader('Content-Length', Math.max(0, end - start + 1));
+      if (req.method === 'HEAD') { res.end(); return; }
+      const stream = createReadStream(content.absolutePath, { start, end });
+      stream.on('error', () => {
+        if (!res.headersSent) res.status(410).json({ success: false, code: 'ATTACHMENT_DELETED', error: '附件已删除' });
+        else res.destroy();
+      });
+      stream.pipe(res);
+    } catch (error) {
+      if (error instanceof AttachmentUnavailableError) {
+        res.status(error.code === 'ATTACHMENT_NOT_FOUND' ? 404 : 410).json({ success: false, code: error.code, error: error.message });
+        return;
+      }
+      res.status(404).json({ success: false, code: 'ATTACHMENT_NOT_FOUND', error: '附件不存在或无权访问' });
+    }
+  };
+  router.get('/attachments/:attachmentId/content', serveAttachmentContent);
+  router.head('/attachments/:attachmentId/content', serveAttachmentContent);
+
+  // Usage and cleanup endpoints remain separate from byte-stream playback.
   router.get('/uploads/usage', async (req, res) => {
     try {
       const userCwd = resolveRequestUserCwd(agentCwd, req);

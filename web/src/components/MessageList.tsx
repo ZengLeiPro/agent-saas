@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
+import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useRef, useState, type Ref, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDown, Loader2 } from 'lucide-react';
 import { MessageItem as MessageItemType, type RenderItem } from './types';
@@ -13,7 +13,6 @@ import { asCompactionItem } from '@/lib/compaction';
 import { cn } from '@/lib/utils';
 import {
   buildMessageVirtualLayout,
-  findMessageRowAtOffset,
   getMessageVirtualRange,
   MAX_RENDERED_MESSAGE_ROWS,
 } from '@/lib/messageVirtualizer';
@@ -23,13 +22,26 @@ import type { TtsState } from '@/hooks/useTtsPlayer';
 import { useVoicePlayer } from '@/hooks/useVoicePlayer';
 import { useAuth } from '@/contexts/AuthContext';
 import { AgentAvatar, UserAvatar } from './AgentAvatar';
-import { isDebugModeAvailable, type AgentProfile, type AskUserAnswers, type SessionParticipants } from '@agent/shared';
+import {
+  canShowRawPresentation,
+  captureHistoryAnchor,
+  isDebugModeAvailable,
+  selectRenderModel,
+  type AgentProfile,
+  type AskUserAnswers,
+  type HistoryAnchor,
+  type RenderModel, type SessionParticipants,
+} from '@agent/shared';
+import {
+  useHistoryAnchorRestoration,
+} from './useHistoryAnchorRestoration';
+import { adaptRenderModelForWeb } from '@/lib/renderModelAdapter';
 
 const BusinessStepDetail = lazy(() => import('./BusinessStepDetailPanel'));
 const BusinessStepFlow = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepFlow })));
 const BusinessStepProcessEvent = lazy(() => import('./BusinessStepFlow').then((module) => ({ default: module.BusinessStepProcessEvent })));
 const HISTORY_LOAD_TRIGGER_PX = 80;
-const HISTORY_LOAD_REARM_PX = 160;
+const HISTORY_LOAD_REARM_PX = 160; // hysteresis avoids duplicate page retries
 // ---------------------------------------------------------------------------
 // AI 气泡分组，与移动端 groupIntoBubbles() 保持一致。
 
@@ -276,7 +288,7 @@ export const MessageList = memo(function MessageList({
   emptySlot,
 }: MessageListProps) {
   const NEAR_BOTTOM_THRESHOLD = 150;
-  // 本地捕获滚动容器 DOM，供「回到最新消息」浮动按钮判定距离与主动滚动。
+  // 本地捕获滚动容器 DOM，用于「回到最新消息」判定距离与主动滚动。
   // 通过 setContainerRef 合并到外部传入的 scrollContainerRef，不破坏原有引用契约。
   const internalContainerRef = useRef<HTMLDivElement | null>(null);
   const setContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -289,9 +301,29 @@ export const MessageList = memo(function MessageList({
   }, [scrollContainerRef]);
 
   const voicePlayer = useVoicePlayer();
+  // A historical clip is scoped to the visible conversation; switching sessions releases it.
+  useEffect(() => voicePlayer.stop, [sessionId, voicePlayer.stop]);
   const { user } = useAuth();
-  const debugMode = debugModeOverride
+  const debugModeRequested = debugModeOverride
     ?? (user?.debugMode === true && isDebugModeAvailable(user.tenantId, user.tenantFeatures));
+  const presentationGate = useMemo(() => ({
+    debugBuild: import.meta.env.DEV,
+    authenticatedAdmin: user?.role === 'admin',
+    explicitSessionToggle: debugModeRequested,
+  }), [debugModeRequested, user?.role]);
+  const debugMode = debugModeRequested;
+  const rawPresentationMode = canShowRawPresentation(presentationGate);
+  const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
+  const renderModel = useMemo(() => {
+    const next = selectRenderModel({ messages }, previousRenderModelRef.current);
+    previousRenderModelRef.current = next;
+    return next;
+  }, [messages]);
+  const timelineRows = useMemo(
+    () => adaptRenderModelForWeb(renderModel, presentationGate),
+    [presentationGate, renderModel],
+  );
+  // Legacy visual blocks remain source-compatible; RenderModel owns semantic identity, accessibility and actions.
   const groupedMessages = useGroupedMessages(messages, loading, { debugMode, sectioning: true });
   const mainThreadItems = useMemo(() => businessStepMainItems(groupedMessages), [groupedMessages]);
   // 选择、跟随、历史重映射与焦点恢复由专用 hook 统一维护；详情面板仅在选中后按需加载。
@@ -304,8 +336,6 @@ export const MessageList = memo(function MessageList({
     detailsOpen: businessStepDetailsOpen,
     selectStep: selectBusinessStep,
     clearSelection: clearBusinessStepSelection,
-    selectRelative: selectRelativeBusinessStep,
-    returnToCurrent: returnToCurrentBusinessStep,
   } = useBusinessStepDetail({
     groupedMessages,
     sessionId,
@@ -395,6 +425,7 @@ export const MessageList = memo(function MessageList({
   const [viewport, setViewport] = useState({ start: 0, size: 0 });
   const viewportRafRef = useRef(0);
   const viewportSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousVirtualLayoutRef = useRef(virtualLayout);
   const updateViewportNow = useCallback(() => {
     viewportRafRef.current = 0;
     const container = internalContainerRef.current;
@@ -430,8 +461,7 @@ export const MessageList = memo(function MessageList({
   }, []);
 
   const prependScrollRef = useRef<{
-    anchorKey: string;
-    screenOffset: number;
+    anchor: HistoryAnchor;
     firstKey?: string;
     scrollTop: number;
     scrollHeight: number;
@@ -441,12 +471,10 @@ export const MessageList = memo(function MessageList({
     const body = virtualBodyRef.current;
     if (!el || !body || !onLoadEarlier || isLoadingEarlier) return;
     const localStart = Math.max(0, el.scrollTop - body.offsetTop);
-    const anchorIndex = findMessageRowAtOffset(virtualLayout, localStart);
-    const anchorKey = virtualLayout.keys[anchorIndex];
-    if (anchorKey) {
+    const anchor = captureHistoryAnchor({ semanticIds: virtualLayout.keys, offsets: virtualLayout.offsets }, localStart);
+    if (anchor) {
       prependScrollRef.current = {
-        anchorKey,
-        screenOffset: virtualLayout.offsets[anchorIndex] - localStart,
+        anchor,
         firstKey: virtualLayout.keys[0],
         scrollTop: el.scrollTop,
         scrollHeight: el.scrollHeight,
@@ -505,59 +533,23 @@ export const MessageList = memo(function MessageList({
     handleLoadEarlier();
   }, [handleLoadEarlier, hasMoreHistory, isLoadingEarlier, messages]);
 
-  // Preserve a key-based visual anchor across prepend and asynchronous row remeasurement.
-  const previousLayoutRef = useRef(virtualLayout);
-  useLayoutEffect(() => {
-    const el = internalContainerRef.current;
-    const body = virtualBodyRef.current;
-    const previous = previousLayoutRef.current;
-    if (!el || !body) {
-      previousLayoutRef.current = virtualLayout;
-      return;
-    }
-
-    if (wasNearBottomRef.current) {
-      // Streaming, appended rows, and image/expander growth follow only while near the bottom.
-      el.scrollTop = el.scrollHeight;
-    } else if (previous !== virtualLayout && previous.keys.length > 0) {
-      const pendingPrepend = prependScrollRef.current;
-      const didPrepend = pendingPrepend
-        && pendingPrepend.firstKey !== virtualLayout.keys[0];
-      if (didPrepend) {
-        const nextIndex = virtualLayout.indexByKey.get(pendingPrepend.anchorKey);
-        if (nextIndex !== undefined) {
-          const nextLocalStart = virtualLayout.offsets[nextIndex] - pendingPrepend.screenOffset;
-          el.scrollTop = body.offsetTop + nextLocalStart;
-        } else {
-          // 长任务的连续工具活动会跨分页边界重新分组，导致原虚拟行 key 消失。
-          // 此时用实际新增滚动高度补偿，保持用户眼前的内容位置不变。
-          const addedHeight = el.scrollHeight - pendingPrepend.scrollHeight;
-          el.scrollTop = Math.max(0, pendingPrepend.scrollTop + addedHeight);
-        }
-        prependScrollRef.current = null;
-      } else {
-        const previousLocalStart = Math.max(0, el.scrollTop - body.offsetTop);
-        const anchorIndex = findMessageRowAtOffset(previous, previousLocalStart);
-        const anchorKey = previous.keys[anchorIndex];
-        const nextIndex = virtualLayout.indexByKey.get(anchorKey);
-        if (nextIndex !== undefined) {
-          el.scrollTop += virtualLayout.offsets[nextIndex] - previous.offsets[anchorIndex];
-        }
-      }
-    }
-
-    previousLayoutRef.current = virtualLayout;
-    syncNearBottomState();
-    updateViewportNow();
-    // useMessages may force scrollTop in a parent effect without dispatching a scroll event.
-    // Re-sample once after that rAF rather than polling continuously.
-    if (viewportSettleTimerRef.current) clearTimeout(viewportSettleTimerRef.current);
-    viewportSettleTimerRef.current = setTimeout(() => {
-      viewportSettleTimerRef.current = null;
-      syncNearBottomState();
-      updateViewportNow();
-    }, 50);
-  }, [hasMoreHistory, showAgentLoading, showSyncLoading, syncNearBottomState, updateViewportNow, virtualLayout]);
+  // The list owns the DOM and scheduling refs; the hook owns semantic restoration policy.
+  // Keeping these boundaries explicit prevents virtualizer measurement from leaking into rendering.
+  const historyAnchorRestorationOptions = {
+    containerRef: internalContainerRef,
+    bodyRef: virtualBodyRef,
+    layout: virtualLayout,
+    wasNearBottomRef,
+    pendingPrependRef: prependScrollRef,
+    previousLayoutRef: previousVirtualLayoutRef,
+    settleTimerRef: viewportSettleTimerRef,
+    syncNearBottomState,
+    updateViewportNow,
+    hasMoreHistory,
+    showAgentLoading,
+    showSyncLoading,
+  };
+  useHistoryAnchorRestoration(historyAnchorRestorationOptions);
 
   useEffect(() => {
     const container = internalContainerRef.current;
@@ -689,6 +681,7 @@ export const MessageList = memo(function MessageList({
             isActive={item.isActive}
             isLast={item.id === lastActivityGroupId}
             debugMode={debugMode}
+            rawPresentationMode={rawPresentationMode}
             onSwitchModel={onSwitchModel}
           />
         </ErrorBoundary>
@@ -721,11 +714,13 @@ export const MessageList = memo(function MessageList({
           voicePlayer={voicePlayer}
           voicePlayState={voicePlayState}
           debugMode={debugMode}
+          rawPresentationMode={rawPresentationMode}
         />
       </ErrorBoundary>
     );
   }, [
     debugMode,
+    rawPresentationMode,
     lastActivityGroupId,
     loading,
     msgIndexMap,
@@ -745,22 +740,17 @@ export const MessageList = memo(function MessageList({
     plan: selectedBusinessStepPlan,
     followMode: businessStepFollowMode,
     debugMode,
-    onPrevious: selectedBusinessStepDetail.stepIndex > 1
-      ? () => selectRelativeBusinessStep(-1)
-      : undefined,
-    onNext: selectedBusinessStepDetail.stepIndex < selectedBusinessStepDetail.stepCount
-      ? () => selectRelativeBusinessStep(1)
-      : undefined,
-    onReturnCurrent: selectedBusinessStepPlan.currentTodoKey
-      ? returnToCurrentBusinessStep
-      : undefined,
+    onSelectStep: (todoKey: string) => {
+      if (!businessStepSelection) return;
+      selectBusinessStep({ ...businessStepSelection, todoKey });
+    },
     onClose: () => clearBusinessStepSelection(),
     renderItem: renderBusinessDetailItem,
   } : null;
 
   return (
     <>
-    <div className="chat-message-content relative flex min-h-0 flex-1 flex-col">
+    <div className="chat-message-content relative flex min-h-0 flex-1 flex-col" data-render-model-version={renderModel.version} data-render-model-items={timelineRows.length}>
     <div
       ref={setContainerRef}
       tabIndex={-1}
@@ -879,7 +869,7 @@ export const MessageList = memo(function MessageList({
                 )}
                 <div className={cn(showHeader && HEADER_FLOW_PADDING_CLASS)}>
                   <ErrorBoundary inline>
-                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} onSwitchModel={onSwitchModel} />
+                    <ActivityGroupBlock items={item.items} isActive={item.isActive} isLast={item.id === lastActivityGroupId} debugMode={debugMode} rawPresentationMode={rawPresentationMode} onSwitchModel={onSwitchModel} />
                   </ErrorBoundary>
                 </div>
               </div>
@@ -941,6 +931,7 @@ export const MessageList = memo(function MessageList({
                     voicePlayer={voicePlayer}
                     voicePlayState={undefined}
                     debugMode={debugMode}
+                    rawPresentationMode={rawPresentationMode}
                   />
                 </ErrorBoundary>
               </div>
@@ -974,6 +965,7 @@ export const MessageList = memo(function MessageList({
                     voicePlayer={voicePlayer}
                     voicePlayState={undefined}
                     debugMode={debugMode}
+                    rawPresentationMode={rawPresentationMode}
                   />
                 </ErrorBoundary>
               </div>
@@ -1018,6 +1010,7 @@ export const MessageList = memo(function MessageList({
                 voicePlayer={voicePlayer}
                 voicePlayState={voicePlayState}
                 debugMode={debugMode}
+                rawPresentationMode={rawPresentationMode}
               />
               </ErrorBoundary>
             </div>

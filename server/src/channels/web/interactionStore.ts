@@ -5,8 +5,12 @@ import type { AskUserQuestion } from '../../types/index.js';
 export interface PendingInteraction {
   resolve: (response: InteractionResponse) => void;
   reject: (reason: Error) => void;
-  type: 'permission_request' | 'ask_user';
+  type: 'permission_request' | 'ask_user' | 'approval';
   createdAt: number;
+  /** Monotonic summary version for session-list projection. */
+  version: number;
+  /** Stable FIFO order assigned by the server. */
+  order: number;
   timer: ReturnType<typeof setTimeout>;
   sessionId?: string;
   runId?: string;
@@ -26,6 +30,7 @@ export interface PendingInteraction {
   toolInput?: Record<string, unknown>;
   /** ExitPlanMode 专用：plan 文件内容 */
   planContent?: string;
+  onExpired?: (entry: PendingInteraction) => void;
 }
 
 /** SSE 断开后允许存活的交互类型（等待用户重连回答） */
@@ -33,7 +38,7 @@ const PLAN_MODE_TOOLS = new Set(['EnterPlanMode', 'ExitPlanMode']);
 const PERSISTED_PLATFORM_APPROVAL_TOOL_IDS = new Set(['Write', 'Edit', 'Shell']);
 
 function shouldSurviveDisconnect(entry: PendingInteraction): boolean {
-  if (entry.type === 'ask_user') return true;
+  if (entry.type === 'ask_user' || entry.type === 'approval') return true;
   if (entry.type === 'permission_request' && PLAN_MODE_TOOLS.has(entry.toolName || '')) return true;
   if (entry.type === 'permission_request' && PERSISTED_PLATFORM_APPROVAL_TOOL_IDS.has(entry.toolId || '')) return true;
   return false;
@@ -41,8 +46,79 @@ function shouldSurviveDisconnect(entry: PendingInteraction): boolean {
 
 const INTERACTION_TIMEOUT_MS = 30 * 60 * 1000;
 
-class InteractionStore {
+export interface CompletedInteractionResponse {
+  sessionId: string;
+  interactionId: string;
+  requestId: string;
+  response: InteractionResponse;
+  completedAt: number;
+  version: number;
+  order: number;
+  userId?: string;
+}
+
+export class InteractionStore {
   private pending = new Map<string, PendingInteraction>();
+  private pendingBySession = new Map<string, string[]>();
+  private version = Date.now();
+  private completed = new Map<string, CompletedInteractionResponse>();
+  private responseClaims = new Map<string, { requestId: string; response: InteractionResponse }>();
+
+  private addToSessionIndex(sessionId: string | undefined, interactionId: string): void {
+    if (!sessionId) return;
+    const ids = this.pendingBySession.get(sessionId) ?? [];
+    this.pendingBySession.set(sessionId, [...ids.filter((id) => id !== interactionId), interactionId]);
+  }
+
+  private removeFromSessionIndex(sessionId: string | undefined, interactionId: string): void {
+    if (!sessionId) return;
+    const ids = (this.pendingBySession.get(sessionId) ?? []).filter((id) => id !== interactionId);
+    if (ids.length) this.pendingBySession.set(sessionId, ids);
+    else this.pendingBySession.delete(sessionId);
+  }
+
+  private take(interactionId: string): PendingInteraction | undefined {
+    const entry = this.pending.get(interactionId);
+    if (!entry) return undefined;
+    this.pending.delete(interactionId);
+    this.responseClaims.delete(interactionId);
+    this.removeFromSessionIndex(entry.sessionId, interactionId);
+    return entry;
+  }
+
+  private completedKey(sessionId: string, interactionId: string): string { return `${sessionId}\u0000${interactionId}`; }
+
+  getCompleted(sessionId: string, interactionId: string): CompletedInteractionResponse | undefined {
+    const key = this.completedKey(sessionId, interactionId);
+    const value = this.completed.get(key);
+    if (value && Date.now() - value.completedAt > INTERACTION_TIMEOUT_MS) { this.completed.delete(key); return undefined; }
+    return value;
+  }
+
+  recordCompleted(sessionId: string, interactionId: string, requestId: string, response: InteractionResponse, version = ++this.version, order = version, userId?: string): void {
+    this.responseClaims.delete(interactionId);
+    this.completed.set(this.completedKey(sessionId, interactionId), { sessionId, interactionId, requestId, response, completedAt: Date.now(), version, order, ...(userId ? { userId } : {}) });
+  }
+
+  /** Atomic in-process winner election; durable CAS remains authoritative across processes. */
+  claimResponse(interactionId: string, requestId: string, response: InteractionResponse): 'winner' | 'duplicate' | 'conflict' {
+    const existing = this.responseClaims.get(interactionId);
+    if (!existing) {
+      this.responseClaims.set(interactionId, { requestId, response });
+      return 'winner';
+    }
+    return existing.requestId === requestId && JSON.stringify(existing.response) === JSON.stringify(response) ? 'duplicate' : 'conflict';
+  }
+
+  releaseResponseClaim(interactionId: string, requestId: string): void {
+    if (this.responseClaims.get(interactionId)?.requestId === requestId) this.responseClaims.delete(interactionId);
+  }
+
+  classifyCompleted(sessionId: string, interactionId: string, response: InteractionResponse): 'missing' | 'duplicate' | 'conflict' {
+    const completed = this.getCompleted(sessionId, interactionId);
+    if (!completed) return 'missing';
+    return JSON.stringify(completed.response) === JSON.stringify(response) ? 'duplicate' : 'conflict';
+  }
 
   create(
     interactionId: string,
@@ -61,20 +137,25 @@ class InteractionStore {
       displayName?: string;
       toolInput?: Record<string, unknown>;
       planContent?: string;
+      onExpired?: (entry: PendingInteraction) => void;
     },
   ): Promise<InteractionResponse> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (this.pending.has(interactionId)) {
-          this.pending.delete(interactionId);
+        const expired = this.take(interactionId);
+        if (expired) {
+          expired.onExpired?.(expired);
           reject(new Error('Interaction timed out'));
         }
       }, INTERACTION_TIMEOUT_MS);
       timer.unref();
 
+      const version = ++this.version;
       this.pending.set(interactionId, {
         resolve, reject, type,
         createdAt: Date.now(),
+        version,
+        order: version,
         timer,
         sessionId: options?.sessionId,
         runId: options?.runId,
@@ -89,7 +170,9 @@ class InteractionStore {
         displayName: options?.displayName,
         toolInput: options?.toolInput,
         planContent: options?.planContent,
+        onExpired: options?.onExpired,
       });
+      this.addToSessionIndex(options?.sessionId, interactionId);
     });
   }
 
@@ -103,29 +186,26 @@ class InteractionStore {
   }
 
   resolve(interactionId: string, response: InteractionResponse): boolean {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return false;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.resolve(response);
     return true;
   }
 
-  /** 终止并移除交互，避免遗留 Promise 永久占用旧执行协程。 */
+  /** 终止并移除交互及响应 claim，避免遗留 Promise 永久占用旧执行协程。 */
   discard(interactionId: string, reason: string): boolean {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return false;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.reject(new Error(reason));
     return true;
   }
 
   reject(interactionId: string, reason: string): void {
-    const entry = this.pending.get(interactionId);
+    const entry = this.take(interactionId);
     if (!entry) return;
     clearTimeout(entry.timer);
-    this.pending.delete(interactionId);
     entry.reject(new Error(reason));
   }
 
@@ -139,7 +219,7 @@ class InteractionStore {
       if (!entry) continue;
       if (shouldSurviveDisconnect(entry)) continue;
       clearTimeout(entry.timer);
-      this.pending.delete(id);
+      this.take(id);
       entry.reject(new Error(reason));
     }
   }
@@ -151,12 +231,22 @@ class InteractionStore {
     }
   }
 
+  /** O(1) by-session lookup; the oldest server-ordered pending interaction is canonical. */
+  getActiveInteraction(sessionId: string): { interactionId: string; type: PendingInteraction['type']; version: number; order: number; createdAt: number } | undefined {
+    const interactionId = this.pendingBySession.get(sessionId)?.[0];
+    if (!interactionId) return undefined;
+    const entry = this.pending.get(interactionId);
+    return entry ? { interactionId, type: entry.type, version: entry.version, order: entry.order, createdAt: entry.createdAt } : undefined;
+  }
+
   /**
    * 获取指定会话所有 pending 的可重连交互
    */
   getPendingInteractions(sessionId: string): Array<{
     interactionId: string;
-    type: 'ask_user' | 'permission_request';
+    type: 'ask_user' | 'permission_request' | 'approval';
+    version: number;
+    order: number;
     runId?: string;
     toolCallId?: string;
     invocationId?: string;
@@ -169,7 +259,9 @@ class InteractionStore {
   }> {
     const result: Array<{
       interactionId: string;
-      type: 'ask_user' | 'permission_request';
+      type: 'ask_user' | 'permission_request' | 'approval';
+      version: number;
+      order: number;
       runId?: string;
       toolCallId?: string;
       invocationId?: string;
@@ -186,6 +278,8 @@ class InteractionStore {
       result.push({
         interactionId: id,
         type: entry.type,
+        version: entry.version,
+        order: entry.order,
         runId: entry.runId,
         toolCallId: entry.toolCallId,
         invocationId: entry.invocationId,

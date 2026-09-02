@@ -53,7 +53,7 @@ export function QueuedMessageBar({
             : entry.status === "queued"
               ? entry.deliveryMode === "steer"
                 ? "显式插话，将在安全边界处理"
-                : `已排队${entry.queuePosition ? ` · 第 ${entry.queuePosition} 位` : ""}`
+                : `已排队${entry.queuePosition !== undefined ? ` · 第 ${entry.queuePosition} 位` : ""}`
               : entry.status === "cancelled"
                 ? (entry.reason || "已撤销")
                 : (entry.reason || "发送失败");

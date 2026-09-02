@@ -6,7 +6,7 @@ import type { TtsState } from "@/hooks/useTtsPlayer";
 import type { ModelList } from "@/types/models";
 import type { UseTtsPlayerReturn } from "@/hooks/useTtsPlayer";
 import type { TokenUsage } from "@/lib/sessionsApi";
-import type { AskUserAnswers, ContextUsageData } from "@agent/shared";
+import type { AgentTargetUnavailableReason, AskUserAnswers, ContextUsageData } from "@agent/shared";
 import type { ConnectionState } from "@/hooks/useConnectionState";
 import type { AgentProfile, OrgAgentSummary, SessionParticipants } from "@agent/shared";
 import type { SettingsSectionId } from "@/types/settings";
@@ -29,9 +29,13 @@ export interface LayoutProps {
   startOrgAgentSession: (agentId: string, groupId?: string | null) => void;
   /** 当前会话绑定的企业专家（含草稿态）；null = 个人通用 Agent 会话 */
   activeOrgAgent: OrgAgentSummary | null;
-  /** 当前企业专家会话已停用、删除或取消指派，输入区应只读 */
+  /** 当前会话 target 不可用时输入区只读。 */
   activeOrgAgentReadOnly: boolean;
-  /** 当前用户被指派且启用的企业专家列表 */
+  /** 服务端投影的结构化只读原因。 */
+  activeAgentTargetUnavailableReason?: AgentTargetUnavailableReason;
+  /** Header label derived only from persisted/pending canonical target. */
+  activeAgentTargetLabel?: string;
+  /** 当前用户被指派且启用的企业专家列表。 */
   myOrgAgents: OrgAgentSummary[];
   /** 当前用户是否可使用个人通用 Agent（admin 始终为 true） */
   personalAgentEnabled: boolean;

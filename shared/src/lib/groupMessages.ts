@@ -213,6 +213,15 @@ export function groupMessages(
       continue;
     }
 
+    if (sectioning && currentSection && msg.type === 'file_download' && msg.artifactId) {
+      // 正式 deliver 的 Artifact 是用户交付物：主区负责发现和下载，步骤详情保留来源归属。
+      // 两处只是同一消息的展示投影，不复制 Artifact 本体；未登记的普通文件仍只属于步骤过程。
+      flushGroup(false);
+      sink().push(msg);
+      currentSectionMainTail.push(msg);
+      continue;
+    }
+
     if (sectioning && currentSection && msg.type === 'text' && msg.finalOutput) {
       // finalOutput 由 run 成功结束事件追认，比模型调用 TodoWrite 的先后顺序更可信。
       // 模型漏掉终态快照，或先输出总结、后补 TodoWrite 时，最终正文都不能被步骤详情吞掉。

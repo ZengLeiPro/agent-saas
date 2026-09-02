@@ -1,6 +1,19 @@
 export type {
+  AgentTarget,
+  AgentTargetAvailability,
+  AgentTargetCatalog,
+  AgentTargetCatalogAdapterResult,
+  AgentTargetOption,
+  AgentTargetSelection,
+  AgentTargetUnavailableReason,
+  AgentTargetUnavailableReasonCode,
+} from "../lib/agentTarget";
+
+// Shared public message contracts.
+export type {
   MessageItem,
   MessageItemInput,
+  MessageAttachmentDisplay,
   AskUserAnswerValue,
   AskUserAnswers,
   SubagentStatus,
@@ -9,6 +22,7 @@ export type {
   BusinessStepSection,
   RenderItem,
 } from "./message";
+// Message render/runtime exports.
 export { ACTIVITY_TYPES } from "./message";
 
 export type {
@@ -16,6 +30,8 @@ export type {
   SessionOwnerInfo,
   SessionParticipants,
   ApiSessionListItem,
+  SessionListActiveInteraction,
+  SessionListPage,
   ApiSessionDetail,
   TokenUsage,
   ContextUsageAccuracy,
@@ -39,8 +55,19 @@ export type {
   SessionSearchResponse,
 } from "./search";
 
-export type { WsBlockType, WsAskUserQuestion, WsEvent } from "./ws";
-export type { RuntimeFailureKind, RuntimeRecoveryAction } from "./runtimeFailure";
+export type {
+  WsBlockType,
+  WsAskUserQuestion,
+  WsEvent,
+  WsSyncOverflowRecovery,
+  WsSyncPendingInteractionSnapshot,
+  WsSyncRuntimeSnapshot,
+  WsSyncSessionSnapshot,
+} from "./ws";
+export type {
+  RuntimeFailureKind,
+  RuntimeRecoveryAction,
+} from "./runtimeFailure";
 
 export type {
   AuthUser,
@@ -158,7 +185,9 @@ export {
   TASKBOARD_EXECUTION_PURPOSES,
   TASKBOARD_VISIBILITIES,
   TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_DEFAULT_STAGE_PROMPT,
+  TASKBOARD_DEFAULT_WORK_PROMPT,
+  TASKBOARD_DEFAULT_REVIEW_PROMPT,
+  TASKBOARD_DEFAULT_MERGE_PROMPT,
   TASKBOARD_STAGE_DEFAULT_PROMPTS,
 } from "./taskboard";
 export type {
@@ -245,6 +274,7 @@ export type {
   OrgAgentRuntimePolicy,
   OrgAgentRecord,
   OrgAgentSummary,
+  OrgAgentMineResponse,
 } from "./orgAgent";
 
 export type {

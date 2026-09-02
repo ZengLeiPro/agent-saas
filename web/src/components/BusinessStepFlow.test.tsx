@@ -89,12 +89,13 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(card?.className).toContain("md:max-w-[min(760px,100%)]");
   });
 
-  it("头部显示完成数和整体状态，不再显示“共 N 步”", () => {
-    render(<BusinessStepFlow event={event()} sessionId="session-1" selected={null} />);
+  it("头部只显示标题、完成数和整体状态，不再显示装饰图标或“共 N 步”", () => {
+    const { container } = render(<BusinessStepFlow event={event()} sessionId="session-1" selected={null} />);
 
     expect(screen.getByText("1/3")).toBeTruthy();
     expect(screen.getByText("运行中")).toBeTruthy();
     expect(screen.queryByText("共 3 步")).toBeNull();
+    expect(container.querySelector("header svg")).toBeNull();
   });
 
   it("主行只显示 content、状态和两位序号，不泄露 activeForm 或详情字段", () => {
@@ -120,6 +121,22 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(screen.getByText("核验订单").className).toContain("[-webkit-line-clamp:2]");
     expect(screen.getByText("核验订单").className).toContain("break-words");
     expect(screen.getByText("核验订单").getAttribute("title")).toBe("核验订单");
+  });
+
+  it("completed warning 在主导航按绿色完成展示，只有失败语义使用红色", () => {
+    const { rerender } = render(
+      <BusinessStepFlow event={event({ todos: [todo("completed", "warn")], stepCount: 1 })} selected={null} />,
+    );
+
+    const completed = screen.getByLabelText("已完成");
+    expect(completed.querySelector("svg")?.getAttribute("class")).toContain("text-success");
+    expect(screen.queryByLabelText("已完成，有例外")).toBeNull();
+
+    rerender(
+      <BusinessStepFlow event={event({ todos: [todo("completed", "fail")], stepCount: 1 })} selected={null} />,
+    );
+    const failed = screen.getByLabelText("完成结果异常");
+    expect(failed.querySelector("svg")?.getAttribute("class")).toContain("text-destructive");
   });
 
   it("连接线按行锚定图标中心，首尾不越界，单步骤不显示多余线段", () => {
@@ -152,7 +169,9 @@ describe("BusinessStepFlow 主导航卡", () => {
     const row = screen.getByRole("button", { name: /核验订单/ });
 
     expect(row.getAttribute("aria-selected")).toBe("false");
+    expect(row.getAttribute("data-business-step-selected")).toBe("false");
     expect(row.getAttribute("aria-current")).toBe("step");
+    expect(row.className).not.toContain("bg-primary/5");
     expect(row.getAttribute("aria-controls")).toBe("business-step-detail-panel");
     fireEvent.click(row);
     expect(onSelect).toHaveBeenCalledWith(selection);
@@ -162,8 +181,11 @@ describe("BusinessStepFlow 主导航卡", () => {
     );
     const selectedCurrent = screen.getByRole("button", { name: /核验订单/ });
     expect(selectedCurrent.getAttribute("aria-selected")).toBe("true");
+    expect(selectedCurrent.getAttribute("data-business-step-selected")).toBe("true");
     expect(selectedCurrent.getAttribute("aria-current")).toBe("step");
-    expect(selectedCurrent.className).toContain("before:bg-primary");
+    expect(selectedCurrent.className).toContain("bg-primary/5");
+    expect(selectedCurrent.className).not.toContain("before:bg-primary");
+    expect(selectedCurrent.className).not.toContain("before:w-0.5");
     expect(selectedCurrent.className).not.toContain("ring-primary/25");
     expect(selectedCurrent.className).toContain("focus-visible:ring-2");
   });

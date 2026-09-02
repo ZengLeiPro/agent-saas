@@ -64,20 +64,32 @@ bash -lc 'AZEROTH_CLI_FORCE=1 source "$KY_DATA_QUERY_SKILL_DIR/scripts/ensure-cl
 
 如果 `source` 报"No such file or directory"，先用 `pwd` 和 `ls -la .ky-agent/skills/ky-data-query/scripts/` 确认是否在 workspace 根、skill 是否已同步。仍不存在才停止并报告 agent-saas skill 挂载/安装问题；**不要尝试自己复制脚本到 workspace**。
 
-## 可选：CLI 覆盖度自检
+## 能力发现协议（所有业务域强制）
 
-不确定某实体是否被 CLI 暴露，或行为反常时跑一次：
+**判断某项能力是否存在时，必须先查 `azeroth capabilities`。不得因为 `azeroth entities` 没有某个名字，就断言该业务域未接入。** 两者边界不同：
+
+- `azeroth capabilities`：完整的 Agent-facing 能力目录，包含标准实体、reporting、config 与手写命令组；
+- `azeroth entities`：仅列由 shared schema 自动发现的标准 CRUD/只读实体，是 `capabilities` 的子集；
+- `azeroth <command> --help`：确认已发现命令组的实际子命令和参数；
+- `azeroth describe <entity> --action query|response|create|update`：读取标准实体字段契约；
+- 业务域自己的目录命令（如 `xiaohongshu datasets`）：发现服务端动态数据集，数量和可用性不得写死在 Skill。
+
+| 用户意图                           | 命令类型                      | 第一发现入口                            | 详细手册                                                        |
+| ---------------------------------- | ----------------------------- | --------------------------------------- | --------------------------------------------------------------- |
+| 客户、商机、订单、回款、项目、工时 | 标准 entity / entity extras   | `capabilities` → `describe`             | 本文 CRM/项目章节、[schema.md](references/schema.md)            |
+| 官网访问、UTM、SEO                 | entity reporting              | `capabilities` → `web-events` / `seo-*` | 本文官网埋点 / SEO 章节                                         |
+| 小红书聚光投放、笔记、关键词、转化 | reporting 命令组 + 动态数据集 | `capabilities` → `xiaohongshu datasets` | [xiaohongshu-spotlight.md](references/xiaohongshu-spotlight.md) |
+| 销售缺口与处置待办                 | entity extras                 | `capabilities` → `sales-action-items`   | [sales-action-items.md](references/sales-action-items.md)       |
+| 非标准业务动作                     | 手写命令组 / entity extras    | `capabilities` → `<command> --help`     | 本文“非标 action”章节                                           |
+
+覆盖异常或命令行为反常时再运行：
 
 ```bash
-azeroth doctor          # 覆盖度报告：shared schema / controller / Prisma / CLI extras / 装饰器漂移 五方比对
-azeroth entities        # 当前 CLI 实际可用的实体清单（JSON）
-azeroth capabilities    # Agent-facing 能力清单：operations / permissions / risk
-azeroth doctor --strict # CI 回归用：extras_gap_strong + ghost_extras + decorator_missing 任一非 0 即 exit 1
+azeroth doctor          # shared schema / controller / Prisma / CLI extras / 装饰器漂移五方比对
+azeroth doctor --strict # ghost_extras / decorator_missing 等任一强错误即 exit 1
 ```
 
-2026-06-13 后 doctor 同时检测「CLI extras 覆盖非标 endpoint」与「server 端权限装饰器完整性」，并对 ghost_extras（CLI 指向不存在 endpoint）和 decorator_missing（漏挂权限装饰器）有 0 容忍——遇到提示有 ghost 命令时直接停手报给用户，不要原样重试。
-
-**实时第一信源顺序**：`azeroth capabilities` 判断能力是否存在，`azeroth <entity> --help` 看实际子命令与参数，`azeroth describe <entity> --action query|response|create|update` 看字段。本文档是业务操作指南，不是完整 CLI 规格副本；与实时输出冲突时以实时输出为准，并在完成任务后回补本 skill。
+遇到 ghost 命令直接停止并报告，不要原样重试。本文档只固化发现流程与业务纪律，不复制完整 CLI 规格；与实时输出冲突时以实时输出为准。
 
 ## ⚠ 默认不要查询的实体（CLI 可见 ≠ 本 skill 默认范围）
 
@@ -145,7 +157,7 @@ duckdb --version      # 期望 ≥ 0.10
 
 若 `duckdb` 缺失，停止并报告 ACS 镜像依赖缺口；不要用 Homebrew、系统包管理器或全局安装命令在任务运行期修。
 
-## 三步法
+## 标准实体三步法
 
 > 小红书聚光不是标准 entity CRUD，不能套用 `<entity> list --all`。涉及聚光时跳到「小红书聚光完整投放数据」专节，使用动态数据集目录与 `query-dataset --all`。
 
@@ -231,7 +243,7 @@ CREATE OR REPLACE VIEW customers AS
 
 ## 自检清单（写 SQL 前必走）
 
-1. **软删除过滤（双保险）**：server `list` 默认已过滤软删（详见 § 查询规范 Part 2 § 1），SQL 仍**必须**对含 `deletedAt` 字段的实体加 `WHERE "deletedAt" IS NULL`——0 风险，防 server 行为漂移 + 防误用 trash 接口。响应里不含 `deletedAt` 的实体（employees / departments / users / roles / dingtalk_*）不要加，会报 `column not found`。不确定就跑 `azeroth describe <entity> --action response`。
+1. **软删除过滤（双保险）**：server `list` 默认已过滤软删（详见 § 查询规范 Part 2 § 1），SQL 仍**必须**对含 `deletedAt` 字段的实体加 `WHERE "deletedAt" IS NULL`——0 风险，防 server 行为漂移 + 防误用 trash 接口。响应里不含 `deletedAt` 的实体（employees / departments / users / roles / dingtalk\_\*）不要加，会报 `column not found`。不确定就跑 `azeroth describe <entity> --action response`。
 2. **JOIN key**：`customerId` / `opportunityId` / `saleOrderId` / `chargerId` 都是 string，对齐名字不要张冠李戴。
 3. **类型 CAST**：日期显式 `::TIMESTAMP` 或 `::DATE`；Decimal 金额统一 `CAST(x AS DECIMAL(18,2))`。
 4. **NULL 处理**：`SUM()` 和 `COUNT(expr)` 都可能出 NULL，用 `COALESCE(..., 0)` 兜底。
@@ -588,72 +600,17 @@ azeroth approvals get-change-request <id>                  # 查询变更申请�
 
 > 上述非标 action 命令均**不在** ky-data-query"业务查询默认范围"内（ky-data-query 主要做 CRM/项目/工时只读分析），仅当用户**明确要求**做批量转交、发起退款、红冲、整年发布、薪资导入、用户状态切换、工时补录、组织树调整、工单流转、变更申请等业务操作时才用，执行前按"写操作原则"段展示命令与影响对象等待确认。只读类（如 `departments tree` / `project-tickets stats` / `effort-records my-timesheet` / `approvals get-change-request` / `crm-products trash` / `system-params get*` / `holidays work-dates`）作为常规分析入口可直接用，无需额外确认。
 
-## 小红书聚光完整投放数据（动态数据集，非 entity CRUD）
+## 小红书聚光投放数据（动态数据集，非 entity CRUD）
 
-用户提到“小红书投放、聚光、广告消耗、计划/单元/创意/笔记/关键词/搜索词、私信咨询或转化归因”时使用本流程。这里的完整性来自服务端 registry 动态目录：**不要硬编码数据集清单，也不要只查旧的 5 张本地日报。**
+用户提到“小红书投放、聚光、广告消耗、计划/单元/创意/笔记/关键词/搜索词、私信咨询或转化归因”时，直接加载 [references/xiaohongshu-spotlight.md](references/xiaohongshu-spotlight.md)，按其中的“目录发现 → 单项契约 → 单页探测 → 全量导出 → 覆盖分析”执行。
 
-完整操作手册、覆盖矩阵与分析口径见 [references/xiaohongshu-spotlight.md](references/xiaohongshu-spotlight.md)。实时第一信源依次是：
+主 Skill 只保留三条路由纪律：
 
-1. `azeroth xiaohongshu datasets --advertiser-id <id>`：发现全部数据集、授权状态和参数摘要；
-2. `azeroth xiaohongshu describe-dataset <dataset> --advertiser-id <id>`：读取单项完整契约；
-3. `azeroth xiaohongshu query-dataset --help`：确认当前 CLI 的导出/续传参数。
+1. 先用 `azeroth capabilities` 确认 `xiaohongshu` reporting 命令组；**不得因 `entities` 无此项而判定未接入**；
+2. 再用 `xiaohongshu connection / advertisers / datasets` 获取当前连接、广告主与动态目录；不可查询项是能力边界，不是 0 数据；
+3. 操作清单、数据集数量、字段和可用状态均以实时 CLI/服务端返回为准，不在本文硬编码。
 
-若上述命令不存在，先按第 0 步设置 `AZEROTH_CLI_FORCE=1` 强制刷新一次 CLI；仍不存在就报告“服务端/CLI 发布尚未同步”，**不得退回旧命令后声称完成了全量分析**。
-
-### 强制查询流程（命令模板）
-
-```bash
-export SESS="$(pwd)/.cache/azq/$(date +%Y%m%d-%H%M)"
-mkdir -p "$SESS/xiaohongshu"
-
-# 1) 先确定真实身份、连接和广告主 ID
-azeroth whoami
-azeroth xiaohongshu connection > "$SESS/xiaohongshu/connection.json"
-azeroth xiaohongshu advertisers > "$SESS/xiaohongshu/advertisers.json"
-# 先从 advertisers.json 选择目标广告主，并在运行本代码块前 export ADV=<真实 advertiserId>。
-: "${ADV:?请先设置真实 advertiserId；不能猜测}"
-
-# 2) 目录快照：不可查询/缺 scope 是覆盖边界，不是“数据为 0”
-azeroth xiaohongshu datasets --advertiser-id "$ADV" \
-  > "$SESS/xiaohongshu/catalog.json"
-
-# 3) 描述所需数据集，再构造严格 JSON；额外官方参数必须放 params 内
-azeroth xiaohongshu describe-dataset report.keyword.offline --advertiser-id "$ADV" \
-  > "$SESS/xiaohongshu/report.keyword.offline.contract.json"
-# 以下日期仅示例，必须替换为用户要求的明确范围。
-cat > "$SESS/xiaohongshu/report.keyword.offline.query.json" <<EOF
-{
-  "advertiserId": "$ADV",
-  "startDate": "2026-08-01",
-  "endDate": "2026-08-29",
-  "dataCaliber": 0,
-  "page": 1,
-  "pageSize": 100,
-  "params": {}
-}
-EOF
-
-# 4) 先探一页核对字段/汇总/口径，再完整导出
-azeroth xiaohongshu query-dataset report.keyword.offline \
-  --json "$SESS/xiaohongshu/report.keyword.offline.query.json" \
-  > "$SESS/xiaohongshu/report.keyword.offline.probe.json"
-azeroth xiaohongshu query-dataset report.keyword.offline \
-  --json "$SESS/xiaohongshu/report.keyword.offline.query.json" \
-  --all --page-size 100 \
-  --output "$SESS/xiaohongshu/report.keyword.offline.ndjson" \
-  --metadata-output "$SESS/xiaohongshu/report.keyword.offline.metadata.json"
-```
-
-`--all` 的输出文件只有行数据 NDJSON；sidecar 顶层 `dataset.coreFields` 是预期核心字段、顶层 `fields` 是实际字段并集，逐页汇总/附加信息/追踪标识分别在 `pages[].aggregation`、`pages[].metadata`、`pages[].requestId`，`ndjson` 保存 SHA-256/字节数/行数。分析前确认 sidecar 的 `status === "complete"`；失败时执行 stderr 给出的原样续传命令，不能把半成品当全量。
-
-### 完整分析的最低标准
-
-- 先做覆盖矩阵：`datasetId / queryable / 是否导出 / 行数 / 日期范围 / dataCaliber / 未导出原因`。`scope_missing`、白名单、账户角色或契约限制必须单列，不能按 0 行处理。
-- 报表必须显式给 `startDate/endDate`；同一分析统一 `dataCaliber`。0（计费/点击时间）与 1（转化时间）若都查，必须分栏，禁止直接相加。
-- 有 `parameters[].source === "params" && required === true` 的数据集，先从基础数据集取得 ID/上下文，再把值放进 `params`。禁止猜 ID、空数组占位或跳过后仍称“完整”。
-- 不跨层级、跨来源重复求和：账户、计划、单元等通常是同一消耗的不同切片；`local_report` 与 `official_api` 的同层数据也只能整段选择一个 `complete` 来源作为总量事实层，另一来源只做核对，禁止按日/按键 `COALESCE` 补缺拼接。
-- 官方字段是动态的。写 SQL 前先读 probe，以及 sidecar 的顶层 `fields` 与 `dataset.coreFields`，不要凭旧字段表猜名字或单位；保留原始 NDJSON 和 metadata 作为证据。
-- 用户只问单一问题时按需查询相关数据集；用户要求“完整分析”时才建立目录覆盖矩阵并分层拉取，避免无目的轰炸全部接口。
+命令不存在时按第 0 步强制刷新 CLI；仍不存在才报告发布未同步。详细参数、`query-dataset --all`、续传、sidecar 完整性、口径与覆盖矩阵均以下沉手册为准。
 
 ## 官网埋点 / SEO 监测（事件流与第三方数据快照）
 

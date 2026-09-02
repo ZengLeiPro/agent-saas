@@ -9,14 +9,17 @@ import { checkTenantAccess } from "../data/tenants/access.js";
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
 import { getEffectivePlatformCapabilities } from "./platformGovernance.js";
 import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
+import type { AuthEpochAuthority } from './authEpochAuthority.js';
 
 export { isPlatformAdmin } from "./types.js";
 
-// 注意：中间件通过 app.use('/api', ...) 挂载，req.path 不含 /api 前缀
+// 中间件通过 app.use('/api', ...) 挂载，req.path 不含 /api 前缀。
 const PUBLIC_ROUTES: Array<{ method?: string; path: string | RegExp }> = [
   { method: "POST", path: "/auth/login" },
   { method: "POST", path: "/auth/sms/send-code" },
   { method: "POST", path: "/auth/sms/login" },
+  // M30-01 logout verifies bearer inside the router so replay remains idempotent after fencing.
+  { method: 'POST', path: '/auth/logout' },
   // 自助注册试用（官网联动）：status/send-code/register 均免登录；
   // enabled 开关与频控在 routes/signup.ts 内收口
   { path: /^\/signup\// },
@@ -66,6 +69,7 @@ export function createAuthMiddleware(
     getMembership(tenantId: string, userId: string): Promise<{ persona: 'member' | 'org_admin'; status: 'active' | 'disabled' } | null>;
     getPlatformAdmin(userId: string): Promise<{ status: 'active' | 'disabled' } | null>;
   },
+  authEpochAuthority?: AuthEpochAuthority,
 ) {
   const expiresIn = tokenExpiresIn || "30d";
 
@@ -109,6 +113,32 @@ export function createAuthMiddleware(
             .status(403)
             .json({ error: "账号已被禁用", code: "USER_DISABLED" });
           return;
+        }
+
+        // M30-01: token/session authority is checked before any business authorization.
+        if (authEpochAuthority) {
+          if (payload.authEpoch === undefined || payload.generation === undefined) {
+            const upgraded = authEpochAuthority.upgradeLegacy(record.id);
+            if (!upgraded) {
+              res.status(401).json({ error: 'Legacy token can no longer be upgraded', code: 'AUTH_EPOCH_REQUIRED' });
+              return;
+            }
+            payload.authEpoch = upgraded.authEpoch;
+            payload.generation = upgraded.generation;
+            const upgradedToken = jwt.sign({
+              sub: record.id,
+              username: record.username,
+              role: record.role,
+              tenantId: record.tenantId,
+              ...upgraded,
+            }, jwtSecret, { expiresIn } as SignOptions);
+            res.setHeader('X-Refresh-Token', upgradedToken);
+            res.setHeader('X-Auth-Epoch', String(upgraded.authEpoch));
+            res.setHeader('X-Auth-Generation', String(upgraded.generation));
+          } else if (!authEpochAuthority.validates(record.id, payload)) {
+            res.status(401).json({ error: 'Authentication generation revoked', code: 'AUTH_EPOCH_REVOKED' });
+            return;
+          }
         }
 
         // 使用数据库中的真实角色与 tenantId，而非 token 中可能过期的声明
@@ -165,6 +195,8 @@ export function createAuthMiddleware(
                 username: record.username,
                 role: payload.role,
                 tenantId: payload.tenantId,
+                ...(payload.authEpoch !== undefined ? { authEpoch: payload.authEpoch } : {}),
+                ...(payload.generation !== undefined ? { generation: payload.generation } : {}),
               },
               jwtSecret,
               { expiresIn } as SignOptions,

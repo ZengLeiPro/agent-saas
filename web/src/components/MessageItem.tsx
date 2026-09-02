@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo, lazy, Suspense } from 'react';
-import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic, Ban } from 'lucide-react';
+import { Copy, Check, Volume2, VolumeX, Loader2, Pause, Play, Download, GitFork, Paperclip, ImageIcon, Mic } from 'lucide-react';
 import { CATEGORY_ICON } from '@/lib/fileCategoryIcons';
 import { MessageItem as MessageItemType, formatFileSize } from './types';
 import type { AskUserAnswers } from '@agent/shared';
@@ -24,9 +24,11 @@ import { GuardrailAppealButton } from './GuardrailAppealButton';
 import type { TtsState } from '@/hooks/useTtsPlayer';
 import type { UseVoicePlayerReturn } from '@/hooks/useVoicePlayer';
 import type { Components } from 'react-markdown';
-import { EntityIcons } from '@/lib/icons';
-import { requestOpenBillingBadge } from '@/lib/billingBadgeBus';
 import { publicSessionShareFileUrl } from '@/lib/sessionShareApi';
+import {
+  SystemErrorMessage,
+} from './SystemErrorMessage';
+
 import { ImageLightbox } from './ImageLightbox';
 const LazyArtifactPreviewDialog = lazy(() => import('@/components/artifacts/ArtifactPreviewDialog').then(module => ({ default: module.ArtifactPreviewDialog })));
 import "katex/dist/katex.min.css";
@@ -428,57 +430,89 @@ function FileDownloadCard({ fileName, filePath, fileSize, filePreview, owner, ar
  * 存量消息无 relativePath，保持静态展示。
  */
 function UserAttachmentChip({ att, filePreview }: {
-  att: { name: string; isImage?: boolean; relativePath?: string };
+  att: { name: string; attachmentId?: string; mimeType?: string; size?: number; isImage?: boolean; relativePath?: string };
   filePreview: ReturnType<typeof useFilePreview> | null;
 }) {
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const Icon = att.isImage ? ImageIcon : Paperclip;
-  const path = att.relativePath;
-  const previewable = !att.isImage && !!getPreviewFileType(att.name) && !!filePreview;
-  const clickable = !!path;
+  const canonical = !!att.attachmentId;
+  const path = canonical ? undefined : att.relativePath;
+  const legacyPreviewable = !att.isImage && !!path && !!getPreviewFileType(att.name) && !!filePreview;
+  const clickable = canonical || !!path;
 
-  const handleClick = () => {
+  const handleClick = async () => {
+    setError(null);
+    if (att.attachmentId) {
+      try {
+        const response = await authFetch(`/api/attachments/${encodeURIComponent(att.attachmentId)}/content${att.isImage ? '' : '?download=1'}`);
+        if (!response.ok) throw new Error(response.status === 410 ? '附件已过期或删除' : '附件不可用');
+        const blobUrl = URL.createObjectURL(await response.blob());
+        if (att.isImage) {
+          setPreviewSrc(blobUrl);
+        } else {
+          const anchor = document.createElement('a');
+          anchor.href = blobUrl;
+          anchor.download = att.name;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(blobUrl);
+        }
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '附件不可用');
+      }
+      return;
+    }
     if (!path) return;
     if (att.isImage) {
       if (filePreview?.shareToken) {
         setPreviewSrc(publicSessionShareFileUrl(filePreview.shareToken, path));
         return;
       }
-      void resolveImageSrc(path, filePreview?.owner)
-        .then(setPreviewSrc)
-        .catch(() => setPreviewSrc(path));
-    } else if (previewable && filePreview) {
+      void resolveImageSrc(path, filePreview?.owner).then(setPreviewSrc).catch(() => setError('附件不可用'));
+    } else if (legacyPreviewable && filePreview) {
       filePreview.openPreview(path, filePreview.owner);
+    } else if (filePreview?.shareToken) {
+      void shareFileDownload(filePreview.shareToken, path, att.name);
     } else {
-      if (filePreview?.shareToken) {
-        void shareFileDownload(filePreview.shareToken, path, att.name);
-      } else {
-        void authFetchDownload(path, att.name, filePreview?.owner);
-      }
+      void authFetchDownload(path, att.name, filePreview?.owner);
     }
   };
 
+  const label = canonical ? (att.isImage ? `查看图片：${att.name}` : `下载附件：${att.name}`) : att.name;
+  const content = (
+    <>
+      <Icon className="size-3 shrink-0" aria-hidden="true" />
+      <span className="max-w-[200px] truncate">{att.name}</span>
+      {att.mimeType && <span className="text-[10px] opacity-70">{att.mimeType.split('/').at(-1)}</span>}
+      {att.size !== undefined && <span className="text-[10px] opacity-70">{formatFileSize(att.size)}</span>}
+    </>
+  );
   return (
     <>
-      <span
-        className={cn(
-          "inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground",
-          clickable && "cursor-pointer transition-colors hover:bg-foreground/[0.12] hover:text-foreground",
-        )}
-        onClick={clickable ? handleClick : undefined}
-        role={clickable ? "button" : undefined}
-        title={clickable
-          ? (att.isImage ? "点击查看图片" : previewable ? "点击预览" : "点击下载")
-          : undefined}
-      >
-        <Icon className="size-3 shrink-0" />
-        <span className="max-w-[200px] truncate">{att.name}</span>
-      </span>
+      {clickable ? (
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.12] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => void handleClick()}
+          aria-label={label}
+          title={label}
+        >
+          {content}
+        </button>
+      ) : (
+        <span className="inline-flex items-center gap-1 rounded bg-foreground/[0.06] px-1.5 py-0.5 text-xs text-muted-foreground">{content}</span>
+      )}
+      {error && <span className="text-xs text-destructive" role="alert">{error}</span>}
       {previewSrc && (
         <ImageLightbox
           src={previewSrc}
           alt={att.name}
-          onClose={() => setPreviewSrc(null)}
+          onClose={() => {
+            if (previewSrc.startsWith('blob:')) URL.revokeObjectURL(previewSrc);
+            setPreviewSrc(null);
+          }}
         />
       )}
     </>
@@ -644,7 +678,10 @@ interface MessageItemProps {
   /** user-voice 消息的播放状态（从外部注入以支持 memo） */
   voicePlayState?: import('@/hooks/useVoicePlayer').VoicePlayState;
   /** 是否显示思考、工具、技能/子任务等执行细节。 */
-  debugMode?: boolean; sessionId?: string | null;
+  debugMode?: boolean;
+  /** 仅表示共享三重门已授权 raw tool/error payload。 */
+  rawPresentationMode?: boolean;
+  sessionId?: string | null;
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -662,7 +699,9 @@ export const MessageItem = memo(function MessageItem({
   ttsIsActive: ttsIsActiveProp,
   voicePlayer,
   voicePlayState,
-  debugMode = true, sessionId,
+  debugMode = true,
+  rawPresentationMode = debugMode,
+  sessionId,
 }: MessageItemProps) {
   const filePreview = useFilePreview();
   const msgKey = `msg-${index}`;
@@ -959,9 +998,6 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (message.type === "tool_use") {
-    // 有「给人看」摘要时，非 debug 视图也呈现——摘要正是为业务观众准备的。
-    // 无摘要则维持原行为（占位符），不把原始 payload 推给全量客户。
-    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder isActive={message.streaming || message.executionStatus === "running" || (!message.resultReady && message.executionStatus !== "failed" && message.executionStatus !== "cancelled")} durationMs={message.durationMs} hasIssue={message.executionStatus === "failed"} />;
     return (
       <ToolBlock
         toolName={message.toolName}
@@ -976,19 +1012,19 @@ export const MessageItem = memo(function MessageItem({
         {...(message.presentation ? { presentation: message.presentation } : {})}
         {...(message.toolMetadata ? { toolMetadata: message.toolMetadata } : {})}
         {...(message.defaultExpanded ? { defaultExpanded: true } : {})}
-        debugMode={debugMode}
+        debugMode={rawPresentationMode}
+        onRecovery={onRetry ? () => onRetry(message) : undefined}
       />
     );
   }
 
   if (message.type === "tool_result") {
-    if (!debugMode && !message.presentation) return <ExecutionHiddenPlaceholder />;
     return (
       <ToolResultBlock
         toolName={message.toolName}
         result={message.result}
         {...(message.presentation ? { presentation: message.presentation } : {})}
-        debugMode={debugMode}
+        debugMode={rawPresentationMode}
       />
     );
   }
@@ -1035,61 +1071,23 @@ export const MessageItem = memo(function MessageItem({
         transcribedText={message.transcribedText}
         status={message.status}
         playState={voicePlayState ?? 'idle'}
-        onPlay={() => voicePlayer?.play(voiceId, message.audioUrl)}
+        onPlay={() => message.attachmentId && voicePlayer?.play(voiceId, message.attachmentId)}
         onTogglePause={() => voicePlayer?.togglePause(voiceId)}
         timestamp={message.timestamp}
       />
     );
   }
 
+  // Tool/error raw payloads render only after the shared three-gate presenter authorizes them.
   if (message.type === "system-error") {
-    // 积分门禁是账户状态，不按运行异常展示：独立暖橙卡片 + 明确下一步。
-    if (message.severity === 'billing') {
-      return (
-        <div
-          className="rounded-xl border border-brand-accent/30 bg-brand-accent-soft px-4 py-3 text-brand-accent-ink shadow-sm dark:border-brand-accent/35 dark:bg-brand-accent/10 dark:text-brand-accent"
-          role="status"
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/70 ring-1 ring-brand-accent/25 dark:bg-brand-accent/10 dark:ring-brand-accent/25">
-              <EntityIcons.credits aria-hidden="true" className="size-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold">积分余额不足</div>
-              <div className="mt-1 text-sm leading-5 opacity-85">{message.content}</div>
-              <button
-                type="button"
-                onClick={requestOpenBillingBadge}
-                className="mt-2 rounded-md bg-white/75 px-2.5 py-1 text-xs font-medium ring-1 ring-brand-accent/25 transition-colors hover:bg-white dark:bg-brand-accent/10 dark:ring-brand-accent/25 dark:hover:bg-brand-accent/15"
-              >
-                查看积分
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    const isCancelled = message.severity === 'cancelled';
-    if (!isCancelled) {
-      return (
-        <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground" role="status">
-          <span className="whitespace-pre-wrap break-words">{message.content}</span>
-          {!isLoading && (message.recoveryAction === 'switch_model' ? onSwitchModel : onRetry) && (
-            <button type="button" onClick={message.recoveryAction === 'switch_model' ? onSwitchModel : () => onRetry?.(message)} className="shrink-0 rounded-md px-2 py-1 font-medium text-foreground/75 transition-colors hover:bg-foreground/[0.06] hover:text-foreground">{message.recoveryAction === 'switch_model' ? '切换模型' : '继续生成'}</button>
-          )}
-        </div>
-      );
-    }
-
-    // 用户主动停止是正常终态，保留中性提示且不提供续跑入口。
     return (
-      <div className="rounded-r border-l-4 border-zinc-400 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 dark:border-zinc-500 dark:bg-zinc-800/40 dark:text-zinc-300" role="status">
-        <div className="flex items-start gap-2">
-          <Ban aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <div className="flex-1 whitespace-pre-wrap break-words">{message.content}</div>
-        </div>
-      </div>
+      <SystemErrorMessage
+        message={message}
+        isLoading={isLoading}
+        rawPresentationMode={rawPresentationMode}
+        onRetry={onRetry}
+        onSwitchModel={onSwitchModel}
+      />
     );
   }
 
@@ -1107,5 +1105,7 @@ export const MessageItem = memo(function MessageItem({
   prev.ttsState === next.ttsState &&
   prev.ttsIsActive === next.ttsIsActive &&
   prev.voicePlayState === next.voicePlayState &&
-  prev.debugMode === next.debugMode && prev.sessionId === next.sessionId
+  prev.debugMode === next.debugMode &&
+  prev.rawPresentationMode === next.rawPresentationMode &&
+  prev.sessionId === next.sessionId
 ));

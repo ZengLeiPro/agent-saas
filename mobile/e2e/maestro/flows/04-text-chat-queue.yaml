@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: 04 text chat and authoritative server queue
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- tapOn:
+    id: "chat-composer-input"
+- inputText: "M60 queue first"
+- tapOn:
+    id: "chat-send-button"
+- tapOn:
+    id: "chat-composer-input"
+- inputText: "M60 queue second"
+- tapOn:
+    id: "chat-send-button"
+- extendedWaitUntil:
+    visible: "排队中"
+    timeout: 10000
+- extendedWaitUntil:
+    visible: "M60_QUEUE_ACK_2"
+    timeout: 20000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/04-text-chat-queue

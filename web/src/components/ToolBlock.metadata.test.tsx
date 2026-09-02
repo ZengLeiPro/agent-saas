@@ -41,7 +41,7 @@ function renderBlock(
   );
 }
 
-describe('ToolBlock 退出码徽标', () => {
+describe('M40-04 ToolBlock canonical 状态与退出码徽标', () => {
   it('非零退出码把「已完成」校正成「有异常」——平台判定链漏判时以原值为准', () => {
     renderBlock('completed', { exitCode: 127, durationMs: 210 });
     expect(screen.getByText('有异常')).toBeTruthy();
@@ -70,5 +70,24 @@ describe('ToolBlock 退出码徽标', () => {
     expect(screen.getByText('执行中')).toBeTruthy();
     renderBlock('cancelled', { exitCode: 1 });
     expect(screen.getByText('已取消')).toBeTruthy();
+  });
+
+  it.each(['completed', 'failed', 'cancelled'] as const)('终态 %s 不残留 spinner', (status) => {
+    const { container } = renderBlock(status);
+    expect(container.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('未知工具与敏感入参使用安全标题且非 debug 不输出 raw', () => {
+    const { container } = render(
+      <ToolBlock
+        toolName="https://evil.example/token"
+        toolInput='{"token":"TOOL_SECRET","path":"/workspace/private"}'
+        executionStatus="completed"
+        debugMode={false}
+      />,
+    );
+    expect(screen.getByText('工具')).toBeTruthy();
+    expect(container.textContent).not.toContain('TOOL_SECRET');
+    expect(container.textContent).not.toContain('/workspace');
   });
 });

@@ -65,9 +65,11 @@ const ADMIN_ALWAYS_AUDITED: ReadonlySet<LoginEvent> = new Set<LoginEvent>([
   'workflow_display_policy_updated', 'workflow_display_policy_deleted',
   // 顶层 Agent 调度并发改变全平台瞬时负载，必须记录 before/after
   'runtime_scheduler_capacity_updated',
+  'capability_degraded_entered', 'capability_normal_revalidated',
+  'capability_fallback_selected', 'capability_fallback_cancelled',
 ]);
 
-/** 从 Express Request 构建并追加一条审计日志（fire-and-forget） */
+/** 从 Express Request 构建并追加一条审计日志（fire-and-forget；调用方必须先脱敏） */
 export function auditLog(
   req: { ip?: string; socket?: { remoteAddress?: string }; headers: Record<string, string | string[] | undefined>; user?: { sub: string; username: string; role: string; tenantId?: string } },
   event: LoginEvent,

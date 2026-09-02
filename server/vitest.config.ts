@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const coverageReporters =
@@ -6,8 +7,14 @@ const coverageReporters =
     : ['text', 'lcov', 'json-summary', 'json', 'html'];
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@agent/shared/lib/chatSubmission': fileURLToPath(new URL('../shared/src/lib/chatSubmission.ts', import.meta.url)),
+      '@agent/shared': fileURLToPath(new URL('../shared/src/index.ts', import.meta.url)),
+    },
+  },
   test: {
-    // 测试文件匹配模式
+    // 测试文件匹配模式（server + shared source alias）
     include: ['src/**/*.{test,spec}.{ts,tsx}', 'tests/**/*.{test,spec}.{ts,tsx}'],
     // 排除的目录
     exclude: ['node_modules', 'dist'],

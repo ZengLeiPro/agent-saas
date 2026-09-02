@@ -111,6 +111,12 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       marginTop: 2,
       marginRight: spacing.sm,
     },
+    targetName: {
+      ...typography.caption,
+      color: colors.primary,
+      fontWeight: '600',
+      marginRight: spacing.sm,
+    },
     subtitleRow: {
       flexDirection: 'row' as const,
       alignItems: 'center' as const,
@@ -123,6 +129,7 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
   }), [colors]);
 
   const hasAgentAvatar = agentAvatar !== undefined;
+  const targetLabel = session.agentTargetSnapshot?.name ?? '绑定不可验证';
   const separatorLeft = spacing.sm + (selectMode ? 24 + spacing.sm : 0) + 42 + spacing.md;
 
   const avatarElement = hasAgentAvatar ? (
@@ -137,6 +144,9 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
 
   const rowContent = (
     <Pressable
+      testID={session.id}
+      accessibilityLabel={`会话：${session.title || '新会话'}`}
+      accessibilityRole="button"
       style={({ pressed }) => [styles.sessionRow, pressed && styles.sessionRowPressed]}
       onPress={selectMode ? onSelectToggle : () => onPress(session.id)}
     >
@@ -148,15 +158,15 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
       {avatarElement}
       <View style={styles.sessionContent}>
         <View style={styles.titleRow}>
-          <Text style={styles.sessionTitle} numberOfLines={1}>
+          <Text style={styles.sessionTitle} numberOfLines={1} testID={`${session.id}-title`}>
             {session.title || '新会话'}
           </Text>
           <Text style={styles.sessionTime}>
             {formatShortDate(session.updatedAt)}
           </Text>
         </View>
-        {(session.preview || (showOwner && session.owner)) && (
-          <View style={styles.subtitleRow}>
+        <View style={styles.subtitleRow}>
+            <Text style={styles.targetName} numberOfLines={1}>{targetLabel}</Text>
             {showOwner && session.owner && (
               <Text style={styles.ownerName} numberOfLines={1}>
                 {session.owner.realName || session.owner.username}
@@ -168,7 +178,6 @@ export const SessionRow = React.memo(function SessionRow({ session, actions, ope
               </Text>
             )}
           </View>
-        )}
       </View>
       <View style={[styles.separator, { left: separatorLeft }]} />
     </Pressable>

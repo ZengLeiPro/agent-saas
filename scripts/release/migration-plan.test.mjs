@@ -2405,24 +2405,38 @@ test('classifies destructive SQL when only a statically imported JSON resource c
   assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
 });
 
-test('classifies static node:fs resource reads and rejects dynamic resource paths', () => {
+test('classifies aliased default node:fs resource reads outside migration directories', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
-  const provider = 'server/src/data/governance-schema/provider.json';
+  const provider = 'server/src/data/sql/provider.json';
   const providerSource = '["DROP TABLE users"]';
-  const staticRoot =
-    "import { readFileSync } from 'node:fs';\nexport const statements = JSON.parse(readFileSync(new URL('./provider.json', import.meta.url), 'utf8'));";
-  const result = plan(providerSource, addedSourceDiff(providerSource), {
-    changedPaths: [provider],
-    baselines: { [root]: staticRoot, [provider]: '["SELECT 1"]' },
-    targets: { [root]: staticRoot, [provider]: providerSource },
-    diffs: { [provider]: addedSourceDiff(providerSource) },
-    nameStatus: `M\t${provider}`,
-  });
-  assert.equal(result.ok, false);
-  assert.notEqual(result.migrationPlan.phase, 'none');
+  for (const staticRoot of [
+    "import { readFileSync } from 'node:fs';\nexport const statements = JSON.parse(readFileSync(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nexport const statements = JSON.parse(fs.readFileSync(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fsp from 'node:fs/promises';\nexport const statements = JSON.parse(await fsp.readFile(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst io = fs;\nexport const statements = JSON.parse(io.readFileSync(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst load = fs.readFileSync;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst { readFileSync: load } = fs;\nexport const statements = JSON.parse(load(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+    "import fs from 'node:fs';\nconst io = fs.promises;\nexport const statements = JSON.parse(await io.readFile(new URL('../sql/provider.json', import.meta.url), 'utf8'));",
+  ]) {
+    const result = plan(providerSource, addedSourceDiff(providerSource), {
+      changedPaths: [provider],
+      baselines: { [root]: staticRoot, [provider]: '["SELECT 1"]' },
+      targets: { [root]: staticRoot, [provider]: providerSource },
+      diffs: { [provider]: addedSourceDiff(providerSource) },
+      nameStatus: `M\t${provider}`,
+    });
+    assert.equal(result.ok, false, staticRoot);
+    assert.notEqual(result.migrationPlan.phase, 'none', staticRoot);
+    assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
+  }
+});
 
+test('fails closed for an unproven resource path in an authoritative migration runner', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/sql/provider.json';
+  const providerSource = '["DROP TABLE users"]';
   const dynamicRoot =
-    "import { readFileSync } from 'node:fs';\nexport const statements = JSON.parse(readFileSync(process.env.PROVIDER_PATH, 'utf8'));";
+    "import fs from 'node:fs';\nconst io = fs;\nexport const statements = JSON.parse(io.readFileSync(process.env.PROVIDER_PATH, 'utf8'));";
   const dynamic = plan(providerSource, addedSourceDiff(providerSource), {
     changedPaths: [provider],
     baselines: { [root]: dynamicRoot, [provider]: '["SELECT 1"]' },
@@ -2431,5 +2445,5 @@ test('classifies static node:fs resource reads and rejects dynamic resource path
     nameStatus: `M\t${provider}`,
   });
   assert.equal(dynamic.ok, false);
-  assert.match(dynamic.blockingReasons.join('\n'), /dynamic resource paths fail closed/u);
+  assert.match(dynamic.blockingReasons.join('\n'), /unproven dynamic resource path/u);
 });

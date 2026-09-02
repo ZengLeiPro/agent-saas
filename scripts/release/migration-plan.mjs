@@ -2810,7 +2810,8 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     return current;
   };
   const readFileNames = new Set();
-  const fsNamespaceNames = new Set();
+  const fsObjectNames = new Set();
+  const readMethodNames = new Set(['readFile', 'readFileSync']);
   for (const statement of sourceFile.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
@@ -2822,12 +2823,85 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
       statement.importClause.isTypeOnly
     )
       continue;
+    if (statement.importClause.name) fsObjectNames.add(statement.importClause.name.text);
     const bindings = statement.importClause.namedBindings;
-    if (bindings && ts.isNamespaceImport(bindings)) fsNamespaceNames.add(bindings.name.text);
+    if (bindings && ts.isNamespaceImport(bindings)) fsObjectNames.add(bindings.name.text);
     if (bindings && ts.isNamedImports(bindings))
       for (const element of bindings.elements)
-        if (['readFile', 'readFileSync'].includes((element.propertyName ?? element.name).text))
+        if (readMethodNames.has((element.propertyName ?? element.name).text))
           readFileNames.add(element.name.text);
+  }
+  const staticPropertyName = (node) => {
+    const current = unwrapResourceExpression(node);
+    if (ts.isPropertyAccessExpression(current)) return current.name.text;
+    if (
+      ts.isElementAccessExpression(current) &&
+      current.argumentExpression &&
+      (ts.isStringLiteral(current.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(current.argumentExpression))
+    )
+      return current.argumentExpression.text;
+    return undefined;
+  };
+  const propertyOwner = (node) => {
+    const current = unwrapResourceExpression(node);
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current))
+      return unwrapResourceExpression(current.expression);
+    return undefined;
+  };
+  const isFsObjectExpression = (node) => {
+    const current = unwrapResourceExpression(node);
+    if (ts.isIdentifier(current)) return fsObjectNames.has(current.text);
+    const owner = propertyOwner(current);
+    return (
+      staticPropertyName(current) === 'promises' &&
+      owner !== undefined &&
+      ts.isIdentifier(owner) &&
+      fsObjectNames.has(owner.text)
+    );
+  };
+  const isFsReadExpression = (node) => {
+    const current = unwrapResourceExpression(node);
+    if (ts.isIdentifier(current)) return readFileNames.has(current.text);
+    const owner = propertyOwner(current);
+    return (
+      readMethodNames.has(staticPropertyName(current)) &&
+      owner !== undefined &&
+      isFsObjectExpression(owner)
+    );
+  };
+  let aliasesChanged = true;
+  while (aliasesChanged) {
+    aliasesChanged = false;
+    const addAlias = (set, name) => {
+      if (!set.has(name)) {
+        set.add(name);
+        aliasesChanged = true;
+      }
+    };
+    const classifyAlias = (name, initializer) => {
+      if (isFsObjectExpression(initializer)) addAlias(fsObjectNames, name);
+      if (isFsReadExpression(initializer)) addAlias(readFileNames, name);
+    };
+    const visitAliases = (node) => {
+      if (ts.isVariableDeclaration(node) && node.initializer) {
+        if (ts.isIdentifier(node.name)) classifyAlias(node.name.text, node.initializer);
+        if (ts.isObjectBindingPattern(node.name) && isFsObjectExpression(node.initializer))
+          for (const element of node.name.elements) {
+            const importedName = (element.propertyName ?? element.name).getText(sourceFile);
+            if (ts.isIdentifier(element.name) && readMethodNames.has(importedName))
+              addAlias(readFileNames, element.name.text);
+          }
+      }
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      )
+        classifyAlias(node.left.text, node.right);
+      ts.forEachChild(node, visitAliases);
+    };
+    visitAliases(sourceFile);
   }
   const isImportMetaUrl = (node) => {
     const current = unwrapResourceExpression(node);
@@ -2866,14 +2940,19 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
   const visitResourceReads = (node) => {
     if (ts.isCallExpression(node)) {
       const callee = unwrapExpression(node.expression);
-      const recognized =
-        (ts.isIdentifier(callee) && readFileNames.has(callee.text)) ||
-        (ts.isPropertyAccessExpression(callee) &&
-          ts.isIdentifier(callee.expression) &&
-          fsNamespaceNames.has(callee.expression.text) &&
-          ['readFile', 'readFileSync'].includes(callee.name.text));
-      if (recognized) {
+      if (isFsReadExpression(callee)) {
         const specifier = node.arguments[0] && staticReadFileSpecifier(node.arguments[0]);
+        let scope = node.parent;
+        let insideFunction = false;
+        while (scope && scope !== sourceFile) {
+          if (ts.isFunctionLike(scope)) {
+            insideFunction = true;
+            break;
+          }
+          scope = scope.parent;
+        }
+        if (!specifier && !insideFunction)
+          throw new Error(`Migration dependency ${path} reads an unproven dynamic resource path`);
         if (specifier)
           dependencies.push({
             specifier,
@@ -3553,17 +3632,6 @@ export function createMigrationPlan({
 
   const newlyReachable = new Set([...targetClosure].filter((path) => !baselineClosure.has(path)));
   const noLongerReachable = [...baselineClosure].filter((path) => !targetClosure.has(path));
-  for (const path of candidatePaths) {
-    if (
-      !SCRIPT_MIGRATION_PATTERN.test(path) &&
-      /(?:^|\/)(?:migrations?|governance-schema)(?:\/|$)/u.test(path) &&
-      !baselineClosure.has(path) &&
-      !targetClosure.has(path)
-    )
-      blockingReasons.push(
-        `Migration data resource ${path} is not statically reachable from an authoritative runner; dynamic resource paths fail closed.`,
-      );
-  }
   candidatePaths.push(...newlyReachable);
   for (const path of noLongerReachable) {
     blockingReasons.push(

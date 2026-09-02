@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { governanceAccessApi, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
 
 type EntitlementResourceType =
-  'model' | 'agent_template' | 'skill' | 'connector' | 'environment_template';
+  'model' | 'tool' | 'agent_template' | 'skill' | 'connector' | 'environment_template';
 type AssignmentResourceType =
   'skill' | 'credential' | 'environment_template' | 'connector' | 'dws_delegation';
 type AssigneeType = 'everyone' | 'user' | 'directory_group' | 'agent';

@@ -539,4 +539,16 @@ describe("AdminShells V2 内容适配", () => {
     const page = screen.getByTestId("organization-management-content").querySelector("main");
     for (const title of unrelatedTitles) expect(page?.textContent).not.toContain(title);
   });
+
+  it("模型与工具页同时挂载模型和工具 Entitlement 入口", () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        governanceRoute={governanceRoute("organization.agents.model-tools", { orgId: "acme" })}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "模型可用范围" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "工具可用范围" })).toBeTruthy();
+  });
 });

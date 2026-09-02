@@ -113,6 +113,7 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.agents.model-tools': ({ tenantId }) => (
     <div className="space-y-4">
       <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="model" title="模型可用范围" description="模型白名单由 Entitlement 权威源维护；组织设置仅保留默认模型和展示策略。" />
+      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="tool" title="工具可用范围" description="控制平台工具进入本组织的范围，由 Entitlement 权威源统一维护。" />
       <TenantSettingsPanel tenantId={tenantId} section="model-tools" />
     </div>
   ),

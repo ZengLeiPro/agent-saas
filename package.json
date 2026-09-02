@@ -30,7 +30,7 @@
     "typecheck:staged": "node scripts/typecheck-staged.mjs",
     "preflight:pr": "bash scripts/pr-preflight.sh",
     "test:ratchets": "node --test scripts/ratchets.test.mjs scripts/runtime-worker-rollout-order.test.mjs scripts/pr-preflight-contract.test.mjs scripts/config/effective-config.test.mjs",
-    "test:production-rollbacks": "node --test scripts/release/rollback-compatibility-app.test.mjs scripts/release/deploy-production-rollback.test.mjs scripts/release/deploy-production-acs-rollback.test.mjs scripts/release/deploy-acs-direct-rollback.test.mjs",
+    "test:production-rollbacks": "node --test scripts/release/rollback-compatibility-app.test.mjs scripts/release/compatibility-deploy-transaction.test.mjs scripts/release/deploy-production-rollback.test.mjs scripts/release/deploy-production-acs-rollback.test.mjs scripts/release/deploy-acs-direct-rollback.test.mjs",
     "check:runtime-dependencies": "node --test scripts/release/runtime-dependency.test.mjs scripts/release/manage-acs-systemd-unit.test.mjs scripts/release/compatibility-release.test.mjs scripts/release/build-release.test.mjs scripts/release/admin-runner.test.mjs scripts/release/verify-artifact.test.mjs scripts/release/verify-selected-release-artifacts.test.mjs scripts/release/assemble-release-evidence.test.mjs scripts/release/publish-release-record.test.mjs && pnpm test:production-rollbacks",
     "check:ratchets": "pnpm test:ratchets && node scripts/check-max-lines-ratchet.mjs && node scripts/check-env-var-count.mjs",
     "check:release-selection": "node --test scripts/release/verify-selected-release-artifacts.test.mjs scripts/release/resolve-baseline-artifacts.test.mjs",

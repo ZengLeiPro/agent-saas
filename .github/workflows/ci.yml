@@ -661,6 +661,7 @@ jobs:
             scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs \
             scripts/release/rollback-compatibility-app.sh \
+            scripts/release/compatibility-deploy-transaction.sh \
             scripts/release/seal-compatibility-release.mjs \
             scripts/release/verify-installed-release.mjs \
             scripts/release/write-compatibility-app-env.mjs \
@@ -919,12 +920,141 @@ jobs:
           INSTALL_CLEANUP_ARMED=0
           ROLLBACK_STATE_COMMITTED=0
           ROLLBACK_STATE_DIR=''
+          ROLLBACK_STATE_PRESERVE=0
+          SYSTEMD_UNITS_DIRTY=0
+          UNIT_RESTORE_FAILED=0
+          FAILURE_RECOVERY_ACTIVE=0
+          FAILURE_RECOVERY_COMPLETED=0
+          FAILURE_STATUS=1
+          FAILURE_LINE=unknown
           TRAFFIC_SWITCHED=0
+          SYMLINKS_DIRTY=0
+          WORKER_SYMLINK_DIRTY=0
+          WEB_IDLE_ENABLEMENT_DIRTY=0
+          WEB_IDLE_WAS_ENABLED=0
+          PREV_CURRENT=''
+          PREV_PREVIOUS=''
+          PREV_IDLE_TARGET=''
+          PREVIOUS_UPDATED=0
+          restore_predeploy_symlinks() {
+            [ "$SYMLINKS_DIRTY" -eq 1 ] || [ "$WORKER_SYMLINK_DIRTY" -eq 1 ] || return 0
+            if ! DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              SYMLINKS_DIRTY="$SYMLINKS_DIRTY" \
+              WORKER_SYMLINK_DIRTY="$WORKER_SYMLINK_DIRTY" \
+              PREV_LINK="$APP_LINK" \
+              PREV_CURRENT="$PREV_CURRENT" \
+              PREVIOUS_UPDATED="$PREVIOUS_UPDATED" \
+              PREVIOUS_LINK="$PREV_LINK" \
+              PREV_PREVIOUS="$PREV_PREVIOUS" \
+              COLOR_IDLE_LINK="$COLOR_DIR/$IDLE" \
+              PREV_IDLE_TARGET="$PREV_IDLE_TARGET" \
+              WORKER_IDLE_LINK="$WORKER_DIR/${WORKER_IDLE:-none}" \
+              PREV_WORKER_IDLE_TARGET="${PREV_WORKER_IDLE_TARGET:-}" \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                restore-symlinks; then
+              ROLLBACK_STATE_PRESERVE=1
+              return 70
+            fi
+            SYMLINKS_DIRTY=0
+            WORKER_SYMLINK_DIRTY=0
+            log "symlinks restored: current=${PREV_CURRENT:-<none>} color/$IDLE=${PREV_IDLE_TARGET:-<none>} worker/${WORKER_IDLE:-none}=${PREV_WORKER_IDLE_TARGET:-<none>}"
+          }
+          restore_predeploy_systemd_units() {
+            [ "$SYSTEMD_UNITS_DIRTY" -eq 1 ] || return 0
+            if ! DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              SERVER_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}@.service" \
+              WORKER_UNIT_PATH="/etc/systemd/system/${WORKER_SERVICE}@.service" \
+              NGINX_DROP_IN_PATH="/etc/systemd/system/nginx.service.d/agent-saas-nas.conf" \
+              SYSTEMCTL_BIN=systemctl \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" restore-units; then
+              UNIT_RESTORE_FAILED=1
+              ROLLBACK_STATE_PRESERVE=1
+              return 1
+            fi
+            return 0
+          }
+          mark_manual_recovery() {
+            DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              RELEASE_ID="$RELEASE_ID" \
+              FAILED_STATUS="$FAILURE_STATUS" \
+              FAILED_LINE="$FAILURE_LINE" \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                mark-manual-recovery
+          }
+          recover_previous_nginx() {
+            FAILURE_STATUS=1
+            FAILURE_LINE="$1"
+            DEPLOY_ROOT="$DEPLOY_ROOT" \
+              ROLLBACK_STATE_DIR="$ROLLBACK_STATE_DIR" \
+              RELEASE_ID="$RELEASE_ID" \
+              FAILED_STATUS="$FAILURE_STATUS" \
+              FAILED_LINE="$FAILURE_LINE" \
+              UPSTREAM_CONF="$UPSTREAM_CONF" \
+              UPSTREAM_BAK="$UPSTREAM_BAK" \
+              API_SITE_CONF="$API_SITE_CONF" \
+              API_SITE_BAK="$API_SITE_BAK" \
+              NGINX_BIN=nginx \
+              SYSTEMCTL_BIN=systemctl \
+              bash "$RELEASE_DIR/scripts/release/compatibility-deploy-transaction.sh" \
+                recover-nginx-switch
+          }
           on_error() {
             local status=$?
             trap - ERR
+            FAILURE_STATUS="$status"
+            FAILURE_LINE="$1"
             log "ERROR status=$status line=$1 release=$RELEASE_ID"
-            if [ "$TRAFFIC_SWITCHED" -eq 0 ]; then
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$FAILURE_RECOVERY_ACTIVE" -eq 0 ] \
+              && declare -F rollback_idle_and_exit >/dev/null; then
+              rollback_idle_and_exit "$status"
+            fi
+            exit "$status"
+          }
+          on_exit() {
+            local status=$? final_status
+            trap - ERR EXIT
+            [ "$status" -ne 0 ] || return 0
+            final_status="$status"
+            if [ "$FAILURE_LINE" = unknown ]; then
+              FAILURE_STATUS="$status"
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$SYSTEMD_UNITS_DIRTY" -eq 1 ] \
+              && [ "$UNIT_RESTORE_FAILED" -eq 0 ]; then
+              if ! restore_predeploy_systemd_units; then
+                final_status=70
+                log "ERROR: previous systemd units could not be restored; rollback state preserved"
+              else
+                SYSTEMD_UNITS_DIRTY=0
+              fi
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] \
+              && { [ "$SYMLINKS_DIRTY" -eq 1 ] || [ "$WORKER_SYMLINK_DIRTY" -eq 1 ]; }; then
+              if ! restore_predeploy_symlinks; then
+                ROLLBACK_STATE_PRESERVE=1
+                final_status=70
+                log "ERROR: pre-switch symlinks could not be restored; rollback state preserved"
+              fi
+            fi
+            if [ "$FAILURE_RECOVERY_ACTIVE" -eq 1 ] && [ "$FAILURE_RECOVERY_COMPLETED" -eq 0 ]; then
+              ROLLBACK_STATE_PRESERVE=1
+              final_status=70
+              log "ERROR: pre-switch recovery did not complete; rollback state preserved"
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 1 ] && [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] \
+              && [ -n "$ROLLBACK_STATE_DIR" ]; then
+              ROLLBACK_STATE_PRESERVE=1
+              final_status=70
+              if [ -f "$ROLLBACK_STATE_DIR/manual-recovery-required" ] \
+                && [ ! -L "$ROLLBACK_STATE_DIR/manual-recovery-required" ]; then
+                log "manual recovery marker already recorded for failure line $FAILURE_LINE"
+              elif ! mark_manual_recovery; then
+                log "ERROR: failed to write manual recovery marker; rollback snapshot remains preserved"
+              fi
+            fi
+            if [ "$TRAFFIC_SWITCHED" -eq 0 ] && [ "$ROLLBACK_STATE_PRESERVE" -eq 0 ]; then
               if [ "$INSTALL_CLEANUP_ARMED" -eq 1 ]; then
                 case "$RELEASE_DIR" in
                   "$RELEASES_DIR"/*)
@@ -938,7 +1068,8 @@ jobs:
               fi
               rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
             fi
-            if [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] && [ -n "$ROLLBACK_STATE_DIR" ]; then
+            if [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] && [ -n "$ROLLBACK_STATE_DIR" ] \
+              && [ "$ROLLBACK_STATE_PRESERVE" -eq 0 ]; then
               case "$ROLLBACK_STATE_DIR" in
                 "$DEPLOY_ROOT/rollback-states/"*)
                   rm -rf -- "$ROLLBACK_STATE_DIR" || log "WARN: failed rollback state cleanup failed"
@@ -946,9 +1077,10 @@ jobs:
                 *) log "WARN: refuse rollback state cleanup outside managed root: $ROLLBACK_STATE_DIR" ;;
               esac
             fi
-            exit "$status"
+            exit "$final_status"
           }
           trap 'on_error $LINENO' ERR
+          trap on_exit EXIT
 
           log "deploy start release=$RELEASE_ID root=$DEPLOY_ROOT service=$SERVICE_NAME"
 
@@ -1093,7 +1225,6 @@ jobs:
           node "$RELEASE_DIR/scripts/release/seal-compatibility-release.mjs" \
             --root "$RELEASE_DIR" --component server \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" >/dev/null
-          INSTALL_CLEANUP_ARMED=0
 
           # 在覆盖 unit 或发布身份前持久保存旧部署拓扑。rollback-state 指针仅在本次
           # 发布完全收敛后原子切换，因此失败发布不会污染上一份可用回滚状态。
@@ -1142,6 +1273,9 @@ jobs:
             api.release.env 0600 api-env-present
           snapshot_optional_file "/etc/systemd/system/${WORKER_SERVICE}@.service" \
             runtime-worker@.service 0644 worker-unit-present
+          snapshot_optional_file "/etc/systemd/system/nginx.service.d/agent-saas-nas.conf" \
+            nginx-agent-saas-nas.conf 0644 nginx-drop-in-present
+          snapshot_optional_file "$API_SITE_CONF" api-site.conf 0644 api-site-present
           OLD_WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE" 2>/dev/null || true)
           case "$OLD_WORKER_ACTIVE" in
             blue|green)
@@ -1164,6 +1298,8 @@ jobs:
 
           # 每次发布都以仓库模板刷新 unit；systemd 仅 reload 定义，不重启当前 active
           # 进程。蓝绿 Web 固定 ws-only，runtime worker 由独立蓝绿 unit 承担。
+          # 在第一处覆盖前标记事务为 dirty，任一后续失败都必须先恢复旧 unit。
+          SYSTEMD_UNITS_DIRTY=1
           install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-server@.service.template" \
             "/etc/systemd/system/${SERVICE_NAME}@.service"
           install -m 0644 "$RELEASE_DIR/daemon-packaging/systemd/agent-saas-runtime-worker@.service.template" \
@@ -1228,12 +1364,13 @@ jobs:
           WORKER_IDLE=""
           PREV_WORKER_IDLE_TARGET=""
           log "switch color/$IDLE: $(readlink "$COLOR_DIR/$IDLE" 2>/dev/null || echo '<none>') -> $RELEASE_DIR"
+          SYMLINKS_DIRTY=1
           ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"
           log "switch current: ${PREV_CURRENT:-<none>} -> $RELEASE_DIR"
           ln -sfn "$RELEASE_DIR" "$APP_LINK"
           if [ -n "$PREV_CURRENT" ] && [ "$PREV_CURRENT" != "$RELEASE_DIR" ]; then
-            ln -sfn "$PREV_CURRENT" "$PREV_LINK"
             PREVIOUS_UPDATED=1
+            ln -sfn "$PREV_CURRENT" "$PREV_LINK"
           fi
 
           preserve_candidate_authority_and_exit() {
@@ -1341,11 +1478,6 @@ jobs:
                 exit 1
               fi
               rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
-              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
-                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
-              else
-                rm -f "$WORKER_DIR/$WORKER_IDLE"
-              fi
               WORKER_CANDIDATE_STARTED=0
               WORKER_CANDIDATE_PROCESS_STARTED=0
               WORKER_PROCESS_READY=0
@@ -1441,6 +1573,13 @@ jobs:
           # 切流前失败：legacy 先停候选再恢复旧来源；新版旧 worker 仍按 authority reclaim。
           # 首次 bootstrap 在候选停止前由仍在服务的 all 进程 reclaim；不支持 reclaim 时保留候选。
           rollback_idle_and_exit() {
+            local deploy_status="${1:-1}"
+            FAILURE_RECOVERY_ACTIVE=1
+            ROLLBACK_STATE_PRESERVE=1
+            if ! restore_predeploy_systemd_units; then
+              log "ERROR: failed to restore previous systemd units before process topology"
+              exit 70
+            fi
             log "deploy FAILED before traffic switch; restoring the previous runtime source and Web color"
             if [ "$WORKER_PREVIOUS_SERVICE_CONFIG_DIRTY" -eq 1 ] \
               && [ "$WORKER_LEGACY_PRE_DRAINED" -ne 1 ]; then
@@ -1531,34 +1670,39 @@ jobs:
               systemctl status "${WORKER_SERVICE}@${WORKER_IDLE}" --no-pager -l || true
               journalctl -u "${WORKER_SERVICE}@${WORKER_IDLE}" -n 120 --no-pager || true
               log "stop runtime worker candidate: ${WORKER_SERVICE}@${WORKER_IDLE}"
-              systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}" || true
-              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
-              if [ -n "$PREV_WORKER_IDLE_TARGET" ]; then
-                ln -sfn "$PREV_WORKER_IDLE_TARGET" "$WORKER_DIR/$WORKER_IDLE"
-              else
-                rm -f "$WORKER_DIR/$WORKER_IDLE"
+              if ! systemctl disable --now "${WORKER_SERVICE}@${WORKER_IDLE}"; then
+                log "ERROR: failed to stop runtime worker candidate during rollback"
+                exit 70
               fi
+              rm -f "/run/agent-saas-runtime-worker-${WORKER_IDLE}.ready.authority"
             fi
             log "Web idle diagnostics: ${SERVICE_NAME}@${IDLE}"
             journalctl -u "${SERVICE_NAME}@${IDLE}" -n 120 --no-pager || true
             log "stop idle unit ${SERVICE_NAME}@${IDLE}"
-            systemctl stop "${SERVICE_NAME}@${IDLE}" || true
-            if [ -n "$PREV_CURRENT" ]; then
-              ln -sfn "$PREV_CURRENT" "$APP_LINK"
+            if ! systemctl stop "${SERVICE_NAME}@${IDLE}"; then
+              log "ERROR: failed to stop idle Server unit during rollback"
+              exit 70
             fi
-            if [ "$PREVIOUS_UPDATED" -eq 1 ]; then
-              if [ -n "$PREV_PREVIOUS" ]; then
-                ln -sfn "$PREV_PREVIOUS" "$PREV_LINK"
-              else
-                rm -f "$PREV_LINK"
+            if [ "$WEB_IDLE_ENABLEMENT_DIRTY" -eq 1 ]; then
+              if [ "$WEB_IDLE_WAS_ENABLED" -eq 1 ]; then
+                systemctl enable "${SERVICE_NAME}@${IDLE}"
+              elif ! systemctl disable "${SERVICE_NAME}@${IDLE}"; then
+                log "ERROR: failed to restore idle Server disablement during rollback"
+                exit 70
               fi
+              WEB_IDLE_ENABLEMENT_DIRTY=0
             fi
-            if [ -n "$PREV_IDLE_TARGET" ]; then
-              ln -sfn "$PREV_IDLE_TARGET" "$COLOR_DIR/$IDLE"
-            else
-              rm -f "$COLOR_DIR/$IDLE"
+            if ! restore_predeploy_symlinks; then
+              log "ERROR: failed to restore pre-deploy symlinks"
+              exit 70
             fi
-            log "symlinks restored: current=${PREV_CURRENT:-<unchanged>} color/$IDLE=${PREV_IDLE_TARGET:-<none>}"
+            # legacy 恢复可能需要旧 release template 才能重启进程；进程复活后再次
+            # 恢复持久快照，确保磁盘上的最终 unit 与部署前精确一致。
+            if ! restore_predeploy_systemd_units; then
+              log "ERROR: failed to restore exact pre-deploy systemd unit snapshot"
+              exit 70
+            fi
+            SYSTEMD_UNITS_DIRTY=0
             case "$RELEASE_DIR" in
               "$RELEASES_DIR"/*)
                 log "remove failed release: $RELEASE_DIR"
@@ -1566,7 +1710,9 @@ jobs:
                 ;;
             esac
             rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
-            exit 1
+            FAILURE_RECOVERY_COMPLETED=1
+            ROLLBACK_STATE_PRESERVE=0
+            exit "$deploy_status"
           }
 
           recover_interrupted_runtime_worker_drain() {
@@ -1746,6 +1892,7 @@ jobs:
 
             PREV_WORKER_IDLE_TARGET=$(readlink "$WORKER_DIR/$WORKER_IDLE" 2>/dev/null || true)
             log "switch worker/$WORKER_IDLE: ${PREV_WORKER_IDLE_TARGET:-<none>} -> $RELEASE_DIR"
+            WORKER_SYMLINK_DIRTY=1
             ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"
             WORKER_CANDIDATE_STARTED=1
             log "runtime worker candidate prepared: color=$WORKER_IDLE (process readiness precedes Web readiness)"
@@ -2001,6 +2148,12 @@ jobs:
           # 避免整机重启时两色同时启动并争用启动期 PG 锁。
           rm -f "/run/${SERVICE_NAME}-${IDLE}.pid" "/run/${SERVICE_NAME}-${IDLE}.draining"
           log "start idle unit: ${SERVICE_NAME}@${IDLE} (port $IDLE_PORT)"
+          if systemctl is-enabled --quiet "${SERVICE_NAME}@${IDLE}"; then
+            WEB_IDLE_WAS_ENABLED=1
+          else
+            WEB_IDLE_WAS_ENABLED=0
+          fi
+          WEB_IDLE_ENABLEMENT_DIRTY=1
           systemctl enable --now "${SERVICE_NAME}@${IDLE}"
 
           ready_ok() {
@@ -2134,12 +2287,23 @@ jobs:
             fi
             if [ -f "$API_SITE_BAK" ]; then
               cp "$API_SITE_BAK" "$API_SITE_CONF"
+            else
+              rm -f "$API_SITE_CONF"
             fi
             nginx -t || log "WARN: nginx -t still failing after restore; manual attention needed"
             rollback_idle_and_exit
           fi
-          systemctl reload nginx
-          log "nginx reloaded; verifying via https://127.0.0.1 (Host: api.agent.kaiyan.net)"
+          TRAFFIC_SWITCHED=1
+          if ! systemctl reload nginx; then
+            log "ERROR: nginx reload failed after switch was armed; restoring previous configuration"
+            if ! recover_previous_nginx "$LINENO"; then
+              log "ERROR: nginx state is uncertain; preserving candidate and rollback snapshot for manual recovery"
+              exit 1
+            fi
+            TRAFFIC_SWITCHED=0
+            rollback_idle_and_exit
+          fi
+          log "nginx reloaded; traffic physically switched to $IDLE; verifying via https://127.0.0.1 (Host: api.agent.kaiyan.net)"
           SWITCH_VERIFIED=0
           for _ in $(seq 1 10); do
             if curl -kfsS -m 5 -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz >/dev/null 2>&1; then
@@ -2150,29 +2314,24 @@ jobs:
           done
           if [ "$SWITCH_VERIFIED" -ne 1 ]; then
             log "post-reload verification FAILED; flipping nginx back to $ACTIVE and rolling back"
-            if [ -f "$UPSTREAM_BAK" ]; then
-              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
+            if ! recover_previous_nginx "$LINENO"; then
+              log "ERROR: failed to flip nginx back; preserving candidate and rollback snapshot for manual recovery"
+              exit 1
             fi
-            if [ -f "$API_SITE_BAK" ]; then
-              cp "$API_SITE_BAK" "$API_SITE_CONF"
-            fi
-            { nginx -t && systemctl reload nginx; } || log "WARN: failed to flip nginx back; manual attention needed"
+            TRAFFIC_SWITCHED=0
             rollback_idle_and_exit
           fi
           # ── 10. 原子更新活动色标记；失败时先安全翻回 nginx ──
           if ! write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE"; then
             log "ERROR: failed to atomically update active color; flipping nginx back to $ACTIVE"
-            [ ! -f "$UPSTREAM_BAK" ] || cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-            [ ! -f "$API_SITE_BAK" ] || cp "$API_SITE_BAK" "$API_SITE_CONF"
-            if ! { nginx -t && systemctl reload nginx; }; then
-              TRAFFIC_SWITCHED=1
+            if ! recover_previous_nginx "$LINENO"; then
               log "ERROR: failed to flip nginx back; preserving idle service for manual recovery"
               exit 1
             fi
+            TRAFFIC_SWITCHED=0
             rollback_idle_and_exit
           fi
-          TRAFFIC_SWITCHED=1
-          log "traffic switched to $IDLE"
+          log "traffic switch verified: active=$IDLE"
           systemctl disable "${SERVICE_NAME}@${ACTIVE}"
           log "active color atomically updated: $ACTIVE -> $IDLE"
           log "boot ownership updated: enabled=$IDLE disabled=$ACTIVE"
@@ -2214,13 +2373,7 @@ jobs:
               log "ERROR: failed to restore active color; preserving new traffic for manual recovery"
               exit 1
             fi
-            if [ -f "$UPSTREAM_BAK" ]; then
-              cp "$UPSTREAM_BAK" "$UPSTREAM_CONF"
-            fi
-            if [ -f "$API_SITE_BAK" ]; then
-              cp "$API_SITE_BAK" "$API_SITE_CONF"
-            fi
-            if ! { nginx -t && systemctl reload nginx; }; then
+            if ! recover_previous_nginx "$LINENO"; then
               write_color_marker "$ACTIVE_COLOR_FILE" "$IDLE" || true
               log "ERROR: failed to restore old nginx upstream; preserving idle service"
               exit 1
@@ -2236,13 +2389,17 @@ jobs:
           # ── 11. 固化本次发布对应的回滚状态与版本化脚本 ──
           # 先安装脚本，再原子切换状态指针；回滚会先恢复旧 unit/env/identity/Worker
           # 拓扑，再启动旧 release，因此首次引入 Runtime guard 也能安全回退。
-          install -m 0755 "$RELEASE_DIR/scripts/release/rollback-compatibility-app.sh" \
-            "$DEPLOY_ROOT/rollback.sh.candidate"
-          mv -f "$DEPLOY_ROOT/rollback.sh.candidate" "$DEPLOY_ROOT/rollback.sh"
+          # 状态 schema 向后兼容旧 rollback.sh；先切换状态，再发布读取新字段的脚本，
+          # 避免新脚本在两次原子 rename 之间读到旧 schema。
           rm -f "$ROLLBACK_STATE_LINK.candidate"
           ln -s "$ROLLBACK_STATE_DIR" "$ROLLBACK_STATE_LINK.candidate"
           mv -Tf "$ROLLBACK_STATE_LINK.candidate" "$ROLLBACK_STATE_LINK"
+          install -m 0755 "$RELEASE_DIR/scripts/release/rollback-compatibility-app.sh" \
+            "$DEPLOY_ROOT/rollback.sh.candidate"
+          mv -f "$DEPLOY_ROOT/rollback.sh.candidate" "$DEPLOY_ROOT/rollback.sh"
           ROLLBACK_STATE_COMMITTED=1
+          INSTALL_CLEANUP_ARMED=0
+          WEB_IDLE_ENABLEMENT_DIRTY=0
           log "rollback state committed and rollback.sh refreshed: $ROLLBACK_STATE_DIR"
 
           # ── 12. drain 旧色：SIGUSR2 精确送 node 主进程（拒新流量→停 cron→活跃流清空→自行 exit 0）──

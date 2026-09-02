@@ -174,13 +174,71 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
   assert.match(appWorkflow, /pre-deploy rollback state captured/u);
   assert.match(appWorkflow, /rollback-compatibility-app\.sh/u);
+  assert.match(appWorkflow, /compatibility-deploy-transaction\.sh/u);
   assert.ok(
     appWorkflow.indexOf('pre-deploy rollback state captured') <
-      appWorkflow.indexOf('systemd units refreshed'),
+      appWorkflow.indexOf('SYSTEMD_UNITS_DIRTY=1'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('SYSTEMD_UNITS_DIRTY=1') < appWorkflow.indexOf('systemd units refreshed'),
+  );
+  assert.match(
+    appWorkflow,
+    /rollback_idle_and_exit\(\) \{[\s\S]*restore_predeploy_systemd_units[\s\S]*restoring the previous runtime source and Web color/u,
+  );
+  assert.match(appWorkflow, /compatibility-deploy-transaction\.sh[\s\S]*restore-symlinks/u);
+  assert.match(appWorkflow, /nginx-agent-saas-nas\.conf 0644 nginx-drop-in-present/u);
+  assert.match(
+    appWorkflow,
+    /snapshot_optional_file "\$API_SITE_CONF" api-site\.conf 0644 api-site-present/u,
+  );
+  assert.ok(
+    appWorkflow.indexOf('SYMLINKS_DIRTY=1') <
+      appWorkflow.indexOf('ln -sfn "$RELEASE_DIR" "$COLOR_DIR/$IDLE"'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('PREVIOUS_UPDATED=1') <
+      appWorkflow.indexOf('ln -sfn "$PREV_CURRENT" "$PREV_LINK"'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('WORKER_SYMLINK_DIRTY=1') <
+      appWorkflow.indexOf('ln -sfn "$RELEASE_DIR" "$WORKER_DIR/$WORKER_IDLE"'),
+  );
+  assert.match(appWorkflow, /restore-symlinks/u);
+  assert.match(
+    appWorkflow,
+    /TRAFFIC_SWITCHED=1\n\s+if ! systemctl reload nginx; then[\s\S]*recover_previous_nginx[\s\S]*TRAFFIC_SWITCHED=0[\s\S]*rollback_idle_and_exit/u,
+  );
+  assert.match(
+    appWorkflow,
+    /post-reload verification FAILED[\s\S]*recover_previous_nginx[\s\S]*TRAFFIC_SWITCHED=0[\s\S]*rollback_idle_and_exit/u,
+  );
+  assert.doesNotMatch(
+    appWorkflow,
+    /systemctl disable --now "\$\{WORKER_SERVICE\}@\$\{WORKER_IDLE\}" \|\| true/u,
+  );
+  assert.doesNotMatch(appWorkflow, /systemctl stop "\$\{SERVICE_NAME\}@\$\{IDLE\}" \|\| true/u);
+  assert.ok(
+    appWorkflow.indexOf('WEB_IDLE_ENABLEMENT_DIRTY=1') <
+      appWorkflow.indexOf('systemctl enable --now "${SERVICE_NAME}@${IDLE}"'),
+  );
+  assert.match(appWorkflow, /failed to restore idle Server disablement during rollback/u);
+  assert.match(appWorkflow, /manual recovery marker already recorded for failure line/u);
+  assert.match(
+    appWorkflow,
+    /restore_predeploy_symlinks[\s\S]*restore exact pre-deploy systemd unit snapshot/u,
+  );
+  assert.match(
+    appWorkflow,
+    /TRAFFIC_SWITCHED" -eq 1[\s\S]*ROLLBACK_STATE_COMMITTED" -eq 0[\s\S]*mark_manual_recovery/u,
   );
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
       appWorkflow.indexOf('rollback state committed and rollback.sh refreshed'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('mv -Tf "$ROLLBACK_STATE_LINK.candidate" "$ROLLBACK_STATE_LINK"') <
+      appWorkflow.indexOf('"$DEPLOY_ROOT/rollback.sh.candidate"'),
   );
   assert.ok(
     appWorkflow.indexOf('rollback state committed and rollback.sh refreshed') <

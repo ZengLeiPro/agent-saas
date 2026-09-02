@@ -7,8 +7,10 @@ WORKER_SERVICE="${WORKER_SERVICE:-agent-saas-runtime-worker}"
 ACTIVE_COLOR_FILE="${ACTIVE_COLOR_FILE:-/etc/agent-saas/active-color}"
 WORKER_ACTIVE_COLOR_FILE="${WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}"
 UPSTREAM_CONF="${UPSTREAM_CONF:-/etc/nginx/conf.d/agent-saas-upstream.conf}"
+API_SITE_CONF="${API_SITE_CONF:-/etc/nginx/conf.d/agent-api-kaiyan.conf}"
 SERVER_UNIT_PATH="${SERVER_UNIT_PATH:-/etc/systemd/system/agent-saas-server@.service}"
 WORKER_UNIT_PATH="${WORKER_UNIT_PATH:-/etc/systemd/system/agent-saas-runtime-worker@.service}"
+NGINX_DROP_IN_PATH="${NGINX_DROP_IN_PATH:-/etc/systemd/system/nginx.service.d/agent-saas-nas.conf}"
 RUNTIME_IDENTITY_FILE="${RUNTIME_IDENTITY_FILE:-/etc/agent-saas/runtime-identity.json}"
 RELEASE_ENV_ROOT="${RELEASE_ENV_ROOT:-/etc/agent-saas}"
 RUN_DIR="${RUN_DIR:-/run}"
@@ -48,6 +50,14 @@ restore_optional_file() {
   esac
 }
 
+CURRENT_UPSTREAM_BAK="/tmp/agent-saas-rollback-upstream.$$.conf"
+CURRENT_API_SITE_BAK="/tmp/agent-saas-rollback-api-site.$$.conf"
+CURRENT_UPSTREAM_PRESENT=false
+CURRENT_API_SITE_PRESENT=false
+cleanup_nginx_backups() {
+  rm -f "$CURRENT_UPSTREAM_BAK" "$CURRENT_API_SITE_BAK"
+}
+trap cleanup_nginx_backups EXIT
 trap 'log "rollback FAILED at line $LINENO"; exit 1' ERR
 
 CUR="$(tr -d '[:space:]' <"$ACTIVE_COLOR_FILE")"
@@ -62,6 +72,18 @@ case "$STATE" in
   *) log "rollback state escapes $ROOT/rollback-states: $STATE"; exit 1 ;;
 esac
 [ -d "$STATE" ] && [ ! -L "$STATE" ] || { log "rollback state directory is unsafe: $STATE"; exit 1; }
+if [ -L "$UPSTREAM_CONF" ] || [ -L "$API_SITE_CONF" ]; then
+  log 'current nginx configuration must not be a symlink'
+  exit 1
+fi
+if [ -f "$UPSTREAM_CONF" ]; then
+  install -m 0600 "$UPSTREAM_CONF" "$CURRENT_UPSTREAM_BAK"
+  CURRENT_UPSTREAM_PRESENT=true
+fi
+if [ -f "$API_SITE_CONF" ]; then
+  install -m 0600 "$API_SITE_CONF" "$CURRENT_API_SITE_BAK"
+  CURRENT_API_SITE_PRESENT=true
+fi
 
 API_ACTIVE="$(read_state api-active-color)"
 API_TARGET="$(read_state api-release-target)"
@@ -117,6 +139,10 @@ esac
 restore_required_file "$STATE/server@.service" "$SERVER_UNIT_PATH" 0644
 WORKER_UNIT_PRESENT="$(read_state worker-unit-present)"
 restore_optional_file "$WORKER_UNIT_PRESENT" "$STATE/runtime-worker@.service" "$WORKER_UNIT_PATH" 0644
+NGINX_DROP_IN_PRESENT="$(read_state nginx-drop-in-present)"
+restore_optional_file "$NGINX_DROP_IN_PRESENT" "$STATE/nginx-agent-saas-nas.conf" \
+  "$NGINX_DROP_IN_PATH" 0644
+API_SITE_PRESENT="$(read_state api-site-present)"
 restore_required_file "$STATE/runtime-identity.json" "$RUNTIME_IDENTITY_FILE" 0444
 restore_optional_file "$(read_state api-env-present)" "$STATE/api.release.env" \
   "$RELEASE_ENV_ROOT/server-$API_ACTIVE.release.env" 0600
@@ -176,8 +202,52 @@ if [ "$WORKER_WAS_ACTIVE" = true ]; then
   }
 fi
 
+restore_current_nginx_files() {
+  local status=0
+  restore_optional_file "$CURRENT_UPSTREAM_PRESENT" "$CURRENT_UPSTREAM_BAK" \
+    "$UPSTREAM_CONF" 0644 || status=1
+  restore_optional_file "$CURRENT_API_SITE_PRESENT" "$CURRENT_API_SITE_BAK" \
+    "$API_SITE_CONF" 0644 || status=1
+  return "$status"
+}
+
+mark_nginx_recovery_required() {
+  local marker="$STATE/rollback-nginx-manual-recovery-required" candidate="${STATE}/rollback-nginx-manual-recovery-required.candidate"
+  rm -f "$candidate"
+  {
+    printf 'fromColor=%s
+' "$CUR"
+    printf 'targetColor=%s
+' "$OTHER"
+    printf 'reason=%s
+' "$1"
+    printf 'recordedAt=%s
+' "$(date -Is)"
+  } >"$candidate"
+  chmod 0600 "$candidate"
+  mv -f "$candidate" "$marker"
+}
+
+restore_current_nginx_runtime() {
+  local reason="$1"
+  if restore_current_nginx_files && nginx -t && systemctl reload nginx; then
+    write_marker "$ACTIVE_COLOR_FILE" "$CUR" || {
+      mark_nginx_recovery_required "${reason}-marker-restore-failed" || true
+      return 70
+    }
+    return 0
+  fi
+  mark_nginx_recovery_required "$reason" || true
+  return 70
+}
+
 switch_traffic_back() {
-  cat >"$UPSTREAM_CONF" <<EOF
+  if ! restore_optional_file "$API_SITE_PRESENT" "$STATE/api-site.conf" \
+    "$API_SITE_CONF" 0644; then
+    restore_current_nginx_files || mark_nginx_recovery_required 'target-api-site-install-failed'
+    return 1
+  fi
+  if ! cat >"$UPSTREAM_CONF" <<EOF
 # active=$OTHER
 # 由 rollback-compatibility-app.sh 重写
 upstream agent_saas_backend {
@@ -185,9 +255,25 @@ upstream agent_saas_backend {
     server 127.0.0.1:$CUR_PORT backup;
 }
 EOF
-  write_marker "$ACTIVE_COLOR_FILE" "$OTHER"
-  if ! { nginx -t && systemctl reload nginx; }; then
-    write_marker "$ACTIVE_COLOR_FILE" "$CUR" || true
+  then
+    restore_current_nginx_files || mark_nginx_recovery_required 'target-upstream-write-failed'
+    return 1
+  fi
+  if ! nginx -t; then
+    restore_current_nginx_files || {
+      mark_nginx_recovery_required 'target-nginx-test-and-disk-restore-failed' || true
+      return 70
+    }
+    return 1
+  fi
+  if ! systemctl reload nginx; then
+    log 'target nginx reload failed; restoring the pre-rollback nginx runtime'
+    restore_current_nginx_runtime 'target-nginx-reload-and-reverse-failed'
+    return 1
+  fi
+  if ! write_marker "$ACTIVE_COLOR_FILE" "$OTHER"; then
+    log 'target nginx is live but active marker update failed; reversing nginx'
+    restore_current_nginx_runtime 'active-marker-update-and-nginx-reverse-failed'
     return 1
   fi
   systemctl enable "$SERVICE@$OTHER"

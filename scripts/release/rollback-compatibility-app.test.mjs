@@ -17,7 +17,14 @@ import test from 'node:test';
 
 const SCRIPT = resolve('scripts/release/rollback-compatibility-app.sh');
 
-async function fixture({ workerWasActive }) {
+test('rollback defaults to the same managed API nginx site as compatibility deploy', async () => {
+  assert.match(
+    await readFile(SCRIPT, 'utf8'),
+    /API_SITE_CONF="\$\{API_SITE_CONF:-\/etc\/nginx\/conf\.d\/agent-api-kaiyan\.conf\}"/u,
+  );
+});
+
+async function fixture({ workerWasActive, nginxDropInPresent = true }) {
   const root = await mkdtemp(join(tmpdir(), 'compatibility-rollback-'));
   const appRoot = join(root, 'app');
   const releases = join(appRoot, 'releases');
@@ -51,16 +58,22 @@ async function fixture({ workerWasActive }) {
     workerActive: join(etc, 'runtime-worker-active-color'),
     serverUnit: join(etc, 'agent-saas-server@.service'),
     workerUnit: join(etc, 'agent-saas-runtime-worker@.service'),
+    nginxDropIn: join(etc, 'nginx-agent-saas-nas.conf'),
     identity: join(etc, 'runtime-identity.json'),
     upstream: join(etc, 'upstream.conf'),
+    apiSite: join(etc, 'api-site.conf'),
     log: join(root, 'commands.log'),
+    reloadCount: join(root, 'reload-count'),
   };
   await Promise.all([
     writeFile(paths.active, 'blue\n'),
     writeFile(paths.workerActive, 'blue\n'),
     writeFile(paths.serverUnit, 'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n'),
     writeFile(paths.workerUnit, 'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n'),
+    writeFile(paths.nginxDropIn, 'candidate nginx drop-in\n'),
     writeFile(paths.identity, '{"release":"new"}\n'),
+    writeFile(paths.upstream, 'current upstream\n'),
+    writeFile(paths.apiSite, 'current api site\n'),
     writeFile(join(state, 'api-active-color'), 'green\n'),
     writeFile(join(state, 'api-release-target'), `${oldRelease}\n`),
     writeFile(join(state, 'server@.service'), 'ExecStart=/usr/bin/node legacy-server.js\n'),
@@ -69,7 +82,13 @@ async function fixture({ workerWasActive }) {
     writeFile(join(state, 'api.release.env'), 'AGENT_SAAS_RELEASE_SHA=old\n'),
     writeFile(join(state, 'worker-was-active'), `${workerWasActive}\n`),
     writeFile(join(state, 'worker-unit-present'), `${workerWasActive}\n`),
+    writeFile(join(state, 'nginx-drop-in-present'), `${nginxDropInPresent}\n`),
+    writeFile(join(state, 'api-site-present'), 'true\n'),
+    writeFile(join(state, 'api-site.conf'), 'old api site\n'),
   ]);
+  if (nginxDropInPresent) {
+    await writeFile(join(state, 'nginx-agent-saas-nas.conf'), 'old nginx drop-in\n');
+  }
   if (workerWasActive) {
     await Promise.all([
       writeFile(
@@ -94,6 +113,13 @@ if [ "$1" = restart ] && [ "$2" = agent-saas-runtime-worker@green ]; then
   printf '%s\\n' "$TEST_PID" > "$TEST_RUN/agent-saas-runtime-worker-green.ready"
 fi
 if [ "$1" = show ] && [ "$2" = agent-saas-runtime-worker@green ]; then printf '%s\\n' "$TEST_PID"; fi
+if [ "$1" = reload ] && [ "$2" = nginx ]; then
+  count=$(cat "$RELOAD_COUNT_FILE" 2>/dev/null || echo 0)
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$RELOAD_COUNT_FILE"
+  if [ "${'$'}{FAIL_ALL_NGINX_RELOADS:-false}" = true ]; then exit 1; fi
+  if [ "${'$'}{FAIL_FIRST_NGINX_RELOAD:-false}" = true ] && [ "$count" -eq 1 ]; then exit 1; fi
+fi
 exit 0
 `,
   );
@@ -113,14 +139,17 @@ exit 0
       ...process.env,
       PATH: `${bin}:/usr/bin:/bin`,
       ROLLBACK_LOG: paths.log,
+      RELOAD_COUNT_FILE: paths.reloadCount,
       TEST_PID: String(process.pid),
       TEST_RUN: run,
       ROOT: appRoot,
       ACTIVE_COLOR_FILE: paths.active,
       WORKER_ACTIVE_COLOR_FILE: paths.workerActive,
       UPSTREAM_CONF: paths.upstream,
+      API_SITE_CONF: paths.apiSite,
       SERVER_UNIT_PATH: paths.serverUnit,
       WORKER_UNIT_PATH: paths.workerUnit,
+      NGINX_DROP_IN_PATH: paths.nginxDropIn,
       RUNTIME_IDENTITY_FILE: paths.identity,
       RELEASE_ENV_ROOT: etc,
       RUN_DIR: run,
@@ -145,6 +174,51 @@ test('rollback fails closed before restoring units when the current Worker marke
   assert.match(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
 });
 
+test('failed target nginx reload reverses disk and runtime to the current deployment', async () => {
+  const value = await fixture({ workerWasActive: false });
+  const result = spawnSync('bash', [SCRIPT], {
+    encoding: 'utf8',
+    env: { ...value.environment, FAIL_FIRST_NGINX_RELOAD: 'true' },
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(value.paths.upstream, 'utf8'), 'current upstream\n');
+  assert.equal(await readFile(value.paths.apiSite, 'utf8'), 'current api site\n');
+  assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  assert.equal(await readFile(value.paths.reloadCount, 'utf8'), '2\n');
+  const log = await readFile(value.paths.log, 'utf8');
+  assert.doesNotMatch(log, /systemctl stop agent-saas-server@blue/u);
+});
+
+test('failed target and reverse nginx reloads leave auditable manual recovery state', async () => {
+  const value = await fixture({ workerWasActive: false });
+  const result = spawnSync('bash', [SCRIPT], {
+    encoding: 'utf8',
+    env: { ...value.environment, FAIL_ALL_NGINX_RELOADS: 'true' },
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(await readFile(value.paths.upstream, 'utf8'), 'current upstream\n');
+  assert.equal(await readFile(value.paths.apiSite, 'utf8'), 'current api site\n');
+  assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  const marker = join(
+    value.appRoot,
+    'rollback-states',
+    'new',
+    'rollback-nginx-manual-recovery-required',
+  );
+  assert.equal((await lstat(marker)).mode & 0o777, 0o600);
+  assert.match(await readFile(marker, 'utf8'), /target-nginx-reload-and-reverse-failed/u);
+});
+
+test('slow rollback removes the nginx drop-in when the previous deployment had none', async () => {
+  const value = await fixture({ workerWasActive: false, nginxDropInPresent: false });
+  const result = spawnSync('bash', [SCRIPT], { encoding: 'utf8', env: value.environment });
+
+  assert.equal(result.status, 0, result.stderr);
+  await assert.rejects(lstat(value.paths.nginxDropIn));
+});
+
 for (const workerWasActive of [true, false]) {
   test(`slow rollback restores the pre-guard release when prior Worker active=${workerWasActive}`, async () => {
     const value = await runRollback(workerWasActive);
@@ -155,6 +229,8 @@ for (const workerWasActive of [true, false]) {
     );
     assert.doesNotMatch(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
     assert.equal(await readFile(value.paths.identity, 'utf8'), '{"release":"old"}\n');
+    assert.equal(await readFile(value.paths.nginxDropIn, 'utf8'), 'old nginx drop-in\n');
+    assert.equal(await readFile(value.paths.apiSite, 'utf8'), 'old api site\n');
     assert.equal(await readFile(value.paths.active, 'utf8'), 'green\n');
     assert.equal(await readlink(join(value.appRoot, 'current')), value.oldRelease);
     assert.equal(await readlink(join(value.appRoot, 'previous')), value.newRelease);

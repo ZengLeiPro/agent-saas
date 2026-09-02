@@ -435,10 +435,10 @@ export class PgSessionAutomationStore {
         WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 AND incarnation_id=$4
           AND generation=$5 AND spec_version=$6 AND state IN ('pending','dispatching')
           AND wakeup_id=ANY($8::uuid[])`,[s.tenantId,s.sessionId,s.automationId,s.incarnationId,s.generation,s.specVersion,reason,ids]);
-      await c.query(`UPDATE ${this.tables.preparedDispatchAttempts} p SET state='cancelled',version=version+1,
-          lease_token=NULL,lease_expires_at=NULL,last_error=COALESCE(last_error,$7),updated_at=now()
+      await c.query(`UPDATE ${this.tables.preparedDispatchAttempts} p SET state='cancelled',version=p.version+1,
+          lease_token=NULL,lease_expires_at=NULL,last_error=COALESCE(p.last_error,$7),updated_at=now()
         FROM ${this.tables.outbox} o
-        WHERE p.outbox_id=o.outbox_id AND o.tenant_id=$1 AND o.session_id=$2 AND o.automation_id=$3
+        WHERE p.outbox_id = o.outbox_id AND o.tenant_id=$1 AND o.session_id=$2 AND o.automation_id=$3
           AND o.incarnation_id=$4 AND o.generation=$5 AND o.spec_version=$6
           AND o.wakeup_id=ANY($8::uuid[]) AND p.state IN ('prepared','result_unknown','reconcile')`,
       [s.tenantId,s.sessionId,s.automationId,s.incarnationId,s.generation,s.specVersion,reason,ids]);

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SessionAutomationTools } from '../agent/tools/sessionAutomationTools.js';
 import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
@@ -35,6 +35,14 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     store = new PgSessionAutomationStore(pool, prefix, runs.runsTable);
     await store.init();
   }, 30_000);
+
+  beforeEach(async () => {
+    await pool.query(`DO $$ DECLARE r record; BEGIN
+      FOR r IN SELECT tablename FROM pg_tables
+        WHERE schemaname='public' AND tablename LIKE '${prefix}_%'
+      LOOP EXECUTE format('TRUNCATE TABLE %I CASCADE',r.tablename); END LOOP;
+    END $$`);
+  });
 
   afterAll(async () => {
     if (!pool) return;

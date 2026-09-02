@@ -6,6 +6,37 @@ import { RuntimeScheduler } from '../runtime/scheduler.js';
 import type { RunRecord, RunStatus } from '../runtime/runStore.js';
 import { deferred, MemoryEventStore, MemoryRunStore } from './runtimeScheduler.testHelpers.js';
 
+function terminalRuntimeConfig(runStore: MemoryRunStore, eventStore: MemoryEventStore): RawRuntimeRunDispatchConfig {
+  return {
+    agentCwd: '/tmp',
+    sharedDir: '/tmp',
+    runStore,
+    sessionCatalog: {
+      async upsert() {},
+      async ensure() {},
+      async get(sessionId: string) {
+        const run = [...runStore.records.values()].find(candidate => candidate.sessionId === sessionId);
+        if (!run) return null;
+        const now = new Date().toISOString();
+        return {
+          sessionId,
+          userId: run.userId ?? 'background-user',
+          username: 'background-user',
+          tenantId: run.tenantId,
+          channel: run.channel ?? 'web',
+          cwd: '/tmp/workspace',
+          transcriptPath: `/tmp/${sessionId}.jsonl`,
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+      async markStatus() {},
+      async findTranscriptPath(sessionId: string) { return `/tmp/${sessionId}.jsonl`; },
+    },
+    eventStoreFactory: () => eventStore,
+  } as RawRuntimeRunDispatchConfig;
+}
+
 function automationAgentMetadata(runId: string): Record<string, unknown> {
   return {
     backgroundTask: true,
@@ -106,6 +137,7 @@ describe('RuntimeScheduler background task recovery', () => {
 
   it('freezes a running parent when the interrupted child terminal is already preserved', async () => {
     const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
     const interrupted = await runStore.upsertPending({
       runId: 'bg-automation-child-cancelled',
       sessionId: 'sub-bg-automation-child-cancelled',
@@ -113,11 +145,11 @@ describe('RuntimeScheduler background task recovery', () => {
     });
     runStore.records.set(interrupted.runId, { ...interrupted, status: 'running' });
     const service = new DurableBackgroundTaskService({
-      agentCwd: '/tmp', sharedDir: '/tmp', runStore,
+      ...terminalRuntimeConfig(runStore, eventStore),
       sessionAutomationRuntimeGuard: {
         recoverInterruptedBackgroundChild: vi.fn(async () => 'terminal_preserved' as const),
       } as never,
-    } as RawRuntimeRunDispatchConfig);
+    });
 
     await service.failInterrupted(runStore.records.get(interrupted.runId)!);
 
@@ -130,6 +162,7 @@ describe('RuntimeScheduler background task recovery', () => {
 
   it('preserves concurrent cancellation and never falls back to the automation root run', async () => {
     const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
     await runStore.upsertPending({ runId: 'automation-root-run', sessionId: 'automation-root-session' });
     const interrupted = await runStore.upsertPending({
       runId: 'bg-automation-cancelled',
@@ -140,11 +173,11 @@ describe('RuntimeScheduler background task recovery', () => {
     const staleInterrupted = runStore.records.get(interrupted.runId)!;
     await runStore.markStatus(interrupted.runId, 'cancelled', 'user_cancelled');
     const service = new DurableBackgroundTaskService({
-      agentCwd: '/tmp', sharedDir: '/tmp', runStore,
+      ...terminalRuntimeConfig(runStore, eventStore),
       sessionAutomationRuntimeGuard: {
         recoverInterruptedBackgroundChild: vi.fn(async () => 'terminal_preserved' as const),
       } as never,
-    } as RawRuntimeRunDispatchConfig);
+    });
 
     await service.failInterrupted(staleInterrupted);
 
@@ -172,7 +205,7 @@ describe('RuntimeScheduler background task recovery', () => {
       leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
     });
     const wake = vi.fn();
-    const service = new DurableBackgroundTaskService({ agentCwd: '/tmp', sharedDir: '/tmp', runStore } as RawRuntimeRunDispatchConfig);
+    const service = new DurableBackgroundTaskService(terminalRuntimeConfig(runStore, eventStore));
     const failInterrupted = vi.fn((candidate: RunRecord) => service.failInterrupted(candidate));
     const scheduler = new RuntimeScheduler({
       runStore,

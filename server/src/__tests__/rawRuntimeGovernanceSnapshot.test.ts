@@ -36,7 +36,7 @@ function casHandStore(registerImpl: (record: Record<string, unknown>) => unknown
   });
   return {
     register,
-    async completeProvisionAttempt(_handId: string, generation: string, status: string, metadata: Record<string, unknown>) {
+    async completeProvisionAttempt(_handId: string, generation: string, status: string, metadata: Record<string, unknown>, _tenantId?: string, _owner?: string) {
       const currentMetadata = current?.metadata as Record<string, unknown> | undefined;
       if (currentMetadata?.provisionGeneration !== generation) return null;
       return await register({ ...current, status, metadata });
@@ -107,7 +107,7 @@ describe('Raw Runtime governance snapshot fail-closed', () => {
     const generation = (register.mock.calls[0]![0].metadata as Record<string, unknown>).provisionGeneration;
     expect(completeProvisionAttempt).toHaveBeenCalledWith(
       deriveTenantHandId('tenant-a', 'session-1', 'server-local'), generation, 'ready',
-      expect.objectContaining({ provisionGeneration: generation }), 'tenant-a',
+      expect.objectContaining({ provisionGeneration: generation }), 'tenant-a', expect.any(String),
     );
   });
 

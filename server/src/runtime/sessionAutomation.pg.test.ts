@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'; // isolated real-PG fixture identities
 import pg from 'pg';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PgEventStore } from './pgEventStore.js';
 import { PgRunStore } from './runStore.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
@@ -16,33 +16,14 @@ const describePg=url?describe:describe.skip; // Real PostgreSQL is required for 
 
 describePg('session automation real PostgreSQL integration',()=>{
  const prefix=`automation_${randomUUID().replaceAll('-','').slice(0,12)}`;let pool:InstanceType<typeof Pool>;let events:PgEventStore;let runs:PgRunStore;let store:PgSessionAutomationStore;const tenant='tenant-a',session='session-a',automation=randomUUID(),incarnation=randomUUID();
- beforeAll(async()=>{pool=new Pool({connectionString:url!,max:8});events=new PgEventStore({connectionString:url!,tablePrefix:prefix,poolMax:4});await events.init();runs=new PgRunStore({pool,tablePrefix:prefix,writerCapability:{capability:'tenant-native-v1',allowPrivilegedRoleForTests:true}});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[automation,tenant,session,incarnation]);await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[automation,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);},30_000);
- afterAll(async()=>{if(!pool)return;await events.close();await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP; END $$`).catch(()=>undefined);await pool.end();},30_000);
- afterEach(async()=>{
-  if(!pool)return;
-  const ids=`SELECT automation_id FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id LIKE 'goal-race-%'`;
-  await store.tx(async c=>{
-   await c.query(`DELETE FROM ${store.tables.reconciliationReceipts} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.evaluations} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.goalCompletionCandidates} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.budgetSettlements} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.providerAttempts} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.budgetReservations} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.interactions} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.backgroundResources} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.preparedDispatchAttempts} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.lifecycleWork} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.cancellations} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.usage} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.events} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.completionAllowances} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.executions} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.outbox} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.wakeups} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.specs} WHERE automation_id IN (${ids})`,[tenant]);
-   await c.query(`DELETE FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id LIKE 'goal-race-%'`,[tenant]);
-  });
+ beforeAll(async()=>{pool=new Pool({connectionString:url!,max:8});events=new PgEventStore({connectionString:url!,tablePrefix:prefix,poolMax:4});await events.init();runs=new PgRunStore({pool,tablePrefix:prefix,writerCapability:{capability:'tenant-native-v1',allowPrivilegedRoleForTests:true}});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();},30_000);
+ beforeEach(async()=>{
+  await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('TRUNCATE TABLE %I CASCADE',r.tablename); END LOOP; END $$`);
+  await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[automation,tenant,session,incarnation]);
+  await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[automation,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
  });
+ afterAll(async()=>{if(!pool)return;await events.close();await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP; END $$`).catch(()=>undefined);await pool.end();},30_000);
+
  async function schedule(automationId:string,sessionId:string,key:string,dueAt:Date,generation:number){const current=await pool.query(`SELECT incarnation_id,continuation_epoch FROM ${store.tables.automations} WHERE automation_id=$1`,[automationId]);await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId,automationId,incarnationId:String(current.rows[0].incarnation_id),generation,specVersion:1,continuationEpoch:Number(current.rows[0].continuation_epoch),triggerKey:key,dueAt,payload:{}}));}
  async function wake(key:string,generation=1){await schedule(automation,session,key,new Date(0),generation);}
  it('multi-worker claims exactly once and crash lease is recovered',async()=>{await wake('multi');await Promise.all([store.claimDue(10,10),store.claimDue(10,10)]);const [a,b]=await Promise.all([store.claimDispatch(10,10),store.claimDispatch(10,10)]);expect([...a,...b]).toHaveLength(1);await new Promise(r=>setTimeout(r,20));await store.recoverLeases();expect(await store.claimDispatch(10,1000)).toHaveLength(1);});

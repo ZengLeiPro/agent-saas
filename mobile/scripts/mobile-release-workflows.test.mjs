@@ -119,6 +119,13 @@ test('M60-04 submit credential policy isolates all three profiles', () => {
 
   const submit = sources['.github/workflows/mobile-submit.yml'];
   assert.match(submit, /node mobile\/scripts\/mobile-submit-credential-policy\.mjs "\$PROFILE"/u);
+  const submitSteps = parsed['.github/workflows/mobile-submit.yml'].jobs.submit.steps;
+  const checkoutIndex = submitSteps.findIndex((step) => step.uses === 'actions/checkout@v5');
+  const credentialPolicyIndex = submitSteps.findIndex((step) =>
+    step.run?.includes('mobile-submit-credential-policy.mjs'));
+  assert.equal(checkoutIndex, 0, 'real submit must checkout the reviewed commit before any repository script');
+  assert.equal(submitSteps[checkoutIndex].with.ref, '${{ needs.validate-boundary.outputs.commit }}');
+  assert.ok(credentialPolicyIndex > checkoutIndex, 'credential policy must run after checkout');
   for (const variable of [
     'APP_STORE_CONNECT_API_KEY_P8',
     'APP_STORE_CONNECT_API_KEY_ID',

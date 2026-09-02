@@ -115,6 +115,8 @@ jobs:
     timeout-minutes: 45
     env: { EXPO_TOKEN: '${{ secrets.EXPO_ORG_ROBOT_TOKEN }}' }
     steps:
+      - uses: actions/checkout@v5
+        with: { ref: '${{ needs.validate-boundary.outputs.commit }}', persist-credentials: false }
       - name: Fail closed unless store integration is configured
         env:
           PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
@@ -134,8 +136,6 @@ jobs:
           test "$CONFIGURED" = true && test -n "$EXPO_TOKEN" && test -n "$PRIVATE_KEY" && test -n "$PUBLIC_KEY" && test -n "$LOOKUP_TOKEN" && test -n "$LOOKUP_ENDPOINT" || { echo 'organization robot submit/lookup configuration is incomplete' >&2; exit 1; }
           [[ "$LOOKUP_ENDPOINT" =~ ^https://[^/@]+/ ]] || { echo 'store lookup endpoint must be credential-free HTTPS' >&2; exit 1; }
           node mobile/scripts/mobile-submit-credential-policy.mjs "$PROFILE"
-      - uses: actions/checkout@v5
-        with: { ref: '${{ needs.validate-boundary.outputs.commit }}', persist-credentials: false }
       - uses: pnpm/action-setup@v6
         with: { version: '10.18.3', run_install: false }
       - uses: actions/setup-node@v5

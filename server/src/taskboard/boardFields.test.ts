@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { rowToBoard } from './boardFields.js';
+import { boardIntegrationMigrationSql, rowToBoard } from './boardFields.js';
 
 describe('rowToBoard integration policy projection', () => {
   it('drops historical featureFlags and CI fallback while projecting workflow v3', () => {
@@ -17,8 +17,8 @@ describe('rowToBoard integration policy projection', () => {
         batch: { maxTasks: 10, selection: 'priority_then_ready_at' },
         execution: {
           mergeMethod: 'squash', continueIndependentSources: true, autoResolveConflicts: true,
-          maxAutomaticRemediationRounds: 2, maxTransientRetries: 3, requireGreenChecks: true,
-          deleteRemoteBranch: false, deploy: false,
+          maxAutomaticRemediationRounds: 2, maxTransientRetries: 3,
+          requireGreenChecks: true, deleteRemoteBranch: false, deploy: false,
         },
       },
     }, 'owner-1');
@@ -26,5 +26,12 @@ describe('rowToBoard integration policy projection', () => {
     expect(board.integrationPolicy).toMatchObject({ workflowVersion: 3 });
     expect(board.integrationPolicy).not.toHaveProperty('featureFlags');
     expect(board.integrationPolicy).not.toHaveProperty('ciPolicy');
+    expect(board.integrationPolicy?.execution).not.toHaveProperty('requireGreenChecks');
+  });
+
+  it('removes requireGreenChecks from stored policy JSON during schema normalization', () => {
+    const sql = boardIntegrationMigrationSql('taskboards');
+    expect(sql).toContain("(integration_policy->'execution')-'requireGreenChecks'");
+    expect(sql).toContain("(integration_policy->'execution')?'requireGreenChecks'");
   });
 });

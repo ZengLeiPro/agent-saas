@@ -551,15 +551,20 @@ export class GithubRepositoryProvider implements RepositoryProvider {
   ): Promise<string> {
     const token = await this.options.resolveToken(repository, credentialOwnerId);
     if (!token) throw new Error('GitHub repository credential is unavailable');
-    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
-      signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'agent-saas-taskboard-provider',
-      },
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+        signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'agent-saas-taskboard-provider',
+        },
+      });
+    } catch (error) {
+      throw new RepositoryProviderUnavailableError('GitHub API request is temporarily unavailable', error);
+    }
     const text = await response.text();
     if (!response.ok) throw new GithubApiError(response.status, text || `GitHub API ${response.status}`);
     return text.slice(0, 200_000);
@@ -568,11 +573,16 @@ export class GithubRepositoryProvider implements RepositoryProvider {
   private async request(repository: TaskBoardRepositoryConfig, credentialOwnerId: string, path: string, init: RequestInit = {}): Promise<unknown> {
     const token = await this.options.resolveToken(repository, credentialOwnerId);
     if (!token) throw new Error('GitHub repository credential is unavailable');
-    const response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
-      ...init,
-      signal: init.signal ?? AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-saas-taskboard-provider', ...init.headers },
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${this.apiBaseUrl}${path}`, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+        headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-saas-taskboard-provider', ...init.headers },
+      });
+    } catch (error) {
+      throw new RepositoryProviderUnavailableError('GitHub API request is temporarily unavailable', error);
+    }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new GithubApiError(response.status, payload && typeof payload === 'object' && 'message' in payload ? String((payload as { message: unknown }).message) : `GitHub API ${response.status}`);
     return payload;
@@ -584,6 +594,16 @@ export function repositorySubjectDigest(input: { repositoryId: string; providerP
 }
 
 export class GithubApiError extends Error { constructor(readonly status: number, message: string) { super(message); this.name = 'GithubApiError'; } }
+export class RepositoryProviderUnavailableError extends Error {
+  constructor(message: string, readonly providerCause?: unknown) {
+    super(message);
+    this.name = 'RepositoryProviderUnavailableError';
+  }
+}
+export function isRepositoryProviderUnavailableError(error: unknown): boolean {
+  return error instanceof RepositoryProviderUnavailableError
+    || (error instanceof GithubApiError && (error.status === 429 || error.status >= 500));
+}
 function isUnavailableGithubPolicyFeature(error: unknown): boolean {
   if (!(error instanceof GithubApiError) || error.status !== 403) return false;
   const message = error.message.toLowerCase();

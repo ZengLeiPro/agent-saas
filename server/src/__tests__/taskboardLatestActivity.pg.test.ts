@@ -42,7 +42,7 @@ describePg('任务卡片最新动态时间', () => {
     }
   }, 30_000);
 
-  it('普通编辑、CI 字段刷新和同状态 execution.claimed 不会推进最新动态时间', async () => {
+  it('普通编辑、非状态字段刷新和同状态 execution.claimed 不会推进最新动态时间', async () => {
     const board = await store.createBoard(alice, { name: '非状态更新' });
     const task = await store.createTask(alice, board.id, { title: '原始标题', status: 'backlog' });
     const initialActivityAt = task.latestActivityAt;
@@ -56,7 +56,7 @@ describePg('任务卡片最新动态时间', () => {
 
     await pool.query(
       `UPDATE ${store.tasksTable}
-          SET provider_ci_status='success',provider_ci_inspected_at=now(),updated_at=now()+interval '1 day'
+          SET model='legacy-model',updated_at=now()+interval '1 day'
         WHERE id=$1`,
       [task.id],
     );
@@ -65,9 +65,9 @@ describePg('任务卡片最新动态时间', () => {
        VALUES ($1,'execution.claimed','user',$2,$3::jsonb,'2040-01-01T00:00:00Z')`,
       [task.id, alice.ownerUserId, JSON.stringify({ from: 'backlog', to: 'backlog' })],
     );
-    const afterCiInspection = await store.getTask(alice, task.id);
-    expect(afterCiInspection.updatedAt).not.toBe(edited.updatedAt);
-    expect(afterCiInspection.latestActivityAt).toBe(initialActivityAt);
+    const afterNonStatusUpdate = await store.getTask(alice, task.id);
+    expect(afterNonStatusUpdate.updatedAt).not.toBe(edited.updatedAt);
+    expect(afterNonStatusUpdate.latestActivityAt).toBe(initialActivityAt);
   });
 
   it('真实状态迁移会推进列表和详情的最新动态时间', async () => {

@@ -601,7 +601,6 @@ describe("TaskBoardView", () => {
           autoResolveConflicts: true,
           maxAutomaticRemediationRounds: 2,
           maxTransientRetries: 3,
-          requireGreenChecks: true,
           deleteRemoteBranch: false,
           deploy: false,
         },
@@ -613,7 +612,6 @@ describe("TaskBoardView", () => {
       status: "ready_to_merge" as const,
       providerPullRequestId: "pr-1",
       pullRequestNumber: 88,
-      reviewedSubjectDigest: "sha256:reviewed",
       mergeEligibility: "eligible" as const,
     };
     const integrationTask = {

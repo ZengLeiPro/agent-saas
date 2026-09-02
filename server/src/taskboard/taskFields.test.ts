@@ -60,6 +60,19 @@ describe('taskboard task status DDL', () => {
     }
   });
 
+  it('drops retired task review and provider CI columns idempotently', () => {
+    const ddl = taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards');
+    const migration = taskFieldsMigrationSql('runtime_taskboard_tasks');
+    for (const column of [
+      'reviewed_subject_digest', 'provider_ci_inspection_id', 'provider_ci_execution_id',
+      'provider_ci_purpose', 'provider_ci_head_oid', 'provider_ci_status', 'provider_ci_inspected_at',
+    ]) {
+      expect(ddl).not.toContain(column);
+      expect(migration).toContain(`ALTER TABLE runtime_taskboard_tasks DROP COLUMN IF EXISTS ${column};`);
+      expect(migration).not.toContain(`ADD COLUMN IF NOT EXISTS ${column}`);
+    }
+  });
+
   it('defines every delivery evidence column written by pull request registration', () => {
     const ddl = taskTableSql('runtime_taskboard_tasks', 'runtime_taskboards');
     const migration = taskFieldsMigrationSql('runtime_taskboard_tasks');

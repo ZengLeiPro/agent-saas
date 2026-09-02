@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
-import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const connectionString = process.env.TEST_DATABASE_URL?.trim();
@@ -69,7 +68,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
     }
   }, 30_000);
 
-  it('reconciles a pull request merged outside the taskboard while recording review subject', async () => {
+  it('reconciles a pull request merged outside the taskboard when review finishes', async () => {
     const board = await store.createBoard(identity, {
       name: 'External merge reconciliation',
       repository: {
@@ -105,7 +104,7 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       }),
     });
 
-    await expect(store.recordReviewedExecutionSubjectV2(identity, runId)).resolves.toMatchObject({
+    await expect(store.finishExecutionV2(identity, runId, { targetStatus: 'ready_to_merge', body: 'Independent review completed; provider reports the PR already merged.' })).resolves.toMatchObject({
       status: 'done', mergedCommitOid: 'merge-32',
     });
     const execution = await pool.query(
@@ -119,6 +118,86 @@ describePg('taskboard integration recovery workflow (PostgreSQL)', () => {
       [executionId],
     );
     expect(cancellations.rows[0].count).toBe(1);
+    const comments = await pool.query(
+      `SELECT body,author_type,author_id FROM ${store.commentsTable} WHERE task_id=$1`,
+      [delivery.id],
+    );
+    expect(comments.rows).toEqual([{
+      body: 'Independent review completed; provider reports the PR already merged.',
+      author_type: 'agent',
+      author_id: runId,
+    }]);
+    const commentEvents = await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.changesTable}
+        WHERE task_id=$1 AND change_type='execution.comment' AND actor_id=$2`,
+      [delivery.id, runId],
+    );
+    expect(commentEvents.rows[0].count).toBe(1);
+    await expect(store.finishExecutionV2(identity, runId, {
+      targetStatus: 'ready_to_merge', body: 'Duplicate handoff must not create another comment.',
+    })).rejects.toBeTruthy();
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.commentsTable} WHERE task_id=$1`,
+      [delivery.id],
+    )).rows[0].count).toBe(1);
+  });
+
+  it('keeps one immutable Delivery PR binding under refresh, replacement, and concurrency', async () => {
+    const board = await store.createBoard(identity, {
+      name: 'Immutable delivery pull request',
+      repository: {
+        provider: 'github', repositoryId: 'github:acme/immutable-pr', owner: 'acme', name: 'immutable-pr',
+        baseBranch: 'main', allowForkPullRequest: false,
+      },
+    });
+    store.setRepositoryProvider({
+      getPullRequest: async (_repository, providerPullRequestId) => ({
+        providerPullRequestId,
+        number: Number(providerPullRequestId),
+        state: 'open',
+        draft: false,
+        headRef: `fix/task-${providerPullRequestId}`,
+        headOid: `head-${providerPullRequestId}`,
+        baseRef: 'main',
+        baseOid: 'base-main',
+        mergeable: true,
+        requiredChecks: [],
+        subjectDigest: `digest-${providerPullRequestId}`,
+      }),
+      mergePullRequest: async () => ({
+        providerRequestId: 'unused', providerPullRequestId: '31', merged: false, raw: {},
+      }),
+    });
+
+    const delivery = await store.createTask(identity, board.id, { title: 'Bound once', status: 'todo' });
+    const executionId = randomUUID();
+    const runId = `run-${executionId}`;
+    await store.claimExecution(identity, delivery.id, executionClaim(delivery.id, delivery.version, executionId, runId, 'work'));
+    await expect(store.attachExecutionPullRequestV2(identity, runId, '31'))
+      .resolves.toMatchObject({ providerPullRequestId: '31' });
+    await expect(store.attachExecutionPullRequestV2(identity, runId, '31'))
+      .resolves.toMatchObject({ providerPullRequestId: '31' });
+    expect((await pool.query(
+      `SELECT head_oid,base_oid FROM ${store.tasksTable} WHERE id=$1`,
+      [delivery.id],
+    )).rows[0]).toEqual({ head_oid: 'head-31', base_oid: 'base-main' });
+    await expect(store.attachExecutionPullRequestV2(identity, runId, '32'))
+      .rejects.toMatchObject({ code: 'TASKBOARD_SUBJECT_STALE' });
+
+    const concurrent = await store.createTask(identity, board.id, { title: 'Concurrent bind', status: 'todo' });
+    const concurrentExecutionId = randomUUID();
+    const concurrentRunId = `run-${concurrentExecutionId}`;
+    await store.claimExecution(identity, concurrent.id, executionClaim(
+      concurrent.id, concurrent.version, concurrentExecutionId, concurrentRunId, 'work',
+    ));
+    const outcomes = await Promise.allSettled([
+      store.attachExecutionPullRequestV2(identity, concurrentRunId, '41'),
+      store.attachExecutionPullRequestV2(identity, concurrentRunId, '42'),
+    ]);
+    expect(outcomes.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const bound = await store.getTask(identity, concurrent.id);
+    expect(['41', '42']).toContain(bound.providerPullRequestId);
   });
 
   it('returns unresolved protocol V2 executions to a dispatchable business state', async () => {

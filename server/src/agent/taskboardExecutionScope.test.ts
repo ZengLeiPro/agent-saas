@@ -49,8 +49,7 @@ describe('taskboard Integration Execution scope', () => {
     'execution.pull_request.set',
     'execution.pull_request.inspect',
     'execution.pull_request.log',
-    'execution.review_subject.record',
-  ] as const)('keeps Integration out of the Delivery receipt protocol: %s', (action) => {
+  ] as const)('keeps Integration out of the Delivery PR read protocol: %s', (action) => {
     expect(() => assertTaskboardExecutionScope({ action }, context(3), identity))
       .toThrow('Integration Agent 直接使用标准 Git/GitHub');
   });

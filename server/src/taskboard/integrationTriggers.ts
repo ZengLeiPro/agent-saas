@@ -192,7 +192,6 @@ async function eligibleSources(host: IntegrationTriggerHost, boardId: string, li
         WHERE t.board_id=$1 AND t.kind='delivery' AND t.status='ready_to_merge'
           AND t.archived_at IS NULL
           AND t.provider_pull_request_id IS NOT NULL
-          AND t.reviewed_subject_digest IS NOT NULL
           AND NOT EXISTS (
             SELECT 1 FROM ${host.integrationSourcesTable} s
              WHERE s.delivery_task_id=t.id AND s.state NOT IN ('merged','canceled')
@@ -437,7 +436,6 @@ async function completeTrigger(
              WHERE t.board_id=$2 AND t.kind='delivery' AND t.status='ready_to_merge'
                AND t.archived_at IS NULL
                AND t.provider_pull_request_id IS NOT NULL
-               AND t.reviewed_subject_digest IS NOT NULL
                AND NOT EXISTS (
                  SELECT 1 FROM ${host.integrationSourcesTable} s
                   WHERE s.delivery_task_id=t.id AND s.state NOT IN ('merged','canceled')

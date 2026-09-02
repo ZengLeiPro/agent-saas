@@ -50,7 +50,7 @@ import type { RepositoryProvider } from './repositoryProvider.js';
 import { claimIntegrationDispatchCandidates } from './integrationTriggers.js';
 import {
   attachExecutionPullRequest, inspectExecutionPullRequest, readExecutionPullRequestJobLog,
-  recordReviewedExecutionSubject, type ExecutionPullRequestInspection,
+  type ExecutionPullRequestInspection,
 } from './deliveryPullRequests.js';
 import {
   appendBoardChange,
@@ -254,17 +254,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
   readExecutionPullRequestJobLogV2(
     identity: TaskboardIdentity,
     runId: string,
-    inspectionId: string,
     providerJobId: string,
-  ): Promise<{ inspectionId: string; providerJobId: string; log: string }> {
-    return readExecutionPullRequestJobLog(this, identity, runId, inspectionId, providerJobId);
-  }
-
-  recordReviewedExecutionSubjectV2(
-    identity: TaskboardIdentity,
-    runId: string,
-  ): Promise<TaskBoardTask> {
-    return recordReviewedExecutionSubject(this, identity, runId);
+  ): Promise<{ providerJobId: string; log: string }> {
+    return readExecutionPullRequestJobLog(this, identity, runId, providerJobId);
   }
 
   claimWorkflowCancellations(limit = 20): Promise<Array<{ id: string; runId: string; reason: string }>> {
@@ -554,10 +546,9 @@ export class PgTaskboardStore implements TaskboardService, TaskboardExecutionSto
       if (
         input.providerPullRequestId !== undefined
         || input.pullRequestNumber !== undefined
-        || input.reviewedSubjectDigest !== undefined
       ) {
         throw new TaskboardValidationError(
-          'Pull request identity and reviewed subject are protected fields',
+          'Pull request identity fields are protected',
           'TASKBOARD_PROTECTED_FIELD',
         );
       }

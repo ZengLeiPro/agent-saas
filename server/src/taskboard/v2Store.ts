@@ -245,11 +245,11 @@ export async function createIntegrationBatch(
       await client.query(
         `INSERT INTO ${options.integrationSourcesTable}
            (id, integration_task_id, delivery_task_id, repository_id, provider_pull_request_id,
-            reviewed_subject_digest, frozen_head_oid, source_order)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            frozen_head_oid, source_order)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [
           integrationSourceId, integrationTaskId, row.id, repository.repositoryId,
-          row.provider_pull_request_id, row.reviewed_subject_digest, row.head_oid, index,
+          row.provider_pull_request_id, row.head_oid, index,
         ],
       );
       frozenSources.push({ integrationSourceId });

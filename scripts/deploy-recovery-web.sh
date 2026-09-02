@@ -138,7 +138,37 @@ else
 fi
 
 # 与 OSS 的只增不删语义一致：旧页面在 DNS 回切后仍能懒加载旧 hash chunk，
-# 旧 Service Worker 也仍能加载它对应的 Workbox runtime。
+# 旧 Service Worker 也仍能加载它对应的 Workbox runtime。同名 hash 文件必须逐字节相同，
+# 否则在任何复制或 symlink mutation 前失败，不能让 cp -n 静默吸收冲突。
+verify_immutable_shared_file() {
+  local source="$1"
+  local target="$2"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ ! -f "$target" ] || [ -L "$target" ] || ! cmp -s "$source" "$target"; then
+      echo "immutable recovery Web asset conflicts with existing shared byte: $target" >&2
+      exit 1
+    fi
+  fi
+}
+if [ -d "$RELEASE_DIR/assets" ]; then
+  if find "$RELEASE_DIR/assets" -type l -print -quit | grep -q .; then
+    echo "recovery Web assets must not contain symlinks" >&2
+    exit 1
+  fi
+  while IFS= read -r -d '' asset_file; do
+    relative_asset="${asset_file#"$RELEASE_DIR/assets/"}"
+    verify_immutable_shared_file "$asset_file" "$SHARED_ROOT/assets/$relative_asset"
+  done < <(find "$RELEASE_DIR/assets" -type f -print0)
+fi
+for workbox_file in "$RELEASE_DIR"/workbox-*.js; do
+  [ -e "$workbox_file" ] || continue
+  if [ ! -f "$workbox_file" ] || [ -L "$workbox_file" ]; then
+    echo "recovery Web Workbox runtime must be a regular file: $workbox_file" >&2
+    exit 1
+  fi
+  verify_immutable_shared_file "$workbox_file" "$SHARED_ROOT/$(basename "$workbox_file")"
+done
+
 if [ -d "$RELEASE_DIR/assets" ]; then
   cp -a -n "$RELEASE_DIR/assets/." "$SHARED_ROOT/assets/"
 fi

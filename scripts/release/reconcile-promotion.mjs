@@ -34,14 +34,32 @@ export function componentIdentityMatrix(components) {
 }
 
 export function summarizeRollbackReceipts(receipts) {
-  if (!receipts || typeof receipts !== 'object') return null;
-  const entries = Object.values(receipts);
-  if (entries.length === 0) return { attempted: false, succeeded: false };
-  const attempted = entries.some((entry) => entry?.attempted === true);
+  if (!receipts || typeof receipts !== 'object' || Array.isArray(receipts)) return null;
+  const requiredComponents = ['acs', 'app', 'web'];
+  if (
+    Object.keys(receipts).sort().join(',') !== requiredComponents.join(',') ||
+    requiredComponents.some((component) => {
+      const receipt = receipts[component];
+      return (
+        !receipt ||
+        typeof receipt !== 'object' ||
+        Array.isArray(receipt) ||
+        Object.keys(receipt).sort().join(',') !== 'attempted,succeeded' ||
+        typeof receipt.attempted !== 'boolean' ||
+        typeof receipt.succeeded !== 'boolean' ||
+        (!receipt.attempted && receipt.succeeded)
+      );
+    })
+  )
+    return null;
+  const attempted = requiredComponents.some((component) => receipts[component].attempted);
   return {
     attempted,
     succeeded:
-      attempted && entries.every((entry) => entry?.attempted !== true || entry?.succeeded === true),
+      attempted &&
+      requiredComponents.every(
+        (component) => !receipts[component].attempted || receipts[component].succeeded,
+      ),
   };
 }
 
@@ -65,10 +83,20 @@ export function reconcilePromotion(input) {
       reason: 'promotion started a forbidden destructive contract migration',
     };
   }
-  const rollback = summarizeRollbackReceipts(input.rollbackReceipts) ?? {
-    attempted: input.rollbackAttempted === true,
-    succeeded: input.rollbackSucceeded === true,
-  };
+  let rollback = { attempted: false, succeeded: false };
+  if (input.rollbackReceipts !== undefined) {
+    rollback = summarizeRollbackReceipts(input.rollbackReceipts);
+    if (!rollback)
+      return {
+        outcome: 'needs_human',
+        reason: 'rollback receipts are incomplete or violate the strict ACS/App/Web schema',
+      };
+  } else if (input.rollbackAttempted !== undefined || input.rollbackSucceeded !== undefined) {
+    return {
+      outcome: 'needs_human',
+      reason: 'legacy aggregate rollback flags are not authoritative receipts',
+    };
+  }
   if (rollback.attempted) {
     if (!rollback.succeeded)
       return {

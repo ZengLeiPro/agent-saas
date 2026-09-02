@@ -48,6 +48,19 @@ async function createRecoveryArchive(root, label) {
   return archive;
 }
 
+async function createRecoveryArchiveWithFiles(root, label, files) {
+  const source = join(root, `${label}-source`);
+  const archive = join(root, `${label}.tgz`);
+  await writeRecoveryRelease(source, label);
+  for (const [relativePath, content] of Object.entries(files)) {
+    await mkdir(join(source, relativePath, '..'), { recursive: true });
+    await writeFile(join(source, relativePath), content);
+  }
+  const tar = spawnSync('tar', ['-C', source, '-czf', archive, '.'], { encoding: 'utf8' });
+  assert.equal(tar.status, 0, tar.stderr);
+  return archive;
+}
+
 test('creates component-scoped immutable artifact indexes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compat-index-'));
   const artifactPath = join(root, 'server-bundle.tgz');
@@ -216,6 +229,12 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(identityCommit, /continue-on-error: true/u);
   assert.match(identityCommit, /grep -Fx 'state=activated'/u);
   assert.doesNotMatch(identityCommit, /state=\(rolled_back\|not_started\)/u);
+  assert.match(identityCommit, /runtime-identity\.before\.json/u);
+  assert.match(identityCommit, /--slurpfile before/u);
+  assert.match(identityCommit, /\.components\|keep.*before\[0\]\.components\|keep/u);
+  assert.match(identityCommit, /--slurpfile live/u);
+  assert.match(identityCommit, /\.components\|matrix.*live\[0\]\.components\|matrix/u);
+
   for (const failurePoint of [
     'read-live-production-components.mjs',
     'write-live-production-identity.mjs',
@@ -576,4 +595,49 @@ test('rejects recovery activation before mutation when the rollback baseline is 
   });
   assert.notEqual(emptyActivation.status, 0);
   await assert.rejects(readFile(join(emptyRoot, 'transactions', 'empty.1.activation'), 'utf8'));
+});
+
+test('rejects conflicting immutable recovery assets before changing current or previous', async () => {
+  for (const relativePath of ['assets/app-deadbeef.js', 'workbox-deadbeef.js']) {
+    const root = await mkdtemp(join(tmpdir(), 'recovery-immutable-conflict-'));
+    const olderRelease = join(root, 'releases', 'older');
+    const oldRelease = join(root, 'releases', 'old');
+    await writeRecoveryRelease(olderRelease, 'older');
+    await writeRecoveryRelease(oldRelease, 'old');
+    await symlink(oldRelease, join(root, 'current'));
+    await symlink(olderRelease, join(root, 'previous'));
+    const sharedPath = join(root, 'shared-root', relativePath);
+    await mkdir(join(sharedPath, '..'), { recursive: true });
+    await writeFile(sharedPath, 'existing-byte');
+    const archive = await createRecoveryArchiveWithFiles(root, 'new', {
+      [relativePath]: 'different-byte',
+    });
+
+    const activation = spawnSync('bash', ['scripts/deploy-recovery-web.sh'], {
+      env: {
+        ...process.env,
+        RECOVERY_WEB_ROOT: root,
+        RECOVERY_WEB_BEFORE_TARGET: oldRelease,
+        RELEASE_ID: 'new',
+        RUN_ID: relativePath.startsWith('assets/') ? 'asset.1' : 'workbox.1',
+        ARCHIVE: archive,
+      },
+      encoding: 'utf8',
+    });
+    assert.notEqual(activation.status, 0, relativePath);
+    assert.match(activation.stderr, /immutable recovery Web asset conflicts/u);
+    assert.equal(await readlink(join(root, 'current')), oldRelease);
+    assert.equal(await readlink(join(root, 'previous')), olderRelease);
+    assert.equal(await readFile(sharedPath, 'utf8'), 'existing-byte');
+    const receipt = await readFile(
+      join(
+        root,
+        'transactions',
+        relativePath.startsWith('assets/') ? 'asset.1.activation' : 'workbox.1.activation',
+      ),
+      'utf8',
+    );
+    assert.match(receipt, /state=attempted/u);
+    assert.doesNotMatch(receipt, /state=activated/u);
+  }
 });

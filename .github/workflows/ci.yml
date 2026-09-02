@@ -2576,21 +2576,27 @@ jobs:
             scripts/release/read-runtime-identity.mjs \
             scripts/release/verify-installed-release.mjs \
             scripts/release/write-live-production-identity.mjs \
+            "$RUNNER_TEMP/runtime-identity.before.json" \
             "$ECS_USER@$ECS_HOST:$remote/"
           ssh -i ~/.ssh/ecs_recovery_key "$ECS_USER@$ECS_HOST" \
             "sudo node '$remote/read-live-production-components.mjs' --output '$remote/live.json' >/dev/null && \
              jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
                '.components.web.gitSha==\$sha and .components.web.artifactDigest==\$digest' '$remote/live.json' >/dev/null && \
-             { [ '${{ needs.deploy_plan.outputs.ecs_required }}' = false ] || \
+             if [ '${{ needs.deploy_plan.outputs.ecs_required }}' = false ]; then \
+               jq -e --slurpfile before '$remote/runtime-identity.before.json' \
+                 'def keep: {api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|keep)==(\$before[0].components|keep)' \
+                 '$remote/live.json' >/dev/null; \
+             else \
                jq -e --arg sha '$GITHUB_SHA' \
                  --arg digest '${{ needs.deploy-ecs.outputs.server_artifact_digest }}' \
                  '.components.api.gitSha==\$sha and .components.api.artifactDigest==\$digest and
                   .components.runtimeWorker.gitSha==\$sha and .components.runtimeWorker.artifactDigest==\$digest' \
-                 '$remote/live.json' >/dev/null; } && \
+                 '$remote/live.json' >/dev/null; \
+             fi && \
              sudo node '$remote/write-live-production-identity.mjs' --input '$remote/live.json' >/dev/null && \
              sudo node '$remote/read-production-state.mjs' --output '$remote/confirmed.json' >/dev/null && \
-             jq -e --arg sha '$GITHUB_SHA' --arg digest '$WEB_ARTIFACT_DIGEST' \
-               '.components.web.gitSha==\$sha and .components.web.artifactDigest==\$digest' \
+             jq -e --slurpfile live '$remote/live.json' \
+               'def matrix: {web:{gitSha:.web.gitSha,artifactDigest:.web.artifactDigest},api:{gitSha:.api.gitSha,artifactDigest:.api.artifactDigest},runtimeWorker:{gitSha:.runtimeWorker.gitSha,artifactDigest:.runtimeWorker.artifactDigest},acs:{gitSha:.acs.gitSha,orchestratorArtifactDigest:.acs.orchestratorArtifactDigest,sandboxImageDigest:.acs.sandboxImageDigest}}; (.components|matrix)==(\$live[0].components|matrix)' \
                '$remote/confirmed.json' >/dev/null"
           echo "Production identity committed once after Web/API/Worker/ACS live readback"
       - name: Restore previous recovery Web on failure

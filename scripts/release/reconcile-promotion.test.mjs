@@ -26,7 +26,7 @@ const target = {
 };
 const base = { releaseId: 'rc-20260826-01', before, target, observationComplete: true };
 
-test('classifies complete, before-change failure and proven rollback', () => {
+test('classifies complete and before-change failure while rejecting legacy rollback flags', () => {
   assert.equal(reconcilePromotion({ ...base, observed: target }).outcome, 'completed');
   assert.equal(reconcilePromotion({ ...base, observed: before }).outcome, 'failed_before_change');
   assert.equal(
@@ -36,7 +36,7 @@ test('classifies complete, before-change failure and proven rollback', () => {
       rollbackAttempted: true,
       rollbackSucceeded: true,
     }).outcome,
-    'rolled_back',
+    'needs_human',
   );
   assert.equal(
     reconcilePromotion({
@@ -107,6 +107,27 @@ test('requires succeeded evidence for every attempted ACS/App/Web rollback', () 
       reconcilePromotion({ ...base, observed: before, rollbackReceipts }).outcome,
       'rolled_back',
       `${componentName} restoration has matching succeeded evidence`,
+    );
+  }
+});
+
+test('requires an exact typed ACS/App/Web rollback receipt schema', () => {
+  const valid = {
+    acs: { attempted: false, succeeded: false },
+    app: { attempted: true, succeeded: true },
+    web: { attempted: false, succeeded: false },
+  };
+  for (const receipts of [
+    { acs: valid.acs, app: valid.app },
+    { ...valid, database: { attempted: false, succeeded: false } },
+    { ...valid, web: { attempted: 'false', succeeded: false } },
+    { ...valid, web: { attempted: false, succeeded: true } },
+    { ...valid, web: { attempted: false, succeeded: false, detail: 'ok' } },
+  ]) {
+    assert.equal(summarizeRollbackReceipts(receipts), null);
+    assert.equal(
+      reconcilePromotion({ ...base, observed: before, rollbackReceipts: receipts }).outcome,
+      'needs_human',
     );
   }
 });

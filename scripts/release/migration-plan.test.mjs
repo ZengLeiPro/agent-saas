@@ -2385,3 +2385,51 @@ test('real repository closure ignores unrelated TypeScript changes behind type-o
   assert.equal(result.ok, true, result.blockingReasons.join('\n'));
   assert.equal(result.migrationPlan.phase, 'none');
 });
+
+test('classifies destructive SQL when only a statically imported JSON resource changes', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/provider.json';
+  const rootSource =
+    "import statements from './provider.json' with { type: 'json' };\nexport { statements };";
+  const baselineProvider = '["CREATE TABLE IF NOT EXISTS safe(id text)"]';
+  const targetProvider = '["DROP TABLE users"]';
+  const result = plan(targetProvider, addedSourceDiff(targetProvider), {
+    changedPaths: [provider],
+    baselines: { [root]: rootSource, [provider]: baselineProvider },
+    targets: { [root]: rootSource, [provider]: targetProvider },
+    diffs: { [provider]: addedSourceDiff(targetProvider) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.notEqual(result.migrationPlan.phase, 'none');
+  assert.match(result.blockingReasons.join('\n'), /contract or non-whitelisted/u);
+});
+
+test('classifies static node:fs resource reads and rejects dynamic resource paths', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/provider.json';
+  const providerSource = '["DROP TABLE users"]';
+  const staticRoot =
+    "import { readFileSync } from 'node:fs';\nexport const statements = JSON.parse(readFileSync(new URL('./provider.json', import.meta.url), 'utf8'));";
+  const result = plan(providerSource, addedSourceDiff(providerSource), {
+    changedPaths: [provider],
+    baselines: { [root]: staticRoot, [provider]: '["SELECT 1"]' },
+    targets: { [root]: staticRoot, [provider]: providerSource },
+    diffs: { [provider]: addedSourceDiff(providerSource) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(result.ok, false);
+  assert.notEqual(result.migrationPlan.phase, 'none');
+
+  const dynamicRoot =
+    "import { readFileSync } from 'node:fs';\nexport const statements = JSON.parse(readFileSync(process.env.PROVIDER_PATH, 'utf8'));";
+  const dynamic = plan(providerSource, addedSourceDiff(providerSource), {
+    changedPaths: [provider],
+    baselines: { [root]: dynamicRoot, [provider]: '["SELECT 1"]' },
+    targets: { [root]: dynamicRoot, [provider]: providerSource },
+    diffs: { [provider]: addedSourceDiff(providerSource) },
+    nameStatus: `M\t${provider}`,
+  });
+  assert.equal(dynamic.ok, false);
+  assert.match(dynamic.blockingReasons.join('\n'), /dynamic resource paths fail closed/u);
+});

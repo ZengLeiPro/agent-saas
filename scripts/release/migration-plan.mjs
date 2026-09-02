@@ -2797,6 +2797,95 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
         sideEffect: true,
       });
   }
+  const unwrapResourceExpression = (node) => {
+    let current = node;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isSatisfiesExpression(current)
+    )
+      current = current.expression;
+    return current;
+  };
+  const readFileNames = new Set();
+  const fsNamespaceNames = new Set();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !['fs', 'fs/promises', 'node:fs', 'node:fs/promises'].includes(
+        statement.moduleSpecifier.text,
+      ) ||
+      !statement.importClause ||
+      statement.importClause.isTypeOnly
+    )
+      continue;
+    const bindings = statement.importClause.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) fsNamespaceNames.add(bindings.name.text);
+    if (bindings && ts.isNamedImports(bindings))
+      for (const element of bindings.elements)
+        if (['readFile', 'readFileSync'].includes((element.propertyName ?? element.name).text))
+          readFileNames.add(element.name.text);
+  }
+  const isImportMetaUrl = (node) => {
+    const current = unwrapResourceExpression(node);
+    return (
+      ts.isPropertyAccessExpression(current) &&
+      current.name.text === 'url' &&
+      ts.isMetaProperty(current.expression) &&
+      current.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      current.expression.name.text === 'meta'
+    );
+  };
+  const staticModuleRelativeUrl = (node) => {
+    const current = unwrapResourceExpression(node);
+    if (
+      !ts.isNewExpression(current) ||
+      !ts.isIdentifier(current.expression) ||
+      current.expression.text !== 'URL' ||
+      current.arguments?.length !== 2 ||
+      !isImportMetaUrl(current.arguments[1])
+    )
+      return undefined;
+    const specifier = unwrapExpression(current.arguments[0]);
+    return (ts.isStringLiteral(specifier) || ts.isNoSubstitutionTemplateLiteral(specifier)) &&
+      RELATIVE_MODULE_SPECIFIER.test(specifier.text)
+      ? specifier.text
+      : undefined;
+  };
+  const staticReadFileSpecifier = (node) => {
+    const current = unwrapResourceExpression(node);
+    const direct = staticModuleRelativeUrl(current);
+    if (direct) return direct;
+    if (ts.isCallExpression(current) && current.arguments[0])
+      return staticModuleRelativeUrl(current.arguments[0]);
+    return undefined;
+  };
+  const visitResourceReads = (node) => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      const recognized =
+        (ts.isIdentifier(callee) && readFileNames.has(callee.text)) ||
+        (ts.isPropertyAccessExpression(callee) &&
+          ts.isIdentifier(callee.expression) &&
+          fsNamespaceNames.has(callee.expression.text) &&
+          ['readFile', 'readFileSync'].includes(callee.name.text));
+      if (recognized) {
+        const specifier = node.arguments[0] && staticReadFileSpecifier(node.arguments[0]);
+        if (specifier)
+          dependencies.push({
+            specifier,
+            bindings: new Set(['*']),
+            callableBindings: new Set(),
+            sideEffect: true,
+          });
+      }
+    }
+    ts.forEachChild(node, visitResourceReads);
+  };
+  if (isMigrationPath(path)) visitResourceReads(sourceFile);
   return dependencies;
 }
 
@@ -3376,7 +3465,10 @@ function buildMigrationDependencyClosure(execFileSync, cwd, sha) {
       isDeclarativeSqlProvider(path, content, requestedBindings)
     )
       closure.add(path);
-    if (!SCRIPT_MIGRATION_PATTERN.test(path)) continue;
+    if (!SCRIPT_MIGRATION_PATTERN.test(path)) {
+      closure.add(path);
+      continue;
+    }
     for (const dependencyRequest of relativeModuleDependencies(
       content,
       path,
@@ -3433,7 +3525,7 @@ export function createMigrationPlan({
   let baselineClosure = new Set();
   let targetClosure = new Set();
   const resolveDependencyClosure = candidatePaths.some(
-    (path) => isMigrationPath(path) || SCRIPT_MIGRATION_PATTERN.test(path),
+    (path) => /^(?:server|scripts)\//u.test(path) || isMigrationPath(path),
   );
   if (resolveDependencyClosure) {
     try {
@@ -3451,15 +3543,27 @@ export function createMigrationPlan({
       );
       baselineClosure = buildMigrationDependencyClosure(execFileSync, cwd, baseline);
       targetClosure = buildMigrationDependencyClosure(execFileSync, cwd, target);
-    } catch {
+    } catch (error) {
+      const detail = error instanceof Error ? ` ${error.message}` : '';
       blockingReasons.push(
-        'Migration execution dependency closure could not be proven from the production baseline.',
+        `Migration execution dependency closure could not be proven from the production baseline.${detail}`,
       );
     }
   }
 
   const newlyReachable = new Set([...targetClosure].filter((path) => !baselineClosure.has(path)));
   const noLongerReachable = [...baselineClosure].filter((path) => !targetClosure.has(path));
+  for (const path of candidatePaths) {
+    if (
+      !SCRIPT_MIGRATION_PATTERN.test(path) &&
+      /(?:^|\/)(?:migrations?|governance-schema)(?:\/|$)/u.test(path) &&
+      !baselineClosure.has(path) &&
+      !targetClosure.has(path)
+    )
+      blockingReasons.push(
+        `Migration data resource ${path} is not statically reachable from an authoritative runner; dynamic resource paths fail closed.`,
+      );
+  }
   candidatePaths.push(...newlyReachable);
   for (const path of noLongerReachable) {
     blockingReasons.push(

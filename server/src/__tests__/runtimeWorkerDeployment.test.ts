@@ -211,11 +211,15 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(compatibilityRollback).toContain(
       'TARGET_DRAIN_SNAPSHOT="$(cat "$RUN_DIR/$SERVICE-$OTHER.draining"',
     );
+    expect(compatibilityRollback).toContain('state.activeRuns.blocking');
+    expect(compatibilityRollback).toContain('safe &&= state.runtimeQuiesced === true');
     expect(compatibilityRollback).toContain(
-      'rollback refused: target $OTHER is draining with activeUploads=$TARGET_ACTIVE_UPLOADS',
+      'rollback refused: target $OTHER verified drain state is $TARGET_DRAIN_SAFETY',
     );
+    expect(compatibilityRollback).toContain('rm -f "$RUN_DIR/$SERVICE-$API_ACTIVE.pid"');
+    expect(compatibilityRollback).toContain('target_server_identity_ready');
     expect(compatibilityRollback).toContain(
-      'rm -f "$RUN_DIR/$SERVICE-$API_ACTIVE.pid" "$RUN_DIR/$SERVICE-$API_ACTIVE.draining"',
+      'readiness identity does not match rollback release SHA',
     );
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',

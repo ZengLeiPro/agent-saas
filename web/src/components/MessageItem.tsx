@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { VoiceBar } from './VoiceBar';
 import { useFilePreview } from '@/contexts/FilePreviewContext';
 import { authFetch } from '@/lib/authFetch';
-import { markdownRuntimePromise } from '@/lib/markdownRuntime';
+import { loadMarkdownRuntime } from '@/lib/markdownRuntime';
 import { extractTextFromChildren, getTableCellStyle } from '@/lib/tableCellWidth';
 import { MD_PATH_RE, HTML_PATH_RE, resolveImageSrc, getPreviewFileType, getFileTypeVisual, splitByMessageMarkers, stripPartialCiteMarker } from '@agent/shared';
 import { MessageCitationCard } from './MessageCitationCard';
@@ -130,7 +130,7 @@ function AuthVideo({ src, owner }: { src: string; owner?: string }) {
 }
 
 const LazyMarkdown = lazy(async () => {
-  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   function MarkdownWithPreview({ content }: { content: string }) {
     const filePreview = useFilePreview();
 

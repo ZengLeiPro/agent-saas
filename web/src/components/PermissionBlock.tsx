@@ -3,13 +3,13 @@ import { Shield, Check, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { markdownRuntimePromise } from "@/lib/markdownRuntime";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 import { truncateContent } from "./types";
 import "katex/dist/katex.min.css";
 
 const LazyMarkdown = lazy(async () => {
-  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   const mdComponents: import("react-markdown").Components = {
     a: ({ children, href, ...props }) => (
       <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>

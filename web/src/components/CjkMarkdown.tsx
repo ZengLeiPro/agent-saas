@@ -1,8 +1,8 @@
 import { lazy } from "react";
-import { markdownRuntimePromise } from "@/lib/markdownRuntime";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 
 export const CjkMarkdown = lazy(async () => {
-  const { Markdown, cjkRemarkPlugins } = await markdownRuntimePromise;
+  const { Markdown, cjkRemarkPlugins } = await loadMarkdownRuntime();
 
   return {
     default: (props: import("react-markdown").Options) => (

@@ -1,9 +1,9 @@
 import { lazy, Suspense } from "react";
-import { markdownRuntimePromise } from "@/lib/markdownRuntime";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 
 const LazyMarkdown = lazy(async () => {
-  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
 
   const mdComponents: import("react-markdown").Components = {
     table: ({ children, ...props }) => (

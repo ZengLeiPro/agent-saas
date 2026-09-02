@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, lazy, Suspense, useCallback, useRef } fro
 import { ChevronLeft, Loader2, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/authFetch";
-import { markdownRuntimePromise } from "@/lib/markdownRuntime";
+import { loadMarkdownRuntime } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getTableCellStyle } from "@/lib/tableCellWidth";
 import { resolveImageSrc } from "@agent/shared";
 import { FilePreviewActions, printFilePreviewElement, useFilePreviewPrint } from "@/components/FilePreviewActions";
@@ -82,7 +82,7 @@ function PreviewVideo({ src, owner, referrer }: { src: string; owner?: string; r
 import "katex/dist/katex.min.css";
 
 const LazyMarkdownRenderer = lazy(async () => {
-  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   return {
     default: ({ content, owner, referrer }: { content: string; owner?: string; referrer?: string }) => {
       const mdComponents = useMemo<import("react-markdown").Components>(() => ({

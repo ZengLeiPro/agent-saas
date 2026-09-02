@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { markdownRuntimePromise } from './markdownRuntime';
+import { loadMarkdownRuntime } from './markdownRuntime';
 
 async function renderMarkdown(content: string) {
-  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
+  const { Markdown, remarkPlugins, rehypePlugins } = await loadMarkdownRuntime();
   return render(
     <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
       {content}

@@ -21,6 +21,7 @@ export interface CodexWebSocketExecuteInput {
   accessToken: string;
   accountId: string;
   accountBindingHash: string;
+  credentialGeneration: number;
   originator: string;
   serializedBody: string;
   tenantId: string;
@@ -650,6 +651,7 @@ function poolKey(input: CodexWebSocketExecuteInput): string {
     input.cacheAffinityId,
     input.endpoint,
     input.accountBindingHash,
+    input.credentialGeneration,
     input.originator,
   ]));
 }
@@ -660,8 +662,6 @@ function codexHeaders(input: CodexWebSocketExecuteInput): Record<string, string>
     'chatgpt-account-id': input.accountId,
     originator: input.originator,
     'user-agent': `${input.originator}/0.0.0 (${process.platform}; ${process.arch}) kaiyan-agent`,
-    // Codex 私有 endpoint 的 WebSocket v2 握手值；HTTP/SSE 仍沿用 responses=experimental。
-    // 该值与 openai/codex 当前 build_websocket_headers 保持一致。
     'openai-beta': 'responses_websockets=2026-02-06',
     'session-id': input.cacheAffinityId,
     'x-client-request-id': input.clientRequestId,

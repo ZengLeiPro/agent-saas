@@ -117,12 +117,22 @@ describe('Codex subscription admin router', () => {
     if (!address || typeof address === 'string') throw new Error('failed to bind test server');
     const baseUrl = `http://127.0.0.1:${address.port}/api/admin/codex-subscription`;
 
+    for (const invalidCooldown of ['60', null, 1.5]) {
+      const invalidCooldownResponse = await fetch(baseUrl, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ quotaCooldownMinutes: invalidCooldown }),
+      });
+      expect(invalidCooldownResponse.status).toBe(400);
+    }
+
     const prematureEnable = await fetch(baseUrl, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ enabled: true }),
     });
     expect(prematureEnable.status).toBe(409);
+    expect(config.codexSubscription?.quotaCooldownMinutes).toBe(60);
 
     const startResponse = await fetch(`${baseUrl}/device/start`, { method: 'POST' });
     expect(startResponse.status).toBe(201);

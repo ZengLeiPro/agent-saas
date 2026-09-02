@@ -292,6 +292,24 @@ describe('Codex subscription credential failover', () => {
     });
   });
 
+  it('OAuth 5xx 即使错误体包含 invalid_grant 也不会切换账号', async () => {
+    const { manager } = await createFixture();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      error: 'invalid_grant',
+    }), { status: 500, headers: { 'content-type': 'application/json' } }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('', { status: 401 }));
+    const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
+
+    await expect(transport.execute({
+      serializedBody: JSON.stringify({ input: [{ type: 'message', role: 'user', content: 'hello' }] }),
+      context,
+      clientRequestId: 'oauth-5xx-request',
+    })).rejects.toThrow(/OAuth refresh 失败（HTTP 500）/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await manager.getStatuses())[0]).toMatchObject({ availability: 'available' });
+  });
+
   it('请求开始后调整优先级，不会改变该请求已固定的候选顺序', async () => {
     const { config, manager, primary, secondary } = await createFixture();
     let resolvePrimary!: (response: Response) => void;
@@ -338,8 +356,8 @@ describe('Codex subscription credential failover', () => {
   it('非额度错误不会切换到低优先级 Codex 授权账号', async () => {
     const { manager } = await createFixture();
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(
-      JSON.stringify({ error: { code: 'server_error', message: 'temporary provider failure' } }),
-      { status: 500, headers: { 'content-type': 'application/json' } },
+      JSON.stringify({ error: { code: 'insufficient_quota', message: 'temporary provider failure' } }),
+      { status: 503, headers: { 'content-type': 'application/json' } },
     ));
     const transport = new CodexSubscriptionResponsesTransport(manager, fetchMock as unknown as typeof fetch);
 
@@ -349,7 +367,7 @@ describe('Codex subscription credential failover', () => {
       clientRequestId: 'non-quota-request',
     });
 
-    expect(result.response.status).toBe(500);
+    expect(result.response.status).toBe(503);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

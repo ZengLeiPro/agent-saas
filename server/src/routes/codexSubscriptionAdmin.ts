@@ -108,12 +108,17 @@ export function createCodexSubscriptionAdminRouter(
     const current = options.credentialManager.getConfiguration();
     const refs = credentialRefs(options);
     const body = isRecord(req.body) ? req.body : {};
+    const requestedQuotaCooldownMinutes = body.quotaCooldownMinutes;
+    if ('quotaCooldownMinutes' in body && typeof requestedQuotaCooldownMinutes !== 'number') {
+      res.status(400).json({ error: 'quotaCooldownMinutes 必须是数字' });
+      return;
+    }
     const enabled = typeof body.enabled === 'boolean' ? body.enabled : current.enabled;
     const requestedWebsocketEnabled = typeof body.websocketEnabled === 'boolean'
       ? body.websocketEnabled
       : current.websocketEnabled;
-    const quotaCooldownMinutes = typeof body.quotaCooldownMinutes === 'number'
-      ? body.quotaCooldownMinutes
+    const quotaCooldownMinutes = typeof requestedQuotaCooldownMinutes === 'number'
+      ? requestedQuotaCooldownMinutes
       : current.quotaCooldownMinutes;
     if (enabled && refs.length === 0) {
       res.status(409).json({ error: '请先完成至少一个 Codex 账号授权，再启用订阅 transport' });

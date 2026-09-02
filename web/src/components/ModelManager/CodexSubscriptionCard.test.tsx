@@ -1,9 +1,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { authFetch } from "@/lib/authFetch";
-import { CodexSubscriptionCard } from "./CodexSubscriptionCard";
+import { CodexSubscriptionCard, formatCooldownRemaining } from "./CodexSubscriptionCard";
 
 vi.mock("@/lib/authFetch", () => ({ authFetch: vi.fn() }));
 
@@ -65,6 +65,8 @@ const connectedState = {
 };
 
 describe("CodexSubscriptionCard", () => {
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(() => {
     vi.mocked(authFetch).mockReset();
     vi.mocked(authFetch).mockImplementation(async (_path, init) => {
@@ -106,6 +108,13 @@ describe("CodexSubscriptionCard", () => {
     });
   });
 
+  it("按当前时间显示确定性的冷却剩余时间", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-02T23:50:30.000Z"));
+
+    expect(formatCooldownRemaining("2026-09-03T00:00:00.000Z")).toBe("9 分 30 秒");
+  });
+
   it("展示额度冷却和授权异常账号状态", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce(jsonResponse({
       ...connectedState,
@@ -131,6 +140,7 @@ describe("CodexSubscriptionCard", () => {
 
     expect(await screen.findByText("额度冷却")).toBeTruthy();
     expect(screen.getByText("需重授权")).toBeTruthy();
+    expect(screen.getByText(/剩余/)).toBeTruthy();
     expect(screen.getByText(/insufficient_quota/)).toBeTruthy();
     expect(screen.getByText(/invalid_grant/)).toBeTruthy();
     expect(screen.getByDisplayValue("60")).toBeTruthy();

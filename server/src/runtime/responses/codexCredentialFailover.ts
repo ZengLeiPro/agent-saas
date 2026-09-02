@@ -1,4 +1,8 @@
-import { hashAccountBinding, type CodexCredentialManager } from './codexCredentialManager.js';
+import {
+  CodexOAuthResponseError,
+  hashAccountBinding,
+  type CodexCredentialManager,
+} from './codexCredentialManager.js';
 import {
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
@@ -169,8 +173,11 @@ export async function isCodexAccountUnavailableResponse(response: Response): Pro
 export function isPermanentCredentialError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (/secret not found|凭据格式损坏|凭据字段不完整|token 缺少/i.test(message)) return true;
-  if (/invalid_grant|invalid_token|refresh token.{0,30}(?:revoked|expired)/i.test(message)) return true;
-  return /Codex OAuth refresh 失败（HTTP 401）/i.test(message);
+  const oauthError = findOAuthResponseError(error);
+  return !!oauthError
+    && oauthError.status >= 400
+    && oauthError.status < 500
+    && ['invalid_grant', 'invalid_token'].includes(oauthError.code ?? '');
 }
 
 export function credentialFailureGeneration(error: unknown): number {
@@ -180,16 +187,16 @@ export function credentialFailureGeneration(error: unknown): number {
 }
 
 export function credentialFailureCode(error: unknown): string {
+  const oauthCode = findOAuthResponseError(error)?.code;
+  if (oauthCode === 'invalid_grant' || oauthCode === 'invalid_token') return oauthCode;
   const message = error instanceof Error ? error.message : String(error);
-  if (/invalid_grant/i.test(message)) return 'invalid_grant';
-  if (/invalid_token/i.test(message)) return 'invalid_token';
   if (/secret not found/i.test(message)) return 'credential_not_found';
   if (/格式损坏|字段不完整/i.test(message)) return 'credential_invalid';
   return 'credential_unavailable';
 }
 
 async function codexQuotaResponseCode(response: Response): Promise<string | undefined> {
-  if (response.ok) return undefined;
+  if (response.ok || response.status >= 500) return undefined;
   const text = await response.clone().text().catch(() => '');
   let code: string | undefined;
   let message: string | undefined;
@@ -206,6 +213,17 @@ async function codexQuotaResponseCode(response: Response): Promise<string | unde
   return isCodexQuotaError({ status: response.status, code, message, rawText: text })
     ? quotaErrorCode({ code, message, rawText: text })
     : undefined;
+}
+
+function findOAuthResponseError(error: unknown): CodexOAuthResponseError | undefined {
+  let current = error;
+  const seen = new Set<unknown>();
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    if (current instanceof CodexOAuthResponseError) return current;
+    seen.add(current);
+    current = 'cause' in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return undefined;
 }
 
 function isCodexQuotaTransportError(error: unknown): error is CodexWebSocketQuotaExhaustedError {

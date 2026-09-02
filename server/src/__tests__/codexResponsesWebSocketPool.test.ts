@@ -100,6 +100,7 @@ function request(serializedBody: string, signal?: AbortSignal) {
     accessToken: 'access-token',
     accountId: 'acct-1',
     accountBindingHash: 'binding-1',
+    credentialGeneration: 1,
     originator: 'codex-tui',
     serializedBody,
     tenantId: 'kaiyan',
@@ -275,11 +276,17 @@ describe('CodexResponsesWebSocketPool', () => {
     pool.close();
   });
 
-  it('账号绑定或 originator 变化时使用新连接，旧连接保持可用并自然过期', async () => {
+  it('账号绑定、credential generation 或 originator 变化时使用新连接', async () => {
     const originalSocket = new FakeWebSocket();
     const changedAccountSocket = new FakeWebSocket();
+    const changedGenerationSocket = new FakeWebSocket();
     const changedOriginatorSocket = new FakeWebSocket();
-    const connector = connectorFor(originalSocket, changedAccountSocket, changedOriginatorSocket);
+    const connector = connectorFor(
+      originalSocket,
+      changedAccountSocket,
+      changedGenerationSocket,
+      changedOriginatorSocket,
+    );
     const pool = new CodexResponsesWebSocketPool(connector);
     const input = [{ type: 'message', role: 'user', content: 'same request' }];
     await establish(pool, originalSocket, input, 'resp-original');
@@ -296,6 +303,17 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedAccountSocket, 'resp-account');
     await changedAccountResult.response.text();
 
+    const changedGenerationPending = pool.execute({
+      ...request(body(input)),
+      accessToken: 'reauthorized-token',
+      credentialGeneration: 2,
+    });
+    await waitForSend(changedGenerationSocket);
+    changedGenerationSocket.emit({ type: 'response.created', response: { id: 'resp-generation' } });
+    const changedGenerationResult = await changedGenerationPending;
+    complete(changedGenerationSocket, 'resp-generation');
+    await changedGenerationResult.response.text();
+
     const changedOriginatorPending = pool.execute({
       ...request(body(input)),
       originator: 'kaiyan-agent',
@@ -306,8 +324,8 @@ describe('CodexResponsesWebSocketPool', () => {
     complete(changedOriginatorSocket, 'resp-originator');
     await changedOriginatorResult.response.text();
 
-    expect(connector).toHaveBeenCalledTimes(3);
-    expect(connector.mock.calls[2]?.[0]).toEqual(expect.objectContaining({
+    expect(connector).toHaveBeenCalledTimes(4);
+    expect(connector.mock.calls[3]?.[0]).toEqual(expect.objectContaining({
       headers: expect.objectContaining({ originator: 'kaiyan-agent' }),
     }));
     expect(originalSocket.readyState).toBe(1);

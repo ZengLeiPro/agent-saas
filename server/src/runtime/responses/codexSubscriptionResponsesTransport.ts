@@ -107,7 +107,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   }
 
   async execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult> {
-    // 每次请求固定一份顺序快照；管理端重排只影响后续请求。
+    // 每次请求固定顺序快照；管理端重排只影响后续请求。
     const credentialRefs = this.orderedCredentialRefs();
     if (credentialRefs.length === 0) throw new Error('Codex subscription 尚未完成账号授权');
     return executeCodexCredentialFailover({
@@ -123,14 +123,14 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     token: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>,
   ): Promise<ResponsesTransportExecuteResult> {
     const firstPrepared = prepareRequestForBinding(input, this.bindingFor(token.accountId));
-    const firstResult = await this.executeWithToken(firstPrepared.input, token.accessToken, token.accountId);
+    const firstResult = await this.executeWithToken(
+      firstPrepared.input, token.accessToken, token.accountId, token.generation,
+    );
     if (firstResult.response.status !== 401) {
       if (await isCodexAccountUnavailableResponse(firstResult.response)) {
         await firstResult.response.body?.cancel().catch(() => undefined);
         throw new CodexAccountAuthUnavailableError(
-          'account_unavailable',
-          'Codex 授权账号不可用',
-          token.generation,
+          'account_unavailable', 'Codex 授权账号不可用', token.generation,
         );
       }
       return {
@@ -158,6 +158,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       retryPrepared.input,
       refreshed.accessToken,
       refreshed.accountId,
+      refreshed.generation,
     );
     if (retried.response.status === 401 || (await isCodexAccountUnavailableResponse(retried.response))) {
       await retried.response.body?.cancel().catch(() => undefined);
@@ -181,9 +182,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   }
 
   private async markAuthUnavailable(
-    credentialRef: string,
-    code: string,
-    credentialGeneration: number,
+    credentialRef: string, code: string, credentialGeneration: number,
   ): Promise<void> {
     await (this.credentials as CodexCredentialManager & {
       markAuthUnavailable?: CodexCredentialManager['markAuthUnavailable'];
@@ -224,6 +223,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     input: ResponsesTransportExecuteInput,
     accessToken: string,
     accountId: string,
+    credentialGeneration: number,
   ): Promise<ResponsesTransportExecuteResult> {
     const config = this.credentials.getConfiguration();
     if (config.websocketEnabled && this.websocketPool) {
@@ -234,6 +234,7 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
           accessToken,
           accountId,
           accountBindingHash: binding.accountBindingHash,
+          credentialGeneration,
           originator: config.originator,
           serializedBody: input.serializedBody,
           tenantId: input.context.tenantId ?? '__default__',

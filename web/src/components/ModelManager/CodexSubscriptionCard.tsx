@@ -92,6 +92,13 @@ async function readJson<T>(response: Response): Promise<T & { error?: string }> 
   return (await response.json().catch(() => ({}))) as T & { error?: string };
 }
 
+export function formatCooldownRemaining(cooldownUntil: string): string {
+  const remainingSeconds = Math.max(0, Math.ceil((Date.parse(cooldownUntil) - Date.now()) / 1000));
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
 function accountList(state: CodexSubscriptionState | null): CodexCredentialState[] {
   if (state?.credentials) return state.credentials;
   return state?.credential?.configured ? [state.credential] : [];
@@ -456,6 +463,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                     {account.availability === "quota_cooldown" && account.cooldownUntil && (
                       <div className="mt-1 text-amber-700 dark:text-amber-400">
                         冷却至 {new Date(account.cooldownUntil).toLocaleString()}
+                        {` · 剩余 ${formatCooldownRemaining(account.cooldownUntil)}`}
                         {account.lastFailureCode ? ` · ${account.lastFailureCode}` : ""}
                       </div>
                     )}

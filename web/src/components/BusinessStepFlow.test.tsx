@@ -122,6 +122,22 @@ describe("BusinessStepFlow 主导航卡", () => {
     expect(screen.getByText("核验订单").getAttribute("title")).toBe("核验订单");
   });
 
+  it("completed warning 在主导航按绿色完成展示，只有失败语义使用红色", () => {
+    const { rerender } = render(
+      <BusinessStepFlow event={event({ todos: [todo("completed", "warn")], stepCount: 1 })} selected={null} />,
+    );
+
+    const completed = screen.getByLabelText("已完成");
+    expect(completed.querySelector("svg")?.getAttribute("class")).toContain("text-success");
+    expect(screen.queryByLabelText("已完成，有例外")).toBeNull();
+
+    rerender(
+      <BusinessStepFlow event={event({ todos: [todo("completed", "fail")], stepCount: 1 })} selected={null} />,
+    );
+    const failed = screen.getByLabelText("完成结果异常");
+    expect(failed.querySelector("svg")?.getAttribute("class")).toContain("text-destructive");
+  });
+
   it("连接线按行锚定图标中心，首尾不越界，单步骤不显示多余线段", () => {
     const { container, rerender } = render(<BusinessStepFlow event={event()} selected={null} />);
     const rows = container.querySelectorAll("[data-business-step-list] > li");

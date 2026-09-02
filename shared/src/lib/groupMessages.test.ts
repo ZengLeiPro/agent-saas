@@ -363,7 +363,7 @@ describe('groupMessages sectioning（章节化）', () => {
     ], false, opts);
 
     expect(result.map(item => item.type)).toEqual([
-      'user', 'business_step', 'business_step_section', 'user', 'business_step_section',
+      'user', 'business_step', 'business_step_section', 'user', 'business_step_section', 'file_download',
     ]);
     const before = result[2] as BusinessStepSection;
     expect(before.terminal).toBeUndefined();
@@ -375,6 +375,7 @@ describe('groupMessages sectioning（章节化）', () => {
     expect((after.items[0] as ActivityGroup).items.map(item => item.id)).toEqual(['read-after']);
     expect(after.systemActionIds).toEqual(['connector-after']);
     expect(after.items.at(-1)).toMatchObject({ id: 'artifact-after', artifactId: 'artifact-1' });
+    expect(result[5]).toBe(artifact);
   });
 
   it('同一 Run 跨 system_event、user-voice 与 system-error 后依次重开同一步骤节', () => {
@@ -548,6 +549,60 @@ describe('groupMessages sectioning（章节化）', () => {
     } else {
       expect(section.terminal).toBeUndefined();
     }
+  });
+
+  it.each([
+    ['漏掉终态 TodoWrite', []],
+    ['交付后补终态 TodoWrite', [businessTodo('artifact-done', [
+      { id: 'only', kind: 'business', content: '唯一步骤', status: 'completed' },
+    ])]],
+  ])('%s 时正式 Artifact 同时进入主时间线与步骤交付物', (_label, trailingMessages) => {
+    const artifact: MessageItem = {
+      id: 'artifact-delivery', type: 'file_download', fileName: '交付结果.xlsx',
+      filePath: '交付结果.xlsx', fileType: 'xlsx', fileSize: 128,
+      artifactId: 'artifact-1', artifactKind: 'file',
+    };
+    const finalSummary: MessageItem = {
+      id: 'artifact-summary', type: 'text', content: '交付完成', finalOutput: true,
+    };
+    const result = groupMessages([
+      user('artifact-user'),
+      businessTodo('artifact-start', [
+        { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
+      ]),
+      tool('artifact-read', { toolName: 'Read' }),
+      artifact,
+      finalSummary,
+      ...trailingMessages,
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'file_download', 'text',
+    ]);
+    const section = result[2] as BusinessStepSection;
+    expect(section.items.map(item => item.type)).toEqual(['activity_group', 'file_download']);
+    expect(section.items.at(-1)).toBe(artifact);
+    expect(result[3]).toBe(artifact);
+    expect(result[4]).toBe(finalSummary);
+  });
+
+  it('没有 artifactId 的普通文件仍只属于步骤过程', () => {
+    const ordinaryFile: MessageItem = {
+      id: 'ordinary-file', type: 'file_download', fileName: '过程文件.txt',
+      filePath: '过程文件.txt', fileType: 'text/plain', fileSize: 16,
+    };
+    const result = groupMessages([
+      user('ordinary-user'),
+      businessTodo('ordinary-start', [
+        { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
+      ]),
+      ordinaryFile,
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section',
+    ]);
+    expect((result[2] as BusinessStepSection).items).toEqual([ordinaryFile]);
   });
 
   it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {

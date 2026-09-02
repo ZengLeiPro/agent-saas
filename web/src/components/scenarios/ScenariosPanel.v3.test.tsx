@@ -296,6 +296,10 @@ describe("ScenariosPanel V3", () => {
     const actions = catalog.querySelector("[data-workflow-actions]");
     expect(actions?.className).toContain("grid-cols-2");
     expect(within(catalog).getByRole("button", { name: "看演示" }).querySelector("svg")).toBeTruthy();
+    const tryButton = within(catalog).getByRole("button", { name: "立即试一试" });
+    expect(tryButton.className).toContain("bg-brand-50");
+    expect(tryButton.className).toContain("hover:bg-brand-600");
+    expect(catalog.firstElementChild?.className).toContain("min-h-32");
     expect(catalog.firstElementChild?.className).not.toContain("before:bg-gradient-to-b");
   });
 

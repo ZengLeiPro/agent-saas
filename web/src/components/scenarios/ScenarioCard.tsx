@@ -238,7 +238,7 @@ export function WorkflowScenarioCard({
         }
       }}
       className={cn(
-        "group relative flex min-h-28 cursor-pointer flex-col overflow-hidden p-4 text-left text-card-foreground",
+        "group relative flex min-h-32 cursor-pointer flex-col overflow-hidden p-4 text-left text-card-foreground",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2",
         CAPABILITY_SURFACE,
         CAPABILITY_SURFACE_HOVER,
@@ -264,8 +264,9 @@ export function WorkflowScenarioCard({
         </Button>
         <Button
           type="button"
+          variant="outline"
           size="sm"
-          className="h-8 w-full px-3 text-xs"
+          className="h-8 w-full border-brand-200 bg-brand-50 px-3 text-xs text-brand-700 shadow-none hover:border-brand-600 hover:bg-brand-600 hover:text-white hover:shadow-sm focus-visible:border-brand-600 focus-visible:bg-brand-600 focus-visible:text-white active:translate-y-px active:bg-brand-700 active:text-white"
           onClick={(event) => {
             event.stopPropagation();
             onPrimaryAction("chat", scenario);

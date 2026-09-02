@@ -117,7 +117,18 @@ describePg('PgTaskboardStore V2 integration contract', () => {
       expectedBoardVersion: freshBoard.version,
     }, 'manual_batch');
     expect(integration).toMatchObject({ kind: 'integration', status: 'in_progress' });
-    expect(await store.listIntegrationSources!(bob, integration.id)).toHaveLength(2);
+    const integrationSources = await store.listIntegrationSources!(bob, integration.id);
+    expect(integrationSources.map((source) => ({
+      deliveryTaskId: source.deliveryTaskId,
+      frozenHeadOid: source.frozenHeadOid,
+    }))).toEqual([
+      { deliveryTaskId: first.id, frozenHeadOid: `head-${first.id}` },
+      { deliveryTaskId: second.id, frozenHeadOid: `head-${second.id}` },
+    ]);
+    const context = await store.getExecutionContextV2!(bob, integration.id, { include: ['integrationSources'] });
+    expect(context.integrationSources?.map((source) => source.frozenHeadOid)).toEqual([
+      `head-${first.id}`, `head-${second.id}`,
+    ]);
     const boardAfterIntegration = await store.getBoard(bob, board.id);
     await expect(store.createIntegrationBatch!(bob, board.id, {
       deliveryTaskIds: [first.id],

@@ -451,6 +451,7 @@ export interface TaskBoardIntegrationSource {
   deliveryTaskTitle?: string;
   repositoryId: string;
   providerPullRequestId?: string;
+  frozenHeadOid?: string;
   order: number;
   state: TaskBoardIntegrationSourceState;
   mergedCommitOid?: string;

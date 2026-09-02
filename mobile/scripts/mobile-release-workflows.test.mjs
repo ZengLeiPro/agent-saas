@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import YAML from 'yaml';
+import { validateMobileSubmitCredentials } from './mobile-submit-credential-policy.mjs';
 const root = resolve(import.meta.dirname, '../..');
 const require = createRequire(import.meta.url);
 const paths = [
@@ -75,6 +76,57 @@ test('M60-04 workflow secret and logging contract is fail closed', () => {
     assert.doesNotMatch(all, new RegExp(forbidden));
   assert.doesNotMatch(all, /echo\s+['"]?\$\{\{\s*secrets\./u);
   assert.match(all, /no external|no external command|no external submission/iu);
+});
+
+test('M60-04 submit credential policy isolates all three profiles', () => {
+  const cases = [
+    {
+      profile: 'ios-store',
+      valid: {
+        APP_STORE_CONNECT_API_KEY_P8: 'private-key',
+        APP_STORE_CONNECT_API_KEY_ID: 'key-id',
+        APP_STORE_CONNECT_ISSUER_ID: 'issuer-id',
+      },
+      missing: 'APP_STORE_CONNECT_API_KEY_P8',
+    },
+    {
+      profile: 'android-store',
+      valid: { ANDROID_PLAY_SERVICE_ACCOUNT_JSON: '{"type":"service_account"}' },
+      missing: 'ANDROID_PLAY_SERVICE_ACCOUNT_JSON',
+    },
+    {
+      profile: 'android-enterprise',
+      valid: {
+        ENTERPRISE_MDM_ROBOT_TOKEN: 'robot-token',
+        MOBILE_ENTERPRISE_SUBMIT_ENDPOINT: 'https://mdm.example.com/mobile/upload',
+      },
+      missing: 'ENTERPRISE_MDM_ROBOT_TOKEN',
+    },
+  ];
+  for (const { profile, valid, missing } of cases) {
+    assert.doesNotThrow(() => validateMobileSubmitCredentials(profile, valid));
+    assert.throws(() => validateMobileSubmitCredentials(profile, {}), new RegExp(missing));
+  }
+  assert.doesNotThrow(() => validateMobileSubmitCredentials('android-enterprise', {
+    ENTERPRISE_MDM_ROBOT_TOKEN: 'robot-token',
+    MOBILE_ENTERPRISE_SUBMIT_ENDPOINT: 'https://mdm.example.com/mobile/upload',
+    ANDROID_PLAY_SERVICE_ACCOUNT_JSON: '',
+  }));
+  assert.throws(() => validateMobileSubmitCredentials('android-enterprise', {
+    ENTERPRISE_MDM_ROBOT_TOKEN: 'robot-token',
+    MOBILE_ENTERPRISE_SUBMIT_ENDPOINT: 'http://user:password@mdm.example.com/upload',
+  }), /credential-free HTTPS/u);
+
+  const submit = sources['.github/workflows/mobile-submit.yml'];
+  assert.match(submit, /node mobile\/scripts\/mobile-submit-credential-policy\.mjs "\$PROFILE"/u);
+  for (const variable of [
+    'APP_STORE_CONNECT_API_KEY_P8',
+    'APP_STORE_CONNECT_API_KEY_ID',
+    'APP_STORE_CONNECT_ISSUER_ID',
+    'ANDROID_PLAY_SERVICE_ACCOUNT_JSON',
+    'ENTERPRISE_MDM_ROBOT_TOKEN',
+    'MOBILE_ENTERPRISE_SUBMIT_ENDPOINT',
+  ]) assert.match(submit, new RegExp(variable, 'u'));
 });
 
 test('M60-04 downloaded artifact verifier invokes platform signing and identity tools', () => {

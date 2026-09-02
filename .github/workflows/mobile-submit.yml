@@ -119,16 +119,21 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
           PUBLIC_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}
-          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
-          PLAY_KEY: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          APP_STORE_CONNECT_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_STORE_CONNECT_API_KEY_ID: ${{ vars.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ vars.APP_STORE_CONNECT_ISSUER_ID }}
+          ANDROID_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.ANDROID_PLAY_SERVICE_ACCOUNT_JSON }}
+          ENTERPRISE_MDM_ROBOT_TOKEN: ${{ secrets.ENTERPRISE_MDM_ROBOT_TOKEN }}
+          MOBILE_ENTERPRISE_SUBMIT_ENDPOINT: ${{ vars.MOBILE_ENTERPRISE_SUBMIT_ENDPOINT }}
           LOOKUP_TOKEN: ${{ secrets.MOBILE_STORE_LOOKUP_ROBOT_TOKEN }}
           LOOKUP_ENDPOINT: ${{ vars.MOBILE_STORE_BUILD_LOOKUP_ENDPOINT }}
+          PROFILE: ${{ inputs.profile }}
           CONFIGURED: ${{ vars.MOBILE_SUBMIT_CONFIGURED }}
         run: |
           set -euo pipefail
           test "$CONFIGURED" = true && test -n "$EXPO_TOKEN" && test -n "$PRIVATE_KEY" && test -n "$PUBLIC_KEY" && test -n "$LOOKUP_TOKEN" && test -n "$LOOKUP_ENDPOINT" || { echo 'organization robot submit/lookup configuration is incomplete' >&2; exit 1; }
           [[ "$LOOKUP_ENDPOINT" =~ ^https://[^/@]+/ ]] || { echo 'store lookup endpoint must be credential-free HTTPS' >&2; exit 1; }
-          if [ '${{ inputs.profile }}' = ios-store ]; then test -n "$ASC_KEY" || { echo 'APP_STORE_CONNECT_API_KEY_P8 is missing' >&2; exit 1; }; else test -n "$PLAY_KEY" || { echo 'ANDROID_PLAY_SERVICE_ACCOUNT_JSON is missing' >&2; exit 1; }; fi
+          node mobile/scripts/mobile-submit-credential-policy.mjs "$PROFILE
       - uses: actions/checkout@v5
         with: { ref: '${{ needs.validate-boundary.outputs.commit }}', persist-credentials: false }
       - uses: pnpm/action-setup@v6

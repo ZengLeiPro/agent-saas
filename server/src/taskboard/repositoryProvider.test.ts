@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { GithubRepositoryProvider, repositorySubjectDigest } from './repositoryProvider.js';
+import {
+  GithubApiError,
+  GithubRepositoryProvider,
+  isRepositoryProviderUnavailableError,
+  repositorySubjectDigest,
+  RepositoryProviderPolicyError,
+  RepositoryProviderUnavailableError,
+} from './repositoryProvider.js';
 
 const unavailablePolicyFeature = 'Upgrade to GitHub Pro or make this repository public to enable this feature.';
 const repository = {
@@ -549,5 +556,26 @@ describe('GithubRepositoryProvider', () => {
     await expect(provider.findIntegrationPullRequest(repository, {
       headRef: 'integration/task-1', baseRef: 'main', expectedHeadOid: 'candidate-oid',
     }, 'owner-user')).rejects.toThrow('More than one Integration PR');
+  });
+});
+
+
+describe('repository provider availability classification', () => {
+  it('wraps transport failures as explicit transient unavailability', async () => {
+    const provider = new GithubRepositoryProvider({
+      resolveToken: async () => 'token',
+      fetchImpl: vi.fn<typeof fetch>(async () => { throw new TypeError('network reset'); }),
+    });
+
+    await expect(provider.getPullRequest(repository, '42', 'owner-user'))
+      .rejects.toBeInstanceOf(RepositoryProviderUnavailableError);
+  });
+
+  it('does not classify policy and contract errors as transient Provider unavailability', () => {
+    expect(isRepositoryProviderUnavailableError(new GithubApiError(503, 'service unavailable'))).toBe(true);
+    expect(isRepositoryProviderUnavailableError(new GithubApiError(429, 'rate limited'))).toBe(true);
+    expect(isRepositoryProviderUnavailableError(new GithubApiError(403, 'forbidden'))).toBe(false);
+    expect(isRepositoryProviderUnavailableError(new RepositoryProviderPolicyError('wrong repository'))).toBe(false);
+    expect(isRepositoryProviderUnavailableError(new Error('malformed provider response'))).toBe(false);
   });
 });

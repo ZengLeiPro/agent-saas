@@ -53,7 +53,6 @@ export const TASKBOARD_RESOURCE_ACTIONS = [
   'execution.pull_request.set',
   'execution.pull_request.inspect',
   'execution.pull_request.log',
-  'execution.review_subject.record',
   'execution.finish',
   'integration.create',
   'integration.cancel',
@@ -85,7 +84,6 @@ export interface TaskboardManageInput {
   boardId?: string;
   taskId?: string;
   providerPullRequestId?: string;
-  inspectionId?: string;
   providerJobId?: string;
   kind?: TaskBoardTaskKind;
   name?: string;
@@ -367,19 +365,8 @@ export async function invokeTaskboardAction(
       return await service.readExecutionPullRequestJobLogV2(
         identity,
         scope.execution.execution.runId,
-        requireField(input.inspectionId, 'inspectionId'),
         requireField(input.providerJobId, 'providerJobId'),
       );
-    }
-    case 'execution.review_subject.record': {
-      if (!scope.execution || !service.recordReviewedExecutionSubjectV2) {
-        throw new Error('仅当前 review Execution 可以登记已审 subject');
-      }
-      const task = await service.recordReviewedExecutionSubjectV2(
-        identity,
-        scope.execution.execution.runId,
-      );
-      return { updated: true, task };
     }
     case 'execution.finish': {
       if (!scope.execution || !service.finishExecutionV2) {

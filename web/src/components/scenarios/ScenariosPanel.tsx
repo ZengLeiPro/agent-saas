@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { ScenarioCard, ScenarioModeBadge, ScenarioRequireBadges, WorkflowScenarioCard } from "./ScenarioCard";
-import { getReplayScript, type ReplayScript } from "./replay";
+import { getWorkflowCardReplayScript, type ReplayScript } from "./replay";
 import { hasLazyReplayScript } from "./replay/availability";
 import { TECHNICAL_INQUIRY_TRACE_SCENARIO_ID } from "./replay/technicalInquiryTraceMeta";
 import { matchRoleIdByPosition, useScenarioLibrary } from "./useScenarioLibrary";
@@ -48,6 +48,7 @@ import {
   type OutcomeFilterValue,
   type VerticalFilterValue,
   type WorkflowPrimaryAction,
+  workflowTrialMessage,
 } from "./workflowUi";
 
 const INDUSTRY_ORDER: IndustryType[] = ["manufacturing", "trade", "retail", "service", "export", "ecommerce"];
@@ -131,22 +132,19 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
           .then(({ loadLazyReplayScript }) => loadLazyReplayScript(scenario.id))
           .then((script) => {
             if (replayRequest.current !== requestId) return;
-            if (script) setReplay(script);
-            else setDetail({ scenario });
+            setReplay(script ?? getWorkflowCardReplayScript(scenario));
           })
           .catch(() => {
-            if (replayRequest.current === requestId) setDetail({ scenario });
+            if (replayRequest.current === requestId) setReplay(getWorkflowCardReplayScript(scenario));
           });
         return;
       }
       // 静态剧本与其他 Workflow V3 presentation 继续走原生会话回放。
-      const script = getReplayScript(scenario.id, scenario);
-      if (script) setReplay(script);
-      else setDetail({ scenario });
+      setReplay(getWorkflowCardReplayScript(scenario));
       return;
     }
     if (action === "chat") {
-      if (props.onStartWorkflow) props.onStartWorkflow(scenario.launch.starterMessage, scenario);
+      if (props.onStartWorkflow) props.onStartWorkflow(workflowTrialMessage(scenario), scenario);
       else setDetail({ scenario });
       return;
     }
@@ -536,7 +534,6 @@ export function ScenariosPanel(props: ScenariosPanelProps) {
             <WorkflowScenarioCard
               key={scenario.id}
               scenario={scenario}
-              emphasizePrimary={index === 0 && scenario.featured}
               className="cap-grid-item"
               style={{ "--i": Math.min(index, 12) } as CSSProperties}
               onOpenDetail={(scenario) => {

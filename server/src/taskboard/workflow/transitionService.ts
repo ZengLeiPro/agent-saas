@@ -6,6 +6,7 @@ import type {
   TaskBoardExecutionFinishInput,
   TaskBoardTask,
 } from '../../../../shared/src/types/taskboard.js';
+import { reconcileExecutionPullRequestMerge } from '../deliveryPullRequests.js';
 import { integrationAgentTableNames } from '../integrationAgentSchema.js';
 import { rowToExecution } from '../storeHelpers.js';
 import {
@@ -19,8 +20,8 @@ import {
 import { TaskboardNotFoundError, TaskboardValidationError, type TaskboardIdentity } from '../types.js';
 import { fenceTaskExecutions, loadWorkflowFacts } from './commandService.js';
 import { EXECUTION_TRANSITIONED_REASON } from './cancellationOutbox.js';
-import { assertCurrentPullRequestGate } from './pullRequestGate.js';
 import { assertIntegrationExecutionMigrated, decideTransition } from './decider.js';
+import { recordExecutionFinishComment } from './finishComment.js';
 
 const ACTIVE = ['queued', 'running', 'waiting_user', 'waiting_approval'];
 
@@ -30,6 +31,10 @@ export async function finishExecutionV2(
   runId: string,
   input: TaskBoardExecutionFinishInput,
 ): Promise<TaskBoardTask> {
+  if (input.targetStatus === 'ready_to_merge') {
+    const reconciled = await reconcileExecutionPullRequestMerge(options, identity, runId, input.body);
+    if (reconciled) return reconciled;
+  }
   return withTransaction(options, async (client) => {
     const ownership = await client.query(
       `SELECT e.task_id FROM ${options.executionsTable} e
@@ -75,13 +80,6 @@ export async function finishExecutionV2(
     if (execution.purpose === 'work' && loaded.task.kind !== 'advisory'
       && nextStatus === 'in_review' && !loaded.task.providerPullRequestId) {
       throw new TaskboardValidationError('Delivery work must attach its pull request before review', 'TASKBOARD_PULL_REQUEST_REQUIRED');
-    }
-    if (execution.purpose === 'review' && nextStatus === 'ready_to_merge' && !loaded.task.reviewedSubjectDigest) {
-      throw new TaskboardValidationError('Review must record the exact pull request subject before approval', 'TASKBOARD_REVIEW_SUBJECT_REQUIRED');
-    }
-    if ((execution.purpose === 'work' && nextStatus === 'in_review')
-      || (execution.purpose === 'review' && nextStatus === 'ready_to_merge')) {
-      await assertCurrentPullRequestGate(options, client, loaded.task, loaded.board, execution.id, execution.purpose);
     }
     await updateTaskStatus(options, client, taskId, nextStatus);
     if (nextStatus === 'blocked') await recordBlock(options, client, taskId, execution);
@@ -178,28 +176,6 @@ function assertActiveExecution(row: Record<string, unknown>, execution: TaskBoar
   if (!ACTIVE.includes(String(row.status)) || row.transitioned_at || execution.supersededAt) {
     throw new TaskboardValidationError('Taskboard execution is no longer active', 'TASKBOARD_EXECUTION_FENCED');
   }
-}
-
-async function recordExecutionFinishComment(
-  options: TaskboardV2StoreOptions,
-  client: PoolClient,
-  execution: TaskBoardExecution,
-  body: string,
-): Promise<void> {
-  const normalized = body.trim();
-  if (!normalized) {
-    throw new TaskboardValidationError('Execution finish comment is required', 'TASKBOARD_EXECUTION_COMMENT_REQUIRED');
-  }
-  const result = await client.query(
-    `INSERT INTO ${options.commentsTable}
-       (id,task_id,body,author_type,author_id,author_name,continuation_eligible,version)
-     VALUES ($1,$2,$3,'agent',$4,'Agent',false,1)
-     RETURNING id`,
-    [randomUUID(), execution.taskId, normalized, execution.runId],
-  );
-  await appendChange(options, client, execution.taskId, 'execution.comment', 'agent', execution.runId, {
-    commentId: String(result.rows[0]!.id),
-  });
 }
 
 async function markTransitioned(options: TaskboardV2StoreOptions, client: PoolClient, execution: TaskBoardExecution, status: string): Promise<void> {

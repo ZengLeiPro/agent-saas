@@ -42,7 +42,7 @@ server/src/runtime/rawRuntimeRunDispatch.ts	3157	production
 server/src/runtime/responsesApiAdapter.ts	2007	production
 server/src/runtime/runStore.ts	1411	production
 server/src/runtime/types.ts	1131	production
-server/src/taskboard/store.ts	1020	production
+server/src/taskboard/store.ts	1011	production
 shared/src/lib/wsEventProcessor.test.ts	1122	test
 shared/src/lib/wsEventProcessor.ts	1024	production
 shared/src/schemas/workflowScenario.ts	1025	production

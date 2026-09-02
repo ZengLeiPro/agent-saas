@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterWorkflowScenarios, workflowCta } from "./workflowUi";
+import { filterWorkflowScenarios, workflowCta, workflowTrialMessage } from "./workflowUi";
 import { makeWorkflowScenario } from "./workflowTestFixtures";
 
 describe("Workflow V3 UI 纯契约", () => {
@@ -35,6 +35,23 @@ describe("Workflow V3 UI 纯契约", () => {
       launch: { sampleAvailable: false, startMode: "diagnosis", entry: { kind: "business_event", content: "预约诊断" }, starterMessage: "预约诊断" },
       cta: { primary: "预约落地诊断", secondary: "查看行业演示" },
     })).action).toBe("diagnosis");
+  });
+
+  it("统一试用入口只让 D0 直接运行，D1/D2 明确使用示例数据", () => {
+    const d0 = makeWorkflowScenario("d0-trial");
+    const d1 = makeWorkflowScenario("d1-trial", {
+      readiness: "D1_CONNECTOR",
+      launch: {
+        sampleAvailable: false,
+        startMode: "connector",
+        entry: { kind: "business_event", content: "出现一条待处理业务事件。" },
+        starterMessage: "出现一条待处理业务事件。",
+      },
+    });
+
+    expect(workflowTrialMessage(d0)).toBe(d0.launch.starterMessage);
+    expect(workflowTrialMessage(d1)).toContain("请用示例数据带我体验");
+    expect(workflowTrialMessage(d1)).toContain("不要连接或写入任何真实业务系统");
   });
 
 

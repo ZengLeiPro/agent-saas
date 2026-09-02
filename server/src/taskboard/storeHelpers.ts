@@ -59,17 +59,6 @@ export function rowToTask(row: Record<string, unknown>): TaskBoardTask {
     ...(row.pull_request_number !== null && row.pull_request_number !== undefined
       ? { pullRequestNumber: Number(row.pull_request_number) }
       : {}),
-    ...(row.reviewed_subject_digest ? { reviewedSubjectDigest: String(row.reviewed_subject_digest) } : {}),
-    ...(row.provider_ci_inspection_id ? { providerCiInspectionId: String(row.provider_ci_inspection_id) } : {}),
-    ...(row.provider_ci_execution_id ? { providerCiExecutionId: String(row.provider_ci_execution_id) } : {}),
-    ...(row.provider_ci_purpose ? {
-      providerCiPurpose: String(row.provider_ci_purpose) as TaskBoardTask['providerCiPurpose'],
-    } : {}),
-    ...(row.provider_ci_head_oid ? { providerCiHeadOid: String(row.provider_ci_head_oid) } : {}),
-    ...(row.provider_ci_status ? {
-      providerCiStatus: String(row.provider_ci_status) as TaskBoardTask['providerCiStatus'],
-    } : {}),
-    ...(row.provider_ci_inspected_at ? { providerCiInspectedAt: toIso(row.provider_ci_inspected_at) } : {}),
     ...(row.merged_commit_oid ? { mergedCommitOid: String(row.merged_commit_oid) } : {}),
     ...(row.integration_task_id ? { integrationTaskId: String(row.integration_task_id) } : {}),
     ...(row.integration_task_identifier ? { integrationTaskIdentifier: String(row.integration_task_identifier) } : {}),

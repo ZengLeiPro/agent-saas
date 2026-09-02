@@ -32,19 +32,21 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
   ];
   if (context.execution.purpose === 'work' && context.task.kind !== 'integration') {
     instructions.splice(2, 0,
-      '- 登记当前唯一非 Draft PR 后，调用 execution.pull_request.inspect 并等待当前精确 head 的必需 CI 全绿；pending、failure、unknown 均不得提交复核。',
-      '- CI 失败时用 execution.pull_request.log 读取 receipt 所列失败 job 日志，在同一分支和原 PR 修复并重新检查；inspection/log 后重新读取最新 context receipt。');
+      '- 登记当前唯一非 Draft PR，主动调用 execution.pull_request.inspect 读取当前 PR、准确 head/base、observed checks 以及 workflow runs/jobs/steps；需要定位失败时，对当前 observed workflow 中的 job 调用 execution.pull_request.log。',
+      '- pending 是正常等待状态，应等待后重新检查；失败须结合 diff 与日志分类为当前改动、主线公共故障或无关/无适用 job。只有认为交付可由 Review 独立复核时才提交 in_review。',
+      '- execution.finish 的 body 必须记录 PR、当前 head、实际执行/观察到的检查、任何例外归因及剩余风险；服务端不会依据 CI、head、mergeability 或 inspection 结果替你作准入判断。');
   } else if (context.execution.purpose === 'review' && context.task.kind !== 'integration') {
     instructions.splice(2, 0,
-      '- 独立调用 execution.pull_request.inspect 检查当前精确 head/base/subject 与 CI，再登记 reviewed subject 并重新读取最新 context receipt；不得复用 Work 阶段旧结果。',
-      '- inspection receipt 与当前 head 全绿是 approved 的服务端硬门禁；pending、failure、unknown 均不得批准。');
+      '- 独立重读当前 PR、准确 head/base、observed checks、workflow 与 diff，不得复用 Work 的结论；发现 head 变化后必须重新检查新 head。',
+      '- 代码或测试失败应退回 todo。红 CI 只有在有直接证据证明属于主线公共故障、与当前改动无关或没有适用 job 时才可例外批准，并在 body 中记录证据、归因和风险；否则正常等待或退回修复。',
+      '- 批准时直接提交 ready_to_merge；服务端不会要求 inspection receipt、review subject、精确 head、mergeability 或全绿检查。');
   }
   if (context.task.kind === 'integration') {
     instructions.splice(2, 0,
-      '- 你是本次 Integration 唯一的持久 Agent，负责从读取来源任务到 GitHub 合并、资源清理和任务收口的完整过程；是否创建 integration branch/worktree、采用何种合并方式、是否调用子 Agent，均由你根据现场事实自行决定。',
-      '- 直接使用当前运行环境提供的标准 Git 与 GitHub 能力；不要调用 Delivery 专用的 execution.pull_request.* 或 execution.review_subject.record receipt 协议。遵守仓库现有权限、branch protection 和 ruleset，不得把任务范围解释为对其他仓库或无关资源的授权。',
-      '- 任何 push、PR、merge、删除等外部操作结果不确定时，必须先重新读取 GitHub 与本地 Git 的实际状态，再决定是否继续，避免重复副作用。',
-      '- GitHub 确认合并后，清理本批次拥有的本地 worktree、本地分支、远程分支和临时目录；删除前确认归属且没有未合并提交。全部完成后调用 execution.finish({targetStatus: "done", body})；只有确实需要人工决策或补充条件时才使用 blocked。');
+      '- 你是本次 Integration 唯一的持久 Agent，负责读取完整来源、组合代码、解决冲突、最终验证、GitHub 合并、资源清理和任务收口；分支/worktree、合并方式及是否调用子 Agent 由你根据现场事实决定。',
+      '- 最终组合完成后，自主读取实际 PR/head/base、observed checks、workflow runs/jobs/steps 与必要失败日志，运行适合仓库的本地验证；pending 正常等待，失败结合组合 diff 和证据处理，不把平台状态当作新增质量门禁。',
+      '- 直接使用当前运行环境提供的标准 Git 与 GitHub merge 能力；遵守仓库现有权限、branch protection 和 ruleset，不得把任务范围解释为对其他仓库或无关资源的授权。',
+      '- push、PR、merge、删除等外部操作结果不确定时，先重读 GitHub 与本地 Git 实际状态，避免重复副作用。GitHub 确认合并后清理本批次拥有且无未合并提交的资源；全部完成后以 done 收口，只有确需人工决策或补充条件时才 blocked。');
   }
   return instructions;
 }

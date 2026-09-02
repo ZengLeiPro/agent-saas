@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, CircleGauge, Settings2, Volume2, VolumeX, Loader2, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, Volume2, VolumeX, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,6 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
-import { EntityIcons } from "@/lib/icons";
-import { navigateSettingsRoute } from "@/lib/urlSync";
-import { ORGANIZATION_SETTINGS_WORKSPACES } from "@/components/OrganizationManagement/organizationManagementRegistry";
-import { organizationWorkspaceRoute } from "@/components/OrganizationManagement/organizationManagementRouting";
-import { PLATFORM_SETTINGS_SECTIONS } from "@/components/SettingsCenter/unifiedSettingsConfig";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
@@ -58,7 +53,7 @@ const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemo
 const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
 const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
-const SettingsModal = lazy(() => import("@/components/SettingsCenter").then(m => ({ default: m.SettingsModal })));
+const MobileSettingsModal = lazy(() => import("@/components/SettingsCenter/MobileSettingsModal"));
 const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
@@ -104,39 +99,6 @@ export function MobileLayout(props: LayoutProps) {
   const managementAccess = useManagementSettingsAccess({
     user: authUser, authLoading, authEnabled, active: accessTarget !== null,
   });
-  const organizationWorkspaceIcons: Record<string, LucideIcon> = useMemo(() => ({
-    overview: CircleGauge,
-    members: EntityIcons.members,
-    agents: EntityIcons.expert,
-    governance: EntityIcons.billing,
-    settings: Settings2,
-  }), []);
-  const mobileSettingsManagementGroups = useMemo(() => {
-    const ready = managementAccess.status === "ready" || managementAccess.status === "refreshing";
-    return [
-      ...(ready && managementAccess.tenantEntryAllowed ? [{
-        id: "tenant",
-        label: "组织管理",
-        items: ORGANIZATION_SETTINGS_WORKSPACES.map((workspace) => ({
-          id: workspace.id,
-          label: workspace.label,
-          icon: organizationWorkspaceIcons[workspace.iconKey],
-          onSelect: () => navigateSettingsRoute(organizationWorkspaceRoute(
-            workspace.id,
-            governanceRoute?.area === "organization" ? governanceRoute : null,
-          )),
-        })),
-      }] : []),
-      ...(ready && managementAccess.platformEntryAllowed ? [{
-        id: "platform",
-        label: "平台管理",
-        items: PLATFORM_SETTINGS_SECTIONS.map((item) => ({
-          ...item,
-          onSelect: () => openAdminSettings("platform", item.id),
-        })),
-      }] : []),
-    ];
-  }, [governanceRoute, managementAccess.platformEntryAllowed, managementAccess.status, managementAccess.tenantEntryAllowed, openAdminSettings, organizationWorkspaceIcons]);
   const handleReturnPersonalSettings = useCallback(() => {
     openSettings(settingsSection);
   }, [openSettings, settingsSection]);
@@ -766,7 +728,7 @@ export function MobileLayout(props: LayoutProps) {
           />
         ) : null}
       <Suspense fallback={null}>
-        <SettingsModal
+        <MobileSettingsModal
           open={settingsOpen}
           section={settingsSection}
           onSectionChange={setSettingsSection}
@@ -783,7 +745,11 @@ export function MobileLayout(props: LayoutProps) {
           chatFontLarge={chatFontLarge}
           onChatFontSizeChange={setChatFontLarge}
           personalAgentEnabled={personalAgentEnabled}
-          managementGroups={mobileSettingsManagementGroups}
+          governanceRoute={governanceRoute}
+          managementStatus={managementAccess.status}
+          tenantEntryAllowed={managementAccess.tenantEntryAllowed}
+          platformEntryAllowed={managementAccess.platformEntryAllowed}
+          openAdminSettings={openAdminSettings}
         />
 
         <SettingsDirtyBoundary>{(dirtyController) => (<>

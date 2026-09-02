@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { managementAccessTarget } from "@/lib/managementAccessView";
 import mobileSessionListSource from "@/components/MobileSessionList.tsx?raw";
+import mobileSettingsModalSource from "@/components/SettingsCenter/MobileSettingsModal.tsx?raw";
 import source from "./MobileLayout.tsx?raw";
 
 describe("MobileLayout 管理模块接线", () => {
@@ -26,8 +27,9 @@ describe("MobileLayout 管理模块接线", () => {
   });
 
   it("移动头像菜单通过唯一设置入口承载组织与平台管理", () => {
-    expect(source).toContain("managementGroups={mobileSettingsManagementGroups}");
-    expect(source).toContain("ORGANIZATION_SETTINGS_WORKSPACES.map");
+    expect(source).toContain("<MobileSettingsModal");
+    expect(mobileSettingsModalSource).toContain("managementGroups={managementGroups}");
+    expect(mobileSettingsModalSource).toContain("ORGANIZATION_SETTINGS_WORKSPACES.map");
     expect(mobileSessionListSource).toContain("设置");
     expect(mobileSessionListSource).not.toContain("个人设置");
     expect(mobileSessionListSource).not.toContain("组织控制台");

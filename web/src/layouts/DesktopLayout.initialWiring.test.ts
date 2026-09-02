@@ -45,13 +45,13 @@ describe("DesktopLayout 初始会话接线", () => {
 
   it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
     expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
-    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (");
-    expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
+    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (");
+    expect(source).toContain("dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
     expect(source).toContain("governanceContentOnly={governanceRoute?.area === \"organization\"}");
-    expect(source).toContain("<SettingsDirtyControllerBridge controller={dirtyController}");
+    expect(source).not.toContain("SettingsDirtyControllerBridge");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
     expect(source).not.toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
@@ -61,9 +61,8 @@ describe("DesktopLayout 初始会话接线", () => {
   });
 
   it("进入统一设置后隐藏底层业务页，避免旧组织分析与新组织管理重复可访问", () => {
-    expect(source).toContain('settingsMode && "invisible"');
-    expect(source).toContain('(settingsMode || activeTab !== "chat") && "hidden"');
-    expect(source).toContain('(settingsMode || activeTab !== "tenant-admin") && "hidden"');
-    expect(source).toContain('(settingsMode || activeTab !== "platform-admin") && "hidden"');
+    expect(source).toContain('className={cn("contents", settingsMode && "invisible")}');
+    expect(source).toContain("aria-hidden={settingsMode || undefined}");
+    expect(source).not.toContain('(settingsMode || activeTab !== "chat") && "hidden"');
   });
 });

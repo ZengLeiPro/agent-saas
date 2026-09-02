@@ -47,7 +47,7 @@ describe("useUnifiedSettingsWorkspace", () => {
     expect(result.current.activeSection).toBe("members");
   });
 
-  it("切换组织分类经过 dirty guard，并保留点击瞬间的 org", () => {
+  it("切换组织分类经过 dirty guard，并保留点击瞬间的 org", async () => {
     const guarded = vi.fn();
     const route = governanceRoute("organization.members.list", { orgId: "tenant-a" });
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
@@ -60,13 +60,14 @@ describe("useUnifiedSettingsWorkspace", () => {
 
     expect(guarded).toHaveBeenCalledTimes(1);
     expect(mocks.navigateSettingsRoute).not.toHaveBeenCalled();
-    act(() => guarded.mock.calls[0][0]());
+    await act(async () => guarded.mock.calls[0][0]());
+    await vi.waitFor(() => expect(mocks.navigateSettingsRoute).toHaveBeenCalledTimes(1));
     const target = mocks.navigateSettingsRoute.mock.calls[0][0];
     expect(target).toMatchObject({ routeId: "organization.agents.org-agents", orgId: "tenant-a" });
     expect(buildGovernanceUrl(target)).toBe("/tenant-admin/agents/org-agents?org=tenant-a");
   });
 
-  it("平台管理员从其他设置范围进入组织管理时只使用 Shell 显式目标", () => {
+  it("平台管理员从其他设置范围进入组织管理时只使用 Shell 显式目标", async () => {
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
       ...baseProps(),
       adminSettings: { target: "platform", section: "tenants" },
@@ -75,13 +76,14 @@ describe("useUnifiedSettingsWorkspace", () => {
     }));
 
     act(() => result.current.navigate("tenant", "overview"));
+    await vi.waitFor(() => expect(mocks.navigateSettingsRoute).toHaveBeenCalledTimes(1));
     expect(mocks.navigateSettingsRoute.mock.calls[0][0]).toMatchObject({
       routeId: "organization.overview.overview",
       orgId: "tenant-a",
     });
   });
 
-  it("平台管理员未明确选择组织时保持空 org 阻断态", () => {
+  it("平台管理员未明确选择组织时保持空 org 阻断态", async () => {
     const { result } = renderHook(() => useUnifiedSettingsWorkspace({
       ...baseProps(),
       adminSettings: { target: "platform", section: "tenants" },
@@ -90,6 +92,7 @@ describe("useUnifiedSettingsWorkspace", () => {
     }));
 
     act(() => result.current.navigate("tenant", "settings"));
+    await vi.waitFor(() => expect(mocks.navigateSettingsRoute).toHaveBeenCalledTimes(1));
     expect(mocks.navigateSettingsRoute.mock.calls[0][0]).toMatchObject({
       routeId: "organization.settings.profile",
       orgId: null,

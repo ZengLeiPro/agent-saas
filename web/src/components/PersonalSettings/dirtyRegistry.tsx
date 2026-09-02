@@ -279,8 +279,10 @@ export function useSettingsDirtyEntry(entry: SettingsDirtyEntry): void {
 
 export function SettingsDirtyBoundary({
   children,
+  onControllerChange,
 }: {
   children: (controller: SettingsDirtyController) => ReactNode;
+  onControllerChange?: (controller: SettingsDirtyController | null) => void;
 }) {
   const entriesRef = useRef(new Map<string, SettingsDirtyEntry>());
   const acceptedHistoryRef = useRef<HistoryPoint>(typeof window === "undefined"
@@ -603,10 +605,16 @@ export function SettingsDirtyBoundary({
   }, [continueNavigation]);
 
   const value = useMemo(() => ({ register }), [register]);
+  const controller = useMemo(() => ({ dirty, requestNavigation }), [dirty, requestNavigation]);
+
+  useEffect(() => {
+    onControllerChange?.(controller);
+    return () => onControllerChange?.(null);
+  }, [controller, onControllerChange]);
 
   return (
     <DirtyRegistryContext.Provider value={value}>
-      {children({ dirty, requestNavigation })}
+      {children(controller)}
       <Dialog open={pendingNavigation !== null} onOpenChange={(open) => { if (!open && !actionInFlight) cancelNavigation(); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
           <DialogHeader>

@@ -53,7 +53,6 @@ const PlatformAdminHeaderControls = lazy(() => import("@/components/PlatformAdmi
 const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHeaderControls").then(m => ({ default: m.TenantAdminHeaderControls })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
-import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
@@ -79,20 +78,6 @@ const SuspenseFallback = (
     <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
-
-function SettingsDirtyControllerBridge({
-  controller,
-  onChange,
-}: {
-  controller: SettingsDirtyController;
-  onChange: (controller: SettingsDirtyController | null) => void;
-}) {
-  useEffect(() => {
-    onChange(controller);
-    return () => onChange(null);
-  }, [controller, onChange]);
-  return null;
-}
 
 export function DesktopLayout(props: LayoutProps) {
   const {
@@ -435,6 +420,10 @@ export function DesktopLayout(props: LayoutProps) {
           )}
           style={{ flex: 1 }}
         >
+        <div
+          className={cn("contents", settingsMode && "invisible")}
+          aria-hidden={settingsMode || undefined}
+        >
         {/* Header 内含任务中心的 portal 宿主，只隐藏不卸载，避免切页时与 portal 清理竞争。 */}
         <header
           className={cn(
@@ -442,7 +431,6 @@ export function DesktopLayout(props: LayoutProps) {
             activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6" : "h-12 px-4",
             contentPanelFloating ? "bg-card" : "bg-background",
             capabilityReplayActive && "hidden",
-            settingsMode && "invisible",
           )}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest("button, a, input, textarea, select, [role=button]")) return;
@@ -568,7 +556,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
 
         {/* Tab 内容 */}
-        <div className={cn("flex min-h-0 flex-1 overflow-hidden", (settingsMode || activeTab !== "chat") && "hidden")}>
+        <div className={cn("flex min-h-0 flex-1 overflow-hidden", activeTab !== "chat" && "hidden")}>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <ChatTabContent
               messages={messages}
@@ -634,7 +622,7 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         </div>
         {capabilitiesMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-hidden", (settingsMode || activeTab !== "capabilities") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "capabilities" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <CapabilityCenterPanel
                 experts={myOrgAgents}
@@ -655,7 +643,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {cronMounted && (
           // 白框内不整页滚动：列表栏与详情栏各自滚，滚动条才不会压在圆角边上
-          <div className={cn("min-h-0 flex-1 overflow-hidden", (settingsMode || activeTab !== "cron") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "cron" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <CronManager
                 headerNavigationTarget={cronHeaderNavigationTarget}
@@ -667,42 +655,42 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
         {tenantsMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "tenants") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "tenants" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <TenantManager />
             </Suspense>
           </div>
         )}
         {profileMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "profile") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "profile" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <AgentProfilePanel />
             </Suspense>
           </div>
         )}
         {skillsMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "skills") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "skills" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <SkillManagerPanel mode={isPlatformAdmin ? "platform" : "tenant"} tenantIdScope={isPlatformAdmin ? undefined : authUser?.tenantId} />
             </Suspense>
           </div>
         )}
         {usageMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "usage") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "usage" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <UsageDashboard tenantId={isPlatformAdmin ? undefined : authUser?.tenantId} scope={isPlatformAdmin ? "platform" : "tenant"} />
             </Suspense>
           </div>
         )}
         {mcpMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "mcp") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "mcp" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <McpManagerPanel />
             </Suspense>
           </div>
         )}
         {modelsMounted && (
-          <div className={cn("min-h-0 flex-1 overflow-auto", (settingsMode || activeTab !== "models") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-auto", activeTab !== "models" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <ModelManagerPanel />
             </Suspense>
@@ -710,7 +698,7 @@ export function DesktopLayout(props: LayoutProps) {
         )}
 
         {tenantAdminMounted && !analysisMode && (
-          <div className={cn("min-h-0 flex-1 overflow-hidden", (settingsMode || activeTab !== "tenant-admin") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "tenant-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <ManagementSettingsAccessGate scope="tenant" target="tenant"
                 access={managementAccess} onRetry={managementAccess.retry}
@@ -738,7 +726,7 @@ export function DesktopLayout(props: LayoutProps) {
           </div>
         )}
         {platformAdminMounted && !analysisMode && (
-          <div className={cn("min-h-0 flex-1 overflow-hidden", (settingsMode || activeTab !== "platform-admin") && "hidden")}>
+          <div className={cn("min-h-0 flex-1 overflow-hidden", activeTab !== "platform-admin" && "hidden")}>
             <Suspense fallback={SuspenseFallback}>
               <ManagementSettingsAccessGate scope="platform" target="platform"
                 access={managementAccess} onRetry={managementAccess.retry}
@@ -814,6 +802,7 @@ export function DesktopLayout(props: LayoutProps) {
             onOpenChange={setCronWizardOpen}
           />
         )}
+        </div>
         {!!previewFilePath && previewMode === "dialog" && (
           <Suspense fallback={null}>
             <FilePreviewDialog
@@ -827,9 +816,8 @@ export function DesktopLayout(props: LayoutProps) {
         )}
         {analysisMode && governanceRoute && <AnalysisWorkspaceContent route={governanceRoute} access={managementAccess} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}
           openFilePreview={handleOpenFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
-        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
+        {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
-            <SettingsDirtyControllerBridge controller={dirtyController} onChange={handleSettingsControllerChange} />
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
               <Suspense fallback={SuspenseFallback}>
                 <SettingsContent
@@ -837,7 +825,7 @@ export function DesktopLayout(props: LayoutProps) {
                   section={settingsSection}
                   onSectionChange={setSettingsSection}
                   onClose={handleCloseUnifiedSettings}
-                  onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}
+                  dirtyController={dirtyController}
                   renderMemory={() => <MemorySectionPanel />}
                   renderFiles={() => (
                     <FileBrowserLazy

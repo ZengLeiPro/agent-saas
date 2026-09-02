@@ -1,14 +1,10 @@
 import { useCallback, useRef } from "react";
 
 import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
+import type { OrganizationSettingsWorkspaceId } from "@/components/OrganizationManagement/organizationManagementRegistry";
 import type { GovernanceRouteState } from "@/lib/governanceNavigation";
 import { navigateSettingsRoute, type AdminSettingsState, type AdminSettingsTarget } from "@/lib/urlSync";
 import type { SettingsSectionId } from "@/types/settings";
-import {
-  isOrganizationSettingsWorkspaceId,
-  organizationSettingsWorkspaceForRoute,
-} from "@/components/OrganizationManagement/organizationManagementRegistry";
-import { organizationWorkspaceRoute } from "@/components/OrganizationManagement/organizationManagementRouting";
 
 export function useUnifiedSettingsWorkspace({
   settingsOpen,
@@ -41,12 +37,9 @@ export function useUnifiedSettingsWorkspace({
   closeOrganizationSettings?: () => void;
 }) {
   const organizationRoute = governanceRoute?.area === "organization" ? governanceRoute : null;
-  const organizationWorkspace = organizationRoute
-    ? organizationSettingsWorkspaceForRoute(organizationRoute.routeId)
-    : null;
   const mode = settingsOpen || adminSettings !== null || organizationRoute !== null;
   const target = organizationRoute ? "tenant" as const : settingsOpen ? "personal" as const : adminSettings?.target ?? "personal";
-  const activeSection = organizationWorkspace?.id
+  const activeSection = organizationRoute?.workspace
     ?? (settingsOpen ? settingsSection : adminSettings?.section ?? "account-security");
   const dirtyControllerRef = useRef<SettingsDirtyController | null>(null);
   const onControllerChange = useCallback((controller: SettingsDirtyController | null) => {
@@ -63,13 +56,18 @@ export function useUnifiedSettingsWorkspace({
         if (settingsOpen) setSettingsSection(section as SettingsSectionId);
         else openSettings(section as SettingsSectionId);
       } else if (nextTarget === "tenant") {
-        if (!isOrganizationSettingsWorkspaceId(section)) {
-          throw new Error(`Unknown organization settings workspace: ${section}`);
-        }
         const orgId = organizationRoute?.orgId
           ?? (isPlatformAdmin ? organizationSettingsTargetId ?? null : null);
-        const nextRoute = organizationWorkspaceRoute(section, organizationRoute);
-        navigateSettingsRoute({ ...nextRoute, orgId });
+        void import("@/components/OrganizationManagement/organizationManagementRouting")
+          .then(({ organizationWorkspaceRoute }) => {
+            navigateSettingsRoute({
+              ...organizationWorkspaceRoute(
+                section as OrganizationSettingsWorkspaceId,
+                organizationRoute,
+              ),
+              orgId,
+            });
+          });
       } else if (adminSettings?.target === nextTarget) setAdminSettingsSection(section);
       else openAdminSettings(nextTarget, section);
     });

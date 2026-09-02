@@ -185,10 +185,11 @@ const SECRET_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
 ];
 
 /**
- * 任意 JSON/命令/仓库 URL 可能夹带 token、绝对路径或密文。保留不可逆摘要以让
+ * 凭据标识、任意 JSON/命令/仓库 URL 可能夹带 token、绝对路径或密文。保留不可逆摘要以让
  * 行为变化仍改变 config digest，但 canonical projection 绝不携带原值。
  */
 const OPAQUE_VALUE_FIELDS: ReadonlyArray<PathPattern> = [
+  ['auth', 'selfSignup', 'sms', 'accessKeyId'],
   ['models', 'groups', '*', 'thinking'],
   ['models', 'groups', '*', 'extraBody'],
   ['models', 'groups', '*', 'models', '*', 'thinking'],

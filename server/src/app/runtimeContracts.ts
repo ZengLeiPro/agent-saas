@@ -6,6 +6,7 @@ import type {
 import type { CodexCredentialManager } from '../runtime/responses/codexCredentialManager.js';
 import type { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
 import type { RuntimeAuditQuery } from '../runtime/auditQuery.js';
+import type { PreparedConfigRecoveryPublication } from '../runtime/configIdentityRuntime.js';
 import type { PgEventStore } from '../runtime/pgEventStore.js';
 import type { EventStore } from '../runtime/types.js';
 import type { PgRunStore } from '../runtime/runStore.js';
@@ -149,10 +150,12 @@ export interface AppRuntime {
   getMemoryIndexService?: () => MemoryIndexService | null;
   getMemoryConsolidationScannerStatus?: () => Promise<MemoryConsolidationScannerStatus>;
   /**
-   * TASK-318：只读脱敏配置身份摘要（/api/healthz/ready 与平台概览 snapshot 消费）。
+   * TASK-318：只读脱敏配置身份摘要（health、平台概览与 Worker readiness 消费）。
    * 内容只含 digest/计数/时间戳/四态状态，不含 secret 与 raw config。
    */
   getConfigIdentitySummary?: () => import('@agent/shared').ConfigIdentitySummary;
+  /** 当前私有 ConfigIdentity snapshot 必须与内存 summary 逐字一致。 */
+  isPrivateConfigIdentitySummaryCurrent: () => boolean;
   /** Runtime、refresher 与管理端 mutation 共享的唯一恢复门及 permit 所有者。 */
   configRuntimeRecoveryGate: ConfigRuntimeRecoveryGate;
   memoryIndexShutdown?: () => Promise<void>;
@@ -258,7 +261,7 @@ export interface AppRuntime {
   /** 恢复事务只计算 observation；由 mutation service 在 audit 成功后同步提交。 */
   prepareSharedConfigIdentityPublication: (
     recoveryPermit: ConfigRuntimeRecoveryPermit,
-  ) => Promise<() => void>;
+  ) => Promise<PreparedConfigRecoveryPublication>;
   /** 普通管理端提交后按精确文本推进指纹；gate dirty 时始终拒绝。 */
   acknowledgeSharedConfigApplied: (expectedConfigText: string) => boolean;
   /** 恢复事务专用精确文本确认；只接受当前 active permit。 */

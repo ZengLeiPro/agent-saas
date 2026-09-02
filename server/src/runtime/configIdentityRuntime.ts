@@ -25,6 +25,49 @@ import {
 } from '../release/configIdentity.js';
 
 
+const PREPARED_PUBLICATION_CREATION_TOKEN = Symbol('prepared-config-recovery-publication');
+const TRUSTED_PREPARED_PUBLICATIONS = new WeakSet<object>();
+
+/** 只能由本 Runtime 私有令牌创建的已计算、未发布 observation。 */
+export class PreparedConfigRecoveryPublication {
+  #committed = false;
+  readonly #commitAction: () => void;
+
+  private constructor(
+    token: typeof PREPARED_PUBLICATION_CREATION_TOKEN,
+    commitAction: () => void,
+  ) {
+    if (token !== PREPARED_PUBLICATION_CREATION_TOKEN) {
+      throw new Error('禁止在 ConfigIdentity Runtime 外构造 prepared publication capability');
+    }
+    this.#commitAction = commitAction;
+    TRUSTED_PREPARED_PUBLICATIONS.add(this);
+    Object.freeze(this);
+  }
+
+  static create(
+    token: typeof PREPARED_PUBLICATION_CREATION_TOKEN,
+    commitAction: () => void,
+  ): PreparedConfigRecoveryPublication {
+    return new PreparedConfigRecoveryPublication(token, commitAction);
+  }
+
+  commit(): void {
+    if (this.#committed) throw new Error('恢复 observation 已提交');
+    this.#committed = true;
+    this.#commitAction();
+  }
+}
+
+Object.freeze(PreparedConfigRecoveryPublication.prototype);
+Object.freeze(PreparedConfigRecoveryPublication);
+
+export function isPreparedConfigRecoveryPublication(
+  value: unknown,
+): value is PreparedConfigRecoveryPublication {
+  return typeof value === 'object' && value !== null && TRUSTED_PREPARED_PUBLICATIONS.has(value);
+}
+
 export interface ConfigIdentityRuntimeOptions {
   config: AppConfig;
   secretVault?: SecretVault;
@@ -54,7 +97,7 @@ export interface ConfigIdentityRuntime {
   /** 纯同步撤销 observation、取消在途计算并发布 not_collected；不启动重算。 */
   invalidateObservation(): void;
   /** 为恢复事务计算但不发布 observation；返回同步 commit，供 audit 成功后调用。 */
-  prepareConfigChanged(reason: string): Promise<() => void>;
+  prepareConfigChanged(reason: string): Promise<PreparedConfigRecoveryPublication>;
   /** 配置热更新成功后先失效再重算（内部捕获异常，绝不打断热更新主流程）。 */
   notifyConfigChanged(reason: string): void;
   /** 同步等待一次重算（测试与显式刷新用）。 */
@@ -100,7 +143,15 @@ export function createConfigIdentityRuntime(
           `(credentialVersions=${next.credentialVersionDigest?.slice(0, 19) ?? 'none'})`,
       );
     }
-    onSummaryUpdated?.(buildSummary());
+    try {
+      onSummaryUpdated?.(buildSummary());
+    } catch (error) {
+      try {
+        logger?.warn(`[ConfigIdentity] summary publisher failed: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {
+        // 发布者异常已隔离；诊断 logger 也不得把已发布终态反转成 commit 失败。
+      }
+    }
   }
 
   async function compute(): Promise<ConfigIdentityObservation> {
@@ -155,11 +206,32 @@ export function createConfigIdentityRuntime(
       if (generation !== computeGeneration) {
         throw new Error(`ConfigIdentity recompute became stale after ${reason}`);
       }
-      observationInvalidated = false;
-      invalidatedComparisonObservation = undefined;
-      applyObservation(next, comparisonObservation);
-      lastComputedAtMs = now().getTime();
-      logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
+      const computedAtMs = now().getTime();
+      const previousState = {
+        observation,
+        firstObservedAt,
+        lastObservedAt,
+        lastChangedAt,
+        lastComputedAtMs,
+        observationInvalidated,
+        invalidatedComparisonObservation,
+      };
+      try {
+        logger?.info(`[ConfigIdentity] recomputed after ${reason}: ${next.digest.slice(0, 19)}…`);
+        observationInvalidated = false;
+        invalidatedComparisonObservation = undefined;
+        applyObservation(next, comparisonObservation);
+        lastComputedAtMs = computedAtMs;
+      } catch (error) {
+        observation = previousState.observation;
+        firstObservedAt = previousState.firstObservedAt;
+        lastObservedAt = previousState.lastObservedAt;
+        lastChangedAt = previousState.lastChangedAt;
+        lastComputedAtMs = previousState.lastComputedAtMs;
+        observationInvalidated = previousState.observationInvalidated;
+        invalidatedComparisonObservation = previousState.invalidatedComparisonObservation;
+        throw error;
+      }
     };
   }
 
@@ -173,9 +245,12 @@ export function createConfigIdentityRuntime(
     }
   }
 
-  async function prepareConfigChanged(reason: string): Promise<() => void> {
+  async function prepareConfigChanged(reason: string): Promise<PreparedConfigRecoveryPublication> {
     invalidateObservation();
-    return await prepareRefresh(reason);
+    return PreparedConfigRecoveryPublication.create(
+      PREPARED_PUBLICATION_CREATION_TOKEN,
+      await prepareRefresh(reason),
+    );
   }
 
   function invalidateObservation(): void {
@@ -184,7 +259,15 @@ export function createConfigIdentityRuntime(
     observationInvalidated = true;
     observation = undefined;
     lastComputedAtMs = now().getTime();
-    onSummaryUpdated?.(buildSummary());
+    try {
+      onSummaryUpdated?.(buildSummary());
+    } catch (error) {
+      try {
+        logger?.warn(`[ConfigIdentity] summary publisher failed: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {
+        // 发布者异常已隔离；诊断 logger 也不得把已发布终态反转成 commit 失败。
+      }
+    }
   }
 
   function notifyConfigChanged(reason: string): void {

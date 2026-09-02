@@ -19,6 +19,10 @@ import type {
   ConfigRuntimeRecoveryGate,
   ConfigRuntimeRecoveryPermit,
 } from './runtimeRecoveryGate.js';
+import {
+  isPreparedConfigRecoveryPublication,
+  type PreparedConfigRecoveryPublication,
+} from '../runtime/configIdentityRuntime.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
 const LOCK_STALE_MS = 120_000;
@@ -140,11 +144,12 @@ export class AdminConfigMutationService {
       processRole: string;
       recoveryGate?: ConfigRuntimeRecoveryGate;
       now?: () => Date;
-      /** durable commit 完成后发布实际落盘文本对应的运行时配置身份。 */
+      /** durable commit 后准备 Runtime 受信 publication；恢复 audit 成功后由 service 同步提交。 */
       onCommitted?: (
         candidateText: string,
         recoveryPermit?: ConfigRuntimeRecoveryPermit,
-      ) => void | (() => void) | Promise<void | (() => void)>;
+      ) => void | PreparedConfigRecoveryPublication
+        | Promise<void | PreparedConfigRecoveryPublication>;
       /** runtime 与磁盘身份不再可信时，同步撤销当前身份 observation。 */
       onRuntimeDirty?: () => void;
       /** audit 故障注入/替代持久化；生产默认使用原生 appendFile。 */
@@ -245,9 +250,9 @@ export class AdminConfigMutationService {
           let rollbackCompleted = false;
           try {
             permit = this.options.recoveryGate?.beginRecoveryCompletion();
-            const commitObservation = await this.options.onCommitted?.(currentText, permit);
-            if (permit && typeof commitObservation !== 'function') {
-              throw new Error('恢复配置身份发布未返回 observation commit');
+            const preparedPublication = await this.options.onCommitted?.(currentText, permit);
+            if (permit && !(isPreparedConfigRecoveryPublication(preparedPublication))) {
+              throw new Error('恢复配置身份发布未返回受信 prepared publication');
             }
             await this.appendAudit({
               at: (this.options.now?.() ?? new Date()).toISOString(),
@@ -264,7 +269,9 @@ export class AdminConfigMutationService {
               candidateStillOwned,
               diskRestored,
             });
-            this.commitObservation(typeof commitObservation === 'function' ? commitObservation : undefined);
+            if (isPreparedConfigRecoveryPublication(preparedPublication)) {
+              preparedPublication.commit();
+            }
             if (permit) this.options.recoveryGate?.completeRecovery(permit);
             rollbackCompleted = true;
           } catch (postRollbackError) {
@@ -346,9 +353,9 @@ export class AdminConfigMutationService {
         // 必须复用失败 mutation 原有 recipe；gate 在 observation commit 与 audit 完成前始终保持 dirty。
         await recovery.applyRuntime(recovery.targetConfig, recovery.failedConfig);
         permit = this.options.recoveryGate?.beginRecoveryCompletion();
-        const commitObservation = await this.options.onCommitted?.(recovery.targetText, permit);
-        if (permit && typeof commitObservation !== 'function') {
-          throw new Error('恢复配置身份发布未返回 observation commit');
+        const preparedPublication = await this.options.onCommitted?.(recovery.targetText, permit);
+        if (permit && !(isPreparedConfigRecoveryPublication(preparedPublication))) {
+          throw new Error('恢复配置身份发布未返回受信 prepared publication');
         }
         await this.appendAudit({
           at: (this.options.now?.() ?? new Date()).toISOString(),
@@ -367,7 +374,9 @@ export class AdminConfigMutationService {
           candidateStillOwned: recovery.candidateStillOwned,
           diskRestored: recovery.diskRestored,
         });
-        this.commitObservation(typeof commitObservation === 'function' ? commitObservation : undefined);
+        if (isPreparedConfigRecoveryPublication(preparedPublication)) {
+          preparedPublication.commit();
+        }
         if (permit) this.options.recoveryGate?.completeRecovery(permit);
         this.runtimeRecovery = undefined;
         return;
@@ -472,16 +481,6 @@ export class AdminConfigMutationService {
       await unlink(candidate).catch(() => undefined);
       throw error;
     }
-  }
-
-  private commitObservation(commit?: () => void): void {
-    if (!commit) return;
-    const result: unknown = commit();
-    if (result === undefined) return;
-    if (typeof (result as PromiseLike<unknown>)?.then === 'function') {
-      void Promise.resolve(result).catch(() => undefined);
-    }
-    throw new Error('恢复 observation commit 必须同步完成');
   }
 
   private async appendAudit(record: Record<string, unknown>): Promise<void> {

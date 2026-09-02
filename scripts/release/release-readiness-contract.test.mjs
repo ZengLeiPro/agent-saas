@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
-import { validateCandidateReleaseReadiness } from './read-production-state.mjs';
+import {
+  readReleaseConfigIdentityBinding,
+  validateCandidateReleaseReadiness,
+  validatePrivateConfigIdentityReleaseBinding,
+} from './read-production-state.mjs';
 
 const fixture = async (name) =>
   JSON.parse(await readFile(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
@@ -81,6 +87,135 @@ test('candidate contract rejects anonymous summary leaks and deployment/snapshot
   );
 });
 
+test('private ConfigIdentity release helper compares every release binding field', async () => {
+  const summary = await fixture('candidate-config-identity.json');
+  const dir = await mkdtemp(join(tmpdir(), 'worker-config-identity-binding-'));
+  const privateSnapshotPath = join(dir, 'worker.json');
+  try {
+    await writeFile(privateSnapshotPath, JSON.stringify(summary));
+    await assert.doesNotReject(
+      validatePrivateConfigIdentityReleaseBinding({
+        privateSnapshotPath,
+        releaseId: summary.releaseId,
+        expectedConfigIdentity,
+        label: 'Candidate Worker private ConfigIdentity',
+      }),
+    );
+
+    const mismatches = [
+      ['releaseId', { releaseId: 'rc-wrong' }, /not consistent with the release binding/],
+      [
+        'schemaVersion',
+        { expectedConfigIdentity: { ...expectedConfigIdentity, schemaVersion: 2 } },
+        /expected schemaVersion disagrees with deployment/,
+      ],
+      [
+        'digest',
+        {
+          expectedConfigIdentity: {
+            ...expectedConfigIdentity,
+            digest: `sha256:${'f'.repeat(64)}`,
+          },
+        },
+        /expected digest disagrees with deployment/,
+      ],
+      [
+        'credentialVersionDigest',
+        {
+          expectedConfigIdentity: {
+            ...expectedConfigIdentity,
+            credentialVersionDigest: `sha256:${'d'.repeat(64)}`,
+          },
+        },
+        /expected credentialVersionDigest disagrees with deployment/,
+      ],
+    ];
+    for (const [field, overrides, expectedError] of mismatches) {
+      await assert.rejects(
+        validatePrivateConfigIdentityReleaseBinding({
+          privateSnapshotPath,
+          releaseId: summary.releaseId,
+          expectedConfigIdentity,
+          label: 'Candidate Worker private ConfigIdentity',
+          ...overrides,
+        }),
+        expectedError,
+        field,
+      );
+    }
+
+    await writeFile(
+      privateSnapshotPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        status: 'unverifiable',
+        reason: 'expected_not_bound',
+        releaseId: summary.releaseId,
+        observed: summary.observed,
+      }),
+    );
+    await assert.rejects(
+      validatePrivateConfigIdentityReleaseBinding({
+        privateSnapshotPath,
+        releaseId: summary.releaseId,
+        expectedConfigIdentity,
+      }),
+      /not consistent with the release binding/,
+    );
+
+    await rm(privateSnapshotPath);
+    await assert.rejects(
+      validatePrivateConfigIdentityReleaseBinding({
+        privateSnapshotPath,
+        releaseId: summary.releaseId,
+        expectedConfigIdentity,
+      }),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('rollback release env is parsed without shell evaluation and must match the old Worker snapshot', async () => {
+  const summary = await fixture('candidate-config-identity.json');
+  const dir = await mkdtemp(join(tmpdir(), 'rollback-worker-binding-'));
+  const envPath = join(dir, 'runtime-worker-blue.release.env');
+  const privateSnapshotPath = join(dir, 'worker.json');
+  try {
+    await writeFile(privateSnapshotPath, JSON.stringify(summary));
+    await writeFile(envPath, [
+      `AGENT_SAAS_RELEASE_ID=${summary.releaseId}`,
+      `AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=${summary.expected.schemaVersion}`,
+      `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=${summary.expected.digest}`,
+      '',
+    ].join('\n'));
+    const binding = await readReleaseConfigIdentityBinding(envPath);
+    await assert.doesNotReject(validatePrivateConfigIdentityReleaseBinding({
+      privateSnapshotPath,
+      ...binding,
+      label: 'Rollback Worker private ConfigIdentity',
+    }));
+
+    await writeFile(envPath, [
+      `AGENT_SAAS_RELEASE_ID=${summary.releaseId}`,
+      `AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION=${summary.expected.schemaVersion}`,
+      `AGENT_SAAS_CONFIG_IDENTITY_DIGEST=sha256:${'f'.repeat(64)}`,
+      '',
+    ].join('\n'));
+    await assert.rejects(
+      validatePrivateConfigIdentityReleaseBinding({
+        privateSnapshotPath,
+        ...await readReleaseConfigIdentityBinding(envPath),
+        label: 'Rollback Worker private ConfigIdentity',
+      }),
+      /expected digest disagrees with deployment/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('Production and Staging deploy modules consume the same private snapshot contract', async () => {
   const [production, staging, healthRoute] = await Promise.all([
     readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8'),
@@ -91,6 +226,37 @@ test('Production and Staging deploy modules consume the same private snapshot co
     assert.match(deploy, /validateCandidateReleaseReadiness/u);
     assert.doesNotMatch(deploy, /(?:ready|api)\.configIdentity/u);
   }
+  const workerPidCheck = production.indexOf('test -n "${pid:-}"');
+  const workerEnvironmentCheck = production.indexOf(
+    'systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value',
+  );
+  const workerBindingCheck = production.indexOf(
+    "label: 'Candidate Worker private ConfigIdentity'",
+  );
+  const workerPromotion = production.indexOf(
+    'echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color',
+  );
+  assert.ok(workerPidCheck > -1);
+  assert.ok(workerEnvironmentCheck > workerPidCheck);
+  assert.ok(workerBindingCheck > workerEnvironmentCheck);
+  assert.ok(workerPromotion > workerBindingCheck);
+  assert.match(
+    production,
+    /agent-saas-runtime-worker-\$worker_idle\.config-identity\.json/u,
+  );
+  const rollbackReadyCheck = production.indexOf('if [ "$worker_restored" = true ]; then');
+  const rollbackBindingCheck = production.indexOf(
+    "label: 'Rollback Worker private ConfigIdentity'",
+    rollbackReadyCheck,
+  );
+  const rollbackMarker = production.indexOf(
+    'runtime-worker-active-color',
+    rollbackBindingCheck,
+  );
+  assert.ok(rollbackReadyCheck > -1);
+  assert.ok(rollbackBindingCheck > rollbackReadyCheck);
+  assert.ok(rollbackMarker > rollbackBindingCheck);
+  assert.match(production, /readReleaseConfigIdentityBinding/u);
   assert.match(healthRoute, /摘要本身只走平台管理员 API \/ 私有运行态快照，不进匿名响应/u);
   assert.doesNotMatch(
     healthRoute.slice(

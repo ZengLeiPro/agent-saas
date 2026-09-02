@@ -243,6 +243,7 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     'sk-inline-wetools-key',
     'inline-bearer-token-123',
     'jwt-secret-value-32-chars-long!!',
+    'LTAI-SMS-PLAINTEXT-CREDENTIAL-ID',
     'supersecret-signing-key',
     'oss-access-key-secret-value',
     'doubao-tts-api-key-value',
@@ -253,9 +254,15 @@ describe('脱敏：secret 明文与敏感值绝不进入投影', () => {
     'model-group-api-key-value',
   ];
 
-  it('所有注册 secret 字段种植明文后，投影与摘要输入均不含明文', () => {
+  it('所有注册凭据字段种植明文后，投影与摘要输入均不含明文', () => {
     const config = baseConfig({
-      auth: { enabled: true, jwtSecret: 'jwt-secret-value-32-chars-long!!' },
+      auth: {
+        enabled: true,
+        jwtSecret: 'jwt-secret-value-32-chars-long!!',
+        selfSignup: { enabled: true, sms: {
+          provider: 'aliyun', accessKeyId: 'LTAI-SMS-PLAINTEXT-CREDENTIAL-ID',
+        } },
+      },
       artifact: {
         backend: 'oss',
         accessKeyId: 'oss-id',

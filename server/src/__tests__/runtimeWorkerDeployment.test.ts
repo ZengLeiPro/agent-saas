@@ -96,10 +96,16 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(workerUnit).toContain('AGENT_SAAS_PIDFILE=/run/agent-saas-runtime-worker-%i.pid');
     expect(workerUnit).toContain('AGENT_SAAS_READYFILE=/run/agent-saas-runtime-worker-%i.ready');
     expect(workerUnit).toContain(
+      'AGENT_SAAS_CONFIG_IDENTITY_PATH=/run/agent-saas-runtime-worker-%i.config-identity.json',
+    );
+    expect(workerUnit).toContain(
       'AGENT_SAAS_DRAIN_MARKER=/run/agent-saas-runtime-worker-%i.draining',
     );
     expect(workerUnit).toContain(
       'ExecCondition=/usr/bin/test ! -e /run/agent-saas-runtime-worker-%i.draining',
+    );
+    expect(workerUnit).toContain(
+      'ExecStartPre=/usr/bin/rm -f /run/agent-saas-runtime-worker-%i.ready /run/agent-saas-runtime-worker-%i.config-identity.json',
     );
     expect(workerUnit).toContain('WorkingDirectory=/opt/agent-saas-app/worker/%i/server');
     expect(workerUnit).toContain('MemoryHigh=45%');
@@ -200,9 +206,8 @@ describe('Runtime Worker 生产部署契约', () => {
     expect(serverEntry).toContain(
       'writeDrainMarker({ activeStreams: active, activeUploads, runtimeQuiesced })',
     );
-    expect(serverEntry).toContain(
-      'projectRuntimeWorkerReadyFile(readyFile, runtime?.getRuntimeAdmissionSnapshot?.())',
-    );
+    expect(serverEntry).toContain('runtime?.getRuntimeAdmissionSnapshot?.(),');
+    expect(serverEntry).toContain('runtime?.getConfigIdentitySummary?.(),');
     expect(serverEntry).toContain(
       'runtimeReadyFileTimer = setInterval(syncRuntimeWorkerReadyFile, 1_000)',
     );

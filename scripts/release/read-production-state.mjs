@@ -408,6 +408,50 @@ export async function readPrivateConfigIdentitySnapshot(snapshotPath) {
   return validateConfigIdentitySummary(raw);
 }
 
+export async function readReleaseConfigIdentityBinding(envPath) {
+  const entries = new Map();
+  for (const line of (await readFile(envPath, 'utf8')).split(/\r?\n/)) {
+    if (!line) continue;
+    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (!match || entries.has(match[1])) throw new Error('Release env is malformed or duplicated');
+    entries.set(match[1], match[2]);
+  }
+  const releaseId = entries.get('AGENT_SAAS_RELEASE_ID');
+  if (!releaseId) throw new Error('Release env is missing AGENT_SAAS_RELEASE_ID');
+  const schemaVersion = Number(entries.get('AGENT_SAAS_CONFIG_IDENTITY_SCHEMA_VERSION'));
+  const expectedConfigIdentity = configIdentitySide({
+    schemaVersion,
+    digest: entries.get('AGENT_SAAS_CONFIG_IDENTITY_DIGEST'),
+    ...(entries.has('AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST')
+      ? { credentialVersionDigest: entries.get('AGENT_SAAS_CONFIG_IDENTITY_CREDENTIAL_VERSION_DIGEST') }
+      : {}),
+  }, 'Release env expected configIdentity');
+  return { releaseId, expectedConfigIdentity };
+}
+
+export async function validatePrivateConfigIdentityReleaseBinding({
+  privateSnapshotPath,
+  releaseId,
+  expectedConfigIdentity,
+  label = 'Candidate private ConfigIdentity',
+}) {
+  const summary = await readPrivateConfigIdentitySnapshot(privateSnapshotPath);
+  if (summary.status !== 'consistent' || summary.releaseId !== releaseId) {
+    throw new Error(`${label} is not consistent with the release binding`);
+  }
+  // 发布入口传入 config-identity-cli 的 observed 形态；严格校验其 version metadata，
+  // 再与私有快照中的 release expected 绑定字段逐项比较。
+  const expected = configIdentitySide(expectedConfigIdentity, `${label} computed configIdentity`, {
+    observed: Object.hasOwn(expectedConfigIdentity, 'versionResolution'),
+  });
+  for (const field of ['schemaVersion', 'digest', 'credentialVersionDigest']) {
+    if ((summary.expected?.[field] ?? null) !== (expected[field] ?? null)) {
+      throw new Error(`${label} expected ${field} disagrees with deployment`);
+    }
+  }
+  return summary;
+}
+
 export async function validateCandidateReleaseReadiness({
   environment,
   manifest,
@@ -433,23 +477,11 @@ export async function validateCandidateReleaseReadiness({
     throw new Error('Candidate readiness release identity does not match Manifest');
   }
 
-  const summary = await readPrivateConfigIdentitySnapshot(privateSnapshotPath);
-  if (summary.status !== 'consistent' || summary.releaseId !== manifest.releaseId) {
-    throw new Error('Candidate private ConfigIdentity is not consistent with the release binding');
-  }
-  // 部署入口传入的是 config-identity-cli 的 observed 形态；严格校验全部
-  // version metadata 后，仅用 release expected 拥有的三个字段做绑定比较。
-  const expected = configIdentitySide(expectedConfigIdentity, 'Candidate computed configIdentity', {
-    observed: true,
+  return validatePrivateConfigIdentityReleaseBinding({
+    privateSnapshotPath,
+    releaseId: manifest.releaseId,
+    expectedConfigIdentity,
   });
-  for (const field of ['schemaVersion', 'digest', 'credentialVersionDigest']) {
-    if ((summary.expected?.[field] ?? null) !== (expected[field] ?? null)) {
-      throw new Error(
-        `Candidate private ConfigIdentity expected ${field} disagrees with deployment`,
-      );
-    }
-  }
-  return summary;
 }
 
 export async function resolvePrivateConfigIdentity(options) {

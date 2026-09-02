@@ -7,13 +7,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AdminConfigMutationService, ConfigRuntimeRecoveryError } from '../config/adminConfigMutationService.js';
 import type { ConfigRuntimeRecoveryPermit } from '../config/runtimeRecoveryGate.js';
+import type { PreparedConfigRecoveryPublication } from '../runtime/configIdentityRuntime.js';
 import { InMemorySecretVault } from '../security/secretVault.js';
 import { publishAdminCommittedConfigIdentity } from './audioTranscribeAdminRoute.js';
 import { parseAppConfig, type AppConfig } from './config.js';
 import { initializeRuntimeConfigIdentityAssembly } from './configIdentityAssembly.js';
 import { createSharedConfigRefresher } from './sharedConfigRefresher.js';
 
-const roots: string[] = [];
+const roots: string[] = []; // 每个 case 的私有运行态根目录。
 
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -35,6 +36,36 @@ function deferred(): {
 }
 
 describe('ConfigRuntimeRecoveryGate integration', () => {
+  it('requires the private snapshot to exist and exactly match the in-memory summary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'config-identity-snapshot-'));
+    roots.push(root);
+    const snapshotPath = join(root, 'config-identity.json');
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv('AGENT_SAAS_CONFIG_IDENTITY_PATH', snapshotPath);
+    const config = parseAppConfig({ agent: { cwd: '/tmp/workspace' }, server: {} });
+    const assembly = await initializeRuntimeConfigIdentityAssembly({
+      config,
+      secretVault: new InMemorySecretVault(),
+      processCwd: root,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+
+    expect(assembly.isPrivateSummaryCurrent()).toBe(true);
+    await rm(snapshotPath, { force: true });
+    expect(assembly.isPrivateSummaryCurrent()).toBe(false);
+
+    const blockedSnapshotPath = join(root, 'snapshot-directory');
+    await mkdir(blockedSnapshotPath);
+    vi.stubEnv('AGENT_SAAS_CONFIG_IDENTITY_PATH', blockedSnapshotPath);
+    const blockedAssembly = await initializeRuntimeConfigIdentityAssembly({
+      config,
+      secretVault: new InMemorySecretVault(),
+      processCwd: root,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    });
+    expect(blockedAssembly.isPrivateSummaryCurrent()).toBe(false);
+  });
+
   it('keeps recovery audit and observation commit fail closed until synchronous completion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'config-runtime-recovery-'));
     roots.push(root);
@@ -50,11 +81,13 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
     vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('AGENT_SAAS_CONFIG_PATH', configPath);
 
+    const publishedStatuses: string[] = [];
     const assembly = await initializeRuntimeConfigIdentityAssembly({
       config,
       secretVault: new InMemorySecretVault(),
       processCwd: root,
       logger: { info: vi.fn(), warn: vi.fn() },
+      onSummaryUpdated: (summary) => publishedStatuses.push(summary.status),
     });
     const refresher = createSharedConfigRefresher({
       config,
@@ -75,7 +108,8 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
       }, text, recoveryPermit);
     let recoveryAuditTail: Promise<void> | undefined;
     let recoveryAuditStarted: (() => void) | undefined;
-    let returnAsyncObservationCommit = false;
+    let returnUntrustedPublication = false;
+    let untrustedCommitInvoked = false;
     const service = new AdminConfigMutationService({
       configPath,
       processCwd: root,
@@ -84,11 +118,12 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
       recoveryGate: assembly.recoveryGate,
       onCommitted: async (text, recoveryPermit) => {
         const commit = await publish(text, recoveryPermit);
-        if (!recoveryPermit || !commit || !returnAsyncObservationCommit) return commit;
-        return async () => {
-          commit();
+        if (!recoveryPermit || !commit || !returnUntrustedPublication) return commit;
+        return (async () => {
+          untrustedCommitInvoked = true;
+          commit.commit();
           await Promise.resolve();
-        };
+        }) as unknown as PreparedConfigRecoveryPublication;
       },
       onRuntimeDirty: assembly.invalidate,
       auditAppender: async (path, line) => {
@@ -165,7 +200,9 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
 
     recoveryAuditTail = undefined;
     recoveryAuditStarted = undefined;
-    returnAsyncObservationCommit = true;
+    const beforeUntrustedAttempt = assembly.getSummary();
+    const untrustedSequenceStart = publishedStatuses.length;
+    returnUntrustedPublication = true;
     const asyncCommitBuildCandidate = vi.fn((text: string) => text);
     await expect(service.mutate({
       actor: 'admin-3',
@@ -175,10 +212,15 @@ describe('ConfigRuntimeRecoveryGate integration', () => {
     })).rejects.toBeInstanceOf(ConfigRuntimeRecoveryError);
     await Promise.resolve();
     expect(assembly.recoveryGate.isDirty()).toBe(true);
-    expect(assembly.getSummary().status).toBe('not_collected');
+    const afterUntrustedAttempt = assembly.getSummary();
+    expect(afterUntrustedAttempt.status).toBe('not_collected');
+    expect(afterUntrustedAttempt.lastObservedAt).toBe(beforeUntrustedAttempt.lastObservedAt);
+    expect(afterUntrustedAttempt.lastChangedAt).toBe(beforeUntrustedAttempt.lastChangedAt);
+    expect(untrustedCommitInvoked).toBe(false);
+    expect(publishedStatuses.slice(untrustedSequenceStart)).not.toContain('consistent');
     expect(asyncCommitBuildCandidate).not.toHaveBeenCalled();
 
-    returnAsyncObservationCommit = false;
+    returnUntrustedPublication = false;
     const nextApplyRuntime = vi.fn(async (next: AppConfig) => {
       config.agent.maxTurns = next.agent.maxTurns;
     });

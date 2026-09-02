@@ -17,6 +17,18 @@ const APP_CONFIG = {
   agent: { maxTurns: 4, permissionMode: 'ask' },
   tts: undefined,
 } as any;
+const WORKER_CONFIG_IDENTITY = {
+  schemaVersion: 1 as const,
+  status: 'consistent' as const,
+  expected: { schemaVersion: 1, digest: `sha256:${'a'.repeat(64)}` },
+  observed: {
+    schemaVersion: 1,
+    digest: `sha256:${'a'.repeat(64)}`,
+    credentialVersionDigest: null,
+    versionResolution: 'resolved' as const,
+    secretRefCount: 0,
+  },
+};
 
 async function startHealthServer(
   options: Parameters<typeof createHealthRouter>[1] = {},
@@ -221,7 +233,7 @@ describe('health router', () => {
     });
   });
 
-  it('fails ws-only readiness when the active runtime worker withdraws its readyfile', async () => {
+  it('fails ws-only readiness when the active runtime worker withdraws its identity-bound readyfile', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'split-role-health-'));
     cleanupDirs.push(dir);
     const activeColorFile = join(dir, 'active-color');
@@ -237,13 +249,25 @@ describe('health router', () => {
       () => ({ state: 'unknown', admitting: true }),
       getActiveWorkerSnapshot,
     );
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'healthy', admitting: true }, 1234);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      { state: 'healthy', admitting: true },
+      WORKER_CONFIG_IDENTITY,
+      true,
+      1234,
+    );
     const server = await startHealthServer({ getRuntimeAdmissionSnapshot });
     servers.push(server);
 
     expect((await server.request('/api/healthz/ready')).status).toBe(200);
 
-    projectRuntimeWorkerReadyFile(readyFile, { state: 'paused', admitting: false }, 1234);
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      { state: 'paused', admitting: false },
+      WORKER_CONFIG_IDENTITY,
+      true,
+      1234,
+    );
     const response = await server.request('/api/healthz/ready');
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({

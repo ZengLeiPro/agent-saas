@@ -5,11 +5,15 @@ import { join } from 'node:path';
 import { applyEdits, modify } from 'jsonc-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AppConfig } from '../app/config.js';
+import { parseAppConfig, type AppConfig } from '../app/config.js';
 import {
   ConfigRuntimeRecoveryGate,
   type ConfigRuntimeRecoveryPermit,
 } from '../config/runtimeRecoveryGate.js';
+import {
+  createConfigIdentityRuntime,
+  type PreparedConfigRecoveryPublication,
+} from '../runtime/configIdentityRuntime.js';
 import {
   AdminConfigMutationService,
   ConfigConflictError,
@@ -19,16 +23,19 @@ import {
 
 const roots: string[] = [];
 
+type PublicationCallback = (
+  candidateText: string,
+  recoveryPermit?: ConfigRuntimeRecoveryPermit,
+) => void | PreparedConfigRecoveryPublication
+  | Promise<void | PreparedConfigRecoveryPublication>;
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 async function fixture(callbacks: {
   recoveryGate?: ConfigRuntimeRecoveryGate;
-  onCommitted?: (
-    candidateText: string,
-    recoveryPermit?: ConfigRuntimeRecoveryPermit,
-  ) => void | (() => void) | Promise<void | (() => void)>;
+  onCommitted?: PublicationCallback;
   onRuntimeDirty?: () => void;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'admin-config-mutation-'));
@@ -108,13 +115,15 @@ describe('AdminConfigMutationService', () => {
 
   it('keeps the shared gate closed until rollback audit and observation commit both succeed', async () => {
     const recoveryGate = new ConfigRuntimeRecoveryGate();
-    const commitObservation = vi.fn(() => {
-      expect(recoveryGate.isDirty()).toBe(true);
+    const identityRuntime = createConfigIdentityRuntime({
+      config: parseAppConfig({ agent: { cwd: '/tmp/workspace' }, server: {} }),
+      environment: 'test',
     });
-    const onCommitted = vi.fn((_text: string, permit?: ConfigRuntimeRecoveryPermit) => {
+    await identityRuntime.initialize();
+    const onCommitted = vi.fn(async (_text: string, permit?: ConfigRuntimeRecoveryPermit) => {
       expect(recoveryGate.isDirty()).toBe(true);
       expect(recoveryGate.allowsRecoveryCompletion(permit)).toBe(true);
-      return commitObservation;
+      return await identityRuntime.prepareConfigChanged('rollback_test');
     });
     const test = await fixture({ recoveryGate, onCommitted });
     const applyRuntime = vi
@@ -130,14 +139,14 @@ describe('AdminConfigMutationService', () => {
     })).rejects.toThrow('runtime rejected candidate');
 
     expect(onCommitted).toHaveBeenCalledOnce();
-    expect(commitObservation).toHaveBeenCalledOnce();
+    expect(identityRuntime.getSummary().status).not.toBe('not_collected');
     expect(recoveryGate.isDirty()).toBe(false);
   });
 
-  it('keeps the shared gate closed when recovery publication is missing, fails or returns async commit', async () => {
+  it('keeps the shared gate closed when recovery publication is missing, prepare fails or value is untrusted', async () => {
     const failures = [
       {
-        phase: 'missing', expectedError: '未返回 observation commit',
+        phase: 'missing', expectedError: '未返回受信 prepared publication',
         onCommitted: () => undefined,
       },
       {
@@ -145,12 +154,8 @@ describe('AdminConfigMutationService', () => {
         onCommitted: () => { throw new Error('prepare publication failed'); },
       },
       {
-        phase: 'commit', expectedError: 'observation commit failed',
-        onCommitted: () => () => { throw new Error('observation commit failed'); },
-      },
-      {
-        phase: 'async-commit', expectedError: '必须同步完成',
-        onCommitted: () => async () => { await Promise.resolve(); },
+        phase: 'untrusted-callback', expectedError: '未返回受信 prepared publication',
+        onCommitted: (() => async () => { await Promise.resolve(); }) as unknown as PublicationCallback,
       },
     ] as const;
 

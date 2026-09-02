@@ -99,9 +99,20 @@ function syncRuntimeWorkerReadyFile(): void {
   const readyFile = process.env.AGENT_SAAS_READYFILE;
   if (!readyFile) return;
   try {
-    projectRuntimeWorkerReadyFile(readyFile, runtime?.getRuntimeAdmissionSnapshot?.());
+    projectRuntimeWorkerReadyFile(
+      readyFile,
+      runtime?.getRuntimeAdmissionSnapshot?.(),
+      runtime?.getConfigIdentitySummary?.(),
+      runtime?.isPrivateConfigIdentitySummaryCurrent() ?? false,
+    );
   } catch (err) {
-    serverLogger.warn(`Failed to project runtime worker readiness ${readyFile}: ${err instanceof Error ? err.message : String(err)}`);
+    // 内存身份、私有快照或准入证据任一读取失败时撤销旧 ready，避免 stale readiness 继续切流。
+    try { fs.rmSync(readyFile, { force: true }); } catch {}
+    serverLogger.warn(
+      `Failed to project runtime worker readiness ${readyFile}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 }
 

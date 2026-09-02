@@ -376,10 +376,11 @@ deploy_app() {
         echo 'ERROR: preserving candidate API release/env because old traffic or candidate stop is unverified' >&2
       fi
 
-      # 旧 Worker 必须重新 ready，随后停候选、翻 marker，最后才能恢复候选 env。
+      # 旧 Worker 必须重新 ready 且私有身份匹配旧 release env，随后才能停候选、翻 marker。
       rm -f "/run/agent-saas-runtime-worker-$worker_active.pid" \
         "/run/agent-saas-runtime-worker-$worker_active.ready" \
-        "/run/agent-saas-runtime-worker-$worker_active.draining" || true
+        "/run/agent-saas-runtime-worker-$worker_active.draining" \
+        "/run/agent-saas-runtime-worker-$worker_active.config-identity.json" || true
       systemctl reset-failed "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 || true
       if systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 \
         && systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1; then
@@ -395,9 +396,32 @@ deploy_app() {
           sleep 1
         done
       fi
+      if [ "$worker_restored" = true ]; then
+        if ! node --input-type=module - \
+          "/etc/agent-saas/runtime-worker-$worker_active.release.env" \
+          "/run/agent-saas-runtime-worker-$worker_active.config-identity.json" \
+          "$config_identity_reader" <<'NODE'
+import { pathToFileURL } from 'node:url';
+const [envPath, snapshotPath, readerPath] = process.argv.slice(2);
+const {
+  readReleaseConfigIdentityBinding,
+  validatePrivateConfigIdentityReleaseBinding,
+} = await import(pathToFileURL(readerPath));
+const binding = await readReleaseConfigIdentityBinding(envPath);
+await validatePrivateConfigIdentityReleaseBinding({
+  privateSnapshotPath: snapshotPath,
+  ...binding,
+  label: 'Rollback Worker private ConfigIdentity',
+});
+NODE
+        then
+          worker_restored=false
+        fi
+      fi
       if [ "$worker_restored" = true ] \
         && systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 \
         && ! systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
+        rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
         printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
         if [ -n "$worker_idle_previous" ]; then
           ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
@@ -483,7 +507,10 @@ EOF
   curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready >/dev/null
   echo "$api_idle" >/etc/agent-saas/active-color
 
-  rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" "/run/agent-saas-runtime-worker-$worker_idle.ready" "/run/agent-saas-runtime-worker-$worker_idle.draining"
+  rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" \
+    "/run/agent-saas-runtime-worker-$worker_idle.ready" \
+    "/run/agent-saas-runtime-worker-$worker_idle.draining" \
+    "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"
   systemctl enable --now "agent-saas-runtime-worker@$worker_idle"
   for _ in $(seq 1 180); do
     pid="$(cat "/run/agent-saas-runtime-worker-$worker_idle.pid" 2>/dev/null || true)"
@@ -494,6 +521,21 @@ EOF
   test -n "${pid:-}" && test "$pid" = "${ready:-}" && kill -0 "$pid"
   systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value \
     | tr ' ' '\n' | grep -Fx 'AGENT_SAAS_ENVIRONMENT=production' >/dev/null
+  node --input-type=module - "$MANIFEST_PATH" \
+    "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" \
+    "$config_identity" "$config_identity_reader" <<'NODE'
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const [manifestPath, snapshotPath, expectedJson, readerPath] = process.argv.slice(2);
+const { validatePrivateConfigIdentityReleaseBinding } = await import(pathToFileURL(readerPath));
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+await validatePrivateConfigIdentityReleaseBinding({
+  privateSnapshotPath: snapshotPath,
+  releaseId: manifest.releaseId,
+  expectedConfigIdentity: JSON.parse(expectedJson),
+  label: 'Candidate Worker private ConfigIdentity',
+});
+NODE
   echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color
 
   old_worker_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"

@@ -4,13 +4,14 @@ import { createAudioTranscribeAdminRouter } from "../routes/audioTranscribeAdmin
 import type { AppRuntime } from "./runtime.js";
 import type { AdminConfigMutationService } from "../config/adminConfigMutationService.js";
 import type { ConfigRuntimeRecoveryPermit } from "../config/runtimeRecoveryGate.js";
+import type { PreparedConfigRecoveryPublication } from "../runtime/configIdentityRuntime.js";
 
 type SharedConfigIdentityPublisherRuntime = Pick<
   AppRuntime,
   "acknowledgeSharedConfigApplied" | "invalidateSharedConfigIdentity"
   | "notifySharedConfigChanged" | "refreshSharedConfig"
 > & {
-  /** 仅测试窄对象可省略；真实 recovery 路径缺失时必须 fail closed。 */
+  /** 测试窄对象可省略；真实 recovery 路径缺失时必须 fail closed。 */
   acknowledgeRecoveryConfigApplied?: AppRuntime["acknowledgeRecoveryConfigApplied"];
   prepareSharedConfigIdentityPublication?: AppRuntime["prepareSharedConfigIdentityPublication"];
 };
@@ -23,7 +24,7 @@ export async function publishAdminCommittedConfigIdentity(
   runtime: SharedConfigIdentityPublisherRuntime,
   expectedConfigText: string,
   recoveryPermit?: ConfigRuntimeRecoveryPermit,
-): Promise<void | (() => void)> {
+): Promise<void | PreparedConfigRecoveryPublication> {
   if (recoveryPermit) {
     if (!runtime.acknowledgeRecoveryConfigApplied
       || !runtime.acknowledgeRecoveryConfigApplied(expectedConfigText, recoveryPermit)) {

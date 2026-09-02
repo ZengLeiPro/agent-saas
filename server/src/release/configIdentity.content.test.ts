@@ -20,7 +20,23 @@ function digestOf(value: AppConfig): string {
   return calculateConfigIdentityDigest(projection);
 }
 
-describe('canonical projection 自由文本', () => {
+describe('canonical projection 敏感内容', () => {
+  it('SMS accessKeyId 只进入不可逆 identity，内容变化仍改变 digest', () => {
+    const withSmsId = (accessKeyId: string) => config({
+      auth: {
+        enabled: true,
+        jwtSecret: 'jwt-secret-value-32-chars-long!!',
+        selfSignup: { enabled: true, sms: { provider: 'aliyun', accessKeyId } },
+      },
+    });
+    const first = withSmsId('LTAI-SMS-ID-FIRST');
+    const second = withSmsId('LTAI-SMS-ID-SECOND');
+    const serialized = JSON.stringify(buildCanonicalConfigProjection(first).projection);
+
+    expect(serialized).not.toContain('LTAI-SMS-ID-FIRST');
+    expect(digestOf(first)).not.toBe(digestOf(second));
+  });
+
   it('system prompt 与工具 descriptionOverride 文本仅以 opaque digest 投影', () => {
     const firstPrompt = 'private-prompt-token /home/alice/prompt-source';
     const secondPrompt = 'changed-private-prompt-token /home/bob/prompt-source';
@@ -47,7 +63,9 @@ describe('canonical projection 自由文本', () => {
       },
     });
 
-    const serialized = JSON.stringify(buildCanonicalConfigProjection(first, '/srv/server').projection);
+    const serialized = JSON.stringify(
+      buildCanonicalConfigProjection(first, '/srv/server').projection,
+    );
     for (const plaintext of [
       firstPrompt,
       'private-prompt-token',

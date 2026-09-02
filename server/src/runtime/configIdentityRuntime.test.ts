@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../types/index.js';
 import { parseAppConfig } from '../app/config.js';
 import { InMemorySecretVault, type SecretVault, type SecretRef } from '../security/secretVault.js';
-import { createConfigIdentityRuntime } from './configIdentityRuntime.js';
+import {
+  createConfigIdentityRuntime,
+  isPreparedConfigRecoveryPublication,
+  PreparedConfigRecoveryPublication,
+} from './configIdentityRuntime.js';
 import { publishAdminCommittedConfigIdentity } from '../app/audioTranscribeAdminRoute.js';
 import {
   calculateConfigIdentityDigest,
@@ -139,17 +143,97 @@ describe('createConfigIdentityRuntime', () => {
     config.server.port = 9999;
     const commit = await runtime.prepareConfigChanged('runtime_recovery');
     expect(runtime.getSummary().status).toBe('not_collected');
-    commit();
+    commit.commit();
     expect(runtime.getSummary().status).toBe('drifted');
 
     config.server.port = 3000;
     const staleCommit = await runtime.prepareConfigChanged('runtime_recovery');
     runtime.invalidateObservation();
-    expect(() => staleCommit()).toThrow('became stale');
+    expect(() => staleCommit.commit()).toThrow('became stale');
     expect(runtime.getSummary().status).toBe('not_collected');
   });
 
-  it('notifyConfigChanged 在异步重算期间立即同步撤销旧 consistent 快照', async () => {
+  it('拒绝外部构造、原型伪造与覆写真实 publication capability', async () => {
+    const commitAction = vi.fn();
+    const ExternalConstructor = PreparedConfigRecoveryPublication as unknown as new (
+      token: symbol,
+      action: () => void,
+    ) => PreparedConfigRecoveryPublication;
+
+    expect(() => PreparedConfigRecoveryPublication.create(Symbol('external') as never, commitAction))
+      .toThrow('Runtime 外构造');
+    expect(() => new ExternalConstructor(Symbol('external'), commitAction))
+      .toThrow('Runtime 外构造');
+    const prototypeForgery = Object.create(PreparedConfigRecoveryPublication.prototype) as {
+      commit: () => void;
+    };
+    Object.defineProperty(prototypeForgery, 'commit', { value: commitAction });
+    expect(isPreparedConfigRecoveryPublication(prototypeForgery)).toBe(false);
+
+    const runtime = createConfigIdentityRuntime({ config: baseConfig(), environment: 'test' });
+    await runtime.initialize();
+    const trusted = await runtime.prepareConfigChanged('runtime_recovery');
+    expect(Object.isFrozen(PreparedConfigRecoveryPublication)).toBe(true);
+    expect(Object.isFrozen(PreparedConfigRecoveryPublication.prototype)).toBe(true);
+    expect(Object.isFrozen(trusted)).toBe(true);
+    expect(() => Object.defineProperty(trusted, 'commit', { value: commitAction }))
+      .toThrow(TypeError);
+    expect(commitAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['pre-publication log', 'recomputed after'],
+    ['identity-changed log', 'observed identity changed'],
+  ])('commit %s 抛错时恢复旧 observation 且不发布候选状态', async (_label, failedLog) => {
+    const config = baseConfig();
+    let failCommitLog = false;
+    const publishedStatuses: string[] = [];
+    const runtime = createConfigIdentityRuntime({
+      config,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      logger: {
+        info: (message) => {
+          if (failCommitLog && message.includes(failedLog)) throw new Error('commit log failed');
+        },
+        warn: vi.fn(),
+      },
+      onSummaryUpdated: (summary) => publishedStatuses.push(summary.status),
+    });
+    await runtime.initialize();
+
+    config.server.port = 9999;
+    const prepared = await runtime.prepareConfigChanged('runtime_recovery');
+    const summaryBeforeCommit = runtime.getSummary();
+    failCommitLog = true;
+
+    expect(() => prepared.commit()).toThrow('commit log failed');
+    expect(runtime.getSummary()).toEqual(summaryBeforeCommit);
+    expect(publishedStatuses).not.toContain('drifted');
+  });
+
+  it('publisher 与诊断 logger 同时抛错也不反转已发布终态', async () => {
+    const config = baseConfig();
+    let failPublication = false;
+    const runtime = createConfigIdentityRuntime({
+      config,
+      environment: 'test',
+      expected: { schemaVersion: 1, digest: digestOf(config) },
+      logger: { info: vi.fn(), warn: () => { throw new Error('diagnostic failed'); } },
+      onSummaryUpdated: (summary) => {
+        if (failPublication && summary.status === 'drifted') throw new Error('subscriber failed');
+      },
+    });
+    await runtime.initialize();
+    config.server.port = 9999;
+    const prepared = await runtime.prepareConfigChanged('runtime_recovery');
+    failPublication = true;
+
+    expect(() => prepared.commit()).not.toThrow();
+    expect(runtime.getSummary().status).toBe('drifted');
+  });
+
+  it('notifyConfigChanged 在异步重算期间立即同步撤销旧 consistent observation', async () => {
     let resolveMetadata!: (value: SecretRef) => void;
     const metadata = new Promise<SecretRef>((resolve) => { resolveMetadata = resolve; });
     const vault = {

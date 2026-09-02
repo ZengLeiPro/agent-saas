@@ -1,5 +1,5 @@
 import type { ConfigIdentitySummary } from '@agent/shared';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import {
@@ -8,7 +8,10 @@ import {
 } from '../config/runtimeRecoveryGate.js';
 import type { SecretVault } from '../security/secretVault.js';
 import { readRuntimeIdentity } from '../release/runtimeIdentity.js';
-import { createConfigIdentityRuntime } from '../runtime/configIdentityRuntime.js';
+import {
+  createConfigIdentityRuntime,
+  type PreparedConfigRecoveryPublication,
+} from '../runtime/configIdentityRuntime.js';
 import type { AppConfig } from './config.js';
 
 export function createPrivateSummaryPublisher(
@@ -42,9 +45,10 @@ export interface RuntimeConfigIdentityAssembly {
   };
   prepareRecoveryPublication: (
     recoveryPermit: ConfigRuntimeRecoveryPermit,
-  ) => Promise<() => void>;
+  ) => Promise<PreparedConfigRecoveryPublication>;
   invalidate: () => void;
   getSummary: () => ConfigIdentitySummary;
+  isPrivateSummaryCurrent: () => boolean;
 }
 
 /**
@@ -56,10 +60,15 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
   secretVault: SecretVault;
   processCwd: string;
   logger: { info: (message: string) => void; warn: (message: string) => void };
+  /** 测试/内部订阅者观察完整状态序列；私有 snapshot publisher 仍独立执行。 */
+  onSummaryUpdated?: (summary: ConfigIdentitySummary) => void;
 }): Promise<RuntimeConfigIdentityAssembly> {
   const recoveryGate = new ConfigRuntimeRecoveryGate();
   const runtimeIdentity = readRuntimeIdentity(process.env);
   const snapshotPath = process.env.AGENT_SAAS_CONFIG_IDENTITY_PATH?.trim();
+  const privatePublisher = snapshotPath
+    ? createPrivateSummaryPublisher(snapshotPath, options.logger)
+    : undefined;
   const runtime = createConfigIdentityRuntime({
     config: options.config,
     secretVault: options.secretVault,
@@ -70,8 +79,11 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
     processCwd: options.processCwd,
     ...(runtimeIdentity.releaseId ? { releaseId: runtimeIdentity.releaseId } : {}),
     logger: options.logger,
-    ...(snapshotPath
-      ? { onSummaryUpdated: createPrivateSummaryPublisher(snapshotPath, options.logger) }
+    ...(privatePublisher || options.onSummaryUpdated
+      ? { onSummaryUpdated: (summary: ConfigIdentitySummary) => {
+        privatePublisher?.(summary);
+        options.onSummaryUpdated?.(summary);
+      } }
       : {}),
   });
   await runtime.initialize();
@@ -94,5 +106,13 @@ export async function initializeRuntimeConfigIdentityAssembly(options: {
     },
     invalidate: () => runtime.invalidateObservation(),
     getSummary: () => runtime.getSummary(),
+    isPrivateSummaryCurrent: () => {
+      if (!snapshotPath) return false;
+      try {
+        return readFileSync(snapshotPath, 'utf8') === `${JSON.stringify(runtime.getSummary())}\n`;
+      } catch {
+        return false;
+      }
+    },
   };
 }

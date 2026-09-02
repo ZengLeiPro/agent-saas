@@ -56,4 +56,11 @@ describe('organization management registry', () => {
       search: '',
     });
   });
+
+  it('移动端返回设置菜单后仍使用已记住的平台管理员目标组织', () => {
+    expect(organizationWorkspaceRoute('governance', null, 'tenant-a')).toMatchObject({
+      routeId: 'organization.governance.usage',
+      orgId: 'tenant-a',
+    });
+  });
 });

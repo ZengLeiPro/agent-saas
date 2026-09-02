@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { authFetch } from "@/lib/authFetch";
 
 export interface OrgAgentDwsSectionProps {
@@ -237,11 +238,11 @@ export function OrgAgentDwsSection({ tenantId, agentId, agentName }: OrgAgentDws
     setNotice("");
     if (!tenantId.trim() || !agentId.trim()) {
       setActionError("缺少组织或企业专家 ID，无法创建钉钉成员账号");
-      return;
+      return false;
     }
     if (!displayName.trim() || !loginId.trim()) {
       setActionError("显示名和 loginId 均为必填项");
-      return;
+      return false;
     }
 
     const requestedScope = scopeRef.current;
@@ -261,20 +262,31 @@ export function OrgAgentDwsSection({ tenantId, agentId, agentName }: OrgAgentDws
       });
       if (!response.ok) throw await responseError(response, "创建钉钉成员账号失败");
       const payload = await response.json() as AccountResponse;
-      if (scopeRef.current !== requestedScope) return;
+      if (scopeRef.current !== requestedScope) return false;
       setAccounts((current) => replaceAccount(current, payload.account));
       setDisplayName("");
       setLoginId("");
       setCorpId("");
       setNotice("成员账号已创建，请发起 OAuth 授权");
+      return true;
     } catch (error) {
       if (scopeRef.current === requestedScope) {
         setActionError(errorMessage(error, "创建钉钉成员账号失败"));
       }
+      return false;
     } finally {
       if (scopeRef.current === requestedScope) setCreating(false);
     }
   };
+
+  useSettingsDirtyEntry({
+    id: `organization-agent-dws-create:${tenantId}:${agentId}`,
+    label: `为 ${agentName} 创建钉钉成员账号`,
+    dirty: Boolean(displayName || loginId || corpId),
+    save: async () => { if (!await handleCreate()) throw new Error("Agent DWS account save failed"); },
+    discard: () => { setDisplayName(""); setLoginId(""); setCorpId(""); setActionError(""); },
+    draft: { displayName, loginId, corpId },
+  });
 
   const handleAuthorize = async (account: AgentDwsAccount) => {
     const requestedTenantId = tenantId;

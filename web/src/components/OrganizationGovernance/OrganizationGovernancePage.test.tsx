@@ -1,9 +1,11 @@
+import type { ReactNode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { governanceRoute } from "@/lib/governanceNavigation";
 import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
+import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
 import { OrganizationCredentialsPage, OrganizationEnvironmentsPage, OrganizationGroupsPage, OrganizationMemoryKnowledgePage, OrganizationMembersPage, OrganizationOffboardingPage, OrganizationPoliciesPage } from "./OrganizationGovernancePage";
 
 const mocks = vi.hoisted(() => ({
@@ -88,6 +90,12 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     startUserOffboarding: mocks.startUserOffboarding,
   },
 }));
+
+function renderWithDirtyNavigation(page: ReactNode) {
+  const navigated = vi.fn();
+  render(<SettingsDirtyBoundary>{(controller) => <>{page}<button type="button" onClick={() => controller.requestNavigation(navigated)}>切换组织页面</button></>}</SettingsDirtyBoundary>);
+  return navigated;
+}
 
 describe("OrganizationGovernancePage", () => {
   beforeEach(() => {
@@ -330,6 +338,18 @@ describe("OrganizationGovernancePage", () => {
     })));
     expect(await screen.findByText("变更任务")).toBeTruthy();
     expect(screen.getAllByText("等待中").length).toBeGreaterThan(0);
+  });
+
+  it("离职交接草稿在切换页面前触发 dirty guard", async () => {
+    mocks.listMemberships.mockResolvedValue({ memberships: [
+      { userId: "user-leaving", persona: "member", isOwner: false, status: "active", version: 1, directoryProfile: { username: "leaving", displayName: "离职成员甲", accountStatus: "active" }, allowedActions: [] },
+      { userId: "user-next", persona: "member", isOwner: false, status: "active", version: 1, directoryProfile: { username: "next", displayName: "接手成员乙", accountStatus: "active" }, allowedActions: [] },
+    ] });
+    const navigated = renderWithDirtyNavigation(<OrganizationOffboardingPage tenantId="tenant-a" />);
+    fireEvent.change(await screen.findByLabelText("离职成员"), { target: { value: "user-leaving" } });
+    fireEvent.click(screen.getByRole("button", { name: "切换组织页面" }));
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(navigated).not.toHaveBeenCalled();
   });
 
   it("离职预览即使错误返回 canCommit=true，未知 authority 仍禁用按钮并阻止提交", async () => {
@@ -630,5 +650,33 @@ describe("OrganizationGovernancePage", () => {
     expect(await screen.findByText("Python")).toBeTruthy();
     expect(screen.queryByText("Old")).toBeNull();
     expect(screen.getByText("v2")).toBeTruthy();
+  });
+
+  it("凭据草稿注册统一 dirty guard", async () => {
+    mocks.listCredentials.mockResolvedValue({ credentials: [] });
+    mocks.listConnectors.mockResolvedValue({ connectors: [{ connectorId: "github", name: "GitHub", status: "published", version: 1, authMethods: ["token"], healthTestSupported: false }] });
+    const credentialNavigation = renderWithDirtyNavigation(<OrganizationCredentialsPage tenantId="tenant-a" />);
+    fireEvent.change(await screen.findByLabelText("连接器目录"), { target: { value: "github" } });
+    fireEvent.click(screen.getByRole("button", { name: "切换组织页面" }));
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(credentialNavigation).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "放弃更改" }));
+    await waitFor(() => expect(credentialNavigation).toHaveBeenCalledTimes(1));
+  });
+
+  it("环境范围草稿注册统一 dirty guard", async () => {
+    mocks.getEntitlements.mockResolvedValue({ entitlement: null, policies: [], scopes: [{ resourceType: "environment_template", mode: "selected", resourceIds: ["env-python"], version: 2 }] });
+    mocks.listEnvironmentTemplates.mockResolvedValue({ templates: [
+      { templateId: "env-python", name: "Python", status: "published", revision: 4 },
+      { templateId: "env-node", name: "Node.js", status: "published", revision: 1 },
+    ] });
+    const navigated = renderWithDirtyNavigation(<OrganizationEnvironmentsPage tenantId="tenant-a" />);
+    const nodeCheckbox = (await screen.findByText("Node.js")).closest("label")?.querySelector("input");
+    expect(nodeCheckbox).toBeTruthy();
+    fireEvent.click(nodeCheckbox!);
+    fireEvent.click(screen.getByRole("button", { name: "切换组织页面" }));
+    expect(await screen.findByText("有未保存的更改")).toBeTruthy();
+    expect(navigated).not.toHaveBeenCalled();
   });
 });

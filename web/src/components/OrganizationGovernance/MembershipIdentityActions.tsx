@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { governanceAccessApi } from "@agent/shared/lib/governanceApi";
 
 export interface GovernedMembership {
@@ -63,8 +64,6 @@ export function MembershipIdentityActions({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (!actions.length) return <span className="text-xs text-muted-foreground">只读</span>;
-
   const close = () => { if (!busy) { setAction(null); setReason(""); setPreview(null); setReceipt(null); setError(null); } };
   const requestPreview = async () => {
     if (!action || reason.trim().length < 3) return;
@@ -81,7 +80,7 @@ export function MembershipIdentityActions({
     } finally { setBusy(false); }
   };
   const commit = async () => {
-    if (!action || !preview) return;
+    if (!action || !preview) return false;
     setBusy(true); setError(null);
     try {
       const result = await governanceAccessApi.updateMembership<MembershipReceipt>(target.userId, {
@@ -95,11 +94,24 @@ export function MembershipIdentityActions({
       setReceipt(result);
       setPreview(null);
       onChanged();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "身份变更失败，请重新预览");
       setPreview(null);
+      return false;
     } finally { setBusy(false); }
   };
+
+  useSettingsDirtyEntry({
+    id: `organization-membership:${tenantId}:${target.userId}`,
+    label: `${target.directoryProfile?.displayName ?? target.userId} 身份变更`,
+    dirty: Boolean(action && !receipt && (reason || preview)),
+    save: async () => { if (!preview) { setError("请先生成权威预览，再保存并离开。"); throw new Error("Membership preview required"); } if (!await commit()) throw new Error("Membership commit failed"); },
+    discard: close,
+    draft: { actionId: action?.id, reason },
+  });
+
+  if (!actions.length) return <span className="text-xs text-muted-foreground">只读</span>;
 
   return <>
     <div className="flex flex-wrap gap-1">{actions.map(item => <Button key={item.id} type="button" size="sm" variant="outline" onClick={() => { setAction(item); setPreview(null); setReceipt(null); setError(null); }}>{item.label}</Button>)}</div>

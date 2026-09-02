@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AgentDwsAccount } from '@agent/shared';
 
 import { OrganizationResourceAssignmentEditor } from '@/components/OrganizationGovernance/ResourceAccessEditors';
+import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -21,11 +22,12 @@ export function DelegationAccessPanel({
   tenantId: string;
   accounts: AgentDwsAccount[];
 }) {
+  const defaultArgs = '["calendar", "event", "list"]';
   const activeAccounts = accounts.filter(
     (account) => account.status === 'active' && account.profileId,
   );
   const [accountId, setAccountId] = useState('');
-  const [argsText, setArgsText] = useState('["calendar", "event", "list"]');
+  const [argsText, setArgsText] = useState(defaultArgs);
   const [resourceId, setResourceId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -54,12 +56,27 @@ export function DelegationAccessPanel({
       const data = (await response.json().catch(() => ({}))) as DelegationResourceResponse;
       if (!response.ok) throw new Error(data.error || '生成委托资源失败');
       setResourceId(data.resourceId);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  useSettingsDirtyEntry({
+    id: `organization-dws-delegation:${tenantId}`,
+    label: '钉钉命令委托授权',
+    dirty: !resourceId && Boolean(accountId || argsText !== defaultArgs),
+    save: async () => {
+      if (!await resolve()) throw new Error('DWS delegation resource resolution failed');
+    },
+    discard: () => {
+      setAccountId(''); setArgsText(defaultArgs); setResourceId(''); setError('');
+    },
+    draft: { accountId, argsText },
+  });
 
   return (
     <Card>

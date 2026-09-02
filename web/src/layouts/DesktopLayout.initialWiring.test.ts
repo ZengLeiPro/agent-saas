@@ -50,6 +50,7 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
+    expect(source).toContain("governanceRoute, closeOrganizationSettings: closeSettings,");
     expect(source).toContain("governanceContentOnly={governanceRoute?.area === \"organization\"}");
     expect(source).not.toContain("SettingsDirtyControllerBridge");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");

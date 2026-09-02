@@ -26,10 +26,11 @@ export function organizationRouteDefinition(routeId: string): GovernanceRouteDef
 export function organizationWorkspaceRoute(
   workspaceId: OrganizationSettingsWorkspaceId,
   current?: GovernanceRouteState | null,
+  fallbackOrgId?: string | null,
 ): GovernanceRouteState {
   const workspace = organizationSettingsWorkspace(workspaceId);
   return governanceRoute(workspace.defaultRouteId, {
-    orgId: current?.area === 'organization' ? current.orgId : null,
+    orgId: current?.area === 'organization' ? current.orgId : fallbackOrgId ?? null,
   });
 }
 

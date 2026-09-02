@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, Volume2, VolumeX, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveApprovalTier } from "@/lib/approvalTier";
@@ -121,6 +121,11 @@ export function MobileLayout(props: LayoutProps) {
   const [activeWorkflow, setActiveWorkflow] = useState<WorkflowOnboardingContext | null>(null);
   const [lastTriedScenario, setLastTriedScenario] = useState<ScenarioItem | null>(null);
   const [roleDetailId, setRoleDetailId] = useState<string | null>(null);
+  const organizationSettingsTargetId = useRef<string | null>(null);
+  if (governanceRoute?.area === "organization") organizationSettingsTargetId.current = governanceRoute.orgId;
+  const returnToSettingsMenu = useCallback(() => {
+    openSettings(settingsSection);
+  }, [openSettings, settingsSection]);
   const closeDrawer = useCallback(() => {
     setSheetOpen(false);
     setActiveTab("chat");
@@ -288,11 +293,11 @@ export function MobileLayout(props: LayoutProps) {
         >
           <div className="flex h-full min-h-0 flex-col bg-card" data-testid="mobile-organization-settings">
             <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
-              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(() => openSettings(settingsSection))} aria-label="返回设置菜单">
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(returnToSettingsMenu)} aria-label="返回设置菜单">
                 <ChevronLeft className="size-5" />
               </button>
               <span className="min-w-0 flex-1 truncate text-sm font-semibold">设置 / 组织管理</span>
-              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(() => setActiveTab("chat"))} aria-label="关闭设置">
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(closeSettings)} aria-label="关闭设置">
                 <X className="size-5" />
               </button>
             </div>
@@ -749,6 +754,7 @@ export function MobileLayout(props: LayoutProps) {
           managementStatus={managementAccess.status}
           tenantEntryAllowed={managementAccess.tenantEntryAllowed}
           platformEntryAllowed={managementAccess.platformEntryAllowed}
+          organizationTargetId={organizationSettingsTargetId.current}
           openAdminSettings={openAdminSettings}
         />
 

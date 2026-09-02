@@ -31,6 +31,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { OrganizationAssignmentManager } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
@@ -69,6 +70,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [deleting, setDeleting] = useState(false);
   const [editTarget, setEditTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [editContent, setEditContent] = useState("");
+  const [editBaselineContent, setEditBaselineContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [tenantSkills, setTenantSkills] = useState<TenantSkillInfo[]>([]);
@@ -209,12 +211,14 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const openEditor = useCallback(async (target: { kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string }) => {
     setEditTarget(target);
     setEditContent("");
+    setEditBaselineContent("");
     setEditLoading(true);
     try {
       const doc = target.kind === "tenantOwn" && tenantIdScope
         ? await fetchTenantOwnSkillDocument(tenantIdScope, target.skillId)
         : await fetchCustomSkillDocument(target.username, target.skillId);
       setEditContent(doc.content);
+      setEditBaselineContent(doc.content);
     } catch (err) {
       alert(err instanceof Error ? err.message : "读取失败");
       setEditTarget(null);
@@ -224,7 +228,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   }, [fetchCustomSkillDocument, tenantIdScope]);
 
   const saveEditor = useCallback(async () => {
-    if (!editTarget) return;
+    if (!editTarget) return false;
     setEditSaving(true);
     try {
       if (editTarget.kind === "tenantOwn" && tenantIdScope) {
@@ -234,12 +238,23 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       }
       setEditTarget(null);
       await refreshAll();
+      return true;
     } catch (err) {
       alert(err instanceof Error ? err.message : "保存失败");
+      return false;
     } finally {
       setEditSaving(false);
     }
   }, [editContent, editTarget, refreshAll, tenantIdScope, updateCustomSkillDocument]);
+
+  useSettingsDirtyEntry({
+    id: `organization-skill-document:${tenantIdScope ?? "platform"}:${editTarget?.kind ?? "none"}:${editTarget?.skillId ?? "none"}`,
+    label: `编辑技能文档 ${editTarget?.name ?? ""}`.trim(),
+    dirty: Boolean(editTarget && !editLoading && editContent !== editBaselineContent),
+    save: async () => { if (!await saveEditor()) throw new Error("Skill document save failed"); },
+    discard: () => { setEditContent(editBaselineContent); setEditTarget(null); },
+    draft: { content: editContent },
+  });
 
   const openPoolDelete = useCallback(async (skill: PoolSkillInfo) => {
     if (skill.enabled) {

@@ -5,6 +5,7 @@ import {
   OrganizationEntitlementScopeEditor,
   OrganizationResourceAssignmentEditor,
 } from './ResourceAccessEditors';
+import { SettingsDirtyBoundary } from '@/components/PersonalSettings/dirtyRegistry';
 
 const mocks = vi.hoisted(() => ({
   getEntitlements: vi.fn(),
@@ -150,5 +151,26 @@ describe('ResourceAccessEditors', () => {
         'tenant-a',
       ),
     );
+  });
+
+  it('Entitlement 草稿切换页面前触发统一 dirty guard', async () => {
+    mocks.getEntitlements.mockResolvedValue({
+      scopes: [{ resourceType: 'tool', mode: 'all', resourceIds: [], source: 'governance', version: 1 }],
+    });
+    mocks.listCatalog.mockResolvedValue({
+      resourceType: 'tool',
+      items: [{ resourceId: 'search', label: '搜索', version: 1 }],
+    });
+    const navigated = vi.fn();
+    render(
+      <SettingsDirtyBoundary>{(controller) => <>
+        <OrganizationEntitlementScopeEditor tenantId="tenant-a" resourceType="tool" title="工具可用范围" description="测试" />
+        <button type="button" onClick={() => controller.requestNavigation(navigated)}>切换页面</button>
+      </>}</SettingsDirtyBoundary>,
+    );
+    fireEvent.change(await screen.findByLabelText('工具可用范围模式'), { target: { value: 'selected' } });
+    fireEvent.click(screen.getByRole('button', { name: '切换页面' }));
+    expect(await screen.findByText('有未保存的更改')).toBeTruthy();
+    expect(navigated).not.toHaveBeenCalled();
   });
 });

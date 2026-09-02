@@ -25,6 +25,7 @@ interface MobileSettingsModalProps extends Omit<SettingsModalProps, 'managementG
   managementStatus: 'loading' | 'refreshing' | 'ready' | 'error';
   tenantEntryAllowed: boolean;
   platformEntryAllowed: boolean;
+  organizationTargetId?: string | null;
   openAdminSettings: (target: 'tenant' | 'platform', section?: string) => void;
 }
 
@@ -33,6 +34,7 @@ export default function MobileSettingsModal({
   managementStatus,
   tenantEntryAllowed,
   platformEntryAllowed,
+  organizationTargetId,
   openAdminSettings,
   ...settingsProps
 }: MobileSettingsModalProps) {
@@ -52,6 +54,7 @@ export default function MobileSettingsModal({
                   organizationWorkspaceRoute(
                     workspace.id,
                     governanceRoute?.area === 'organization' ? governanceRoute : null,
+                    organizationTargetId,
                   ),
                 ),
             })),

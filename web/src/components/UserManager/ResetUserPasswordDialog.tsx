@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import {
   Dialog,
   DialogContent,
@@ -40,14 +41,14 @@ export function ResetUserPasswordDialog({
   }, [open]);
 
   const handleConfirm = async () => {
-    if (!user) return;
+    if (!user) return false;
     if (password.length < 6) {
       setError("密码至少 6 位");
-      return;
+      return false;
     }
     if (password !== confirmPassword) {
       setError("两次输入的密码不一致");
-      return;
+      return false;
     }
 
     setError("");
@@ -55,12 +56,23 @@ export function ResetUserPasswordDialog({
     try {
       await onConfirm(user.id, password);
       onOpenChange(false);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "重置失败");
+      return false;
     } finally {
       setLoading(false);
     }
   };
+
+  useSettingsDirtyEntry({
+    id: `user-password-reset:${user?.id ?? "none"}`,
+    label: `重置 ${user?.realName || user?.username || "成员"} 的密码`,
+    dirty: open && Boolean(password || confirmPassword),
+    save: async () => { if (!await handleConfirm()) throw new Error("Password reset failed"); },
+    discard: () => { setPassword(""); setConfirmPassword(""); setError(""); },
+    secret: true,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

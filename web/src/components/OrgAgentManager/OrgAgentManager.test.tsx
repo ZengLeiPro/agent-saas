@@ -64,6 +64,7 @@ vi.mock('@/components/OrgAgentAvatar', () => ({
 }));
 
 import { OrgAgentManager } from './index';
+import { SettingsDirtyBoundary } from '@/components/PersonalSettings/dirtyRegistry';
 import {
   assembleScopeDescription,
   emptyFormValues,
@@ -149,6 +150,27 @@ function adminRecord(overrides: Partial<OrgAgentAdminRecord> = {}): OrgAgentAdmi
 }
 
 describe('OrgAgentManager - 数据合同与异步隔离', () => {
+  it('企业专家草稿会阻止设置导航', async () => {
+    let requestNavigation!: (navigation: () => void) => void;
+    render(
+      <SettingsDirtyBoundary>
+        {(controller) => {
+          requestNavigation = controller.requestNavigation;
+          return (
+            <OrgAgentManager tenantId="kaiyan" />
+          );
+        }}
+      </SettingsDirtyBoundary>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /创建企业专家/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByPlaceholderText('如：产品选型助手'), { target: { value: '草稿专家' } });
+    await act(async () => requestNavigation(vi.fn()));
+
+    expect(await screen.findByRole('heading', { name: '有未保存的更改' })).toBeTruthy();
+    expect(screen.getByText(/创建企业专家尚未保存/)).toBeTruthy();
+  });
+
   it('隔离 audience 异常资源并显示安全错误状态', () => {
     mockUseOrgAgentAdmin.mockReturnValue({
       agents: [],

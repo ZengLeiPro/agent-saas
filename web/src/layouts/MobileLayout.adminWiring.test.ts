@@ -24,6 +24,10 @@ describe("MobileLayout 管理模块接线", () => {
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (<>\n        {adminSettings?.target === "tenant"');
     expect(source).toContain('dirtyController={dirtyController}\n            settingsSection={adminSettings.section as TenantSection}');
     expect(source).toContain('onSettingsClose={() => dirtyController.requestNavigation(closeAdminSettings)}');
+    expect(source).toContain('dirtyController.requestNavigation(returnToSettingsMenu)');
+    expect(source).toContain('dirtyController.requestNavigation(closeSettings)');
+    expect(source).toContain('organizationTargetId={organizationSettingsTargetId.current}');
+    expect(mobileSettingsModalSource).toContain('organizationTargetId,');
   });
 
   it("移动头像菜单通过唯一设置入口承载组织与平台管理", () => {

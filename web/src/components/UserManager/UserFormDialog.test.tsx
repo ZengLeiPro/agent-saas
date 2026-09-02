@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ vi.mock("@/components/TenantManager/hooks", () => ({
 }));
 
 import { UserFormDialog } from "./UserFormDialog";
+import { SettingsDirtyBoundary } from "@/components/PersonalSettings/dirtyRegistry";
 import type { UserInfo } from "./types";
 
 const editingUser = {
@@ -96,5 +97,32 @@ describe("UserFormDialog", () => {
     );
 
     expect(screen.getByRole("switch", { name: "调试模式" })).not.toBeNull();
+  });
+
+  it("账号表单有草稿时阻止设置导航", async () => {
+    const user = userEvent.setup();
+    let requestNavigation!: (navigation: () => void) => void;
+    render(
+      <SettingsDirtyBoundary>
+        {(controller) => {
+          requestNavigation = controller.requestNavigation;
+          return (
+            <UserFormDialog
+              open
+              onOpenChange={vi.fn()}
+              editingUser={editingUser}
+              onSubmit={vi.fn()}
+            />
+          );
+        }}
+      </SettingsDirtyBoundary>,
+    );
+
+    await user.clear(screen.getByLabelText("真实姓名"));
+    await user.type(screen.getByLabelText("真实姓名"), "新的姓名");
+    await act(async () => requestNavigation(vi.fn()));
+
+    expect(await screen.findByRole("heading", { name: "有未保存的更改" })).toBeTruthy();
+    expect(screen.getByText(/编辑账号 alice尚未保存/)).toBeTruthy();
   });
 });

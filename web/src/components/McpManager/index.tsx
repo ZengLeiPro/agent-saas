@@ -3,6 +3,7 @@ import { Check, ExternalLink, Loader2, Link2Off, Plus, RefreshCw, Save, Stethosc
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -159,6 +160,10 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   const [diagnostic, setDiagnostic] = useState<McpDiagnosticResponse | null>(null);
   const [form, setForm] = useState<ManagedMcpServer>(EMPTY_SERVER);
   const [configText, setConfigText] = useState(JSON.stringify(EMPTY_SERVER.config, null, 2));
+  const [adminFormBaseline, setAdminFormBaseline] = useState(() => JSON.stringify({
+    form: EMPTY_SERVER,
+    configText: JSON.stringify(EMPTY_SERVER.config, null, 2),
+  }));
   const [personalForm, setPersonalForm] = useState<ManagedMcpServer>({
     ...EMPTY_SERVER,
     id: "",
@@ -266,8 +271,10 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
   }, [diagnose, enabled]);
 
   const editServer = useCallback((server: ManagedMcpServer) => {
+    const nextConfigText = JSON.stringify(server.config, null, 2);
     setForm(server);
-    setConfigText(JSON.stringify(server.config, null, 2));
+    setConfigText(nextConfigText);
+    setAdminFormBaseline(JSON.stringify({ form: server, configText: nextConfigText }));
   }, []);
 
   const saveServer = useCallback(async () => {
@@ -280,14 +287,31 @@ function McpManagerInner({ mode, embedded }: { mode: "personal" | "admin"; embed
       if (!payload.tenantId) delete payload.tenantId;
       await upsertMcpServer(payload);
       setForm(EMPTY_SERVER);
-      setConfigText(JSON.stringify(EMPTY_SERVER.config, null, 2));
+      const resetConfigText = JSON.stringify(EMPTY_SERVER.config, null, 2);
+      setConfigText(resetConfigText);
+      setAdminFormBaseline(JSON.stringify({ form: EMPTY_SERVER, configText: resetConfigText }));
       await refresh();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSaving(false);
     }
   }, [configText, form, refresh]);
+
+  const adminFormDraft = { form, configText };
+  useSettingsDirtyEntry({
+    id: `mcp-admin-catalog:${form.tenantId ?? user?.tenantId ?? "default"}:${form.id || "new"}`,
+    label: form.id ? `编辑 MCP Server ${form.name || form.id}` : "新增 MCP Server",
+    dirty: mode === "admin" && JSON.stringify(adminFormDraft) !== adminFormBaseline,
+    save: async () => { if (!await saveServer()) throw new Error("MCP Server save failed"); },
+    discard: () => {
+      const baseline = JSON.parse(adminFormBaseline) as { form: ManagedMcpServer; configText: string };
+      setForm(baseline.form); setConfigText(baseline.configText); setError(null);
+    },
+    draft: adminFormDraft,
+  });
 
   const editPersonalServer = useCallback((server: ManagedMcpServer) => {
     setPersonalForm({ ...server, enabledByDefault: false });

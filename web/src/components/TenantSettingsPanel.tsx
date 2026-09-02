@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
@@ -79,6 +80,7 @@ export function TenantSettingsPanel({
   const readOnly = isPlatformAdmin
     && (tenantId === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"));
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
+  const [baselineSettings, setBaselineSettings] = useState<TenantSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export function TenantSettingsPanel({
     try {
       const data = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenantId);
       setSettings(data.settings);
+      setBaselineSettings(cloneTenantSettings(data.settings));
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       setError(null);
@@ -139,18 +142,37 @@ export function TenantSettingsPanel({
         expectedUpdatedAt: settingsUpdatedAt,
       });
       setSettings(data.settings);
+      setBaselineSettings(cloneTenantSettings(data.settings));
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       if (user?.tenantId === tenantId) updateTenantFeatures(data.settings.features);
       await refreshAll();
       setSaved(true);
       setError(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSaving(false);
     }
   }, [defaultMcpText, settings, settingsUpdatedAt, tenantId, updateTenantFeatures, user?.tenantId]);
+
+  const settingsDraft = cloneTenantSettings(settings);
+  settingsDraft.mcp.defaultEnabledServerIds = splitLines(defaultMcpText);
+  useSettingsDirtyEntry({
+    id: `organization-settings:${tenantId}`,
+    label: "组织设置",
+    dirty: Boolean(baselineSettings && JSON.stringify(settingsDraft) !== JSON.stringify(baselineSettings)),
+    save: async () => { if (!await save()) throw new Error("Tenant settings save failed"); },
+    discard: () => {
+      if (!baselineSettings) return;
+      setSettings(cloneTenantSettings(baselineSettings));
+      setDefaultMcpText(baselineSettings.mcp.defaultEnabledServerIds.join("\n"));
+      setError(null); setSaved(false);
+    },
+    draft: settingsDraft,
+  });
 
   const modelOptions = modelList?.groups.flatMap(group =>
     group.models.map(model => ({

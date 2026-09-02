@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSettingsDirtyEntry } from '@/components/PersonalSettings/dirtyRegistry';
 import { governanceAccessApi, governanceResourcesApi } from '@agent/shared/lib/governanceApi';
 
 type EntitlementResourceType =
@@ -183,7 +184,7 @@ export function OrganizationEntitlementScopeEditor({
   };
 
   const commit = async () => {
-    if (!command || !preview) return;
+    if (!command || !preview) return false;
     setBusy(true);
     setError(null);
     try {
@@ -200,12 +201,31 @@ export function OrganizationEntitlementScopeEditor({
       setReceipt(result);
       setPreview(null);
       await load();
+      return true;
     } catch (cause) {
       setError(errorText(cause, '范围变更提交失败'));
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  const baselineIds = scope?.mode === 'selected' ? [...scope.resourceIds].sort() : [];
+  const draftIds = mode === 'selected' ? [...selected].sort() : [];
+  useSettingsDirtyEntry({
+    id: `organization-entitlement:${tenantId}:${resourceType}`,
+    label: title,
+    dirty: Boolean(scope && (mode !== scope.mode || JSON.stringify(draftIds) !== JSON.stringify(baselineIds))),
+    save: async () => {
+      if (!preview) { setError('请先生成签名预览，再保存并离开。'); throw new Error('Entitlement preview required'); }
+      if (!await commit()) throw new Error('Entitlement commit failed');
+    },
+    discard: () => {
+      if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); }
+      setPreview(null); setReceipt(null); setError(null);
+    },
+    draft: { mode, resourceIds: draftIds },
+  });
 
   return (
     <section className="space-y-3 rounded-xl border bg-card p-4">
@@ -422,7 +442,7 @@ export function OrganizationResourceAssignmentEditor({
     }
   };
   const commit = async () => {
-    if (!command || !preview) return;
+    if (!command || !preview) return false;
     setBusy(true);
     setError(null);
     try {
@@ -440,12 +460,34 @@ export function OrganizationResourceAssignmentEditor({
       setReceipt(result);
       setPreview(null);
       await load();
+      return true;
     } catch (cause) {
       setError(errorText(cause, '资源指派提交失败'));
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  const baselineRules = baseline?.assignments.map((rule) => ({
+    assigneeType: rule.assigneeType,
+    ...(rule.assigneeType === 'everyone' ? {} : { assigneeId: rule.assigneeId }),
+    effect: rule.effect,
+  })) ?? [];
+  useSettingsDirtyEntry({
+    id: `organization-assignment:${tenantId}:${resourceType}:${resourceId}`,
+    label: `${resourceId} 资源授权`,
+    dirty: Boolean(baseline && JSON.stringify(normalizedRules) !== JSON.stringify(baselineRules)),
+    save: async () => {
+      if (!preview) { setError('请先生成签名预览，再保存并离开。'); throw new Error('Assignment preview required'); }
+      if (!await commit()) throw new Error('Assignment commit failed');
+    },
+    discard: () => {
+      setRules(baseline?.assignments.map(({ assignmentId: _assignmentId, origin: _origin, ...rule }) => rule) ?? []);
+      setPreview(null); setReceipt(null); setError(null);
+    },
+    draft: { assignments: normalizedRules },
+  });
 
   if (loading) return <div className="text-sm text-muted-foreground">正在读取指派规则…</div>;
   return (

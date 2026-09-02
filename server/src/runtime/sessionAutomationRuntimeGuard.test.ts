@@ -132,6 +132,9 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
         ? { rows: [{ '?column?': 1 }] as T[], rowCount: 1 }
         : { rows: [] as T[], rowCount: 0 };
     }
+    if (normalized.startsWith('INSERT INTO runtime_session_automation_background_resources')) {
+      return { rows: [{ state: 'prepared' }] as T[], rowCount: 1 };
+    }
     if (normalized.startsWith("UPDATE runtime_session_automation_background_resources SET state='active'")) {
       return { rows: [{ state: 'active' }] as T[], rowCount: 1 };
     }
@@ -439,6 +442,31 @@ describe('SessionAutomationRuntimeGuard', () => {
     await expect(guard.barrier(normal)).resolves.toBeUndefined();
   });
 
+  it('atomically commits background intent and scheduler activation under live authority', async () => {
+    const pool = new FakePool();
+    const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
+    await expect(guard.activateBackgroundResourceIntent(
+      context, 'background-run', { childSessionId: 'child-session', childRunId: 'child-run' },
+    )).resolves.toBeUndefined();
+    const authority = pool.statements.findIndex(sql => sql.includes('SELECT status,incarnation_id'));
+    const intent = pool.statements.findIndex(sql => sql.startsWith('INSERT INTO runtime_session_automation_background_resources'));
+    expect(authority).toBeGreaterThan(-1);
+    expect(authority).toBeLessThan(intent);
+    expect(pool.statements.indexOf('COMMIT')).toBeGreaterThan(intent);
+  });
+
+  it('worker prepared locks and revalidates authority before touching intent', async () => {
+    const stale = new FakePool();
+    stale.automation.status = 'cancelling';
+    const guard = new SessionAutomationRuntimeGuard(stale as unknown as pg.Pool, () => true);
+
+    await expect(guard.recordBackgroundResource(
+      context, 'background-run', { childSessionId: 'child-session', childRunId: 'child-run' }, 'prepared',
+    )).rejects.toBeInstanceOf(AutomationFenceRejectedError);
+    expect(stale.statements.some(sql => sql.startsWith('INSERT INTO runtime_session_automation_background_resources'))).toBe(false);
+    expect(stale.statements.at(-1)).toBe('ROLLBACK');
+  });
+
   it('background resource checkpoint reads the live gate before querying durable intent', async () => {
     const pool = new FakePool();
     let enabled = false;
@@ -452,7 +480,8 @@ describe('SessionAutomationRuntimeGuard', () => {
 
     enabled = true;
     await expect(guard.assertBackgroundResourcePrepared(context, 'background-run', identity)).resolves.toBeUndefined();
-    expect(pool.statements.at(-1)).toContain('runtime_session_automation_background_resources');
+    expect(pool.statements.some(sql => sql.includes('runtime_session_automation_background_resources'))).toBe(true);
+    expect(pool.statements.at(-1)).toBe('COMMIT');
   });
 
   it('remote dispatch gate atomically checks automation/execution and parent+child running before prepared→active', async () => {

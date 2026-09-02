@@ -295,7 +295,7 @@ describe('RuntimeScheduler background task recovery', () => {
     await expect(runStore.get('shell-bg-starting')).resolves.toMatchObject({ status: 'pending' });
   });
 
-  it('fails and cleans up a background command reservation whose ACS acknowledgement never arrived', async () => {
+  it('fails stale unactivated command and Agent background reservations', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
     const record = await runStore.upsertPending({
@@ -311,6 +311,11 @@ describe('RuntimeScheduler background task recovery', () => {
       ...record,
       requestedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
     });
+    const agent = await runStore.upsertPending({
+      runId: 'bg-agent-stale-start', sessionId: 'sub-agent-stale-start',
+      metadata: { backgroundTask: true, backgroundTaskType: 'agent', backgroundTaskReady: false },
+    });
+    runStore.records.set(agent.runId, { ...agent, requestedAt: new Date(Date.now() - 3 * 60_000).toISOString() });
     const failBackgroundTask = vi.fn(async (candidate: RunRecord, message: string) => {
       await runStore.markStatus(candidate.runId, 'failed', 'background_command_start_timeout', {
         wakeState: 'pending',
@@ -331,6 +336,10 @@ describe('RuntimeScheduler background task recovery', () => {
 
     expect(failBackgroundTask).toHaveBeenCalledWith(
       expect.objectContaining({ runId: 'shell-bg-stale-start' }),
+      expect.stringContaining('启动确认超时'),
+    );
+    expect(failBackgroundTask).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'bg-agent-stale-start' }),
       expect.stringContaining('启动确认超时'),
     );
     await expect(runStore.get('shell-bg-stale-start')).resolves.toMatchObject({
@@ -385,7 +394,7 @@ describe('RuntimeScheduler background task recovery', () => {
     await runStore.upsertPending({
       runId: 'bg-blocked',
       sessionId: 'sub-bg-blocked',
-      metadata: { backgroundTask: true, wakeState: 'none' },
+      metadata: { backgroundTask: true, backgroundTaskReady: true, wakeState: 'none' },
     });
     const failBackground = vi.fn(async (candidate: RunRecord, message: string) => {
       await runStore.markStatus(candidate.runId, 'failed', 'background_task_start_failed', {

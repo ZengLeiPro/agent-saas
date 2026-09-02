@@ -224,13 +224,15 @@ END $$`,
 `CREATE TABLE IF NOT EXISTS ${t.backgroundResources} (
  background_resource_id UUID PRIMARY KEY, tenant_id TEXT NOT NULL, session_id TEXT NOT NULL, automation_id UUID NOT NULL, incarnation_id UUID NOT NULL,
  generation BIGINT NOT NULL, execution_id UUID NOT NULL, run_id TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_key TEXT NOT NULL,
- provider_resource_id TEXT, state TEXT NOT NULL DEFAULT 'prepared' CHECK(state IN ('prepared','active','release_pending','released','result_unknown','reconcile')),
+ provider_resource_id TEXT, state TEXT NOT NULL DEFAULT 'prepared' CHECK(state IN ('prepared','launching','active','release_pending','released','result_unknown','reconcile')),
  metadata JSONB NOT NULL DEFAULT '{}'::jsonb, version BIGINT NOT NULL DEFAULT 1 CHECK(version > 0), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  UNIQUE(tenant_id,resource_kind,resource_key), FOREIGN KEY(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id)
    REFERENCES ${t.executions}(tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id) DEFERRABLE INITIALLY DEFERRED
 )`,
 `ALTER TABLE ${t.providerAttempts} DROP CONSTRAINT IF EXISTS ${t.providerAttempts}_state_check`,
 `ALTER TABLE ${t.providerAttempts} ADD CONSTRAINT ${t.providerAttempts}_state_check CHECK(state IN ('prepared','dispatched','completed','cancelled','result_unknown','reconcile'))`,
+`ALTER TABLE ${t.backgroundResources} DROP CONSTRAINT IF EXISTS ${t.backgroundResources}_state_check`,
+`ALTER TABLE ${t.backgroundResources} ADD CONSTRAINT ${t.backgroundResources}_state_check CHECK(state IN ('prepared','launching','active','release_pending','released','result_unknown','reconcile'))`,
 `ALTER TABLE ${t.interactions} DROP CONSTRAINT IF EXISTS ${t.interactions}_state_check`,
 `ALTER TABLE ${t.interactions} ADD CONSTRAINT ${t.interactions}_state_check CHECK(state IN ('prepared','active','completed','cancelled','result_unknown','reconcile'))`,
 `CREATE TABLE IF NOT EXISTS ${t.reconciliationReceipts} (

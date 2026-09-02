@@ -321,7 +321,7 @@ export class SessionAutomationEvaluator {
       `SELECT EXISTS(
          SELECT 1 FROM ${this.store.tables.backgroundResources}
           WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
-            AND state IN ('prepared','active','release_pending','result_unknown','reconcile')
+            AND state IN ('prepared','launching','active','release_pending','result_unknown','reconcile')
        ) AS active`,
       [input.tenantId, input.sessionId, input.automationId],
     );

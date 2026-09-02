@@ -625,6 +625,78 @@ export class SessionAutomationRuntimeGuard {
     );
   }
 
+  private async lockBackgroundAuthority(client: pg.PoolClient, lineage: AutomationLineage, requireInvokingRun: boolean): Promise<void> {
+    await this.lockFenceAndResolveBudget(client, lineage);
+    const root = await client.query(
+      `SELECT 1 FROM ${this.runsTable}
+        WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND status='running'
+        FOR UPDATE`,
+      [lineage.tenantId, lineage.sessionId, lineage.executionRunId],
+    );
+    if (root.rowCount !== 1) throw new AutomationFenceRejectedError('active_root_run_mismatch');
+    if (requireInvokingRun) {
+      const invoking = await client.query(
+        `SELECT 1 FROM ${this.runsTable}
+          WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND status='running'
+          FOR UPDATE`,
+        [lineage.tenantId, lineage.invokingSessionId, lineage.invokingRunId],
+      );
+      if (invoking.rowCount !== 1) throw new AutomationFenceRejectedError('invoking_run_not_running');
+    }
+    this.assertExecutionEnabled();
+  }
+
+  private async upsertPreparedBackgroundResource(client: pg.PoolClient, lineage: AutomationLineage, resourceKey: string,
+    identity: { childSessionId: string; childRunId: string }): Promise<void> {
+    const metadata = JSON.stringify({
+      ...identity,
+      invokingSessionId: lineage.invokingSessionId,
+      invokingRunId: lineage.invokingRunId,
+      rootSessionId: lineage.sessionId,
+      rootRunId: lineage.executionRunId,
+    });
+    const result = await client.query(
+      `INSERT INTO ${this.tables.backgroundResources}
+        (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,'prepared',$11)
+       ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
+         SET version=${this.tables.backgroundResources}.version+1,updated_at=now()
+         WHERE ${this.tables.backgroundResources}.provider_resource_id=EXCLUDED.provider_resource_id
+           AND ${this.tables.backgroundResources}.metadata->>'childSessionId'=EXCLUDED.metadata->>'childSessionId'
+           AND ${this.tables.backgroundResources}.automation_id=EXCLUDED.automation_id
+           AND ${this.tables.backgroundResources}.incarnation_id=EXCLUDED.incarnation_id
+           AND ${this.tables.backgroundResources}.generation=EXCLUDED.generation
+           AND ${this.tables.backgroundResources}.execution_id=EXCLUDED.execution_id
+           AND ${this.tables.backgroundResources}.run_id=EXCLUDED.run_id
+           AND ${this.tables.backgroundResources}.state='prepared'
+       RETURNING state`,
+      [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+        lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, metadata],
+    );
+    if (result.rowCount !== 1 || result.rows[0]?.state !== 'prepared') {
+      throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
+    }
+  }
+
+  /** Atomically publishes intent and makes the already-staged task scheduler-visible. */
+  async activateBackgroundResourceIntent(
+    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
+    resourceKey: string,
+    identity: { childSessionId: string; childRunId: string },
+  ): Promise<void> {
+    const lineage = this.lineage(context as RunContext);
+    if (!lineage) return;
+    const client = await this.pool.connect();let committed=false;
+    try {
+      await client.query('BEGIN');
+      await this.lockBackgroundAuthority(client,lineage,false);
+      await this.upsertPreparedBackgroundResource(client,lineage,resourceKey,identity);
+      const activated=await client.query(`UPDATE ${this.runsTable} SET metadata=metadata||$4::jsonb,status_reason='background_task_started',updated_at=now() WHERE tenant_id=$1 AND session_id=$2 AND run_id=$3 AND status='pending' AND COALESCE((metadata->>'backgroundTaskReady')::boolean,false)=false RETURNING run_id`,[lineage.tenantId,lineage.invokingSessionId,lineage.invokingRunId,JSON.stringify({backgroundTaskReady:true,backgroundStartedAt:new Date().toISOString()})]);
+      if(activated.rowCount!==1)throw new AutomationFenceRejectedError('background_task_activation_lost');
+      await client.query('COMMIT');committed=true;
+    } catch(error){if(!committed)await client.query('ROLLBACK').catch(()=>undefined);throw error;} finally{client.release();}
+  }
+
   async recordBackgroundResource(
     context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
@@ -633,13 +705,6 @@ export class SessionAutomationRuntimeGuard {
   ): Promise<void> {
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return;
-    const metadata = JSON.stringify({
-      ...identity,
-      invokingSessionId: lineage.invokingSessionId,
-      invokingRunId: lineage.invokingRunId,
-      rootSessionId: lineage.sessionId,
-      rootRunId: lineage.executionRunId,
-    });
     if (state === 'active') {
       // Final durable boundary before tenant /provision: validate and lock the
       // whole authority chain, then consume prepared intent in this transaction.
@@ -680,7 +745,7 @@ export class SessionAutomationRuntimeGuard {
             WHERE tenant_id=$1 AND automation_id=$2 AND incarnation_id=$3 AND generation=$4
               AND execution_id=$5 AND run_id=$6 AND resource_kind='child_run' AND resource_key=$7
               AND provider_resource_id=$8 AND metadata->>'childSessionId'=$9
-              AND state IN ('prepared','active') RETURNING state`,
+              AND state IN ('launching','active') RETURNING state`,
           [lineage.tenantId, lineage.automationId, lineage.incarnationId, lineage.generation,
             lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, identity.childSessionId],
         );
@@ -694,22 +759,47 @@ export class SessionAutomationRuntimeGuard {
         client.release();
       }
     } else {
-      const result = await this.pool.query(
-        `INSERT INTO ${this.tables.backgroundResources}
-          (background_resource_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,resource_kind,resource_key,provider_resource_id,state,metadata)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,'child_run',$9,$10,'prepared',$11)
-         ON CONFLICT(tenant_id,resource_kind,resource_key) DO UPDATE
-           SET version=${this.tables.backgroundResources}.version+1,updated_at=now()
-           WHERE ${this.tables.backgroundResources}.provider_resource_id=EXCLUDED.provider_resource_id
-             AND ${this.tables.backgroundResources}.metadata->>'childSessionId'=EXCLUDED.metadata->>'childSessionId'
-             AND ${this.tables.backgroundResources}.automation_id=EXCLUDED.automation_id
-             AND ${this.tables.backgroundResources}.incarnation_id=EXCLUDED.incarnation_id
-             AND ${this.tables.backgroundResources}.generation=EXCLUDED.generation
-         RETURNING state`,
-        [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-          lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey, identity.childRunId, metadata],
+      // The producer is the sole creator of prepared intent. A worker must never
+      // resurrect stale authority with an UPSERT after clear/replace has swept it.
+      await this.assertBackgroundResourcePrepared(context, resourceKey, identity);
+    }
+  }
+
+  async claimBackgroundResourceLaunch(
+    context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
+    resourceKey: string,
+    identity: { childSessionId: string; childRunId: string },
+  ): Promise<void> {
+    this.assertExecutionEnabled();
+    const lineage = this.lineage(context as RunContext);
+    if (!lineage) return;
+    const client = await this.pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      await this.lockBackgroundAuthority(client, lineage, true);
+      const claimed = await client.query(
+        `UPDATE ${this.tables.backgroundResources}
+            SET state='launching',metadata=metadata||$13::jsonb,version=version+1,updated_at=now()
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND incarnation_id=$4 AND generation=$5 AND execution_id=$6 AND run_id=$7
+            AND resource_kind='child_run' AND resource_key=$8 AND provider_resource_id=$9
+            AND metadata->>'childSessionId'=$10 AND metadata->>'childRunId'=$9
+            AND metadata->>'invokingSessionId'=$11 AND metadata->>'invokingRunId'=$12
+            AND state IN ('prepared','launching') RETURNING background_resource_id`,
+        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+          lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey,
+          identity.childRunId, identity.childSessionId, lineage.invokingSessionId, lineage.invokingRunId,
+          JSON.stringify({ launchClaimedAt: new Date().toISOString() })],
       );
-      if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_identity_mismatch');
+      if (claimed.rowCount !== 1) throw new AutomationFenceRejectedError('background_launch_authority_lost');
+      await client.query('COMMIT');
+      committed = true;
+    } catch (error) {
+      if (!committed) await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -717,6 +807,7 @@ export class SessionAutomationRuntimeGuard {
     context: Pick<RunContext, 'tenantId' | 'sessionId' | 'runId' | 'automationFence'>,
     resourceKey: string,
     identity: { childSessionId: string; childRunId: string },
+    workerStopped = false,
   ): Promise<'released' | 'result_unknown'> {
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return 'released';
@@ -724,6 +815,7 @@ export class SessionAutomationRuntimeGuard {
     let committed = false;
     try {
       await client.query('BEGIN');
+      await client.query(`SELECT 1 FROM ${this.tables.automations} WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3 FOR UPDATE`,[lineage.tenantId,lineage.sessionId,lineage.automationId]);
       const resource = await client.query<{ background_resource_id: string; state: string }>(
         `SELECT background_resource_id,state FROM ${this.tables.backgroundResources}
           WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
@@ -751,14 +843,18 @@ export class SessionAutomationRuntimeGuard {
       );
       const terminal = child.rowCount === 1
         && ['completed', 'failed', 'cancelled', 'orphaned'].includes(child.rows[0]!.status);
-      const resolution = terminal ? 'released' : 'result_unknown';
+      // Only the worker that has fully stopped may prove that a missing child Run had
+      // no side effect. Lifecycle polling must not infer this while a launching worker
+      // can still cross the next boundary.
+      const safeMissingChild = workerStopped && child.rowCount === 0;
+      const resolution = terminal || safeMissingChild ? 'released' : 'result_unknown';
       await client.query(
         `UPDATE ${this.tables.backgroundResources}
             SET state=$2,version=version+1,updated_at=now()
           WHERE background_resource_id=$1 AND state<>'released'`,
         [locked.background_resource_id, resolution],
       );
-      if (terminal) {
+      if (terminal || safeMissingChild) {
         await client.query(
           `UPDATE ${this.tables.lifecycleWork}
               SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
@@ -807,14 +903,33 @@ export class SessionAutomationRuntimeGuard {
     this.assertExecutionEnabled();
     const lineage = this.lineage(context as RunContext);
     if (!lineage) return;
-    const result = await this.pool.query(
-      `SELECT 1 FROM ${this.tables.backgroundResources}
-        WHERE tenant_id=$1 AND automation_id=$2 AND incarnation_id=$3 AND generation=$4
-          AND resource_kind='child_run' AND resource_key=$5 AND provider_resource_id=$6
-          AND metadata->>'childSessionId'=$7 AND state IN ('prepared','active')`,
-      [lineage.tenantId, lineage.automationId, lineage.incarnationId, lineage.generation,
-        resourceKey, identity.childRunId, identity.childSessionId],
-    );
-    if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_not_prepared');
+    const client = await this.pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      await this.lockBackgroundAuthority(client, lineage, true);
+      const result = await client.query(
+        `SELECT 1 FROM ${this.tables.backgroundResources}
+          WHERE tenant_id=$1 AND session_id=$2 AND automation_id=$3
+            AND incarnation_id=$4 AND generation=$5 AND execution_id=$6 AND run_id=$7
+            AND resource_kind='child_run' AND resource_key=$8 AND provider_resource_id=$9
+            AND metadata->>'childSessionId'=$10 AND metadata->>'childRunId'=$9
+            AND metadata->>'invokingSessionId'=$11 AND metadata->>'invokingRunId'=$12
+            AND metadata->>'rootSessionId'=$2 AND metadata->>'rootRunId'=$7
+            AND state IN ('prepared','launching','active')
+          FOR UPDATE`,
+        [lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+          lineage.generation, lineage.executionId, lineage.executionRunId, resourceKey,
+          identity.childRunId, identity.childSessionId, lineage.invokingSessionId, lineage.invokingRunId],
+      );
+      if (result.rowCount !== 1) throw new AutomationFenceRejectedError('background_resource_not_prepared');
+      await client.query('COMMIT');
+      committed = true;
+    } catch (error) {
+      if (!committed) await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

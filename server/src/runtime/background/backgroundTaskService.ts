@@ -103,7 +103,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     const userId = parentSession.userId || identity?.id || context.workspace.userId;
     const parentRun = await runStore.get(parentRunId);
     const dwsCompletionRoute = resolveDwsCompletionRoute(parentRun, context.channelContext.channel);
-
     // 真正执行模型的是后续 child run；由 runSubagent 在拿到 childRunId 后原子预占。
     // 此处不能用旧余额快照门禁，否则父 run 自己的 reservation 会误拒绝派生。
     const executionTarget = context.workspace.executionTarget;
@@ -145,7 +144,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }
     model ??= modelRef ?? parentRun?.model;
     if (!model || !modelRef) throw new Error('无法确定后台 Agent 模型。');
-
     const taskUuid = randomUUID();
     const taskId = `bg-${Date.now()}-${taskUuid}`;
     const shortTaskId = `T-${taskUuid.replaceAll('-', '').slice(0, 24).toUpperCase()}`;
@@ -178,8 +176,8 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       taskSession = this.config.agentRuntimeProfileResolver.bindSessionRecord(taskSession, boundProfile);
     }
     await sessionCatalog.upsert(taskSession);
-
-    const taskRun = await runStore.enqueueBackgroundTask!({
+    const automationResource = new SessionAutomationBackgroundResource(this.config.sessionAutomationRuntimeGuard, automationFence ? { tenantId, sessionId: taskSessionId, runId: taskId, automationFence } : undefined, taskId, { childSessionId: executionChildSessionId, childRunId: executionChildRunId });
+    const taskRun = await automationResource.enqueuePrepared(() => runStore.enqueueBackgroundTask!({
       runId: taskId,
       sessionId: taskSessionId,
       userId,
@@ -194,7 +192,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
         subagent: true,
         backgroundTask: true,
         backgroundTaskType: 'agent',
-        backgroundTaskReady: true,
+        backgroundTaskReady: false,
         backgroundTaskVersion: 1,
         executionChildSessionId,
         executionChildRunId,
@@ -234,7 +232,9 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     }, {
       perParentActive: SUBAGENT_PER_RUN_MAX_CONCURRENCY,
       perTenantActive: SUBAGENT_PER_TENANT_MAX_ACTIVE,
-    });
+    }), () => runStore.markStatus(taskId, 'pending', 'background_task_started', {
+      backgroundTaskReady: true, backgroundStartedAt: new Date().toISOString(),
+    }), () => runStore.get(taskId), () => runStore.markStatus(taskId, 'cancelled', 'background_task_intent_failed'));
     await this.appendParentLifecycleEvent(parentSession, tenantId, {
       type: 'background_task_started',
       runId: parentRunId,
@@ -246,7 +246,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       description: request.description,
       model: taskRun.model ?? model,
     });
-
     return { taskId, shortTaskId, status: 'pending', description: request.description, model };
   }
   async reserveCommand(context: ToolCallContext, request: BackgroundCommandRequest): Promise<BackgroundCommandReservation> {
@@ -396,7 +395,6 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (!executionRegistry || !tenantHandResolver) {
       throw new Error('后台 Agent 缺少 executionTransportRegistry/tenantHandResolver 装配。');
     }
-
     const abortController = new AbortController();
     runtimeRunController.register(record.runId, abortController, {
       abortOnDrain: false,
@@ -475,10 +473,10 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
           includeCompanyInfo: metadata.includeCompanyInfo,
         },
         preparedChildIdentity: preparedIdentity,
-        beforeChildSideEffects: identity => automationResource.assertPrepared(identity),
+        acquireChildLaunchAuthority: identity => automationResource.launching(identity), beforeChildSideEffects: identity => automationResource.assertPrepared(identity),
         beforeTenantRemoteProvision: identity => assertBackgroundRemoteDispatchBarrier(this.config.runStore,
           record.runId, abortController.signal, identity, () => automationResource.active(identity)),
-        onChildRunCreated: async (identity) => { await automationResource.active(identity);
+        onChildLaunchError: () => automationResource.resolveFromAuthoritativeChild(true).then(() => undefined), onChildRunCreated: async (identity) => { await automationResource.active(identity);
           await this.config.runStore?.markStatus(record.runId, 'running', 'background_task_started', {
             executionChildSessionId: identity.childSessionId, executionChildRunId: identity.childRunId,
           }); },
@@ -489,7 +487,7 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
       const current = await this.config.runStore?.get(record.runId);
       const finalStatus = current?.status ?? outcomeToRunStatus(outcome.status);
       await lease?.release(finalStatus, current?.statusReason ?? `background_${outcome.status}`);
-    } catch (err) { await automationResource.resolveFromAuthoritativeChild().catch((resolutionError) => logger.warn(`后台子任务资源权威结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
+    } catch (err) { await automationResource.resolveFromAuthoritativeChild(true).catch((resolutionError) => logger.warn(`后台子任务资源权威结算失败 task=${record.runId}: ${resolutionError instanceof Error ? resolutionError.message : String(resolutionError)}`));
       const current = await this.config.runStore?.get(record.runId);
       if (current?.status === 'cancelled') {
         await this.config.runStore?.markStatus(record.runId, 'cancelled', current.statusReason, {
@@ -523,13 +521,15 @@ export class DurableBackgroundTaskService implements BackgroundTaskRuntime {
     if (metadata?.taskType === 'command') await this.invokeCommandControl(record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
     await this.freezeFailure(record, '后台任务执行进程中断；为避免重复副作用，本任务不会自动重放', 'failed', 'background_task_interrupted_no_replay');
   }
-
   async fail(record: RunRecord, message: string, reason = 'background_task_start_failed'): Promise<void> {
     const metadata = parseBackgroundTaskMetadata(record);
     if (metadata?.taskType === 'command') {
       await this.invokeCommandControl(record, metadata, 'KillBash', { task_id: record.runId }).catch(() => undefined);
     }
     await this.freezeFailure(record, message, 'failed', reason);
+    if (metadata?.taskType === 'agent' && metadata.executionChildSessionId && metadata.executionChildRunId && this.config.sessionAutomationRuntimeGuard) {
+      const context=buildBackgroundTaskAutomationContext(record,metadata);if(context)await new SessionAutomationBackgroundResource(this.config.sessionAutomationRuntimeGuard,context,record.runId,{childSessionId:metadata.executionChildSessionId,childRunId:metadata.executionChildRunId}).resolveFromAuthoritativeChild(true).catch(()=>undefined);
+    }
   }
   async reconcileWakeDeliveries(): Promise<void> {
     const runStore = this.config.runStore;

@@ -8,6 +8,8 @@ import type { RawRuntimeRunDispatchConfig } from './rawRuntimeRunDispatch.js';
 import { PgRunStore } from './runStore.js';
 import type { RuntimeSessionRecord, SessionCatalog } from './sessionCatalog.js';
 import { PgSessionAutomationStore } from './sessionAutomationStore.js';
+import { createLifecycleAdapters } from '../app/sessionAutomationRuntime.js';
+import { createSessionAutomationCancelRun } from './sessionAutomationCancellation.js';
 import { SessionAutomationRuntimeGuard } from './sessionAutomationRuntimeGuard.js';
 import { deriveChildAutomationFence, type SubagentOutcome } from './subagent/subagentRunner.js';
 import { createTenantRemoteHandAuthTokenResolver } from './tenantRemoteHandResolver.js';
@@ -209,6 +211,10 @@ describePg('automation background child recovery on PostgreSQL', () => {
       includeCompanyInfo: false,
     });
     const persisted = await runs.get(started.taskId);
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE tenant_id=$1 AND resource_key=$2`,
+      [tenantId, started.taskId],
+    )).rows[0]?.state).toBe('prepared');
     expect(persisted?.metadata.automationFence).toMatchObject({
       rootSessionId: setup.sessionId,
       rootRunId: setup.dispatch.targetRunId,
@@ -348,6 +354,104 @@ describePg('automation background child recovery on PostgreSQL', () => {
     await expect(guard.beforeModel({ ...childContext, runId: `invoking-${randomUUID()}` },
       'turn:spoof-invoking-run', { model: 'test-model', inputTokens: 1, maxOutputTokens: 1 }))
       .rejects.toMatchObject({ reason: 'context_run_mismatch' });
+  });
+
+  it('enqueue -> clear -> worker prepare is fail-closed and lifecycle reconciliation is idempotent', async () => {
+    const setup = await activeExecution();
+    const rootFence = {
+      ...setup.context.automationFence!, rootSessionId: setup.sessionId,
+      rootRunId: setup.dispatch.targetRunId,
+    };
+    const sessions = new Map<string, RuntimeSessionRecord>();
+    const now = new Date().toISOString();
+    sessions.set(setup.sessionId, {
+      sessionId: setup.sessionId, userId: 'user-a', username: 'alice', userRole: 'user', tenantId,
+      channel: 'web', cwd: '/tmp/automation-background',
+      transcriptPath: `/tmp/nonexistent-${randomUUID()}.jsonl`, modelRef: 'test-model',
+      executionTarget: 'server-container', workspaceId: setup.sessionId,
+      status: 'running', createdAt: now, updatedAt: now,
+    });
+    const sessionCatalog: SessionCatalog = {
+      get: async id => sessions.get(id) ?? null,
+      upsert: async record => { sessions.set(record.sessionId, record); },
+      ensure: async record => { if (!sessions.has(record.sessionId)) sessions.set(record.sessionId, record); },
+      findTranscriptPath: async id => sessions.get(id)?.transcriptPath ?? null,
+      markStatus: async (id, status) => {
+        const current = sessions.get(id);
+        if (current) sessions.set(id, { ...current, status, updatedAt: new Date().toISOString() });
+      },
+    };
+    const config = {
+      agentCwd: '/tmp/automation-background', sharedDir: '/tmp', runStore: runs, sessionCatalog,
+      eventStoreFactory: () => events,
+      executionTransportRegistry: createDefaultExecutionTransportRegistry(),
+      tenantRemoteHandResolver: createTenantRemoteHandAuthTokenResolver({}),
+      sessionAutomationRuntimeGuard: guard,
+    } as RawRuntimeRunDispatchConfig;
+    const context = {
+      channelContext: { channel: 'web', sessionOwner: { id: 'user-a', username: 'alice', role: 'user', tenantId } },
+      workspace: { id: setup.sessionId, root: '/tmp/automation-background', userId: 'user-a', username: 'alice', tenantId,
+        sessionId: setup.sessionId, executionTarget: 'server-container' },
+      sessionId: setup.sessionId, runId: setup.dispatch.targetRunId,
+      toolCallId: 'automation-background-clear-race', automationFence: rootFence,
+    } as ToolCallContext;
+
+    const started = await new DurableBackgroundTaskService(config).enqueue(context, {
+      description: 'clear race', prompt: 'must not start', agentType: 'general', includeCompanyInfo: false,
+    });
+    expect((await pool.query(
+      `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`, [started.taskId],
+    )).rows[0]?.state).toBe('prepared');
+
+    await store.tx(async client => {
+      const live = await store.getLocked(client, tenantId, setup.sessionId, setup.automationId);
+      await store.control(client, live!, 'clear');
+    });
+    const task = await runs.markStatus(started.taskId, 'running', 'late_worker_claim');
+    let childCalls = 0;
+    const worker = new DurableBackgroundTaskService(config, {
+      runSubagentImpl: async () => {
+        childCalls += 1;
+        throw new Error('runSubagent must not be reached after clear');
+      },
+    });
+    await worker.execute(task!);
+
+    expect(childCalls).toBe(0);
+    const childRows = await pool.query(
+      `SELECT count(*)::int AS count FROM ${runs.runsTable}
+        WHERE tenant_id=$1 AND metadata->>'parentRunId'=$2 AND COALESCE(metadata->>'backgroundTask','false')<>'true'`,
+      [tenantId, started.taskId],
+    );
+    expect(childRows.rows[0]?.count).toBe(0);
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.tables.lifecycleWork}
+        WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource'`,
+      [tenantId, setup.automationId],
+    )).rows[0]?.count).toBe(1);
+
+    const cancelRun = createSessionAutomationCancelRun({
+      runStore: runs,
+      eventStore: events,
+      logger: { warn: () => undefined },
+      abort: () => undefined,
+    });
+    // Exercise the production adapter and its real missing-Run cancellation semantics:
+    // prepared+missing child must complete without calling cancelRun(child).
+    const adapters = createLifecycleAdapters(cancelRun);
+    await store.processLifecycleWork(adapters, 50);
+    await store.processLifecycleWork(adapters, 50);
+
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.tables.backgroundResources}
+        WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('prepared','launching','active','release_pending','result_unknown','reconcile')`,
+      [tenantId, setup.automationId],
+    )).rows[0]?.count).toBe(0);
+    expect((await pool.query(
+      `SELECT count(*)::int AS count FROM ${store.tables.lifecycleWork}
+        WHERE tenant_id=$1 AND automation_id=$2 AND state<>'completed'`,
+      [tenantId, setup.automationId],
+    )).rows[0]?.count).toBe(0);
   });
 
   it('rejects the remote dispatch barrier when the root execution Run is already terminal', async () => {

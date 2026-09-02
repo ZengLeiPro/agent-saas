@@ -51,7 +51,26 @@ export function createLifecycleAdapters(
     return lifecycleReceipt(job,'pending',{error:'provider_authority_unresolved',providerState,sideEffectKnown:false});
   }},
   interaction:{execute:async job=>lifecycleReceipt(job,job.details.state==='prepared'?'completed':'pending',{error:'active_interaction_adapter_unavailable'})},
-  background_resource:{execute:async job=>{if(job.details.resource_kind!=='child_run')return lifecycleReceipt(job,'pending',{error:`resource_adapter_unavailable:${String(job.details.resource_kind??'unknown')}`});const runId=String(job.details.provider_resource_id??'');if(!runId)return lifecycleReceipt(job,'pending',{error:'resource_provider_id_unavailable'});await cancelRun(runId,'session_automation_background_resource_release');return lifecycleReceipt(job,'completed',{runId});}},
+  background_resource:{execute:async job=>{
+    if(job.details.resource_kind!=='child_run')return lifecycleReceipt(job,'pending',{error:`resource_adapter_unavailable:${String(job.details.resource_kind??'unknown')}`});
+    const runId=String(job.details.provider_resource_id??'');
+    if(!runId)return lifecycleReceipt(job,'pending',{error:'resource_provider_id_unavailable'});
+    const state=String(job.details.state??'');
+    const childStatus=typeof job.details.child_run_status==='string'?job.details.child_run_status:undefined;
+    const metadata=job.details.metadata as Record<string,unknown>|undefined;
+    const invokingRunId=typeof metadata?.invokingRunId==='string'?metadata.invokingRunId:undefined;
+    const invokingStatus=typeof job.details.invoking_run_status==='string'?job.details.invoking_run_status:undefined;
+    const terminal=(status:string|undefined)=>status!==undefined&&['completed','failed','cancelled','orphaned'].includes(status);
+    if(childStatus&&!terminal(childStatus))await cancelRun(runId,'session_automation_background_resource_release');
+    if(invokingStatus&&!terminal(invokingStatus)){
+      if(!invokingRunId)return lifecycleReceipt(job,'pending',{error:'resource_invoking_run_id_unavailable',childStatus,sideEffectKnown:false});
+      await cancelRun(invokingRunId,`session_automation_background_resource_${state}_cancel`);
+      return lifecycleReceipt(job,'pending',{error:`${state}_worker_cancellation_pending`,invokingRunId,childStatus:childStatus??null,childMissing:!childStatus,sideEffectKnown:false});
+    }
+    if(childStatus)return lifecycleReceipt(job,'completed',{runId,childStatus:terminal(childStatus)?childStatus:'cancelled',sideEffectKnown:true});
+    if(state==='prepared')return lifecycleReceipt(job,'completed',{runId,invokingRunId,childMissing:true,sideEffectKnown:false});
+    return lifecycleReceipt(job,'pending',{error:'worker_stop_receipt_required',invokingRunId,childMissing:true,sideEffectKnown:false});
+  }},
   budget_reservation:{execute:async job=>{
     const state=String(job.details.state??'');if(['settled','released'].includes(state))return lifecycleReceipt(job,'completed',{billingClosure:state});
     if(job.details.safe_to_release===true)return lifecycleReceipt(job,'completed',{billingClosure:'released'});

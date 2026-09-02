@@ -321,38 +321,28 @@ export class RuntimeScheduler {
         this.options.logger?.warn(`Runtime scheduler maintenance refresh failed; keeping current value: ${message}`);
       }
 
-      if (!this.executionEnabled) return;
-
-      if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
-
       const recoverable = await this.options.runStore.listRecoverable();
+      let backgroundStateChanged = false;
+      // Activation cleanup is maintenance, not execution admission. It must run while
+      // the kill switch is closed or capacity pressure would leak ready=false quota.
+      for (const record of recoverable) {
+        if (record.status !== 'pending' || !isBackgroundTaskRun(record) || isBackgroundTaskReady(record)
+          || Date.parse(record.requestedAt) > Date.now() - BACKGROUND_COMMAND_START_TIMEOUT_MS) continue;
+        const message = '后台任务启动确认超时；已冻结未获得 durable intent 的任务';
+        try {
+          if (this.options.failBackgroundTask) await this.options.failBackgroundTask(record, message);
+          else await this.options.runStore.markStatus(record.runId, 'failed', 'background_task_activation_timeout', { wakeState: 'pending' });
+          backgroundStateChanged = true;
+        } catch (err) {
+          this.options.logger?.error(`Failed to freeze stale background task reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (backgroundStateChanged) this.tickAgainRequested = true;
+      if (!this.executionEnabled) return;
+      if (this.options.admissionGuard && !this.options.admissionGuard.canAcquire()) return;
       const recoverableRunIds = new Set(recoverable.map((record) => record.runId));
       for (const runId of this.deferredUntilByRun.keys()) {
         if (!recoverableRunIds.has(runId)) this.deferredUntilByRun.delete(runId);
-      }
-      let backgroundStateChanged = false;
-      for (const record of recoverable) {
-        if (
-          record.status !== 'pending'
-          || !isBackgroundCommandTaskRun(record)
-          || isBackgroundTaskReady(record)
-          || Date.parse(record.requestedAt) > Date.now() - BACKGROUND_COMMAND_START_TIMEOUT_MS
-        ) continue;
-        const message = '后台命令启动确认超时；已尝试终止可能存在的 ACS 进程';
-        try {
-          if (this.options.failBackgroundTask) {
-            await this.options.failBackgroundTask(record, message);
-          } else {
-            await this.options.runStore.markStatus(record.runId, 'failed', 'background_command_start_timeout', {
-              wakeState: 'pending',
-            });
-          }
-          backgroundStateChanged = true;
-        } catch (err) {
-          this.options.logger?.error(
-            `Failed to freeze stale background command reservation ${record.runId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
       }
       // 后台任务一旦进入 running 就可能已经产生外部副作用。lease 过期只冻结失败，
       // 不允许像普通主会话那样恢复重放；pending 后台任务仍可安全首跑。
@@ -609,6 +599,9 @@ export class RuntimeScheduler {
       this.options.logger?.error(
         `Runtime scheduler failed before wake for ${acquired.runId}: ${message}; terminal=${terminal.won ? 'claimed' : terminal.record?.status ?? 'missing'}`,
       );
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(terminal.record ?? acquired, message).catch(() => undefined);
+      }
       return;
     }
 
@@ -633,6 +626,9 @@ export class RuntimeScheduler {
       });
       if (terminal.won) this.options.logger?.warn(`Marked recoverable run ${acquired.runId} as orphaned`);
       else this.options.logger?.error(`Runtime scheduler orphan terminal CAS lost for ${acquired.runId}: current=${terminal.record?.status ?? 'missing'}`);
+      if (isBackgroundTaskRun(acquired) && this.options.failBackgroundTask) {
+        await this.options.failBackgroundTask(terminal.record ?? acquired, 'scheduler_recovery_scan').catch(() => undefined);
+      }
       return;
     }
 

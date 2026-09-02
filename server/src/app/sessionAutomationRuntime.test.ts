@@ -23,13 +23,62 @@ describe('session automation background resource cancellation authority', () => 
 
     const completed = await adapter.execute(resourceJob({
       resource_kind: 'child_run', run_id: 'root-run-must-not-be-cancelled',
-      provider_resource_id: 'prepared-child-run', state: 'prepared',
+      provider_resource_id: 'prepared-child-run', state: 'active', child_run_status: 'running',
     }));
     expect(completed).toMatchObject({ outcome: 'completed', payload: { runId: 'prepared-child-run' } });
     expect(cancelRun).toHaveBeenCalledOnce();
     expect(cancelRun).toHaveBeenCalledWith(
       'prepared-child-run', 'session_automation_background_resource_release',
     );
+  });
+
+  it('releases a prepared intent when enqueue never created an invoking or child Run', async () => {
+    const cancelRun = vi.fn(async () => { throw new Error('must not cancel a missing Run'); });
+    const receipt = await createLifecycleAdapters(cancelRun).background_resource!.execute(resourceJob({
+      resource_kind: 'child_run', provider_resource_id: 'missing-child', state: 'prepared',
+      metadata: { invokingRunId: 'missing-worker' },
+    }));
+    expect(receipt).toMatchObject({ outcome: 'completed', payload: { childMissing: true, sideEffectKnown: false } });
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  it('does not release launching authority while its worker may still create the child', async () => {
+    const cancelRun = vi.fn(async () => undefined);
+    const receipt = await createLifecycleAdapters(cancelRun).background_resource!.execute(resourceJob({
+      resource_kind: 'child_run', provider_resource_id: 'not-yet-created', state: 'launching',
+      invoking_run_status: 'running', metadata: { invokingRunId: 'worker-run' },
+    }));
+    expect(receipt).toMatchObject({ outcome: 'pending', payload: { error: 'launching_worker_cancellation_pending' } });
+    expect(cancelRun).toHaveBeenCalledWith('worker-run', 'session_automation_background_resource_launching_cancel');
+  });
+
+  it('cancels both an active child and its invoking worker before releasing authority', async () => {
+    const cancelRun = vi.fn(async () => undefined);
+    const adapter = createLifecycleAdapters(cancelRun).background_resource!;
+    const pending = await adapter.execute(resourceJob({
+      resource_kind: 'child_run', provider_resource_id: 'active-child', state: 'active',
+      child_run_status: 'running', invoking_run_status: 'running', metadata: { invokingRunId: 'worker-run' },
+    }));
+    expect(pending).toMatchObject({ outcome: 'pending', payload: { error: 'active_worker_cancellation_pending' } });
+    expect(cancelRun.mock.calls).toEqual([
+      ['active-child', 'session_automation_background_resource_release'],
+      ['worker-run', 'session_automation_background_resource_active_cancel'],
+    ]);
+    const completed = await adapter.execute(resourceJob({
+      resource_kind: 'child_run', provider_resource_id: 'active-child', state: 'active',
+      child_run_status: 'cancelled', invoking_run_status: 'cancelled', metadata: { invokingRunId: 'worker-run' },
+    }));
+    expect(completed).toMatchObject({ outcome: 'completed', payload: { childStatus: 'cancelled' } });
+  });
+
+  it('keeps launching intent pending until the worker publishes a stop receipt', async () => {
+    const cancelRun = vi.fn(async () => { throw new Error('terminal worker must not be cancelled again'); });
+    const receipt = await createLifecycleAdapters(cancelRun).background_resource!.execute(resourceJob({
+      resource_kind: 'child_run', provider_resource_id: 'not-created', state: 'launching',
+      invoking_run_status: 'cancelled', metadata: { invokingRunId: 'worker-run' },
+    }));
+    expect(receipt).toMatchObject({ outcome: 'pending', payload: { error: 'worker_stop_receipt_required' } });
+    expect(cancelRun).not.toHaveBeenCalled();
   });
 });
 

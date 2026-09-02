@@ -171,7 +171,7 @@ describe('RuntimeScheduler', () => {
       channel: 'web',
       model: 'test-model',
       executionTarget: 'server-container',
-      metadata: { backgroundTask: true },
+      metadata: { backgroundTask: true, backgroundTaskReady: true },
     });
     const scheduler = new RuntimeScheduler({
       runStore,
@@ -778,9 +778,9 @@ describe('RuntimeScheduler', () => {
   it('uses one shared concurrency pool without task-type reservations', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();
-    await runStore.upsertPending({ runId: 'bg-1', sessionId: 'sub-1', metadata: { backgroundTask: true } });
-    await runStore.upsertPending({ runId: 'bg-2', sessionId: 'sub-2', metadata: { backgroundTask: true } });
-    await runStore.upsertPending({ runId: 'bg-3', sessionId: 'sub-3', metadata: { backgroundTask: true } });
+    await runStore.upsertPending({ runId: 'bg-1', sessionId: 'sub-1', metadata: { backgroundTask: true, backgroundTaskReady: true } });
+    await runStore.upsertPending({ runId: 'bg-2', sessionId: 'sub-2', metadata: { backgroundTask: true, backgroundTaskReady: true } });
+    await runStore.upsertPending({ runId: 'bg-3', sessionId: 'sub-3', metadata: { backgroundTask: true, backgroundTaskReady: true } });
     await runStore.upsertPending({ runId: 'normal-1', sessionId: 'session-1' });
     await runStore.upsertPending({ runId: 'normal-2', sessionId: 'session-2' });
     const gate = deferred();

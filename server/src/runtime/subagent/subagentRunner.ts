@@ -176,8 +176,12 @@ export interface RunSubagentParams {
   ) => import('../types.js').ModelAdapter;
   /** Durable caller-reserved identity. Recovery must pass the same pair instead of creating another child. */
   preparedChildIdentity?: { childSessionId: string; childRunId: string };
-  /** Called before child session/run/lease/hand/provider side effects so the caller can assert durable intent. */
+  /** Atomically consumes the caller's prepared resource before the first child side effect. */
+  acquireChildLaunchAuthority?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Called before and after child session/run/lease/hand/provider side effects to recheck live authority. */
   beforeChildSideEffects?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
+  /** Invoked after stale/error cleanup has terminalized the child and destroyed registered Hands. */
+  onChildLaunchError?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
   /** Durable fence immediately before a tenant remote provision request leaves the process. */
   beforeTenantRemoteProvision?: (identity: { childSessionId: string; childRunId: string }) => Promise<void> | void;
   /** Crash/recovery contract checkpoints; production callers normally leave this unset. */
@@ -309,11 +313,20 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
   const combinedSignal = parentContext.signal
     ? AbortSignal.any([parentContext.signal, timeoutController.signal])
     : timeoutController.signal;
+  const childIdentity = { childSessionId, childRunId };
+  let launchClaimed = false; // durable resource was consumed before child creation
+  let childSessionCreated = false;
+  let childRunCreated = false;
 
   try {
-    const childIdentity = { childSessionId, childRunId };
     await params.beforeChildSideEffects?.(childIdentity);
     await params.lifecycleCheckpoint?.('prepared');
+    // Durable launch authority precedes session creation, capacity lease, running
+    // transition and Hand registration. Clear/replace can now always discover a
+    // worker that may still create the fixed child identity.
+    await params.acquireChildLaunchAuthority?.(childIdentity);
+    launchClaimed = true;
+    await params.beforeChildSideEffects?.(childIdentity);
     // ── 子 session/run 落库（D2：hidden session；runStore metadata 挂亲子链） ──
     let childRecord: RuntimeSessionRecord = createRuntimeSessionRecord({
       sessionId: childSessionId,
@@ -339,6 +352,8 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     }
     await params.beforeChildSideEffects?.(childIdentity);
     await sessionCatalog.upsert(childRecord);
+    childSessionCreated = true;
+    await params.beforeChildSideEffects?.(childIdentity);
     await params.lifecycleCheckpoint?.('session');
 
     const baseEventStore = createEventStoreForSession(config, childRecord);
@@ -374,14 +389,18 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         // 刻意不写 wakeMessage：子 run 是父死子亡语义，绝不允许 scheduler 恢复重放
       },
     });
+    childRunCreated = true;
+    await params.beforeChildSideEffects?.(childIdentity);
     await params.lifecycleCheckpoint?.('run');
     const billing = config.billingService?.();
     if (billing && tenantId) {
+      await params.beforeChildSideEffects?.(childIdentity);
       const decision = await billing.authorizeRun({
         tenantId,
         userId,
         runId: childRunId,
       });
+      await params.beforeChildSideEffects?.(childIdentity);
       if (!decision.ok) {
         const reason = `[${decision.code}] ${decision.reason}`;
         await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'failed', reason, undefined, { tenantId }).catch(() => undefined);
@@ -402,6 +421,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         signal: combinedSignal,
       });
       await markRunState(config.runStore, eventStore, childSessionId, childRunId, 'running', undefined, undefined, { tenantId });
+      await params.beforeChildSideEffects?.(childIdentity);
       await params.lifecycleCheckpoint?.('lease');
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -440,6 +460,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
         await params.beforeTenantRemoteProvision?.(childIdentity);
       },
     });
+    await params.beforeChildSideEffects?.(childIdentity);
     await appendResolvedRunSnapshot({
       config,
       runId: childRunId,
@@ -448,6 +469,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       executionTarget,
       hands: config.handStore ? await config.handStore.listBySession(childSessionId, tenantId) : [],
     });
+    await params.beforeChildSideEffects?.(childIdentity);
     await params.lifecycleCheckpoint?.('hand');
 
     // ── 工具集派生（关键不变量 5：白名单派生 + 无条件剥夺，见 buildSubagentToolRuntime） ──
@@ -578,6 +600,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
     await params.lifecycleCheckpoint?.('before_active');
     await params.beforeChildSideEffects?.(childIdentity);
     await params.onChildRunCreated?.({ childSessionId, childRunId, model });
+    await params.beforeChildSideEffects?.(childIdentity);
     logger.info(
       `[subagent] start type=${agentType.id} child=${childSessionId} run=${childRunId} `
       + `parent=${parentSessionId}/${parentRunId} model=${model}`,
@@ -612,6 +635,7 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       if (event.type === 'tool_result') toolUseCount += 1;
       else if (event.type === 'error') streamError = event.error;
     }
+    await params.beforeChildSideEffects?.(childIdentity);
 
     // ── 终态判定（关键不变量 4）：信号状态 > onResult subtype，绝不读模型文本 ──
     const durationMs = Date.now() - startedAt;
@@ -690,6 +714,28 @@ export async function runSubagent(params: RunSubagentParams): Promise<SubagentOu
       model,
       ...(modelUsage ? { modelUsage } : {}),
     };
+  } catch (error) {
+    if (launchClaimed || childSessionCreated || childRunCreated) {
+      const reason = error instanceof Error ? error.message : String(error);
+      if (childRunCreated) {
+        await config.runStore?.markStatus(
+          childRunId,
+          combinedSignal.aborted ? 'cancelled' : 'failed',
+          reason,
+        ).catch(() => undefined);
+      }
+      if (childSessionCreated) {
+        await sessionCatalog.markStatus(childSessionId, 'error').catch(() => undefined);
+      }
+      if (config.handStore) {
+        const hands = await config.handStore.listBySession(childSessionId, tenantId).catch(() => []);
+        await Promise.all(hands.map(hand => config.handStore!.updateStatus(
+          hand.handId, 'destroyed', { destroyReason: 'subagent_launch_aborted' }, tenantId,
+        ).catch(() => null)));
+      }
+      await Promise.resolve(params.onChildLaunchError?.(childIdentity)).catch(() => undefined);
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutTimer);
     await slot.release();

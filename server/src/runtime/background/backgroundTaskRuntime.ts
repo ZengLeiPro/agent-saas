@@ -79,7 +79,7 @@ export function isBackgroundCommandTaskRun(record: Pick<RunRecord, 'metadata'>):
 }
 
 export function isBackgroundTaskReady(record: Pick<RunRecord, 'metadata'>): boolean {
-  return !isBackgroundCommandTaskRun(record) || record.metadata?.backgroundTaskReady === true;
+  return !isBackgroundTaskRun(record) || record.metadata?.backgroundTaskReady === true;
 }
 
 export function isBackgroundTaskWakeRun(record: Pick<RunRecord, 'metadata'>): boolean {

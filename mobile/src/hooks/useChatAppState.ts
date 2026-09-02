@@ -453,7 +453,7 @@ export function useChatAppStateCore(): ChatAppState {
   const chatClientStateRef = useRef(createChatClientState(identity));
   const [chatQueueItems, setChatQueueItems] = useState<ChatQueueItem[]>([]);
   const refreshSelectedQueue = useCallback(() => {
-    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, sessionIdRef.current));
+    setChatQueueItems(selectChatClientQueueItems(chatClientStateRef.current, immediateSessionIdRef.current ?? sessionIdRef.current));
   }, []);
   const applyAuthoritativeWsEvent = useCallback((event: WsEvent, fallbackSessionId?: string) => {
     chatClientStateRef.current = reduceChatClientState(chatClientStateRef.current, {
@@ -1178,7 +1178,7 @@ export function useChatAppStateCore(): ChatAppState {
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
     const projectSessionListInteraction = (event: WsEvent) => {
-      const fallbackSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      const fallbackSessionId = wsLatestSessionIdRef.current?.value;
       if (event.type === 'pending_interactions' && event.sessionId) {
         const authoritativeSessionId = event.sessionId;
         sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
@@ -1231,13 +1231,14 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
-      observeChatEvent(data, sessionIdRef.current ?? undefined);
+      const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
+      observeChatEvent(data, selectedSessionId ?? undefined);
       if (!data || !data.type) return;
       projectSessionListInteraction(data);
       if (data.type === 'queue_snapshot' || data.type === 'queue_item_updated' || data.type === 'message_queued'
         || data.type === 'session_status' || data.type === 'done' || data.type === 'interjection_applied'
         || data.type === 'steering_cancelled' || data.type === 'cancel_queued_result') {
-        applyAuthoritativeWsEvent(data, sessionIdRef.current ?? undefined);
+        applyAuthoritativeWsEvent(data, selectedSessionId ?? undefined);
       }
 
       if (envelope.eventId != null) {
@@ -1249,7 +1250,7 @@ export function useChatAppStateCore(): ChatAppState {
       if (data.type === "stream_id") {
         streamIdRef.current = data.streamId;
         runIdRef.current = data.runId ?? null;
-      } else if (data.type === "session_status" && data.runId) {
+      } else if (data.type === "session_status" && data.runId && data.sessionId === selectedSessionId) {
         runIdRef.current = data.runId;
       }
 
@@ -1261,15 +1262,15 @@ export function useChatAppStateCore(): ChatAppState {
         return;
       }
 
-      // ── sync 协议响应 ──
+      // ── sync 响应 ──
       if (data.type === "sync_ok") {
         lastUserSeqRef.current = (data as any).seq;
         wsClient.setLastSeq((data as any).seq);
         for (const { event } of (data as any).events || []) {
           const e = event as WsEvent;
           projectSessionListInteraction(e);
-          applyAuthoritativeWsEvent(e, sessionIdRef.current ?? undefined);
-          if (e.type === "session_status" && e.sessionId === sessionIdRef.current) {
+          applyAuthoritativeWsEvent(e, selectedSessionId ?? undefined);
+          if (e.type === "session_status" && e.sessionId === selectedSessionId) {
             runIdRef.current = e.runId ?? null;
             streamIdRef.current = e.streamId ?? null;
             const active = !["idle", "completed", "failed", "cancelled", "orphaned"].includes(e.status);
@@ -1313,7 +1314,7 @@ export function useChatAppStateCore(): ChatAppState {
         if (inline?.queueSnapshot) {
           applyQueueSnapshot(inline.sessionId, inline.queueSnapshot);
         }
-        if (inline?.runtime && inline.sessionId === sessionIdRef.current) {
+        if (inline?.runtime && inline.sessionId === selectedSessionId) {
           runIdRef.current = inline.runtime.runId ?? null;
           streamIdRef.current = inline.runtime.streamId ?? null;
           wsAttachedRef.current = inline.runtime.active;
@@ -1326,6 +1327,8 @@ export function useChatAppStateCore(): ChatAppState {
             interactions: inline.pendingInteractions,
           });
         }
+        const overflowSessionId = inline?.sessionId ?? wsLatestSessionIdRef.current?.value;
+        if (overflowSessionId && overflowSessionId !== selectedSessionId) return;
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void sessionRef.current.loadSessions(true, { fresh: true });
           sessionRef.current.refreshCurrentSession();
@@ -1347,7 +1350,7 @@ export function useChatAppStateCore(): ChatAppState {
         ]);
         if (
           terminalStatuses.has(d.status) &&
-          d.sessionId === sessionIdRef.current &&
+          d.sessionId === selectedSessionId &&
           loadingRef.current
         ) {
           clearWatchdog();

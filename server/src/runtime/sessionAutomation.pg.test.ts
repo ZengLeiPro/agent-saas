@@ -19,6 +19,7 @@ describePg('session automation real PostgreSQL integration',()=>{
  beforeAll(async()=>{pool=new Pool({connectionString:url!,max:8});events=new PgEventStore({connectionString:url!,tablePrefix:prefix,poolMax:4});await events.init();runs=new PgRunStore({pool,tablePrefix:prefix,writerCapability:{capability:'tenant-native-v1',allowPrivilegedRoleForTests:true}});await runs.init();store=new PgSessionAutomationStore(pool,prefix,runs.runsTable);await store.init();},30_000);
  beforeEach(async()=>{
   await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('TRUNCATE TABLE %I CASCADE',r.tablename); END LOOP; END $$`);
+  await runs.init();
   await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[automation,tenant,session,incarnation]);
   await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[automation,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
  });

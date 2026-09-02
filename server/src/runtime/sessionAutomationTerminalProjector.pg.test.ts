@@ -42,6 +42,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
         WHERE schemaname='public' AND tablename LIKE '${prefix}_%'
       LOOP EXECUTE format('TRUNCATE TABLE %I CASCADE',r.tablename); END LOOP;
     END $$`);
+    await runs.init();
   });
 
   afterAll(async () => {

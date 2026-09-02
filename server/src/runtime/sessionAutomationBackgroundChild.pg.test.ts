@@ -453,7 +453,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
     )).rows[0]?.count).toBe(0);
     expect((await pool.query(
       `SELECT count(*)::int AS count FROM ${store.tables.lifecycleWork}
-        WHERE tenant_id=$1 AND automation_id=$2 AND state<>'completed'`,
+        WHERE tenant_id=$1 AND automation_id=$2 AND object_type='background_resource' AND state<>'completed'`,
       [tenantId, setup.automationId],
     )).rows[0]?.count).toBe(0);
   });

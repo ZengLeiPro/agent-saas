@@ -53,7 +53,7 @@ describe('taskboard execution writeback prompt', () => {
     expect(reviewPrompt).not.toContain('Delivery 批准时提交 ready_to_merge');
   });
 
-  it('Integration 只提示一个持久 Agent 自主完成合并与安全清理', () => {
+  it('Integration 由一个持久 Agent 完成全绿发布与安全清理', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
     integrationWork.task.workflowVersion = 3;
@@ -65,6 +65,9 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('重读 GitHub 与本地 Git 实际状态');
     expect(prompt).toContain('integrationPolicy 允许删除的资源');
     expect(prompt).toContain('deleteRemoteBranch=false 时保留远程分支');
+    expect(prompt).toContain('任何红灯都必须处理');
+    expect(prompt).toContain('因上游失败而 skipped/canceled 的下游流水线不算成功');
+    expect(prompt).toContain('达到可发布状态后才能清理并以 done 收口');
     expect(prompt).toContain('以 done 收口');
     expect(prompt).not.toContain('integration.agent.merge');
     expect(prompt).not.toContain('integration.agent.cleanup');

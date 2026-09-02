@@ -156,12 +156,12 @@ export const TASKBOARD_DEFAULT_MERGE_PROMPT = [
   "4. 使用标准 Git 与 GitHub；不调用 Delivery 专用 execution.pull_request.*，也不调用 Candidate、integration_candidate、integration.agent.*、integration.source.* 或 Merge Gateway 等旧协议。",
   "5. 一个 Integration task 必须通过唯一 Integration branch 和唯一非 Draft Integration PR 进入基础分支；禁止逐个直接合并来源 PR。",
   "6. Integration branch 从最新基础分支创建，按依赖顺序纳入全部冻结 source head。来源 head 变化会使冻结结果失效，必须重新核对。",
-  "7. 来源 PR 的 CI 不能替代最终组合验证。对 Integration PR 当前 head 运行相关本地验证并读取 observed checks、workflow 和必要日志；pending 时等待并复查。",
+  "7. 来源 PR 的 CI 不能替代最终组合验证。对 Integration PR 当前 head 运行相关本地验证并读取全部适用的 required checks、构建、发布与部署 workflow；pending 时等待并复查。任何失败都必须处理，不能以主线公共故障、历史依赖问题或与本批次无关为由带红灯合并。",
   "8. 机械冲突可自行处理并重跑验证；需要改写业务逻辑的非机械冲突应整批 blocked，不得单方面生成未复核代码后合并。",
   "9. Integration PR 描述和最终记录列出来源任务、PR、冻结 head、纳入顺序、冲突处理和验证结果。使用 squash 时必须核对最终 tree/diff。",
-  "10. 最终合并前重读基础分支、Integration PR head、冻结来源 head 和 checks；事实变化时重整组合并重跑验证，再按 branch protection、ruleset 和 integrationPolicy.mergeMethod 执行标准 GitHub merge。",
-  "11. GitHub 确认合并后才能处理来源 PR 与清理。清理服从 integrationPolicy，只删除本批次拥有且确认安全、策略允许的资源；deleteRemoteBranch=false 时保留远程分支并记录。",
-  "12. 不得普通移动来源任务。所有未取消来源已进入基础分支后，finish(done) 原子收口 Integration task、来源状态与关联 Delivery 任务；调用前必须先核实远端合并。",
+  "10. 最终合并前重读基础分支、Integration PR head、冻结来源 head 和全部适用 CI/CD；只有当前准确 head 的代码质量门禁与发布流水线全部成功，才能按 branch protection、ruleset 和 integrationPolicy.mergeMethod 执行标准 GitHub merge。因上游失败而 skipped 或 canceled 的下游流水线不算成功。",
+  "11. GitHub 确认合并后仍须核对目标基础分支上由本次合并触发的适用 Backend/Frontend 构建、发布和部署流水线。只有最终代码达到可发布状态，才能处理来源 PR 与清理；若合并后流水线失败，应在当前职责内修复或明确 blocked，不得直接 done。清理服从 integrationPolicy，deleteRemoteBranch=false 时保留远程分支。",
+  "12. 不得普通移动来源任务。所有未取消来源已进入基础分支，且合并前门禁与合并后适用 CI/CD 均成功后，finish(done) 才能原子收口 Integration task、来源状态与关联 Delivery 任务。",
   "13. body 记录仓库与基础分支、来源任务/PR/冻结 head、纳入顺序、Integration PR 与 merge commit、验证与 checks、冲突、来源 PR 处理、清理、保留资源和风险；只有确需人工时 finish(blocked)。",
 ].join("\n");
 

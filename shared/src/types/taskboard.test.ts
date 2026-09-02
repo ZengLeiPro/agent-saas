@@ -40,7 +40,7 @@ void legacyPolicy;
 void flaggedPolicy;
 
 describe('taskboard default prompts', () => {
-  it('uses distinct, repository-agnostic prompts for all execution stages', () => {
+  it('uses distinct, repository-agnostic prompts with a publishable Integration gate', () => {
     expect(new Set(Object.values(TASKBOARD_STAGE_DEFAULT_PROMPTS))).toHaveProperty('size', 3);
     expect(TASKBOARD_STAGE_DEFAULT_PROMPTS).toEqual({
       work: TASKBOARD_DEFAULT_WORK_PROMPT,
@@ -57,6 +57,8 @@ describe('taskboard default prompts', () => {
     expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('### Remediation Work');
     expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('Remediation 通过时 finish(done)');
     expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('deleteRemoteBranch=false');
+    expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('因上游失败而 skipped 或 canceled 的下游流水线不算成功');
+    expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('合并后适用 CI/CD 均成功');
   });
 });
 

@@ -54,9 +54,10 @@ export function executionWritebackInstructions(context: TaskboardExecutionContex
   if (context.task.kind === 'integration') {
     instructions.splice(2, 0,
       '- 你是本次 Integration 唯一的持久 Agent，负责读取完整来源、组合代码、解决冲突、最终验证、GitHub 合并、资源清理和任务收口；分支/worktree、合并方式及是否调用子 Agent 由你根据现场事实决定。',
-      '- 最终组合完成后，自主读取实际 PR/head/base、observed checks、workflow runs/jobs/steps 与必要失败日志，运行适合仓库的本地验证；pending 正常等待，失败结合组合 diff 和证据处理，不把平台状态当作新增质量门禁。',
+      '- 最终组合完成后，自主读取实际 PR/head/base、全部适用的 required checks、构建、发布与部署 workflow 及必要失败日志，并运行相关本地验证；pending 正常等待。任何红灯都必须处理，不能因公共故障、历史依赖问题或与本批次无关而带红合并。',
       '- 直接使用当前运行环境提供的标准 Git 与 GitHub merge 能力；遵守仓库现有权限、branch protection 和 ruleset，不得把任务范围解释为对其他仓库或无关资源的授权。',
-      '- push、PR、merge、删除等外部操作结果不确定时，先重读 GitHub 与本地 Git 实际状态，避免重复副作用。GitHub 确认合并后只清理本批次拥有、无未合并提交且 integrationPolicy 允许删除的资源；deleteRemoteBranch=false 时保留远程分支并记录。全部完成后以 done 收口。');
+      '- 只有 Integration PR 当前准确 head 的适用 CI/CD 全部成功才能合并；因上游失败而 skipped/canceled 的下游流水线不算成功。合并后还须确认基础分支上由本次合并触发的适用 Backend/Frontend 发布流水线全部成功，达到可发布状态后才能清理并以 done 收口。',
+      '- push、PR、merge、删除等结果不确定时，先重读 GitHub 与本地 Git 实际状态。清理只处理本批次拥有、无未合并提交且 integrationPolicy 允许删除的资源；deleteRemoteBranch=false 时保留远程分支并记录。');
   }
   return instructions;
 }

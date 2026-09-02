@@ -3278,7 +3278,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const applySoftDelete = async (): Promise<boolean> => {
         if (options.sandboxCleanupRequired && !options.sandboxSessionDeletion) throw new Error("Sandbox cleanup 能力不可用"); const currentMeta = await readSessionMeta(transcriptPath); if (!currentMeta) throw new Error("Session not found"); const newlyDeleted = !currentMeta.deletedAt;
         if (newlyDeleted) {
-          // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，跨文件/PG 不伪装原子事务。
+          // prepared 不可投递；meta tombstone 成功后才进入 durable cancelling，缓存与事件由 cleanup 成功后补偿。
           const intent = await options.sandboxSessionDeletionIntent?.(sessionId); if (intent === "blocked") throw new Error("Sandbox cleanup intent blocked");
           await updateSessionMeta(transcriptPath, { deletedAt: new Date().toISOString(), deletedBy: req.user?.username || "anonymous" });
         }
@@ -3292,12 +3292,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
         : await applySoftDelete();
-      if (!changed) { // 已有 tombstone 仍完成 cleanup 重试，仅跳过重复审计与广播。
-        res.json({ ok: true, softDeleted: true }); return;
-      }
-
+      // cleanup 成功后补偿审计、缓存与删除事件；重复 DELETE 可幂等重放审计。
       auditLog(req, "session_soft_deleted", sessionId);
       sessionsListCache.clear();
+      // 广播是幂等状态通知，重复 DELETE 可再次投递以补偿前次 cleanup 失败。
       // 广播删除事件到操作者和资源 owner 的所有连接（前端效果：会话从列表消失）
       const broadcastUserIds = new Set<string>();
       if (req.user?.sub) broadcastUserIds.add(req.user.sub);

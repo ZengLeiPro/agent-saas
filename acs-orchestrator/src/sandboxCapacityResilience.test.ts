@@ -64,7 +64,13 @@ function kubectlFailingFirstList(): { kubectl: Kubectl; listCalls: () => number 
       }
       if (args[0] === 'get') {
         if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-        return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+        return {
+          stdout: JSON.stringify({
+            metadata: { uid: 'uid-capacity', resourceVersion: '1', annotations: {} },
+            status: { phase: 'Running' },
+          }),
+          stderr: '', exitCode: 0, signal: null,
+        };
       }
       if (args[0] === 'apply') {
         created = true;
@@ -111,7 +117,13 @@ describe('ensureCapacity 硬门禁', () => {
         if (args[0] === 'get') {
           const name = args[1]?.split('/').at(-1) ?? '';
           return running.has(name)
-            ? { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null }
+            ? {
+                stdout: JSON.stringify({
+                  metadata: { uid: `uid-${name}`, resourceVersion: '1', annotations: {} },
+                  status: { phase: 'Running' },
+                }),
+                stderr: '', exitCode: 0, signal: null,
+              }
             : { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
         }
         if (args[0] === 'apply' || args[0] === 'create') {

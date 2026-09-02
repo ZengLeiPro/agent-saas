@@ -97,14 +97,14 @@ describe('SandboxManager lifecycle mutations', () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it('touches last-active only behind expected UID and resourceVersion tests', async () => {
+  it('touches last-active behind observed UID and resourceVersion tests without a pinned UID', async () => {
     const { manager, run } = setup();
     vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
       'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:00:00.000Z',
     }));
     const now = new Date('2026-08-30T00:05:00.000Z');
 
-    await manager.touch('as-touch', now, 'sandbox-uid-1');
+    await manager.touch('as-touch', now);
 
     const patchArgs = run.mock.calls.at(-1)![0];
     expect(patchArgs.slice(0, 3)).toEqual(['patch', 'sandbox/as-touch', '--type=json']);
@@ -135,9 +135,20 @@ describe('SandboxManager lifecycle mutations', () => {
     await expect(manager.touch(
       'as-touch-recreated',
       new Date('2026-08-30T00:05:00.000Z'),
-      'sandbox-uid-1',
     )).rejects.toThrow(/同名重建/u);
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an unpinned touch after the Sandbox entered deletion', async () => {
+    const { manager, run } = setup();
+    const deleting = status();
+    (deleting.raw.metadata as any).deletionTimestamp = '2026-08-30T00:04:00.000Z';
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(deleting);
+
+    await expect(manager.touch(
+      'as-touch-deleting', new Date('2026-08-30T00:05:00.000Z'),
+    )).rejects.toThrow(/进入删除流程/u);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('updates terminal annotations only after exact identity verification and CAS fencing', async () => {

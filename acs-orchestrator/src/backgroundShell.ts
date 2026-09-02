@@ -280,7 +280,7 @@ export async function getBackgroundShellOutput(input: BackgroundShellOutputInput
   };
 }
 
-/** 终止单个后台任务，并在返回前确认任务状态已经进入终态。 */
+/** 终止单个后台任务，并在返回前确认该任务状态已经进入终态。 */
 export async function killBackgroundShell(workspaceRoot: string, taskId: string): Promise<BackgroundShellOutput> {
   const taskDir = backgroundShellTaskDir(workspaceRoot, taskId);
   let state = await reconcileBackgroundShellState(taskDir);
@@ -328,15 +328,16 @@ export async function terminateBackgroundShellsFailClosed(
   taskIds: string[],
 ): Promise<{ protectedUntil?: string; activeTaskIds: string[] }> {
   const requested = [...new Set(taskIds)];
-  let remaining = await reconcileBackgroundShells(workspaceRoot, { strict: true });
+  if (requested.length === 0) throw new Error('background shell fail-closed requires owned task IDs');
+  let remaining = await reconcileBackgroundShells(workspaceRoot);
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const activeTaskIds = [...new Set([...requested, ...remaining.activeTaskIds])];
-    if (activeTaskIds.length === 0) return remaining;
-    for (const taskId of activeTaskIds) await killBackgroundShell(workspaceRoot, taskId);
-    remaining = await reconcileBackgroundShells(workspaceRoot, { strict: true });
-    if (remaining.activeTaskIds.length === 0) return remaining;
+    for (const taskId of requested) await killBackgroundShell(workspaceRoot, taskId);
+    remaining = await reconcileBackgroundShells(workspaceRoot);
+    const stillActive = remaining.activeTaskIds.filter((taskId) => requested.includes(taskId));
+    if (stillActive.length === 0) return remaining;
   }
-  throw new Error(`background shell fail-closed verification failed: ${remaining.activeTaskIds.join(',')}`);
+  const stillActive = remaining.activeTaskIds.filter((taskId) => requested.includes(taskId));
+  throw new Error(`background shell fail-closed verification failed: ${stillActive.join(',')}`);
 }
 
 export async function reconcileBackgroundShells(

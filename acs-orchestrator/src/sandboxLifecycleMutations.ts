@@ -125,6 +125,51 @@ export async function applyInvocationLease(
   );
 }
 
+/** Atomically records invocation activity and removes only that invocation's lease. */
+export async function completeInvocationLease(
+  config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
+  invocationKey: string, completedAt: Date, getStatus: () => Promise<SandboxStatus | null>,
+  expectedUid: string,
+): Promise<string> {
+  const leaseKey = activeInvocationLeaseAnnotationKey(invocationKey);
+  const leasePath = `/metadata/annotations/${jsonPointerSegment(leaseKey)}`;
+  const activityPath = `/metadata/annotations/${jsonPointerSegment(LAST_ACTIVE_AT_ANNOTATION)}`;
+  const observedUid = expectedUid;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const status = await getStatus();
+    if (!status) throw new SandboxMutationPreconditionError('Sandbox 不存在，拒绝完成 invocation');
+    const metadata = objectValue(status.raw?.metadata);
+    const annotations = objectValue(metadata.annotations);
+    const uid = stringValue(metadata.uid);
+    const resourceVersion = stringValue(metadata.resourceVersion);
+    if (!uid || !resourceVersion) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID/resourceVersion');
+    if (observedUid !== uid) throw new SandboxMutationPreconditionError('Sandbox 已同名重建，拒绝完成 invocation');
+    if (stringValue(metadata.deletionTimestamp)) {
+      throw new SandboxMutationPreconditionError('Sandbox 已进入删除流程，拒绝完成 invocation');
+    }
+    const lease = stringValue(annotations[leaseKey]);
+    if (!lease) throw new SandboxMutationPreconditionError('invocation lease 不存在，拒绝非原子完成');
+    const activityAt = laterProtection(stringValue(annotations[LAST_ACTIVE_AT_ANNOTATION]), completedAt.toISOString());
+    const patch = [
+      { op: 'test', path: '/metadata/uid', value: uid },
+      { op: 'test', path: '/metadata/resourceVersion', value: resourceVersion },
+      { op: 'test', path: leasePath, value: lease },
+      { op: 'remove', path: leasePath },
+      { op: 'add', path: activityPath, value: activityAt },
+    ];
+    const result = await kubectl.run([
+      'patch', resourceName, '--type=json', '-p', JSON.stringify(patch),
+    ], { timeoutMs: config.sandboxWaitTimeoutMs });
+    if (result.exitCode === 0) return uid;
+    const detail = result.stderr || result.stdout;
+    const conflict = /conflict|test(?: operation)? failed|object has been modified|precondition|resourceversion/i.test(detail);
+    if (conflict && attempt < 2) continue;
+    if (conflict) throw new SandboxMutationPreconditionError(`完成 invocation 失败: ${detail}`);
+    throw new Error(`完成 invocation 失败: ${detail}`);
+  }
+  throw new SandboxMutationPreconditionError('完成 invocation 失败: retry exhausted');
+}
+
 /** Atomically removes every expired invocation annotation observed on one resource. */
 export async function clearExpiredInvocationLeases(
   config: AcsOrchestratorConfig, kubectl: Kubectl, resourceName: string,
@@ -273,14 +318,6 @@ export async function touchSandboxActivity(
   getStatus: () => Promise<SandboxStatus | null>,
   expectedUid?: string,
 ): Promise<void> {
-  if (!expectedUid) {
-    const result = await kubectl.run([
-      'patch', resourceName, '--type=merge', '-p',
-      JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
-    ], { timeoutMs: config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
-    return;
-  }
   await applyProtectedAnnotation(
     config, kubectl, resourceName, LAST_ACTIVE_AT_ANNOTATION,
     now.toISOString(), 'last-active', getStatus, { expectedUid },

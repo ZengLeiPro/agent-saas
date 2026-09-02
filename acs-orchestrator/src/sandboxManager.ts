@@ -699,6 +699,7 @@ export class SandboxManager {
   async setActiveInvocationLease(name: string, invocationKey: string, leaseUntil?: string, expectedUid?: string, activityGeneration?: string): Promise<string> {
     return await this.invocationMutations.setActiveLease(name, invocationKey, leaseUntil, expectedUid, activityGeneration);
   }
+  async completeInvocation(name: string, invocationKey: string, completedAt: Date, expectedUid: string): Promise<string> { return await this.invocationMutations.completeInvocation(name, invocationKey, completedAt, expectedUid); }
   async clearExpiredInvocationLeases(name: string, now = new Date()): Promise<{ active: boolean; removed: number }> { return await this.invocationMutations.clearExpired(name, now); }
 
   private async patchWorkloadDescriptor(name: string, workload: SandboxWorkloadDescriptor): Promise<void> {
@@ -707,7 +708,7 @@ export class SandboxManager {
 
   /**
    * Updates last-active through UID/resourceVersion CAS.
-   * Invocation callers pass expectedUid to reject same-name replacement writes.
+   * Invocation completion uses completeInvocation so lease removal and touch share one CAS.
    * Callers without a pinned UID still retry only within one observed UID.
    * The mutation helper rejects resources already entering deletion.
    */
@@ -741,10 +742,8 @@ export class SandboxManager {
     this.ensureFastPath.delete(name);
   }
 
-  async setBackgroundShellProtection(name: string, protectedUntil?: string, expectedUid?: string, expectedClearGeneration?: string | null, generation?: string): Promise<string> {
-    return await this.invocationMutations.setBackgroundProtection(name, protectedUntil, expectedUid, expectedClearGeneration, generation);
-  }
-  async getSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getUid(name); } async getBackgroundShellProtection(name: string, expectedUid: string) { return await this.invocationMutations.getBackgroundProtection(name, expectedUid); }
+  async setBackgroundShellProtection(name: string, protectedUntil?: string, expectedUid?: string, expectedClearGeneration?: string | null, generation?: string): Promise<string> { return await this.invocationMutations.setBackgroundProtection(name, protectedUntil, expectedUid, expectedClearGeneration, generation); }
+  async getSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getUid(name); } async getMutableSandboxUid(name: string): Promise<string | null> { return await this.invocationMutations.getMutableUid(name); } async getBackgroundShellProtection(name: string, expectedUid: string) { return await this.invocationMutations.getBackgroundProtection(name, expectedUid); }
 
   async getStatus(name: string): Promise<SandboxStatus | null> {
     const result = await this.kubectl.run(['get', this.resourceName(name), '-o', 'json'], { timeoutMs: 15_000 });

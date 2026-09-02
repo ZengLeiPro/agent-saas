@@ -97,6 +97,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
       setBackgroundShellProtection,
       touch: vi.fn(async () => undefined),
     } as unknown as SandboxManager;
@@ -131,6 +132,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     const sandboxManager = {
       ref: () => sandboxRef,
       setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => sandboxRef),
       setBackgroundShellProtection,
@@ -168,6 +170,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     const sandboxManager = {
       ref: () => sandboxRef,
       setActiveInvocationLease: vi.fn(async () => 'uid-1'),
+      completeInvocation: vi.fn(async () => 'uid-1'),
       getBackgroundShellProtection: vi.fn(async () => ({ protectedUntil: observed, generation: observedGeneration })),
       touch: vi.fn(async () => undefined),
       ensureRunning: vi.fn(async () => sandboxRef),
@@ -210,6 +213,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
       setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
       getSandboxUid: vi.fn(async () => 'uid-1'),
       touch,
@@ -253,21 +257,24 @@ describe('AcsExecutor background shell protection handoff', () => {
     ['aggregate reconcile', {
       activeTaskIds: ['shell-bg-other'], protectedUntil: '2099-07-20T00:10:00.000Z',
     }],
-  ])('terminates active tasks for %s when both protection writes fail', async (_case, backgroundShell) => {
+  ])('does not terminate unowned tasks for %s when both protection writes fail', async (_case, backgroundShell) => {
     const sandboxRef = ref(`as-background-${String(_case).replaceAll(' ', '-')}`);
     const child = fakeChild();
     const setActiveInvocationLease = vi.fn()
       .mockResolvedValueOnce('uid-1')
-      .mockRejectedValueOnce(new Error('lease CAS exhausted'));
+      .mockRejectedValueOnce(new Error('lease CAS exhausted'))
+      .mockResolvedValue('uid-1');
+    const setBackgroundShellProtection = vi.fn()
+      .mockRejectedValueOnce(new Error('protection CAS exhausted'))
+      .mockResolvedValue('uid-1');
     const terminateBackgroundTasks = vi.fn(async () => undefined);
-    const touch = vi.fn(async () => undefined);
     const sandboxManager = {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease,
-      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection,
       getSandboxUid: vi.fn(async () => 'uid-1'),
-      touch,
     } as unknown as SandboxManager;
     const executor = new AcsExecutor(
       baseConfig(),
@@ -275,7 +282,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       sandboxManager,
       noopLogger,
       undefined,
-      { persistentRunner: false, terminateBackgroundTasks },
+      { persistentRunner: false, terminateBackgroundTasks, backgroundRecoveryRetryMs: 1 },
     );
 
     const resultPromise = executor.execute({
@@ -294,16 +301,90 @@ describe('AcsExecutor background shell protection handoff', () => {
     })}\n`);
     child.emit('close', 0, null);
 
-    await expect(resultPromise).rejects.toThrow(/已终止活跃任务/u);
-    expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-other']);
-    expect(setActiveInvocationLease).toHaveBeenCalledTimes(4);
-    expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
-      sandboxRef.name, expect.any(String), undefined, 'uid-1',
+    await expect(resultPromise).rejects.toThrow(/不终止无所有权任务/u);
+    await vi.waitFor(() => expect(executor.backgroundRecoveryCount()).toBe(0));
+    expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+    expect(setBackgroundShellProtection).toHaveBeenLastCalledWith(
+      sandboxRef.name, '2099-07-20T00:10:00.000Z', 'uid-1', undefined, expect.any(String),
     );
-    expect(touch).toHaveBeenCalledOnce();
   });
 
-  it('does not write or terminate a same-name replacement Sandbox', async () => {
+  it('terminates only request-owned task A when task B is already protected in the same workspace', async () => {
+    const sandboxRef = ref('as-background-owned-only');
+    const child = fakeChild();
+    const setActiveInvocationLease = vi.fn()
+      .mockResolvedValueOnce('uid-1')
+      .mockRejectedValueOnce(new Error('fallback lease CAS exhausted'))
+      .mockResolvedValue('uid-1');
+    const terminateBackgroundTasks = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => sandboxRef,
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+      getSandboxUid: vi.fn(async () => 'uid-1'),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager, noopLogger, undefined,
+      { persistentRunner: false, terminateBackgroundTasks },
+    );
+
+    const resultPromise = executor.execute({
+      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-a' },
+      context: { invocationId: 'inv-owned-a', workspace: {
+        id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
+        sandboxScopeId: sandboxRef.sandboxScopeId,
+      } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    child.stdout.end(`${JSON.stringify({
+      kind: 'final',
+      response: { status: 'success', content: '{}', metadata: { backgroundShell: {
+        taskId: 'shell-bg-a', status: 'running',
+        activeTaskIds: ['shell-bg-a', 'shell-bg-b'],
+        protectedUntil: '2099-07-20T00:10:00.000Z',
+      } } },
+    })}\n`);
+    child.emit('close', 0, null);
+
+    await expect(resultPromise).rejects.toThrow(/已终止活跃任务/u);
+    expect(terminateBackgroundTasks).toHaveBeenCalledOnce();
+    expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-a']);
+    expect(terminateBackgroundTasks).not.toHaveBeenCalledWith(sandboxRef, ['shell-bg-b']);
+  });
+
+  it('does not terminate a returned taskId that differs from the request-owned taskId', async () => {
+    const sandboxRef = ref('as-background-task-mismatch'); const child = fakeChild();
+    const protectedUntil = '2099-07-20T00:10:00.000Z';
+    const setActiveInvocationLease = vi.fn(async (_name: string, _key: string, until?: string) => {
+      if (until === protectedUntil) throw new Error('fallback lease CAS exhausted');
+      return 'uid-1';
+    });
+    const terminateBackgroundTasks = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => sandboxRef, ensureRunning: vi.fn(async () => sandboxRef), setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'), getSandboxUid: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager, noopLogger, undefined, { persistentRunner: false, terminateBackgroundTasks,
+        backgroundRecoveryRetryMs: 1, reconcileBackgroundTasks: async () => ({ activeTaskIds: [] }) });
+
+    const resultPromise = executor.execute({
+      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-a' },
+      context: { invocationId: 'inv-task-mismatch', workspace: { id: sandboxRef.workspaceId,
+        sessionId: sandboxRef.sessionId, sandboxScopeId: sandboxRef.sandboxScopeId } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    finishBackground(child, 'shell-bg-b', protectedUntil);
+    await expect(resultPromise).rejects.toThrow(/不终止无所有权任务/u);
+    await vi.waitFor(() => expect(executor.backgroundRecoveryCount()).toBe(0));
+    expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+  });
+
+  it('does not mutate or terminate a same-name replacement Sandbox by UID', async () => {
     const sandboxRef = ref('as-background-recreated');
     const child = fakeChild();
     const protectedUntil = '2099-07-20T00:10:00.000Z';
@@ -322,6 +403,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
       setBackgroundShellProtection,
       getSandboxUid: vi.fn(async () => 'uid-new'),
       touch,
@@ -333,7 +415,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     );
 
     const resultPromise = executor.execute({
-      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-recreated' },
       context: { invocationId: 'inv-background-recreated', workspace: {
         id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
         sandboxScopeId: sandboxRef.sandboxScopeId,
@@ -349,7 +431,38 @@ describe('AcsExecutor background shell protection handoff', () => {
     expect(executor.backgroundRecoveryCount()).toBe(0);
   });
 
-  it('terminates when protection CAS returns after its exact deadline expired', async () => {
+  it('stops recovery when the original Sandbox has entered deletion', async () => {
+    const sandboxRef = ref('as-background-deleting'); const child = fakeChild();
+    const protectedUntil = '2099-07-20T00:10:00.000Z';
+    const setActiveInvocationLease = vi.fn(async (_name: string, _key: string, until?: string) => {
+      if (until === protectedUntil) throw new Error('Sandbox 已进入删除流程');
+      return 'uid-old';
+    });
+    const getMutableSandboxUid = vi.fn(async () => null);
+    const terminateBackgroundTasks = vi.fn(async () => undefined);
+    const sandboxManager = {
+      ref: () => sandboxRef, ensureRunning: vi.fn(async () => sandboxRef), setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-old'), getSandboxUid: vi.fn(async () => 'uid-old'),
+      setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
+      getMutableSandboxUid,
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager, noopLogger, undefined, { persistentRunner: false, terminateBackgroundTasks });
+
+    const resultPromise = executor.execute({
+      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-deleting' },
+      context: { invocationId: 'inv-background-deleting', workspace: { id: sandboxRef.workspaceId,
+        sessionId: sandboxRef.sessionId, sandboxScopeId: sandboxRef.sandboxScopeId } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    finishBackground(child, 'shell-bg-deleting', protectedUntil);
+    await expect(resultPromise).rejects.toThrow(/原 Sandbox 已消失/u);
+    expect(getMutableSandboxUid).toHaveBeenCalledWith(sandboxRef.name);
+    expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+    expect(executor.backgroundRecoveryCount()).toBe(0);
+  });
+
+  it('terminates the owned task when protection CAS returns after its exact deadline expired', async () => {
     vi.useFakeTimers();
     try {
       const nowMs = Date.parse('2026-08-30T00:00:00.000Z');
@@ -367,6 +480,7 @@ describe('AcsExecutor background shell protection handoff', () => {
         ref: () => sandboxRef,
         ensureRunning: vi.fn(async () => sandboxRef),
         setActiveInvocationLease,
+        completeInvocation: vi.fn(async () => 'uid-1'),
         setBackgroundShellProtection,
         getSandboxUid: vi.fn(async () => 'uid-old'),
         touch: vi.fn(async () => undefined),
@@ -378,7 +492,9 @@ describe('AcsExecutor background shell protection handoff', () => {
       );
 
       const resultPromise = executor.execute({
-        toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+        toolName: 'Shell', input: {
+          command: 'sleep 60', mode: 'background', taskId: 'shell-bg-expired-during-cas',
+        },
         context: { invocationId: 'inv-expired-during-cas', workspace: {
           id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
           sandboxScopeId: sandboxRef.sandboxScopeId,
@@ -445,7 +561,9 @@ describe('AcsExecutor background shell protection handoff', () => {
         );
 
         const resultPromise = executor.execute({
-          toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+          toolName: 'Shell', input: {
+            command: 'sleep 60', mode: 'background', taskId: `shell-recovery-${proof}`,
+          },
           context: { invocationId: `inv-recovery-${proof}`, workspace: {
             id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
             sandboxScopeId: sandboxRef.sandboxScopeId,
@@ -499,80 +617,68 @@ describe('AcsExecutor background shell protection handoff', () => {
     },
   );
 
-  it('keeps renewing after a detached worker loses its final until conservative aggregate protection persists', async () => {
-    vi.useFakeTimers();
-    try {
-      const sandboxRef = ref('as-background-final-lost');
-      const child = fakeChild();
-      let protectionAvailable = false;
-      const setActiveInvocationLease = vi.fn(async () => 'uid-1');
-      const setBackgroundShellProtection = vi.fn(async () => {
-        if (!protectionAvailable) throw new Error('aggregate protection unavailable');
-      });
-      const terminateBackgroundTasks = vi.fn(async () => { throw new Error('KillBash unavailable'); });
-      const touch = vi.fn(async () => undefined);
-      const sandboxManager = {
-        ref: () => sandboxRef,
-        ensureRunning: vi.fn(async () => sandboxRef),
-        setActiveInvocationLease,
-        setBackgroundShellProtection,
-        getSandboxUid: vi.fn(async () => 'uid-1'),
-        touch,
-      } as unknown as SandboxManager;
-      const executor = new AcsExecutor(
-        baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
-        sandboxManager, noopLogger, undefined,
-        {
-          persistentRunner: false,
-          terminateBackgroundTasks,
-          backgroundRecoveryRetryMs: 30_000,
-        },
-      );
+  it('recovers a detached worker with conservative aggregate protection after its final is lost', async () => {
+    const sandboxRef = ref('as-background-final-lost');
+    const child = fakeChild();
+    let protectionAvailable = false;
+    const setActiveInvocationLease = vi.fn(async () => 'uid-1');
+    const setBackgroundShellProtection = vi.fn(async () => {
+      if (!protectionAvailable) throw new Error('aggregate protection unavailable');
+    });
+    const terminateBackgroundTasks = vi.fn(async () => { throw new Error('KillBash unavailable'); });
+    const sandboxManager = {
+      ref: () => sandboxRef,
+      ensureRunning: vi.fn(async () => sandboxRef),
+      setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
+      setBackgroundShellProtection,
+      getSandboxUid: vi.fn(async () => 'uid-1'),
+    } as unknown as SandboxManager;
+    const executor = new AcsExecutor(
+      baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
+      sandboxManager, noopLogger, undefined,
+      {
+        persistentRunner: false,
+        terminateBackgroundTasks,
+        backgroundRecoveryRetryMs: 1,
+        reconcileBackgroundTasks: async () => { throw new Error('inventory unavailable'); },
+      },
+    );
 
-      const resultPromise = executor.execute({
-        toolName: 'Shell',
-        input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-final-lost' },
-        context: { invocationId: 'inv-background-final-lost', workspace: {
-          id: sandboxRef.workspaceId,
-          sessionId: sandboxRef.sessionId,
-          sandboxScopeId: sandboxRef.sandboxScopeId,
-        } },
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      child.stdout.end();
-      child.emit('close', 1, null);
-      await vi.advanceTimersByTimeAsync(0);
+    const resultPromise = executor.execute({
+      toolName: 'Shell',
+      input: { command: 'sleep 60', mode: 'background', taskId: 'shell-bg-final-lost' },
+      context: { invocationId: 'inv-background-final-lost', workspace: {
+        id: sandboxRef.workspaceId,
+        sessionId: sandboxRef.sessionId,
+        sandboxScopeId: sandboxRef.sandboxScopeId,
+      } },
+    });
+    await vi.waitFor(() => expect(setActiveInvocationLease).toHaveBeenCalledOnce());
+    child.stdout.end();
+    child.emit('close', 1, null);
 
-      await expect(resultPromise).resolves.toMatchObject({
-        status: 'error', error: expect.stringContaining('启动结果不确定'),
-      });
-      expect(executor.backgroundRecoveryCount()).toBe(1);
-      expect((setActiveInvocationLease.mock.calls as unknown[][])
-        .some((call) => call[2] === undefined)).toBe(false);
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'error', error: expect.stringContaining('启动结果不确定'),
+    });
+    expect(executor.backgroundRecoveryCount()).toBe(1);
+    expect((setActiveInvocationLease.mock.calls as unknown[][])
+      .some((call) => call[2] === undefined)).toBe(false);
+    expect(terminateBackgroundTasks).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(terminateBackgroundTasks).not.toHaveBeenCalled();
-      expect((setActiveInvocationLease.mock.calls as unknown[][])
-        .some((call) => call[2] === undefined)).toBe(false);
-
-      protectionAvailable = true;
-      await vi.advanceTimersByTimeAsync(30_000);
-      const aggregateDeadline = (setBackgroundShellProtection.mock.calls as unknown[][]).at(-1)?.[1];
-      expect(Date.parse(aggregateDeadline as string) - Date.now()).toBeGreaterThan(24 * 60 * 60_000);
-      expect(setBackgroundShellProtection).toHaveBeenLastCalledWith(
-        sandboxRef.name, aggregateDeadline, 'uid-1', undefined, expect.any(String),
-      );
-      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
-        sandboxRef.name, expect.any(String), undefined, 'uid-1',
-      );
-      expect(executor.backgroundRecoveryCount()).toBe(0);
-      expect(touch).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    protectionAvailable = true;
+    await vi.waitFor(() => expect((setActiveInvocationLease.mock.calls as unknown[][]).some((call) => (
+      call[0] === sandboxRef.name && call[2] === undefined && call[3] === 'uid-1'
+    ))).toBe(true));
+    const aggregateDeadline = (setBackgroundShellProtection.mock.calls as unknown[][]).at(-1)?.[1];
+    expect(Date.parse(aggregateDeadline as string) - Date.now()).toBeGreaterThan(24 * 60 * 60_000);
+    expect(setBackgroundShellProtection).toHaveBeenLastCalledWith(
+      sandboxRef.name, aggregateDeadline, 'uid-1', undefined, expect.any(String),
+    );
+    expect(executor.backgroundRecoveryCount()).toBe(0);
   });
 
-  it('strictly reconciles the workspace after a synthetic deadline expires', async () => {
+  it('reconciles without wildcard termination after an ownerless synthetic deadline expires', async () => {
     vi.useFakeTimers();
     try {
       const sandboxRef = ref('as-background-final-lost-expired');
@@ -582,18 +688,23 @@ describe('AcsExecutor background shell protection handoff', () => {
         throw new Error('aggregate protection unavailable');
       });
       const terminateBackgroundTasks = vi.fn(async () => undefined);
+      const reconcileBackgroundTasks = vi.fn(async () => ({ activeTaskIds: ['shell-bg-unowned'] }));
+      let originalGone = false;
       const sandboxManager = {
         ref: () => sandboxRef,
         ensureRunning: vi.fn(async () => sandboxRef),
         setActiveInvocationLease,
+        completeInvocation: vi.fn(async () => 'uid-1'),
         setBackgroundShellProtection,
-        getSandboxUid: vi.fn(async () => 'uid-1'),
-        touch: vi.fn(async () => undefined),
+        getSandboxUid: vi.fn(async () => originalGone ? null : 'uid-1'),
       } as unknown as SandboxManager;
       const executor = new AcsExecutor(
         baseConfig(), { spawn: vi.fn(() => child) } as unknown as Kubectl,
         sandboxManager, noopLogger, undefined,
-        { persistentRunner: false, terminateBackgroundTasks, backgroundRecoveryRetryMs: 30_000 },
+        {
+          persistentRunner: false, terminateBackgroundTasks, reconcileBackgroundTasks,
+          backgroundRecoveryRetryMs: 30_000,
+        },
       );
 
       const resultPromise = executor.execute({
@@ -609,21 +720,23 @@ describe('AcsExecutor background shell protection handoff', () => {
       await vi.advanceTimersByTimeAsync(0);
       await expect(resultPromise).resolves.toMatchObject({ status: 'error' });
       expect(executor.backgroundRecoveryCount()).toBe(1);
-      expect(terminateBackgroundTasks).not.toHaveBeenCalled();
 
       vi.setSystemTime(new Date(Date.now() + 49 * 60 * 60_000));
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, []);
-      expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
-        sandboxRef.name, expect.any(String), undefined, 'uid-1',
-      );
+      expect(reconcileBackgroundTasks).toHaveBeenCalledWith(sandboxRef);
+      expect(terminateBackgroundTasks).not.toHaveBeenCalled();
+      expect((setActiveInvocationLease.mock.calls as unknown[][])
+        .some((call) => call[2] === undefined)).toBe(false);
+
+      originalGone = true;
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(executor.backgroundRecoveryCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('keeps the short lease as the last fence when protection writes and fenced termination all fail', async () => {
+  it('keeps the short lease as the last fence when owned-task protection and fenced termination fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();
     const protectedUntil = '2099-07-20T00:10:00.000Z';
@@ -636,6 +749,7 @@ describe('AcsExecutor background shell protection handoff', () => {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-1'),
       setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
       getSandboxUid: vi.fn(async () => 'uid-1'),
       touch,

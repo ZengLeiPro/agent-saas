@@ -4,6 +4,7 @@ import {
   applyBackgroundShellProtection,
   applyInvocationLease,
   clearExpiredInvocationLeases,
+  completeInvocationLease,
   SandboxMutationPreconditionError,
 } from './sandboxLifecycleMutations.js';
 import {
@@ -36,6 +37,19 @@ export class SandboxInvocationMutationFacade {
     return await applyInvocationLease(
       config, kubectl, this.context.resourceName(name), invocationKey, leaseUntil,
       () => this.context.getStatus(name), expectedUid, activityGeneration,
+    );
+  }
+
+  async completeInvocation(
+    name: string,
+    invocationKey: string,
+    completedAt: Date,
+    expectedUid: string,
+  ): Promise<string> {
+    const { config, kubectl } = this.context;
+    return await completeInvocationLease(
+      config, kubectl, this.context.resourceName(name), invocationKey, completedAt,
+      () => this.context.getStatus(name), expectedUid,
     );
   }
 
@@ -77,11 +91,22 @@ export class SandboxInvocationMutationFacade {
     };
   }
 
-  /** Returns null only when the named resource no longer exists. */
+  /** Returns the UID even while deletion is in progress; use getMutableUid for recovery writes. */
   async getUid(name: string): Promise<string | null> {
     const status = await this.context.getStatus(name);
     if (!status) return null;
     const uid = stringValue((status.raw?.metadata as Record<string, unknown> | undefined)?.uid);
+    if (!uid) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID');
+    return uid;
+  }
+
+  /** Returns null when the resource is absent or already immutable because deletion has started. */
+  async getMutableUid(name: string): Promise<string | null> {
+    const status = await this.context.getStatus(name);
+    if (!status) return null;
+    const metadata = status.raw?.metadata as Record<string, unknown> | undefined;
+    if (stringValue(metadata?.deletionTimestamp)) return null;
+    const uid = stringValue(metadata?.uid);
     if (!uid) throw new SandboxMutationPreconditionError('Sandbox 缺少 UID');
     return uid;
   }

@@ -56,6 +56,7 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
         ref: () => ref,
         ensureRunning: vi.fn(async () => ref),
         setActiveInvocationLease,
+        completeInvocation: vi.fn(async () => 'uid-1'),
         touch: vi.fn(async () => undefined),
       } as unknown as SandboxManager;
       const executor = new AcsExecutor(
@@ -101,16 +102,22 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     const childB = fakeChild();
     const setLeaseA = vi.fn(async () => 'uid-lease');
     const setLeaseB = vi.fn(async () => 'uid-lease');
-    const manager = (setActiveInvocationLease: typeof setLeaseA) => ({
+    const completeA = vi.fn(async () => 'uid-lease');
+    const completeB = vi.fn(async () => 'uid-lease');
+    const manager = (
+      setActiveInvocationLease: typeof setLeaseA,
+      completeInvocation: typeof completeA,
+    ) => ({
       ref: () => ref,
       ensureRunning: vi.fn(async () => ref),
       setActiveInvocationLease,
+      completeInvocation,
       touch: vi.fn(async () => undefined),
     } as unknown as SandboxManager);
     const executorA = new AcsExecutor(baseConfig(), { spawn: vi.fn(() => childA) } as unknown as Kubectl,
-      manager(setLeaseA), noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false });
+      manager(setLeaseA, completeA), noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false });
     const executorB = new AcsExecutor(baseConfig(), { spawn: vi.fn(() => childB) } as unknown as Kubectl,
-      manager(setLeaseB), noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false });
+      manager(setLeaseB, completeB), noopLogger, new ActiveSandboxRegistry(), { persistentRunner: false });
 
     const requestForAttempt = (attemptId: string) => ({
       ...request,
@@ -136,13 +143,17 @@ describe('AcsExecutor persisted invocation lease fail-closed and ownership', () 
     childA.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'a' } })}\n`);
     childA.emit('close', 0, null);
     await expect(first).resolves.toMatchObject({ status: 'success' });
-    expect(setLeaseA).toHaveBeenLastCalledWith(ref.name, leaseA, undefined, 'uid-lease');
+    expect(setLeaseA).toHaveBeenCalledTimes(2);
+    expect(setLeaseA).toHaveBeenLastCalledWith(ref.name, leaseA, expect.any(String), 'uid-lease');
+    expect(completeA).toHaveBeenCalledWith(ref.name, leaseA, expect.any(Date), 'uid-lease');
     expect(setLeaseB).toHaveBeenCalledOnce();
 
     childB.stdout.end(`${JSON.stringify({ kind: 'final', response: { status: 'success', content: 'b' } })}\n`);
     childB.emit('close', 0, null);
     await expect(second).resolves.toMatchObject({ status: 'success' });
-    expect(setLeaseB).toHaveBeenLastCalledWith(ref.name, leaseB, undefined, 'uid-lease');
+    expect(setLeaseB).toHaveBeenCalledTimes(2);
+    expect(setLeaseB).toHaveBeenLastCalledWith(ref.name, leaseB, expect.any(String), 'uid-lease');
+    expect(completeB).toHaveBeenCalledWith(ref.name, leaseB, expect.any(Date), 'uid-lease');
   });
 });
 

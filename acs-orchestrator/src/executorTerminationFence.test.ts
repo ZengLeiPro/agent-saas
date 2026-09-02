@@ -75,6 +75,7 @@ describe('AcsExecutor background termination fence', () => {
         ref: () => sandboxRef,
         ensureRunning: vi.fn(async () => sandboxRef),
         setActiveInvocationLease,
+        completeInvocation: vi.fn(async () => 'uid-old'),
         setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
         getSandboxUid,
         touch: vi.fn(async () => undefined),
@@ -86,7 +87,9 @@ describe('AcsExecutor background termination fence', () => {
       );
 
       const resultPromise = executor.execute({
-        toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+        toolName: 'Shell', input: {
+          command: 'sleep 60', mode: 'background', taskId: 'shell-bg-fence-renew-failed',
+        },
         context: { invocationId: 'inv-fence-renew-failed', workspace: {
           id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
           sandboxScopeId: sandboxRef.sandboxScopeId,
@@ -141,6 +144,7 @@ describe('AcsExecutor background termination fence', () => {
         ref: () => sandboxRef,
         ensureRunning: vi.fn(async () => sandboxRef),
         setActiveInvocationLease,
+        completeInvocation: vi.fn(async () => 'uid-old'),
         setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
         getSandboxUid: vi.fn(async () => originalGone ? 'uid-new' : 'uid-old'),
         touch: vi.fn(async () => undefined),
@@ -152,7 +156,9 @@ describe('AcsExecutor background termination fence', () => {
       );
 
       const resultPromise = executor.execute({
-        toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+        toolName: 'Shell', input: {
+          command: 'sleep 60', mode: 'background', taskId: 'shell-bg-fence-returned-late',
+        },
         context: { invocationId: 'inv-fence-returned-late', workspace: {
           id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
           sandboxScopeId: sandboxRef.sandboxScopeId,
@@ -199,6 +205,7 @@ describe('AcsExecutor background termination fence', () => {
       ref: () => sandboxRef,
       ensureRunning: vi.fn(async () => sandboxRef),
       setActiveInvocationLease,
+      completeInvocation: vi.fn(async () => 'uid-old'),
       setBackgroundShellProtection: vi.fn(async () => { throw new Error('protection CAS exhausted'); }),
       getSandboxUid,
       touch: vi.fn(async () => undefined),
@@ -210,7 +217,9 @@ describe('AcsExecutor background termination fence', () => {
     );
 
     const resultPromise = executor.execute({
-      toolName: 'Shell', input: { command: 'sleep 60', mode: 'background' },
+      toolName: 'Shell', input: {
+        command: 'sleep 60', mode: 'background', taskId: 'shell-bg-recreated-after-check',
+      },
       context: { invocationId: 'inv-recreated-after-check', workspace: {
         id: sandboxRef.workspaceId, sessionId: sandboxRef.sessionId,
         sandboxScopeId: sandboxRef.sandboxScopeId,

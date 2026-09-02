@@ -55,6 +55,7 @@ async function startServer(
     sandboxSessionDeletionIntent?: (sessionId: string) => Promise<'not_required' | 'blocked' | 'queued'>;
     sandboxSessionDeletion?: ((sessionId: string) => Promise<'not_required' | 'blocked' | 'deleted' | 'queued'>) | null;
     sandboxSessionRestore?: (sessionId: string) => Promise<void>;
+    broadcastToUser?: (userId: string, event: object) => void;
     sessionProjectionStore?: {
       get?(sessionId: string, options?: { tenantId?: string; includeDeleted?: boolean }): Promise<{
         sessionId: string;
@@ -87,6 +88,7 @@ async function startServer(
     ...(opts.sandboxSessionDeletionIntent ? { sandboxSessionDeletionIntent: opts.sandboxSessionDeletionIntent } : {}),
     ...(sandboxSessionDeletion ? { sandboxSessionDeletion } : {}),
     ...(opts.sandboxSessionRestore ? { sandboxSessionRestore: opts.sandboxSessionRestore } : {}),
+    ...(opts.broadcastToUser ? { broadcastToUser: opts.broadcastToUser } : {}),
   }));
 
   return new Promise((resolve) => {
@@ -426,6 +428,34 @@ describe('sessions routes lifecycle coverage', () => {
     expect(retried.status).toBe(200);
     expect((await retried.json() as { softDeleted: boolean }).softDeleted).toBe(true);
     expect(resumedCleanup).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('同进程 cleanup 重试成功后清理列表并补偿删除事件', async () => {
+    const { sessionId } = await writeSession(OWNER);
+    const sandboxSessionDeletion = vi.fn()
+      .mockRejectedValueOnce(new Error('injected cleanup failure'))
+      .mockResolvedValue('queued');
+    const broadcastToUser = vi.fn();
+    const { server, baseUrl } = await startServer(agentCwd, OWNER, {
+      sandboxSessionDeletionIntent: async () => 'queued',
+      sandboxSessionDeletion,
+      broadcastToUser,
+    });
+    servers.push(server);
+
+    const warm = await fetch(`${baseUrl}/api/sessions`);
+    expect(warm.status).toBe(200);
+    expect((await warm.json() as { sessions: Array<{ sessionId: string }> }).sessions)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ sessionId })]));
+
+    const failed = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(failed.status).toBe(500);
+    const retried = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
+    expect(retried.status).toBe(200);
+    const refreshed = await fetch(`${baseUrl}/api/sessions`);
+    expect((await refreshed.json() as { sessions: Array<{ sessionId: string }> }).sessions)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ sessionId })]));
+    expect(broadcastToUser).toHaveBeenCalledWith(OWNER.id, { type: 'session_deleted', sessionId });
   });
 
   it('POST /sessions/:id/restore：未删除 400、非 owner 403、取消 pending Sandbox 清理后恢复', async () => {

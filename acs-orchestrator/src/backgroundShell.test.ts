@@ -116,7 +116,7 @@ describe('background shell runtime', () => {
     expect((await reconcileBackgroundShells(root)).activeTaskIds).toEqual([]);
   });
 
-  it('terminates the aggregate active task set when lifecycle protection fails closed', async () => {
+  it('terminates only requested tasks and leaves unrelated workspace tasks running', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-fail-closed-'));
     const taskIds = [
       `shell-bg-test-${randomUUID()}`,
@@ -133,15 +133,17 @@ describe('background shell runtime', () => {
       await waitForStatus(root, taskId, 'running');
     }
 
-    await expect(terminateBackgroundShellsFailClosed(root, [taskIds[0]!])).resolves.toEqual({
-      activeTaskIds: [],
+    await expect(terminateBackgroundShellsFailClosed(root, [taskIds[0]!])).resolves.toMatchObject({
+      activeTaskIds: [taskIds[1]],
     });
-    for (const taskId of taskIds) {
-      expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId })).status).toBe('cancelled');
-    }
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: taskIds[0]! })).status)
+      .toBe('cancelled');
+    expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: taskIds[1]! })).status)
+      .toBe('running');
+    await killBackgroundShell(root, taskIds[1]!);
   }, 15_000);
 
-  it('fails closed when an unrequested task has unreadable state', async () => {
+  it('ignores unreadable unrequested tasks while terminating the owned task', async () => {
     const root = await mkdtemp(join(tmpdir(), 'acs-background-shell-corrupt-state-'));
     const runningTaskId = `shell-bg-test-${randomUUID()}`;
     const corruptTaskId = `shell-bg-test-${randomUUID()}`;
@@ -158,10 +160,9 @@ describe('background shell runtime', () => {
     await writeFile(join(corruptDir, 'state.json'), '{half-written');
 
     await expect(terminateBackgroundShellsFailClosed(root, [runningTaskId]))
-      .rejects.toThrow(`background shell task state is unreadable: ${corruptTaskId}`);
+      .resolves.toEqual({ activeTaskIds: [] });
     expect((await getBackgroundShellOutput({ workspaceRoot: root, taskId: runningTaskId })).status)
-      .toBe('running');
-    await killBackgroundShell(root, runningTaskId);
+      .toBe('cancelled');
   }, 15_000);
 
   it('records timeout as timed_out instead of cancellation', async () => {

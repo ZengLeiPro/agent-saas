@@ -9,7 +9,7 @@ import { SandboxManager, brokenSandboxStateReason } from './sandboxManager.js';
 import { baseConfig, noopLogger } from './sandboxManagerTestFixtures.js';
 import { isRawSandboxDelete, mockCurrentSandboxStatusReads } from './sandboxManagerLifecycleTestFixtures.js';
 
-describe('SandboxManager egress injection', () => {
+describe('SandboxManager egress and runtime injection', () => {
   async function applyWithEgress(egress: AcsOrchestratorConfig['egress']) {
     const applies: Array<Record<string, unknown>> = [];
     let created = false;
@@ -20,7 +20,7 @@ describe('SandboxManager egress injection', () => {
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         if ((args[0] === 'apply' || args[0] === 'create')) {
@@ -122,7 +122,7 @@ describe('SandboxManager', () => {
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') {
           return { stdout: '', stderr: '', exitCode: 0, signal: null };
@@ -217,7 +217,7 @@ describe('SandboxManager', () => {
         }
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'patch') return { stdout: '', stderr: '', exitCode: 0, signal: null };
         if ((args[0] === 'apply' || args[0] === 'create')) {
@@ -294,7 +294,7 @@ describe('SandboxManager', () => {
               signal: null,
             };
           }
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'delete') {
           deleted.push(args[1] ?? '');
@@ -672,7 +672,7 @@ describe('SandboxManager', () => {
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (args[1] === 'sandbox/as-idle') return idleDeleted ? { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null } : { stdout: JSON.stringify(idleSandbox), stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return { stdout: JSON.stringify({ status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
+          return { stdout: JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }), stderr: '', exitCode: 0, signal: null };
         }
         if (args[0] === 'delete') { if (isRawSandboxDelete(args, 'as-idle')) idleDeleted = true;
           return { stdout: '', stderr: '', exitCode: 0, signal: null }; }
@@ -1067,7 +1067,7 @@ describe('SandboxManager', () => {
           return {
             stdout: JSON.stringify({
               metadata: {
-                name: args[1].slice('sandbox/'.length),
+                name: args[1].slice('sandbox/'.length), uid: 'uid-resume-by-name', resourceVersion: '1',
                 annotations: {
                   'agent-saas.kaiyan.net/workspace-id': 'ws_kaiyan__u-1',
                   'agent-saas.kaiyan.net/session-id': 'session-1',
@@ -1558,13 +1558,12 @@ describe('resume 快路径与 Failed fail-fast', () => {
   it('Paused+recreating 走 resume_paused：patch unpause，不删除不重建', async () => {
     const config = { ...baseConfig(), sandboxWaitTimeoutMs: 5_000, maxRunningSandboxes: 0 };
     const input = { workspaceId: 'ws-resume2', sessionId: 's-1' };
-    let phase = 'Paused';
-    let specPaused = true;
-    let deletes = 0;
-    let sandboxApplies = 0;
+    let phase = 'Paused'; let specPaused = true;
+    let deletes = 0; let sandboxApplies = 0;
     let unpausePatches = 0;
     const sandboxJson = () => JSON.stringify({
-      metadata: { annotations: { 'agent-saas.kaiyan.net/mount-subpath': input.workspaceId } },
+      metadata: { uid: 'uid-resume-fast-path', resourceVersion: '1',
+        annotations: { 'agent-saas.kaiyan.net/mount-subpath': input.workspaceId } },
       spec: {
         paused: specPaused,
         template: { spec: { containers: [{ name: config.sandboxContainerName, image: config.sandboxImage }] } },
@@ -1640,7 +1639,7 @@ describe('ImageCache 注解（2026-07-31 方案3-P0）', () => {
         if (args[0] === 'get' && args.includes('-l')) return ok(JSON.stringify({ items: [] }));
         if (args[0] === 'get') { if (args.includes('--ignore-not-found=true')) return { stdout: '', stderr: '', exitCode: 0, signal: null };
           if (!created) return { stdout: '', stderr: 'NotFound', exitCode: 1, signal: null };
-          return ok(JSON.stringify({ status: { phase: 'Running' } }));
+          return ok(JSON.stringify({ metadata: { uid: 'uid-test', resourceVersion: '1', annotations: {} }, status: { phase: 'Running' } }));
         }
         if ((args[0] === 'apply' || args[0] === 'create')) {
           const manifest = JSON.parse(options.input ?? '{}') as {

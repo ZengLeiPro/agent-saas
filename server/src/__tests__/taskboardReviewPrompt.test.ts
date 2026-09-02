@@ -5,7 +5,7 @@ import { executionWritebackInstructions } from '../taskboard/executionService.js
 
 function context(purpose: 'work' | 'review' | 'merge'): TaskboardExecutionContext {
   return {
-    task: { id: 'task-1', boardId: 'board-1' },
+    task: { id: 'task-1', boardId: 'board-1', kind: 'delivery' },
     execution: { purpose },
   } as TaskboardExecutionContext;
 }
@@ -33,6 +33,26 @@ describe('taskboard execution writeback prompt', () => {
     expect(merge).not.toContain('integration.source.');
   });
 
+  it('按 Advisory 与 Remediation 的真实合同生成动态职责', () => {
+    const advisory = context('work');
+    advisory.task.kind = 'advisory';
+    const advisoryPrompt = executionWritebackInstructions(advisory).join('\n');
+    expect(advisoryPrompt).toContain('Advisory 只完成答复、分析或建议');
+    expect(advisoryPrompt).not.toContain('execution.pull_request.inspect');
+    expect(advisoryPrompt).not.toContain('in_review');
+
+    const remediationWork = context('work');
+    remediationWork.task.kind = 'remediation';
+    expect(executionWritebackInstructions(remediationWork).join('\n'))
+      .toContain('必须复用关联 Delivery 的原分支、worktree 和 PR');
+
+    const remediationReview = context('review');
+    remediationReview.task.kind = 'remediation';
+    const reviewPrompt = executionWritebackInstructions(remediationReview).join('\n');
+    expect(reviewPrompt).toContain('Remediation 批准时提交 done');
+    expect(reviewPrompt).not.toContain('Delivery 批准时提交 ready_to_merge');
+  });
+
   it('Integration 只提示一个持久 Agent 自主完成合并与安全清理', () => {
     const integrationWork = context('work');
     integrationWork.task.kind = 'integration';
@@ -43,7 +63,8 @@ describe('taskboard execution writeback prompt', () => {
     expect(prompt).toContain('唯一的持久 Agent');
     expect(prompt).toContain('标准 Git 与 GitHub merge 能力');
     expect(prompt).toContain('重读 GitHub 与本地 Git 实际状态');
-    expect(prompt).toContain('本批次拥有且无未合并提交的资源');
+    expect(prompt).toContain('integrationPolicy 允许删除的资源');
+    expect(prompt).toContain('deleteRemoteBranch=false 时保留远程分支');
     expect(prompt).toContain('以 done 收口');
     expect(prompt).not.toContain('integration.agent.merge');
     expect(prompt).not.toContain('integration.agent.cleanup');

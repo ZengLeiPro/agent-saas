@@ -1,12 +1,10 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { CircleAlert, Download, FileQuestion, Loader2 } from "lucide-react";
 
+import { CjkMarkdown } from "@/components/CjkMarkdown";
 import { Button } from "@/components/ui/button";
 import { resolveArtifactContentUrl } from "@/lib/artifactShareApi";
 import { injectSandboxCsp } from "@/lib/htmlSandbox";
-
-const ReactMarkdown = lazy(() => import("react-markdown"));
-const remarkGfm = () => import("remark-gfm").then((module) => module.default);
 
 export const ARTIFACT_TEXT_MAX_BYTES = 2 * 1024 * 1024;
 export const ARTIFACT_HTML_MAX_BYTES = 50 * 1024 * 1024;
@@ -103,14 +101,6 @@ function DownloadFallback({ contentUrl, fileName, allowDownload }: Pick<Artifact
 export function ArtifactContentViewer({ contentUrl, fileName, mimeType, allowDownload = true, className }: ArtifactContentViewerProps) {
   const kind = useMemo(() => selectArtifactPreviewKind(fileName, mimeType), [fileName, mimeType]);
   const [state, setState] = useState<ViewerState>({ status: "loading" });
-  const [markdownPlugins, setMarkdownPlugins] = useState<Awaited<ReturnType<typeof remarkGfm>>[] | null>(null);
-
-  useEffect(() => {
-    if (kind !== "markdown") return;
-    let cancelled = false;
-    void remarkGfm().then((plugin) => { if (!cancelled) setMarkdownPlugins([plugin]); });
-    return () => { cancelled = true; };
-  }, [kind]);
 
   useEffect(() => {
     if (kind === "download") {
@@ -180,10 +170,8 @@ export function ArtifactContentViewer({ contentUrl, fileName, mimeType, allowDow
     return (
       <div className={`h-full overflow-auto bg-card px-5 py-6 sm:px-8 ${className || ""}`}>
         <Suspense fallback={<Loader2 className="mx-auto size-6 animate-spin text-muted-foreground" />}>
-          {markdownPlugins ? (
-            <div className="prose-chat mx-auto max-w-[76ch] text-sm">
-              <ReactMarkdown
-                remarkPlugins={markdownPlugins}
+          <div className="prose-chat mx-auto max-w-[76ch] text-sm">
+              <CjkMarkdown
                 components={{
                   img: ({ src, alt }) => {
                     const embedded = typeof src === "string" && (src.startsWith("data:image/") || src.startsWith("blob:"));
@@ -198,9 +186,8 @@ export function ArtifactContentViewer({ contentUrl, fileName, mimeType, allowDow
                 }}
               >
                 {state.text}
-              </ReactMarkdown>
+              </CjkMarkdown>
             </div>
-          ) : <Loader2 className="mx-auto size-6 animate-spin text-muted-foreground" />}
         </Suspense>
       </div>
     );

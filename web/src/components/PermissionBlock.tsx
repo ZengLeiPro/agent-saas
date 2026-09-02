@@ -3,22 +3,13 @@ import { Shield, Check, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { markdownRuntimePromise } from "@/lib/markdownRuntime";
 import { extractTextFromChildren, getCellMinWidthPx } from "@/lib/tableCellWidth";
 import { truncateContent } from "./types";
-
-const markdownPromise = import("react-markdown");
-const remarkGfmPromise = import("remark-gfm");
-const remarkMathPromise = import("remark-math");
-const rehypeKatexPromise = import("rehype-katex");
 import "katex/dist/katex.min.css";
 
 const LazyMarkdown = lazy(async () => {
-  const [{ default: Markdown }, { default: remarkGfm }, { default: remarkMath }, { default: rehypeKatex }] = await Promise.all([
-    markdownPromise,
-    remarkGfmPromise,
-    remarkMathPromise,
-    rehypeKatexPromise,
-  ]);
+  const { Markdown, remarkPlugins, rehypePlugins } = await markdownRuntimePromise;
   const mdComponents: import("react-markdown").Components = {
     a: ({ children, href, ...props }) => (
       <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
@@ -37,7 +28,7 @@ const LazyMarkdown = lazy(async () => {
   };
   return {
     default: ({ content }: { content: string }) => (
-      <Markdown remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]} rehypePlugins={[rehypeKatex]} components={mdComponents}>
+      <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
         {content}
       </Markdown>
     ),

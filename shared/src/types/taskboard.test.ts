@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TaskBoardIntegrationPolicy } from './taskboard.js';
+import {
+  TASKBOARD_DEFAULT_MERGE_PROMPT,
+  TASKBOARD_DEFAULT_PROMPT,
+  TASKBOARD_DEFAULT_REVIEW_PROMPT,
+  TASKBOARD_DEFAULT_WORK_PROMPT,
+  TASKBOARD_STAGE_DEFAULT_PROMPTS,
+  type TaskBoardIntegrationPolicy,
+} from './taskboard.js';
 
 const policy: TaskBoardIntegrationPolicy = {
   schemaVersion: 1,
@@ -31,6 +38,29 @@ const flaggedPolicy: TaskBoardIntegrationPolicy = {
 
 void legacyPolicy;
 void flaggedPolicy;
+
+describe('taskboard default prompts', () => {
+  it('uses distinct, repository-agnostic prompts with a publishable Integration gate', () => {
+    expect(new Set(Object.values(TASKBOARD_STAGE_DEFAULT_PROMPTS))).toHaveProperty('size', 3);
+    expect(TASKBOARD_STAGE_DEFAULT_PROMPTS).toEqual({
+      work: TASKBOARD_DEFAULT_WORK_PROMPT,
+      review: TASKBOARD_DEFAULT_REVIEW_PROMPT,
+      merge: TASKBOARD_DEFAULT_MERGE_PROMPT,
+    });
+    for (const prompt of [TASKBOARD_DEFAULT_PROMPT, ...Object.values(TASKBOARD_STAGE_DEFAULT_PROMPTS)]) {
+      expect(prompt).not.toContain('code/agent-saas');
+      expect(prompt).not.toContain('目标分支为 main');
+      expect(prompt).not.toContain('execution.integration_candidate.push');
+      expect(prompt).not.toContain('execution.review_subject.record');
+    }
+    expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('### Advisory Work');
+    expect(TASKBOARD_DEFAULT_WORK_PROMPT).toContain('### Remediation Work');
+    expect(TASKBOARD_DEFAULT_REVIEW_PROMPT).toContain('Remediation 通过时 finish(done)');
+    expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('deleteRemoteBranch=false');
+    expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('上游失败造成的 skipped/canceled 不算成功');
+    expect(TASKBOARD_DEFAULT_MERGE_PROMPT).toContain('合并后适用 CI/CD 均成功');
+  });
+});
 
 describe('TaskBoardIntegrationPolicy writable contract', () => {
   it('contains only the Agent-first workflow version and no feature flags', () => {

@@ -141,8 +141,11 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       workspaceId: 'workspace-legacy', sandboxScopeId: 'legacy-cleanup-carrier-scope', metadata: {},
     });
     await runStore.markStatus('legacy-cleanup-carrier', 'cancelled', 'legacy cleanup');
-    await pool.query(`UPDATE ${prefix}_runs SET tenant_id=NULL, metadata=jsonb_set(metadata,
-      '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, ['legacy-cleanup-carrier', JSON.stringify({
+    // 旧部署曾允许 NULL tenant_id；临时放宽约束以构造真实 legacy carrier，测试后恢复当前 schema。
+    await pool.query(`ALTER TABLE ${prefix}_runs ALTER COLUMN tenant_id DROP NOT NULL`);
+    try {
+      await pool.query(`UPDATE ${prefix}_runs SET tenant_id=NULL, metadata=jsonb_set(metadata,
+        '{sandboxCleanupOutbox}', $2::jsonb) WHERE run_id=$1`, ['legacy-cleanup-carrier', JSON.stringify({
       state: 'delivered', workspaceId: 'workspace-legacy', sessionId, sandboxScopeId,
       targetHandId: 'agent-saas-acs', deletionGeneration: 'generation-legacy',
     })]);
@@ -161,10 +164,14 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
       }),
     ]);
     await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toBe(true);
-    await expect(runStore.upsertPending({
-      runId: 'legacy-restored-run', sessionId, tenantId: 'tenant-2',
-      workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
-    })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-restored-run' }));
+      await expect(runStore.upsertPending({
+        runId: 'legacy-restored-run', sessionId, tenantId: 'tenant-2',
+        workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},
+      })).resolves.toEqual(expect.objectContaining({ runId: 'legacy-restored-run' }));
+    } finally {
+      await pool.query(`UPDATE ${prefix}_runs SET tenant_id='pantheon' WHERE tenant_id IS NULL`);
+      await pool.query(`ALTER TABLE ${prefix}_runs ALTER COLUMN tenant_id SET NOT NULL`);
+    }
   });
 
   it('prepared cleanup fences late admission and guarded cancellation avoids carrier Run self-lock', async () => {

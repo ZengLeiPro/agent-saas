@@ -8,7 +8,6 @@ import {
   Save,
   Settings2,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +48,10 @@ import { fetchAgentProfile, saveUserPreferences, updateAgentProfile, uploadAgent
 import type { AgentProfileDetail, ModelList, SidebarLayoutPref } from "@agent/shared";
 import type { CanonicalSettingsSectionId, SettingsSectionId } from "@/types/settings";
 import { SETTINGS_GROUP_LABELS, SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
+import {
+  ManagementSettingsGroups,
+  type ManagementSettingsGroup,
+} from "@/components/SettingsCenter/ManagementSettingsGroups";
 
 export { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
 const SETTINGS_NAV_ITEM_SELECTED =
@@ -705,11 +708,7 @@ export interface SettingsModalProps {
   personalAgentEnabled?: boolean;
   onNavigationControllerChange?: (controller: SettingsDirtyController | null) => void;
   /** 移动端统一设置菜单中的组织/平台管理入口；桌面统一侧栏不传。 */
-  managementGroups?: readonly {
-    id: string;
-    label: string;
-    items: readonly { id: string; label: string; icon: LucideIcon; onSelect: () => void }[];
-  }[];
+  managementGroups?: readonly ManagementSettingsGroup[];
 }
 
 export function SettingsModalInner({
@@ -753,9 +752,6 @@ export function SettingsModalInner({
   const handleClose = useCallback(() => {
     dirtyController.requestNavigation(onClose);
   }, [dirtyController, onClose]);
-  const handleManagementNavigation = useCallback((navigation: () => void) => {
-    dirtyController.requestNavigation(navigation);
-  }, [dirtyController]);
 
   // 移动端（<md）两级导航：菜单页 ⇄ 内容页。桌面不受影响（max-md 类不生效）。
   const [mobileView, setMobileView] = useState<"menu" | "content">("menu");
@@ -946,30 +942,10 @@ export function SettingsModalInner({
                 </div>
               </div>
             ))}
-            {managementGroups.map((group) => (
-              <div key={group.id} className="mb-4">
-                <div className="mb-1 px-2 text-xs font-medium text-muted-foreground">{group.label}</div>
-                <div className="space-y-1">
-                  {group.items.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
-                          SETTINGS_NAV_ITEM_UNSELECTED,
-                        )}
-                        onClick={() => handleManagementNavigation(item.onSelect)}
-                      >
-                        <Icon className="size-4 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+            <ManagementSettingsGroups
+              groups={managementGroups}
+              onSelect={(navigation) => dirtyController.requestNavigation(navigation)}
+            />
           </div>
           <div className="border-t pt-3">
             <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground">

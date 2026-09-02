@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { authFetch } from "@/lib/authFetch";
 import { ContextPolicyDialog } from './ContextPolicyDialog';
+import { DelegationAccessPanel } from './DelegationAccessPanel';
 
 interface AgentDwsAccountsPageProps {
   tenantId: string;
@@ -695,6 +696,8 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
           )}
         </CardContent>
       </Card>
+
+      <DelegationAccessPanel tenantId={tenantId} accounts={accounts} />
 
       <ContextPolicyDialog
         account={contextPolicyAccount}

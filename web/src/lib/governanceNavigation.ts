@@ -410,7 +410,7 @@ function parseLegacy(pathname: string, parts: readonly string[], params: URLSear
   const tenant = TENANT_LEGACY[pathname];
   if (tenant) return legacyResult(tenant, params);
   if (parts[0] === "tenant-admin" && parts[1] === "settings" && parts.length <= 3) {
-    const legacySection = parts[2] ?? "users";
+    const legacySection = parts[2] ?? "";
     if (legacySection === "billing" && !params.has("usageSection")) params.set("usageSection", "billing");
     return legacyResult(TENANT_SETTINGS_LEGACY[legacySection] ?? "organization.members.list", params);
   }

@@ -7,7 +7,7 @@ import { DEFAULT_TENANT_SETTINGS } from "@/components/TenantManager/types";
 import { OrganizationCredentialsPage, OrganizationEnvironmentsPage, OrganizationGroupsPage, OrganizationMemoryKnowledgePage, OrganizationMembersPage, OrganizationOffboardingPage, OrganizationPoliciesPage } from "./OrganizationGovernancePage";
 
 const mocks = vi.hoisted(() => ({
-  getSnapshot: vi.fn(), listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
+  getSnapshot: vi.fn(), listMemberships: vi.fn(), createMembership: vi.fn(), getMembershipDetails: vi.fn(), listDirectoryGroups: vi.fn(), getAssignment: vi.fn(), listCredentials: vi.fn(), listConnectors: vi.fn(), listEntitlementResourceCatalog: vi.fn(), getEntitlements: vi.fn(), getTenantSettings: vi.fn(), updateTenantSettings: vi.fn(), listMemoryKnowledge: vi.fn(), listEnvironmentTemplates: vi.fn(),
   previewMembership: vi.fn(), updateMembership: vi.fn(), previewUserOffboarding: vi.fn(), startUserOffboarding: vi.fn(), previewPolicy: vi.fn(), updatePolicy: vi.fn(), previewMemoryResource: vi.fn(), updateMemoryResource: vi.fn(), previewAssignment: vi.fn(), updateAssignment: vi.fn(), previewAssignmentBatch: vi.fn(), updateAssignmentBatch: vi.fn(),
   previewEntitlementScope: vi.fn(), updateEntitlementScope: vi.fn(), previewCredentialCreate: vi.fn(), createCredential: vi.fn(), previewCredentialRotation: vi.fn(), rotateCredential: vi.fn(), previewCredentialTransfer: vi.fn(), transferCredential: vi.fn(), testCredentialHealth: vi.fn(),
 }));
@@ -54,6 +54,7 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
     createMembership: mocks.createMembership,
     getMembershipDetails: mocks.getMembershipDetails,
     listDirectoryGroups: mocks.listDirectoryGroups,
+    getAssignment: mocks.getAssignment,
     previewMembership: mocks.previewMembership,
     updateMembership: mocks.updateMembership,
     getEntitlements: mocks.getEntitlements,
@@ -74,6 +75,7 @@ vi.mock("@agent/shared/lib/governanceApi", () => ({
   governanceResourcesApi: {
     listCredentials: mocks.listCredentials,
     listConnectors: mocks.listConnectors,
+    listEntitlementResourceCatalog: mocks.listEntitlementResourceCatalog,
     listEnvironmentTemplates: mocks.listEnvironmentTemplates,
     previewCredentialCreate: mocks.previewCredentialCreate,
     createCredential: mocks.createCredential,
@@ -93,6 +95,11 @@ describe("OrganizationGovernancePage", () => {
     window.history.replaceState({}, "", "/");
     authState.isAdmin = true;
     authState.username = "org-admin";
+    mocks.listMemberships.mockResolvedValue({ memberships: [] });
+    mocks.listDirectoryGroups.mockResolvedValue({ groups: [] });
+    mocks.getAssignment.mockResolvedValue({ version: 0, assignments: [] });
+    mocks.listEntitlementResourceCatalog.mockResolvedValue({ resourceType: "connector", items: [] });
+    mocks.getEntitlements.mockResolvedValue({ entitlement: null, scopes: [], policies: [] });
     authFetchMock.mockResolvedValue(new Response(JSON.stringify([]), { status: 200,
       headers: { "Content-Type": "application/json" } }));
     mocks.listConnectors.mockResolvedValue({ connectors: [] });

@@ -14,6 +14,10 @@ import {
   OrganizationPoliciesPage,
 } from '@/components/OrganizationGovernance/OrganizationGovernancePage';
 import { OrganizationUsageBillingPage } from '@/components/OrganizationGovernance/OrganizationUsageBillingPage';
+import {
+  OrganizationCatalogAccessPanel,
+  OrganizationEntitlementScopeEditor,
+} from '@/components/OrganizationGovernance/ResourceAccessEditors';
 import type { SettingsDirtyController } from '@/components/PersonalSettings/dirtyRegistry';
 import { QaConsole } from '@/components/QaConsole';
 import { GovernanceChangeAuditPage } from '@/components/Governance/GovernanceChangeAuditPage';
@@ -77,16 +81,24 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.members.offboarding': ({ tenantId }) => (
     <OrganizationOffboardingPage tenantId={tenantId} />
   ),
-  'organization.agents.org-agents': ({ tenantId, tenantName, renderOrgAgents }) =>
-    renderOrgAgents?.(tenantId, tenantName) ?? <GovernanceCapabilityNotice title="组织智能体" />,
+  'organization.agents.org-agents': ({ tenantId, tenantName, renderOrgAgents }) => (
+    <div className="space-y-4">
+      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="agent_template" title="智能体模板可用范围" description="控制平台智能体模板是否可被本组织创建和使用。" />
+      {renderOrgAgents?.(tenantId, tenantName) ?? <GovernanceCapabilityNotice title="组织智能体" />}
+    </div>
+  ),
   'organization.agents.workflows': ({ tenantId }) => (
     <WorkflowDisplaySettingsPage tenantId={tenantId} />
   ),
   'organization.agents.dingtalk-accounts': ({ tenantId }) => (
     <AgentDwsAccountsPage tenantId={tenantId} />
   ),
-  'organization.agents.skills': ({ tenantId, tenantName, renderSkills }) =>
-    renderSkills(tenantId, tenantName),
+  'organization.agents.skills': ({ tenantId, tenantName, renderSkills }) => (
+    <div className="space-y-4">
+      <OrganizationCatalogAccessPanel tenantId={tenantId} resourceType="skill" scopeTitle="平台技能可用范围" assignmentTitle="技能成员与群组授权" />
+      {renderSkills(tenantId, tenantName)}
+    </div>
+  ),
   'organization.agents.connectors': ({ tenantId }) => (
     <OrganizationCredentialsPage tenantId={tenantId} />
   ),
@@ -99,7 +111,10 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   ),
   'organization.agents.files-data': ({ renderFiles }) => renderFiles(),
   'organization.agents.model-tools': ({ tenantId }) => (
-    <TenantSettingsPanel tenantId={tenantId} section="model-tools" />
+    <div className="space-y-4">
+      <OrganizationEntitlementScopeEditor tenantId={tenantId} resourceType="model" title="模型可用范围" description="模型白名单由 Entitlement 权威源维护；组织设置仅保留默认模型和展示策略。" />
+      <TenantSettingsPanel tenantId={tenantId} section="model-tools" />
+    </div>
   ),
   'organization.agents.environments': ({ tenantId }) => (
     <OrganizationEnvironmentsPage tenantId={tenantId} />

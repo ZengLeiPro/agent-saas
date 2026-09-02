@@ -96,6 +96,15 @@ function mockBillingApi() {
         replayed: false,
       }), { status: 200 });
     }
+    if (url.includes("/api/admin/billing/member-budget-audit")) {
+      return new Response(JSON.stringify({ entries: [{
+        id: "budget-audit-1", userId: "user-1", beforeLimitCredits: 1500, afterLimitCredits: 2000,
+        beforePerRunLimitCredits: null, afterPerRunLimitCredits: 500,
+        beforeEnforcementMode: "notify", afterEnforcementMode: "stop_new_runs",
+        beforeActive: true, afterActive: true, note: "提高销售预算", actorUsername: "org-admin",
+        createdAt: "2026-08-01T02:00:00.000Z",
+      }] }), { status: 200 });
+    }
     if (url.includes("/api/admin/billing/member-budgets")) {
       return new Response(JSON.stringify(budgets), { status: 200 });
     }
@@ -114,9 +123,11 @@ describe("TenantBillingPanel 员工预算", () => {
 
     expect(await screen.findByText("员工预算")).toBeTruthy();
     expect(screen.getByText(/员工可设软预算/)).toBeTruthy();
-    expect(screen.getByText("爱丽丝")).toBeTruthy();
+    expect(screen.getAllByText("爱丽丝")).toHaveLength(2);
     expect(screen.getByText("未归属用量")).toBeTruthy();
     expect(screen.getByText("20")).toBeTruthy();
+    expect(await screen.findByText("员工预算变更历史")).toBeTruthy();
+    expect(screen.getByText("提高销售预算")).toBeTruthy();
     expect(screen.queryByText("本月应收")).toBeNull();
     expect(screen.queryByText("按积分折算的客户侧金额")).toBeNull();
   });

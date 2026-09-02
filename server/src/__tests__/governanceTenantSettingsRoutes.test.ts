@@ -82,6 +82,19 @@ describe('governed tenant settings routes', () => {
     }), NOW);
   });
 
+  it('旧客户端提交 allowedModels 时保留 Entitlement 兼容投影', async () => {
+    const test = await rig();
+    const settings = structuredClone(DEFAULT_TENANT_SETTINGS);
+    settings.models.allowedModels = ['legacy/attempt'];
+    const response = await test.request('/api/governance/access/tenant-settings', json('PUT', {
+      settings, expectedUpdatedAt: NOW,
+    }));
+    expect(response.status).toBe(200);
+    expect(test.updateTenantSettings).toHaveBeenCalledWith('tenant-a', expect.objectContaining({
+      models: expect.objectContaining({ allowedModels: DEFAULT_TENANT_SETTINGS.models.allowedModels }),
+    }), NOW);
+  });
+
   it('平台管理员可授权目标组织使用调试模式', async () => {
     const test = await rig({ platformAdmin: true });
     const settings = structuredClone(DEFAULT_TENANT_SETTINGS);

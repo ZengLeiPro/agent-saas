@@ -154,6 +154,25 @@ describe('Agent DWS accounts routes', () => {
     expect(body.items[0]).not.toHaveProperty('responseText');
   });
 
+  it('为已授权账号生成与完整命令参数绑定的委托资源 ID', async () => {
+    const store = new FakeAccountStore();
+    store.records.push(makeAccount({
+      status: 'active', corpId: 'corp-a', dingtalkUserId: 'ding-a', profileId: 'corp-a:ding-a',
+    }));
+    const opened = await listen({ store });
+    server = opened.server;
+
+    const response = await fetch(`${opened.baseUrl}/api/agent-dws-accounts/adws-1/delegation-resource`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ args: ['calendar', 'event', 'list'] }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      accountId: 'adws-1', args: ['calendar', 'event', 'list'],
+      resourceId: expect.stringMatching(/^dws-delegation:adws-1:[0-9a-f]{64}$/),
+    });
+  });
+
   it('创建账号时强制当前租户并写入 intent/terminal 审计', async () => {
     const store = new FakeAccountStore();
     const audit = new InMemoryGovernanceAuditStore();

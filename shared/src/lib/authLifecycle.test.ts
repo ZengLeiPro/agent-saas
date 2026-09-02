@@ -78,6 +78,40 @@ describe('M30-01 canonical auth lifecycle transaction', () => {
     expect(f.token()).toBe('');
   });
 
+  it('serializes distinct concurrent login intents instead of dropping the later account', async () => {
+    const f = fixture();
+    const tx = f.engine();
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const effects = (account: 'B' | 'C', hold = false) => ({
+      fenceUntilCommit: () => { events.push(`${account}:fence`); },
+      persistTokenAndBinding: async () => {
+        events.push(`${account}:persist`);
+        if (hold) {
+          markFirstStarted();
+          await new Promise<void>((resolve) => { releaseFirst = resolve; });
+        }
+      },
+      installAuthenticatedState: () => { events.push(`${account}:install`); },
+      commitConnections: () => { events.push(`${account}:commit`); },
+      failClosed: vi.fn(),
+    });
+
+    const loginB = tx.login({ authEpoch: 2, generation: 2 }, effects('B', true));
+    await firstStarted;
+    const loginC = tx.login({ authEpoch: 3, generation: 3 }, effects('C'));
+    expect(loginC).not.toBe(loginB);
+    releaseFirst();
+
+    await Promise.all([loginB, loginC]);
+    expect(events).toEqual([
+      'B:fence', 'B:persist', 'B:install', 'B:commit',
+      'C:fence', 'C:persist', 'C:install', 'C:commit',
+    ]);
+  });
+
   it.each([new Error('500'), new Error('timeout')])('keeps delete failure fenced and retryable: %s', async (failure) => {
     const f = fixture({ deleteFailure: failure });
     const result = await f.engine().deleteAccount();

@@ -150,9 +150,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistIdentityState(next);
     setIdentityState(next);
     setMessageCacheIdentity(next.identity);
-    if (next.identity && (event.type === 'authenticated' || event.type === 'principal-switched' || event.type === 'tenant-switched')) {
-      wsClient.unfreezeSending();
-    }
     return next.identity;
   }, []);
   const [isLoading, setIsLoading] = useState(true);
@@ -289,6 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setAccounts(rememberSavedAccount(token, nextUser, binding));
           }
           setAuthEnabled(true);
+          wsClient.unfreezeSending();
         }
       } else if (result.status === 'no-auth') {
         setAuthEnabled(false);
@@ -352,11 +350,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccounts(readSavedAccounts());
       return;
     }
-    await unsubscribeCurrentBrowserPush();
     const nextUser = normalizeAuthUser(savedAuth.user);
     await runSavedAccountLifecycle(lifecycle, savedAuth.binding, {
-      fenceUntilCommit: () => {
+      fenceUntilCommit: async () => {
         wsClient.freezeSending();
+        await unsubscribeCurrentBrowserPush();
         clearAccountScopedState();
       },
       persistTokenAndBinding: (binding) => {

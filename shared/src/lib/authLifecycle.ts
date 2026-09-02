@@ -90,7 +90,9 @@ export class AuthLifecycleTransaction {
 
   private serialize(operation: AuthLifecycleOperation, run: () => Promise<AuthLifecycleJournal>): Promise<AuthLifecycleJournal> {
     if (this.active) {
-      if (operation === this.activeOperation) return this.active;
+      // Login effects carry the target principal and credentials. Operation equality
+      // alone cannot prove two login intents are identical, so never coalesce them.
+      if (operation === this.activeOperation && operation !== 'login') return this.active;
       const previous = this.active;
       const queued = previous.then(run, run).finally(() => {
         if (this.active === queued) {

@@ -87,9 +87,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIdentityState(next);
     setMobileMessageCacheIdentity(next.identity);
     await AsyncStorage.setItem(IDENTITY_META_KEY, JSON.stringify(next));
-    if (next.identity && (event.type === 'authenticated' || event.type === 'principal-switched' || event.type === 'tenant-switched')) {
-      wsClient.unfreezeSending();
-    }
     return next.identity;
   }, []);
   const cachedUserKey = useCallback((identity: BoundaryIdentity | null) => scopedSensitiveKey(CACHED_USER_KEY, identity), []);
@@ -240,6 +237,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!cancelled) setUser(data);
           const key = cachedUserKey(identity);
           if (key) await AsyncStorage.setItem(key, JSON.stringify(data));
+          setSensitiveTransportAllowed(true);
+          wsClient.unfreezeSending();
         } else {
           await clearAccountData(false);
           await transitionIdentity({ type: 'token-invalidated' });

@@ -108,6 +108,35 @@ describe('Web saved-account lifecycle', () => {
     expect(credentials.get(AUTH_SESSION_KEY)).toBe(bindingB);
   });
 
+  it('keeps logout behind saved-account pre-work so an older switch cannot revive identity', async () => {
+    const events: string[] = [];
+    let releasePreWork!: () => void;
+    let markPreWorkStarted!: () => void;
+    const preWorkStarted = new Promise<void>((resolve) => { markPreWorkStarted = resolve; });
+    const savedSwitch = runSavedAccountLifecycle(lifecycle, { authEpoch: 2, generation: 2 }, {
+      fenceUntilCommit: async () => {
+        events.push('switch:pre-work:start');
+        markPreWorkStarted();
+        await new Promise<void>((resolve) => { releasePreWork = resolve; });
+        events.push('switch:pre-work:end');
+      },
+      persistTokenAndBinding: () => { events.push('switch:persist'); },
+      installAuthenticatedState: () => { events.push('switch:install'); },
+      commitConnections: () => { events.push('switch:commit'); },
+      failClosed: () => { events.push('switch:fail'); },
+    });
+    await preWorkStarted;
+    const logout = lifecycle.logout().then(() => { events.push('logout:commit'); });
+    expect(events).toEqual(['switch:pre-work:start']);
+    releasePreWork();
+
+    await Promise.all([savedSwitch, logout]);
+    expect(events).toEqual([
+      'switch:pre-work:start', 'switch:pre-work:end', 'switch:persist',
+      'switch:install', 'switch:commit', 'logout:commit',
+    ]);
+  });
+
   it('queues a parallel logout after saved-account activation and ends fail closed', async () => {
     const events: string[] = [];
     let releasePersist!: () => void;

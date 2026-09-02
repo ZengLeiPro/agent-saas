@@ -43,12 +43,12 @@ function runScriptLines(text) {
   return output;
 }
 
-test('promotion accepts only an approved release id and serializes production mutation', async () => {
+test('promotion accepts only an approved release id and shares the production runtime lock', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /release_id:/u);
   assert.doesNotMatch(workflow, /^\s+(?:release_sha|artifact_url|image_tag):/mu);
-  assert.match(workflow, /group: production-promotion/u);
+  assert.match(workflow, /group: production-runtime/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert.match(workflow, /environment: production/u);
   assert.match(workflow, /PRODUCTION_SSH_HOST_KEY_SHA256/u);

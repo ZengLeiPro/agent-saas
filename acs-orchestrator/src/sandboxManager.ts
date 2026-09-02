@@ -11,8 +11,7 @@ import { AcsNetworkPolicyManager, type NetworkPolicyProbeDetails } from './netwo
 import { sandboxNameFor, validateSessionId, validateWorkspaceId } from './sandboxName.js';
 import { deleteSandboxAndReclaimNetwork, reconcileTerminatingSandboxDeletions, type SandboxDeletionPreconditions } from './sandboxDeletion.js';
 import { cleanupManagedSandboxes } from './sandboxCleanup.js';
-import {
-  applyDeletionGeneration, applyPausedWithPreconditions, applyWorkloadDescriptor, createSandboxResource } from './sandboxLifecycleMutations.js';
+import { applyDeletionGeneration, applyPausedWithPreconditions, applyWorkloadDescriptor, createSandboxResource, touchSandboxActivity } from './sandboxLifecycleMutations.js';
 import { SandboxInvocationMutationFacade } from './sandboxInvocationMutationFacade.js';
 import { updateSandboxLifecycle } from './sandboxLifecycleUpdater.js';
 import {
@@ -706,18 +705,19 @@ export class SandboxManager {
     await applyWorkloadDescriptor(this.config, this.kubectl, this.resourceName(name), workload, () => this.getStatus(name));
   }
 
-  async touch(name: string, now: Date = new Date()): Promise<void> {
-    const result = await this.kubectl.run([
-      'patch',
-      this.resourceName(name),
-      '--type=merge',
-      '-p',
-      JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
-    ], { timeoutMs: this.config.sandboxWaitTimeoutMs });
-    if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
+  /**
+   * Updates last-active through UID/resourceVersion CAS.
+   * Invocation callers pass expectedUid to reject same-name replacement writes.
+   * Callers without a pinned UID still retry only within one observed UID.
+   * The mutation helper rejects resources already entering deletion.
+   */
+  async touch(name: string, now: Date = new Date(), expectedUid?: string): Promise<void> {
+    await touchSandboxActivity(
+      this.config, this.kubectl, this.resourceName(name), now, () => this.getStatus(name), expectedUid,
+    );
   }
 
-  /** 60s 内已 touch 过则跳过（idle 判定为分钟级，精度足够，省一次 kubectl patch）。 */
+  /** 60s 内已 touch 过则跳过（idle 判定为分钟级，精度足够，减少 kubectl patch）。 */
   private async touchThrottled(name: string, now: Date = new Date()): Promise<void> {
     const entry = this.ensureFastPath.get(name);
     if (entry && now.getTime() - entry.touchedAt < TOUCH_THROTTLE_MS) return;

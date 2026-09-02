@@ -131,7 +131,7 @@ describe('DwsPersonalMessageSender command builder', () => {
 });
 
 describe('DwsPersonalMessageSender transport', () => {
-  it('用 Agent principal 解析远端，并在 Agent 独立 workspace 调用 Shell', async () => {
+  it('用 Agent principal 解析远端，并在 Agent 独立交互式 workspace 调用 Shell', async () => {
     const invoke = successfulInvoke();
     const resolveServerRemote = vi.fn(async () => ({
       baseUrl: 'http://hand.internal',
@@ -175,6 +175,7 @@ describe('DwsPersonalMessageSender transport', () => {
       mountSubPath: 'workspaces/tenant-a/.agent-connectors-oa-sales/dws',
       executionTarget: 'server-remote',
       sandboxResources: { cpu: '1', memoryMb: 2048 },
+      workload: { class: 'interactive' },
     });
   });
 

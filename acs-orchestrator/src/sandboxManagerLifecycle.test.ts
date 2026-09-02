@@ -61,7 +61,7 @@ function setup(activeRegistry?: ActiveSandboxRegistry) {
 }
 
 describe('SandboxManager lifecycle mutations', () => {
-  // Cleanup and capacity eviction share the same serialized, fresh-state deletion gate.
+  // Cleanup and capacity eviction share one serialized, fresh-state deletion gate.
   it('atomically advances activity generation when an existing scope becomes active again', async () => {
     const { manager, run } = setup();
     vi.spyOn(manager, 'getStatus').mockResolvedValueOnce(status({
@@ -94,6 +94,49 @@ describe('SandboxManager lifecycle mutations', () => {
       ...identity, terminalState: 'completed', terminalAt: '2026-08-30T00:02:00.000Z',
       expectedActivityGeneration: 'generation-old',
     })).resolves.toEqual({ name: manager.ref(identity).name });
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it('touches last-active only behind expected UID and resourceVersion tests', async () => {
+    const { manager, run } = setup();
+    vi.spyOn(manager, 'getStatus').mockResolvedValue(status({
+      'agent-saas.kaiyan.net/last-active-at': '2026-08-30T00:00:00.000Z',
+    }));
+    const now = new Date('2026-08-30T00:05:00.000Z');
+
+    await manager.touch('as-touch', now, 'sandbox-uid-1');
+
+    const patchArgs = run.mock.calls.at(-1)![0];
+    expect(patchArgs.slice(0, 3)).toEqual(['patch', 'sandbox/as-touch', '--type=json']);
+    const payload = JSON.parse(patchArgs[4]!) as Array<{ op: string; path: string; value?: unknown }>;
+    expect(payload).toEqual(expect.arrayContaining([
+      { op: 'test', path: '/metadata/uid', value: 'sandbox-uid-1' },
+      { op: 'test', path: '/metadata/resourceVersion', value: 'resource-version-1' },
+      {
+        op: 'add',
+        path: '/metadata/annotations/agent-saas.kaiyan.net~1last-active-at',
+        value: now.toISOString(),
+      },
+    ]));
+  });
+
+  it('rejects delayed touch when the Sandbox is recreated with the same name', async () => {
+    const { manager, run } = setup();
+    const recreated = status();
+    (recreated.raw.metadata as any).uid = 'sandbox-uid-2';
+    (recreated.raw.metadata as any).resourceVersion = 'resource-version-2';
+    vi.spyOn(manager, 'getStatus')
+      .mockResolvedValueOnce(status())
+      .mockResolvedValueOnce(recreated);
+    run.mockResolvedValueOnce({
+      stdout: '', stderr: 'jsonpatch test operation failed', exitCode: 1, signal: null,
+    });
+
+    await expect(manager.touch(
+      'as-touch-recreated',
+      new Date('2026-08-30T00:05:00.000Z'),
+      'sandbox-uid-1',
+    )).rejects.toThrow(/同名重建/u);
     expect(run).toHaveBeenCalledOnce();
   });
 

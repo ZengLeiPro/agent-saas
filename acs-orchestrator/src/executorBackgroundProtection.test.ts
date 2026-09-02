@@ -296,7 +296,7 @@ describe('AcsExecutor background shell protection handoff', () => {
 
     await expect(resultPromise).rejects.toThrow(/已终止活跃任务/u);
     expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-other']);
-    expect(setActiveInvocationLease).toHaveBeenCalledTimes(3);
+    expect(setActiveInvocationLease).toHaveBeenCalledTimes(4);
     expect(setActiveInvocationLease).toHaveBeenLastCalledWith(
       sandboxRef.name, expect.any(String), undefined, 'uid-1',
     );
@@ -417,8 +417,8 @@ describe('AcsExecutor background shell protection handoff', () => {
           if (until === protectedUntil) throw new Error('long lease CAS exhausted');
           if (until) {
             shortLeaseWriteCount += 1;
-            if (proof === 'termination' && shortLeaseWriteCount === 2) {
-              throw new Error('monitor renewal CAS exhausted');
+            if (proof === 'termination' && shortLeaseWriteCount === 3) {
+              throw new Error('recovery renewal CAS exhausted');
             }
           }
           return 'uid-1';
@@ -472,7 +472,7 @@ describe('AcsExecutor background shell protection handoff', () => {
         expect(leaseCalls.some((call) => call[2] === undefined)).toBe(false);
         if (proof === 'termination') {
           expect(warn).toHaveBeenCalledWith(expect.stringContaining('background_shell_recovery_lease_renew_failed'));
-          expect(warn).toHaveBeenCalledWith(expect.stringContaining('monitor renewal CAS exhausted'));
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('recovery renewal CAS exhausted'));
         }
 
         proofReady = true;
@@ -623,7 +623,7 @@ describe('AcsExecutor background shell protection handoff', () => {
     }
   });
 
-  it('keeps the short lease as the last fence when protection writes and task termination all fail', async () => {
+  it('keeps the short lease as the last fence when protection writes and fenced termination all fail', async () => {
     const sandboxRef = ref('as-background-fail-closed');
     const child = fakeChild();
     const protectedUntil = '2099-07-20T00:10:00.000Z';
@@ -674,8 +674,8 @@ describe('AcsExecutor background shell protection handoff', () => {
     await expect(resultPromise).rejects.toThrow(/终止任务失败，保留现有 invocation lease/u);
     expect(executor.backgroundRecoveryCount()).toBe(1);
     expect(terminateBackgroundTasks).toHaveBeenCalledWith(sandboxRef, ['shell-bg-fail-closed']);
-    // Recovery's first round renews the original short lease without sleeping.
-    expect(setActiveInvocationLease).toHaveBeenCalledTimes(3);
+    // Recovery keeps the short lease alive, then renews a fresh fence before each termination attempt.
+    expect(setActiveInvocationLease).toHaveBeenCalledTimes(5);
     expect(touch).not.toHaveBeenCalled();
   });
 });

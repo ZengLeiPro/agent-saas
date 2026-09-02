@@ -141,6 +141,12 @@ export class DwsBusinessToolProvider implements ToolProvider {
     const operator = context.channelContext.user ?? identity;
     const workspaceIdentity = operator;
     const session = context.sessionId ? await this.options.sessionCatalog.get(context.sessionId) : null;
+    const workload = context.workspace.workload
+      ?? (context.memoryMaintenanceMode === 'consolidation'
+        ? { class: 'memory' as const }
+        : session?.channel === 'cron'
+          ? { class: 'cron' as const }
+          : { class: 'interactive' as const });
     const correlationId = context.invocationId ?? context.toolCallId ?? `${context.runId ?? context.sessionId ?? 'unbound'}:dws`;
     const auditRejection = async (reason: string, metadata?: Record<string, unknown>) => {
       await this.options.auditStore.append({
@@ -340,6 +346,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
         correlationId,
         context.signal,
         context.executionAudit,
+        workload,
       );
       await this.options.auditStore.append({ ...auditBase, result: 'succeeded' });
       return result;
@@ -442,8 +449,9 @@ export class DwsBusinessToolProvider implements ToolProvider {
     args: string[],
     risk: ClassifiedDwsCommand['risk'],
     invocationId: string,
-    signal?: AbortSignal,
-    executionAudit?: ExecutionAuditRecorder,
+    signal: AbortSignal | undefined,
+    executionAudit: ExecutionAuditRecorder | undefined,
+    workload: NonNullable<ToolCallContext['workspace']['workload']>,
   ): Promise<ToolResult> {
     const remote = await this.options.resolveServerRemote(principal);
     const transport = this.options.createTransport?.(remote) ?? new HttpTransport({
@@ -478,6 +486,7 @@ export class DwsBusinessToolProvider implements ToolProvider {
           mountSubPath,
           executionTarget: 'server-remote',
           sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+          workload,
         },
       },
     });

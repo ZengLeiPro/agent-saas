@@ -50,7 +50,7 @@ describe('ACS deploy workflow contract', () => {
     expect(gate).not.toContain('workflow_dispatch');
   });
 
-  it('对普通 UI、ACS 源码和 ACS Workflow fixture 给出稳定分类', () => {
+  it('对普通 UI、ACS 源码、release lifecycle 与 Workflow fixture 给出稳定分类', () => {
     expect(classify(['web/src/App.tsx'])).toMatchObject({
       publish: 'false',
       contract_check: 'false',
@@ -60,6 +60,26 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
+    for (const releaseScript of [
+      'scripts/release/deploy-staging-release.sh',
+      'scripts/release/deploy-production-release.sh',
+    ]) {
+      expect(classify([releaseScript])).toMatchObject({
+        publish: 'true',
+        contract_check: 'false',
+      });
+    }
+    for (const contractTest of [
+      '.github/workflows/deploy-staging.yml',
+      '.github/workflows/promote-release.yml',
+      'scripts/release/staging-workflow.test.mjs',
+      'scripts/release/promotion-workflow.test.mjs',
+    ]) {
+      expect(classify([contractTest])).toMatchObject({
+        publish: 'false',
+        contract_check: 'true',
+      });
+    }
     expect(classify(['.github/workflows/acs-sandbox.yml'])).toMatchObject({
       publish: 'true',
       contract_check: 'false',
@@ -68,6 +88,12 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
+  });
+
+  it('在 required、contract 与 publish gate 中执行 Staging/Production lifecycle 契约', () => {
+    expect(workflow.match(/- name: Test ACS staging and production lifecycle gates/gu)).toHaveLength(3);
+    expect(workflow.match(/scripts\/release\/staging-workflow\.test\.mjs/gu)).toHaveLength(4);
+    expect(workflow.match(/scripts\/release\/promotion-workflow\.test\.mjs/gu)).toHaveLength(4);
   });
 
   it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {

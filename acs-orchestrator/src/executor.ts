@@ -258,9 +258,9 @@ export class AcsExecutor {
           this.logger.warn(`invocation_lease_clear_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
         try {
-          await this.sandboxManager.touch(ref.name);
+          await this.sandboxManager.touch(ref.name, new Date(), sandboxUid);
         } catch (err) {
-          // Lease/touch cleanup is lifecycle bookkeeping. Never replace a completed tool result.
+          // UID-fenced lease/touch cleanup is bookkeeping. Never replace a completed tool result.
           this.logger.warn(`invocation_touch_failed sandbox=${ref.name} invocation=${invocationKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
@@ -375,7 +375,7 @@ export class AcsExecutor {
     if (aggregateProtectionActive) state.preserveInvocationLease = true;
     if (protectedTaskIds.length > 0 && !this.hasSafeBackgroundProtection(protectedUntilMs)) {
       await this.failClosedBackgroundTasks(
-        ref, protectedTaskIds, expectedUid, state,
+        ref, protectedTaskIds, leaseKey, expectedUid, state,
         'missing aggregate protection deadline', protectedUntil,
       );
     }
@@ -399,7 +399,7 @@ export class AcsExecutor {
       // Success is a safety proof only while the exact deadline still has margin.
       if (aggregateProtectionActive && !this.hasSafeBackgroundProtection(protectedUntilMs)) {
         await this.failClosedBackgroundTasks(
-          ref, protectedTaskIds, expectedUid, state,
+          ref, protectedTaskIds, leaseKey, expectedUid, state,
           'aggregate protection deadline expired before persistence confirmation', protectedUntil,
         );
       }
@@ -418,7 +418,7 @@ export class AcsExecutor {
     if (!leaseError) {
       if (!this.hasSafeBackgroundProtection(protectedUntilMs)) {
         await this.failClosedBackgroundTasks(
-          ref, protectedTaskIds, expectedUid, state,
+          ref, protectedTaskIds, leaseKey, expectedUid, state,
           'aggregate protection deadline expired before fallback confirmation', protectedUntil,
         );
       }
@@ -430,6 +430,7 @@ export class AcsExecutor {
     await this.failClosedBackgroundTasks(
       ref,
       protectedTaskIds,
+      leaseKey,
       expectedUid,
       state,
       `protection=${errorMessage(protectionError)} lease=${errorMessage(leaseError)}`,
@@ -440,6 +441,7 @@ export class AcsExecutor {
   private async failClosedBackgroundTasks(
     ref: SandboxRef,
     taskIds: string[],
+    leaseKey: string,
     expectedUid: string,
     state: InvocationProtectionState,
     reason: string,
@@ -453,6 +455,10 @@ export class AcsExecutor {
         state.preserveInvocationLease = false;
         throw new OriginalSandboxGoneError();
       }
+      // A successful UID-bound lease renewal fences the original CR for the full
+      // termination window. Without it, a same-name replacement could appear
+      // between the UID check and the name-based runner operation.
+      await this.establishBackgroundTerminationFence(ref.name, leaseKey, expectedUid);
       // The runner reconciles the whole workspace even when an older response did
       // not include activeTaskIds, then proves that no background process remains.
       await terminate(ref, taskIds);
@@ -473,6 +479,26 @@ export class AcsExecutor {
     // No background process remains, so the short invocation lease can be cleared.
     state.preserveInvocationLease = false;
     throw new Error(`后台 Shell 保护持久化失败，已终止活跃任务: ${reason}`);
+  }
+
+  private backgroundTerminationWindowMs(): number {
+    return Math.max(30_000, this.config.execTimeoutMs) + BACKGROUND_PROTECTION_CONFIRM_MARGIN_MS;
+  }
+
+  /** Persist a UID-bound fence that still covers termination after the lease CAS returns. */
+  private async establishBackgroundTerminationFence(
+    name: string,
+    leaseKey: string,
+    expectedUid: string,
+  ): Promise<void> {
+    const requiredRemainingMs = this.backgroundTerminationWindowMs();
+    const leaseUntilMs = Date.now() + this.config.sandboxWaitTimeoutMs + requiredRemainingMs;
+    await this.sandboxManager.setActiveInvocationLease(
+      name, leaseKey, new Date(leaseUntilMs).toISOString(), expectedUid,
+    );
+    if (leaseUntilMs - Date.now() < requiredRemainingMs) {
+      throw new Error('termination fence expired before persistence confirmation');
+    }
   }
 
   /** The persisted deadline must remain useful after a potentially slow CAS. */
@@ -565,6 +591,7 @@ export class AcsExecutor {
             this.logger.info(`background_shell_recovery_original_gone sandbox=${ref.name}`);
             return;
           }
+          await this.establishBackgroundTerminationFence(ref.name, leaseKey, recovery.expectedUid);
           await terminate(ref, taskIds);
           safe = true;
         } catch (err) {

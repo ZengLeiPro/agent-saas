@@ -14,6 +14,7 @@ import type { FeishuConnectionStore, FeishuLoginMetadata } from './store.js';
 
 const FEISHU_PROFILE_ID = 'kaiyan-agent';
 const FEISHU_AUTH_TIMEOUT_MS = 11 * 60 * 1_000;
+const FEISHU_AUTH_WORKLOAD = { class: 'interactive' } as const;
 
 export interface FeishuDeviceAuthorization {
   authorizationUrl: string;
@@ -142,6 +143,7 @@ export class FeishuDeviceLoginRunner implements FeishuDeviceLoginRunnerLike {
         sandboxScopeId: `${workspaceId}__${mountSubPath.replace(/[^A-Za-z0-9_-]+/g, '_')}`,
         mountSubPath,
         executionTarget: 'server-remote' as const,
+        workload: FEISHU_AUTH_WORKLOAD,
       },
     };
   }

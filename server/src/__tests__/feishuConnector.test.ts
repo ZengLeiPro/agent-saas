@@ -84,7 +84,7 @@ describe('飞书官方 CLI 连接器', () => {
       .toMatchObject({ event: 'authorization_complete', user_open_id: 'ou_1' });
   });
 
-  it('在用户专属 Sandbox 依次执行固定 init/start/complete 动作', async () => {
+  it('在用户专属交互式 Sandbox 依次执行固定 init/start/complete 动作', async () => {
     const wires: Array<Record<string, any>> = [];
     const fetchImpl: typeof fetch = vi.fn(async (_input, init) => {
       const wire = JSON.parse(String(init?.body)) as Record<string, any>;
@@ -134,7 +134,9 @@ describe('飞书官方 CLI 连接器', () => {
       id: 'ws_kaiyan__ky000000000001',
       mountSubPath: 'workspaces/kaiyan/ky000000000001',
       userId: USER.id,
+      workload: { class: 'interactive' },
     });
+    expect(wires.every((wire) => wire.context.workspace.workload?.class === 'interactive')).toBe(true);
     expect(JSON.stringify(wires)).not.toContain('acs-token');
   });
 

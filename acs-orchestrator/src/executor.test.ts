@@ -371,11 +371,11 @@ describe('AcsExecutor active sandbox tracking', () => {
     const leaseKey = (setActiveInvocationLease.mock.calls as unknown[][])[0]?.[1] as string;
     expect(leaseKey).toMatch(/^inv-finally:/u);
     expect(setActiveInvocationLease).toHaveBeenNthCalledWith(2, ref.name, leaseKey, undefined, 'uid-1');
-    expect(touch).toHaveBeenCalledWith(ref.name);
+    expect(touch).toHaveBeenCalledWith(ref.name, expect.any(Date), 'uid-1');
     expect(setActiveInvocationLease.mock.invocationCallOrder[1]).toBeLessThan(touch.mock.invocationCallOrder[0]!);
   });
 
-  it('logs lease cleanup failure, still touches, and preserves the original execution error', async () => {
+  it('logs lease cleanup failure, still touches with the expected UID, and preserves the original execution error', async () => {
     const ref: SandboxRef = {
       name: 'as-finally-error',
       workspaceId: 'ws_kaiyan__u-1',
@@ -410,7 +410,7 @@ describe('AcsExecutor active sandbox tracking', () => {
         id: ref.workspaceId, sessionId: ref.sessionId, sandboxScopeId: ref.sandboxScopeId,
       } },
     })).rejects.toThrow('runner spawn failed');
-    expect(touch).toHaveBeenCalledWith(ref.name);
+    expect(touch).toHaveBeenCalledWith(ref.name, expect.any(Date), 'uid-1');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('invocation_lease_clear_failed'));
   });
 });

@@ -20,6 +20,7 @@ import {
 import { DWS_CONNECTOR_SANDBOX_RESOURCES } from './sandboxResources.js';
 
 const LOOKUP_BATCH_SIZE = 30;
+const DWS_REQUESTER_LOOKUP_WORKLOAD = { class: 'interactive' } as const;
 
 export interface DwsRequesterDirectoryEntry {
   staffId: string;
@@ -188,6 +189,7 @@ export class DwsRequesterIdentityResolver {
             mountSubPath,
             executionTarget: 'server-remote',
             sandboxResources: DWS_CONNECTOR_SANDBOX_RESOURCES,
+            workload: DWS_REQUESTER_LOOKUP_WORKLOAD,
           },
         },
       });

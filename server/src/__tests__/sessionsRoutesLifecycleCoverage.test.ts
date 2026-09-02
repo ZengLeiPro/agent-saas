@@ -5,7 +5,7 @@
  * 覆盖公开分享快照。本文件补齐「会话状态变更」这批未覆盖的 mutation 与回收站路径：
  *  - PATCH /sessions/:id（重命名）：非法 sessionId 400、title 非字符串 400、404、成功改名、跨用户 403
  *  - DELETE /sessions/:id（软删除）：成功软删、重复删除幂等、404、跨用户 403
- *  - POST /sessions/:id/restore：未删除 400、非 owner 403、成功恢复
+ *  - POST /sessions/:id/restore：未删除 400、非 owner 403、能力缺失 503、成功恢复
  *  - DELETE /sessions/:id/permanent：未在回收站 400、成功永久删除
  *  - GET /sessions/trash：列出当前用户已软删除会话
  *  - DELETE /sessions/trash：清空当前用户回收站，不影响正常会话和其他用户
@@ -459,6 +459,39 @@ describe('sessions routes lifecycle coverage', () => {
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.deletedAt).toBeUndefined();
     expect(sandboxSessionRestore).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('restore callback 缺失时保留既有 tombstone，重启补齐能力后可恢复', async () => {
+    const deletedAt = new Date().toISOString();
+    const { sessionId, transcriptPath } = await writeSession(OWNER, {
+      deletedAt,
+      deletedBy: OWNER.username,
+    });
+    const unavailable = await startServer(agentCwd, OWNER, {
+      sandboxCleanupRequired: true,
+    });
+    servers.push(unavailable.server);
+
+    const failed = await fetch(`${unavailable.baseUrl}/api/sessions/${sessionId}/restore`, {
+      method: 'POST',
+    });
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toEqual({ error: 'Sandbox restore 能力不可用' });
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBe(deletedAt);
+
+    const sandboxSessionRestore = vi.fn(async () => undefined);
+    const restarted = await startServer(agentCwd, OWNER, {
+      sandboxCleanupRequired: true,
+      sandboxSessionRestore,
+    });
+    servers.push(restarted.server);
+
+    const restored = await fetch(`${restarted.baseUrl}/api/sessions/${sessionId}/restore`, {
+      method: 'POST',
+    });
+    expect(restored.status).toBe(200);
+    expect(sandboxSessionRestore).toHaveBeenCalledWith(sessionId);
+    expect((await readSessionMeta(transcriptPath))?.deletedAt).toBeUndefined();
   });
 
   it('永久删除在 session lock 内重验 tombstone，已恢复时不执行任何物理清理', async () => {

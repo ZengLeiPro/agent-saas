@@ -25,7 +25,7 @@ import {
 } from './sandboxState.js';
 import { LAST_ACTIVE_AT_ANNOTATION } from './sandboxInventoryReader.js';
 
-/** Kubernetes UID/resourceVersion JSON Patch 前置条件失败统一映射为可重试冲突。 */
+/** Kubernetes UID/resourceVersion JSON Patch 前置条件失败统一映射为冲突。 */
 export class SandboxMutationPreconditionError extends Error {
   readonly statusCode = 409;
 }
@@ -262,6 +262,29 @@ async function applyProtectedAnnotation(
     throw new Error(`更新 ${description} 失败: ${detail}`);
   }
   throw new SandboxMutationPreconditionError(`更新 ${description} 失败: retry exhausted`);
+}
+
+/** Last-active update; invocation completion can pin the mutation to its Sandbox UID. */
+export async function touchSandboxActivity(
+  config: AcsOrchestratorConfig,
+  kubectl: Kubectl,
+  resourceName: string,
+  now: Date,
+  getStatus: () => Promise<SandboxStatus | null>,
+  expectedUid?: string,
+): Promise<void> {
+  if (!expectedUid) {
+    const result = await kubectl.run([
+      'patch', resourceName, '--type=merge', '-p',
+      JSON.stringify({ metadata: { annotations: { [LAST_ACTIVE_AT_ANNOTATION]: now.toISOString() } } }),
+    ], { timeoutMs: config.sandboxWaitTimeoutMs });
+    if (result.exitCode !== 0) throw new Error(`touch sandbox 失败: ${result.stderr || result.stdout}`);
+    return;
+  }
+  await applyProtectedAnnotation(
+    config, kubectl, resourceName, LAST_ACTIVE_AT_ANNOTATION,
+    now.toISOString(), 'last-active', getStatus, { expectedUid },
+  );
 }
 
 function laterProtection(current: string | undefined, requested: string): string {

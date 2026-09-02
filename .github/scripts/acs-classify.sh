@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# ACS 影响分类（acs-sandbox.yml 的 changes job 与 build-deploy 必要性门禁共用）
+# ACS 影响分类（acs-sandbox.yml 的 changes job 与 build-deploy 门禁共用）
 # ----------------------------------------------------------------------------
 # 用法: acs-classify.sh <changed_files_path> [base_sha]
 #   changed_files_path: 变更文件清单（每行一个仓库相对路径）
@@ -11,8 +11,8 @@
 #   contract_check=true|false 仅需契约门禁（typecheck + test, 不判定需部署）
 #   reason=...                publish/contract 命中原因（分号分隔; 无则 none）
 #   skipped=...               未命中 ACS 面的输入（分号分隔; 无则 none）
-# 注意: 纯测试文件 acs-orchestrator/**/*.test.ts 归 contract_check——测试代码
-#   会 COPY 进 sandbox 镜像但不影响运行行为，只跑测试门禁、不触发全量部署。
+# 注意: ACS/release 契约与纯测试文件归 contract_check；它们只跑测试门禁，
+#   不触发全量部署。
 # ============================================================================
 set -euo pipefail
 
@@ -73,7 +73,7 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/apply-orchestrator-env.py|scripts/deploy-acs-orchestrator.sh|scripts/release/deploy-staging-release.sh|scripts/release/deploy-production-release.sh|scripts/release/upload-oss-object-immutable.sh|scripts/acs-browser-lease-e2e.mjs|workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py)
       return 0
       ;;
     acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
@@ -94,7 +94,7 @@ is_publish_path() {
 
 is_contract_check_path() {
   case "$1" in
-    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
+    server/src/runtime/rawAgentLoop.ts|server/src/runtime/rawRuntimeRunDispatch.ts|.github/workflows/deploy-staging.yml|.github/workflows/promote-release.yml|acs-orchestrator/*.test.ts|acs-orchestrator/*TestFixtures.ts|acs-orchestrator/*TestHelpers.ts|scripts/release/staging-workflow.test.mjs|scripts/release/promotion-workflow.test.mjs|scripts/acs-verify-per-session.py|scripts/test_acs_operational_scripts.py|scripts/test_acr_webhook_redelivery.py)
       return 0
       ;;
   esac

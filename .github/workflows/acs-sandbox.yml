@@ -27,10 +27,16 @@ on:
       - 'pnpm-workspace.yaml'
       - '.github/workflows/acs-sandbox.yml'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/promote-release.yml'
       - '.github/scripts/acs-classify.sh'
       - '.github/scripts/redeliver_acr_webhook.py'
       - 'scripts/apply-orchestrator-env.py'
       - 'scripts/deploy-acs-orchestrator.sh'
+      - 'scripts/release/deploy-staging-release.sh'
+      - 'scripts/release/deploy-production-release.sh'
+      - 'scripts/release/staging-workflow.test.mjs'
+      - 'scripts/release/promotion-workflow.test.mjs'
       - 'scripts/release/upload-oss-object-immutable.sh'
       - 'scripts/acs-browser-lease-e2e.mjs'
       - 'workspace-shared/.ky-agent/skills-pool/browser/scripts/acs_browser.py'
@@ -134,6 +140,13 @@ jobs:
       - name: Test orchestrator
         if: steps.impact.outputs.required == 'true'
         run: pnpm -F acs-orchestrator test
+
+      - name: Test ACS staging and production lifecycle gates
+        if: steps.impact.outputs.required == 'true'
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
 
       - name: Test ACS operational scripts
         if: steps.impact.outputs.required == 'true'
@@ -250,6 +263,12 @@ jobs:
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
 
+      - name: Test ACS staging and production lifecycle gates
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
+
       - name: Test ACS operational scripts
         run: >-
           python3 -m unittest
@@ -298,6 +317,12 @@ jobs:
 
       - name: Test orchestrator
         run: pnpm -F acs-orchestrator test
+
+      - name: Test ACS staging and production lifecycle gates
+        run: >-
+          node --test
+          scripts/release/staging-workflow.test.mjs
+          scripts/release/promotion-workflow.test.mjs
 
       - name: Test ACS operational scripts
         run: >-

@@ -3069,7 +3069,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   /**
    * POST /api/sessions/:sessionId/restore
    *
-   * 从回收站恢复自己的会话（移除 deletedAt）。
+   * 从回收站恢复自己的会话（先取消 durable cleanup，再移除 deletedAt）。
    * Owner-self only：只允许会话原 owner 恢复，任何 admin（含平台 admin / 组织 admin）
    * 都不能代恢复他人会话。普通 user 也能恢复自己的。
    */
@@ -3106,8 +3106,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             res.status(400).json({ error: "Session is not deleted" });
             return;
           }
-
           // 先 CAS 取消 durable cleanup，再移除 tombstone；否则重试可能在恢复后删除新建 Sandbox。
+          if (options.sandboxCleanupRequired && !options.sandboxSessionRestore) { res.status(503).json({ error: "Sandbox restore 能力不可用" }); return; }
           await options.sandboxSessionRestore?.(sessionId); const { deletedAt, deletedBy, ...rest } = meta;
           await writeSessionMeta(transcriptPath, rest as SessionMeta);
           auditLog(req, "session_restored", sessionId);

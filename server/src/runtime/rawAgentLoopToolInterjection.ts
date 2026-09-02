@@ -1,22 +1,6 @@
 import type { ToolDescriptor } from '../agent/toolRuntime.js';
 import type { ToolExecutionOutcome } from './approvalTypes.js';
-import type { ModelToolCall, RunContext } from './types.js';
-
-export async function hasQueuedUserInputAtToolBoundary(args: {
-  context: RunContext;
-  disabled: boolean;
-  warn: (message: string) => void;
-}): Promise<boolean> {
-  if (args.context.signal?.aborted || args.disabled) return false;
-  try {
-    return (await args.context.loadQueuedInterjections?.() ?? []).length > 0;
-  } catch (error) {
-    args.warn(
-      `[run] steering boundary check failed before tool (degraded): run=${args.context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-    );
-    return false;
-  }
-}
+import type { ModelToolCall } from './types.js';
 
 export function buildUserInterjectionSkippedToolResults(calls: ModelToolCall[]): Array<{
   call: ModelToolCall;

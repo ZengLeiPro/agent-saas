@@ -130,6 +130,7 @@ export class SteeringInterjectionCoordinator {
   readonly durableSourceRunIds: Set<string>;
   readonly modelContextSourceRunIds: Set<string>;
   readonly announcementSourceRunIds: Set<string>;
+  private readonly reservedSourceRunIds = new Set<string>();
   currentUserMessageIndex: number;
   absorptionDisabled = false;
 
@@ -153,10 +154,21 @@ export class SteeringInterjectionCoordinator {
     handoff.requestedAt = new Date().toISOString();
   }
 
-  async drain(): Promise<QueuedInterjection[]> {
+  async reserveQueued(): Promise<QueuedInterjection[]> {
     const { context } = this.options;
     if (context.signal?.aborted || this.absorptionDisabled) return [];
-    const queued = await context.loadQueuedInterjections?.() ?? [];
+    let queued: QueuedInterjection[];
+    try {
+      queued = await context.loadQueuedInterjections?.() ?? [];
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      this.requestRecoveryHandoff('steering_load_failed');
+      this.options.warn(
+        `[run] steering load failed; handing off target run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+    queued = queued.filter((item) => !this.reservedSourceRunIds.has(item.sourceRunId));
     if (queued.length === 0 || context.signal?.aborted) return [];
     const requestedSourceRunIds = queued.map((item) => item.sourceRunId);
     let reserved = queued;
@@ -179,9 +191,15 @@ export class SteeringInterjectionCoordinator {
     }
     if (reserved.length === 0 || context.signal?.aborted) return [];
     for (const item of reserved) {
+      this.reservedSourceRunIds.add(item.sourceRunId);
       if (isCompactCommand(item.message.content)) this.manualCheckpointSourceRunIds.add(item.sourceRunId);
     }
+    return reserved;
+  }
 
+  async applyReserved(reserved: QueuedInterjection[]): Promise<QueuedInterjection[]> {
+    if (reserved.length === 0 || this.absorptionDisabled) return [];
+    const { context } = this.options;
     let applied = reserved;
     if (this.options.runStore?.applySteeringInputsAtomically) {
       try {
@@ -268,6 +286,37 @@ export class SteeringInterjectionCoordinator {
       this.modelContextSourceRunIds.add(item.sourceRunId);
     }
     return applied;
+  }
+
+  async drain(): Promise<QueuedInterjection[]> {
+    return this.applyReserved(await this.reserveQueued());
+  }
+
+  async drainOrSeal(): Promise<{ interjections: QueuedInterjection[]; sealed: boolean }> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const interjections = await this.drain();
+      if (interjections.length > 0 || this.absorptionDisabled) {
+        return { interjections, sealed: false };
+      }
+      if (!this.options.runStore?.trySealSteeringInputWindow) {
+        return { interjections: [], sealed: true };
+      }
+      try {
+        if (await this.options.runStore.trySealSteeringInputWindow(this.options.context.runId)) {
+          return { interjections: [], sealed: true };
+        }
+      } catch (error) {
+        if (this.options.context.signal?.aborted) throw error;
+        this.requestRecoveryHandoff('steering_seal_failed');
+        this.options.warn(
+          `[run] steering seal failed; handing off run=${this.options.context.runId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return { interjections: [], sealed: false };
+      }
+    }
+    this.requestRecoveryHandoff('steering_settlement_unresolved');
+    this.options.warn(`[run] steering drain-or-seal remained unresolved; handing off run=${this.options.context.runId}`);
+    return { interjections: [], sealed: false };
   }
 
   announce(interjections: QueuedInterjection[]): Promise<OutboundEvent> {

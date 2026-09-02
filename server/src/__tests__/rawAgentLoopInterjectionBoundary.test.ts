@@ -123,7 +123,9 @@ describe('RawAgentLoop user input boundaries', () => {
     }];
     let loadCalls = 0;
     const markApplied = vi.fn(async () => { queued = []; });
-    const trySeal = vi.fn(async () => false);
+    const trySeal = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
     const loop = new RawAgentLoop({
       modelAdapter: adapter, eventStore,
       approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-text', DEFAULT_TENANT_ID),
@@ -414,7 +416,6 @@ describe('RawAgentLoop user input boundaries', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-seal-failure-handoff-'));
     cleanupDirs.add(cwd);
     const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
-    const drainHandoff = { requested: false } as NonNullable<RunContext['drainHandoff']>;
     const loop = new RawAgentLoop({
       modelAdapter: new FinalTextAdapter(), eventStore,
       approvalStore: new EventBackedApprovalStore(eventStore, 'session-seal-failure', DEFAULT_TENANT_ID),
@@ -430,13 +431,110 @@ describe('RawAgentLoop user input boundaries', () => {
       connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
     }, {
       runId: 'target-seal-failure', sessionId: 'session-seal-failure', model: 'gpt-5.5', cwd,
-      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' }, drainHandoff,
+      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
     }));
 
     expect(events.some((event) => event.type === 'done')).toBe(false);
-    expect(drainHandoff).toMatchObject({ requested: true, reason: 'steering_seal_failed' });
     const durable = await eventStore.list(DEFAULT_TENANT_ID, 'session-seal-failure');
     expect(durable.some((event) => event.type === 'run_finished')).toBe(false);
+  });
+
+  it('drains input that appears after the final tool callback even when maxTurns is exhausted', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-final-tool-last-check-race-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new SerialToolsThenTextAdapter();
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-final-check-race', sourceRunId: 'source-final-check-race',
+      message: { channel: 'web', chatId: 'chat-final-check-race', content: '最后检查之后到达' },
+      prompt: '最后检查之后到达',
+    }];
+    let finalCheckReturned = false;
+    const toolRuntime = new SerialCountingToolRuntime(() => undefined);
+    const markApplied = vi.fn(async () => { queued = []; });
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-final-check-race', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')), toolRuntime,
+      runStore: {
+        get: vi.fn(async () => ({
+          runId: 'target-final-check-race', sessionId: 'session-final-check-race', status: 'running',
+          requestedAt: '2026-09-02T19:00:00.000Z', updatedAt: '2026-09-02T19:00:00.000Z', metadata: {},
+        })),
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: vi.fn(async () => true),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-final-check-race', content: '执行三个工具' },
+      prompt: '执行三个工具', instructions: '按顺序执行。', maxTurns: 1,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'target-final-check-race', sessionId: 'session-final-check-race', model: 'gpt-5.5', cwd,
+      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
+      loadQueuedInterjections: async () => {
+        if (toolRuntime.invocations.length !== 3) return [];
+        if (!finalCheckReturned) {
+          finalCheckReturned = true;
+          return [];
+        }
+        return queued;
+      },
+    }));
+
+    expect(toolRuntime.invocations).toEqual(['call_serial_1', 'call_serial_2', 'call_serial_3']);
+    expect(adapter.requests).toHaveLength(2);
+    expect(adapter.requests[1]?.messages.at(-1)).toEqual({ role: 'user', content: '最后检查之后到达' });
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(true);
+  });
+
+  it('continues remaining tools when ownership is lost to a concurrent withdrawal', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-withdraw-before-claim-'));
+    cleanupDirs.add(cwd);
+    const eventStore = new FileEventStore(join(cwd, 'session.runtime-events.jsonl'), DEFAULT_TENANT_ID);
+    const adapter = new SerialToolsThenTextAdapter();
+    let messageReady = false;
+    let queued: QueuedInterjection[] = [{
+      inputId: 'input-withdraw-race', sourceRunId: 'source-withdraw-race',
+      message: { channel: 'web', chatId: 'chat-withdraw-race', content: '随后撤回' }, prompt: '随后撤回',
+    }];
+    const toolRuntime = new SerialCountingToolRuntime(() => { messageReady = true; });
+    const reserve = vi.fn(async () => {
+      queued = [];
+      return [] as string[];
+    });
+    const markApplied = vi.fn(async () => [] as string[]);
+    const loop = new RawAgentLoop({
+      modelAdapter: adapter, eventStore,
+      approvalStore: new EventBackedApprovalStore(eventStore, 'session-withdraw-race', DEFAULT_TENANT_ID),
+      transcriptProjection: new LegacyTranscriptProjection(join(cwd, 'session.jsonl')), toolRuntime,
+      runStore: {
+        get: vi.fn(async () => ({
+          runId: 'target-withdraw-race', sessionId: 'session-withdraw-race', status: 'running',
+          requestedAt: '2026-09-02T19:00:00.000Z', updatedAt: '2026-09-02T19:00:00.000Z', metadata: {},
+        })),
+        reserveSteeringInputs: reserve,
+        markSteeringInputsApplied: markApplied,
+        trySealSteeringInputWindow: vi.fn(async () => true),
+      } as unknown as RunStore,
+    });
+
+    const events = await collect(loop.run({
+      message: { channel: 'web', chatId: 'chat-withdraw-race', content: '执行三个工具' },
+      prompt: '执行三个工具', instructions: '按顺序执行。', maxTurns: 2,
+      connection: { apiKey: 'sk-test', baseUrl: 'https://example.invalid/v1' },
+    }, {
+      runId: 'target-withdraw-race', sessionId: 'session-withdraw-race', model: 'gpt-5.5', cwd,
+      tenantId: DEFAULT_TENANT_ID, channelContext: { channel: 'web' },
+      loadQueuedInterjections: async () => messageReady ? queued : [],
+    }));
+
+    expect(toolRuntime.invocations).toEqual(['call_serial_1', 'call_serial_2', 'call_serial_3']);
+    expect(reserve).toHaveBeenCalledWith('target-withdraw-race', ['source-withdraw-race']);
+    expect(markApplied).not.toHaveBeenCalled();
+    expect(events.some((event) => event.type === 'interjection_applied')).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'done' });
   });
 
 });

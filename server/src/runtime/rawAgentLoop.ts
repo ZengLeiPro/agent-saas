@@ -116,7 +116,7 @@ import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, In
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { SteeringInterjectionCoordinator } from './rawAgentLoopInterjections.js';
-import { buildUserInterjectionSkippedToolResults, hasQueuedUserInputAtToolBoundary, skipToolCallForQueuedUserInput } from './rawAgentLoopToolInterjection.js';
+import { buildUserInterjectionSkippedToolResults, skipToolCallForQueuedUserInput } from './rawAgentLoopToolInterjection.js';
 import {
   COMPACT_COMMAND_MODEL_CONTENT,
   MIN_COMPACTABLE_MESSAGES,
@@ -769,16 +769,10 @@ export class RawAgentLoop implements AgentLoop {
     if (contextRewindRecoveryUsed) clearProviderContinuations(messages);
     let currentUserMessageIndex = findLastUserMessageIndex(messages);
     const steeringInterjections = new SteeringInterjectionCoordinator({
-      context,
-      messages,
-      priorEvents: recoveredEvents,
-      currentUserMessageIndex,
-      runStore: this.runStore,
-      eventStore: this.eventStore,
-      tenantId: requireEventTenantId(context),
+      context, messages, priorEvents: recoveredEvents, currentUserMessageIndex,
+      runStore: this.runStore, eventStore: this.eventStore, tenantId: requireEventTenantId(context),
       transcriptProjection: this.transcriptProjection,
-      append: (event) => this.eventSink.append(event),
-      warn: (message) => logger.warn(message),
+      append: (event) => this.eventSink.append(event), warn: (message) => logger.warn(message),
     });
     const manualCheckpointSourceRunIds = steeringInterjections.manualCheckpointSourceRunIds;
     const drainQueuedInterjections = async () => {
@@ -1463,19 +1457,8 @@ export class RawAgentLoop implements AgentLoop {
             if (turn >= turnLimit) turnLimit += 1;
             continue;
           }
-          try {
-            if (this.runStore?.trySealSteeringInputWindow) {
-              const sealed = await this.runStore.trySealSteeringInputWindow(context.runId);
-              if (!sealed) queuedInterjections = await drainQueuedInterjections();
-            }
-          } catch (error) {
-            if (context.signal?.aborted) throw error;
-            steeringInterjections.requestRecoveryHandoff('steering_seal_failed');
-            logger.warn(
-              `[run] steering seal failed; handing off run=${context.runId}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-            return;
-          }
+          const settlement = await steeringInterjections.drainOrSeal();
+          queuedInterjections = settlement.interjections;
           if (context.drainHandoff?.requested) {
             if (queuedInterjections.length > 0) yield await announceAppliedInterjections(queuedInterjections);
             return;
@@ -1485,6 +1468,7 @@ export class RawAgentLoop implements AgentLoop {
             if (turn >= turnLimit) turnLimit = turn + input.maxTurns;
             continue;
           }
+          if (!settlement.sealed) return;
           await finishSuccessfulRun({
             context, numTurns: turn, totalUsage, finalText,
             append: (event) => this.eventSink.append(event),
@@ -1568,33 +1552,41 @@ export class RawAgentLoop implements AgentLoop {
             ? { provider_continuation: completed.providerContinuation }
             : {}),
         });
-        let yieldedToUserInput = false;
+        const reservedToolBoundaryInterjections: Awaited<ReturnType<typeof steeringInterjections.reserveQueued>> = [];
+        const claimToolBoundaryInterjections = async () => {
+          if (reservedToolBoundaryInterjections.length > 0) return true;
+          const reserved = await steeringInterjections.reserveQueued();
+          reservedToolBoundaryInterjections.push(...reserved);
+          return reserved.length > 0;
+        };
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
           descriptorsByName: this.callableDescriptorsForMessages(descriptorsByName, messages),
           baseToolContext,
           context,
           messages,
-          shouldYieldToUserInput: async () => (yieldedToUserInput = await hasQueuedUserInputAtToolBoundary({
-            context, disabled: steeringInterjections.absorptionDisabled, warn: (message) => logger.warn(message),
-          })),
+          shouldYieldToUserInput: claimToolBoundaryInterjections,
         });
-        if (yieldedToUserInput && turn >= turnLimit) turnLimit = turn + input.maxTurns;
-        if (turn < turnLimit) {
-          try {
-            carriedBoundaryInterjections = await drainQueuedInterjections();
-          } catch (error) {
-            if (context.signal?.aborted) throw error;
-            logger.warn(
-              `[run] steering drain failed after tools (degraded): run=${context.runId} error=${error instanceof Error ? error.message : String(error)}`,
-            );
+        const toolBoundaryInterjections = await steeringInterjections.applyReserved(
+          reservedToolBoundaryInterjections,
+        );
+        toolBoundaryInterjections.push(...await drainQueuedInterjections());
+        let toolBoundarySealed = true;
+        if (toolBoundaryInterjections.length === 0 && turn >= turnLimit) {
+          const settlement = await steeringInterjections.drainOrSeal();
+          toolBoundaryInterjections.push(...settlement.interjections);
+          toolBoundarySealed = settlement.sealed;
+        }
+        if (!toolBoundarySealed && toolBoundaryInterjections.length === 0) return;
+        if (context.drainHandoff?.requested) {
+          if (toolBoundaryInterjections.length > 0) {
+            yield await announceAppliedInterjections(toolBoundaryInterjections);
           }
-          if (context.drainHandoff?.requested) {
-            if (carriedBoundaryInterjections.length > 0) {
-              yield await announceAppliedInterjections(carriedBoundaryInterjections);
-            }
-            return;
-          }
+          return;
+        }
+        if (toolBoundaryInterjections.length > 0) {
+          carriedBoundaryInterjections = toolBoundaryInterjections;
+          if (turn >= turnLimit) turnLimit = turn + input.maxTurns;
         }
       }
 
@@ -2286,6 +2278,20 @@ export class RawAgentLoop implements AgentLoop {
       context: resumeContext,
     });
 
+    const toolBoundarySteering = new SteeringInterjectionCoordinator({
+      context: resumeContext, messages: [], priorEvents, currentUserMessageIndex: 0,
+      runStore: this.runStore, eventStore: this.eventStore, tenantId: requireEventTenantId(resumeContext),
+      transcriptProjection: this.transcriptProjection,
+      append: (event) => this.eventSink.append(event), warn: (message) => logger.warn(message),
+    });
+    const reservedToolBoundaryInterjections: Awaited<ReturnType<typeof toolBoundarySteering.reserveQueued>> = [];
+    const claimToolBoundaryInterjections = async () => {
+      if (reservedToolBoundaryInterjections.length > 0) return true;
+      const reserved = await toolBoundarySteering.reserveQueued();
+      reservedToolBoundaryInterjections.push(...reserved);
+      return reserved.length > 0;
+    };
+
     try {
       yield* this.drainRemainingToolCallBatch({
         batch: pendingBatch,
@@ -2293,11 +2299,7 @@ export class RawAgentLoop implements AgentLoop {
         descriptorsByName: callableDescriptorsByName,
         baseToolContext,
         context: resumeContext,
-        shouldYieldToUserInput: () => hasQueuedUserInputAtToolBoundary({
-          context: resumeContext,
-          disabled: false,
-          warn: (message) => logger.warn(message),
-        }),
+        shouldYieldToUserInput: claimToolBoundaryInterjections,
       });
     } catch (err) {
       if (err instanceof RunLeaseLostError) return;
@@ -2315,6 +2317,13 @@ export class RawAgentLoop implements AgentLoop {
       }
       throw err;
     }
+    const appliedToolBoundaryInterjections = await toolBoundarySteering.applyReserved(
+      reservedToolBoundaryInterjections,
+    );
+    if (appliedToolBoundaryInterjections.length > 0) {
+      yield await toolBoundarySteering.announce(appliedToolBoundaryInterjections);
+    }
+    if (resumeContext.drainHandoff?.requested) return;
 
     const replayEvents = await this.eventStore.list(requireEventTenantId(context), approval.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
@@ -2338,6 +2347,7 @@ export class RawAgentLoop implements AgentLoop {
       maxTurns: input.maxTurns,
       instructions: input.instructions,
       priorEvents: replayEvents,
+      manualCheckpointSourceRunIds: [...toolBoundarySteering.manualCheckpointSourceRunIds],
     });
   }
 
@@ -2439,6 +2449,20 @@ export class RawAgentLoop implements AgentLoop {
       context,
     });
 
+    const toolBoundarySteering = new SteeringInterjectionCoordinator({
+      context, messages: [], priorEvents, currentUserMessageIndex: 0,
+      runStore: this.runStore, eventStore: this.eventStore, tenantId: requireEventTenantId(context),
+      transcriptProjection: this.transcriptProjection,
+      append: (event) => this.eventSink.append(event), warn: (message) => logger.warn(message),
+    });
+    const reservedToolBoundaryInterjections: Awaited<ReturnType<typeof toolBoundarySteering.reserveQueued>> = [];
+    const claimToolBoundaryInterjections = async () => {
+      if (reservedToolBoundaryInterjections.length > 0) return true;
+      const reserved = await toolBoundarySteering.reserveQueued();
+      reservedToolBoundaryInterjections.push(...reserved);
+      return reserved.length > 0;
+    };
+
     try {
       yield* this.drainRemainingToolCallBatch({
         batch: pendingBatch,
@@ -2446,11 +2470,7 @@ export class RawAgentLoop implements AgentLoop {
         descriptorsByName: callableDescriptorsByName,
         baseToolContext,
         context,
-        shouldYieldToUserInput: () => hasQueuedUserInputAtToolBoundary({
-          context,
-          disabled: false,
-          warn: (message) => logger.warn(message),
-        }),
+        shouldYieldToUserInput: claimToolBoundaryInterjections,
       });
     } catch (err) {
       if (err instanceof RunLeaseLostError) return;
@@ -2468,6 +2488,13 @@ export class RawAgentLoop implements AgentLoop {
       }
       throw err;
     }
+    const appliedToolBoundaryInterjections = await toolBoundarySteering.applyReserved(
+      reservedToolBoundaryInterjections,
+    );
+    if (appliedToolBoundaryInterjections.length > 0) {
+      yield await toolBoundarySteering.announce(appliedToolBoundaryInterjections);
+    }
+    if (context.drainHandoff?.requested) return;
 
     const replayEvents = await this.eventStore.list(requireEventTenantId(context), context.sessionId, { replayMode: 'bounded' });
     const contextProjection = buildContextProjection(replayEvents, {
@@ -2491,6 +2518,7 @@ export class RawAgentLoop implements AgentLoop {
       maxTurns: input.maxTurns,
       instructions: input.instructions,
       priorEvents: replayEvents,
+      manualCheckpointSourceRunIds: [...toolBoundarySteering.manualCheckpointSourceRunIds],
     });
   }
 
@@ -3050,6 +3078,7 @@ export class RawAgentLoop implements AgentLoop {
     maxTurns: number;
     instructions: string;
     priorEvents: PlatformEvent[];
+    manualCheckpointSourceRunIds?: string[];
   }): AsyncIterable<OutboundEvent> {
     let textStarted = false;
     let thinkingStarted = false;
@@ -3068,17 +3097,14 @@ export class RawAgentLoop implements AgentLoop {
       }
     }
     const steeringInterjections = new SteeringInterjectionCoordinator({
-      context: args.context,
-      messages: args.messages,
-      priorEvents: args.priorEvents,
-      currentUserMessageIndex,
-      runStore: this.runStore,
-      eventStore: this.eventStore,
-      tenantId: requireEventTenantId(args.context),
+      context: args.context, messages: args.messages, priorEvents: args.priorEvents, currentUserMessageIndex,
+      runStore: this.runStore, eventStore: this.eventStore, tenantId: requireEventTenantId(args.context),
       transcriptProjection: this.transcriptProjection,
-      append: (event) => this.eventSink.append(event),
-      warn: (message) => logger.warn(message),
+      append: (event) => this.eventSink.append(event), warn: (message) => logger.warn(message),
     });
+    for (const sourceRunId of args.manualCheckpointSourceRunIds ?? []) {
+      steeringInterjections.manualCheckpointSourceRunIds.add(sourceRunId);
+    }
     const drainQueuedInterjections = async () => {
       try {
         const interjections = await steeringInterjections.drain();
@@ -3173,6 +3199,49 @@ export class RawAgentLoop implements AgentLoop {
         pendingTurnText = '';
 
         await this.assertNoOpenToolCallBatchesBeforeModel(args.context.sessionId);
+        if (steeringInterjections.manualCheckpointSourceRunIds.size > 0) {
+          const controlSourceRunIds = [...steeringInterjections.manualCheckpointSourceRunIds];
+          const loadCheckpointEvents = () => this.eventStore.list(
+            requireEventTenantId(args.context), args.context.sessionId, { replayMode: 'bounded' },
+          );
+          const checkpointEvents = await loadCheckpointEvents();
+          const alreadyCheckpointed = controlSourceRunIds.every((sourceRunId) => checkpointEvents.some((event) => (
+            event.type === 'compaction' && event.checkpoint?.controlSourceRunIds?.includes(sourceRunId)
+          )));
+          if (!alreadyCheckpointed) {
+            const outcome = yield* this.compactHistory(
+              { instructions: args.instructions }, args.context, checkpointEvents,
+              {
+                inline: true, trigger: 'manual', sourceRunId: args.context.runId, controlSourceRunIds,
+                baseFixedTokens: estimateContextTokens([args.instructions, args.tools]),
+              },
+            );
+            if (outcome.usage) totalUsage = mergeUsage(totalUsage, outcome.usage);
+            if (outcome.status === 'aborted') {
+              const reason = args.context.signal?.reason;
+              throw reason instanceof Error ? reason : new Error(String(reason ?? 'run aborted'));
+            }
+            if (outcome.status === 'compacted') {
+              const compactedEvents = await loadCheckpointEvents();
+              const projection = buildContextProjection(compactedEvents, {
+                sessionId: args.context.sessionId, runId: args.context.runId, policy: this.contextPolicy,
+              });
+              args.messages.splice(0, args.messages.length, { role: 'system', content: args.instructions },
+                ...this.filterLoadedToolMessages(projection.messages, args.tools));
+              currentUserMessageIndex = findLastUserMessageIndex(args.messages);
+              contextUsageTracker = new RuntimeContextUsageTracker(
+                args.context.model, compactedEvents, args.context.modelRef,
+              );
+              currentResponseId = undefined;
+              this.clearForcedSynthesis();
+            } else if (outcome.status === 'error') {
+              yield { type: 'compaction_end', compaction: {
+                skipped: true, note: '手动压缩失败，已继续当前任务。', coveredEventCount: 0,
+              } };
+            }
+          }
+          steeringInterjections.manualCheckpointSourceRunIds.clear();
+        }
         await args.context.authorizeModelTurn?.();
         const preflight = governModelRequestMessages(
           args.messages,
@@ -3561,19 +3630,8 @@ export class RawAgentLoop implements AgentLoop {
             if (turn >= turnLimit) turnLimit += 1;
             continue;
           }
-          try {
-            if (this.runStore?.trySealSteeringInputWindow) {
-              const sealed = await this.runStore.trySealSteeringInputWindow(args.context.runId);
-              if (!sealed) queuedInterjections = await drainQueuedInterjections();
-            }
-          } catch (error) {
-            if (args.context.signal?.aborted) throw error;
-            steeringInterjections.requestRecoveryHandoff('steering_seal_failed');
-            logger.warn(
-              `[resume] steering seal failed; handing off run=${args.context.runId}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-            return;
-          }
+          const settlement = await steeringInterjections.drainOrSeal();
+          queuedInterjections = settlement.interjections;
           if (args.context.drainHandoff?.requested) {
             if (queuedInterjections.length > 0) yield await steeringInterjections.announce(queuedInterjections);
             return;
@@ -3585,6 +3643,7 @@ export class RawAgentLoop implements AgentLoop {
             if (turn >= turnLimit) turnLimit = turn + args.maxTurns;
             continue;
           }
+          if (!settlement.sealed) return;
           await finishSuccessfulRun({
             context: args.context, numTurns: turn, totalUsage, finalText,
             append: (event) => this.eventSink.append(event),
@@ -3669,25 +3728,37 @@ export class RawAgentLoop implements AgentLoop {
             : {}),
         });
 
-        let yieldedToUserInput = false;
+        const reservedToolBoundaryInterjections: Awaited<ReturnType<typeof steeringInterjections.reserveQueued>> = [];
+        const claimToolBoundaryInterjections = async () => {
+          if (reservedToolBoundaryInterjections.length > 0) return true;
+          const reserved = await steeringInterjections.reserveQueued();
+          reservedToolBoundaryInterjections.push(...reserved);
+          return reserved.length > 0;
+        };
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
           descriptorsByName: this.callableDescriptorsForMessages(args.descriptorsByName, args.messages),
           baseToolContext: args.baseToolContext,
           context: args.context,
           messages: args.messages,
-          shouldYieldToUserInput: async () => (yieldedToUserInput = await hasQueuedUserInputAtToolBoundary({
-            context: args.context,
-            disabled: steeringInterjections.absorptionDisabled,
-            warn: (message) => logger.warn(message),
-          })),
+          shouldYieldToUserInput: claimToolBoundaryInterjections,
         });
-        const toolBoundaryInterjections = await drainQueuedInterjections();
+        const toolBoundaryInterjections = await steeringInterjections.applyReserved(
+          reservedToolBoundaryInterjections,
+        );
+        toolBoundaryInterjections.push(...await drainQueuedInterjections());
+        let toolBoundarySealed = true;
+        if (toolBoundaryInterjections.length === 0 && turn >= turnLimit) {
+          const settlement = await steeringInterjections.drainOrSeal();
+          toolBoundaryInterjections.push(...settlement.interjections);
+          toolBoundarySealed = settlement.sealed;
+        }
+        if (!toolBoundarySealed && toolBoundaryInterjections.length === 0) return;
         if (toolBoundaryInterjections.length > 0) {
           yield await steeringInterjections.announce(toolBoundaryInterjections);
         }
         if (args.context.drainHandoff?.requested) return;
-        if ((yieldedToUserInput || toolBoundaryInterjections.length > 0) && turn >= turnLimit) {
+        if (toolBoundaryInterjections.length > 0 && turn >= turnLimit) {
           turnLimit = turn + args.maxTurns;
         }
       }

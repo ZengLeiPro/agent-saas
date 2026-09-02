@@ -128,7 +128,7 @@ describe('RawAgentLoop resumed user input boundaries', () => {
     expect(adapter.requests[0]?.messages.at(-1)).toEqual({ role: 'user', content: '停止剩余工具，先处理补充' });
   });
 
-  it('applies a message queued after AskUserQuestion resume before the next model request', async () => {
+  it('applies message and compact control queued after AskUserQuestion resume before the next model request', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'raw-loop-resume-interaction-interjection-'));
     cleanupDirs.add(cwd);
     const sessionId = 'session-resume-interaction-interjection';
@@ -158,6 +158,9 @@ describe('RawAgentLoop resumed user input boundaries', () => {
       inputId: 'input-resume-interaction', sourceRunId: 'source-resume-interaction',
       message: { channel: 'web', chatId: sessionId, content: '回答后再补充一句' },
       prompt: '回答后再补充一句',
+    }, {
+      inputId: 'input-resume-compact', sourceRunId: 'source-resume-compact',
+      message: { channel: 'web', chatId: sessionId, content: '/compact' }, prompt: '/compact',
     }];
     const adapter = new FinalTextAdapter();
     const runStore = runningRunStore(runId, sessionId, () => { queued = []; });
@@ -175,9 +178,16 @@ describe('RawAgentLoop resumed user input boundaries', () => {
     }));
 
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'interjection_applied', sourceRunIds: ['source-resume-interaction'] }),
+      expect.objectContaining({
+        type: 'interjection_applied',
+        sourceRunIds: ['source-resume-interaction', 'source-resume-compact'],
+      }),
+      expect.objectContaining({ type: 'compaction_start' }),
     ]));
-    expect(adapter.requests).toHaveLength(1);
-    expect(adapter.requests[0]?.messages.at(-1)).toEqual({ role: 'user', content: '回答后再补充一句' });
+    expect(adapter.requests).toHaveLength(2);
+    expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('回答后再补充一句');
+    expect(adapter.requests[1]?.messages.at(-1)).toMatchObject({
+      role: 'user', content: expect.stringContaining('<context-checkpoint'),
+    });
   });
 });

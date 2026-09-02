@@ -58,6 +58,7 @@ describe('App 生产部署门禁', () => {
       'server/src/index.ts',
       'shared/src/types.ts',
       'workspace-shared/.ky-agent/skills-pool/explore/SKILL.md',
+      'workspace-shared/.ky-agent/skills-pool/ky-data-query/references/xiaohongshu-spotlight.md',
       'pnpm-lock.yaml',
       'daemon-packaging/systemd/agent-saas-server@.service.template',
       '.github/workflows/ci.yml',
@@ -67,6 +68,9 @@ describe('App 生产部署门禁', () => {
     expect(result.reason).toContain('server/src/index.ts');
     expect(result.reason).toContain('shared/src/types.ts');
     expect(result.reason).toContain('workspace-shared/.ky-agent/skills-pool/explore/SKILL.md');
+    expect(result.reason).toContain(
+      'workspace-shared/.ky-agent/skills-pool/ky-data-query/references/xiaohongshu-spotlight.md',
+    );
     expect(result.reason).toContain('.github/workflows/ci.yml');
   });
 

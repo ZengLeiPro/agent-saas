@@ -302,15 +302,16 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText("钉钉 · 记录核验回执")).toBeNull();
   });
 
-  it("点击历史步骤后在右侧同页显示结果、过程、依据和交付物，主区不重复", async () => {
+  it("正式交付物在主区可见，点击历史步骤后仍保留结果、过程、依据和交付归属", async () => {
     render(<Harness messages={workflowMessages(2)} debugMode />);
     await waitForBusinessPlan();
+    expect(screen.getByText("订单核验结果.xlsx")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /核验订单/ }));
 
     await waitFor(() => expect(screen.getByLabelText("步骤详情：核验订单")).toBeTruthy());
     expect(screen.getByText("17 张通过，1 张待复核")).toBeTruthy();
     expect(screen.getByText("核验统计")).toBeTruthy();
-    expect(screen.getByText("订单核验结果.xlsx")).toBeTruthy();
+    expect(screen.getAllByText("订单核验结果.xlsx")).toHaveLength(2);
 
     fireEvent.click(screen.getByText("依据"));
     expect(screen.getByText("receipt:verify-18")).toBeTruthy();
@@ -624,12 +625,12 @@ describe("MessageList 业务步骤主从视图、历史稳定性与 Run 隔离",
     expect(screen.queryByText(/系统事件后读取/)).toBeNull();
     expect(screen.queryByText(/语音边界后读取/)).toBeNull();
     expect(screen.queryByText(/错误边界后读取/)).toBeNull();
-    expect(screen.queryByText("跨消息核验结果.xlsx")).toBeNull();
+    expect(screen.getByText("跨消息核验结果.xlsx")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /跨消息核验/ }));
+    fireEvent.click(screen.getByText("跨消息核验").closest("button")!);
     await waitFor(() => expect(screen.getByLabelText("步骤详情：跨消息核验")).toBeTruthy());
     expect(screen.getByText("跨消息核验完成")).toBeTruthy();
-    expect(screen.getByText("跨消息核验结果.xlsx")).toBeTruthy();
+    expect(screen.getAllByText("跨消息核验结果.xlsx")).toHaveLength(2);
 
     fireEvent.click(screen.getByText("过程"));
     expect(screen.getByText(/前半段读取/)).toBeTruthy();

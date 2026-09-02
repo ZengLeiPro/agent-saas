@@ -163,7 +163,9 @@ describePg('Sandbox lifecycle PostgreSQL locking, admission and ordering contrac
         deletionGeneration: 'generation-legacy-restored',
       }),
     ]);
-    await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toBe(true);
+    await expect(runStore.activateStagedRun('legacy-staged-run')).resolves.toEqual(expect.objectContaining({
+      runId: 'legacy-staged-run', status: 'pending', metadata: expect.objectContaining({ schedulerState: 'ready' }),
+    }));
       await expect(runStore.upsertPending({
         runId: 'legacy-restored-run', sessionId, tenantId: 'tenant-2',
         workspaceId: 'workspace-legacy', sandboxScopeId, metadata: {},

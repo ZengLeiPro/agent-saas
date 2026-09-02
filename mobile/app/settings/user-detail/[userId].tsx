@@ -22,6 +22,7 @@ import { useUsers } from '../../../src/hooks/useUsers';
 import { getServerUrl } from '../../../src/platform/mobileConfig';
 import { isV1RouteAllowed } from '../../../src/v1/v1Capabilities';
 import { getV1BuildProfile } from '../../../src/v1/v1Runtime';
+import { selectUserDetailProfile } from '../../../src/v1/userDetailAccess';
 import { useColors, spacing, typography, radius } from '../../../src/theme';
 
 function formatDate(dateStr: string): string {
@@ -38,16 +39,16 @@ export default function UserDetailScreen() {
   const { userId } = useLocalSearchParams<{ userId: string }>();
   const router = useRouter();
   const { user: currentUser, updateAvatar } = useAuth();
-  const { users, deleteUser, toggleUserDisabled, refresh: refreshUsers } = useUsers();
-
-  const isAdmin = currentUser?.role === 'admin';
-  const isSelf = userId === currentUser?.id;
-  // V1 范围裁剪（M00-01）：生产构建无用户管理/审计移动页，
-  // 管理类行（编辑资料/操作日志/禁用/删除）与 admin 视图全部隐藏。
+  // V1 范围裁剪（M00-01）：生产构建只允许当前账号自助资料，
+  // 不请求、读取或回退到可能属于旧身份的管理员用户列表。
   const v1Profile = getV1BuildProfile();
   const v1AdminActionsEnabled =
     isV1RouteAllowed('user-form', v1Profile) &&
     isV1RouteAllowed('settings/audit-log', v1Profile);
+  const { users, deleteUser, toggleUserDisabled, refresh: refreshUsers } = useUsers(v1AdminActionsEnabled);
+
+  const isAdmin = currentUser?.role === 'admin';
+  const isSelf = userId === currentUser?.id;
 
   // For non-admin viewing self, fetch from /api/auth/me
   const [selfProfile, setSelfProfile] = useState<UserInfo | null>(null);
@@ -69,8 +70,13 @@ export default function UserDetailScreen() {
     }
   }, [isSelf, fetchSelfProfile]);
 
-  const userFromList = useMemo(() => users.find(u => u.id === userId), [users, userId]);
-  const user = userFromList || (isSelf ? selfProfile : null);
+  const user = useMemo(() => selectUserDetailProfile({
+    profile: v1Profile,
+    currentUserId: currentUser?.id,
+    requestedUserId: userId,
+    selfProfile,
+    users,
+  }), [currentUser?.id, selfProfile, userId, users, v1Profile]);
 
   const styles = useMemo(() => StyleSheet.create({
     container: {

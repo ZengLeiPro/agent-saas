@@ -4,7 +4,6 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { TASKBOARD_STAGE_DEFAULT_PROMPTS } from '../../../shared/src/types/taskboard.js';
 import { RunCreateConflictError } from '../runtime/runStore.js';
 import type { PlatformEvent } from '../runtime/types.js';
 import { TaskboardValidationError, type TaskboardIdentity } from '../taskboard/types.js';
@@ -358,35 +357,6 @@ describe('TaskboardExecutionCoordinator', () => {
     expect(content).toContain('读取该任务的最新上下文');
     expect(content).not.toContain('执行前输入已从服务端重新读取');
     expect(content).not.toContain('2026-08-01T01:00:00.000Z');
-  });
-
-  it('wake 时按任务职责注入对应的系统默认阶段提示语', async () => {
-    const deliveryRig = makeRig({
-      getExecutionContextByRunId: vi.fn(async () => ({
-        identity, task, comments: [], execution: execution({ status: 'queued', purpose: 'work' }),
-        boardPrompt: '', stagePrompts: {},
-      })),
-    });
-    const delivery = await deliveryRig.coordinator.prepareWake({
-      runId: 'run-1', sessionId: 'session-1', status: 'pending',
-      requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z',
-      metadata: { taskboardExecution: true, taskboardExecutionId: 'execution-1' },
-    });
-    expect(delivery.metadata.taskboardStagePrompt).toBe(TASKBOARD_STAGE_DEFAULT_PROMPTS.work);
-
-    const integrationTask = { ...task, kind: 'integration' as const, workflowVersion: 3 as const };
-    const integrationRig = makeRig({
-      getExecutionContextByRunId: vi.fn(async () => ({
-        identity, task: integrationTask, comments: [], execution: execution({ status: 'queued', purpose: 'work' }),
-        boardPrompt: '', stagePrompts: {},
-      })),
-    });
-    const integration = await integrationRig.coordinator.prepareWake({
-      runId: 'run-1', sessionId: 'session-1', status: 'pending',
-      requestedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z',
-      metadata: { taskboardExecution: true, taskboardExecutionId: 'execution-1' },
-    });
-    expect(integration.metadata.taskboardStagePrompt).toBe(TASKBOARD_STAGE_DEFAULT_PROMPTS.merge);
   });
 
   it('wake 时显式模型已被组织禁用则拒绝启动', async () => {

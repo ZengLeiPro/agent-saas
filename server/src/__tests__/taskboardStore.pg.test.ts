@@ -3,10 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import {
-  TASKBOARD_DEFAULT_PROMPT,
-  TASKBOARD_STAGE_DEFAULT_PROMPTS,
-} from '../../../shared/src/types/taskboard.js';
+import { TASKBOARD_DEFAULT_PROMPT } from '../../../shared/src/types/taskboard.js';
 import { PgRunStore, RunCreateConflictError } from '../runtime/runStore.js';
 import { PgTaskboardStore } from '../taskboard/store.js';
 import {
@@ -257,7 +254,6 @@ describePg('PgTaskboardStore contract', () => {
   it('stores the default board prompt and allows it to be customized', async () => {
     const withDefault = await store.createBoard(alice, { name: '默认提示语' });
     expect(withDefault.prompt).toBe(TASKBOARD_DEFAULT_PROMPT);
-    expect(withDefault.stagePrompts).toEqual(TASKBOARD_STAGE_DEFAULT_PROMPTS);
 
     const customized = await store.updateBoard(alice, withDefault.id, {
       prompt: '只处理当前任务，不修改无关文件。',
@@ -275,7 +271,7 @@ describePg('PgTaskboardStore contract', () => {
     expect(empty.prompt).toBe('');
   });
 
-  it('stores complete stage defaults, normalizes blanks, and clears overrides via null', async () => {
+  it('stores per-stage prompts, normalizes blanks, and clears them via null', async () => {
     const board = await store.createBoard(alice, {
       name: '阶段提示语',
       stagePrompts: {
@@ -284,17 +280,8 @@ describePg('PgTaskboardStore contract', () => {
         merge: '负责合并交付。',
       },
     });
-    // 显式空白仍表示清除该阶段；未提供的阶段由新看板默认值补齐。
+    // 只保留非空白阶段；空白阶段视为未覆盖。
     expect(board.stagePrompts).toEqual({ work: '只负责实施。', merge: '负责合并交付。' });
-
-    const partial = await store.createBoard(alice, {
-      name: '部分阶段提示语',
-      stagePrompts: { work: '仅覆盖实施阶段。' },
-    });
-    expect(partial.stagePrompts).toEqual({
-      ...TASKBOARD_STAGE_DEFAULT_PROMPTS,
-      work: '仅覆盖实施阶段。',
-    });
 
     const patched = await store.updateBoard(alice, board.id, {
       stagePrompts: { review: '复核时检查证据链。' },

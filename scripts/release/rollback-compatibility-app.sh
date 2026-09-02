@@ -49,16 +49,88 @@ restore_optional_file() {
     *) log "invalid rollback presence marker: $present"; return 1 ;;
   esac
 }
+snapshot_optional_file() {
+  local source="$1" name="$2"
+  if [ -L "$source" ]; then
+    log "current topology file must not be a symlink: $source"
+    return 1
+  fi
+  if [ -f "$source" ]; then
+    install -m 0600 "$source" "$CURRENT_SNAPSHOT_DIR/$name.file"
+    printf 'true\n' >"$CURRENT_SNAPSHOT_DIR/$name.present"
+  elif [ -e "$source" ]; then
+    log "current topology path is not a regular file: $source"
+    return 1
+  else
+    printf 'false\n' >"$CURRENT_SNAPSHOT_DIR/$name.present"
+  fi
+}
+snapshot_required_file() {
+  local source="$1" name="$2"
+  snapshot_optional_file "$source" "$name"
+  [ "$(read_snapshot_value "$name.present")" = true ] || {
+    log "required current topology file is missing: $source"
+    return 1
+  }
+}
+snapshot_link() {
+  local path="$1" name="$2"
+  if [ -L "$path" ]; then
+    readlink "$path" >"$CURRENT_SNAPSHOT_DIR/$name.target"
+    printf 'true\n' >"$CURRENT_SNAPSHOT_DIR/$name.present"
+  elif [ -e "$path" ]; then
+    log "current topology path is not a symlink: $path"
+    return 1
+  else
+    printf 'false\n' >"$CURRENT_SNAPSHOT_DIR/$name.present"
+  fi
+}
+read_snapshot_value() {
+  local path="$CURRENT_SNAPSHOT_DIR/$1" value
+  [ -f "$path" ] && [ ! -L "$path" ] || {
+    log "current topology snapshot is missing or unsafe: $path"
+    return 1
+  }
+  IFS= read -r value <"$path"
+  [ -n "$value" ] || {
+    log "current topology snapshot is empty: $path"
+    return 1
+  }
+  printf '%s' "$value"
+}
+restore_snapshot_file() {
+  local name="$1" target="$2" mode="$3" present
+  present="$(read_snapshot_value "$name.present")" || return 1
+  restore_optional_file "$present" "$CURRENT_SNAPSHOT_DIR/$name.file" "$target" "$mode"
+}
+restore_snapshot_link() {
+  local name="$1" path="$2" present target
+  present="$(read_snapshot_value "$name.present")" || return 1
+  case "$present" in
+    true)
+      target="$(read_snapshot_value "$name.target")" || return 1
+      [ ! -e "$path" ] || [ -L "$path" ] || {
+        log "managed topology symlink path became unsafe: $path"
+        return 1
+      }
+      ln -sfn "$target" "$path"
+      ;;
+    false) rm -f "$path" ;;
+    *) log "invalid current topology presence marker: $present"; return 1 ;;
+  esac
+}
 
-CURRENT_UPSTREAM_BAK="/tmp/agent-saas-rollback-upstream.$$.conf"
-CURRENT_API_SITE_BAK="/tmp/agent-saas-rollback-api-site.$$.conf"
+CURRENT_SNAPSHOT_DIR="$(mktemp -d /tmp/agent-saas-rollback-current.XXXXXX)"
+chmod 0700 "$CURRENT_SNAPSHOT_DIR"
+CURRENT_UPSTREAM_BAK="$CURRENT_SNAPSHOT_DIR/nginx-upstream.conf"
+CURRENT_API_SITE_BAK="$CURRENT_SNAPSHOT_DIR/nginx-api-site.conf"
 CURRENT_UPSTREAM_PRESENT=false
 CURRENT_API_SITE_PRESENT=false
-cleanup_nginx_backups() {
-  rm -f "$CURRENT_UPSTREAM_BAK" "$CURRENT_API_SITE_BAK"
+cleanup_current_snapshot() {
+  rm -rf -- "$CURRENT_SNAPSHOT_DIR"
 }
-trap cleanup_nginx_backups EXIT
-trap 'log "rollback FAILED at line $LINENO"; exit 1' ERR
+trap cleanup_current_snapshot EXIT
+trap 'status=$?; log "rollback FAILED at line $LINENO (status=$status)"; exit "$status"' ERR
 
 CUR="$(tr -d '[:space:]' <"$ACTIVE_COLOR_FILE")"
 case "$CUR" in
@@ -129,13 +201,61 @@ if systemctl is-active --quiet "$SERVICE@$OTHER"; then
 fi
 
 WORKER_WAS_ACTIVE="$(read_state worker-was-active)"
+case "$WORKER_WAS_ACTIVE" in
+  true)
+    WORKER_ACTIVE="$(read_state worker-active-color)"
+    WORKER_TARGET="$(read_state worker-release-target)"
+    [ "$WORKER_ACTIVE" = "$OTHER" ] || {
+      log "rollback Worker color $WORKER_ACTIVE does not match inactive color $OTHER"
+      exit 1
+    }
+    WORKER_TARGET_CANONICAL="$(readlink -f "$WORKER_TARGET" 2>/dev/null || true)"
+    case "$WORKER_TARGET" in
+      "$ROOT"/releases/*)
+        [ "$WORKER_TARGET" = "$WORKER_TARGET_CANONICAL" ] && [ -d "$WORKER_TARGET" ]
+        ;;
+      *) log "rollback Worker target escapes the release root: $WORKER_TARGET"; exit 1 ;;
+    esac
+    ;;
+  false) ;;
+  *) log "invalid worker-was-active marker: $WORKER_WAS_ACTIVE"; exit 1 ;;
+esac
+
 CURRENT_WORKER_ACTIVE="$(tr -d '[:space:]' <"$WORKER_ACTIVE_COLOR_FILE" 2>/dev/null || true)"
 case "$CURRENT_WORKER_ACTIVE" in
-  blue|green) systemctl disable --now "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE" ;;
+  blue|green) ;;
   '') log 'current Runtime Worker color is missing'; exit 1 ;;
   *) log "invalid current Runtime Worker color: $CURRENT_WORKER_ACTIVE"; exit 1 ;;
 esac
+CURRENT_WORKER_ENABLED=false
+if systemctl is-enabled --quiet "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE"; then
+  CURRENT_WORKER_ENABLED=true
+fi
+CURRENT_WORKER_RUNNING=false
+if systemctl is-active --quiet "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE"; then
+  CURRENT_WORKER_RUNNING=true
+fi
 
+snapshot_required_file "$SERVER_UNIT_PATH" server-unit
+snapshot_required_file "$WORKER_UNIT_PATH" worker-unit
+snapshot_optional_file "$NGINX_DROP_IN_PATH" nginx-drop-in
+snapshot_required_file "$RUNTIME_IDENTITY_FILE" runtime-identity
+snapshot_optional_file "$RELEASE_ENV_ROOT/server-$API_ACTIVE.release.env" api-target-env
+snapshot_required_file "$WORKER_ACTIVE_COLOR_FILE" worker-active-color
+snapshot_link "$ROOT/current" current-link
+[ "$(read_snapshot_value current-link.present)" = true ] || {
+  log 'current release symlink is missing'
+  exit 1
+}
+snapshot_link "$ROOT/previous" previous-link
+snapshot_link "$ROOT/color/$API_ACTIVE" api-target-color-link
+if [ "$WORKER_WAS_ACTIVE" = true ]; then
+  snapshot_link "$ROOT/worker/$WORKER_ACTIVE" worker-target-link
+  snapshot_optional_file \
+    "$RELEASE_ENV_ROOT/runtime-worker-$WORKER_ACTIVE.release.env" worker-target-env
+fi
+
+systemctl disable --now "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE"
 restore_required_file "$STATE/server@.service" "$SERVER_UNIT_PATH" 0644
 WORKER_UNIT_PRESENT="$(read_state worker-unit-present)"
 restore_optional_file "$WORKER_UNIT_PRESENT" "$STATE/runtime-worker@.service" "$WORKER_UNIT_PATH" 0644
@@ -153,16 +273,6 @@ ln -sfn "$API_TARGET" "$ROOT/current"
 
 case "$WORKER_WAS_ACTIVE" in
   true)
-    WORKER_ACTIVE="$(read_state worker-active-color)"
-    WORKER_TARGET="$(read_state worker-release-target)"
-    case "$WORKER_ACTIVE" in blue|green) ;; *) log "invalid rollback Worker color: $WORKER_ACTIVE"; exit 1 ;; esac
-    WORKER_TARGET_CANONICAL="$(readlink -f "$WORKER_TARGET" 2>/dev/null || true)"
-    case "$WORKER_TARGET" in
-      "$ROOT"/releases/*)
-        [ "$WORKER_TARGET" = "$WORKER_TARGET_CANONICAL" ] && [ -d "$WORKER_TARGET" ]
-        ;;
-      *) log "rollback Worker target escapes the release root: $WORKER_TARGET"; exit 1 ;;
-    esac
     ln -sfn "$WORKER_TARGET" "$ROOT/worker/$WORKER_ACTIVE"
     restore_optional_file "$(read_state worker-env-present)" "$STATE/worker.release.env" \
       "$RELEASE_ENV_ROOT/runtime-worker-$WORKER_ACTIVE.release.env" 0600
@@ -171,7 +281,6 @@ case "$WORKER_WAS_ACTIVE" in
   false)
     rm -f "$WORKER_ACTIVE_COLOR_FILE"
     ;;
-  *) log "invalid worker-was-active marker: $WORKER_WAS_ACTIVE"; exit 1 ;;
 esac
 
 systemctl daemon-reload
@@ -202,6 +311,44 @@ if [ "$WORKER_WAS_ACTIVE" = true ]; then
   }
 fi
 
+restore_current_topology() {
+  local status=0
+  if [ "$WORKER_WAS_ACTIVE" = true ] && [ "$WORKER_ACTIVE" != "$CURRENT_WORKER_ACTIVE" ]; then
+    systemctl disable --now "$WORKER_SERVICE@$WORKER_ACTIVE" || status=1
+  fi
+  restore_snapshot_file server-unit "$SERVER_UNIT_PATH" 0644 || status=1
+  restore_snapshot_file worker-unit "$WORKER_UNIT_PATH" 0644 || status=1
+  restore_snapshot_file nginx-drop-in "$NGINX_DROP_IN_PATH" 0644 || status=1
+  restore_snapshot_file runtime-identity "$RUNTIME_IDENTITY_FILE" 0444 || status=1
+  restore_snapshot_file api-target-env \
+    "$RELEASE_ENV_ROOT/server-$API_ACTIVE.release.env" 0600 || status=1
+  restore_snapshot_file worker-active-color "$WORKER_ACTIVE_COLOR_FILE" 0644 || status=1
+  restore_snapshot_link current-link "$ROOT/current" || status=1
+  restore_snapshot_link previous-link "$ROOT/previous" || status=1
+  restore_snapshot_link api-target-color-link "$ROOT/color/$API_ACTIVE" || status=1
+  if [ "$WORKER_WAS_ACTIVE" = true ]; then
+    restore_snapshot_link worker-target-link "$ROOT/worker/$WORKER_ACTIVE" || status=1
+    restore_snapshot_file worker-target-env \
+      "$RELEASE_ENV_ROOT/runtime-worker-$WORKER_ACTIVE.release.env" 0600 || status=1
+  fi
+  systemctl daemon-reload || status=1
+  if [ "$CURRENT_WORKER_ENABLED" = true ]; then
+    systemctl enable "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE" || status=1
+  else
+    systemctl disable "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE" || status=1
+  fi
+  if [ "$CURRENT_WORKER_RUNNING" = true ]; then
+    systemctl restart "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE" || status=1
+  else
+    systemctl stop "$WORKER_SERVICE@$CURRENT_WORKER_ACTIVE" || status=1
+  fi
+  if [ "$status" -ne 0 ]; then
+    log 'current Server/Worker topology restoration completed with one or more failures'
+    return 70
+  fi
+  log 'current Server/Worker units, identity, env, symlinks, and Worker ownership restored'
+}
+
 restore_current_nginx_files() {
   local status=0
   restore_optional_file "$CURRENT_UPSTREAM_PRESENT" "$CURRENT_UPSTREAM_BAK" \
@@ -211,40 +358,60 @@ restore_current_nginx_files() {
   return "$status"
 }
 
+restore_current_pre_switch_state() {
+  local reason="$1" status=0
+  restore_current_topology || status=1
+  restore_current_nginx_files || status=1
+  if [ "$status" -ne 0 ]; then
+    mark_nginx_recovery_required "$reason" || true
+    return 70
+  fi
+  return 0
+}
+
 mark_nginx_recovery_required() {
   local marker="$STATE/rollback-nginx-manual-recovery-required" candidate="${STATE}/rollback-nginx-manual-recovery-required.candidate"
-  rm -f "$candidate"
+  rm -f "$candidate" || return 1
   {
-    printf 'fromColor=%s
-' "$CUR"
-    printf 'targetColor=%s
-' "$OTHER"
-    printf 'reason=%s
-' "$1"
-    printf 'recordedAt=%s
-' "$(date -Is)"
-  } >"$candidate"
-  chmod 0600 "$candidate"
-  mv -f "$candidate" "$marker"
+    printf 'fromColor=%s\n' "$CUR"
+    printf 'targetColor=%s\n' "$OTHER"
+    printf 'reason=%s\n' "$1"
+    printf 'recordedAt=%s\n' "$(date -Is)"
+  } >"$candidate" || return 1
+  chmod 0600 "$candidate" || {
+    rm -f "$candidate"
+    return 1
+  }
+  mv -f "$candidate" "$marker" || {
+    rm -f "$candidate"
+    return 1
+  }
 }
 
 restore_current_nginx_runtime() {
-  local reason="$1"
-  if restore_current_nginx_files && nginx -t && systemctl reload nginx; then
-    write_marker "$ACTIVE_COLOR_FILE" "$CUR" || {
-      mark_nginx_recovery_required "${reason}-marker-restore-failed" || true
-      return 70
-    }
-    return 0
+  local reason="$1" topology_status=0 nginx_status=0
+  restore_current_topology || topology_status=1
+  restore_current_nginx_files || nginx_status=1
+  if [ "$nginx_status" -eq 0 ]; then
+    nginx -t || nginx_status=1
   fi
-  mark_nginx_recovery_required "$reason" || true
-  return 70
+  if [ "$nginx_status" -eq 0 ]; then
+    systemctl reload nginx || nginx_status=1
+  fi
+  if [ "$nginx_status" -eq 0 ]; then
+    write_marker "$ACTIVE_COLOR_FILE" "$CUR" || nginx_status=1
+  fi
+  if [ "$topology_status" -ne 0 ] || [ "$nginx_status" -ne 0 ]; then
+    mark_nginx_recovery_required "$reason" || true
+    return 70
+  fi
+  return 0
 }
 
 switch_traffic_back() {
   if ! restore_optional_file "$API_SITE_PRESENT" "$STATE/api-site.conf" \
     "$API_SITE_CONF" 0644; then
-    restore_current_nginx_files || mark_nginx_recovery_required 'target-api-site-install-failed'
+    restore_current_pre_switch_state 'target-api-site-install-and-topology-restore-failed' || return 70
     return 1
   fi
   if ! cat >"$UPSTREAM_CONF" <<EOF
@@ -256,24 +423,21 @@ upstream agent_saas_backend {
 }
 EOF
   then
-    restore_current_nginx_files || mark_nginx_recovery_required 'target-upstream-write-failed'
+    restore_current_pre_switch_state 'target-upstream-write-and-topology-restore-failed' || return 70
     return 1
   fi
   if ! nginx -t; then
-    restore_current_nginx_files || {
-      mark_nginx_recovery_required 'target-nginx-test-and-disk-restore-failed' || true
-      return 70
-    }
+    restore_current_pre_switch_state 'target-nginx-test-and-topology-restore-failed' || return 70
     return 1
   fi
   if ! systemctl reload nginx; then
-    log 'target nginx reload failed; restoring the pre-rollback nginx runtime'
-    restore_current_nginx_runtime 'target-nginx-reload-and-reverse-failed'
+    log 'target nginx reload failed; restoring the complete pre-rollback runtime'
+    restore_current_nginx_runtime 'target-nginx-reload-and-reverse-failed' || return 70
     return 1
   fi
   if ! write_marker "$ACTIVE_COLOR_FILE" "$OTHER"; then
-    log 'target nginx is live but active marker update failed; reversing nginx'
-    restore_current_nginx_runtime 'active-marker-update-and-nginx-reverse-failed'
+    log 'target nginx is live but active marker update failed; reversing the complete runtime'
+    restore_current_nginx_runtime 'active-marker-update-and-nginx-reverse-failed' || return 70
     return 1
   fi
   systemctl enable "$SERVICE@$OTHER"

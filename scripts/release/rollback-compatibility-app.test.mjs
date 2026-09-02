@@ -64,14 +64,22 @@ async function fixture({ workerWasActive, nginxDropInPresent = true }) {
     apiSite: join(etc, 'api-site.conf'),
     log: join(root, 'commands.log'),
     reloadCount: join(root, 'reload-count'),
+    workerEnabled: join(root, 'worker-enabled'),
+    workerRunning: join(root, 'worker-running'),
   };
   await Promise.all([
     writeFile(paths.active, 'blue\n'),
     writeFile(paths.workerActive, 'blue\n'),
+    writeFile(paths.workerEnabled, 'agent-saas-runtime-worker@blue\n'),
+    writeFile(paths.workerRunning, 'agent-saas-runtime-worker@blue\n'),
     writeFile(paths.serverUnit, 'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n'),
     writeFile(paths.workerUnit, 'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n'),
     writeFile(paths.nginxDropIn, 'candidate nginx drop-in\n'),
     writeFile(paths.identity, '{"release":"new"}\n'),
+    writeFile(join(etc, 'server-blue.release.env'), 'AGENT_SAAS_RELEASE_SHA=new\n'),
+    writeFile(join(etc, 'server-green.release.env'), 'current idle API env\n'),
+    writeFile(join(etc, 'runtime-worker-blue.release.env'), 'AGENT_SAAS_RELEASE_SHA=new\n'),
+    writeFile(join(etc, 'runtime-worker-green.release.env'), 'current idle Worker env\n'),
     writeFile(paths.upstream, 'current upstream\n'),
     writeFile(paths.apiSite, 'current api site\n'),
     writeFile(join(state, 'api-active-color'), 'green\n'),
@@ -107,7 +115,33 @@ async function fixture({ workerWasActive, nginxDropInPresent = true }) {
     systemctl,
     `#!/usr/bin/env bash
 printf 'systemctl %s\\n' "$*" >> "$ROLLBACK_LOG"
-if [ "$1" = is-active ] && [ "${'$'}{*: -1}" = agent-saas-server@green ]; then exit 1; fi
+service="${'$'}{*: -1}"
+if [ "$1" = is-enabled ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  [ "$(cat "$WORKER_ENABLED_STATE" 2>/dev/null || true)" = "$service" ]
+  exit
+fi
+if [ "$1" = is-active ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  [ "$(cat "$WORKER_RUNNING_STATE" 2>/dev/null || true)" = "$service" ]
+  exit
+fi
+if [ "$1" = disable ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  if [ "$(cat "$WORKER_ENABLED_STATE" 2>/dev/null || true)" = "$service" ]; then
+    rm -f "$WORKER_ENABLED_STATE"
+  fi
+  if [ "$2" = --now ] && [ "$(cat "$WORKER_RUNNING_STATE" 2>/dev/null || true)" = "$service" ]; then
+    rm -f "$WORKER_RUNNING_STATE"
+  fi
+fi
+if [ "$1" = enable ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  printf '%s\\n' "$service" > "$WORKER_ENABLED_STATE"
+fi
+if [ "$1" = restart ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  printf '%s\\n' "$service" > "$WORKER_RUNNING_STATE"
+fi
+if [ "$1" = stop ] && [[ "$service" = agent-saas-runtime-worker@* ]]; then
+  rm -f "$WORKER_RUNNING_STATE"
+fi
+if [ "$1" = is-active ] && [ "$service" = agent-saas-server@green ]; then exit 1; fi
 if [ "$1" = restart ] && [ "$2" = agent-saas-runtime-worker@green ]; then
   printf '%s\\n' "$TEST_PID" > "$TEST_RUN/agent-saas-runtime-worker-green.pid"
   printf '%s\\n' "$TEST_PID" > "$TEST_RUN/agent-saas-runtime-worker-green.ready"
@@ -140,6 +174,8 @@ exit 0
       PATH: `${bin}:/usr/bin:/bin`,
       ROLLBACK_LOG: paths.log,
       RELOAD_COUNT_FILE: paths.reloadCount,
+      WORKER_ENABLED_STATE: paths.workerEnabled,
+      WORKER_RUNNING_STATE: paths.workerRunning,
       TEST_PID: String(process.pid),
       TEST_RUN: run,
       ROOT: appRoot,
@@ -174,19 +210,71 @@ test('rollback fails closed before restoring units when the current Worker marke
   assert.match(await readFile(value.paths.serverUnit, 'utf8'), /runtime-dependency/u);
 });
 
-test('failed target nginx reload reverses disk and runtime to the current deployment', async () => {
-  const value = await fixture({ workerWasActive: false });
+test('failed target nginx reload restores the complete current deployment topology', async () => {
+  const value = await fixture({ workerWasActive: true });
   const result = spawnSync('bash', [SCRIPT], {
     encoding: 'utf8',
     env: { ...value.environment, FAIL_FIRST_NGINX_RELOAD: 'true' },
   });
 
-  assert.notEqual(result.status, 0);
+  assert.equal(result.status, 1);
   assert.equal(await readFile(value.paths.upstream, 'utf8'), 'current upstream\n');
   assert.equal(await readFile(value.paths.apiSite, 'utf8'), 'current api site\n');
+  assert.equal(
+    await readFile(value.paths.serverUnit, 'utf8'),
+    'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n',
+  );
+  assert.equal(
+    await readFile(value.paths.workerUnit, 'utf8'),
+    'ExecStartPre=/usr/bin/node dist/runtime-dependency.mjs\n',
+  );
+  assert.equal(await readFile(value.paths.nginxDropIn, 'utf8'), 'candidate nginx drop-in\n');
+  assert.equal(await readFile(value.paths.identity, 'utf8'), '{"release":"new"}\n');
+  assert.equal(
+    await readFile(join(value.paths.identity, '..', 'server-blue.release.env'), 'utf8'),
+    'AGENT_SAAS_RELEASE_SHA=new\n',
+  );
+  assert.equal(
+    await readFile(join(value.paths.identity, '..', 'server-green.release.env'), 'utf8'),
+    'current idle API env\n',
+  );
+  assert.equal(
+    await readFile(join(value.paths.identity, '..', 'runtime-worker-blue.release.env'), 'utf8'),
+    'AGENT_SAAS_RELEASE_SHA=new\n',
+  );
+  assert.equal(
+    await readFile(join(value.paths.identity, '..', 'runtime-worker-green.release.env'), 'utf8'),
+    'current idle Worker env\n',
+  );
   assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  assert.equal(await readFile(value.paths.workerActive, 'utf8'), 'blue\n');
+  assert.equal(
+    await readFile(value.paths.workerEnabled, 'utf8'),
+    'agent-saas-runtime-worker@blue\n',
+  );
+  assert.equal(
+    await readFile(value.paths.workerRunning, 'utf8'),
+    'agent-saas-runtime-worker@blue\n',
+  );
+  assert.equal(await readlink(join(value.appRoot, 'current')), value.newRelease);
+  assert.equal(await readlink(join(value.appRoot, 'previous')), value.oldRelease);
+  assert.equal(await readlink(join(value.appRoot, 'color', 'blue')), value.newRelease);
+  assert.equal(await readlink(join(value.appRoot, 'color', 'green')), value.oldRelease);
+  assert.equal(await readlink(join(value.appRoot, 'worker', 'blue')), value.newRelease);
+  await assert.rejects(lstat(join(value.appRoot, 'worker', 'green')));
   assert.equal(await readFile(value.paths.reloadCount, 'utf8'), '2\n');
   const log = await readFile(value.paths.log, 'utf8');
+  assert.match(log, /systemctl disable --now agent-saas-runtime-worker@green/u);
+  assert.match(log, /systemctl enable agent-saas-runtime-worker@blue/u);
+  assert.match(log, /systemctl restart agent-saas-runtime-worker@blue/u);
+  assert.ok(
+    log.indexOf('systemctl disable --now agent-saas-runtime-worker@green') <
+      log.lastIndexOf('systemctl daemon-reload'),
+  );
+  assert.ok(
+    log.lastIndexOf('systemctl daemon-reload') <
+      log.indexOf('systemctl enable agent-saas-runtime-worker@blue'),
+  );
   assert.doesNotMatch(log, /systemctl stop agent-saas-server@blue/u);
 });
 
@@ -197,10 +285,11 @@ test('failed target and reverse nginx reloads leave auditable manual recovery st
     env: { ...value.environment, FAIL_ALL_NGINX_RELOADS: 'true' },
   });
 
-  assert.notEqual(result.status, 0);
+  assert.equal(result.status, 70);
   assert.equal(await readFile(value.paths.upstream, 'utf8'), 'current upstream\n');
   assert.equal(await readFile(value.paths.apiSite, 'utf8'), 'current api site\n');
   assert.equal(await readFile(value.paths.active, 'utf8'), 'blue\n');
+  assert.equal(await readFile(value.paths.reloadCount, 'utf8'), '2\n');
   const marker = join(
     value.appRoot,
     'rollback-states',

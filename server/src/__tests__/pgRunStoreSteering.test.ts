@@ -417,7 +417,7 @@ describe('PgRunStore steering inbox', () => {
     const pool = {
       query: vi.fn(async (sql: string) => {
         expect(sql.match(/AND target\.status IN \('pending','running','waiting_hand'\)/g)).toHaveLength(1);
-        expect(sql).toContain("input.state = 'reserved'\n                AND target.status NOT IN ('completed','failed','cancelled','orphaned')");
+        expect(sql).toMatch(/input\.state = 'reserved'\s+AND target\.status NOT IN \('completed','failed','cancelled','orphaned'\)/);
         expect(sql).not.toContain(`'waiting_user','waiting_hand'`);
         expect(sql).toContain("COALESCE(run.metadata->>'schedulerState', '') = 'staged'");
         expect(sql).toContain("run.metadata->>'subagent' IS DISTINCT FROM 'true'");

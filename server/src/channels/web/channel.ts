@@ -480,7 +480,7 @@ export class WebChannel implements BaseChannel {
       eventStoreTenantForClient: (client, tenantId, userId) => this.eventStoreTenantForClient(client, tenantId, userId),
       wsSend: (ws, data, eventId, eventCursor) => this.wsSend(ws, data, eventId, eventCursor),
       sendQueueSnapshot: (client, sessionId, recovery) => this.sendQueueSnapshot(client, sessionId, recovery),
-      getStreamStatus: (sessionId) => this.getStreamStatus(sessionId),
+      getStreamStatus: (sessionId, tenantId) => tenantId ? this.getStreamStatus(tenantId, sessionId) : this.getStreamStatus(sessionId),
       getRuntimeEventStoreForSession: (sessionId, tenantId) => this.getRuntimeEventStoreForSession(sessionId, tenantId),
     });
     // 定期清理 stale session locks，防止异常路径导致的 Map 泄漏

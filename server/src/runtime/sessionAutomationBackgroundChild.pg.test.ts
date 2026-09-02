@@ -127,6 +127,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
     const context = {
       tenantId, sessionId: parentSessionId, runId: parentRunId, automationFence: rootFence,
     } as RunContext;
+    await runs.markStatus(parentRunId, 'running', 'background_worker_started');
     await guard.recordBackgroundResource(context, parentRunId, { childSessionId, childRunId }, 'prepared');
     await pool.query(
       `UPDATE ${runs.runsTable}
@@ -256,6 +257,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
         expect(preparedResource.rows[0]).toMatchObject({
           state: 'prepared', provider_resource_id: childRunId, metadata: { childSessionId, childRunId },
         });
+        await params.acquireChildLaunchAuthority?.({ childSessionId, childRunId });
         await runs.createPending({
           runId: childRunId,
           tenantId,

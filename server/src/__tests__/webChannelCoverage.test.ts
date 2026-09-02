@@ -601,11 +601,11 @@ describe('WebChannel channel.ts 覆盖补齐', () => {
     it('overflow：按 sessionId 内联 durable queue/runtime/pending interactions 的权威快照', async () => {
       const runStore = new MemoryRunStore();
       await runStore.upsertPending({
-        runId: 'sync-run-pending', sessionId: 'sync-session', userId: USER.sub,
+        runId: 'sync-run-pending', sessionId: 'sync-session', userId: USER.sub, tenantId: USER.tenantId,
         model: 'm', channel: 'web', idempotencyKey: 'sync-msg-pending',
       });
       await runStore.upsertPending({
-        runId: 'sync-run-done', sessionId: 'sync-session', userId: USER.sub,
+        runId: 'sync-run-done', sessionId: 'sync-session', userId: USER.sub, tenantId: USER.tenantId,
         model: 'm', channel: 'web', idempotencyKey: 'sync-msg-done',
       });
       await runStore.markStatus('sync-run-done', 'completed');

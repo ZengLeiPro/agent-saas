@@ -40,7 +40,7 @@ interface RuntimeRecoveryHost {
   eventStoreTenantForClient(client: WsClient, targetTenantId?: string, ownerUserId?: string): string | null;
   wsSend(ws: WebSocket, data: object, eventId?: number, eventCursor?: string): void;
   sendQueueSnapshot(client: WsClient, sessionId: string, recovery?: { requestId?: string; networkGeneration?: number }): Promise<void>;
-  getStreamStatus(sessionId: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
+  getStreamStatus(sessionId: string, tenantId?: string): Promise<{ active: boolean; streamId?: string; runId?: string; status?: string; liveness?: RunLiveness }>;
   getRuntimeEventStoreForSession(sessionId: string, tenantId: string): Promise<EventStore | null>;
 }
 
@@ -463,8 +463,9 @@ export class WebRuntimeRecovery {
     if (!sessionId) return undefined;
     const snapshot: SyncSessionSnapshot = { sessionId };
     const runStore = this.host.config.enqueueRuntime?.runStore;
+    const tenantId = client.user?.tenantId;
     if (runStore?.listUserMessagesBySession) {
-      const runs = await runStore.listUserMessagesBySession(sessionId);
+      const runs = await runStore.listUserMessagesBySession(sessionId, tenantId);
       const first = runs[0];
       if (first && this.host.sensitiveActionAccessError(client, {
         tenantId: first.tenantId,
@@ -472,11 +473,11 @@ export class WebRuntimeRecovery {
       })) return undefined;
       snapshot.queueSnapshot = buildChatQueueSnapshot(sessionId, runs);
     }
-    snapshot.runtime = await this.host.getStreamStatus(sessionId);
+    snapshot.runtime = await this.host.getStreamStatus(sessionId, tenantId);
     snapshot.pendingInteractions = await this.getAuthoritativePendingInteractions(
       client,
       sessionId,
-      client.user?.tenantId,
+      tenantId,
     );
     return snapshot;
   }

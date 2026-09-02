@@ -126,7 +126,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     dispatchMetricsStore,
   } = runtime;
   const processCwd = runtime.processCwd || runtime.agentCwd || process.cwd();
-  const { configMutationService, getEffectiveConfigStatus } = createRuntimeConfigGovernance({
+  const { configMutationService, getEffectiveConfigStatus, getAdminConfigStatus } = createRuntimeConfigGovernance({
     config, processCwd, processRole: runtime.processRole,
   });
   const loginLogFilePath = resolve(processCwd, './data/login-logs.jsonl');
@@ -170,7 +170,7 @@ export function registerRoutes(app: Express, runtime: AppRuntime): void {
     }),
   );
   app.use('/api', activeOffboardingWriteFence(runtime));
-  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getEffectiveConfigStatus }));
+  app.use('/api/admin/config-status', createConfigStatusAdminRouter({ getStatus: getAdminConfigStatus }));
   app.use('/api', configuredMobileTelemetryRouter(resolve(processCwd, './data')));
   // App update: version check + APK download
   const mobileDir = resolve(processCwd, '../mobile');

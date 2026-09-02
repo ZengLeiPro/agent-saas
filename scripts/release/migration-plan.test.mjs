@@ -2375,7 +2375,13 @@ test('real repository closure ignores unrelated TypeScript changes behind type-o
       baseline = target;
     }
   } else {
-    baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+    try {
+      baseline = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], {
+        encoding: 'utf8',
+      }).trim();
+    } catch {
+      baseline = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+    }
   }
   const result = createMigrationPlan({
     changedPaths: ['server/src/release/releaseAttestation.ts'],

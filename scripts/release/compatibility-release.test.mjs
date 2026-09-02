@@ -297,7 +297,14 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(promotionWorkflow, /group: production-runtime/u);
   assert.match(acsWorkflow, /baselines\/acs-/u);
   assert.match(acsWorkflow, /group: production-runtime/u);
-  assert.match(appWorkflow, /format\('agent-saas-\{0\}', github\.run_id\)/u);
+  assert.match(
+    appWorkflow,
+    /format\('agent-saas-\{0\}-\{1\}', github\.workflow, github\.event\.pull_request\.number \|\| github\.ref\)/u,
+  );
+  assert.match(
+    appWorkflow,
+    /cancel-in-progress: \$\{\{ github\.event_name != 'workflow_dispatch' \}\}/u,
+  );
   assert.match(acsWorkflow, /ACS_IMAGE_REFERENCE/u);
   assert.match(acsWorkflow, /Stale ACS deploy dispatch/u);
   assert.match(acsWorkflow, /before Production mutation/u);

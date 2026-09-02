@@ -938,7 +938,7 @@ export function processWsEvent(
   }
 
   if (data.type === "interaction_resolved") {
-    const expectedSessionId = activeSessionId ?? latestSessionId.value;
+    const expectedSessionId = activeSessionId ?? latestSessionId?.value;
     if (!expectedSessionId || data.sessionId !== expectedSessionId) return;
     const msgs = msg.messagesRef.current;
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -966,10 +966,10 @@ export function processWsEvent(
   }
 
   if (data.type === "pending_interactions") {
-    const expectedSessionId = activeSessionId ?? latestSessionId.value;
+    const expectedSessionId = activeSessionId ?? latestSessionId?.value;
     if (!expectedSessionId || data.sessionId !== expectedSessionId) return;
     const authoritativeIds = new Set<string>(data.interactions.map((interaction) => interaction.interactionId));
-    // Snapshot replacement removes stale pending cards; local submit/outbox state is never trusted on recovery.
+    // Snapshot replacement removes stale pending cards; local submit/outbox state is never trusted during recovery.
     const staleIndexes = msg.messagesRef.current.flatMap((message, index) => (
       (message.type === 'permission_request' || message.type === 'ask_user')
       && message.status === 'pending' && !authoritativeIds.has(message.interactionId) ? [index] : []

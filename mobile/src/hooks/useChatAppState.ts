@@ -1207,7 +1207,8 @@ export function useChatAppStateCore(): ChatAppState {
     };
     const projectRecoveredInteraction = (event: Extract<WsEvent, { type: 'pending_interactions' | 'permission_request' | 'ask_user' | 'interaction_resolved' }>) => {
       const selectedSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
-      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current.value)) return;
+      // Test harnesses and teardown may expose an empty stream ref; keep the fence fail closed.
+      if (!shouldProjectInteractionEvent(event, selectedSessionId, wsLatestSessionIdRef.current?.value)) return;
       const ctx: WsProcessingContext = {
         msg: msgRef.current,
         session: sessionRef.current,
@@ -1220,7 +1221,13 @@ export function useChatAppStateCore(): ChatAppState {
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
       };
-      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current);
+      processWsEvent(
+        event,
+        ctx,
+        wsBlockRef.current,
+        wsLatestSessionIdRef.current,
+        immediateSessionIdRef.current ?? sessionIdRef.current,
+      );
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
@@ -1544,7 +1551,7 @@ export function useChatAppStateCore(): ChatAppState {
         && !shouldProjectInteractionEvent(
           data,
           immediateSessionIdRef.current ?? sessionIdRef.current,
-          wsLatestSessionIdRef.current.value,
+          wsLatestSessionIdRef.current?.value,
         )
       ) {
         return;
@@ -1555,7 +1562,7 @@ export function useChatAppStateCore(): ChatAppState {
         ctx,
         wsBlockRef.current,
         wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current,
+        immediateSessionIdRef.current ?? sessionIdRef.current,
       );
 
       if (data.type === "session" && "sessionId" in data) {
@@ -1596,7 +1603,7 @@ export function useChatAppStateCore(): ChatAppState {
         clearWatchdog();
         dispatchConnection("complete");
         const latestSid =
-          wsLatestSessionIdRef.current.value || sessionIdRef.current;
+          wsLatestSessionIdRef.current?.value || sessionIdRef.current;
         if (latestSid) {
           // 即时 patch：从本地消息提取最后一条文本作为 preview
           const msgs = msgRef.current.messagesRef.current;

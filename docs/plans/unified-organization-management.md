@@ -131,15 +131,15 @@
 
 ### 4.2 组织管理二级结构
 
-主设置侧栏只展示 5 个组织管理分类。进入分类后，内容区顶部使用局部 Tab 展示具体页面，避免把 23 个页面平铺到总侧栏。
+主设置侧栏只展示 5 个组织管理分类。进入分类后，内容区顶部使用局部 Tab 展示具体页面，避免把 27 个页面平铺到总侧栏。
 
-| 一级分类     | 二级页面                                                                                                       | 默认页          |
-| ------------ | -------------------------------------------------------------------------------------------------------------- | --------------- |
-| 组织总览     | 综合分析                                                                                                       | 综合分析        |
-| 成员与权限   | 成员、所有者与管理员、权限策略、部门/群组、离职撤权与资源交接                                                  | 成员            |
-| 智能体与资源 | 组织智能体、工作流、钉钉账号、技能、连接器与凭据、连接器映射、记忆与知识、文件与数据、模型与工具、环境可用范围 | 组织智能体      |
-| 用量与治理   | 自动化任务、用量/预算与计费、会话质检、操作记录                                                                | 用量/预算与计费 |
-| 组织设置     | 组织资料、智能体规则、功能与配额、品牌、登录与安全                                                             | 组织资料        |
+| 一级分类     | 二级页面                                                                                                                 | 默认页          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| 组织总览     | 综合分析                                                                                                                 | 综合分析        |
+| 成员与权限   | 成员、账号与登录、所有者与管理员、权限策略、部门/群组、离职撤权与资源交接                                                | 成员            |
+| 智能体与资源 | 组织智能体、工作流、钉钉账号、技能、连接器与凭据、MCP 服务、连接器映射、记忆与知识、文件与数据、模型与工具、环境可用范围 | 组织智能体      |
+| 用量与治理   | 自动化任务、用量/预算与计费、会话质检、操作记录                                                                          | 用量/预算与计费 |
+| 组织设置     | 组织资料、智能体规则、功能与配额、品牌、登录与安全                                                                       | 组织资料        |
 
 ### 4.3 命名统一
 
@@ -149,6 +149,7 @@
 | 公司信息              | 组织资料         | 与组织作用域一致                                     |
 | 自定义规则            | 智能体规则       | 明确规则影响对象                                     |
 | 连接器                | 连接器与凭据     | 覆盖目录、共享凭据和健康状态                         |
+| MCP Catalog           | MCP 服务         | 保留 Server Catalog、模板、密钥要求和诊断能力        |
 | 连接器映射            | 连接器映射       | 作为独立二级页保留，不与凭据编辑混淆                 |
 | 计费                  | 用量、预算与计费 | 覆盖真实页面范围                                     |
 | 组织管理（旧叶子）    | 功能与配额       | 避免分组和叶子同名                                   |
@@ -160,18 +161,19 @@
 
 ### 5.1 成员与权限
 
-| 统一页面           | 当前来源                               | 实施方式                   | 权威要求                                         |
-| ------------------ | -------------------------------------- | -------------------------- | ------------------------------------------------ |
-| 成员               | `OrganizationMembersPage`              | 替换设置侧旧 `UserManager` | 必须读取 Governance Membership                   |
-| 成员详情           | `OrganizationMemberDetails`            | 作为成员列表下钻页         | 保留资料、权限、资源指派、用量策略、安全记录 Tab |
-| 所有者与管理员     | `OrganizationMembersPage` owners route | 原样复用                   | 所有者/管理员变更继续走预览和服务端授权          |
-| 权限策略           | `OrganizationPoliciesPage`             | 原样复用                   | 不在前端推导最终权限                             |
-| 部门/群组          | `OrganizationGroupsPage`               | 原样复用                   | 本地不可变 groupId 继续作为绑定 ID               |
-| 离职撤权与资源交接 | `OrganizationOffboardingPage`          | 原样复用                   | 必须先预览影响；存在 blocker 时禁止提交          |
+| 统一页面           | 当前来源                               | 实施方式                   | 权威要求                                          |
+| ------------------ | -------------------------------------- | -------------------------- | ------------------------------------------------- |
+| 成员               | `OrganizationMembersPage`              | 替换设置侧旧 `UserManager` | 必须读取 Governance Membership                    |
+| 账号与登录         | 旧 `UserManager`                       | 作为独立二级页复用         | 保留资料编辑、密码重置、禁用/启用、删除和登录日志 |
+| 成员详情           | `OrganizationMemberDetails`            | 作为成员列表下钻页         | 保留资料、权限、资源指派、用量策略、安全记录 Tab  |
+| 所有者与管理员     | `OrganizationMembersPage` owners route | 原样复用                   | 所有者/管理员变更继续走预览和服务端授权           |
+| 权限策略           | `OrganizationPoliciesPage`             | 原样复用                   | 不在前端推导最终权限                              |
+| 部门/群组          | `OrganizationGroupsPage`               | 原样复用                   | 本地不可变 groupId 继续作为绑定 ID                |
+| 离职撤权与资源交接 | `OrganizationOffboardingPage`          | 原样复用                   | 必须先预览影响；存在 blocker 时禁止提交           |
 
 禁止事项：
 
-- 禁止设置侧继续用旧 `UserManager` 作为组织成员权威页面。
+- 禁止设置侧继续用旧 `UserManager` 作为组织成员权威页面；仅允许在“账号与登录”页承担账号操作。
 - 禁止把 `role === "admin"` 直接等价为最终 Governance persona。
 - 禁止在前端自行计算所有者、管理员或 Assignment 最终结果。
 
@@ -184,6 +186,7 @@
 | 钉钉账号     | `AgentDwsAccountsPage`                      | 原样复用                                             |
 | 技能         | 现有组织技能管理组件                        | 复用现有 renderer                                    |
 | 连接器与凭据 | `OrganizationCredentialsPage`               | 作为连接器权威管理页                                 |
+| MCP 服务     | 现有 MCP Server Catalog 管理组件            | 保留创建、编辑、删除、模板、密钥要求与诊断能力       |
 | 连接器映射   | `TenantConnectorDictionaryPanel`            | 新增独立稳定 routeId，不再与 connectors 共用同一路由 |
 | 记忆与知识   | `OrganizationMemoryKnowledgePage`           | 原样复用，保留 Context Center 内部 Tab               |
 | 文件与数据   | 现有组织文件 renderer                       | 原样复用                                             |
@@ -247,11 +250,11 @@ type TenantSettingsPanelSection = 'general' | 'model-tools' | 'brand' | 'securit
 
 | 旧 URL                                        | canonical routeId                                                        |
 | --------------------------------------------- | ------------------------------------------------------------------------ |
-| `/tenant-admin/settings/users`                | `organization.members.list`                                              |
+| `/tenant-admin/settings/users`                | `organization.members.accounts`                                          |
 | `/tenant-admin/settings/skills`               | `organization.agents.skills`                                             |
 | `/tenant-admin/settings/org-agents`           | `organization.agents.org-agents`                                         |
 | `/tenant-admin/settings/workflows`            | `organization.agents.workflows`                                          |
-| `/tenant-admin/settings/mcp`                  | `organization.agents.connectors`                                         |
+| `/tenant-admin/settings/mcp`                  | `organization.agents.mcp-catalog`                                        |
 | `/tenant-admin/settings/connector-dictionary` | `organization.agents.connector-mappings`                                 |
 | `/tenant-admin/settings/billing`              | `organization.governance.usage`，内部默认 billing Tab 可通过查询参数保留 |
 | `/tenant-admin/settings/files`                | `organization.agents.files-data`                                         |
@@ -642,8 +645,8 @@ interface OrganizationManagementContentProps {
 - 点击分类进入默认二级页。
 - 当前二级页面对应的一级分类保持 active。
 - 工作流页面存在真实内容，不是空节点。
-- 成员页面调用 Governance Membership，不渲染旧 UserManager。
-- 连接器与凭据、连接器映射可分别访问。
+- 成员页面调用 Governance Membership，不渲染旧 UserManager；账号与登录页单独承载旧账号操作。
+- 连接器与凭据、MCP 服务、连接器映射可分别访问。
 - `TenantSettingsPanel` 四个 section 只展示各自字段。
 - 移动头像菜单不再出现「组织控制台」。
 
@@ -653,7 +656,8 @@ interface OrganizationManagementContentProps {
 | ------------------ | ----------------------------------------- | ---------------------------------- |
 | 新组织深链         | `/tenant-admin/members/list`              | 统一设置工作区 > 成员与权限 > 成员 |
 | 成员详情           | `/tenant-admin/members/member/u1/profile` | 保留成员详情和 profile Tab         |
-| 旧成员设置         | `/tenant-admin/settings/users`            | canonical 到成员 Governance route  |
+| 旧成员设置         | `/tenant-admin/settings/users`            | canonical 到账号与登录 route       |
+| 旧 MCP 设置        | `/tenant-admin/settings/mcp`              | canonical 到 MCP 服务 route        |
 | 旧计费设置         | `/tenant-admin/settings/billing`          | 进入用量与治理，并定位预算与计费   |
 | 平台管理员带组织   | `...?org=acme`                            | 管理 acme，组织切换器显示 acme     |
 | 平台管理员无组织   | 无 `org`                                  | 展示选择组织阻断态                 |
@@ -748,7 +752,7 @@ pnpm -F web build
 | `TenantSettingsPanel` 拆分后并发版本冲突 | 中   | 继续使用整包 payload + `expectedUpdatedAt`，冲突时强制刷新 |
 | 平台管理员误操作错误组织                 | 高   | 显式 org、常驻组织提示、切换前 dirty guard                 |
 | 移动端导航层级过深                       | 中   | 固定“设置菜单 → 分类内容”两级，详情通过内容区下钻          |
-| 23 个页面一次迁移范围过大                | 中   | 按 Phase 逐批迁移，每批保持 canonical route 可用           |
+| 27 个页面一次迁移范围过大                | 中   | 按 Phase 逐批迁移，每批保持 canonical route 可用           |
 | 旧测试依赖旧文案                         | 低   | 先更新产品契约测试，再机械更新展示测试                     |
 
 ---

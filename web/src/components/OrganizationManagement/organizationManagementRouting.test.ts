@@ -13,7 +13,7 @@ import {
 import { governanceRoute } from '@/lib/governanceNavigation';
 
 describe('organization management registry', () => {
-  it('固定五个分类、默认页和 25 个主页面加成员详情', () => {
+  it('固定五个分类、默认页和 27 个主页面加成员详情', () => {
     expect(
       ORGANIZATION_SETTINGS_WORKSPACES.map(({ id, label, defaultRouteId }) => ({
         id,
@@ -27,8 +27,8 @@ describe('organization management registry', () => {
       { id: 'governance', label: '用量与治理', defaultRouteId: 'organization.governance.usage' },
       { id: 'settings', label: '组织设置', defaultRouteId: 'organization.settings.profile' },
     ]);
-    expect(ORGANIZATION_MANAGEMENT_ROUTE_IDS).toHaveLength(26);
-    expect(new Set(ORGANIZATION_MANAGEMENT_ROUTE_IDS).size).toBe(26);
+    expect(ORGANIZATION_MANAGEMENT_ROUTE_IDS).toHaveLength(28);
+    expect(new Set(ORGANIZATION_MANAGEMENT_ROUTE_IDS).size).toBe(28);
   });
 
   it('每条组织 route 恰有一个权威 renderer', () => {

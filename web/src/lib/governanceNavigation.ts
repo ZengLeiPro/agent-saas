@@ -116,6 +116,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
     id: "members", label: "成员与权限", routes: [
       route("organization", "members", "list", "成员", ["tenant-admin", "members", "list"]),
+      route("organization", "members", "accounts", "账号与登录", ["tenant-admin", "members", "accounts"]),
       route("organization", "members", "owners", "组织所有者与管理员", ["tenant-admin", "members", "owners"]),
       route("organization", "members", "policies", "权限策略", ["tenant-admin", "members", "policies"]),
       route("organization", "members", "groups", "部门/群组", ["tenant-admin", "members", "groups"]),
@@ -136,6 +137,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
       route("organization", "agents", "dingtalk-accounts", "钉钉账号", ["tenant-admin", "agents", "dingtalk-accounts"]),
       route("organization", "agents", "skills", "技能", ["tenant-admin", "agents", "skills"], { entity: "optional" }),
       route("organization", "agents", "connectors", "连接器与凭据", ["tenant-admin", "agents", "connectors"], { entity: "optional" }),
+      route("organization", "agents", "mcp-catalog", "MCP 服务", ["tenant-admin", "agents", "mcp-catalog"]),
       route("organization", "agents", "connector-mappings", "连接器映射", ["tenant-admin", "agents", "connector-mappings"]),
       route("organization", "agents", "memory-knowledge", "记忆与知识", ["tenant-admin", "agents", "memory-knowledge"], { entity: "optional" }),
       route("organization", "agents", "files-data", "文件与数据", ["tenant-admin", "agents", "files-data"]),
@@ -233,7 +235,7 @@ const TENANT_LEGACY: Readonly<Record<string, string>> = {
   "/tenant-admin/usage": "organization.governance.usage",
   "/tenant-admin/qa": "organization.governance.qa",
   "/tenant-admin/audit": "organization.governance.audit",
-  "/users": "organization.members.list",
+  "/users": "organization.members.accounts",
   "/skills": "organization.agents.skills",
   "/usage": "organization.governance.usage",
 };

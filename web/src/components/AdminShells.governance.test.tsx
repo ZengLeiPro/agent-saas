@@ -307,6 +307,31 @@ describe("AdminShells V2 内容适配", () => {
     expect(screen.queryByText("复用 UserManager")).toBeNull();
   });
 
+  it("账号与登录叶子复用完整 UserManager 账号操作能力", () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div>复用 UserManager</div>}
+        governanceRoute={governanceRoute("organization.members.accounts", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByText("复用 UserManager")).toBeTruthy();
+  });
+
+  it("MCP 服务叶子复用完整 Connector Catalog 管理能力", () => {
+    render(
+      <TenantAdminShell
+        {...commonTenantProps}
+        renderUsers={() => <div />}
+        renderMcp={() => <div>连接器管理器</div>}
+        governanceRoute={governanceRoute("organization.agents.mcp-catalog", { orgId: "acme" })}
+      />,
+    );
+
+    expect(screen.getByText("连接器管理器")).toBeTruthy();
+  });
+
   it("组织记忆与知识叶子在原区域内接入 Context Center，不增加顶级路由", async () => {
     render(
       <TenantAdminShell

@@ -39,8 +39,10 @@ interface OrganizationManagementRendererContext {
   route: GovernanceRouteState;
   tenantId: string;
   tenantName?: string;
+  renderAccounts: (tenantId: string, tenantName?: string) => ReactNode;
   renderOrgAgents?: (tenantId: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId: string, tenantName?: string) => ReactNode;
+  renderMcpCatalog: () => ReactNode;
   renderUsage: (tenantId: string) => ReactNode;
   renderFiles: () => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
@@ -60,6 +62,8 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.members.list': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />
   ),
+  'organization.members.accounts': ({ tenantId, tenantName, renderAccounts }) =>
+    renderAccounts(tenantId, tenantName),
   'organization.members.owners': ({ tenantId, route }) => (
     <OrganizationMembersPage tenantId={tenantId} route={route} />
   ),
@@ -86,6 +90,7 @@ export const ORGANIZATION_MANAGEMENT_RENDERERS: Readonly<
   'organization.agents.connectors': ({ tenantId }) => (
     <OrganizationCredentialsPage tenantId={tenantId} />
   ),
+  'organization.agents.mcp-catalog': ({ renderMcpCatalog }) => renderMcpCatalog(),
   'organization.agents.connector-mappings': ({ tenantId, tenantName }) => (
     <TenantConnectorDictionaryPanel tenantId={tenantId} tenantName={tenantName} />
   ),
@@ -140,8 +145,10 @@ export interface OrganizationManagementContentProps {
   route: GovernanceRouteState;
   tenantId: string;
   tenantName?: string;
+  renderAccounts: (tenantId: string, tenantName?: string) => ReactNode;
   renderOrgAgents?: (tenantId: string, tenantName?: string) => ReactNode;
   renderSkills: (tenantId: string, tenantName?: string) => ReactNode;
+  renderMcpCatalog: () => ReactNode;
   renderUsage: (tenantId: string) => ReactNode;
   renderFiles: () => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;

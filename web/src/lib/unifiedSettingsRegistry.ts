@@ -67,11 +67,11 @@ export const SETTINGS_REGISTRY = defineSettingsRegistry([
   { scope: "personal", id: "files-storage", label: "文件与存储", description: "浏览文件、查看用量并清理附件。", group: "data", iconKey: "hard-drive", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.data.files-storage" },
   { scope: "personal", id: "trash", label: "回收站", description: "恢复或彻底清理已删除会话。", group: "data", iconKey: "trash", accessAction: "settings.personal.view", dirtyPolicy: "immediate", routeId: "settings.data.trash" },
 
-  { scope: "tenant", id: "users", label: "成员", iconKey: "members", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.members.list" },
+  { scope: "tenant", id: "users", label: "成员", iconKey: "members", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.members.accounts" },
   { scope: "tenant", id: "skills", label: "技能", iconKey: "skill", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.skills" },
   { scope: "tenant", id: "org-agents", label: "组织智能体", iconKey: "expert", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.org-agents" },
   { scope: "tenant", id: "workflows", label: "工作流", iconKey: "workflow", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.workflows" },
-  { scope: "tenant", id: "mcp", label: "连接器", iconKey: "connector", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.connectors" },
+  { scope: "tenant", id: "mcp", label: "连接器", iconKey: "connector", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.mcp-catalog" },
   { scope: "tenant", id: "connector-dictionary", label: "连接器映射", iconKey: "connector", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.connector-mappings" },
   { scope: "tenant", id: "billing", label: "计费", iconKey: "billing", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.governance.usage" },
   { scope: "tenant", id: "files", label: "文件与数据", iconKey: "files", accessAction: "settings.tenant.view", dirtyPolicy: "component-owned", targetRouteId: "organization.agents.files-data" },

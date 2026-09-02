@@ -444,10 +444,12 @@ export function TenantAdminShell({
         route={governanceRoute}
         tenantId={effectiveTenantId}
         tenantName={currentTenant?.name}
+        renderAccounts={(tenantId, tenantName) => renderUsers(tenantId, tenantName)}
         renderOrgAgents={renderOrgAgents
           ? (tenantId, tenantName) => renderOrgAgents(tenantId, tenantName)
           : undefined}
         renderSkills={(tenantId, tenantName) => renderSkills(tenantId, tenantName)}
+        renderMcpCatalog={renderMcp}
         renderUsage={(tenantId) => renderUsage(tenantId)}
         renderFiles={renderFiles}
         renderCompanyInfo={renderCompanyInfo}

@@ -365,11 +365,16 @@ export class RuntimeScheduler {
       for (const record of recoverable) {
         if (record.status !== 'running' || !isBackgroundAgentTaskRun(record)) continue;
         try {
+          const claimed = this.options.runStore.acquireLease
+            ? await this.options.runStore.acquireLease(record.runId, this.workerId, this.leaseMs, now, undefined, undefined,
+              { tenantId: requireTenantId(record.tenantId), sessionId: record.sessionId })
+            : record;
+          if (!claimed) continue; // The old worker renewed after the recovery snapshot.
           if (this.options.failInterruptedBackgroundTask) {
-            await this.options.failInterruptedBackgroundTask(record);
+            await this.options.failInterruptedBackgroundTask(claimed);
           } else {
             await this.options.runStore.markStatus(
-              record.runId,
+              claimed.runId,
               'failed',
               'background_task_interrupted_no_replay',
               { wakeState: 'pending' },

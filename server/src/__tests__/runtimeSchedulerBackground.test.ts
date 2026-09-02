@@ -135,6 +135,31 @@ describe('RuntimeScheduler background task recovery', () => {
     expect(wake).toHaveBeenCalledOnce();
   });
 
+  it('does not freeze an interrupted Agent when the old worker renewed after the recovery snapshot', async () => {
+    const runStore = new MemoryRunStore();
+    const eventStore = new MemoryEventStore();
+    const record = await runStore.upsertPending({
+      runId: 'bg-agent-renewed', sessionId: 'sub-bg-agent-renewed',
+      metadata: automationAgentMetadata('bg-agent-renewed'),
+    });
+    runStore.records.set(record.runId, {
+      ...record, status: 'running', workerId: 'old-worker',
+      leaseExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    vi.spyOn(runStore, 'acquireLease').mockResolvedValueOnce(null);
+    const failInterruptedBackgroundTask = vi.fn();
+    const scheduler = new RuntimeScheduler({
+      runStore, eventStore, workerId: 'worker-new', autoWake: true, wake: vi.fn(),
+      failInterruptedBackgroundTask,
+    });
+
+    await scheduler.tick();
+    await scheduler.stop();
+
+    expect(failInterruptedBackgroundTask).not.toHaveBeenCalled();
+    await expect(runStore.get(record.runId)).resolves.toMatchObject({ status: 'running', workerId: 'old-worker' });
+  });
+
   it('freezes a running parent when the interrupted child terminal is already preserved', async () => {
     const runStore = new MemoryRunStore();
     const eventStore = new MemoryEventStore();

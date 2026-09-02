@@ -649,7 +649,7 @@ export class PgRunStoreQueries {
             candidate.status = 'pending'
             OR (
               candidate.status = 'running'
-              AND candidate.liveness_version IS NULL
+              AND (candidate.liveness_version IS NULL OR candidate.metadata->>'backgroundTask' = 'true')
               AND (candidate.lease_expires_at IS NULL OR candidate.lease_expires_at < $4)
             )
           )

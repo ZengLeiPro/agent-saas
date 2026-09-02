@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SessionAutomationCoordinator } from './sessionAutomationCoordinator.js';
+import { SessionAutomationCoordinator, SessionAutomationProcessCrash } from './sessionAutomationCoordinator.js';
 
 function storeStub(overrides: Record<string, unknown> = {}) {
   return {
     recoverLeases: vi.fn(async () => undefined),
     listRecoverablePreparedDispatches: vi.fn(async () => []),
+    reconcileStalePreparedDispatch: vi.fn(async () => false),
     transitionPreparedDispatch: vi.fn(async () => true),
     claimCancellations: vi.fn(async () => []),
     completeCancellation: vi.fn(async () => undefined),
@@ -293,4 +294,56 @@ describe('SessionAutomationCoordinator execution gating and staged recovery', ()
     expect(dispatcher.activate).toHaveBeenCalledTimes(2);
     expect(store.transitionPreparedDispatch).toHaveBeenLastCalledWith('outbox-1', 'dispatched', 'completed');
   });
+  it('preserves the prepared boundary when the process dies after durable stage', async () => {
+    const item = {
+      outboxId: 'outbox-crash', wakeupId: 'wakeup-crash', automationId: 'automation-crash',
+      tenantId: 'tenant-1', sessionId: 'session-1', targetRunId: 'run-staged',
+      triggerKey: 'trigger-crash', payload: {}, leaseToken: 'lease-crash', generation: 1,
+      specVersion: 1, incarnationId: 'incarnation-1',
+    };
+    const store = storeStub({
+      claimDispatch: vi.fn(async () => [item]),
+      get: vi.fn(async () => ({
+        status: 'active', activeRunId: null, generation: 1, incarnationId: 'incarnation-1',
+        spec: { kind: 'loop', prompt: 'continue' }, specVersion: 1,
+      })),
+    });
+    const crash = new SessionAutomationProcessCrash('crash after durable stage');
+    const onError = vi.fn();
+    const coordinator = new SessionAutomationCoordinator(store as never, {
+      stage: vi.fn(async () => { throw crash; }), activate: vi.fn(),
+    }, { executionEnabled: () => true, onError });
+
+    await coordinator.tick();
+
+    expect(store.prepareDispatch).toHaveBeenCalledWith(item, expect.objectContaining({ stage: expect.any(Object) }));
+    expect(store.transitionPreparedDispatch).not.toHaveBeenCalled();
+    expect(store.markDispatched).not.toHaveBeenCalled();
+    expect(store.failDispatch).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(crash);
+  });
+
+  it('hands a prepared attempt from an old lineage to durable reconciliation instead of restaging it', async () => {
+    const attempt = {
+      outboxId: 'outbox-old', tenantId: 'tenant-1', sessionId: 'session-1', automationId: 'automation-1',
+      incarnationId: 'incarnation-old', generation: 1, specVersion: 1,
+      runId: 'run-staged-old', state: 'prepared', requestPayload: { stage: {} },
+    };
+    const poolQuery = vi.fn(async () => ({ rows: [] }));
+    const store = storeStub({
+      listRecoverablePreparedDispatches: vi.fn(async () => [attempt]),
+      reconcileStalePreparedDispatch: vi.fn(async () => true),
+      pool: { query: poolQuery },
+    });
+    const dispatcher = { stage: vi.fn(), activate: vi.fn() };
+    const coordinator = new SessionAutomationCoordinator(store as never, dispatcher, { executionEnabled: () => true });
+
+    await coordinator.tick();
+
+    expect(store.reconcileStalePreparedDispatch).toHaveBeenCalledWith(attempt);
+    expect(poolQuery).not.toHaveBeenCalled();
+    expect(dispatcher.stage).not.toHaveBeenCalled();
+    expect(dispatcher.activate).not.toHaveBeenCalled();
+  });
+
 });

@@ -37,7 +37,25 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
   backgroundAutomationStatus = 'active';
   backgroundExecutionState = 'running';
   backgroundRootRunStatus = 'running';
+  automationPresent = true;
+  executionMatches = true;
   onBackgroundAuthorityLocked?: () => void;
+  onAutomationAuthorityLocked?: () => void;
+  onInteractionUpsert?: () => Promise<void> | void;
+  private automationLockHeld = false;
+  private automationLockWaiters: Array<() => void> = [];
+
+  async mutateAutomationAfterLock(mutate: () => void): Promise<void> {
+    if (this.automationLockHeld) {
+      await new Promise<void>(resolve => this.automationLockWaiters.push(resolve));
+    }
+    mutate();
+  }
+
+  private releaseAutomationLock(): void {
+    this.automationLockHeld = false;
+    for (const resolve of this.automationLockWaiters.splice(0)) resolve();
+  }
 
   async connect(): Promise<pg.PoolClient> {
     return { query: this.query.bind(this), release() {} } as unknown as pg.PoolClient;
@@ -46,12 +64,26 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
   async query<T>(sql: string, values?: readonly unknown[]): Promise<{ rows: T[]; rowCount: number }> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
     this.statements.push(normalized);
-    if (normalized === 'COMMIT') this.onCommit?.();
+    if (normalized === 'COMMIT') {
+      this.onCommit?.();
+      this.releaseAutomationLock();
+    } else if (normalized === 'ROLLBACK') {
+      this.releaseAutomationLock();
+    }
     if (normalized.startsWith('INSERT INTO runtime_session_automation_budget_reservations') && values?.[8] === 'credits') {
       this.creditReservationAmounts.push(values[10]);
     }
     if (normalized.includes('SELECT status,incarnation_id,generation,spec_version,active_run_id')) {
-      return { rows: [this.automation] as T[], rowCount: 1 };
+      this.automationLockHeld = true;
+      this.onAutomationAuthorityLocked?.();
+      return this.automationPresent
+        ? { rows: [this.automation] as T[], rowCount: 1 }
+        : { rows: [] as T[], rowCount: 0 };
+    }
+    if (normalized.startsWith('SELECT 1 FROM runtime_session_automation_executions')) {
+      return this.executionMatches
+        ? { rows: [{ '?column?': 1 }] as T[], rowCount: 1 }
+        : { rows: [] as T[], rowCount: 0 };
     }
     if (normalized.includes('SELECT a.run_count')) {
       return { rows: [{ run_count: this.runCount, spec: { budget: this.budget } }] as T[], rowCount: 1 };
@@ -88,6 +120,10 @@ class FakePool { // SQL-aware transaction and live-switch test double for Runtim
     }
     if (normalized.includes('SELECT prepared_dispatch_attempt_id')) {
       return { rows: [{ prepared_dispatch_attempt_id: '44444444-4444-4444-8444-444444444444' }] as T[], rowCount: 1 };
+    }
+    if (normalized.startsWith('INSERT INTO runtime_session_automation_interactions')) {
+      await this.onInteractionUpsert?.();
+      return { rows: [{ interaction_id: String(values?.[0]) }] as T[], rowCount: 1 };
     }
     if (normalized.startsWith('SELECT 1 FROM runtime_session_automations a') && normalized.includes('parent_run.status')) {
       this.onBackgroundAuthorityLocked?.();
@@ -139,6 +175,93 @@ describe('SessionAutomationRuntimeGuard', () => {
     const cancellingGuard = new SessionAutomationRuntimeGuard(cancelling as unknown as pg.Pool, () => true);
     await expect(cancellingGuard.barrier(context)).rejects.toBeInstanceOf(AutomationFenceRejectedError);
   });
+
+  it('interaction 记录前重验 active fence、execution switch、预算与完整 execution lineage', async () => {
+    const active = new FakePool();
+    const activeGuard = new SessionAutomationRuntimeGuard(active as unknown as pg.Pool, () => true);
+    await activeGuard.recordInteraction(context, 'interaction-active', 'ask_user', 'active', { questions: [] });
+    expect(active.statements.filter(sql => sql.startsWith('INSERT INTO runtime_session_automation_interactions'))).toHaveLength(1);
+    expect(active.statements.filter(sql => sql === 'BEGIN')).toHaveLength(1);
+    expect(active.statements.filter(sql => sql === 'COMMIT')).toHaveLength(1);
+    expect(active.statements.findIndex(sql => sql.startsWith('INSERT INTO runtime_session_automation_interactions')))
+      .toBeLessThan(active.statements.indexOf('COMMIT'));
+
+    const cases: Array<{ name: string; configure(pool: FakePool): () => boolean }> = [
+      { name: 'pause', configure: pool => { pool.automation.status = 'paused'; return () => true; } },
+      { name: 'replace', configure: pool => { pool.automation.generation += 1; return () => true; } },
+      { name: 'clear', configure: pool => { pool.automationPresent = false; return () => true; } },
+      { name: 'execution lineage', configure: pool => { pool.executionMatches = false; return () => true; } },
+      { name: 'kill switch', configure: () => () => false },
+    ];
+    for (const scenario of cases) {
+      const pool = new FakePool();
+      const executionEnabled = scenario.configure(pool);
+      const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, executionEnabled);
+      await expect(guard.recordInteraction(context, `interaction-${scenario.name}`, 'ask_user', 'completed', { response: {} }))
+        .rejects.toBeInstanceOf(AutomationFenceRejectedError);
+      expect(pool.statements.filter(sql => sql.startsWith('INSERT INTO runtime_session_automation_interactions')), scenario.name).toHaveLength(0);
+    }
+  });
+
+  it.each(['active', 'completed'] as const)(
+    'interaction %s 在 automation row lock 周期内 UPSERT，并与 pause/replace/clear 串行',
+    async state => {
+      for (const control of ['pause', 'replace', 'clear'] as const) {
+        const pool = new FakePool();
+        let releaseUpsert!: () => void;
+        let signalUpsert!: () => void;
+        const upsertStarted = new Promise<void>(resolve => { signalUpsert = resolve; });
+        const upsertLatch = new Promise<void>(resolve => { releaseUpsert = resolve; });
+        pool.onInteractionUpsert = async () => {
+          signalUpsert();
+          await upsertLatch;
+        };
+        const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => true);
+        const recording = guard.recordInteraction(
+          context, `interaction-${state}-${control}`, 'ask_user', state,
+          state === 'active' ? { questions: [] } : { response: {} },
+        );
+        await upsertStarted;
+
+        let controlApplied = false;
+        const controlling = pool.mutateAutomationAfterLock(() => {
+          controlApplied = true;
+          if (control === 'pause') pool.automation.status = 'paused';
+          else if (control === 'replace') pool.automation.generation += 1;
+          else pool.automationPresent = false;
+        });
+        await Promise.resolve();
+        expect(controlApplied, `${state}/${control}`).toBe(false);
+
+        releaseUpsert();
+        await recording;
+        await controlling;
+        expect(controlApplied, `${state}/${control}`).toBe(true);
+        const insertIndex = pool.statements.findIndex(sql => sql.startsWith('INSERT INTO runtime_session_automation_interactions'));
+        const commitIndex = pool.statements.indexOf('COMMIT');
+        expect(insertIndex, `${state}/${control}`).toBeGreaterThan(pool.statements.indexOf('BEGIN'));
+        expect(commitIndex, `${state}/${control}`).toBeGreaterThan(insertIndex);
+        expect(pool.statements.filter(sql => sql === 'BEGIN'), `${state}/${control}`).toHaveLength(1);
+        expect(pool.statements.filter(sql => sql === 'COMMIT'), `${state}/${control}`).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each(['active', 'completed'] as const)(
+    'interaction %s 在持锁后动态 execution flag 关闭时 fail-closed',
+    async state => {
+      const pool = new FakePool();
+      let enabled = true;
+      pool.onAutomationAuthorityLocked = () => { enabled = false; };
+      const guard = new SessionAutomationRuntimeGuard(pool as unknown as pg.Pool, () => enabled);
+      await expect(guard.recordInteraction(
+        context, `interaction-disabled-${state}`, 'ask_user', state,
+        state === 'active' ? { questions: [] } : { response: {} },
+      )).rejects.toMatchObject({ reason: 'execution_disabled' });
+      expect(pool.statements.some(sql => sql.startsWith('INSERT INTO runtime_session_automation_interactions'))).toBe(false);
+      expect(pool.statements.at(-1)).toBe('ROLLBACK');
+    },
+  );
 
   it('并发保留已占最后一轮预算时 fail-closed 且不新增 provider attempt', async () => {
     const pool = new FakePool();

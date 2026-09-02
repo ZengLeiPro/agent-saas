@@ -2172,7 +2172,7 @@ export function createRawApprovalResumeDispatch(config: RawRuntimeRunDispatchCon
           executionTarget,
           env: resumeEnv,
           sandboxPolicy,
-          workerId: request.runtimeWorkerId,
+          workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
           approvalPolicy,
           ...(boundProfile ? {
@@ -2656,7 +2656,7 @@ export function createRawInteractionResumeDispatch(config: RawRuntimeRunDispatch
           executionTarget,
           env: resumeEnv,
           sandboxPolicy,
-          workerId: request.runtimeWorkerId,
+          workerId: request.runtimeWorkerId, ...(automationFenceFromMetadata(request.runtimeIsolationMetadata) ? { automationFence: automationFenceFromMetadata(request.runtimeIsolationMetadata)! } : {}),
           channelContext: request.context,
           approvalPolicy,
           ...(boundProfile ? {

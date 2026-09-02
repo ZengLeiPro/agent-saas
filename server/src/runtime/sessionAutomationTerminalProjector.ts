@@ -222,7 +222,31 @@ export class SessionAutomationTerminalProjector {
         const ownsActiveRun = row.active_run_id === event.runId;
         const fenced = row.incarnation_id === row.current_incarnation
           && Number(row.generation) === Number(row.current_generation);
-        if (ownsActiveRun && fenced && creditsUnverifiable) {
+        if (ownsActiveRun && !fenced) {
+          // Controls may advance the generation while the previous run is still the active slot owner.
+          // Its terminal fact may release only that slot: current-generation progress, fixed anchors,
+          // and spec-derived continuation state belong to the newer control generation.
+          await client.query(
+            `UPDATE ${this.store.tables.automations} a
+                SET phase=CASE
+                      WHEN status='active' AND EXISTS (
+                        SELECT 1 FROM ${this.store.tables.wakeups} w
+                         WHERE w.tenant_id=$1 AND w.automation_id=$3
+                           AND w.incarnation_id=a.incarnation_id
+                           AND w.generation=a.generation
+                           AND w.spec_version=a.spec_version
+                           AND w.state IN ('pending','claimed')
+                      ) THEN 'waiting'
+                      WHEN status='active' THEN 'idle'
+                      WHEN status IN ('paused','blocked') THEN 'idle'
+                      ELSE phase
+                    END,
+                    active_run_id=NULL,projection_version=projection_version+1,updated_at=now()
+              WHERE a.tenant_id=$1 AND a.session_id=$2 AND a.automation_id=$3 AND a.active_run_id=$4
+                AND (a.incarnation_id<>$5 OR a.generation<>$6)`,
+            [event.tenantId,event.sessionId,row.automation_id,event.runId,row.incarnation_id,row.generation],
+          );
+        } else if (ownsActiveRun && fenced && creditsUnverifiable) {
           await client.query(
             `UPDATE ${this.store.tables.automations}
                 SET status='reconcile_required',phase='waiting',active_run_id=NULL,next_wakeup_at=NULL,

@@ -556,18 +556,61 @@ export class SessionAutomationRuntimeGuard {
   ): Promise<void> {
     const lineage = this.lineage(context);
     if (!lineage) return;
-    await this.pool.query(
-      `INSERT INTO ${this.tables.interactions}
-        (interaction_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,interaction_key,interaction_kind,state,request_payload,response_payload)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT(tenant_id,interaction_key) DO UPDATE
-         SET state=EXCLUDED.state,response_payload=COALESCE(EXCLUDED.response_payload,${this.tables.interactions}.response_payload),
-             version=${this.tables.interactions}.version+1,updated_at=now()`,
-      [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
-        lineage.generation, lineage.executionId, lineage.executionRunId, key, kind, state, JSON.stringify(payload),
-        state === 'completed' ? JSON.stringify(payload) : null],
-    );
-    if(state==='completed'){const store=new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable);await store.tx(async client=>{await client.query(`UPDATE ${this.tables.lifecycleWork} SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE tenant_id=$1 AND automation_id=$2 AND object_type='interaction' AND object_id IN (SELECT interaction_id::text FROM ${this.tables.interactions} WHERE tenant_id=$1 AND interaction_key=$3) AND state IN ('pending','claimed','result_unknown')`,[lineage.tenantId,lineage.automationId,key]);await store.tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);});}
+    this.assertExecutionEnabled();
+    const client = await this.pool.connect();
+    let committed = false;
+    try {
+      await client.query('BEGIN');
+      let budgetReason = await this.lockFenceAndResolveBudget(client, lineage);
+      // The current run was already admitted; maxRuns only fences the next dispatch.
+      if (budgetReason === 'max_runs') budgetReason = undefined;
+      if (budgetReason) {
+        await this.expireForBudget(client, lineage, budgetReason);
+      } else {
+        // The process-local switch cannot be part of the SQL predicate. Re-read it after
+        // acquiring the automation row lock and immediately before the durable UPSERT.
+        this.assertExecutionEnabled();
+        const interaction = await client.query<{ interaction_id: string }>(
+          `INSERT INTO ${this.tables.interactions}
+            (interaction_id,tenant_id,session_id,automation_id,incarnation_id,generation,execution_id,run_id,interaction_key,interaction_kind,state,request_payload,response_payload)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT(tenant_id,interaction_key) DO UPDATE
+             SET state=EXCLUDED.state,response_payload=COALESCE(EXCLUDED.response_payload,${this.tables.interactions}.response_payload),
+                 version=${this.tables.interactions}.version+1,updated_at=now()
+           WHERE ${this.tables.interactions}.session_id=EXCLUDED.session_id
+             AND ${this.tables.interactions}.automation_id=EXCLUDED.automation_id
+             AND ${this.tables.interactions}.incarnation_id=EXCLUDED.incarnation_id
+             AND ${this.tables.interactions}.generation=EXCLUDED.generation
+             AND ${this.tables.interactions}.execution_id=EXCLUDED.execution_id
+             AND ${this.tables.interactions}.run_id=EXCLUDED.run_id
+             AND ${this.tables.interactions}.interaction_kind=EXCLUDED.interaction_kind
+           RETURNING interaction_id`,
+          [randomUUID(), lineage.tenantId, lineage.sessionId, lineage.automationId, lineage.incarnationId,
+            lineage.generation, lineage.executionId, lineage.executionRunId, key, kind, state, JSON.stringify(payload),
+            state === 'completed' ? JSON.stringify(payload) : null],
+        );
+        if (interaction.rowCount !== 1) throw new AutomationFenceRejectedError('interaction_lineage_mismatch');
+        if (state === 'completed') {
+          await client.query(
+            `UPDATE ${this.tables.lifecycleWork}
+                SET state='completed',lease_token=NULL,lease_expires_at=NULL,updated_at=now()
+              WHERE tenant_id=$1 AND automation_id=$2 AND object_type='interaction'
+                AND object_id=$3::text AND state IN ('pending','claimed','result_unknown')`,
+            [lineage.tenantId, lineage.automationId, interaction.rows[0]!.interaction_id],
+          );
+          await new PgSessionAutomationStore(this.pool,this.tablePrefix,this.runsTable)
+            .tryFinalizeLocked(client,lineage.tenantId,lineage.sessionId,lineage.automationId);
+        }
+      }
+      await client.query('COMMIT');
+      committed = true;
+      if (budgetReason) throw new AutomationBudgetExceededError(budgetReason);
+    } catch (error) {
+      if (!committed) await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async recoverInterruptedBackgroundChild(

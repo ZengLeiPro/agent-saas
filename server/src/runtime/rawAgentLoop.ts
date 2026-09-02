@@ -103,7 +103,7 @@ import {
   unavailableToolMessage,
   type InvalidPromptRequestBlockedFailure,
 } from './rawAgentLoopHelpers.js';
-import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js';
+import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, InteractionPendingWithoutInteractionHook, RunLeaseLostError, ToolInvocationClaimLostError, captureModelStreamError, handleInvocationClaimLoss, readRunLeaseState, resolveClaimedWorkerId } from './rawAgentLoopControlErrors.js'; import { AutomationBudgetExceededError, AutomationFenceRejectedError } from './sessionAutomationRuntimeGuard.js';
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
@@ -2743,7 +2743,7 @@ export class RawAgentLoop implements AgentLoop {
             toolInput: input && typeof input === 'object' ? input as Record<string, unknown> : { value: input },
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = err instanceof Error ? err.message : String(err); await this.automationGuard?.barrier(context);
           await this.approvalStore.resolvePending(approval.id, 'rejected', message);
           return {
             call,
@@ -2780,12 +2780,9 @@ export class RawAgentLoop implements AgentLoop {
       if (err instanceof WebFetchCircuitOpenError) {
         this.forceWebFetchSynthesis(err.reason, context);
       }
-      if (
-        err instanceof InteractionPendingWithoutInteractionHook
-        || err instanceof ToolInvocationClaimLostError
-        || err instanceof RunLeaseLostError
-      ) throw err;
-      // 失败也要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
+      if (err instanceof InteractionPendingWithoutInteractionHook || err instanceof ToolInvocationClaimLostError
+        || err instanceof RunLeaseLostError || err instanceof AutomationFenceRejectedError || err instanceof AutomationBudgetExceededError) throw err;
+      // 普通工具失败要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
       // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
       // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
       // approval-resume 分支（见 resolveApprovalDecision）早已是这么接的。
@@ -2814,7 +2811,7 @@ export class RawAgentLoop implements AgentLoop {
     baseToolContext: ToolCallContext;
     context: RunContext;
   }): Promise<ToolExecutionOutcome> {
-    const allow = args.response.allow === true;
+    const allow = args.response.allow === true; await this.automationGuard?.barrier(args.context);
     const resolvedApproval = await this.approvalStore.resolvePending(
       args.approval.id,
       allow ? 'approved' : 'rejected',
@@ -2854,7 +2851,8 @@ export class RawAgentLoop implements AgentLoop {
       });
       return { call: args.call, descriptor: args.descriptor, input: args.input, result };
     } catch (err) {
-      if (err instanceof ToolInvocationClaimLostError || err instanceof RunLeaseLostError) throw err;
+      if (err instanceof ToolInvocationClaimLostError || err instanceof RunLeaseLostError
+        || err instanceof AutomationFenceRejectedError || err instanceof AutomationBudgetExceededError) throw err;
       // 失败也要有摘要：优先用错误自带的（provider 按真实 metadata 产出），
       // 否则退回入参侧规则并强制标 warn。客户看到「读取 差旅.md · 有异常」
       // 远好过一行「已执行，有异常」。
@@ -2882,15 +2880,17 @@ export class RawAgentLoop implements AgentLoop {
     context: RunContext;
   }): Promise<ToolResult> {
     const startedAt = Date.now();
-    const invocationId = `${args.context.runId}:${args.call.id}`;
+    const invocationId = `${args.context.runId}:${args.call.id}`; // stable across resume
     const executionAudit = createExecutionAuditRecorder();
     const streamBatcher = new StreamEventBatcher(this.eventStore, this.streamEventBatch, requireEventTenantId(args.context));
     const streamSummary = new ToolStreamSummaryBuilder();
-    const hooks = args.baseToolContext.hooks?.onInteraction || args.descriptor.name !== 'AskUserQuestion'
+    const externalInteractionHook = args.baseToolContext.hooks?.onInteraction;
+    const hooks = args.descriptor.name !== 'AskUserQuestion'
       ? args.baseToolContext.hooks
       : {
           ...(args.baseToolContext.hooks ?? {}),
           onInteraction: async (event: InteractionEvent): Promise<InteractionResponse> => { await this.automationGuard?.recordInteraction(args.context,event.interactionId,event.type,'active',{toolCallId:event.toolCallId??args.call.id,questions:event.questions??[]});
+            if (externalInteractionHook) return externalInteractionHook(event);
             await this.eventSink.append({
               type: 'interaction_requested',
               runId: args.context.runId,
@@ -2944,7 +2944,7 @@ export class RawAgentLoop implements AgentLoop {
     const autoHandId = await this.autoSelectTenantHandId(resolveRunTenantId(args.context), args.context.sessionId, args.context.runId, args.baseToolContext.workspace.executionTarget);
     const effectiveHandId = autoHandId;
     toolContext.correlation = createInvocationCorrelation({ sessionId: args.context.sessionId, runId: args.context.runId, toolCallId: args.call.id, invocationId, ...(effectiveHandId ? { handId: effectiveHandId } : {}) });
-    const skillName = resolveInvokedSkillName(args.descriptor.id, args.input);
+    const skillName = resolveInvokedSkillName(args.descriptor.id, args.input); await this.automationGuard?.barrier(args.context);
     const invocation = await this.toolInvocationStore?.start({
       invocationId,
       runId: args.context.runId,
@@ -3028,7 +3028,7 @@ export class RawAgentLoop implements AgentLoop {
           parallelGate.onClaimed();
           await parallelGate.waitForRelease;
         }
-        const attemptCorrelation = createExecutionAttempt(toolContext.correlation!);
+        const attemptCorrelation = createExecutionAttempt(toolContext.correlation!); await this.automationGuard?.barrier(args.context);
         await this.eventSink.append({
           type: 'tool_invocation_started',
           runId: args.context.runId,

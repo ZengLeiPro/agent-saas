@@ -155,7 +155,17 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     return preparedId;
   }
 
-  it('keeps the fixed anchor single when an active run-now terminates', async () => {
+  async function control(
+    automation: { automationId: string; sessionId: string },
+    action: 'pause' | 'run' | 'clear',
+  ) {
+    return store.tx(async client => {
+      const current = await store.getLocked(client, tenantId, automation.sessionId, automation.automationId);
+      return store.control(client, current!, action);
+    });
+  }
+
+  it('clears a stale fixed run after pause/run-now without changing generation-3 progress or anchor', async () => {
     const fixed = await createAutomation({
       kind: 'loop', mode: 'fixed', continuationEpoch: 5,
       spec: { kind: 'loop', mode: 'fixed', prompt: 'continue', intervalMs: 60_000, budget: {} },
@@ -166,32 +176,177 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       incarnationId: fixed.incarnationId, generation: 1, specVersion: 1, continuationEpoch: 6,
       triggerKey: `fixed:${fixed.automationId}:g1:slot6`, dueAt: anchorDueAt, payload: {},
     }));
-    await store.tx(async client => {
-      const current = await store.getLocked(client, tenantId, fixed.sessionId, fixed.automationId);
-      await store.control(client, current!, 'run');
-    });
-    await store.claimDue();
-    const item = (await store.claimDispatch()).find(candidate => candidate.automationId === fixed.automationId)!;
-    await runs.createPending({ runId: item.targetRunId, sessionId: fixed.sessionId, tenantId, userId: 'user-a' });
-    await store.markDispatched(item);
-    await new SessionAutomationTerminalProjector(store, `manual-fixed-${randomUUID()}`).project({
-      globalSequence: 1, tenantId, sessionId: fixed.sessionId, runId: item.targetRunId, status: 'completed',
+    const stale = await dispatch({
+      ...fixed, triggerKey: `manual:${fixed.automationId}:g1:stale`, continuationEpoch: 5,
     });
 
-    const wakeups = await pool.query(
+    await control(fixed, 'pause');
+    await control(fixed, 'run');
+    await pool.query(
+      `UPDATE ${store.tables.automations}
+          SET no_progress_count=2,last_progress_fingerprint='generation-3-progress'
+        WHERE tenant_id=$1 AND automation_id=$2`,
+      [tenantId, fixed.automationId],
+    );
+
+    const before = await pool.query(
       `SELECT trigger_key,due_at FROM ${store.tables.wakeups}
-        WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed') ORDER BY due_at`,
+        WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed') ORDER BY trigger_key`,
       [tenantId, fixed.automationId],
     );
-    expect(wakeups.rows).toHaveLength(1);
-    expect(wakeups.rows[0].trigger_key).toBe(`fixed:${fixed.automationId}:g1:slot6`);
-    expect(new Date(wakeups.rows[0].due_at).getTime()).toBe(anchorDueAt.getTime());
-    expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({ phase: 'waiting' });
-    const automation = await pool.query(
-      `SELECT continuation_epoch FROM ${store.tables.automations} WHERE tenant_id=$1 AND automation_id=$2`,
+    expect(before.rows.filter(row => String(row.trigger_key).startsWith('fixed:'))).toHaveLength(1);
+    expect(before.rows.find(row => String(row.trigger_key).startsWith('fixed:'))?.trigger_key)
+      .toBe(`fixed:${fixed.automationId}:g3:slot6`);
+    expect(new Date(before.rows.find(row => String(row.trigger_key).startsWith('fixed:'))!.due_at).getTime())
+      .toBe(anchorDueAt.getTime());
+
+    const projector = new SessionAutomationTerminalProjector(store, `stale-after-controls-${randomUUID()}`);
+    expect(await projector.project({
+      globalSequence: 1, tenantId, sessionId: fixed.sessionId,
+      runId: stale.targetRunId, status: 'completed', progressFingerprint: 'stale-progress',
+    })).toBe(true);
+    expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({
+      generation: 3, status: 'active', phase: 'waiting', activeRunId: null,
+      noProgressCount: 2, lastProgressFingerprint: 'generation-3-progress', continuationEpoch: 6,
+    });
+
+    await store.claimDue();
+    const manual = (await store.claimDispatch()).find(item => item.automationId === fixed.automationId)!;
+    expect(manual).toBeDefined();
+    expect(manual.generation).toBe(3);
+    expect(manual.triggerKey).toMatch(/^manual:/);
+    await runs.createPending({ runId: manual.targetRunId, sessionId: fixed.sessionId, tenantId, userId: 'user-a' });
+    await store.markDispatched(manual);
+
+    expect(await projector.project({
+      globalSequence: 2, tenantId, sessionId: fixed.sessionId,
+      runId: stale.targetRunId, status: 'completed', progressFingerprint: 'duplicate-stale-progress',
+    })).toBe(true);
+    expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({
+      activeRunId: manual.targetRunId, noProgressCount: 2,
+      lastProgressFingerprint: 'generation-3-progress', continuationEpoch: 6,
+    });
+
+    await projector.project({
+      globalSequence: 3, tenantId, sessionId: fixed.sessionId,
+      runId: manual.targetRunId, status: 'completed', progressFingerprint: 'manual-progress',
+    });
+    const after = await pool.query(
+      `SELECT trigger_key,due_at FROM ${store.tables.wakeups}
+        WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed')`,
       [tenantId, fixed.automationId],
     );
-    expect(automation.rows[0].continuation_epoch).toBe('5');
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0].trigger_key).toBe(`fixed:${fixed.automationId}:g3:slot6`);
+    expect(new Date(after.rows[0].due_at).getTime()).toBe(anchorDueAt.getTime());
+
+    // Simulate the unchanged durable due time becoming due; the future slot must remain claimable.
+    await pool.query(
+      `UPDATE ${store.tables.wakeups} SET due_at=now()-interval '1 second'
+        WHERE tenant_id=$1 AND automation_id=$2 AND trigger_key=$3`,
+      [tenantId, fixed.automationId, `fixed:${fixed.automationId}:g3:slot6`],
+    );
+    expect(await store.claimDue()).toBe(1);
+    const future = (await store.claimDispatch()).find(item => item.automationId === fixed.automationId)!;
+    expect(future).toBeDefined();
+    expect(future.generation).toBe(3);
+    expect(future.triggerKey).toBe(`fixed:${fixed.automationId}:g3:slot6`);
+  });
+
+  it('clears the old run when terminal arrives before run-now and then claims generation 3 manual work', async () => {
+    const fixed = await createAutomation({
+      kind: 'loop', mode: 'fixed', continuationEpoch: 8,
+      spec: { kind: 'loop', mode: 'fixed', prompt: 'continue', intervalMs: 60_000, budget: {} },
+    });
+    const anchorDueAt = new Date(Date.now() + 3_600_000);
+    await store.tx(client => store.scheduleTx(client, {
+      tenantId, sessionId: fixed.sessionId, automationId: fixed.automationId,
+      incarnationId: fixed.incarnationId, generation: 1, specVersion: 1, continuationEpoch: 9,
+      triggerKey: `fixed:${fixed.automationId}:g1:slot9`, dueAt: anchorDueAt, payload: {},
+    }));
+    const stale = await dispatch({
+      ...fixed, triggerKey: `manual:${fixed.automationId}:g1:stale-before`, continuationEpoch: 8,
+    });
+    await control(fixed, 'pause');
+    await pool.query(
+      `UPDATE ${store.tables.automations}
+          SET no_progress_count=1,last_progress_fingerprint='generation-2-progress'
+        WHERE tenant_id=$1 AND automation_id=$2`,
+      [tenantId, fixed.automationId],
+    );
+
+    const projector = new SessionAutomationTerminalProjector(store, `stale-before-controls-${randomUUID()}`);
+    await projector.project({
+      globalSequence: 1, tenantId, sessionId: fixed.sessionId,
+      runId: stale.targetRunId, status: 'completed', progressFingerprint: 'stale-progress',
+    });
+    expect(await store.get(tenantId, fixed.sessionId, fixed.automationId)).toMatchObject({
+      generation: 2, status: 'paused', phase: 'idle', activeRunId: null,
+      noProgressCount: 1, lastProgressFingerprint: 'generation-2-progress', continuationEpoch: 9,
+    });
+
+    await control(fixed, 'run');
+    await store.claimDue();
+    const manual = (await store.claimDispatch()).find(item => item.automationId === fixed.automationId)!;
+    expect(manual).toBeDefined();
+    expect(manual.generation).toBe(3);
+    expect(manual.triggerKey).toMatch(/^manual:/);
+    const anchor = await pool.query(
+      `SELECT trigger_key,due_at FROM ${store.tables.wakeups}
+        WHERE tenant_id=$1 AND automation_id=$2 AND state IN ('pending','claimed') AND trigger_key LIKE 'fixed:%'`,
+      [tenantId, fixed.automationId],
+    );
+    expect(anchor.rows).toHaveLength(1);
+    expect(anchor.rows[0].trigger_key).toBe(`fixed:${fixed.automationId}:g3:slot9`);
+    expect(new Date(anchor.rows[0].due_at).getTime()).toBe(anchorDueAt.getTime());
+  });
+
+  it('keeps late terminals idempotent across replace and clear and never clears a replacement run', async () => {
+    const original = await createAutomation({
+      kind: 'loop', mode: 'adaptive',
+      spec: { kind: 'loop', mode: 'adaptive', prompt: 'original', budget: {} },
+    });
+    const stale = await dispatch({ ...original, triggerKey: `original-${randomUUID()}`, continuationEpoch: 1 });
+    const replacementSpec = { kind: 'loop' as const, mode: 'adaptive' as const, prompt: 'replacement', budget: {} };
+    await store.tx(async client => {
+      const current = await store.getLocked(client, tenantId, original.sessionId, original.automationId);
+      await store.replace(client, current!, replacementSpec);
+    });
+    const projector = new SessionAutomationTerminalProjector(store, `replace-clear-late-${randomUUID()}`);
+    await projector.project({
+      globalSequence: 1, tenantId, sessionId: original.sessionId,
+      runId: stale.targetRunId, status: 'cancelled',
+    });
+    await control(original, 'run');
+    await store.claimDue();
+    const replacement = (await store.claimDispatch()).find(item => item.automationId === original.automationId)!;
+    expect(replacement).toBeDefined();
+    await runs.createPending({ runId: replacement.targetRunId, sessionId: original.sessionId, tenantId, userId: 'user-a' });
+    await store.markDispatched(replacement);
+
+    await projector.project({
+      globalSequence: 2, tenantId, sessionId: original.sessionId,
+      runId: stale.targetRunId, status: 'cancelled',
+    });
+    expect(await store.get(tenantId, original.sessionId, original.automationId)).toMatchObject({
+      activeRunId: replacement.targetRunId, generation: 2, specVersion: 2,
+    });
+
+    await control(original, 'clear');
+    await projector.project({
+      globalSequence: 3, tenantId, sessionId: original.sessionId,
+      runId: replacement.targetRunId, status: 'cancelled',
+    });
+    const cleared = await store.get(tenantId, original.sessionId, original.automationId);
+    expect(cleared?.activeRunId).toBeNull();
+    const controlVersion = cleared?.controlVersion;
+    await projector.project({
+      globalSequence: 4, tenantId, sessionId: original.sessionId,
+      runId: replacement.targetRunId, status: 'cancelled',
+    });
+    expect(await store.get(tenantId, original.sessionId, original.automationId)).toMatchObject({
+      activeRunId: null, controlVersion,
+    });
   });
 
   async function projectUsage(input: {

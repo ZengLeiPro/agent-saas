@@ -7,6 +7,11 @@ export interface AutomationRunDispatcher {
   activate(runId: string): Promise<void>;
 }
 
+/** Models abrupt process loss after a dispatcher effect became durable, before local acknowledgement. */
+export class SessionAutomationProcessCrash extends Error {
+  override readonly name = 'SessionAutomationProcessCrash';
+}
+
 /** Production adapter: create-only staged Run, then explicit activation after the automation execution row exists. */
 export class RuntimeSchedulerAutomationDispatcher implements AutomationRunDispatcher {
   constructor(private readonly scheduler: RuntimeScheduler, private readonly sessions: SessionCatalog) {}
@@ -82,6 +87,7 @@ export class SessionAutomationCoordinator {
   private async processCancellations(): Promise<void> {for(const item of await this.store.claimCancellations(this.options.batchSize??10)){try{if(!this.options.cancelRun)throw new Error('automation cancel adapter unavailable');await this.options.cancelRun(item.runId,item.reason);await this.store.completeCancellation(item);}catch(error){await this.store.failCancellation(item,error);}}}
   private async recoverStagedActivations(): Promise<void> {
     for (const attempt of await this.store.listRecoverablePreparedDispatches()) {
+      if (await this.store.reconcileStalePreparedDispatch(attempt)) continue;
       const run = await this.store.pool.query(
         `SELECT r.status,r.metadata,
                 EXISTS(
@@ -167,6 +173,9 @@ export class SessionAutomationCoordinator {
         await this.dispatcher.stage(stageInput);
         await this.store.transitionPreparedDispatch(item.outboxId,'prepared','dispatched');
       } catch (error) {
+        // A real process crash cannot persist an outcome classification after stage returned.
+        // Preserve the prepared attempt so restart recovery observes the exact crash boundary.
+        if (error instanceof SessionAutomationProcessCrash) throw error;
         await this.store.transitionPreparedDispatch(item.outboxId,'prepared','result_unknown',error instanceof Error?error.message:String(error));
         throw error;
       }
@@ -186,6 +195,7 @@ export class SessionAutomationCoordinator {
       await this.store.transitionPreparedDispatch(item.outboxId,'dispatched','completed');
       const dispatched=await this.store.get(item.tenantId,item.sessionId,item.automationId);if(dispatched)this.store.publish(dispatched,'automation_execution_changed');
     } catch (error) {
+      if (error instanceof SessionAutomationProcessCrash) { this.options.onError?.(error); return; }
       if (dispatchCommitted) { this.options.onError?.(error); return; }
       if(error instanceof Error&&error.message==='dispatch fence lost')return;
       const unknown = await this.store.pool.query(

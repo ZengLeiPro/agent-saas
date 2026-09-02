@@ -24,6 +24,7 @@ import { clearAllMessageCache, setMessageCacheIdentity } from "@/lib/messageCach
 import { clearAllComposerAttachmentDrafts } from "@/lib/composerDraftStorage";
 import { clearWebCacheV2Namespace } from "@/platform/webCacheAdapter";
 import { tenantFeatureUpdatesFromEnvelope } from "./tenantFeatureEvents";
+import { runSavedAccountLifecycle } from "./savedAccountLifecycle";
 import {
   loginWithPassword,
   loginWithSmsCode,
@@ -64,7 +65,7 @@ interface AuthContextValue {
   login: (credentials: LoginCredentials) => Promise<void>;
   loginWithSms: (credentials: SmsLoginCredentials) => Promise<void>;
   activateAccount: (response: AuthResponse) => Promise<void>;
-  switchAccount: (accountKey: string) => void;
+  switchAccount: (accountKey: string) => Promise<void>;
   logoutCurrentAccount: (nextAccountKey?: string) => Promise<void>;
   logoutAllAccounts: () => Promise<void>;
   logout: () => Promise<void>;
@@ -344,20 +345,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await activateAccount(await loginWithSmsCode(credentials));
   }, [activateAccount]);
 
-  const switchAccount = useCallback((accountKey: string) => {
+  const switchAccount = useCallback(async (accountKey: string) => {
     if (user && getAccountKey(user) === accountKey) return;
     const savedAuth = getSavedAccountAuth(accountKey);
     if (!savedAuth) {
       setAccounts(readSavedAccounts());
       return;
     }
-    clearAccountScopedState();
-    transitionIdentity({ type: "logout" });
-    void unsubscribeCurrentBrowserPush();
-    localStorage.setItem(TOKEN_KEY, savedAuth.token);
-    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(savedAuth.binding));
+    await unsubscribeCurrentBrowserPush();
+    const nextUser = normalizeAuthUser(savedAuth.user);
+    await runSavedAccountLifecycle(lifecycle, savedAuth.binding, {
+      fenceUntilCommit: () => {
+        wsClient.freezeSending();
+        clearAccountScopedState();
+      },
+      persistTokenAndBinding: (binding) => {
+        localStorage.setItem(TOKEN_KEY, savedAuth.token);
+        localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(binding));
+      },
+      installAuthenticatedState: () => {
+        setUser(nextUser);
+        transitionIdentity({
+          type: user ? 'principal-switched' : 'authenticated',
+          principal: { userId: nextUser.id, tenantId: nextUser.tenantId },
+        });
+      },
+      commitConnections: () => wsClient.unfreezeSending(),
+      failClosed: () => {
+        wsClient.freezeSending();
+        wsClient.disconnect();
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        setUser(null);
+      },
+    });
     window.location.replace("/");
-  }, [transitionIdentity, user]);
+  }, [lifecycle, transitionIdentity, user]);
 
   const updateAvatar = useCallback((avatar: string | undefined, avatarVersion?: number) => {
     setUser((prev) => prev ? { ...prev, avatar, avatarVersion } : prev);

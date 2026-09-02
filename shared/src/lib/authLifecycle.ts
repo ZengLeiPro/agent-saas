@@ -90,12 +90,17 @@ export class AuthLifecycleTransaction {
 
   private serialize(operation: AuthLifecycleOperation, run: () => Promise<AuthLifecycleJournal>): Promise<AuthLifecycleJournal> {
     if (this.active) {
-      // A concurrent delete must not be lost behind logout; it runs after the
-      // local teardown and retains fail-fenced semantics. All other duplicates coalesce.
-      if (operation === 'delete_account' && this.activeOperation === 'logout') {
-        return this.active.then(() => this.deleteAccount());
-      }
-      return this.active;
+      if (operation === this.activeOperation) return this.active;
+      const previous = this.active;
+      const queued = previous.then(run, run).finally(() => {
+        if (this.active === queued) {
+          this.active = null;
+          this.activeOperation = null;
+        }
+      });
+      this.active = queued;
+      this.activeOperation = operation;
+      return queued;
     }
     const promise = run().finally(() => {
       if (this.active === promise) {

@@ -77,9 +77,9 @@ export function rememberSavedAccount(token: string, user: AuthUser, binding: Aut
   return toSummaries(records);
 }
 
-export function getSavedAccountAuth(key: string): { token: string; binding: AuthSessionBinding } | null {
+export function getSavedAccountAuth(key: string): { token: string; binding: AuthSessionBinding; user: AuthUser } | null {
   const record = readRecords().find((candidate) => candidate.key === key);
-  return record ? { token: record.token, binding: record.binding } : null;
+  return record ? { token: record.token, binding: record.binding, user: record.user } : null;
 }
 
 export function getSavedAccountToken(key: string): string | null {

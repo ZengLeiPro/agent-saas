@@ -103,6 +103,38 @@ describe('M30-01 canonical auth lifecycle transaction', () => {
     expect(canSend).toBe(true);
   });
 
+  it('serializes a concurrent logout behind an in-flight account login', async () => {
+    const f = fixture();
+    const tx = f.engine();
+    const events: string[] = [];
+    let releasePersist!: () => void;
+    let markPersistStarted!: () => void;
+    const persistStarted = new Promise<void>((resolve) => { markPersistStarted = resolve; });
+    const login = tx.login({ authEpoch: 3, generation: 7 }, {
+      fenceUntilCommit: () => { events.push('login:fence'); },
+      persistTokenAndBinding: async () => {
+        events.push('login:persist:start');
+        markPersistStarted();
+        await new Promise<void>((resolve) => { releasePersist = resolve; });
+        events.push('login:persist:end');
+      },
+      installAuthenticatedState: () => { events.push('login:install'); },
+      commitConnections: () => { events.push('login:commit'); },
+      failClosed: vi.fn(),
+    });
+    await persistStarted;
+    const logout = tx.logout().then(() => { events.push('logout:commit'); });
+    expect(f.calls).not.toContain('fence_generation');
+    releasePersist();
+
+    await Promise.all([login, logout]);
+    expect(events).toEqual([
+      'login:fence', 'login:persist:start', 'login:persist:end',
+      'login:install', 'login:commit', 'logout:commit',
+    ]);
+    expect(f.calls).toEqual(AUTH_TERMINATION_STEPS);
+  });
+
   it('fails closed when epoch persistence fails and recovers an incomplete login journal on restart', async () => {
     const f = fixture();
     const failClosed = vi.fn();

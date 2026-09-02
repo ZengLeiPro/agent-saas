@@ -41,8 +41,8 @@ export async function listRecoverableRuns(
       run.status = 'pending'
       OR (
         run.status = 'running'
-        AND run.liveness_version IS NULL
         AND (run.lease_expires_at IS NULL OR run.lease_expires_at < $1)
+        AND (run.liveness_version IS NULL OR run.metadata->>'backgroundTask' = 'true')
       )
     )
       AND run.metadata->>'subagent' IS DISTINCT FROM 'true'

@@ -56,6 +56,7 @@ describe('PgRunStore M40-02 liveness and explicit recovery SQL contract', () => 
     expect(reaperSql[0]).toContain("liveness_state = 'stale'");
     expect(reaperSql[1]).toContain("liveness_state = 'busy'");
     expect(reaperSql.every((sql) => sql.includes('FOR UPDATE SKIP LOCKED'))).toBe(true);
+    expect(reaperSql.every((sql) => sql.includes("metadata->>'backgroundTask' IS DISTINCT FROM 'true'"))).toBe(true);
   });
 
   it('terminalizes uncertain running tools without making them automatically recoverable', async () => {

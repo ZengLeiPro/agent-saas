@@ -76,6 +76,7 @@ export async function reapExpiredRunLiveness(
         SELECT run_id
         FROM ${context.runsTable}
         WHERE status = 'running'
+          AND metadata->>'backgroundTask' IS DISTINCT FROM 'true'
           AND liveness_version IS NOT NULL
           AND liveness_state = 'stale'
           AND liveness_detected_at <= $1::timestamptz
@@ -109,6 +110,7 @@ export async function reapExpiredRunLiveness(
       FROM candidates
       WHERE run.run_id = candidates.run_id
         AND run.status = 'running'
+        AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
         AND run.liveness_state = 'stale'
         AND run.liveness_detected_at <= $1::timestamptz
       RETURNING row_to_json(run.*) AS row_json
@@ -119,6 +121,7 @@ export async function reapExpiredRunLiveness(
         SELECT run_id
         FROM ${context.runsTable}
         WHERE status = 'running'
+          AND metadata->>'backgroundTask' IS DISTINCT FROM 'true'
           AND liveness_version IS NOT NULL
           AND liveness_state = 'busy'
           AND lease_expires_at <= $1::timestamptz
@@ -135,6 +138,7 @@ export async function reapExpiredRunLiveness(
       FROM candidates
       WHERE run.run_id = candidates.run_id
         AND run.status = 'running'
+        AND run.metadata->>'backgroundTask' IS DISTINCT FROM 'true'
         AND run.liveness_state = 'busy'
         AND run.lease_expires_at <= $1::timestamptz
       RETURNING row_to_json(run.*) AS row_json

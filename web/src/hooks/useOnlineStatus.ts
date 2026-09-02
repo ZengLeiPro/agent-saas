@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
+import { CANONICAL_REACHABILITY_EVENT } from '@/lib/lifecycleAdapter';
 
+/** UI projection: online=true only after the canonical HTTP reachability probe succeeds. */
 export function useOnlineStatus(): boolean {
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(false);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const handleReachability = (event: Event) => {
+      setIsOnline((event as CustomEvent<boolean>).detail === true);
+    };
     const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
+    window.addEventListener(CANONICAL_REACHABILITY_EVENT, handleReachability);
     window.addEventListener('offline', handleOffline);
     return () => {
-      window.removeEventListener('online', handleOnline);
+      window.removeEventListener(CANONICAL_REACHABILITY_EVENT, handleReachability);
       window.removeEventListener('offline', handleOffline);
     };
   }, []);

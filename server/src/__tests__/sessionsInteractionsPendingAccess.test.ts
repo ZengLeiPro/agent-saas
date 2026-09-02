@@ -269,8 +269,8 @@ describe('GET /chat/interactions/pending owner-self access guard', () => {
         ],
       });
       expect(body).toEqual([
-        expect.objectContaining({ interactionId: 'interaction-1', type: 'ask_user' }),
-        expect.objectContaining({ interactionId: 'approval-1', type: 'permission_request', toolName: 'Shell' }),
+        expect.objectContaining({ interactionId: 'interaction-1', type: 'ask_user', version: expect.any(Number), order: expect.any(Number) }),
+        expect.objectContaining({ interactionId: 'approval-1', type: 'approval', toolName: 'Shell', version: expect.any(Number), order: expect.any(Number) }),
       ]);
     } finally {
       await stopServer(server);

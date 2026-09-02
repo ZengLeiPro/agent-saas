@@ -3,6 +3,7 @@ import analysisContentSource from "@/components/AnalysisWorkspaceContent.tsx?raw
 import taskBoardSource from "@/components/TaskBoard/index.tsx?raw";
 import taskDetailSource from "@/components/TaskBoard/TaskDetail.tsx?raw";
 import source from "./DesktopLayout.tsx?raw";
+import lazySettingsSource from "./lazySettingsComponents.ts?raw";
 
 describe("DesktopLayout 初始会话接线", () => {
   it("个人与企业专家都启用统一初始 composer", () => {
@@ -20,24 +21,23 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(analysisContentSource).toContain('data-testid="unified-analysis-content"');
     expect(analysisContentSource).toContain("governanceContentEmbedded");
     expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
-    expect(source).toContain('if (!analysisMode && activeTab === "tenant-admin"');
+    expect(source).not.toContain('<GovernanceConsole area="organization"');
   });
 
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
     expect(source).toContain('activeTab === "capabilities" || activeTab === "cron" ? "h-14 px-6"');
   });
 
-  it("任务详情复用外层分栏，并保留任务详情与业务步骤各自默认宽度", () => {
+  it("任务详情复用外层分栏，并与正式会话统一响应式默认宽度", () => {
     expect(source).toContain("const showDockedPanel = showRightPanel || showTaskDetailPanel");
-    expect(source).toContain("style={showDockedPanel");
+    expect(source).toContain("style={{ flex: 1 }}");
     expect(source).toContain("detailPanelTarget={taskDetailPanelTarget}");
     expect(source).toContain("onTaskDetailOpenChange={setTaskDetailOpen}");
     expect(source).toContain('label="调整任务详情宽度"');
-    expect(source).toContain("const dockedPanelInitialRatio = showTaskDetailPanel");
-    expect(source).toContain("? 0.46");
-    expect(source).toContain('rightPanelKind === "business-step" ? 0.42 : 0.5');
-    expect(source).toContain("useResizePanel(dockedPanelInitialRatio, 0.25, 0.75, dockedPanelKey)");
-    expect(source).toContain('minWidth: "min(26rem, 75%)"');
+    expect(source).toContain("useResizePanel(0.35, 0.25, 0.75, dockedPanelKey)");
+    expect(source).toContain('const dockedPanelWidth = `clamp(26rem, ${splitRatio * 100}%, 46rem)`');
+    expect(source.match(/style=\{\{ width: dockedPanelWidth, flexShrink: 0 \}\}/g)).toHaveLength(2);
+    expect(source).not.toContain("dockedPanelInitialRatio");
     expect(taskBoardSource).toContain("portalTarget={detailPanelTarget}");
     expect(taskBoardSource).toContain("onDetailOpenChange?.(detailVisible)");
     expect(taskDetailSource).toContain("portalTarget ? createPortal(panel, portalTarget) : panel");
@@ -45,18 +45,28 @@ describe("DesktopLayout 初始会话接线", () => {
   });
 
   it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
-    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
-    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (");
-    expect(source).toContain("onNavigationControllerChange={handleSettingsControllerChange} dirtyController={dirtyController}");
+    expect(source).toContain("SettingsDirtyBoundary");
+    expect(lazySettingsSource).toContain("export const SettingsDirtyBoundary = lazy(() =>");
+    expect(lazySettingsSource).toContain("@/components/PersonalSettings/dirtyRegistry");
+    expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (");
+    expect(source).toContain("dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
+    expect(source).toContain("governanceRoute, closeOrganizationSettings: closeSettings,");
+    expect(source).toContain("governanceContentOnly={governanceRoute?.area === \"organization\"}");
+    expect(source).not.toContain("SettingsDirtyControllerBridge");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
-    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).not.toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
-    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="tenant"');
     expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
     expect(analysisContentSource).toContain('dirtyController={dirtyController}');
+  });
+
+  it("进入统一设置后隐藏底层业务页，避免旧组织分析与新组织管理重复可访问", () => {
+    expect(source).toContain('className={cn("contents", settingsMode && "invisible")}');
+    expect(source).toContain("aria-hidden={settingsMode || undefined}");
+    expect(source).not.toContain('(settingsMode || activeTab !== "chat") && "hidden"');
   });
 });

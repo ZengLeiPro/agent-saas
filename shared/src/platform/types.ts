@@ -18,10 +18,17 @@ export interface IMessageCache {
   clear(sessionId: string): Promise<void>;
 }
 
+export type TrustedUrlKind = 'http' | 'websocket';
+
 export interface IPlatformConfig {
   getBaseUrl(): string;
   /** Bare endpoint; credentials are sent only in the auth first frame. */
   getWsUrl(): string;
+  /**
+   * Optional final transport guard. Mobile supplies a build-time allowlist
+   * policy; callers must invoke it before reading or sending credentials.
+   */
+  assertTrustedUrl?(url: string, kind: TrustedUrlKind): void;
   /** Whether this deployment requires authentication. Defaults to true for older adapters. */
   isAuthEnabled?(): boolean | Promise<boolean>;
   platform: 'web' | 'mobile';

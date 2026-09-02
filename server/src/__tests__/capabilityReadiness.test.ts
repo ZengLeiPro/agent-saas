@@ -6,7 +6,7 @@ import {
   capabilityConfigFingerprint,
   resolveCapabilityState,
 } from '../config/capabilityContract.js';
-import { buildCapabilityReadiness } from '../config/capabilityReadiness.js';
+import { buildCapabilityReadiness, capabilitySnapshot } from '../config/capabilityReadiness.js';
 
 function appConfig(overrides: Record<string, unknown> = {}): AppConfig {
   return {
@@ -42,6 +42,19 @@ describe('capability readiness', () => {
     });
     expect(states.webTools.state).toBe('disabled');
     expect(states.webTools.missing).toEqual([]);
+  });
+
+  it('TTS 只有显式启用且凭据完整时才进入兼容能力表', () => {
+    expect(
+      capabilitySnapshot(
+        appConfig({ tts: { doubaoAppId: 'app', doubaoApiKey: 'key' } }),
+      ).tts,
+    ).toBe(false);
+    expect(
+      capabilitySnapshot(
+        appConfig({ tts: { enabled: true, doubaoAppId: 'app', doubaoApiKey: 'key' } }),
+      ).tts,
+    ).toBe(true);
   });
 
   it('已启用但配置不完整时是 degraded', () => {

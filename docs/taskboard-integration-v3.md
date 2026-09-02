@@ -14,7 +14,9 @@ Integration task 只启动一个 durable **Integration Agent**。同一个 Sessi
 6. GitHub 确认合并后，Agent 清理本批次拥有且可安全删除的本地/远程分支、worktree 和临时目录。
 7. 全部完成后 `execution.finish({targetStatus: "done", body})`；确实需要人工决定或补充条件时才使用 `blocked`。
 
-任务只有两种 Agent 终点：`done` 与 `blocked`。看板现有 `merge` 提示语/模型键仅作为这个单一 Agent 的配置入口，不代表独立 Merge Execution。普通 Delivery Work/Review 的既有 PR inspection 和独立复核契约不受影响。
+任务只有两种 Agent 终点：`done` 与 `blocked`。看板现有 `merge` 提示语/模型键仅作为这个单一 Agent 的配置入口，不代表独立 Merge Execution。
+
+普通 Delivery 仍由独立的 Work / Review Agent 分阶段交付与复核，但 `execution.pull_request.inspect` 只提供当前 PR、head、check 与 workflow 观测，不输出平台准入结论。质量结论由 Work/Review Agent 基于代码差异、实际验证、CI 和日志证据自主作出；服务端只保留权限、事务与事实一致性约束，例如 active Execution、唯一 PR 绑定、CAS、终态不可逆和真实 merge 事实。
 
 ## 系统保留的边界
 
@@ -36,4 +38,4 @@ Integration task 只启动一个 durable **Integration Agent**。同一个 Sessi
 
 旧数据库中的 lane、authorization、merge operation、review head、receipt 和 remediation 表暂时保留，供历史记录和 workflow v2 读取；新 workflow v3 不创建也不依赖这些记录。启动扫描会把没有活动 Execution 的历史 `in_review` / `ready_to_merge` Integration 归一到单一 `in_progress` work 路径。
 
-生产 schema 只做向后兼容的放宽，不在本次改造中不可逆删除历史表或列。
+兼容范围仅覆盖仍承担历史 workflow v2 读取的 Integration 表和字段；新 workflow v3 不重新依赖这些记录。没有历史读取或事实审计用途的普通 Delivery 质量门禁列与协议可以随正式契约删除，不承诺无差别永久保留所有历史列。

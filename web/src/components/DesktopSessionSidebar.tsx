@@ -102,7 +102,7 @@ interface DesktopSessionSidebarProps {
   settingsMode?: boolean;
   settingsTarget?: "personal" | AdminSettingsTarget;
   activeSettingsSection?: string;
-  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void; onOpenOrganizationGovernance?: () => void; onCloseSettings?: () => void;
+  onSettingsNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void; onCloseSettings?: () => void;
   isAdmin?: boolean;
   settingsAccess?: ManagementSettingsAccess;
   /** 平台 admin（跨组织管理者）。组织管理入口对 admin 可见，平台管理入口仅平台 admin 可见。 */
@@ -341,14 +341,14 @@ function SessionRow({
         <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5">
           {session.title || "新会话"}
         </span>
-        {session.orgAgentId && (
+        {session.agentTarget && (
           <span
             className="flex max-w-24 shrink-0 items-center gap-1 rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-            title={session.orgAgentName || "企业专家"}
-            aria-label={`企业专家：${session.orgAgentName || ""}`}
+            title={session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}
+            aria-label={`Agent：${session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || '企业专家'}`}
           >
             <Bot className="size-3" />
-            <span className="truncate">{session.orgAgentName || "企业专家"}</span>
+            <span className="truncate">{session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}</span>
           </span>
         )}
         <span
@@ -418,11 +418,11 @@ function SessionRow({
               </span>
             )}
             <span className="truncate">{session.title || "新会话"}</span>
-            {session.orgAgentId && (
+            {session.agentTarget && (
               <span
                 className="ml-1 flex size-4 shrink-0 items-center justify-center rounded bg-brand-50 text-brand-600 dark:bg-brand-900/35 dark:text-brand-300"
-                title={session.orgAgentName || "企业专家"}
-                aria-label={`企业专家：${session.orgAgentName || ""}`}
+                title={session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || "企业专家"}
+                aria-label={`Agent：${session.agentTarget.kind === 'personal' ? '个人 Agent' : session.orgAgentName || '企业专家'}`}
               >
                 <Bot className="size-3" />
               </span>
@@ -968,7 +968,7 @@ export function DesktopSessionSidebar({
   settingsMode = false,
   settingsTarget = "personal",
   activeSettingsSection = "account-security",
-  onSettingsNavigate, onOpenOrganizationGovernance,
+  onSettingsNavigate,
   onCloseSettings,
   isAdmin = false,
   settingsAccess = { status: "ready", personalAllowed: true, tenantEntryAllowed: false, platformEntryAllowed: false, retry: () => undefined },
@@ -1686,7 +1686,7 @@ export function DesktopSessionSidebar({
         personalAgentEnabled={personalAgentEnabled}
         target={settingsTarget}
         activeSection={activeSettingsSection}
-        onNavigate={onSettingsNavigate} onOpenOrganizationGovernance={onOpenOrganizationGovernance}
+        onNavigate={onSettingsNavigate}
         onClose={onCloseSettings}
         onCollapse={onCollapse}
         onResizeMouseDown={sidebarLayout === "single" ? onSingleResizeMouseDown : (hasSecondPanel ? onSubResizeMouseDown : onMainResizeMouseDown)}

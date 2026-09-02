@@ -168,7 +168,6 @@ export interface TaskBoardIntegrationPolicy {
     autoResolveConflicts: true;
     maxAutomaticRemediationRounds: number;
     maxTransientRetries: number;
-    requireGreenChecks: true;
     deleteRemoteBranch: false;
     deploy: false;
   };
@@ -259,13 +258,6 @@ export interface TaskBoardTask {
   stageModels?: TaskBoardStageModels;
   providerPullRequestId?: string;
   pullRequestNumber?: number;
-  reviewedSubjectDigest?: string;
-  providerCiInspectionId?: string;
-  providerCiExecutionId?: string;
-  providerCiPurpose?: TaskBoardExecutionPurpose;
-  providerCiHeadOid?: string;
-  providerCiStatus?: 'success' | 'pending' | 'failure' | 'unavailable' | 'unconfigured';
-  providerCiInspectedAt?: string;
   mergedCommitOid?: string;
   integrationTaskId?: string;
   integrationTaskIdentifier?: string;
@@ -477,7 +469,6 @@ export interface TaskBoardTaskCreateInput {
   stageModels?: TaskBoardStageModels;
   providerPullRequestId?: string;
   pullRequestNumber?: number;
-  reviewedSubjectDigest?: string;
   clientRequestId?: string;
   dispatch?: boolean;
 }
@@ -495,7 +486,6 @@ export interface TaskBoardTaskPatchInput {
   stageModels?: TaskBoardStageModels | null;
   providerPullRequestId?: string | null;
   pullRequestNumber?: number | null;
-  reviewedSubjectDigest?: string | null;
   expectedVersion: number;
 }
 

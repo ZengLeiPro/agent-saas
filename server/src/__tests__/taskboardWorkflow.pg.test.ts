@@ -9,9 +9,9 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgTaskboardStore } from '../taskboard/store.js';
+import { UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR } from '../taskboard/storeExecutionLifecycle.js';
 import type { RepositoryProvider } from '../taskboard/repositoryProvider.js';
 import type { TaskboardExecutionClaimInput, TaskboardIdentity } from '../taskboard/types.js';
-import { seedSuccessfulReviewCi } from './taskboardCiPgTestHelpers.js';
 
 const { Pool } = pg;
 const execFileAsync = promisify(execFile);
@@ -103,7 +103,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
       .rejects.toMatchObject({ code: 'TASKBOARD_EXECUTION_FENCED' });
   });
 
-  it('V2 Run 未 finish 时保持任务阶段且不写评论或创建续跑 Execution', async () => {
+  it('V2 Run 未 finish 时将假成功兜底为明确失败且不写交接评论', async () => {
     const board = await store.createBoard(identity, { name: 'Unfinished stage board' });
     const advisory = await store.createTask(identity, board.id, {
       title: 'Continue until finished', kind: 'advisory', status: 'in_progress',
@@ -123,12 +123,16 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     });
 
     expect(completed).toMatchObject({
-      task: { status: 'in_progress' },
-      execution: { status: 'succeeded' },
+      task: { status: 'todo' },
+      execution: { status: 'failed', error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR },
     });
     expect(await store.listComments(identity, advisory.id)).toHaveLength(0);
     expect(await store.listExecutions(identity, advisory.id)).toEqual([
-      expect.objectContaining({ id: executionId, status: 'succeeded' }),
+      expect.objectContaining({
+        id: executionId,
+        status: 'failed',
+        error: UNFINISHED_V2_SUCCESS_PROTOCOL_ERROR,
+      }),
     ]);
   });
 
@@ -237,11 +241,10 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     await pool.query(`UPDATE ${store.tasksTable} SET kind='integration',status='canceled' WHERE id=$1`, [integration.id]);
     await pool.query(
       `UPDATE ${store.tasksTable}
-          SET status='ready_to_merge',provider_pull_request_id='701',head_oid='head-701',base_oid='base-701',
-              reviewed_subject_digest='digest-701' WHERE id=$1`,
+          SET status='ready_to_merge',provider_pull_request_id='701',head_oid='head-701',base_oid='base-701'
+        WHERE id=$1`,
       [delivery.id],
     );
-    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-701');
     await pool.query(
       `INSERT INTO ${store.integrationSourcesTable}
          (id,integration_task_id,delivery_task_id,repository_id,provider_pull_request_id,reviewed_subject_digest,source_order,state)
@@ -264,8 +267,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const executionId = randomUUID();
     const runId = `run-${executionId}`;
     await pool.query(
-      `UPDATE ${store.tasksTable} SET status='in_review',provider_pull_request_id='24',
-              reviewed_subject_digest='digest-24',version=version+1 WHERE id=$1`,
+      `UPDATE ${store.tasksTable} SET status='in_review',provider_pull_request_id='24',version=version+1 WHERE id=$1`,
       [delivery.id],
     );
     await pool.query(
@@ -300,7 +302,7 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
         batch: { maxTasks: 5, selection: 'priority_then_ready_at' },
         execution: {
           mergeMethod: 'merge', continueIndependentSources: true, autoResolveConflicts: true,
-          maxAutomaticRemediationRounds: 1, maxTransientRetries: 1, requireGreenChecks: true,
+          maxAutomaticRemediationRounds: 1, maxTransientRetries: 1,
           deleteRemoteBranch: false, deploy: false,
         },
       },
@@ -316,10 +318,9 @@ describePg('taskboard workflow incident playback (PostgreSQL)', () => {
     const delivery = await store.createTask(identity, board.id, { title: 'repair target', status: 'todo' });
     await pool.query(
       `UPDATE ${store.tasksTable} SET status='ready_to_merge',provider_pull_request_id='88',
-              head_oid='head-88',base_oid='base-88',reviewed_subject_digest='digest-88',version=version+1 WHERE id=$1`,
+              head_oid='head-88',base_oid='base-88',version=version+1 WHERE id=$1`,
       [delivery.id],
     );
-    await seedSuccessfulReviewCi(pool, store, delivery.id, 'head-88');
     const integration = await store.createIntegrationBatch(identity, board.id, {
       deliveryTaskIds: [delivery.id], expectedBoardVersion: (await store.getBoard(identity, board.id)).version,
     });

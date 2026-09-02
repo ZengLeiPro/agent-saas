@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "provider": {
+    "kind": "pending_external_approval",
+    "owner": "pending_external_approval",
+    "dashboardId": "pending_external_approval",
+    "alertPolicyId": "pending_external_approval",
+    "environment": "production",
+    "release": "pending_external_approval",
+    "dsnSecretReference": "pending_external_approval"
+  },
+  "retentionDays": "pending_external_approval",
+  "samplingRate": "pending_external_approval",
+  "rateLimitPerMinute": "pending_external_approval",
+  "sloPolicy": {
+    "status": "pending_external_approval",
+    "metrics": {
+      "crashFreeSessions": "pending_external_approval",
+      "anrRate": "pending_external_approval",
+      "startupP50Ms": "pending_external_approval",
+      "startupP95Ms": "pending_external_approval",
+      "chatAckP95Ms": "pending_external_approval",
+      "firstTokenP95Ms": "pending_external_approval",
+      "wsRecoveryP95Ms": "pending_external_approval",
+      "syncOverflowRate": "pending_external_approval"
+    }
+  }
+}

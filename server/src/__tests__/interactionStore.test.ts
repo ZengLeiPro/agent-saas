@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { interactionStore } from '../channels/web/interactionStore.js';
 
@@ -42,9 +42,11 @@ describe('interactionStore disconnect behavior', () => {
     interactionStore.rejectOnDisconnect(new Set([askId, planId]), 'closed');
 
     expect(interactionStore.getPendingInteractions('session-2')).toEqual([
-      {
+      expect.objectContaining({
         interactionId: askId,
         type: 'ask_user',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: [
           {
             question: '选哪个？',
@@ -55,14 +57,16 @@ describe('interactionStore disconnect behavior', () => {
         ],
         toolName: undefined,
         planContent: undefined,
-      },
-      {
+      }),
+      expect.objectContaining({
         interactionId: planId,
         type: 'permission_request',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: undefined,
         toolName: 'ExitPlanMode',
         planContent: '计划正文',
-      },
+      }),
     ]);
 
     expect(interactionStore.resolve(askId, { answers: { choice: 'A' } })).toBe(true);
@@ -99,19 +103,81 @@ describe('interactionStore disconnect behavior', () => {
     interactionStore.rejectOnDisconnect(new Set([interactionId]), 'closed');
 
     expect(interactionStore.getPendingInteractions('session-3')).toEqual([
-      {
+      expect.objectContaining({
         interactionId,
         type: 'permission_request',
+        version: expect.any(Number),
+        order: expect.any(Number),
         questions: undefined,
         toolId: 'Write',
         toolName: 'Write',
         displayName: 'Write File',
         toolInput: { path: 'assets/20260607/probe.txt', content: 'ok' },
         planContent: undefined,
-      },
+      }),
     ]);
 
     expect(interactionStore.resolve(interactionId, { allow: true })).toBe(true);
     await expect(promise).resolves.toEqual({ allow: true });
+  });
+});
+
+describe('M20-05 interaction timeout outcome', () => {
+  it('reports an explicit expired outcome before rejecting the waiter', async () => {
+    vi.useFakeTimers();
+    try {
+      const onExpired = vi.fn();
+      const promise = interactionStore.create('expires-visible', 'ask_user', { sessionId: 'session-expired', onExpired });
+      const rejection = expect(promise).rejects.toThrow('Interaction timed out');
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+      await rejection;
+      expect(onExpired).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-expired', type: 'ask_user' }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('M20-05 interaction response idempotency', () => {
+  it('executes the waiter side effect once after an ACK loss and classifies retries', async () => {
+    const interactionId = 'ack-loss-once';
+    let sideEffects = 0;
+    const promise = interactionStore.create(interactionId, 'permission_request', { sessionId: 'session-idempotent' })
+      .then((response) => { sideEffects += 1; return response; });
+
+    expect(interactionStore.resolve(interactionId, { allow: true })).toBe(true);
+    interactionStore.recordCompleted('session-idempotent', interactionId, 'request-stable', { allow: true });
+    await expect(promise).resolves.toEqual({ allow: true });
+
+    // Lost ACK retry uses the same request and canonical response; no waiter is resolved twice.
+    expect(interactionStore.classifyCompleted('session-idempotent', interactionId, { allow: true })).toBe('duplicate');
+    expect(interactionStore.resolve(interactionId, { allow: true })).toBe(false);
+    expect(sideEffects).toBe(1);
+    // A different answer for the same interaction is a protocol conflict.
+    expect(interactionStore.classifyCompleted('session-idempotent', interactionId, { allow: false })).toBe('conflict');
+  });
+});
+
+describe('M40-03 concurrent response winner', () => {
+  it('elects one winner and classifies same-request replay vs conflicting response', () => {
+    const id = 'concurrent-winner';
+    expect(interactionStore.claimResponse(id, 'request-1', { allow: true })).toBe('winner');
+    expect(interactionStore.claimResponse(id, 'request-1', { allow: true })).toBe('duplicate');
+    expect(interactionStore.claimResponse(id, 'request-2', { allow: false })).toBe('conflict');
+    interactionStore.releaseResponseClaim(id, 'request-1');
+    expect(interactionStore.claimResponse(id, 'request-2', { allow: false })).toBe('winner');
+    interactionStore.releaseResponseClaim(id, 'request-2');
+  });
+});
+
+describe('M20-07 active interaction session index', () => {
+  it('updates O(1) summary immediately on request and terminal resolution', async () => {
+    const promise = interactionStore.create('indexed-interaction', 'ask_user', { sessionId: 'indexed-session' });
+    expect(interactionStore.getActiveInteraction('indexed-session')).toMatchObject({
+      interactionId: 'indexed-interaction', type: 'ask_user', order: expect.any(Number), version: expect.any(Number),
+    });
+    expect(interactionStore.resolve('indexed-interaction', { answers: {} })).toBe(true);
+    await expect(promise).resolves.toEqual({ answers: {} });
+    expect(interactionStore.getActiveInteraction('indexed-session')).toBeUndefined();
   });
 });

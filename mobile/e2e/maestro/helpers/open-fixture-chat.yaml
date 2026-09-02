@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "e2e-fixture-session"
+- extendedWaitUntil:
+    visible:
+      id: "chat-composer-input"
+    timeout: 10000

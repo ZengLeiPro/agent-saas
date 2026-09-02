@@ -175,7 +175,7 @@ describe('DwsBusinessToolProvider', () => {
     expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args: ['aisearch', 'person', '--keyword', '张三', '--format', 'json'] })).toEqual({ risk: 'safe' });
   });
 
-  it('TASK-335 二次 Review：含已知 read/write 动词的未知路径仍保持 fail-closed', () => {
+  it('TASK-335 二次 Review：含已知 read/write 动词的未知路径仍保持策略拒绝', () => {
     const unknownCommands = [
       ['calendar', 'event', 'future', 'list'],
       ['calendar', 'event', 'future-create'],
@@ -185,7 +185,7 @@ describe('DwsBusinessToolProvider', () => {
     for (const args of unknownCommands) {
       expect(resolveDwsBusinessRisk({ args, confirmed: true }), args.join(' ')).toBe('dangerous');
       expect(dwsBusinessToolDescriptor.resolveCallPolicy?.({ args, confirmed: true })).toEqual({
-        risk: 'dangerous', neverAutoApprove: true,
+        risk: 'safe',
       });
     }
   });

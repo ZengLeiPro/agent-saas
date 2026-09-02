@@ -93,8 +93,8 @@ describe('manual task requeue', () => {
     )).rejects.toMatchObject({ code: 'TASKBOARD_PERMISSION_DENIED' });
   });
 
-  it('resets workflow intent and stale review evidence without starting an execution', async () => {
-    const current = task({ mergeEligibility: 'eligible', reviewedSubjectDigest: 'old-review' });
+  it('resets workflow intent without starting an execution', async () => {
+    const current = task({ mergeEligibility: 'eligible' });
     const requeued = { ...current, status: 'todo' as const, version: current.version + 1 };
     const query = vi.fn(async (sql: string, _values?: unknown[]) => {
       if (sql.includes('SELECT t.id, t.sort_order')) return { rows: [] };
@@ -119,8 +119,8 @@ describe('manual task requeue', () => {
 
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
     expect(sql).toContain("next_action='none'");
-    expect(sql).toContain('reviewed_subject_digest=NULL');
-    expect(sql).toContain('provider_ci_inspection_id=NULL');
+    expect(sql).not.toContain('reviewed_subject_digest');
+    expect(sql).not.toContain('provider_ci_');
     expect(query.mock.calls.some(([, values]) => Array.isArray(values) && values.includes('task.requeued'))).toBe(true);
   });
 });

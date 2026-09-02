@@ -28,6 +28,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useUsers } from '@/components/UserManager/hooks';
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from '@/components/PersonalSettings/dirtyRegistry';
 import { useTenantKnowledgeOptions, useTenantSkillOptions, type OrgAgentConfiguration } from './hooks';
 import { OrgAgentAudienceSection } from './OrgAgentAudienceSection';
 import { OrgAgentDwsSection } from './OrgAgentDwsSection';
@@ -90,7 +94,9 @@ export function OrgAgentFormDialog({
   /** 上传图片头像（专用媒体接口，上传即时生效） */
   onUploadAvatar?: (id: string, file: File) => Promise<{ avatar: string; avatarPath?: string; avatarVersion: number }>;
 }) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [values, setValues] = useState<OrgAgentFormValues>(emptyFormValues());
+  const [baselineValues, setBaselineValues] = useState<OrgAgentFormValues | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
@@ -216,7 +222,7 @@ export function OrgAgentFormDialog({
       const assignedGroupIds = assignments
         .filter(item => item.assigneeType === 'directory_group' && item.effect === selectedEffect && item.assigneeId)
         .map(item => item.assigneeId!);
-      setValues({
+      const nextValues: OrgAgentFormValues = {
         name: definition?.name ?? editing.name,
         avatar: isImageAvatar ? '' : avatarStoredPath,
         avatarImageUrl: isImageAvatar
@@ -241,11 +247,17 @@ export function OrgAgentFormDialog({
         guardrailRejectionMessage: guardrail.rejectionMessage,
         guardrailStrictness: guardrail.strictness,
         enabled: configuration ? configuration.resource.status === 'enabled' : editing.enabled,
-      });
+      };
+      setValues(nextValues);
+      setBaselineValues(structuredClone(nextValues));
     } else if (initialValues) {
-      setValues(structuredClone(initialValues));
+      const nextValues = structuredClone(initialValues);
+      setValues(nextValues);
+      setBaselineValues(structuredClone(nextValues));
     } else {
-      setValues(emptyFormValues());
+      const nextValues = emptyFormValues();
+      setValues(nextValues);
+      setBaselineValues(structuredClone(nextValues));
     }
   }, [open, tenantId, editing, configuration, configurationLoading, initialValues, tenantUsers]);
 
@@ -349,25 +361,25 @@ export function OrgAgentFormDialog({
   const handleSubmit = async () => {
     if (!values.name.trim()) {
       setError('名称不能为空');
-      return;
+      return false;
     }
     const starterPrompts = values.starterPromptsText.split('\n').map((item) => item.trim()).filter(Boolean);
     if (starterPrompts.length > 6) {
       setError('示例问题最多 6 条');
-      return;
+      return false;
     }
     const overlongPromptIndex = starterPrompts.findIndex((item) => item.length > 200);
     if (overlongPromptIndex >= 0) {
       setError(`第 ${overlongPromptIndex + 1} 条示例问题不能超过 200 个字符`);
-      return;
+      return false;
     }
     if (new Set(starterPrompts).size !== starterPrompts.length) {
       setError('示例问题不能重复');
-      return;
+      return false;
     }
     if (values.guardrailMode !== 'off' && !values.guardrailRejectionMessage.trim()) {
       setError('开启门禁时拒绝话术不能为空');
-      return;
+      return false;
     }
     if (assembleScopeDescription({
       mode: values.guardrailMode,
@@ -377,36 +389,52 @@ export function OrgAgentFormDialog({
       strictness: values.guardrailStrictness,
     }).length > 2000) {
       setError('职责边界与允许/拒绝示例合计不能超过 2000 个字符');
-      return;
+      return false;
     }
     const knowledgeIds = values.allowedKnowledgeText.split(/[\n,]/).map(item => item.trim()).filter(Boolean);
     if (new Set(knowledgeIds).size > 20 || knowledgeIds.some(item => item.length > 200)) {
       setError('知识资源最多 20 个，单个 ID 不能超过 200 个字符');
-      return;
+      return false;
     }
     if (values.audienceExposure !== 'all'
       && values.audienceUserIds.length === 0
       && values.audienceGroupIds.length === 0) {
       setError('指定访问范围时，至少选择一个成员或部门');
-      return;
+      return false;
     }
     if (values.runtime.execution.allowedTargets?.length === 0) {
       setError('限制执行环境时，至少选择一个执行目标');
-      return;
+      return false;
     }
     const submitGeneration = ++submitGenerationRef.current;
     setSaving(true);
     try {
       await onSubmit(values);
       if (submitGeneration === submitGenerationRef.current) onClose();
+      return true;
     } catch (err) {
       if (submitGeneration === submitGenerationRef.current) {
         setError(err instanceof Error ? err.message : String(err));
       }
+      return false;
     } finally {
       if (submitGeneration === submitGenerationRef.current) setSaving(false);
     }
   };
+
+  useSettingsDirtyEntry({
+    id: `organization-agent-form:${tenantId ?? "none"}:${editing?.id ?? "new"}`,
+    label: editing ? `配置企业专家 ${editing.name}` : "创建企业专家",
+    dirty: Boolean(open && baselineValues && JSON.stringify(values) !== JSON.stringify(baselineValues)),
+    save: async () => { if (!await handleSubmit()) throw new Error("Organization agent save failed"); },
+    discard: () => {
+      if (baselineValues) setValues(structuredClone(baselineValues));
+      setNewAllowExample(''); setNewRejectExample(''); setError(null);
+    },
+    draft: values,
+  });
+
+  const requestClose = () => requestDirtyNavigation(onClose);
 
   const selectedKnowledgeIds = values.allowedKnowledgeText
     .split(/[\n,]/)
@@ -416,7 +444,7 @@ export function OrgAgentFormDialog({
   const unavailableKnowledgeIds = selectedKnowledgeIds.filter(id => !knownKnowledgeIds.has(id));
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="flex max-h-[min(860px,calc(100vh-40px))] w-[min(960px,calc(100vw-32px))] max-w-none flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{editing ? `配置「${editing.name}」` : '创建企业专家'}</DialogTitle>
@@ -906,7 +934,7 @@ export function OrgAgentFormDialog({
         </div>
 
         <DialogFooter className="shrink-0 border-t px-6 py-4">
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+          <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>取消</Button>
           <Button type="button" onClick={() => { void handleSubmit(); }} disabled={saving || configurationLoading}>
             {saving ? '保存中...' : editing ? '保存全部配置' : '创建'}
           </Button>

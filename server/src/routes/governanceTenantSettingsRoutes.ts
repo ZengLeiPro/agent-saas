@@ -70,8 +70,18 @@ export function registerGovernanceTenantSettingsRoutes(
         code: 'TENANT_SETTINGS_BASELINE_CONFLICT',
       });
     }
+    // 模型可用范围由 Entitlement Scope 独占写入；普通组织设置只能修改默认模型和展示策略。
+    // 即使旧客户端仍提交 allowedModels，也必须保留当前兼容投影，避免形成第二写入源。
+    const governedSettings: TenantSettingsPatch = {
+      ...parsed.data.settings,
+      models: {
+        ...current.settings.models,
+        ...parsed.data.settings.models,
+        allowedModels: current.settings.models.allowedModels,
+      },
+    };
     const policyError = tenantSettingsPolicyError(
-      parsed.data.settings,
+      governedSettings,
       current.settings,
       options.personaFor(req) === 'platform_admin',
     );
@@ -79,7 +89,7 @@ export function registerGovernanceTenantSettingsRoutes(
     try {
       const result = await options.updateTenantSettings(
         tenantId,
-        parsed.data.settings,
+        governedSettings,
         parsed.data.expectedUpdatedAt,
       );
       return res.json({ tenantId, ...result });

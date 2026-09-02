@@ -3,6 +3,10 @@ import type { AgentDwsAccount, AgentDwsAuthSession } from "@agent/shared";
 import { CircleAlert, ExternalLink, Loader2, Plus, RefreshCw, RotateCw, UserRound } from "lucide-react";
 
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +31,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { authFetch } from "@/lib/authFetch";
 import { ContextPolicyDialog } from './ContextPolicyDialog';
+import { DelegationAccessPanel } from './DelegationAccessPanel';
 
 interface AgentDwsAccountsPageProps {
   tenantId: string;
@@ -158,6 +163,7 @@ function contextPolicyText(account: AgentDwsAccount): { historical: string; real
 }
 
 export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageProps) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const [accounts, setAccounts] = useState<AgentDwsAccount[]>([]);
   const [agents, setAgents] = useState<OrgAgentOption[]>([]);
   const [sessions, setSessions] = useState<Record<string, AgentDwsAuthSession | null>>({});
@@ -304,20 +310,26 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
   };
 
   const handleCreateOpenChange = (open: boolean) => {
-    setCreateOpen(open);
-    if (!open && !creating) resetCreateForm();
+    if (open) {
+      setCreateOpen(true);
+      return;
+    }
+    if (creating) return;
+    requestDirtyNavigation(() => {
+      setCreateOpen(false);
+      resetCreateForm();
+    });
   };
 
-  const handleCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const createAccount = async () => {
     setCreateError("");
     if (!agentId) {
       setCreateError("请选择要绑定的组织 Agent");
-      return;
+      return false;
     }
     if (!displayName.trim() || !loginId.trim()) {
       setCreateError("显示名和 loginId 均为必填项");
-      return;
+      return false;
     }
 
     const requestedScope = tenantScopeRef.current;
@@ -337,20 +349,34 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
       });
       if (!response.ok) throw await responseError(response, "创建成员账号失败");
       const payload = await response.json() as AccountResponse;
-      if (tenantScopeRef.current !== requestedScope) return;
+      if (tenantScopeRef.current !== requestedScope) return false;
       setAccounts((current) => replaceAccount(current, payload.account));
       setNotice("成员账号已创建，请在列表中发起 OAuth 授权");
       setActionError("");
       setCreateOpen(false);
       resetCreateForm();
+      return true;
     } catch (error) {
       if (tenantScopeRef.current === requestedScope) {
         setCreateError(errorMessage(error, "创建成员账号失败"));
       }
+      return false;
     } finally {
       if (tenantScopeRef.current === requestedScope) setCreating(false);
     }
   };
+  const handleCreate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void createAccount();
+  };
+  useSettingsDirtyEntry({
+    id: `organization-dws-account-create:${tenantId}`,
+    label: "添加 Agent 钉钉成员账号",
+    dirty: createOpen && Boolean(agentId || displayName || loginId || corpId),
+    save: async () => { if (!await createAccount()) throw new Error("DWS account create failed"); },
+    discard: resetCreateForm,
+    draft: { agentId, displayName, loginId, corpId },
+  });
 
   const handleAuthorize = async (account: AgentDwsAccount) => {
     const requestedTenantId = tenantId;
@@ -695,6 +721,8 @@ export default function AgentDwsAccountsPage({ tenantId }: AgentDwsAccountsPageP
           )}
         </CardContent>
       </Card>
+
+      <DelegationAccessPanel tenantId={tenantId} accounts={accounts} />
 
       <ContextPolicyDialog
         account={contextPolicyAccount}

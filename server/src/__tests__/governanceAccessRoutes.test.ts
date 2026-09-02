@@ -743,7 +743,12 @@ describe('governance access routes', () => {
     expect(response.status).toBe(403);
     expect(test.replaceAssignments).not.toHaveBeenCalled();
   });
-
+  it('首次编辑可指派资源时返回 version 0 空基线而不是 404', async () => {
+    const test = await rig({ getAssignmentSet: vi.fn().mockResolvedValue(null) });
+    const response = await test.request('/api/governance/access/assignments/skill/new-skill');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ tenantId: 'tenant-a', resourceType: 'skill', resourceId: 'new-skill', version: 0, assignments: [] });
+  });
   it('Assignment 写入校验同租户成员和目录群组，平台管理员默认禁止代写', async () => {
     const invalidResource = await rig({ resolveAssignmentResource: async () => 'not_found' });
     const resourceResponse = await invalidResource.request(
@@ -771,18 +776,15 @@ describe('governance access routes', () => {
 
     const directoryGroups = {
       getGroup: vi.fn(async () => ({ groupId: 'group-1', status: 'active' as const })),
-      listGroups: vi.fn(async () => []),
-    };
+      listGroups: vi.fn(async () => []), };
     const validGroup = await rig({ directoryGroups });
     const groupChange = {
       expectedVersion: 1,
       assignments: [{ assigneeType: 'directory_group', assigneeId: 'group-1', effect: 'allow' }],
     };
     const groupPreview = await createAssignmentPreview(validGroup, groupChange);
-    const groupResponse = await validGroup.request(
-      '/api/governance/access/assignments/skill/skill-1',
-      json('PUT', commitBody(groupChange, groupPreview)),
-    );
+    const groupResponse = await validGroup.request('/api/governance/access/assignments/skill/skill-1',
+      json('PUT', commitBody(groupChange, groupPreview)));
     expect(groupResponse.status).toBe(200);
     expect(directoryGroups.getGroup).toHaveBeenCalledWith('tenant-a', 'group-1');
 
@@ -790,10 +792,8 @@ describe('governance access routes', () => {
       user: { sub: 'platform-1', username: 'platform', tenantId: 'pantheon', role: 'admin' },
       platformAdmin: true,
     });
-    const platformResponse = await platform.request(
-      '/api/governance/access/assignments/skill/skill-1?tenantId=tenant-a',
-      json('PUT', { expectedVersion: 1, assignments: [] }),
-    );
+    const platformResponse = await platform.request('/api/governance/access/assignments/skill/skill-1?tenantId=tenant-a',
+      json('PUT', { expectedVersion: 1, assignments: [] }));
     expect(platformResponse.status).toBe(403);
     expect(await platformResponse.json()).toMatchObject({ code: 'PLATFORM_ASSIGNMENT_WRITE_FORBIDDEN' });
   });

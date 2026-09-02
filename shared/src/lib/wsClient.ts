@@ -14,7 +14,18 @@
 
 import { getPlatform } from '../platform/context';
 import { TOKEN_KEY } from './constants';
+import { AUTH_SESSION_KEY, type AuthSessionBinding } from './authLifecycle';
 import type { SandboxProfile } from '../types/session';
+import type { WsEvent } from '../types/ws';
+import {
+    createSyncRecoveryState,
+    reduceSyncRecovery,
+    type SyncRecoveryState,
+} from './syncRecovery';
+import type {
+    CanonicalChatSubmissionWireMessage,
+    ChatClientCapability,
+} from './chatSubmission';
 
 export type WsState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
@@ -23,33 +34,7 @@ export type WsMessageHandler = (data: any) => void;
 export type WsStateHandler = (state: WsState) => void;
 
 /** Outbound message types */
-export interface WsChatMessage {
-    action: 'chat';
-    /** 普通消息默认排队；steer 仅用于用户显式插话。 */
-    deliveryMode?: 'queue' | 'steer';
-    /** 客户端明确支持的向后兼容能力；服务端只启用已声明的协议。 */
-    clientCapabilities?: Array<'replaceable_drafts'>;
-    /** 客户端生成的 UUID，贯穿全链路，用于 ACK / 拒绝 / 幂等 / 状态机绑定 */
-    client_msg_id?: string;
-    message: string;
-    sessionId?: string;
-    /** Only honored when creating a session; persisted profile wins on continuation. */
-    sandboxProfile?: SandboxProfile;
-    /**
-     * 公司级专职 Agent 绑定（2026-07 唯恩批次）。仅新会话首条消息生效；
-     * 带 sessionId 时服务端以会话 meta 为准（忽略客户端值）。
-     */
-    orgAgentId?: string;
-    attachments?: Array<{
-        attachmentId?: string;
-        originalName: string;
-        savedPath?: string;
-        relativePath: string;
-        size: number;
-        mimeType: string;
-        isImage: boolean;
-    }>;
-    model?: string;
+interface WsChatControlFields {
     /** 内部管理员验收开关：选择工具执行后端。普通 UI 不暴露。 */
     executionTarget?: 'server-local' | 'server-container';
     approvalPolicy?: {
@@ -58,18 +43,48 @@ export interface WsChatMessage {
         /** 「低风险常开」档：自动批准上限到 workspace_write，dangerous 仍人工批准。 */
         lowRiskOnly?: boolean;
     };
-    /** 只能使用 Demo 启动 API 返回的不透明运行绑定。 */
-    voiceFile?: {
-        savedPath: string;
-        relativePath: string;
-        duration: number;
-    };
 }
+
+/** M20-01 canonical chat wire message. Path-shaped attachment fields are not representable. */
+export type CanonicalWsChatMessage = CanonicalChatSubmissionWireMessage & WsChatControlFields;
+
+/** @deprecated N-1 only. Never construct this from the M20-01 canonical adapter. */
+export interface LegacyWsChatAttachment {
+    attachmentId?: string;
+    originalName: string;
+    /** @deprecated Server compatibility lookup only; never authoritative. */
+    savedPath?: string;
+    /** @deprecated Server compatibility lookup only; never authoritative. */
+    relativePath: string;
+    size: number;
+    mimeType: string;
+    isImage: boolean;
+}
+
+/** @deprecated N-1 chat envelope. New Mobile/Web code must use CanonicalWsChatMessage. */
+export interface LegacyWsChatMessage extends WsChatControlFields {
+    action: 'chat';
+    deliveryMode?: 'queue' | 'steer';
+    clientCapabilities?: ChatClientCapability[];
+    client_msg_id?: string;
+    message: string;
+    sessionId?: string;
+    /** Only honored when creating a session; persisted profile wins on continuation. */
+    sandboxProfile?: SandboxProfile;
+    orgAgentId?: string;
+    attachments?: LegacyWsChatAttachment[];
+    model?: string;
+}
+
+export type WsChatMessage = CanonicalWsChatMessage | LegacyWsChatMessage;
 
 export interface WsRespondMessage {
   action: 'respond';
   interactionId: string;
   sessionId?: string | null;
+  requestId?: string;
+  clientAttemptId?: string;
+  response?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -95,6 +110,8 @@ export interface WsResumeMessage {
     sessionId: string;
     /** Correlates the active_stream response with this exact resume attempt. */
     requestId?: string;
+    /** M50-05 fence: old network requests are rejected after a network switch. */
+    networkGeneration?: number;
     lastEventId: number;
     lastEventCursor?: string | null;
     skipReplay?: boolean;
@@ -105,6 +122,17 @@ export interface WsRunStatusMessage {
     runId: string;
 }
 
+export interface WsQueueSnapshotMessage {
+    action: 'queue_snapshot';
+    sessionId: string;
+    requestId: string;
+    networkGeneration: number;
+}
+
+export interface WsAttachActiveStreamMessage extends Omit<WsResumeMessage, 'action'> {
+    action: 'attach_active_stream';
+}
+
 export interface WsDetachMessage {
     action: 'detach';
 }
@@ -112,8 +140,14 @@ export interface WsDetachMessage {
 export interface WsSyncMessage {
     action: 'sync';
     lastSeq: number;
+    /** Stable idempotency key for lifecycle recovery. */
+    requestId?: string;
+    /** M50-05 fence: old connect/ping/ACK work cannot cross a network switch. */
+    networkGeneration?: number;
     /** 上次见到的服务端用户日志代际；旧服务端会忽略。 */
     epoch?: string;
+    /** 当前会话；新服务端可在 overflow 中内联其权威快照。 */
+    sessionId?: string;
 }
 
 /** 撤回一条仍在排队（未被目标 run 消费）的插话（2026-08-04 终态设计）。 */
@@ -129,12 +163,17 @@ export type WsOutboundMessage =
     | WsApprovalPolicyMessage
     | WsRunStatusMessage
     | WsResumeMessage
+    | WsQueueSnapshotMessage
+    | WsAttachActiveStreamMessage
     | WsDetachMessage
     | WsSyncMessage
     | WsCancelQueuedMessage;
 
 /** Inbound message envelope */
 export interface WsEnvelope {
+    authEpoch?: number;
+    generation?: number;
+    networkGeneration?: number;
     eventId?: number;
     eventCursor?: string;
     /** 用户级事件序号（per-user，user/dual/admin scope），用于 gap 检测和主动 sync */
@@ -158,6 +197,11 @@ class WsClient {
     private connectPromiseResolve: (() => void) | null = null;
     private connectPromiseReject: ((err: Error) => void) | null = null;
     private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    // M20-04 boundary fence. Every disconnect/boundary invalidates old socket callbacks.
+    private boundaryGeneration = 0;
+    private sendingFrozen = false;
+    private lifecycleSuspended = false;
+    private activeAuthBinding: AuthSessionBinding | null = null;
 
     // Reference counting (for mobile multi-screen)
     private refCount = 0;
@@ -167,23 +211,41 @@ class WsClient {
     private lastPongAt = 0;
     private lastPingSentAt = 0;
 
-    // Heartbeat-piggyback sync: last known user event sequence number + server log epoch
-    private lastSeq = 0;
-    private serverEpoch: string | null = null;
+    // Per-connection authoritative recovery cursor. It is intentionally process-memory only.
+    private recovery: SyncRecoveryState = createSyncRecoveryState();
+    private sentSyncRequestId: number | null = null;
+    private syncSessionId: string | null = null;
+
+    private get lastSeq(): number { return this.recovery.lastSeq; }
+    private get serverEpoch(): string | null { return this.recovery.serverEpoch; }
 
     // Auth failure detection
     private consecutiveFailures = 0;
     private onAuthFailureFn: (() => void) | null = null;
 
+    private assertTrustedWsUrl(url: string): void {
+        getPlatform().platformConfig.assertTrustedUrl?.(url, 'websocket');
+    }
+
     /** Resolve endpoint and credential separately so JWT never enters URLs/logs. */
-    private async getConnectionParams(): Promise<{ url: string; token?: string }> {
+    private async getConnectionParams(): Promise<{ url: string; token?: string; binding?: AuthSessionBinding }> {
         const platform = getPlatform();
-        const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
         const url = platform.platformConfig.getWsUrl();
+        this.assertTrustedWsUrl(url);
+        const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
         if (!authEnabled) return { url };
         const token = await platform.secureStorage.getItem(TOKEN_KEY);
         if (!token) throw new Error('Missing authentication token');
-        return { url, token };
+        const rawBinding = await platform.secureStorage.getItem(AUTH_SESSION_KEY);
+        if (!rawBinding) throw new Error('Missing authentication epoch');
+        let binding: AuthSessionBinding;
+        try { binding = JSON.parse(rawBinding) as AuthSessionBinding; }
+        catch { throw new Error('Invalid authentication epoch'); }
+        if (!Number.isSafeInteger(binding.authEpoch) || binding.authEpoch < 1
+            || !Number.isSafeInteger(binding.generation) || binding.generation < 1) {
+            throw new Error('Invalid authentication epoch');
+        }
+        return { url, token, binding };
     }
 
     /** Reference-counted connect. Returns a release function. */
@@ -237,6 +299,8 @@ class WsClient {
 
     /** Establish connection */
     async connect(): Promise<void> {
+        if (this.sendingFrozen) throw new Error('Identity boundary in progress');
+        if (this.lifecycleSuspended) throw new Error('Lifecycle transport suspended');
         // Already connected
         if (this.ws?.readyState === WebSocket.OPEN && this.state === 'connected') {
             return;
@@ -274,8 +338,8 @@ class WsClient {
         }, CONNECT_TIMEOUT_MS);
 
         try {
-            const { url, token } = await this.getConnectionParams();
-            this.doConnect(url, token);
+            const { url, token, binding } = await this.getConnectionParams();
+            this.doConnect(url, token, binding);
         } catch {
             this.scheduleRetry();
         }
@@ -283,7 +347,92 @@ class WsClient {
         return connectPromise;
     }
 
-    private doConnect(url: string, token?: string): void {
+    private sendRecoveryRequestIfNeeded(): void {
+        const request = this.recovery.syncRequest;
+        if (!request || request.id === this.sentSyncRequestId) return;
+        this.sentSyncRequestId = request.id;
+        this.send({
+            action: 'sync',
+            lastSeq: request.lastSeq,
+            ...(request.epoch ? { epoch: request.epoch } : {}),
+            ...(this.syncSessionId ? { sessionId: this.syncSessionId } : {}),
+        });
+    }
+
+    /** Returns one generation-fenced normalized envelope, or null for rejected/control frames. */
+    private reduceInboundRecovery(envelope: WsEnvelope): WsEnvelope | null {
+        const data = envelope.data as WsEvent | undefined;
+        if (!data?.type) return envelope;
+
+        if (data.type === 'pong') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'pong', seq: data.seq, epoch: data.epoch,
+            });
+            this.sendRecoveryRequestIfNeeded();
+            return null;
+        }
+
+        if (data.type === 'sync_ok') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'sync_ok', seq: data.seq, epoch: data.epoch, events: data.events,
+            });
+            const accepted = this.recovery.appliedEvents;
+            const normalized: WsEvent = {
+                type: 'sync_ok',
+                seq: this.recovery.lastSeq,
+                ...(this.recovery.serverEpoch ? { epoch: this.recovery.serverEpoch } : {}),
+                events: accepted.map(({ seq, event }) => ({ seq, event })),
+                ...('requestId' in data && typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
+                ...('networkGeneration' in data && typeof data.networkGeneration === 'number' ? { networkGeneration: data.networkGeneration } : {}),
+            };
+            this.sendRecoveryRequestIfNeeded();
+            return { ...envelope, data: normalized };
+        }
+
+        if (data.type === 'sync_overflow') {
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'sync_overflow', seq: data.seq, epoch: data.epoch,
+            });
+            return {
+                ...envelope,
+                data: {
+                    ...data,
+                    seq: this.recovery.lastSeq,
+                    ...(this.recovery.serverEpoch ? { epoch: this.recovery.serverEpoch } : {}),
+                },
+            };
+        }
+
+        if (typeof envelope.seq === 'number') {
+            // N-1 servers do not expose an epoch. Their first observed live event is the only
+            // available baseline; epoch-aware servers establish it through pong/sync first.
+            if (this.recovery.lastSeq === 0 && this.recovery.serverEpoch === null && this.recovery.phase === 'idle') {
+                this.recovery = { ...this.recovery, lastSeq: Math.max(0, envelope.seq - 1) };
+            }
+            this.recovery = reduceSyncRecovery(this.recovery, {
+                type: 'event',
+                envelope: {
+                    seq: envelope.seq,
+                    ...(typeof (data as { epoch?: unknown }).epoch === 'string'
+                        ? { epoch: (data as unknown as { epoch: string }).epoch }
+                        : {}),
+                    event: data,
+                },
+            });
+            this.sendRecoveryRequestIfNeeded();
+            const accepted = this.recovery.appliedEvents[0];
+            if (!accepted) return null;
+            return { ...envelope, seq: accepted.seq, data: accepted.event };
+        }
+
+        return envelope;
+    }
+
+    private doConnect(url: string, token?: string, binding?: AuthSessionBinding): void {
+        if (this.sendingFrozen) return;
+        const socketBoundaryGeneration = this.boundaryGeneration;
+        this.activeAuthBinding = binding ?? null;
+        const isCurrentBoundary = () => socketBoundaryGeneration === this.boundaryGeneration && !this.sendingFrozen;
         const isReconnect = this.retryAttempt > 0;
         this.setState(isReconnect ? 'reconnecting' : 'connecting');
 
@@ -297,21 +446,44 @@ class WsClient {
         this.ws = ws;
 
         ws.onopen = () => {
-            if (this.ws !== ws) return; // stale — a newer connection has replaced us
+            if (this.ws !== ws || !isCurrentBoundary()) return; // stale identity/connection
+            // Re-check at the exact credential boundary in case policy changed while
+            // the socket upgrade was in flight.
+            try {
+                this.assertTrustedWsUrl(url);
+            } catch {
+                ws.close(1008, 'Untrusted WebSocket origin');
+                if (this.ws === ws) this.ws = null;
+                this.setState('disconnected');
+                this.connectPromiseReject?.(new Error('Untrusted WebSocket origin'));
+                this.connectPromiseResolve = null;
+                this.connectPromiseReject = null;
+                if (this.connectTimeoutTimer) {
+                    clearTimeout(this.connectTimeoutTimer);
+                    this.connectTimeoutTimer = null;
+                }
+                return;
+            }
             // Auth-enabled deployments require auth as the first client frame. In no-auth
             // mode the server sends auth_ok immediately, so the client must stay silent.
-            if (token) ws.send(JSON.stringify({ action: 'auth', token }));
+            if (token) ws.send(JSON.stringify({ action: 'auth', token, ...binding }));
         };
 
         ws.onmessage = (event: MessageEvent) => {
+            if (this.ws !== ws || !isCurrentBoundary()) return;
             try {
-                const envelope = JSON.parse(event.data as string) as WsEnvelope;
+                const wireEnvelope = JSON.parse(event.data as string) as WsEnvelope;
+                if (this.activeAuthBinding && (
+                    wireEnvelope.authEpoch !== this.activeAuthBinding.authEpoch
+                    || wireEnvelope.generation !== this.activeAuthBinding.generation
+                )) return;
+                const { authEpoch: _authEpoch, generation: _generation, ...envelope } = wireEnvelope;
                 const now = Date.now();
                 // Any inbound frame proves the WS path is alive. Do not depend on
                 // a pong/sync frame specifically; streaming frames may arrive while
                 // heartbeat replies are queued behind other downstream messages.
                 this.lastPongAt = now;
-                const messageData = envelope.data as { type?: string; epoch?: unknown; seq?: unknown } | null | undefined;
+                const messageData = envelope.data as { type?: string } | null | undefined; // binding already validated/stripped
                 const msgType = messageData?.type;
                 if (msgType === 'auth_ok') {
                     this.retryAttempt = 0;
@@ -325,39 +497,22 @@ class WsClient {
                     return;
                 }
                 if (this.state !== 'connected') return;
-                // pong 只证明链路存活，不能推进恢复 cursor/epoch。若 pong 后、对应 overflow/sync_ok
-                // 前断线，提前采纳其 E2/seq 会让重连 sync 跳过本应执行的恢复窗口。
-                if (msgType === 'pong') {
-                    const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
-                    if (typeof rttMs === 'number' && rttMs >= 3000) {
-                        console.warn(`[WS] Heartbeat pong slow: ${rttMs}ms`);
-                    }
-                    return;
-                }
-                // 只有可恢复的 sync 结果或真实事件信封才推进 cursor/epoch。
-                // overflow 可能切换 epoch 并把 seq 回退到新代际起点，因此不能只取 max。
+                const normalized = this.reduceInboundRecovery(envelope);
+                if (!normalized) return;
                 if (msgType === 'sync_ok' || msgType === 'sync_overflow') {
-                    if (typeof messageData?.seq === 'number') this.lastSeq = messageData.seq;
-                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
                     const rttMs = this.lastPingSentAt > 0 ? now - this.lastPingSentAt : undefined;
                     if (typeof rttMs === 'number' && rttMs >= 3000) {
                         console.warn(`[WS] Heartbeat sync response slow: ${msgType} ${rttMs}ms`);
                     }
-                } else {
-                    if (typeof messageData?.epoch === 'string') this.serverEpoch = messageData.epoch;
-                    if (typeof envelope.seq === 'number' && envelope.seq > this.lastSeq) {
-                        this.lastSeq = envelope.seq;
-                    }
                 }
-                for (const handler of this.messageHandlers) {
-                    handler(envelope);
-                }
+                for (const handler of this.messageHandlers) handler(normalized);
             } catch {
                 // ignore parse errors
             }
         };
 
         ws.onclose = (event: CloseEvent) => {
+            if (!isCurrentBoundary()) return;
             // Only null this.ws if it still points to this instance —
             // a newer doConnect() may have already replaced it.
             if (this.ws === ws) {
@@ -389,12 +544,12 @@ class WsClient {
             void this.checkAuthStatus();
         }
 
-        this.retryTimer = setTimeout(async () => {
+        this.retryTimer = setTimeout(async () => { // reload token + binding after backoff
             this.retryTimer = null;
-            if (!this.intentionalClose) {
+            if (!this.intentionalClose && !this.sendingFrozen && !this.lifecycleSuspended) {
                 try {
-                    const { url, token } = await this.getConnectionParams();
-                    this.doConnect(url, token);
+                    const { url, token, binding } = await this.getConnectionParams();
+                    this.doConnect(url, token, binding);
                 } catch {
                     this.scheduleRetry();
                 }
@@ -406,12 +561,14 @@ class WsClient {
     private async checkAuthStatus(): Promise<void> {
         try {
             const platform = getPlatform();
+            const baseUrl = platform.platformConfig.getBaseUrl();
+            const authUrl = `${baseUrl}/api/auth/me`;
+            platform.platformConfig.assertTrustedUrl?.(authUrl, 'http');
             const authEnabled = await platform.platformConfig.isAuthEnabled?.() ?? true;
             if (!authEnabled) return;
             const token = await platform.secureStorage.getItem(TOKEN_KEY);
             if (!token) { this.triggerAuthFailure(); return; }
-            const baseUrl = platform.platformConfig.getBaseUrl();
-            const res = await fetch(`${baseUrl}/api/auth/me`, {
+            const res = await fetch(authUrl, {
                 headers: { 'Authorization': `Bearer ${token}` },
             });
             if (res.status === 401) this.triggerAuthFailure();
@@ -452,6 +609,7 @@ class WsClient {
                 lastSeq: this.lastSeq,
                 ...(this.serverEpoch ? { epoch: this.serverEpoch } : {}),
                 clientTs: this.lastPingSentAt,
+                ...(this.activeAuthBinding ?? {}),
             }));
         }, HEARTBEAT_INTERVAL_MS);
     }
@@ -465,18 +623,66 @@ class WsClient {
 
     // ── Public API ──────────────────────────────────────
 
-    /** Update the last known user event sequence (called by store/hooks after sync responses). */
+    /** N-1 adapter compatibility; prefer resetRecovery at account/session boundaries. */
     setLastSeq(seq: number): void {
-        this.lastSeq = seq;
+        this.recovery = { ...this.recovery, lastSeq: Math.max(0, seq) };
     }
 
-    /** Update the server UserEventLog epoch; null is only used by tests/account resets. */
+    /** N-1 adapter compatibility. Epoch is not persisted across process restarts. */
     setEpoch(epoch: string | null): void {
-        this.serverEpoch = epoch;
+        if (epoch === null && this.recovery.lastSeq === 0) {
+            this.resetRecovery();
+            return;
+        }
+        this.recovery = { ...this.recovery, serverEpoch: epoch };
     }
+
+    /** Supplies the optional session used by overflow inline recovery. */
+    setSyncSessionId(sessionId: string | null): void {
+        this.syncSessionId = sessionId;
+    }
+
+    /** Explicit M20-04 boundary: clear volatile cursor/generation state without reconnecting. */
+    resetRecovery(baseline: { lastSeq?: number; serverEpoch?: string | null; sessionId?: string | null } = {}): void {
+        this.recovery = createSyncRecoveryState(baseline);
+        this.sentSyncRequestId = null;
+        if ('sessionId' in baseline) this.syncSessionId = baseline.sessionId ?? null;
+    }
+
+    getRecoveryCursor(): Readonly<{ lastSeq: number; serverEpoch: string | null }> {
+        return { lastSeq: this.recovery.lastSeq, serverEpoch: this.recovery.serverEpoch };
+    }
+
+    /** Freeze all outbound work before an account/session boundary reset. */
+    freezeSending(): void {
+        this.sendingFrozen = true;
+        this.boundaryGeneration++;
+    }
+
+    /** Install the new identity after all sensitive projections have been cleared. */
+    unfreezeSending(): void {
+        this.sendingFrozen = false;
+    }
+
+    get isSendingFrozen(): boolean { return this.sendingFrozen; }
+
+    /** Pause heartbeat/retry/new connections without cancelling an authoritative run. */
+    suspendNonEssentialTransport(): void {
+        this.lifecycleSuspended = true;
+        this.stopHeartbeat();
+        if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    }
+
+    /** Called only after foreground reachability is explicitly true. */
+    resumeNonEssentialTransport(): void {
+        this.lifecycleSuspended = false;
+    }
+
+    get isLifecycleSuspended(): boolean { return this.lifecycleSuspended; }
 
     /** Disconnect */
     disconnect(): void {
+        this.boundaryGeneration++;
         this.intentionalClose = true;
         this.stopHeartbeat();
         if (this.retryTimer) {
@@ -491,20 +697,35 @@ class WsClient {
             this.ws.close(1000, 'Client disconnect');
             this.ws = null;
         }
+        this.activeAuthBinding = null;
         this.setState('disconnected');
         this.connectPromiseResolve?.();
         this.connectPromiseResolve = null;
         this.connectPromiseReject = null;
     }
 
-    /** Send message, returns whether successful */
+    /** Send message, returns whether successful (and re-checks the connected socket origin). */
     send(msg: WsOutboundMessage): boolean {
+        if (this.sendingFrozen) return false;
         if (this.state === 'connected' && this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+                const socketUrl = (this.ws as unknown as { url?: unknown }).url;
+                if (typeof socketUrl !== 'string') throw new Error('WebSocket URL unavailable');
+                this.assertTrustedWsUrl(socketUrl);
+            } catch {
+                console.warn('[WS] Refusing send to an untrusted origin');
+                this.disconnect();
+                return false;
+            }
             // wsClient 持有从 sync/真实事件得到的最新 epoch，覆盖调用方可能滞后的副本。
-            const outbound = msg.action === 'sync' && this.serverEpoch
-                ? { ...msg, epoch: this.serverEpoch }
+            const outbound = msg.action === 'sync'
+                ? {
+                    ...msg,
+                    ...(this.serverEpoch ? { epoch: this.serverEpoch } : {}),
+                    ...((msg.sessionId ?? this.syncSessionId) ? { sessionId: msg.sessionId ?? this.syncSessionId! } : {}),
+                }
                 : msg;
-            this.ws.send(JSON.stringify(outbound));
+            this.ws.send(JSON.stringify({ ...outbound, ...(this.activeAuthBinding ?? {}) }));
             return true;
         }
         console.warn('[WS] Cannot send: not connected');

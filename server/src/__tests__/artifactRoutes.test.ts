@@ -1,5 +1,5 @@
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, vi, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,15 +9,16 @@ import { createArtifactsRouter } from '../routes/artifacts.js';
 import { InMemoryArtifactStore, LocalArtifactBlobStore } from '../runtime/artifactStore.js';
 import { ArtifactService, type RuntimeArtifactUser } from '../runtime/artifactService.js';
 import { getTranscriptPath } from '../data/transcripts/store.js';
-import { writeSessionMeta } from '../data/transcripts/meta.js';
+import { getMetaPath, writeSessionMeta } from '../data/transcripts/meta.js';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 
-async function startServer(service: ArtifactService, user?: RuntimeArtifactUser): Promise<{ server: Server; baseUrl: string }> {
+async function startServer(service: ArtifactService, user?: RuntimeArtifactUser): Promise<{ server: Server; baseUrl: string; setUser: (next?: RuntimeArtifactUser) => void }> {
+  let currentUser = user;
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    req.user = user;
+    req.user = currentUser;
     next();
   });
   app.use('/api', createArtifactsRouter({ artifactService: service, defaultReadUrlTtlSeconds: 60 }));
@@ -25,7 +26,7 @@ async function startServer(service: ArtifactService, user?: RuntimeArtifactUser)
     const server = app.listen(0, '127.0.0.1', () => {
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : 0;
-      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}`, setUser: (next) => { currentUser = next; } });
     });
   });
 }
@@ -38,6 +39,7 @@ describe('artifact routes', () => {
   let agentCwd = '';
   let blobRoot = '';
   let service: ArtifactService;
+  let artifactStore: InMemoryArtifactStore;
   const cleanupPaths = new Set<string>();
 
   beforeEach(async () => {
@@ -45,8 +47,9 @@ describe('artifact routes', () => {
     blobRoot = await mkdtemp(join(tmpdir(), 'artifact-blob-'));
     cleanupPaths.add(agentCwd);
     cleanupPaths.add(blobRoot);
+    artifactStore = new InMemoryArtifactStore();
     service = new ArtifactService({
-      artifactStore: new InMemoryArtifactStore(),
+      artifactStore,
       blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
       agentCwd,
       signingSecret: 'test-artifact-signing-secret',
@@ -157,7 +160,7 @@ describe('artifact routes', () => {
         expect(downloadUrl.status).toBe(200);
         const download = await downloadUrl.json() as { url: string; direct: boolean };
         expect(download.direct).toBe(false);
-        expect(download.url).toContain('download=true');
+        expect(download.url).not.toContain('download=true'); // disposition is signed, never mutable query state
         const content = await fetch(download.url);
         expect(content.headers.get('content-disposition')).toMatch(/^attachment;/);
       }
@@ -216,4 +219,148 @@ describe('artifact routes', () => {
       await stopServer(server);
     }
   });
+
+  it('binds grants to owner, tenant, disposition, expiry, digest, version and latest nonce', async () => {
+    const artifact = await service.createFromBytes({ sessionId: SESSION_ID, data: 'private', fileName: 'private.txt', mimeType: 'text/plain' });
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl, setUser } = await startServer(service, owner);
+    try {
+      const firstRes = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?expiresInSeconds=1`);
+      const first = await firstRes.json() as { readUrl: string; descriptor: { artifactId: string; digest: string; viewKind: string } };
+      expect(first.descriptor).toMatchObject({ artifactId: artifact.artifactId, digest: artifact.sha256, viewKind: 'text' });
+
+      setUser({ ...owner, sub: 'user-2', username: 'bob' });
+      expect((await fetch(first.readUrl)).status).toBe(403);
+      setUser({ ...owner, tenantId: 'other' });
+      expect((await fetch(first.readUrl)).status).toBe(403);
+      expect((await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url`)).status).toBe(404);
+      setUser(owner);
+
+      const second = await (await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?expiresInSeconds=60`)).json() as { readUrl: string };
+      expect((await fetch(first.readUrl)).status).toBe(401); // superseded nonce cannot be replayed
+      expect((await fetch(`${second.readUrl.slice(0, -1)}x`)).status).toBe(401); // tampered signature
+
+      const expiring = await (await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url?expiresInSeconds=1&download=true`)).json() as { readUrl: string };
+      await new Promise(resolve => setTimeout(resolve, 1_050));
+      expect((await fetch(expiring.readUrl)).status).toBe(401);
+    } finally { await stopServer(server); }
+  });
+
+  it('re-authorizes on refresh and does not extend access revoked between grants', async () => {
+    const artifact = await service.createFromBytes({ sessionId: SESSION_ID, data: 'private', fileName: 'private.txt', mimeType: 'text/plain' });
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      expect((await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url`)).status).toBe(200);
+      const transcriptPath = getTranscriptPath(join(agentCwd, 'kaiyan', 'user-1'), SESSION_ID);
+      await rm(getMetaPath(transcriptPath), { force: true });
+      expect((await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url`)).status).toBe(404);
+    } finally { await stopServer(server); }
+  });
+
+  it('returns canonical deleted and quarantine failures on every signed request', async () => {
+    const deleted = await service.createFromBytes({ sessionId: SESSION_ID, data: 'gone', fileName: 'gone.txt', mimeType: 'text/plain' });
+    const quarantined = await service.createFromBytes({ sessionId: SESSION_ID, data: 'bad', fileName: 'bad.txt', mimeType: 'text/plain' });
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      const deletedGrant = await (await fetch(`${baseUrl}/api/artifacts/${deleted.artifactId}/read-url`)).json() as { readUrl: string };
+      await artifactStore.delete(deleted.artifactId);
+      const deletedResponse = await fetch(deletedGrant.readUrl);
+      expect(deletedResponse.status).toBe(410);
+      await expect(deletedResponse.json()).resolves.toMatchObject({ code: 'artifact_deleted' });
+
+      const quarantineGrant = await (await fetch(`${baseUrl}/api/artifacts/${quarantined.artifactId}/read-url`)).json() as { readUrl: string };
+      const current = await artifactStore.get(quarantined.artifactId);
+      current!.metadata.quarantined = true;
+      const quarantineResponse = await fetch(quarantineGrant.readUrl);
+      expect(quarantineResponse.status).toBe(423);
+      await expect(quarantineResponse.json()).resolves.toMatchObject({ code: 'artifact_quarantined' });
+    } finally { await stopServer(server); }
+  });
+
+  it('serves valid PDF byte ranges/HEAD/304 and rejects invalid or unsupported ranges', async () => {
+    const pdfData = Buffer.from('%PDF-1.7\n0123456789abcdefghijklmnopqrstuvwxyz');
+    const pdf = await service.createFromBytes({ sessionId: SESSION_ID, data: pdfData, fileName: 'safe.pdf', mimeType: 'application/pdf' });
+    const text = await service.createFromBytes({ sessionId: SESSION_ID, data: 'plain', fileName: 'safe.txt', mimeType: 'text/plain' });
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      const pdfGrant = await (await fetch(`${baseUrl}/api/artifacts/${pdf.artifactId}/read-url`)).json() as { readUrl: string };
+      const partial = await fetch(pdfGrant.readUrl, { headers: { Range: 'bytes=5-12' } });
+      expect(partial.status).toBe(206);
+      expect(partial.headers.get('content-range')).toBe(`bytes 5-12/${pdfData.byteLength}`);
+      expect(Number(partial.headers.get('content-length'))).toBe(8);
+      expect((await partial.arrayBuffer()).byteLength).toBe(8);
+
+      const head = await fetch(pdfGrant.readUrl, { method: 'HEAD', headers: { Range: 'bytes=-4' } });
+      expect(head.status).toBe(206);
+      expect(head.headers.get('content-range')).toBe(`bytes ${pdfData.byteLength - 4}-${pdfData.byteLength - 1}/${pdfData.byteLength}`);
+      expect((await fetch(pdfGrant.readUrl, { headers: { Range: 'bytes=999-1000' } })).status).toBe(416);
+
+      const full = await fetch(pdfGrant.readUrl);
+      const etag = full.headers.get('etag')!;
+      expect(etag).toContain(pdf.sha256!);
+      expect(etag).not.toContain(owner.sub);
+      expect((await fetch(pdfGrant.readUrl, { headers: { 'If-None-Match': etag } })).status).toBe(304);
+
+      const textGrant = await (await fetch(`${baseUrl}/api/artifacts/${text.artifactId}/read-url`)).json() as { readUrl: string };
+      expect((await fetch(textGrant.readUrl, { headers: { Range: 'bytes=0-1' } })).status).toBe(416);
+    } finally { await stopServer(server); }
+  });
+
+  it('forces spoofed, double-extension, active and scripted PDF files to warned attachment descriptors', async () => {
+    const cases = [
+      { data: '<svg><script>alert(1)</script></svg>', fileName: 'photo.png', mimeType: 'image/png' },
+      { data: Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]), fileName: 'invoice.html.png', mimeType: 'image/png' },
+      { data: '<!doctype html><script>alert(1)</script>', fileName: 'x.html', mimeType: 'text/html' },
+      { data: '<svg/>', fileName: 'x.svg', mimeType: 'image/svg+xml' },
+      { data: '%PDF-1.7 /JavaScript /JS', fileName: 'x.pdf', mimeType: 'application/pdf' },
+    ];
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      for (const input of cases) {
+        const artifact = await service.createFromBytes({ sessionId: SESSION_ID, ...input });
+        const response = await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url`);
+        const grant = await response.json() as { readUrl: string; descriptor: { viewKind: string; activeContent: boolean; requiresWarning: boolean } };
+        expect(grant.descriptor).toMatchObject({ viewKind: 'download-only', requiresWarning: true });
+        const content = await fetch(grant.readUrl);
+        expect(content.headers.get('content-disposition')).toMatch(/^attachment;/);
+        expect(content.headers.get('x-content-type-options')).toBe('nosniff');
+        expect(content.headers.get('content-security-policy')).toContain('sandbox');
+      }
+    } finally { await stopServer(server); }
+  });
+
+  it('sanitizes header-injection filenames and never emits signed URL/token to logs', async () => {
+    const artifact = await service.createFromBytes({ sessionId: SESSION_ID, data: 'safe', fileName: 'evil\r\nX-Owned: yes.txt', mimeType: 'text/plain' });
+    const owner = { sub: 'user-1', username: 'alice', role: 'user' as const, tenantId: 'kaiyan' };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { server, baseUrl } = await startServer(service, owner);
+    try {
+      const grant = await (await fetch(`${baseUrl}/api/artifacts/${artifact.artifactId}/read-url`)).json() as { readUrl: string };
+      const content = await fetch(grant.readUrl);
+      expect(content.status).toBe(200);
+      const disposition = content.headers.get('content-disposition')!;
+      expect(disposition).not.toMatch(/[\r\n]/);
+      expect(disposition.toLowerCase()).not.toContain('%0d');
+      expect(disposition.toLowerCase()).not.toContain('%0a');
+      expect([...logSpy.mock.calls, ...errorSpy.mock.calls].flat().join(' ')).not.toContain('token=');
+    } finally {
+      logSpy.mockRestore(); errorSpy.mockRestore(); await stopServer(server);
+    }
+  });
+
+
+  it('fails closed in production when persistent signing configuration is absent', () => {
+    expect(() => new ArtifactService({
+      artifactStore: new InMemoryArtifactStore(),
+      blobStore: new LocalArtifactBlobStore({ rootDir: blobRoot }),
+      agentCwd,
+      runtimeEnvironment: 'production',
+    })).toThrow(/signedUrlSecret/);
+  });
+
 });

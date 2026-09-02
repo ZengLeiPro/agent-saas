@@ -10,7 +10,7 @@
  * Business TodoWrite 走「快照差分→事件流」投影：
  * - 事件插在产生它的 TodoWrite 消息位置，按时间线性出现；
  * - 普通工具调用不再被吸进步骤卡，保持自然活动分组；
- * - TodoWrite 原始工具块在非 debug 视图隐藏，debug 保留。
+ * - TodoWrite 原始工具块在非 debug 视图隐藏，debug 保留；finalOutput 始终回到主时间线。
  */
 import { describe, expect, it } from 'vitest';
 import { groupMessages } from './groupMessages';
@@ -515,6 +515,39 @@ describe('groupMessages sectioning（章节化）', () => {
     expect((section.items[0] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-before']);
     expect((result[3] as ActivityGroup).items.map((item) => item.id)).toEqual(['read-after']);
     expect(result[4]).toMatchObject({ id: 'final-summary', type: 'text' });
+  });
+
+  it.each([
+    ['漏掉终态 TodoWrite', []],
+    ['先输出总结、后补终态 TodoWrite', [businessTodo('todo-done', [
+      { id: 'only', kind: 'business', content: '唯一步骤', status: 'completed' },
+    ])]],
+  ])('%s 时 finalOutput 仍从步骤节摘回主时间线', (_label, trailingMessages) => {
+    const finalSummary: MessageItem = {
+      id: 'final-summary', type: 'text', content: '最终总结', finalOutput: true,
+    };
+    const result = groupMessages([
+      user('user-1'),
+      businessTodo('todo-start', [
+        { id: 'only', kind: 'business', content: '唯一步骤', status: 'in_progress' },
+      ]),
+      tool('read-1', { toolName: 'Read' }),
+      finalSummary,
+      ...trailingMessages,
+    ], false, opts);
+
+    expect(result.map(item => item.type)).toEqual([
+      'user', 'business_step', 'business_step_section', 'text',
+    ]);
+    const section = result[2] as BusinessStepSection;
+    expect(section.items.map(item => item.type)).toEqual(['activity_group']);
+    expect(section.items.some(item => item.id === 'final-summary')).toBe(false);
+    expect(result[3]).toBe(finalSummary);
+    if (trailingMessages.length > 0) {
+      expect(section.terminal).toMatchObject({ kind: 'complete', anchorMessageId: 'todo-done' });
+    } else {
+      expect(section.terminal).toBeUndefined();
+    }
   });
 
   it('终态封节后的内容留在节外（最终总结不被折进步骤）', () => {

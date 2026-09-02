@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
 import { Badge } from "@/components/ui/badge";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Button } from "@/components/ui/button";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
 import { authFetch } from "@/lib/authFetch";
@@ -126,17 +127,34 @@ function ResourceEditor({ tenantId, type, item, catalog, catalogError, onCommitt
     finally { setBusy(false); }
   };
   const commit = async () => {
-    if (!preview) return;
+    if (!preview) return false;
     setBusy(true); setError(null);
     const token = { previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt };
     try {
       const next = isMemory
         ? await governanceAccessApi.updateMemoryResource<Receipt>(resourceId, { ...memoryCommand, ...token }, tenantId)
         : await governanceAccessApi.updateAssignment<Receipt>("org_knowledge", resourceId, { ...knowledgeCommand, ...token }, tenantId);
-      setReceipt(next); setPreview(null); onCommitted();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+      setReceipt(next); setPreview(null); onCommitted(); return true;
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return false; }
     finally { setBusy(false); }
   };
+  const discardDraft = () => {
+    setResourceId(item?.resourceId ?? ""); setName(item?.name ?? ""); setStatus(item?.status ?? "enabled");
+    setRules(item?.scope ?? []); setReason(""); setPreview(null); setReceipt(null); setError(null);
+    if (item) setOpen(false);
+  };
+  const baselineRules = item?.scope ?? [];
+  const changed = resourceId !== (item?.resourceId ?? "") || name !== (item?.name ?? "")
+    || status !== (item?.status ?? "enabled") || reason !== ""
+    || JSON.stringify(normalizedRules) !== JSON.stringify(baselineRules.map(({ assigneeType, assigneeId, effect }) => ({ assigneeType, ...(assigneeType !== "everyone" && assigneeId ? { assigneeId } : {}), effect })));
+  useSettingsDirtyEntry({
+    id: `organization-${type}:${tenantId}:${item?.resourceId ?? "new"}`,
+    label: isMemory ? "组织记忆配置" : `${resourceId} 知识授权`,
+    dirty: open && !receipt && changed,
+    save: async () => { if (!preview) { setError("请先生成签名预览，再保存并离开。"); throw new Error("Resource preview required"); } if (!await commit()) throw new Error("Resource commit failed"); },
+    discard: discardDraft,
+    draft: { resourceId, name, status, assignments: normalizedRules, reason },
+  });
   if (!open) return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>管理安全范围</Button>;
   return <div className="mt-3 space-y-2 rounded-lg border p-3">
     {isMemory ? <div className="grid gap-2 sm:grid-cols-2">

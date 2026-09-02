@@ -79,7 +79,6 @@ const integrationPolicySchema = z.object({
     autoResolveConflicts: z.literal(true),
     maxAutomaticRemediationRounds: z.number().int().min(0).max(20),
     maxTransientRetries: z.number().int().min(0).max(20),
-    requireGreenChecks: z.literal(true),
     deleteRemoteBranch: z.literal(false),
     deploy: z.literal(false),
   }).strict(),

@@ -609,14 +609,15 @@ describe('CronManage taskboard actions', () => {
     expect(service.rollbackTaskCreation).toHaveBeenCalledWith(identity, 'task-new', { expectedVersion: 1 });
   });
 
-  it('当前 Work/Review Execution 可通过受控 action 检查登记 PR 与 CI', async () => {
+  it('当前 Work/Review Execution 可通过只读 action 检查 PR 与 observed CI', async () => {
     const { service, options } = rig();
     const scope = executionScope('review');
 
     await expect(invokeTaskboardAction(options, identity,
       { action: 'execution.pull_request.inspect', taskId: task.id }, scope)).resolves.toMatchObject({
-      gateStatus: 'success',
-      receipt: { executionId: execution.id, taskId: task.id, headOid: 'head-42' },
+      providerPullRequestId: '42', headOid: 'head-42', baseOid: 'base-1',
+      observedChecks: [{ name: 'Build & Check', status: 'success' }],
+      workflowRuns: [],
     });
     expect(service.inspectExecutionPullRequestV2).toHaveBeenCalledWith(identity, execution.runId); });
 });

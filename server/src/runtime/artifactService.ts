@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { getTranscriptPath } from '../data/transcripts/store.js';
@@ -7,6 +7,7 @@ import { readSessionMeta } from '../data/transcripts/meta.js';
 import { hidesMemoryPollFrom } from '../data/sessions/access.js';
 import { resolveUserCwd } from '../workspace/resolver.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
+import { evaluateArtifactPolicy, type ArtifactReadGrant, type ArtifactViewModel } from '@agent/shared';
 import type {
   ArtifactBlobStore,
   ArtifactKind,
@@ -44,15 +45,18 @@ export interface CreateArtifactFromWorkspaceFileInput {
   metadata?: Record<string, unknown>;
 }
 
-export interface ArtifactReadUrl {
+export interface ArtifactReadUrl extends ArtifactReadGrant {
+  /** Compatibility aliases; clients must consume descriptor + readUrl only. */
   url: string;
   expiresAt: string;
-  direct: boolean;
+  direct: false;
 }
 
 export interface ArtifactContent {
   record: ArtifactRecord;
   data: Buffer;
+  descriptor: ArtifactViewModel;
+  disposition: 'inline' | 'attachment';
 }
 
 export interface ArtifactServiceOptions {
@@ -60,6 +64,8 @@ export interface ArtifactServiceOptions {
   blobStore: ArtifactBlobStore;
   agentCwd: string;
   signingSecret?: string;
+  /** Injectable environment keeps production fail-closed checks deterministic in parallel tests. */
+  runtimeEnvironment?: string;
   defaultReadUrlTtlSeconds?: number;
   maxBlobBytes?: number;
   resolveSessionTenantId?: (sessionId: string) => Promise<string | undefined>;
@@ -85,16 +91,25 @@ export interface ArtifactServiceOptions {
   assertSessionActive?: (sessionId: string) => Promise<boolean>;
 }
 
-const DEFAULT_READ_URL_TTL_SECONDS = 15 * 60;
+const DEFAULT_READ_URL_TTL_SECONDS = 60;
+const MAX_READ_URL_TTL_SECONDS = 5 * 60;
+const READ_TOKEN_VERSION = 1;
 const DEFAULT_MAX_BLOB_BYTES = 100 * 1024 * 1024;
 
 export class ArtifactService {
   private readonly signingSecret: string;
   private readonly defaultReadUrlTtlSeconds: number;
   private readonly maxBlobBytes: number;
+  private readonly activeReadNonces = new Map<string, string>();
 
   constructor(private readonly options: ArtifactServiceOptions) {
-    this.signingSecret = options.signingSecret || randomBytes(32).toString('hex');
+    if ((options.runtimeEnvironment ?? process.env.NODE_ENV) === 'production' && (!options.signingSecret || options.signingSecret.length < 16)) {
+      throw new Error('ArtifactService requires artifact.signedUrlSecret (or auth.jwtSecret) of at least 16 characters in production');
+    }
+    if (options.signingSecret && options.signingSecret.length < 16) {
+      throw new Error('ArtifactService signingSecret must contain at least 16 characters');
+    }
+    this.signingSecret = options.signingSecret ?? randomBytes(32).toString('hex');
     this.defaultReadUrlTtlSeconds = options.defaultReadUrlTtlSeconds ?? DEFAULT_READ_URL_TTL_SECONDS;
     this.maxBlobBytes = options.maxBlobBytes ?? DEFAULT_MAX_BLOB_BYTES;
   }
@@ -139,7 +154,7 @@ export class ArtifactService {
   }
 
   /** Internal share path. Never returns a storage URL. */
-  async readContentForShare(artifactId: string): Promise<ArtifactContent> {
+  async readContentForShare(artifactId: string): Promise<Pick<ArtifactContent, 'record' | 'data'>> {
     const record = await this.getRecordForShare(artifactId);
     return { record, data: await this.readBlobForShare(record) };
   }
@@ -227,33 +242,86 @@ export class ArtifactService {
     user: RuntimeArtifactUser | undefined,
     opts: { baseUrl: string; expiresInSeconds?: number; forceProxy?: boolean; forceDownload?: boolean },
   ): Promise<ArtifactReadUrl> {
+    if (!user) throw new ArtifactServiceError(401, 'Authentication required');
     const record = await this.getForUser(artifactId, user);
-    const ttlSeconds = opts.expiresInSeconds ?? this.defaultReadUrlTtlSeconds;
+    this.assertArtifactAvailable(record);
+    const data = await this.options.blobStore.get(record.uri);
+    this.assertDigest(record, data);
+    const ttlSeconds = Math.min(opts.expiresInSeconds ?? this.defaultReadUrlTtlSeconds, MAX_READ_URL_TTL_SECONDS);
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    if (record.uri.startsWith('oss://') && !opts.forceProxy && !opts.forceDownload) {
-      return {
-        url: await this.options.blobStore.createReadUrl(record.uri, { expiresInSeconds: ttlSeconds }),
-        expiresAt,
-        direct: true,
-      };
-    }
-    const token = this.signReadToken(artifactId, expiresAt);
-    const base = opts.baseUrl.replace(/\/$/, '');
-    return {
-      url: `${base}/api/artifacts/${encodeURIComponent(artifactId)}/content?token=${encodeURIComponent(token)}${opts.forceDownload ? '&download=true' : ''}`,
+    const correlationId = randomUUID();
+    const policy = evaluateArtifactPolicy({
+      artifactId,
+      name: typeof record.metadata.fileName === 'string' ? record.metadata.fileName : undefined,
+      declaredMime: record.mimeType,
+      size: record.sizeBytes ?? data.byteLength,
+      digest: record.sha256,
+      bytes: data,
       expiresAt,
-      direct: false,
+      correlationId,
+    });
+    const disposition = opts.forceDownload || policy.disposition === 'attachment' ? 'attachment' : 'inline';
+    const nonce = randomBytes(18).toString('base64url');
+    const nonceKey = this.nonceKey(artifactId, user, disposition);
+    this.activeReadNonces.set(nonceKey, nonce);
+    const token = this.signReadToken({
+      artifactId,
+      tenantId: user.tenantId,
+      sub: user.sub,
+      disposition,
+      exp: expiresAt,
+      nonce,
+      version: READ_TOKEN_VERSION,
+      digest: record.sha256 ?? '',
+    });
+    const base = opts.baseUrl.replace(/\/$/, '');
+    const readUrl = `${base}/api/artifacts/${encodeURIComponent(artifactId)}/content?token=${encodeURIComponent(token)}`;
+    const descriptor: ArtifactViewModel = {
+      artifactId: policy.artifactId,
+      name: policy.name,
+      safeMime: policy.safeMime,
+      size: policy.size,
+      digest: policy.digest,
+      viewKind: policy.viewKind,
+      activeContent: policy.activeContent,
+      requiresWarning: policy.requiresWarning,
+      expiresAt: policy.expiresAt,
+      correlationId: policy.correlationId,
     };
+    return { descriptor, readUrl, url: readUrl, expiresAt, direct: false };
   }
 
-  async getContentBySignedToken(artifactId: string, token: string): Promise<ArtifactContent> {
-    this.verifyReadToken(artifactId, token);
+  async getContentBySignedToken(
+    artifactId: string,
+    token: string,
+    requestUser?: RuntimeArtifactUser,
+  ): Promise<ArtifactContent> {
+    const payload = this.verifyReadToken(artifactId, token, requestUser);
     const record = await this.options.artifactStore.get(artifactId);
-    if (!record) throw new ArtifactServiceError(404, 'Artifact not found');
-    return {
-      record,
-      data: await this.options.blobStore.get(record.uri),
+    if (!record) throw new ArtifactServiceError(410, 'Artifact deleted');
+    this.assertArtifactAvailable(record);
+    if (!requestUser) throw new ArtifactServiceError(401, 'Authentication required');
+    await this.ensureCanAccessSession(record.sessionId, requestUser);
+    const data = await this.options.blobStore.get(record.uri);
+    this.assertDigest(record, data);
+    if ((record.sha256 ?? '') !== payload.digest) throw new ArtifactServiceError(410, 'Artifact changed');
+    const policy = evaluateArtifactPolicy({
+      artifactId,
+      name: typeof record.metadata.fileName === 'string' ? record.metadata.fileName : undefined,
+      declaredMime: record.mimeType,
+      size: record.sizeBytes ?? data.byteLength,
+      digest: record.sha256,
+      bytes: data,
+      expiresAt: payload.exp,
+      correlationId: payload.nonce,
+    });
+    const disposition = payload.disposition === 'attachment' || policy.disposition === 'attachment' ? 'attachment' : 'inline';
+    const descriptor: ArtifactViewModel = {
+      artifactId: policy.artifactId, name: policy.name, safeMime: policy.safeMime, size: policy.size,
+      digest: policy.digest, viewKind: policy.viewKind, activeContent: policy.activeContent,
+      requiresWarning: policy.requiresWarning, expiresAt: policy.expiresAt, correlationId: policy.correlationId,
     };
+    return { record, data, descriptor, disposition };
   }
 
   async pruneExpiredArtifacts(retentionDays: number, limit = 100): Promise<{ scanned: number; deleted: number }> {
@@ -382,27 +450,67 @@ export class ArtifactService {
     }
   }
 
-  private signReadToken(artifactId: string, expiresAt: string): string {
-    const payload = Buffer.from(JSON.stringify({ artifactId, exp: expiresAt })).toString('base64url');
-    const sig = createHmac('sha256', this.signingSecret).update(payload).digest('base64url');
-    return `${payload}.${sig}`;
+  private assertArtifactAvailable(record: ArtifactRecord): void {
+    if (record.metadata.deletedAt || record.metadata.deleted === true) throw new ArtifactServiceError(410, 'Artifact deleted');
+    if (record.metadata.quarantineAt || record.metadata.quarantined === true || record.metadata.availability === 'quarantine') {
+      throw new ArtifactServiceError(423, 'Artifact quarantined');
+    }
   }
 
-  private verifyReadToken(artifactId: string, token: string): void {
-    const [payload, sig] = token.split('.');
-    if (!payload || !sig) throw new ArtifactServiceError(401, 'Invalid artifact token');
-    const expected = createHmac('sha256', this.signingSecret).update(payload).digest('base64url');
+  private assertDigest(record: ArtifactRecord, data: Buffer): void {
+    if (record.sizeBytes !== undefined && record.sizeBytes !== data.byteLength) throw new ArtifactServiceError(410, 'Artifact size mismatch');
+    if (!record.sha256 || !/^[a-f0-9]{64}$/i.test(record.sha256)) throw new ArtifactServiceError(410, 'Artifact digest unavailable');
+    const actual = createHash('sha256').update(data).digest('hex');
+    if (!safeEqual(actual, record.sha256.toLowerCase())) throw new ArtifactServiceError(410, 'Artifact digest mismatch');
+  }
+
+  private nonceKey(artifactId: string, user: Pick<RuntimeArtifactUser, 'tenantId' | 'sub'>, disposition: 'inline' | 'attachment'): string {
+    return `${artifactId}|${user.tenantId}|${user.sub}|${disposition}`;
+  }
+
+  private signReadToken(payload: ReadTokenPayload): string {
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = createHmac('sha256', this.signingSecret).update(encoded).digest('base64url');
+    return `${encoded}.${sig}`;
+  }
+
+  private verifyReadToken(artifactId: string, token: string, requestUser?: RuntimeArtifactUser): ReadTokenPayload {
+    const [encoded, sig, extra] = token.split('.');
+    if (!encoded || !sig || extra) throw new ArtifactServiceError(401, 'Invalid artifact token');
+    const expected = createHmac('sha256', this.signingSecret).update(encoded).digest('base64url');
     if (!safeEqual(sig, expected)) throw new ArtifactServiceError(401, 'Invalid artifact token');
-    let parsed: { artifactId?: string; exp?: string };
+    let parsed: ReadTokenPayload;
     try {
-      parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { artifactId?: string; exp?: string };
+      parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as ReadTokenPayload;
     } catch {
       throw new ArtifactServiceError(401, 'Invalid artifact token');
     }
-    if (parsed.artifactId !== artifactId || !parsed.exp || Date.parse(parsed.exp) <= Date.now()) {
-      throw new ArtifactServiceError(401, 'Expired artifact token');
+    if (
+      parsed.version !== READ_TOKEN_VERSION || parsed.artifactId !== artifactId
+      || !parsed.exp || Date.parse(parsed.exp) <= Date.now()
+      || !parsed.tenantId || !parsed.sub || !parsed.nonce
+      || (parsed.disposition !== 'inline' && parsed.disposition !== 'attachment')
+    ) throw new ArtifactServiceError(401, 'Expired or invalid artifact token');
+    if (requestUser && (requestUser.sub !== parsed.sub || requestUser.tenantId !== parsed.tenantId)) {
+      throw new ArtifactServiceError(403, 'Artifact token owner mismatch');
     }
+    if (this.activeReadNonces.get(this.nonceKey(artifactId, parsed, parsed.disposition)) !== parsed.nonce) {
+      throw new ArtifactServiceError(401, 'Artifact token nonce replayed');
+    }
+    return parsed;
   }
+
+}
+
+interface ReadTokenPayload {
+  artifactId: string;
+  tenantId: string;
+  sub: string;
+  disposition: 'inline' | 'attachment';
+  exp: string;
+  nonce: string;
+  version: number;
+  digest: string;
 }
 
 export class ArtifactServiceError extends Error {

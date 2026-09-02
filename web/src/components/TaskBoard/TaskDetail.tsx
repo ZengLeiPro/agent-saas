@@ -640,6 +640,7 @@ export function TaskDetail({
 
   if (!active || !open || !task) return null;
 
+  // 独立渲染时沿用桌面 dock 的 35% 与 26rem–46rem 边界；portal 模式由宿主控制宽度。
   const panel = (
     <FloatingPanel
       role="dialog"
@@ -648,7 +649,7 @@ export function TaskDetail({
       data-testid="task-detail-panel"
       className={portalTarget
         ? "flex h-full min-h-0 w-full flex-col"
-        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-[46%] md:min-w-[24rem] md:max-w-[36rem] md:shrink-0"}
+        : "absolute inset-0 z-20 flex min-h-0 flex-col md:static md:basis-[35%] md:min-w-[26rem] md:max-w-[46rem] md:shrink-0"}
     >
         {currentTask ? (
           <>
@@ -693,14 +694,13 @@ export function TaskDetail({
               onChange={(value) => { tabSelectionResolvedTaskIdRef.current = currentTask.id; setActiveTab(value); }} />
             {activeTab === "discussion" && error ? <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-xs text-destructive sm:px-6">{error}</p> : null}
             {activeTab === "discussion" && (executionsError || latestExecution?.error || integrationSourcesState.error
-              || currentTask.status === "blocked" || currentTask.providerCiStatus === "unconfigured"
+              || currentTask.status === "blocked"
               || currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0) ? (
               <section aria-label="任务关键状态" className="space-y-1 border-b bg-amber-50 px-4 py-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100 sm:px-6">
                 {executionsError ? <p role="alert">{executionsError}</p> : null}
                 {latestExecution?.error ? <p className="line-clamp-2 whitespace-pre-wrap">{latestExecution.error}</p> : null}
                 {integrationSourcesState.error ? <p role="alert">{integrationSourcesState.error}</p> : null}
                 {currentTask.status === "blocked" ? <p>任务已阻塞，切换至详细信息查看解除条件。</p> : null}
-                {currentTask.providerCiStatus === "unconfigured" ? <p>CI 门禁未配置，切换至详细信息处理。</p> : null}
                 {currentTask.integrationState === "needs_human" || integrationNeedsHumanCount > 0 ? <p>集成来源需要人工处理，切换至详细信息查看。</p> : null}
               </section>
             ) : null}
@@ -729,26 +729,8 @@ export function TaskDetail({
                   </p>
                 ) : null}
                 {currentTask.providerPullRequestId ? <p>PR：<span className="font-mono">{currentTask.providerPullRequestId}</span>{currentTask.pullRequestNumber ? `（#${currentTask.pullRequestNumber}）` : ""}</p> : null}
-                {taskKind !== "integration" && currentTask.reviewedSubjectDigest ? <p className="break-all text-xs text-muted-foreground">已复核对象：<span className="font-mono">{currentTask.reviewedSubjectDigest}</span></p> : null}
                 {currentTask.mergedCommitOid ? <p className="flex items-center gap-1 break-all text-xs text-emerald-700 dark:text-emerald-400"><GitCommitHorizontal className="size-3.5 shrink-0" />merged commit {currentTask.mergedCommitOid}</p> : null}
-                {taskKind !== "integration" && currentTask.providerCiStatus === "unconfigured" ? (
-                  <div aria-label="CI 门禁未配置" className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-                    <p className="font-medium">CI 门禁未配置</p>
-                    <p className="text-xs">GitHub 未声明 required checks；系统已 fail-closed，不会把 observed optional checks 自动视为门禁。</p>
-                    <p className="text-xs">请在 GitHub branch protection / ruleset 中配置 required checks。</p>
-                    {currentTask.status === "blocked" && canTransitionTask ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void resumeBlocked({ decision: "GitHub required checks 已配置，恢复实施并重新检查当前精确 PR head", startAfterResume: true })}
-                        disabled={saving || executionActive}
-                      >
-                        {saving ? <LoaderCircle className="animate-spin" /> : <Bot />}恢复任务并重新检查
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {currentTask.status === "blocked" && (taskKind === "integration" || currentTask.providerCiStatus !== "unconfigured") ? (
+                {currentTask.status === "blocked" ? (
                   <div className="space-y-2 text-amber-700 dark:text-amber-300">
                     <p>任务已阻塞；请查看最新执行错误或讨论中的解除条件。</p>
                     {canTransitionTask ? (

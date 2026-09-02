@@ -34,6 +34,7 @@ import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { DEFAULT_TENANT_ID } from "@agent/shared";
+import { MemberBudgetAuditCard } from "./MemberBudgetAuditCard";
 
 const CREDIT_MICRO = 1_000_000;
 const YUAN_MICRO = 1_000_000;
@@ -1086,11 +1087,10 @@ function LedgerView({
   }, [buildQuery, tenantId]);
 
   // tenant 切换或首次进入：reset 并 load
-  useEffect(() => { void load(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenantId]);
+  useEffect(() => { void load(null); }, [tenantId]);
   // initialRunId / initialSessionId 透传完成后重载
   useEffect(() => {
     if (filters.runId || filters.sessionId) void load(null);
-    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [filters.runId, filters.sessionId]);
 
   return (
@@ -1213,10 +1213,9 @@ function UsageEventsView({
     }
   }, [filters, limit, tenantId]);
 
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tenantId]);
+  useEffect(() => { void load(); }, [tenantId]);
   useEffect(() => {
     if (filters.runId || filters.sessionId || filters.unpricedOnly) void load();
-    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [filters.runId, filters.sessionId, filters.unpricedOnly]);
 
   return (
@@ -2000,7 +1999,6 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
   const [budgetNotice, setBudgetNotice] = useState<string | null>(null);
   const [editingMember, setEditingMember] = useState<MemberBudgetItem | null>(null);
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
-
   const load = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
@@ -2231,7 +2229,7 @@ export function TenantBillingPanel({ tenantId, tenantName }: { tenantId: string;
           ) : null}
         </CardContent>
       </Card>
-
+      <MemberBudgetAuditCard tenantId={tenantId} members={budgetData?.items ?? []} refreshToken={budgetData} />
       <Card>
         <CardHeader><CardTitle className="text-base">最近流水</CardTitle></CardHeader>
         <CardContent>

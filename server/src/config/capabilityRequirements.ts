@@ -1,5 +1,6 @@
 import { isToolEnabled } from '../agent/toolRuntime.js';
 import type { AppConfig, ModelsConfig } from '../app/config.js';
+import { isTtsCapabilityEnabled } from '../integrations/tts/capability.js';
 import { MEMORY_CONSOLIDATION_DEFAULTS } from '../memory/consolidation/types.js';
 
 import {
@@ -182,8 +183,7 @@ function evaluateTts({ config }: CapabilityEvaluationContext): CapabilityDraft {
   const missing: string[] = [];
   if (!configured(tts?.doubaoAppId)) missing.push('tts.doubaoAppId');
   if (!configured(tts?.doubaoApiKey)) missing.push('tts.doubaoApiKey');
-  // 历史配置没有 tts.enabled；在兼容层补齐前，配置段存在即视为已启用（方案 §5.6）。
-  return draft(Boolean(tts), missing);
+  return draft(isTtsCapabilityEnabled(tts), missing);
 }
 
 function evaluateMemory({ config }: CapabilityEvaluationContext): CapabilityDraft {

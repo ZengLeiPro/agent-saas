@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "Staging API 通过 AGENT_SAAS_ACTIVE_RUNTIME_WORKER_READYFILE 读取隔离 Worker 的单槽 readyfile，避免误读生产蓝绿 active-color 身份",
-  "updatedAt": "2026-08-29",
+  "reason": "TASK-331 为移动端 V1 增加 fail-closed 发布 SHA、原生 OAuth 回调与生产 telemetry provider/owner/retention/signing 配置；Web 生命周期使用 Vite DEV 构建标志",
+  "updatedAt": "2026-09-01",
   "domains": {
     "server": {
-      "budget": 49,
+      "budget": 62,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -47,6 +47,19 @@
         "KY_AGENT_WORKSPACE_CHOWN",
         "KY_AGENT_WORKSPACE_DEEP_REPAIR",
         "MCP_OAUTH_CALLBACK_URL",
+        "MOBILE_RELEASE_COMMIT",
+        "MOBILE_TELEMETRY_ALERT_POLICY_ID",
+        "MOBILE_TELEMETRY_DASHBOARD_ID",
+        "MOBILE_TELEMETRY_DSN_SECRET_REFERENCE",
+        "MOBILE_TELEMETRY_INTAKE_SIGNING_KEY",
+        "MOBILE_TELEMETRY_OWNER",
+        "MOBILE_TELEMETRY_PROVIDER_KIND",
+        "MOBILE_TELEMETRY_PSEUDONYM_KEY",
+        "MOBILE_TELEMETRY_RATE_LIMIT_PER_MINUTE",
+        "MOBILE_TELEMETRY_RETENTION_DAYS",
+        "MOBILE_TELEMETRY_SAMPLE_RATE",
+        "NATIVE_OAUTH_ALLOW_CUSTOM_SCHEME",
+        "NATIVE_OAUTH_CALLBACK_URL",
         "NODE_ENV",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
@@ -127,11 +140,19 @@
     },
     "shared/runtime": {
       "budget": 2,
-      "names": ["PATH", "SKILL_DEMO_ALLOW_AUTH_STATE"]
+      "names": [
+        "PATH",
+        "SKILL_DEMO_ALLOW_AUTH_STATE"
+      ]
     },
     "web build-time": {
-      "budget": 3,
-      "names": ["BUNDLE_API_ORIGIN", "VITE_API_BASE", "VITE_WEB_ORIGIN"]
+      "budget": 4,
+      "names": [
+        "BUNDLE_API_ORIGIN",
+        "DEV",
+        "VITE_API_BASE",
+        "VITE_WEB_ORIGIN"
+      ]
     },
     "deployment/scripts": {
       "budget": 38,

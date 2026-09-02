@@ -4,7 +4,7 @@ import type {
   ApiSessionDetail,
   TokenUsage,
 } from "@/lib/sessionsApi";
-import type { AgentProfile, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
+import type { AgentProfile, BoundaryIdentity, ContextUsageData, SessionOwnerInfo } from "@agent/shared";
 import { mergeSessionMessagePage } from "@agent/shared";
 import { authFetch } from "@/lib/authFetch";
 import { SESSION_STORAGE_KEY } from "@/lib/constants";
@@ -50,6 +50,10 @@ export interface SessionCallbacks {
   onQueuedMessages?: (
     sessionId: string,
     queued: NonNullable<ApiSessionDetail["queuedMessages"]>,
+  ) => void;
+  onQueueSnapshot?: (
+    sessionId: string,
+    snapshot: NonNullable<ApiSessionDetail["queueSnapshot"]>,
   ) => void;
   onSandboxProfile?: (sessionId: string, profile: ApiSessionDetail["sandboxProfile"], activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void; onNewSession?: () => void;
 }
@@ -117,6 +121,7 @@ export interface SessionState {
 
 export interface SessionOptions {
   initialSessionId?: string | null;
+  identity?: BoundaryIdentity | null;
 }
 
 const RECENT_LOCAL_SESSION_TTL_MS = 60_000;
@@ -132,6 +137,7 @@ export function useSession(
   callbacks: SessionCallbacks,
   options?: SessionOptions,
 ): SessionState {
+  const identity = options?.identity ?? null;
   const [sessionId, setSessionId] = useState<string | null>(
     options?.initialSessionId ?? null,
   );
@@ -333,6 +339,12 @@ export function useSession(
       if (sessionIdRef.current !== id) return;
       const data: ApiSessionDetail = await response.json();
       if (sessionIdRef.current !== id) return;
+      if (detailState.historyRevision && data.historyRevision
+        && detailState.historyRevision !== data.historyRevision) {
+        // Compaction/replacement invalidated this in-flight old page; refresh a new latest generation.
+        void loadSessionDetail(id, { silent: true, preserveTail: true, scrollToBottom: false });
+        return;
+      }
 
       const owner = data.owner?.username ?? sessionOwner?.username;
       const incoming = (await import("@/lib/sessionMessageMapper")).mapSessionDetailToMessages(data, owner);
@@ -340,8 +352,8 @@ export function useSession(
       const merged = data.mode === "before"
         ? mergeSessionMessagePage(current, incoming)
         : incoming;
-      const historyComplete = data.historyComplete !== false;
-      const oldestCursor = data.oldestCursor ?? incoming[0]?.id;
+      const historyComplete = data.hasMore !== undefined ? !data.hasMore : data.historyComplete !== false;
+      const oldestCursor = data.nextCursor ?? data.oldestCursor ?? incoming[0]?.id;
       const tailCursor = data.cursor ?? detailState.tailCursor;
 
       cbRef.current.setMessages(merged, { scrollToBottom: false });
@@ -350,7 +362,9 @@ export function useSession(
         historyComplete,
         ...(tailCursor ? { tailCursor } : {}),
         ...(oldestCursor ? { oldestCursor } : {}),
+        ...(data.historyRevision ? { historyRevision: data.historyRevision } : {}),
       });
+      // Cache remains N-1 compatible; canonical revision is request-fenced in memory.
       saveSessionMessages(id, merged, {
         historyComplete,
         ...(tailCursor ? { tailCursor } : {}),
@@ -362,7 +376,7 @@ export function useSession(
       loadingEarlierSessionIdsRef.current.delete(id);
       if (sessionIdRef.current === id) setIsLoadingEarlier(false);
     }
-  }, [sessionOwner?.username]);
+  }, [loadSessionDetail, sessionOwner?.username]);
 
   const selectSession = useCallback(
     (id: string) => {
@@ -732,7 +746,7 @@ export function useSession(
     let cancelled = false;
 
     // Step 1: 先从本地缓存加载，实现即时展示
-    const cached = loadSessionListCache();
+    const cached = loadSessionListCache(identity);
     if (cached && cached.sessions.length > 0) {
       setSessions(cached.sessions);
       setHasMore(cached.hasMore);
@@ -805,7 +819,7 @@ export function useSession(
     if (sessions.length === 0) return;
     if (debounceSaveRef.current) clearTimeout(debounceSaveRef.current);
     debounceSaveRef.current = setTimeout(() => {
-      saveSessionListCache(sessions, hasMore);
+      saveSessionListCache(sessions, hasMore, identity);
       debounceSaveRef.current = null;
     }, 5000);
     return () => {
@@ -814,7 +828,7 @@ export function useSession(
         debounceSaveRef.current = null;
       }
     };
-  }, [sessions, hasMore]);
+  }, [sessions, hasMore, identity]);
 
   // 展开分组时全量加载组内会话，将未在主列表中的会话合并进来
   const loadGroupSessions = useCallback(async (groupId: string) => {

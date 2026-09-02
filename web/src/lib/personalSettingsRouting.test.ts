@@ -124,4 +124,15 @@ describe("V2 个人设置路由与来源返回", () => {
     expect(closePersonalSettingsHistory("/fallback")).toBe("back");
     expect(go).toHaveBeenCalledWith(-3);
   });
+
+  it("从来源页进入统一组织控制台后关闭会按完整深度返回来源", () => {
+    pushSettingsUrl("account-security", { source: "/cron", depth: 1 });
+    navigateSettingsRoute(governanceRoute("organization.members.accounts", { orgId: "tenant-a" }));
+    navigateSettingsRoute(governanceRoute("organization.agents.mcp-catalog", { orgId: "tenant-a" }));
+
+    expect(readPersonalSettingsHistoryState()).toEqual({ source: "/cron", depth: 3 });
+    const go = vi.spyOn(window.history, "go").mockImplementation(() => undefined);
+    expect(closePersonalSettingsHistory("/fallback")).toBe("back");
+    expect(go).toHaveBeenCalledWith(-3);
+  });
 });

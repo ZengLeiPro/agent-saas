@@ -3,6 +3,7 @@ import { Search, SlidersHorizontal } from "lucide-react";
 
 import { TenantDebugModeSetting } from "@/components/Governance/DebugModeSettings";
 import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavailable";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,7 +141,7 @@ function PolicyEditor({
   };
 
   const commit = async () => {
-    if (!preview) return;
+    if (!preview) return false;
     setBusy(true);
     setError(null);
     try {
@@ -157,13 +158,27 @@ function PolicyEditor({
       setReason("");
       setPreview(null);
       onCommitted();
+      return true;
     } catch (cause) {
       setPreview(null);
       setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  useSettingsDirtyEntry({
+    id: `organization-policy:${tenantId}:${policy.policyKey}`,
+    label: `${label}策略`,
+    dirty: editing && Boolean(changed || reason || preview),
+    save: async () => {
+      if (!preview) { setError("请先生成签名预览，再保存并离开。"); throw new Error("Policy preview required"); }
+      if (!await commit()) throw new Error("Policy commit failed");
+    },
+    discard: resetDraft,
+    draft: { value, reason },
+  });
 
   return <article className="rounded-xl border bg-background p-4" data-policy-key={policy.policyKey}>
     <div className="flex flex-wrap items-start justify-between gap-3">

@@ -20,6 +20,8 @@ const TEST_USER = {
   tenantId: 'kaiyan',
 } satisfies WorkspaceUser;
 
+const QUEUED_ATTACHMENT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+
 type SessionListResponse = {
   sessions: Array<{
     sessionId: string;
@@ -228,10 +230,8 @@ describe('sessions routes for meta-only runtime sessions', () => {
           chatId: sessionId,
           content: '排队任务',
           attachments: [{
-            attachmentId: 'att-queued-1',
+            attachmentId: QUEUED_ATTACHMENT_ID,
             originalName: '排队附件.pdf',
-            savedPath: '/workspace/uploads/att-queued-1/排队附件.pdf',
-            relativePath: 'uploads/att-queued-1/排队附件.pdf',
             size: 1024,
             mimeType: 'application/pdf',
             isImage: false,
@@ -256,10 +256,8 @@ describe('sessions routes for meta-only runtime sessions', () => {
           queuePosition: 1,
           content: '排队任务',
           attachments: [{
-            attachmentId: 'att-queued-1',
+            attachmentId: QUEUED_ATTACHMENT_ID,
             name: '排队附件.pdf',
-            savedPath: '/workspace/uploads/att-queued-1/排队附件.pdf',
-            relativePath: 'uploads/att-queued-1/排队附件.pdf',
             size: 1024,
             mimeType: 'application/pdf',
             isImage: false,

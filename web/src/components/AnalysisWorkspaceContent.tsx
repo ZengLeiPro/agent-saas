@@ -12,6 +12,7 @@ const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/Effic
 const FileBrowser = lazy(() => import("@/components/FileBrowser").then((module) => ({ default: module.FileBrowser })));
 const ManagementSettingsAccessGate = lazy(() => import("@/components/ManagementSettingsAccessGate").then((module) => ({ default: module.ManagementSettingsAccessGate })));
 const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then((module) => ({ default: module.McpAdminCatalog })));
+const renderTenantMcpCatalog = (tenantId?: string) => <McpAdminCatalogPanel tenantId={tenantId} />;
 const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then((module) => ({ default: module.MemoryPollingManager })));
 const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then((module) => ({ default: module.ModelManager })));
 const OrganizationScopeBanner = lazy(() => import("@/components/GovernanceConsole").then((module) => ({ default: module.OrganizationScopeBanner })));
@@ -65,7 +66,7 @@ export function AnalysisWorkspaceContent({
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderMcp={() => <McpAdminCatalogPanel />}
+                renderMcp={renderTenantMcpCatalog}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
                 renderFiles={() => <FileBrowser onPreviewFile={openFilePreview} owner={user?.username} fullPage reserveCloseButtonSpace />}
                 renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}

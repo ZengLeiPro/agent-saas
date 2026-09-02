@@ -80,7 +80,7 @@ describe('Governance schema migration SQL fixtures', () => {
       .filter(item => item.sql.includes('INSERT INTO safe_governance_schema_versions'))
       .map(item => Number(item.params?.[0]));
     expect(queries.filter(item => item.sql === 'BEGIN')).toHaveLength(insertedVersions.length);
-    expect(insertedVersions).toEqual(Array.from({ length: 12 }, (_, index) => index + 23));
+    expect(insertedVersions).toEqual(Array.from({ length: 13 }, (_, index) => index + 23));
     expect(queries.some(item => item.sql.includes("'dws_delegation'"))).toBe(true);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_credential_commits'))).toHaveLength(1);
     expect(queries.filter(item => item.sql.includes('CREATE TABLE IF NOT EXISTS safe_context_sources'))).toHaveLength(1);
@@ -182,7 +182,7 @@ describe('Governance schema migration SQL fixtures', () => {
     expect(createIndex).toBeGreaterThanOrEqual(0);
     expect(alterIndex).toBeGreaterThan(createIndex);
     expect([...applied].sort((a, b) => a - b)).toEqual(
-      Array.from({ length: 34 }, (_, index) => index + 1),
+      Array.from({ length: 35 }, (_, index) => index + 1),
     );
   });
 });

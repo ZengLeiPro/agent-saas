@@ -391,6 +391,7 @@ export function registerGovernanceRoutes(
       connectors: runtime.connectorCatalogStore,
       credentials: runtime.credentialStore,
       environments: runtime.environmentStore,
+      listEntitlementResources: createEntitlementResourceCatalogResolver(runtime),
       changeJobs: runtime.governanceChangeJobStore,
       changePlanner: runtime.governanceChangePlanner,
       tenantExists: tenantId => Boolean(runtime.tenantStore?.findById(tenantId)),

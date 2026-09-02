@@ -76,7 +76,7 @@ describe("SkillSelector 能力目录", () => {
     importPersonalSkillPackage.mockReset();
   });
 
-  it("统一展示三层来源，并在卡片上即时启用技能", async () => {
+  it("统一展示三层来源，并在原卡片上即时启用技能", async () => {
     render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
 
     expect(await screen.findByText("平台分析")).toBeTruthy();
@@ -85,17 +85,17 @@ describe("SkillSelector 能力目录", () => {
     expect(screen.getAllByText("平台提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("组织提供").length).toBeGreaterThan(0);
     expect(screen.getAllByText("我创建的").length).toBeGreaterThan(0);
-    expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
-      "已启用",
-      "平台提供",
-      "组织提供",
-    ]);
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
     expect(screen.queryByText("点击查看详情")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "启用 平台分析" }));
+    const platformCard = screen.getByText("平台分析").closest('[role="button"]') as HTMLElement;
+    fireEvent.click(within(platformCard).getByRole("button", { name: "启用 平台分析" }));
     await waitFor(() => {
       expect(saveSelection).toHaveBeenCalledWith("platform-analysis", true);
     });
+    expect(screen.getByText("平台分析").closest('[role="button"]')).toBe(platformCard);
+    expect(within(platformCard).getByText("已启用")).toBeTruthy();
+    expect(within(platformCard).getByRole("button", { name: "停用 平台分析" })).toBeTruthy();
   });
 
   it("请求处理中快速连续点击只发送一次更新", async () => {
@@ -254,18 +254,16 @@ describe("SkillSelector 能力目录", () => {
     expect(emptyTab).toHaveProperty("disabled", true);
   });
 
-  it("组内来源单一时不再逐卡重复标注来源", async () => {
+  it("统一列表不渲染启用区和来源分区，来源标签仍保留在卡片上", async () => {
     render(<SkillSelector headerTitle="我的通用 Agent 技能" />);
     await screen.findByText("平台分析");
 
-    // 分区标题已经说明了这组的来源，卡片上不必再挂一遍「平台提供」徽标与「平台内置」脚注
-    expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual([
-      "已启用",
-      "平台提供",
-      "组织提供",
-    ]);
-    expect(screen.queryByText("平台内置")).toBeNull();
-    expect(screen.queryByText("组织技能")).toBeNull();
-    expect(screen.queryByText("个人技能")).toBeNull();
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    const platformCard = screen.getByText("平台分析").closest('[role="button"]') as HTMLElement;
+    const organizationCard = screen.getByText("组织 CRM").closest('[role="button"]') as HTMLElement;
+    const personalCard = screen.getByText("我的周报").closest('[role="button"]') as HTMLElement;
+    expect(within(platformCard).getByText("平台提供")).toBeTruthy();
+    expect(within(organizationCard).getByText("组织提供")).toBeTruthy();
+    expect(within(personalCard).getByText("我创建的")).toBeTruthy();
   });
 });

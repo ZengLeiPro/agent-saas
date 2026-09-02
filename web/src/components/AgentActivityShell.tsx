@@ -70,6 +70,7 @@ export function AgentActivityShell({
     // flex gap / 虚拟行 ROW_GAP / 节内 gap）承担，元素自补 margin 是旧补偿体系的乱源。
     <div className={className}>
       <div className="flex items-center gap-2">
+        <span className="sr-only" role={state === 'failed' || state === 'warning' ? 'alert' : 'status'} aria-live={state === 'failed' || state === 'warning' ? 'assertive' : 'polite'}>{state}</span>
         {disabled ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left">{content}</div>
         ) : (

@@ -428,6 +428,17 @@ describe('typed governance resource routes: authorization and credential boundar
     });
   });
 
+  it('组织管理员可读取编辑 Entitlement 所需的稳定资源目录', async () => {
+    const test = await rig({
+      user: { sub: 'admin-1', username: 'admin', tenantId: 'tenant-a', role: 'admin' },
+    });
+    const response = await test.request('/api/governance/resources/entitlement-resource-catalog?resourceType=environment_template');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      resourceType: 'environment_template', items: [{ resourceId: 'env-1', label: 'Node', version: 2 }],
+    });
+  });
+
   it('Credential Secret 仅写 Vault，API 与治理记录响应不暴露 secretRef', async () => {
     const test = await rig({});
     const response = await test.request('/api/governance/resources/credentials', json('POST', {

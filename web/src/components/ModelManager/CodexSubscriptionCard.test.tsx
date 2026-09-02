@@ -18,6 +18,7 @@ const connectedState = {
   config: {
     enabled: true,
     websocketEnabled: true,
+    quotaCooldownMinutes: 60,
     endpoint: "https://chatgpt.com/backend-api/codex/responses",
     originator: "kaiyan-agent",
   },
@@ -100,7 +101,38 @@ describe("CodexSubscriptionCard", () => {
       expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
         enabled: true,
         websocketEnabled: true,
+        quotaCooldownMinutes: 60,
       });
     });
+  });
+
+  it("展示额度冷却和授权异常账号状态", async () => {
+    vi.mocked(authFetch).mockResolvedValueOnce(jsonResponse({
+      ...connectedState,
+      credentials: [
+        {
+          ...connectedState.credential,
+          id: "credential-cooling",
+          availability: "quota_cooldown",
+          cooldownUntil: "2026-09-03T00:00:00.000Z",
+          lastFailureCode: "insufficient_quota",
+        },
+        {
+          ...connectedState.credential,
+          id: "credential-auth",
+          email: "backup@example.com",
+          availability: "auth_unavailable",
+          lastFailureCode: "invalid_grant",
+        },
+      ],
+    }));
+
+    render(<CodexSubscriptionCard readOnly={false} />);
+
+    expect(await screen.findByText("额度冷却")).toBeTruthy();
+    expect(screen.getByText("需重授权")).toBeTruthy();
+    expect(screen.getByText(/insufficient_quota/)).toBeTruthy();
+    expect(screen.getByText(/invalid_grant/)).toBeTruthy();
+    expect(screen.getByDisplayValue("60")).toBeTruthy();
   });
 });

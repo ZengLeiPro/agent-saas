@@ -56,6 +56,9 @@ type CodexCredentialState = {
   expiresAt?: string;
   accessTokenExpired?: boolean;
   generation?: number;
+  availability?: "available" | "quota_cooldown" | "auth_unavailable";
+  cooldownUntil?: string;
+  lastFailureCode?: string;
   error?: string;
 };
 
@@ -64,6 +67,7 @@ type CodexSubscriptionState = {
     enabled: boolean;
     /** 蓝绿 N/N+1：旧 Server 缺字段时按关闭处理。 */
     websocketEnabled?: boolean;
+    quotaCooldownMinutes?: number;
     endpoint: string;
     originator: string;
     credentialCount?: number;
@@ -97,6 +101,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   const [state, setState] = useState<CodexSubscriptionState | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [websocketEnabled, setWebsocketEnabled] = useState(false);
+  const [quotaCooldownMinutes, setQuotaCooldownMinutes] = useState(60);
   const [deviceSession, setDeviceSession] = useState<DeviceSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -107,6 +112,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     setState({ ...next, credentials });
     setEnabled(next.config.enabled);
     setWebsocketEnabled(next.config.websocketEnabled === true);
+    setQuotaCooldownMinutes(next.config.quotaCooldownMinutes ?? 60);
     setError(next.warning ?? null);
   }, []);
 
@@ -129,6 +135,14 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const hasUnavailableAccount = accountList(state)
+      .some((account) => account.availability && account.availability !== "available");
+    if (!hasUnavailableAccount) return;
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, state]);
 
   useEffect(() => {
     if (!deviceSession) return;
@@ -202,7 +216,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
       const response = await authFetch("/api/admin/codex-subscription", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, websocketEnabled }),
+        body: JSON.stringify({ enabled, websocketEnabled, quotaCooldownMinutes }),
       });
       const data = await readJson<CodexSubscriptionState>(response);
       if (!response.ok || !data.config) {
@@ -214,7 +228,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
     } finally {
       setWorking(false);
     }
-  }, [applyState, enabled, websocketEnabled]);
+  }, [applyState, enabled, quotaCooldownMinutes, websocketEnabled]);
 
   const reorder = useCallback(async (fromIndex: number, toIndex: number) => {
     const accounts = accountList(state);
@@ -290,6 +304,9 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
 
   const accounts = accountList(state);
   const primary = accounts[0] ?? state?.credential;
+  const quotaCooldownValid = Number.isInteger(quotaCooldownMinutes)
+    && quotaCooldownMinutes >= 1
+    && quotaCooldownMinutes <= 10_080;
 
   return (
     <Card className="h-fit">
@@ -314,7 +331,7 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
             <p className="text-xs text-muted-foreground">
               只提供 OpenAI Codex 订阅的原始 Responses 传输协议。OAuth 凭据保存在 SecretVault；
               Agent 的 system prompt、工具定义、tool loop 与会话历史仍由本平台掌控。
-              账号按下方优先级使用，仅在当前账号返回额度不足时切换下一个。
+              账号按下方优先级使用；额度耗尽或明确授权失效时自动切换下一个。
             </p>
 
             <div className="grid gap-3 md:grid-cols-2">
@@ -335,7 +352,20 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 />
                 启用订阅 transport
               </label>
-              <label className="flex items-start gap-2 md:col-span-2 text-sm">
+              <div className="space-y-1.5">
+                <Label htmlFor="codex-quota-cooldown">额度耗尽冷却（分钟）</Label>
+                <Input
+                  id="codex-quota-cooldown"
+                  type="number"
+                  min={1}
+                  max={10_080}
+                  value={quotaCooldownMinutes}
+                  disabled={readOnly || working}
+                  onChange={(event) => setQuotaCooldownMinutes(Number(event.target.value))}
+                />
+                <div className="text-xs text-muted-foreground">冷却期间跳过该账号，到期自动恢复探测。</div>
+              </div>
+              <label className="flex items-start gap-2 self-end pb-2 text-sm">
                 <input
                   className="mt-0.5"
                   type="checkbox"
@@ -354,16 +384,23 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
 
             {accounts.length > 0 && (
               <div className="space-y-2">
-                <div className="text-sm font-medium">授权账号优先级</div>
+                <div>
+                  <div className="text-sm font-medium">授权账号优先级</div>
+                  <div className="text-xs text-muted-foreground">新顺序作用于后续模型请求，不改变已发出的请求。</div>
+                </div>
                 {accounts.map((account, index) => (
                   <div key={account.id ?? `${account.email ?? "account"}-${index}`} className="rounded-md border bg-muted/20 p-3 text-xs">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline">优先级 {index + 1}</Badge>
                         <span>{account.email ?? `尾号 ${account.accountIdHint ?? "未知"}`}</span>
-                        {account.connected
-                          ? <Badge variant="secondary">可用</Badge>
-                          : <Badge variant="outline">异常</Badge>}
+                        {account.availability === "quota_cooldown"
+                          ? <Badge variant="outline">额度冷却</Badge>
+                          : account.availability === "auth_unavailable"
+                            ? <Badge variant="destructive">需重授权</Badge>
+                            : account.connected
+                              ? <Badge variant="secondary">可用</Badge>
+                              : <Badge variant="outline">异常</Badge>}
                       </div>
                       <div className="flex flex-wrap gap-1">
                         <Button
@@ -416,6 +453,17 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                         ? ` · access token ${account.accessTokenExpired ? "已到期，将自动刷新" : `到期 ${new Date(account.expiresAt).toLocaleString()}`}`
                         : ""}
                     </div>
+                    {account.availability === "quota_cooldown" && account.cooldownUntil && (
+                      <div className="mt-1 text-amber-700 dark:text-amber-400">
+                        冷却至 {new Date(account.cooldownUntil).toLocaleString()}
+                        {account.lastFailureCode ? ` · ${account.lastFailureCode}` : ""}
+                      </div>
+                    )}
+                    {account.availability === "auth_unavailable" && (
+                      <div className="mt-1 text-destructive">
+                        授权不可用，请重授权{account.lastFailureCode ? ` · ${account.lastFailureCode}` : ""}
+                      </div>
+                    )}
                     {account.error && <div className="mt-1 text-destructive">{account.error}</div>}
                   </div>
                 ))}
@@ -525,7 +573,11 @@ export function CodexSubscriptionCard({ readOnly }: { readOnly: boolean }) {
                 {working ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
                 添加授权账号
               </Button>
-              <Button size="sm" disabled={readOnly || working || accounts.length === 0} onClick={() => void save()}>
+              <Button
+                size="sm"
+                disabled={readOnly || working || accounts.length === 0 || !quotaCooldownValid}
+                onClick={() => void save()}
+              >
                 <Save className="size-3.5" />
                 保存设置
               </Button>

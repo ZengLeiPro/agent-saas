@@ -172,13 +172,30 @@ describe('Codex subscription admin router', () => {
       body: JSON.stringify({
         enabled: false,
         websocketEnabled: true,
+        quotaCooldownMinutes: 90,
         originator: 'kaiyan-runtime',
       }),
     });
     expect(saveResponse.status).toBe(200);
     expect(await saveResponse.json()).toMatchObject({
-      config: { enabled: false, websocketEnabled: false, originator: 'kaiyan-agent' },
+      config: {
+        enabled: false,
+        websocketEnabled: false,
+        quotaCooldownMinutes: 90,
+        originator: 'kaiyan-agent',
+      },
       credential: { configured: true },
+    });
+    expect(closeWebSockets).toHaveBeenCalledTimes(2);
+
+    const cooldownOnlyResponse = await fetch(baseUrl, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ quotaCooldownMinutes: 120 }),
+    });
+    expect(cooldownOnlyResponse.status).toBe(200);
+    expect(await cooldownOnlyResponse.json()).toMatchObject({
+      config: { quotaCooldownMinutes: 120 },
     });
     expect(closeWebSockets).toHaveBeenCalledTimes(2);
 
@@ -247,8 +264,9 @@ describe('Codex subscription admin router', () => {
       };
       next();
     });
+    const closeWebSockets = vi.fn();
     app.use('/api/admin/codex-subscription', createCodexSubscriptionAdminRouter({
-      processCwd, config, credentialManager, deviceAuthService,
+      processCwd, config, credentialManager, deviceAuthService, closeWebSockets,
     }));
     const server = app.listen(0);
     servers.push(server);
@@ -286,11 +304,13 @@ describe('Codex subscription admin router', () => {
       credentialRef: secondId,
       credentialRefs: [secondId, firstId],
     });
+    expect(closeWebSockets).toHaveBeenCalledTimes(2);
 
     const remove = await fetch(`${baseUrl}/credentials/${encodeURIComponent(secondId)}`, { method: 'DELETE' });
     expect(remove.status).toBe(200);
     const remaining = await remove.json() as any;
     expect(remaining.credentials).toHaveLength(1);
     expect(remaining.credentials[0].id).toBe(firstId);
+    expect(closeWebSockets).toHaveBeenCalledTimes(3);
   });
 });

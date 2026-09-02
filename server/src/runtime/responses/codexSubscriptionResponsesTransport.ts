@@ -14,7 +14,14 @@ import {
   CodexWebSocketQuotaExhaustedError,
   CodexWebSocketUnavailableError,
 } from './codexResponsesWebSocketPool.js';
-import { isCodexQuotaError, quotaErrorCode } from './codexQuota.js';
+import {
+  CodexAccountAuthUnavailableError,
+  credentialFailureCode,
+  credentialFailureGeneration,
+  executeCodexCredentialFailover,
+  isCodexAccountUnavailableResponse,
+  isPermanentCredentialError,
+} from './codexCredentialFailover.js';
 import type {
   ResponsesTransport,
   ResponsesTransportExecuteInput,
@@ -72,46 +79,43 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
   }
 
   async getContinuationBinding() {
-    const token = await this.credentials.getCredentials(false);
     const config = this.credentials.getConfiguration();
+    for (const credentialRef of this.orderedCredentialRefs()) {
+      const runtimeState = await this.getRuntimeState(credentialRef);
+      if (runtimeState) continue;
+      try {
+        const token = await this.getCredentialsForCredential(credentialRef);
+        return {
+          provider: 'openai_codex_subscription' as const,
+          issuer: config.endpoint,
+          accountBindingHash: hashAccountBinding(token.accountId),
+        };
+      } catch (error) {
+        if (!isPermanentCredentialError(error)) throw error;
+        await this.markAuthUnavailable(
+          credentialRef,
+          credentialFailureCode(error),
+          credentialFailureGeneration(error),
+        );
+      }
+    }
     return {
       provider: 'openai_codex_subscription' as const,
       issuer: config.endpoint,
-      accountBindingHash: hashAccountBinding(token.accountId),
+      accountBindingHash: hashAccountBinding('__no_available_codex_account__'),
     };
   }
 
   async execute(input: ResponsesTransportExecuteInput): Promise<ResponsesTransportExecuteResult> {
-    const orderedRefs = this.orderedCredentialRefs();
-    const first = await this.credentials.getCredentials(false);
-    const candidateRefs = Array.from(new Set([
-      ...(first.credentialRef ? [first.credentialRef] : []),
-      ...orderedRefs,
-    ]));
-    if (candidateRefs.length === 0) {
-      throw new Error('Codex subscription 尚未完成账号授权');
-    }
-
-    let token = first;
-    for (let index = 0; index < candidateRefs.length; index += 1) {
-      const credentialRef = candidateRefs[index];
-      if (index > 0) token = await this.getCredentialsForCredential(credentialRef);
-      try {
-        const result = await this.executeWithAuthRecovery(input, token);
-        if (!(await isCodexQuotaResponse(result.response))) {
-          return result;
-        }
-        if (index === candidateRefs.length - 1) return result;
-        await result.response.body?.cancel().catch(() => undefined);
-      } catch (error) {
-        if (!isCodexQuotaTransportError(error)) throw error;
-        if (index === candidateRefs.length - 1) {
-          return quotaErrorResult(input, token.accountId, error);
-        }
-      }
-    }
-
-    throw new Error('Codex subscription 未能选择可用授权账号');
+    // 每次请求固定一份顺序快照；管理端重排只影响后续请求。
+    const credentialRefs = this.orderedCredentialRefs();
+    if (credentialRefs.length === 0) throw new Error('Codex subscription 尚未完成账号授权');
+    return executeCodexCredentialFailover({
+      request: input,
+      credentials: this.credentials,
+      credentialRefs,
+      executeWithCredential: (token) => this.executeWithAuthRecovery(input, token),
+    });
   }
 
   private async executeWithAuthRecovery(
@@ -121,6 +125,14 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     const firstPrepared = prepareRequestForBinding(input, this.bindingFor(token.accountId));
     const firstResult = await this.executeWithToken(firstPrepared.input, token.accessToken, token.accountId);
     if (firstResult.response.status !== 401) {
+      if (await isCodexAccountUnavailableResponse(firstResult.response)) {
+        await firstResult.response.body?.cancel().catch(() => undefined);
+        throw new CodexAccountAuthUnavailableError(
+          'account_unavailable',
+          'Codex 授权账号不可用',
+          token.generation,
+        );
+      }
       return {
         ...firstResult,
         ...(firstPrepared.reset ? { continuationReplayReset: true } : {}),
@@ -128,18 +140,54 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
     }
 
     await firstResult.response.body?.cancel().catch(() => undefined);
-    const refreshed = await this.credentials.getCredentials(true, token.generation, token.credentialRef);
+    let refreshed: Awaited<ReturnType<CodexCredentialManager['getCredentials']>>;
+    try {
+      refreshed = await this.credentials.getCredentials(true, token.generation, token.credentialRef);
+    } catch (error) {
+      if (isPermanentCredentialError(error)) {
+        throw new CodexAccountAuthUnavailableError(
+          credentialFailureCode(error),
+          String(error),
+          token.generation,
+        );
+      }
+      throw error;
+    }
     const retryPrepared = prepareRequestForBinding(input, this.bindingFor(refreshed.accountId));
     const retried = await this.executeWithToken(
       retryPrepared.input,
       refreshed.accessToken,
       refreshed.accountId,
     );
+    if (retried.response.status === 401 || (await isCodexAccountUnavailableResponse(retried.response))) {
+      await retried.response.body?.cancel().catch(() => undefined);
+      throw new CodexAccountAuthUnavailableError(
+        retried.response.status === 401 ? 'authentication_failed_after_refresh' : 'account_unavailable',
+        'Codex 授权账号刷新后仍不可用',
+        refreshed.generation,
+      );
+    }
     return {
       ...retried,
       authRetryCount: 1,
       ...(firstPrepared.reset || retryPrepared.reset ? { continuationReplayReset: true } : {}),
     };
+  }
+
+  private async getRuntimeState(credentialRef: string) {
+    return (this.credentials as CodexCredentialManager & {
+      getRuntimeState?: CodexCredentialManager['getRuntimeState'];
+    }).getRuntimeState?.(credentialRef);
+  }
+
+  private async markAuthUnavailable(
+    credentialRef: string,
+    code: string,
+    credentialGeneration: number,
+  ): Promise<void> {
+    await (this.credentials as CodexCredentialManager & {
+      markAuthUnavailable?: CodexCredentialManager['markAuthUnavailable'];
+    }).markAuthUnavailable?.(credentialRef, code, credentialGeneration);
   }
 
   private orderedCredentialRefs(): string[] {
@@ -265,55 +313,6 @@ export class CodexSubscriptionResponsesTransport implements ResponsesTransport {
       accountBindingHash: hashAccountBinding(accountId),
     };
   }
-}
-
-async function isCodexQuotaResponse(response: Response): Promise<boolean> {
-  if (response.ok) return false;
-  const text = await response.clone().text().catch(() => '');
-  let code: string | undefined;
-  let message: string | undefined;
-  try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    const error = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
-      ? parsed.error as Record<string, unknown>
-      : parsed;
-    code = typeof error.code === 'string' ? error.code : undefined;
-    message = typeof error.message === 'string' ? error.message : undefined;
-  } catch {
-    // 非 JSON body 仍交给统一文本判定。
-  }
-  return isCodexQuotaError({ status: response.status, code, message, rawText: text });
-}
-
-function isCodexQuotaTransportError(error: unknown): error is CodexWebSocketQuotaExhaustedError {
-  return error instanceof CodexWebSocketQuotaExhaustedError
-    || (error instanceof CodexWebSocketUnavailableError && error.reason === 'quota_exhausted');
-}
-
-function quotaErrorResult(
-  input: ResponsesTransportExecuteInput,
-  accountId: string,
-  error: CodexWebSocketQuotaExhaustedError,
-): ResponsesTransportExecuteResult {
-  const body = JSON.stringify({
-    error: {
-      code: error.code || quotaErrorCode({ message: error.message }),
-      message: error.message,
-    },
-  });
-  return {
-    response: new Response(body, {
-      status: error.status,
-      headers: { 'content-type': 'application/json' },
-    }),
-    continuationBinding: {
-      provider: 'openai_codex_subscription',
-      issuer: 'https://chatgpt.com/backend-api/codex/responses',
-      accountBindingHash: hashAccountBinding(accountId),
-    },
-    wireMode: 'http_sse_full',
-    wireRequestBodyBytes: Buffer.byteLength(input.serializedBody, 'utf8'),
-  };
 }
 
 function prepareRequestForBinding(

@@ -6,6 +6,11 @@ import {
   type CodexSubscriptionRuntimeStatus,
   type CodexWireRequestSample,
 } from './codexSubscriptionTelemetry.js';
+import {
+  InMemoryCodexCredentialRuntimeStateStore,
+  type CodexCredentialRuntimeState,
+  type CodexCredentialRuntimeStateStore,
+} from './codexCredentialRuntimeState.js';
 
 export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 export const CODEX_AUTH_BASE_URL = 'https://auth.openai.com';
@@ -13,6 +18,7 @@ export const CODEX_RESPONSES_ENDPOINT = 'https://chatgpt.com/backend-api/codex/r
 export const CODEX_DEVICE_VERIFICATION_URI = `${CODEX_AUTH_BASE_URL}/codex/device`;
 
 const REFRESH_EARLY_MS = 5 * 60 * 1000;
+const DEFAULT_QUOTA_COOLDOWN_MINUTES = 60;
 const CODEX_SECRET_KIND = 'codex_subscription_oauth';
 function systemVaultCaller(operation: VaultOperation): VaultCaller {
   return {
@@ -32,6 +38,8 @@ export interface CodexSubscriptionRuntimeConfig {
   originator?: string;
   /** 连接内 stateful 接力；关闭时保持 HTTP/SSE 全量历史。 */
   websocketEnabled?: boolean;
+  /** 账号额度耗尽后跳过该账号的分钟数。 */
+  quotaCooldownMinutes?: number;
 }
 
 export interface CodexOAuthTokens {
@@ -48,6 +56,13 @@ export interface CodexTokenBundle extends CodexOAuthTokens {
   credentialRef?: string;
 }
 
+class CodexCredentialRefreshError extends Error {
+  constructor(readonly credentialGeneration: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'CodexCredentialRefreshError';
+  }
+}
+
 export interface CodexCredentialStatus {
   /** 管理 API 用于排序、重授权和删除的 opaque SecretVault ref。 */
   id?: string;
@@ -60,6 +75,9 @@ export interface CodexCredentialStatus {
   expiresAt?: string;
   accessTokenExpired?: boolean;
   generation?: number;
+  availability?: 'available' | 'quota_cooldown' | 'auth_unavailable';
+  cooldownUntil?: string;
+  lastFailureCode?: string;
   error?: string;
 }
 
@@ -100,13 +118,17 @@ export class LocalCodexCredentialLock implements CodexCredentialLock {
 export class CodexCredentialManager {
   private readonly refreshInFlight = new Map<string, Promise<CodexTokenBundle>>();
   private readonly telemetry = new CodexSubscriptionTelemetry();
+  private readonly runtimeStateStore: CodexCredentialRuntimeStateStore;
 
   constructor(private readonly options: {
     vault: SecretVault;
     getConfig: () => CodexSubscriptionRuntimeConfig | undefined;
     lock?: CodexCredentialLock;
     fetchImpl?: typeof fetch;
-  }) {}
+    runtimeStateStore?: CodexCredentialRuntimeStateStore;
+  }) {
+    this.runtimeStateStore = options.runtimeStateStore ?? new InMemoryCodexCredentialRuntimeStateStore();
+  }
 
   getCredentialRefs(): string[] {
     const raw = this.options.getConfig() ?? {};
@@ -118,7 +140,7 @@ export class CodexCredentialManager {
     return Array.from(new Set(refs.filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0)));
   }
 
-  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled'>>
+  getConfiguration(): Required<Pick<CodexSubscriptionRuntimeConfig, 'enabled' | 'endpoint' | 'originator' | 'websocketEnabled' | 'quotaCooldownMinutes'>>
     & { credentialRef?: string; credentialRefs: string[] } {
     const raw = this.options.getConfig() ?? {};
     const credentialRefs = this.getCredentialRefs();
@@ -129,6 +151,7 @@ export class CodexCredentialManager {
       // Keep the current CLI/TUI identity as the safe wire default; the app still owns the harness.
       originator: validateOriginator(raw.originator ?? 'codex-tui'),
       websocketEnabled: raw.websocketEnabled === true,
+      quotaCooldownMinutes: raw.quotaCooldownMinutes ?? DEFAULT_QUOTA_COOLDOWN_MINUTES,
       credentialRefs,
       ...(credentialRefs[0] ? { credentialRef: credentialRefs[0] } : {}),
     };
@@ -192,15 +215,18 @@ export class CodexCredentialManager {
     bundle: CodexTokenBundle;
   }> {
     const accountId = extractCodexAccountId(tokens.accessToken, tokens.idToken);
+    const previous = existingRef
+      ? await this.readBundle(existingRef).catch(() => undefined)
+      : undefined;
     const bundle: CodexTokenBundle = {
       ...tokens,
       accountId,
-      generation: 1,
+      generation: (previous?.generation ?? 0) + 1,
     };
     const serialized = JSON.stringify(bundle);
     if (existingRef) {
-      const previous = await this.readBundle(existingRef).catch(() => undefined);
       await this.options.vault.rotateSecret(existingRef, serialized, systemVaultCaller('rotate'));
+      await this.runtimeStateStore.clear(existingRef, bundle.generation);
       if (previous?.refreshToken && previous.refreshToken !== bundle.refreshToken) {
         await revokeCodexRefreshToken(
           previous.refreshToken,
@@ -231,6 +257,7 @@ export class CodexCredentialManager {
       remoteWarning = `本地凭据已清理，但 OpenAI refresh token 远端撤销失败: ${compactOAuthError(error)}`;
     }
     await this.options.vault.revokeSecret(credentialRef, systemVaultCaller('revoke'));
+    await this.runtimeStateStore.clear(credentialRef);
     return remoteWarning ? { remoteWarning } : {};
   }
 
@@ -242,11 +269,46 @@ export class CodexCredentialManager {
 
   async getStatuses(): Promise<CodexCredentialStatus[]> {
     const refs = this.getCredentialRefs();
-    return Promise.all(refs.map(async (ref, index) => ({
-      ...(await this.getStatusForCredential(ref)),
-      id: ref,
-      priority: index + 1,
-    })));
+    return Promise.all(refs.map(async (ref, index) => {
+      const runtimeState = await this.getRuntimeState(ref);
+      return {
+        ...(await this.getStatusForCredential(ref)),
+        id: ref,
+        priority: index + 1,
+        availability: runtimeState?.availability ?? 'available',
+        ...(runtimeState?.cooldownUntil ? { cooldownUntil: runtimeState.cooldownUntil } : {}),
+        ...(runtimeState?.lastFailureCode ? { lastFailureCode: runtimeState.lastFailureCode } : {}),
+      };
+    }));
+  }
+
+  async getRuntimeState(credentialRef: string): Promise<CodexCredentialRuntimeState | undefined> {
+    return this.runtimeStateStore.get(credentialRef);
+  }
+
+  async markQuotaCooldown(
+    credentialRef: string,
+    failureCode: string,
+    credentialGeneration = 0,
+  ): Promise<string> {
+    const cooldownUntil = new Date(
+      Date.now() + this.getConfiguration().quotaCooldownMinutes * 60_000,
+    ).toISOString();
+    await this.runtimeStateStore.markQuotaCooldown(
+      credentialRef,
+      cooldownUntil,
+      failureCode,
+      credentialGeneration,
+    );
+    return cooldownUntil;
+  }
+
+  async markAuthUnavailable(
+    credentialRef: string,
+    failureCode: string,
+    credentialGeneration = 0,
+  ): Promise<void> {
+    await this.runtimeStateStore.markAuthUnavailable(credentialRef, failureCode, credentialGeneration);
   }
 
   private async getStatusForCredential(credentialRef: string): Promise<CodexCredentialStatus> {
@@ -338,7 +400,7 @@ export class CodexCredentialManager {
         return next;
       } catch (error) {
         this.telemetry.recordRefreshFailure(error);
-        throw error;
+        throw new CodexCredentialRefreshError(latest.generation, error);
       }
     });
   }

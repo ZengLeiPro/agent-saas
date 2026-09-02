@@ -9,11 +9,9 @@ import {
   createRawRuntimeRunDispatch,
   wakeRuntimeSession,
 } from '../runtime/rawRuntimeRunDispatch.js';
-import {
-  CodexCredentialManager,
-  PgCodexCredentialLock,
-} from '../runtime/responses/codexCredentialManager.js';
+import { CodexCredentialManager, PgCodexCredentialLock } from '../runtime/responses/codexCredentialManager.js';
 import { CodexDeviceAuthService } from '../runtime/responses/codexOAuth.js';
+import { createCodexCredentialRuntimeStateStore } from '../runtime/responses/codexCredentialRuntimeState.js';
 import { createExecutionConfig } from '../runtime/executionConfig.js';
 import {
   DuckDBRuntimeAuditQuery,
@@ -1603,6 +1601,7 @@ export async function createRuntime(options: CreateRuntimeOptions = {}): Promise
   const codexCredentialManager = new CodexCredentialManager({
     vault: secretVault, getConfig: () => config.codexSubscription,
     ...(pgEventStore ? { lock: new PgCodexCredentialLock(pgEventStore.pool) } : {}),
+    runtimeStateStore: await createCodexCredentialRuntimeStateStore(pgEventStore?.pool, config.runtimeEventStore),
     fetchImpl: egressFetch,
   });
   const codexDeviceAuthService = new CodexDeviceAuthService(egressFetch);

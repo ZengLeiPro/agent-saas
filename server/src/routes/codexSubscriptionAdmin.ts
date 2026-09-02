@@ -30,12 +30,13 @@ function credentialRefs(options: CreateCodexSubscriptionAdminRouterOptions): str
 function configWithCredentialRefs(
   current: ReturnType<CodexCredentialManager['getConfiguration']>,
   refs: string[],
-  overrides: Partial<Pick<CodexSubscriptionConfig, 'enabled' | 'websocketEnabled'>> = {},
+  overrides: Partial<Pick<CodexSubscriptionConfig, 'enabled' | 'websocketEnabled' | 'quotaCooldownMinutes'>> = {},
 ): CodexSubscriptionConfig {
   return {
     enabled: overrides.enabled ?? current.enabled,
     websocketEnabled: (overrides.websocketEnabled ?? current.websocketEnabled)
       && (overrides.enabled ?? current.enabled),
+    quotaCooldownMinutes: overrides.quotaCooldownMinutes ?? current.quotaCooldownMinutes,
     endpoint: current.endpoint,
     originator: current.originator,
     ...(refs[0] ? { credentialRef: refs[0], credentialRefs: refs } : {}),
@@ -60,8 +61,9 @@ async function persistConfig(
     },
     applyRuntime: (candidate) => {
       if (!candidate.codexSubscription) throw new Error('codexSubscription 配置无效');
+      const previous = options.credentialManager.getConfiguration();
       options.config.codexSubscription = candidate.codexSubscription;
-      options.closeWebSockets?.();
+      if (shouldCloseWebSockets(previous, candidate.codexSubscription)) options.closeWebSockets?.();
     },
   });
   return result.config.codexSubscription!;
@@ -74,6 +76,7 @@ async function publicState(options: CreateCodexSubscriptionAdminRouterOptions) {
     config: {
       enabled: configuration.enabled,
       websocketEnabled: configuration.websocketEnabled,
+      quotaCooldownMinutes: configuration.quotaCooldownMinutes,
       endpoint: configuration.endpoint,
       originator: configuration.originator,
       credentialCount: credentials.length,
@@ -109,6 +112,9 @@ export function createCodexSubscriptionAdminRouter(
     const requestedWebsocketEnabled = typeof body.websocketEnabled === 'boolean'
       ? body.websocketEnabled
       : current.websocketEnabled;
+    const quotaCooldownMinutes = typeof body.quotaCooldownMinutes === 'number'
+      ? body.quotaCooldownMinutes
+      : current.quotaCooldownMinutes;
     if (enabled && refs.length === 0) {
       res.status(409).json({ error: '请先完成至少一个 Codex 账号授权，再启用订阅 transport' });
       return;
@@ -118,6 +124,7 @@ export function createCodexSubscriptionAdminRouter(
       await persistConfig(options, configMutationService, req, configWithCredentialRefs(current, refs, {
         enabled,
         websocketEnabled: requestedWebsocketEnabled,
+        quotaCooldownMinutes,
       }));
       res.json(await publicState(options));
     } catch (error) {
@@ -205,6 +212,7 @@ export function createCodexSubscriptionAdminRouter(
         }
         throw error;
       }
+      if (replaceCredentialRef) options.closeWebSockets?.();
       options.deviceAuthService.complete(req.params.sessionId);
       res.json({ status: 'completed', ...(await publicState(options)) });
     } catch (error) {
@@ -272,4 +280,16 @@ export function createCodexSubscriptionAdminRouter(
   });
 
   return router;
+}
+
+function shouldCloseWebSockets(
+  previous: ReturnType<CodexCredentialManager['getConfiguration']>,
+  next: CodexSubscriptionConfig,
+): boolean {
+  if (previous.enabled !== next.enabled || previous.websocketEnabled !== next.websocketEnabled) return true;
+  if (previous.endpoint !== (next.endpoint ?? previous.endpoint)) return true;
+  if (previous.originator !== (next.originator ?? previous.originator)) return true;
+  const previousRefs = new Set(previous.credentialRefs);
+  const nextRefs = new Set(next.credentialRefs ?? (next.credentialRef ? [next.credentialRef] : []));
+  return previousRefs.size !== nextRefs.size || Array.from(previousRefs).some((ref) => !nextRefs.has(ref));
 }

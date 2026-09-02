@@ -102,6 +102,7 @@ describe('createSharedConfigRefresher', () => {
     const initial = {
       enabled: true,
       websocketEnabled: true,
+      quotaCooldownMinutes: 60,
       credentialRef: 'credential-old-primary',
       credentialRefs: ['credential-old-primary', 'credential-old-secondary'],
       endpoint: 'https://chatgpt.com/backend-api/codex/responses',
@@ -110,6 +111,7 @@ describe('createSharedConfigRefresher', () => {
     const replacement = {
       enabled: false,
       websocketEnabled: false,
+      quotaCooldownMinutes: 120,
       credentialRef: 'credential-new-primary',
       credentialRefs: ['credential-new-primary', 'credential-old-primary'],
       endpoint: 'https://chatgpt.com/backend-api/codex/responses',
@@ -145,6 +147,7 @@ describe('createSharedConfigRefresher', () => {
     expect(manager.getConfiguration()).toMatchObject({
       enabled: false,
       websocketEnabled: false,
+      quotaCooldownMinutes: 120,
       endpoint: replacement.endpoint,
       originator: replacement.originator,
     });
@@ -158,6 +161,7 @@ describe('createSharedConfigRefresher', () => {
     const initial = {
       enabled: true,
       websocketEnabled: true,
+      quotaCooldownMinutes: 60,
       credentialRef: 'credential-a',
       credentialRefs: ['credential-a', 'credential-b'],
       endpoint: 'https://chatgpt.com/backend-api/codex/responses',

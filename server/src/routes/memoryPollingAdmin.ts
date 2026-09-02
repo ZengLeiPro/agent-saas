@@ -143,7 +143,7 @@ export function createMemoryPollingAdminRouter(
           await options.onPollingUpdated?.(candidate.memory.polling);
         },
       });
-      res.setHeader('ETag', `"${result.effectiveConfigFingerprint}"`);
+      res.setHeader('ETag', `"${result.rawConfigFingerprint}"`);
       res.json(pollingView(options.config));
     } catch (error) {
       if (error instanceof Error && /memory\.polling|时区|触发窗口|模型/u.test(error.message)) {

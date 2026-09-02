@@ -30,6 +30,7 @@ import { registerGovernanceAgentResourceRoutes } from './governanceAgentResource
 import { registerGovernanceCredentialRoutes } from './governanceCredentialRoutes.js';
 import { registerGovernanceEnvironmentRoutes } from './governanceEnvironmentRoutes.js';
 import { registerGovernanceResourceCatalogRoutes } from './governanceResourceCatalogRoutes.js';
+import type { EntitlementResourceType } from '../data/entitlements/types.js';
 import { isActivePlatformAdminIdentity } from '../governance/subject/platformIdentity.js';
 import {
   connectorPublishSchema, connectorStatusSchema, createCandidateSchema, createSkillSchema,
@@ -132,6 +133,10 @@ export function createGovernanceResourcesRouter(deps: {
   connectors: PgConnectorCatalogStore;
   credentials: PgCredentialStore;
   environments: PgEnvironmentStore;
+  listEntitlementResources?: (resourceType: EntitlementResourceType) => Promise<{
+    status: 'valid';
+    items: Array<{ resourceId: string; version: number }>;
+  } | { status: 'unavailable' }>;
   changeJobs: PgGovernanceChangeJobStore;
   changePlanner: GovernanceChangePlanner;
   tenantExists?: (tenantId: string) => boolean;
@@ -480,7 +485,8 @@ export function createGovernanceResourcesRouter(deps: {
 
   registerGovernanceResourceCatalogRoutes({ router,
     personaFor: req => personas.get(req), agents: deps.agents, skills: deps.skills,
-    connectors: deps.connectors, environments: deps.environments });
+    connectors: deps.connectors, environments: deps.environments,
+    ...(deps.listEntitlementResources ? { listResources: deps.listEntitlementResources } : {}) });
 
   router.get('/environment/templates/:templateId', async (req, res) => {
     const template = await deps.environments.getTemplate(req.params.templateId);

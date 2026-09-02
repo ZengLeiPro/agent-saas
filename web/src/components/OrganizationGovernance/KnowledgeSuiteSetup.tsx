@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useGovernanceRequest } from "@/hooks/useGovernanceRequest";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { contextCenterApi, governanceAccessApi } from "@agent/shared/lib/governanceApi";
 
 export interface KnowledgeSuite {
@@ -100,7 +101,8 @@ export function KnowledgeSuiteSetup({ tenantId, suites, manageable, receipt, onR
   const [userIds, setUserIds] = useState<string[]>([]);
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [reason, setReason] = useState("配置企业上下文使用范围");
+  const defaultReason = "配置企业上下文使用范围";
+  const [reason, setReason] = useState(defaultReason);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,15 +149,35 @@ export function KnowledgeSuiteSetup({ tenantId, suites, manageable, receipt, onR
     finally { setBusy(false); }
   };
   const commit = async () => {
-    if (!preview) return;
+    if (!preview) return false;
     setBusy(true); setError(null);
     try {
       const result = await governanceAccessApi.updateAssignmentBatch<BatchReceipt>({ ...command,
         previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId);
-      onReceipt(result); setPreview(null); onCommitted();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "提交失败"); }
+      onReceipt(result); setPreview(null); onCommitted(); return true;
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "提交失败"); return false; }
     finally { setBusy(false); }
   };
+
+  const baselineMode = suite?.configuration.mode === "all" ? "all" : "selected";
+  const baselineUserIds = [...(suite?.configuration.userIds ?? [])].sort();
+  const baselineGroupIds = [...(suite?.configuration.groupIds ?? [])].sort();
+  const draftUserIds = [...userIds].sort();
+  const draftGroupIds = [...groupIds].sort();
+  const changed = Boolean(suite && (mode !== baselineMode || reason !== defaultReason
+    || JSON.stringify(draftUserIds) !== JSON.stringify(baselineUserIds)
+    || JSON.stringify(draftGroupIds) !== JSON.stringify(baselineGroupIds)));
+  useSettingsDirtyEntry({
+    id: `organization-knowledge-suite:${tenantId}:${suite?.suiteId ?? "none"}`,
+    label: `${suite?.name ?? "组织知识"}使用范围`,
+    dirty: !receipt && changed,
+    save: async () => { if (!preview) { setError("请先生成签名预览，再保存并离开。"); throw new Error("Knowledge suite preview required"); } if (!await commit()) throw new Error("Knowledge suite commit failed"); },
+    discard: () => {
+      setMode(baselineMode); setUserIds(suite?.configuration.userIds ?? []); setGroupIds(suite?.configuration.groupIds ?? []);
+      setReason(defaultReason); setPreview(null); setError(null); onReceipt(null);
+    },
+    draft: { mode, userIds: draftUserIds, groupIds: draftGroupIds, reason },
+  });
 
   return <div className="space-y-5">
     <section aria-labelledby="context-step-source">

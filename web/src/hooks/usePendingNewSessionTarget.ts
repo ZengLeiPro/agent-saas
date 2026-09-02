@@ -1,19 +1,24 @@
 import { useCallback, useRef, useState } from "react";
 
+import type { AgentTarget } from "@agent/shared";
 import { addSessionsToGroup } from "@/lib/groupsApi";
 
 const GROUP_ASSIGNMENT_RETRY_DELAYS_MS = [100, 300];
 
 export function usePendingNewSessionTarget() {
-  const pendingOrgAgentIdRef = useRef<string | null>(null);
+  const pendingAgentTargetRef = useRef<AgentTarget | null>(null);
   const pendingNewSessionGroupIdRef = useRef<string | null>(null);
   const groupAssignmentRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
-  const [pendingOrgAgentId, setPendingOrgAgentId] = useState<string | null>(null);
+  const [pendingAgentTarget, setPendingAgentTargetState] = useState<AgentTarget | null>(null);
+
+  const setPendingAgentTarget = useCallback((target: AgentTarget | null) => {
+    pendingAgentTargetRef.current = target;
+    setPendingAgentTargetState(target);
+  }, []);
 
   const clearPendingOrgAgent = useCallback(() => {
-    pendingOrgAgentIdRef.current = null;
-    setPendingOrgAgentId(null);
-  }, []);
+    setPendingAgentTarget(null);
+  }, [setPendingAgentTarget]);
 
   const assignPendingGroup = useCallback((sessionId: string): Promise<void> => {
     const groupId = pendingNewSessionGroupIdRef.current;
@@ -49,10 +54,11 @@ export function usePendingNewSessionTarget() {
   }, []);
 
   return {
-    pendingOrgAgentIdRef,
+    pendingAgentTargetRef,
     pendingNewSessionGroupIdRef,
-    pendingOrgAgentId,
-    setPendingOrgAgentId,
+    pendingAgentTarget,
+    pendingOrgAgentId: pendingAgentTarget?.kind === 'org-agent' ? pendingAgentTarget.orgAgentId : null,
+    setPendingAgentTarget,
     clearPendingOrgAgent,
     assignPendingGroup,
   };

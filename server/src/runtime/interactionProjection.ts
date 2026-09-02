@@ -2,12 +2,15 @@ import type { InteractionResponse } from '../agent/types.js';
 import type { AskUserQuestion } from '../types/index.js';
 import type { PlatformEvent } from './types.js';
 
-export type RuntimeInteractionType = 'approval' | 'ask_user' | 'permission_request';
+export type RuntimeInteractionType = 'approval' | 'ask_user' | 'permission_request'; // canonical fixed-zone kinds
 
 export interface RuntimePendingInteraction {
   interactionId: string;
   type: RuntimeInteractionType;
   sessionId: string;
+  /** Present on modern server projections; optional for legacy helper inputs. */
+  version?: number;
+  order?: number;
   runId?: string;
   toolCallId?: string;
   invocationId?: string;
@@ -37,10 +40,14 @@ export function buildPendingInteractionsFromEvents(
   const pending: RuntimePendingInteraction[] = [];
   for (const request of requested.values()) {
     if (resolved.has(request.interactionId)) continue;
+    const timestampOrder = Date.parse(request.timestamp);
+    const order = Number.isSafeInteger(timestampOrder) ? timestampOrder : 0;
     pending.push({
       interactionId: request.interactionId,
       type: request.interactionType,
       sessionId,
+      version: order,
+      order,
       ...(request.runId ? { runId: request.runId } : {}),
       ...(request.toolCallId ? { toolCallId: request.toolCallId } : {}),
       ...(request.invocationId ? { invocationId: request.invocationId } : {}),

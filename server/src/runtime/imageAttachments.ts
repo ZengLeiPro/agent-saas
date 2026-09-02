@@ -15,7 +15,7 @@ import {
   writeTrustedFile,
   writeTrustedFileIfAbsent,
 } from '../security/trustedFile.js';
-import type { InboundMessage, UploadedFileInfo } from '../types/index.js';
+import type { InboundAttachmentInfo, InboundMessage, UploadedFileInfo } from '../types/index.js';
 import type {
   ModelAttachmentRef,
   ModelImageMimeType,
@@ -49,7 +49,7 @@ export interface ResolveAttachmentOptions {
 }
 
 export async function resolveInboundAttachments(
-  attachments: readonly UploadedFileInfo[] | undefined,
+  attachments: readonly InboundAttachmentInfo[] | undefined,
   options: ResolveAttachmentOptions,
 ): Promise<ModelAttachmentRef[]> {
   if (!attachments?.length) return [];
@@ -378,14 +378,16 @@ interface OpenedInboundSource {
 }
 
 async function openInboundSource(
-  inbound: UploadedFileInfo,
+  inbound: InboundAttachmentInfo,
   options: ResolveAttachmentOptions,
   uploadsRoot: string,
   canonicalWebAttachment: boolean,
 ): Promise<OpenedInboundSource> {
+  const relativePath = 'relativePath' in inbound ? inbound.relativePath : undefined;
   if (options.channel === 'web') {
     if (canonicalWebAttachment) {
-      return openTrustedWorkspaceSource(options.cwd, inbound.relativePath, true);
+      if (!relativePath) throw new Error('ATTACHMENT_FORBIDDEN: 服务端附件状态缺少路径');
+      return openTrustedWorkspaceSource(options.cwd, relativePath, true);
     }
     if (inbound.attachmentId && UUID_PATTERN.test(inbound.attachmentId)) {
       const matches = (await readdir(uploadsRoot))
@@ -401,13 +403,15 @@ async function openInboundSource(
         close: async () => { await file.handle.close(); },
       };
     }
-    return openTrustedWorkspaceSource(options.cwd, inbound.relativePath);
+    if (!relativePath) throw new Error('ATTACHMENT_FORBIDDEN: legacy Web 附件缺少路径');
+    return openTrustedWorkspaceSource(options.cwd, relativePath);
   }
 
-  if (options.channel === 'dingtalk' && inbound.savedPath && isAbsolute(inbound.savedPath)) {
-    const parent = await openTrustedDirectory(dirname(inbound.savedPath));
+  const savedPath = 'savedPath' in inbound ? inbound.savedPath : undefined;
+  if (options.channel === 'dingtalk' && savedPath && isAbsolute(savedPath)) {
+    const parent = await openTrustedDirectory(dirname(savedPath));
     try {
-      const leaf = basename(inbound.savedPath);
+      const leaf = basename(savedPath);
       const file = await openPinnedTrustedFile(parent.fdPath, leaf);
       return {
         relativePath: leaf,
@@ -422,7 +426,8 @@ async function openInboundSource(
       throw error;
     }
   }
-  return openTrustedWorkspaceSource(options.cwd, inbound.relativePath);
+  if (!relativePath) throw new Error('UPLOAD_REJECTED: 附件缺少服务端路径');
+  return openTrustedWorkspaceSource(options.cwd, relativePath);
 }
 
 async function openTrustedWorkspaceSource(

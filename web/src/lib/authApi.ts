@@ -1,8 +1,11 @@
 import type { AuthUser, LoginCredentials, SmsLoginCredentials } from "@/types/auth";
 import { apiUrl } from "@/lib/apiBase";
 
+/** Login is unusable until token and epoch/generation are durably committed. */
 export interface AuthResponse {
   token: string;
+  authEpoch: number;
+  generation: number;
   user: AuthUser;
 }
 

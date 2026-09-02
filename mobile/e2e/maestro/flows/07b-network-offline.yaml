@@ -1,0 +1,11 @@
+appId: ${APP_ID}
+name: 07b provider-controlled physical network offline
+---
+# Runner invokes provider phase network-offline immediately before this segment.
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: "connection-banner"
+    timeout: 10000
+- assertVisible: "网络未连接"
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/07b-network-offline

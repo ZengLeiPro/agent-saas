@@ -124,16 +124,17 @@ describe("buildUrl 覆盖各 tab 分支", () => {
 });
 
 describe("parseUrl 常规路径分支", () => {
-  it("tenant-admin Registry 叶与 bare settings 留在统一设置工作区", () => {
+  it("tenant-admin 旧设置叶与 bare settings canonical 到统一组织 route", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      adminSettings: { target: "tenant", section: "billing" },
-      tenantAdminSection: null,
-      canonicalPath: null,
+      adminSettings: null,
+      governanceRoute: { routeId: "organization.governance.usage" },
+      canonicalPath: "/tenant-admin/governance/usage?usageSection=billing",
     });
     expect(parseUrl("/tenant-admin/settings")).toMatchObject({
-      adminSettings: { target: "tenant", section: "users" },
-      canonicalPath: null,
+      adminSettings: null,
+      governanceRoute: { routeId: "organization.members.list" },
+      canonicalPath: "/tenant-admin/members/list",
     });
   });
 

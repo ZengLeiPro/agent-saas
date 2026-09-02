@@ -137,6 +137,7 @@ export default function BrowseFolderScreen() {
     );
   }, [refresh]);
 
+  // Workspace HTML never enters an in-app renderer; Artifact delivery is the supported path.
   const handleEntryPress = useCallback(async (entry: FileEntry) => {
     if (entry.isDirectory) {
       router.push({ pathname: '/(tabs)/files/browse', params: { path: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
@@ -144,9 +145,12 @@ export default function BrowseFolderScreen() {
     }
 
     const previewType = getPreviewFileType(entry.name);
-    if (previewType) {
-      const screen = previewType === 'html' ? '/chat/html-preview' : '/chat/markdown-preview';
-      router.push({ pathname: screen, params: { filePath: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
+    if (previewType === 'html') {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
+    if (previewType === 'md') {
+      router.push({ pathname: '/chat/markdown-preview', params: { filePath: entry.path, ...(ownerFilter ? { owner: ownerFilter } : {}), ...(isRootMode ? { root: 'true' } : {}) } });
       return;
     }
 

@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
     currentFiles: [] as UploadedFile[],
+    reportUploadError: vi.fn(),
     replaceFiles: vi.fn((files: UploadedFile[]) => {
       harness.currentFiles = files;
     }),
@@ -74,6 +75,7 @@ vi.mock("@/hooks/useFileUpload", () => ({
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: harness.reportUploadError,
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -128,10 +130,19 @@ function interactionPayloads(): Array<Record<string, unknown>> {
     .filter((payload) => payload.action === "respond");
 }
 
+async function settleInitialResume(sessionId: string): Promise<void> {
+  await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (payload as { action?: string }).action === "resume")).toBe(true));
+  const resume = harness.sends.mock.calls
+    .map(([payload]) => payload as { action?: string; requestId?: string })
+    .find((payload) => payload.action === "resume");
+  act(() => emit({ type: "active_stream", sessionId, active: true, status: "running", streamId: `stream-${sessionId}`, runId: `run-${sessionId}`, requestId: resume?.requestId }));
+}
+
 beforeEach(() => {
   harness.messageHandlers.clear();
   harness.stateHandlers.clear();
   harness.sends.mockClear();
+  harness.reportUploadError.mockClear();
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
   harness.session.sessionId = null;
@@ -150,8 +161,11 @@ afterEach(() => {
 });
 
 describe("useChatAppState ACK lifecycle", () => {
-  it("releases a sent interaction after transport drop, ignores its old ACK, and accepts the retry ACK", async () => {
+  it("reuses the request id after transport drop and accepts either lost ACK replay", async () => {
+    harness.session.sessionId = "session-remote";
+    harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-remote");
     const answers = { "Choose a path": "Continue" };
 
     act(() => emit({
@@ -165,6 +179,7 @@ describe("useChatAppState ACK lifecycle", () => {
           options: [{ label: "Continue", description: "Proceed" }],
           multiSelect: false,
         }],
+        version: 1,
       }],
     }));
 
@@ -180,26 +195,27 @@ describe("useChatAppState ACK lifecycle", () => {
     await act(async () => { await result.current.handleAskUserResponse("ask-retry", answers); });
     expect(interactionPayloads()).toHaveLength(2);
     const latestAttemptId = interactionPayloads()[1].clientAttemptId as string;
-    expect(latestAttemptId).not.toBe(oldAttemptId);
+    expect(latestAttemptId).toBe(oldAttemptId);
 
-    act(() => emit({ type: "respond_ok", interactionId: "ask-retry", clientAttemptId: oldAttemptId }));
-    // The old ACK leaves the latest in-flight generation owned, so duplicate
-    // submit is still idempotently blocked.
-    await act(async () => { await result.current.handleAskUserResponse("ask-retry", answers); });
+    // Both attempts carry the same idempotency key, so an ACK from either wire
+    // attempt authoritatively resolves the one logical submission.
+    act(() => emit({ type: "respond_ok", interactionId: "ask-retry", clientAttemptId: oldAttemptId, response: { answers } }));
+    await waitFor(() => expect(result.current.messages.find((message) => "interactionId" in message && message.interactionId === "ask-retry"))
+      .toMatchObject({ type: "ask_user", status: "answered", answers }));
     expect(interactionPayloads()).toHaveLength(2);
-
-    act(() => emit({ type: "respond_ok", interactionId: "ask-retry", clientAttemptId: latestAttemptId }));
-    await act(async () => { await result.current.handleAskUserResponse("ask-retry", answers); });
-    expect(interactionPayloads()).toHaveLength(3);
   });
 
   it("applies the canonical first response when its ACK was lost and the retry changed the answer", async () => {
+    harness.session.sessionId = "session-remote";
+    harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await settleInitialResume("session-remote");
     act(() => emit({
       type: "pending_interactions",
       interactions: [{
         type: "permission_request",
         interactionId: "approval-canonical",
+        version: 1,
         toolName: "Shell",
         toolInput: { command: "echo test" },
       }],

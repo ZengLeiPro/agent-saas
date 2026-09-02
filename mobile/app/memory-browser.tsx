@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { getPreviewFileType } from '@agent/shared';
 import type { FileEntry } from '@agent/shared';
@@ -39,9 +39,12 @@ export default function MemoryBrowserScreen() {
     }
 
     const previewType = getPreviewFileType(entry.name);
-    if (previewType) {
-      const screen = previewType === 'html' ? '/chat/html-preview' : '/chat/markdown-preview';
-      router.push({ pathname: screen, params: { filePath: entry.path, ...(owner ? { owner } : {}) } });
+    if (previewType === 'html') {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
+    if (previewType === 'md') {
+      router.push({ pathname: '/chat/markdown-preview', params: { filePath: entry.path, ...(owner ? { owner } : {}) } });
       return;
     }
 

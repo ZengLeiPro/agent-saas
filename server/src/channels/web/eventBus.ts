@@ -77,6 +77,7 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   interaction_resolved: 'user',
   // 普通 queue / 显式 steer 的统一队列区多端同步。
   message_queued: 'user',
+  queue_item_updated: 'user',
   steering_queued: 'user',
   steering_cancelled: 'user',
 
@@ -89,6 +90,7 @@ export const EVENT_SCOPE: Record<string, EventScope> = {
   pending_interactions: 'reply',
   buffer_overflow: 'reply',
   sync_ok: 'reply',
+  queue_snapshot: 'reply',
   sync_overflow: 'reply',
   pong: 'reply',
   // 消息可靠性协议（2026-04-18 新增）

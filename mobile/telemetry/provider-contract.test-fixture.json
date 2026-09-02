@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "exampleOnly": true,
+  "provider": {
+    "kind": "fixture-adapter",
+    "owner": "fixture-mobile-oncall",
+    "dashboardId": "fixture-dashboard-id",
+    "alertPolicyId": "fixture-alert-policy-id",
+    "environment": "test",
+    "release": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "dsnSecretReference": "secret://fixture/mobile-telemetry-dsn"
+  },
+  "retentionDays": 7,
+  "samplingRate": 1,
+  "rateLimitPerMinute": 10,
+  "sloPolicy": {
+    "status": "approved_test_fixture",
+    "metrics": {
+      "crashFreeSessions": { "operator": ">=", "threshold": 0.99 },
+      "anrRate": { "operator": "<=", "threshold": 0.01 },
+      "startupP50Ms": { "operator": "<=", "threshold": 1000 },
+      "startupP95Ms": { "operator": "<=", "threshold": 2500 },
+      "chatAckP95Ms": { "operator": "<=", "threshold": 1000 },
+      "firstTokenP95Ms": { "operator": "<=", "threshold": 5000 },
+      "wsRecoveryP95Ms": { "operator": "<=", "threshold": 3000 },
+      "syncOverflowRate": { "operator": "<=", "threshold": 0.01 }
+    }
+  }
+}

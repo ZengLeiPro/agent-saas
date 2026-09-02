@@ -44,7 +44,14 @@ export function AgentActivityShell({
   const styles = makeStyles(colors);
   return (
     <View style={styles.card}>
-      <Pressable style={styles.header} onPress={onToggle}>
+      <Pressable
+        style={styles.header}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={`${title}，${LABELS[state]}`}
+        accessibilityState={{ expanded }}
+        accessibilityLiveRegion={state === 'failed' || state === 'warning' ? 'assertive' : 'polite'}
+      >
         <StateIcon state={state} colors={colors} />
         <View style={styles.titleArea}>
           <View style={styles.titleRow}>

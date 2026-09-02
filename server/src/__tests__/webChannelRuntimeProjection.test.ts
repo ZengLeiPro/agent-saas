@@ -196,6 +196,27 @@ describe('WebChannel runtime event projection', () => {
       });
     });
 
+    it('active interaction uses its pending indicator and does not count as AI unread', async () => {
+      const unreadCalls: Array<{ sessionId: string; eventKey: string }> = [];
+      const rig = makeRig({
+        userStore: { findById: () => ({ id: USER.sub, tenantId: USER.tenantId }) } as any,
+        sessionReadStateStore: {
+          markUnread: async (input: { sessionId: string; eventKey: string }) => {
+            unreadCalls.push({ sessionId: input.sessionId, eventKey: input.eventKey });
+            return true;
+          },
+        } as any,
+      });
+      const sessionId = randomUUID();
+      rig.channel.publishRuntimeOutboundEvent({
+        sessionId, runId: 'waiting-run', userId: USER.sub,
+        event: { type: 'ask_user', interactionId: 'interaction-1', questions: [] },
+      });
+      await flushMicrotasks();
+      expect(unreadCalls).toEqual([]);
+      expect(rig.sessionEvents.at(-1)).toMatchObject({ type: 'ask_user', interactionId: 'interaction-1' });
+    });
+
     it('任务看板会话完成后不写未读状态，普通会话仍保留完成提醒', async () => {
       const unreadCalls: Array<{ sessionId: string; eventKey: string }> = [];
       const rig = makeRig({

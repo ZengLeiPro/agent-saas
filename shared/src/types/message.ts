@@ -2,6 +2,7 @@ import type { ToolPresentation } from '../lib/toolPresentation';
 import type { ToolResultMetadata } from '../lib/toolResultMetadata';
 import type { PresentationBlock } from '../lib/presentation/types';
 import type { BusinessStepEventItem } from '../lib/extractTodos';
+import type { CanonicalError } from '../lib/canonicalError';
 import type { RuntimeFailureKind, RuntimeRecoveryAction } from './runtimeFailure';
 
 /**
@@ -38,9 +39,30 @@ export type AskUserAnswerValue = string | string[];
 export type AskUserAnswers = Record<string, AskUserAnswerValue>;
 export type SubagentStatus = "running" | "completed" | "failed" | "cancelled" | "timeout";
 
+export interface MessageAttachmentDisplay {
+  name: string;
+  /** M20-01 authority for new submissions/replay. */
+  attachmentId?: string;
+  mimeType?: string;
+  size?: number;
+  isImage?: boolean;
+  /** @deprecated Legacy transcript display only; never use as submission authority. */
+  relativePath?: string;
+}
+
+export interface MessageModerationMetadata {
+  eventId: string;
+  moderationId: string;
+  runId: string;
+  messageId: string;
+  blockId?: string;
+  outcome: 'allowed' | 'blocked' | 'flagged';
+  reasonCode?: string;
+}
+
 export type MessageItem =
-  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string }
-  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[] }
+  | { id: string; type: "user"; content: string; displayContent?: string; attachments?: MessageAttachmentDisplay[]; isVoiceTranscript?: boolean; status?: 'pending' | 'queued' | 'sent' | 'failed'; timestamp?: number; clientMsgId?: string; failedReason?: string; moderation?: MessageModerationMetadata }
+  | { id: string; type: "text"; content: string; streaming?: boolean; draftId?: string; runId?: string; finalOutput?: boolean; voiceMarkers?: Array<{ text: string; voice?: string; speed?: number }>; owner?: string; timestamp?: number; guardrailEventId?: string; display?: PresentationBlock[]; moderation?: MessageModerationMetadata }
   | { id: string; type: "system_event"; title: string; content: string; timestamp?: number }
   | { id: string; type: "thinking"; content: string; streaming?: boolean; draftId?: string; startedAt?: number; durationMs?: number }
   | {
@@ -88,6 +110,8 @@ export type MessageItem =
       id: string;
       type: "permission_request";
       interactionId: string;
+      interactionVersion?: number;
+      interactionOrder?: number;
       toolName: string;
       toolInput: string;
       status: "pending" | "allowed" | "denied";
@@ -96,6 +120,8 @@ export type MessageItem =
       id: string;
       type: "ask_user";
       interactionId: string;
+      interactionVersion?: number;
+      interactionOrder?: number;
       questions: Array<{
         question: string;
         header: string;
@@ -152,10 +178,15 @@ export type MessageItem =
   | {
       id: string;
       type: "user-voice";
+      /** Same-origin authenticated attachment route; never file://. */
       audioUrl: string;
+      attachmentId?: string;
+      voiceIntentId?: string;
+      uploadRequestId?: string;
+      transcriptionId?: string;
       duration: number;
       transcribedText?: string;
-      status: 'uploading' | 'transcribing' | 'sent' | 'failed';
+      status: 'uploading' | 'transcribing' | 'ready' | 'sent' | 'failed';
       timestamp?: number;
       clientMsgId?: string;
       failedReason?: string;
@@ -174,6 +205,8 @@ export type MessageItem =
       severity?: 'error' | 'cancelled' | 'billing';
       failureKind?: RuntimeFailureKind;
       recoveryAction?: RuntimeRecoveryAction;
+      /** M40-05 sanitized cross-transport authority; safe to persist and restore. */
+      canonicalFailure?: CanonicalError;
       /** 终态所属 runtime run；用于 live 与 durable refresh 稳定去重。 */
       runId?: string;
       timestamp?: number;
@@ -183,6 +216,7 @@ export type MessageItem =
 export type MessageItemInput = MessageItem extends infer T ? T extends MessageItem ? Omit<T, 'id'> & { id?: string } : never : never;
 
 export interface UploadedFile {
+  /** Server-issued upload authority. Canonical chat V1 requires this to be present and valid. */
   attachmentId?: string;
   originalName: string;
   savedPath?: string;

@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: logout helper
+---
+# NativeTabs exposes the stable localized accessibility label on iOS.
+- tapOn: "设置"
+- extendedWaitUntil:
+    visible:
+      id: "settings-screen"
+    timeout: 5000
+- tapOn:
+    id: "logout-button"
+- assertVisible: "确定要退出吗？"
+- tapOn: "退出"
+- extendedWaitUntil:
+    visible:
+      id: "login-screen"
+    timeout: 10000

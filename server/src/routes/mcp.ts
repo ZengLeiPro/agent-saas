@@ -11,7 +11,7 @@ import { resolveUserCwd } from '../workspace/resolver.js';
 import { auditLog } from '../data/login-logs/index.js';
 import type { SecretVault } from '../security/secretVault.js';
 import type { McpOAuthService } from '../mcp/oauthService.js';
-import type { NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
+import { nativeOAuthStartBindingSchema, type NativeOAuthHandoffStore } from '../connectors/nativeOAuthHandoff.js';
 
 export interface McpRouterDeps {
   store: McpConfigStore;
@@ -131,8 +131,10 @@ function validateConnectorSecretValue(server: ManagedMcpServer, key: string, val
 }
 const oauthStartSchema = z.object({
   returnTo: z.string().min(1).max(4000).optional(),
-  nativeDeviceId: z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/).optional(),
-}).strict();
+}).merge(nativeOAuthStartBindingSchema.partial()).superRefine((value, ctx) => {
+  const nativeKeys = Object.keys(value).filter(key => key.startsWith('native'));
+  if (nativeKeys.length !== 0 && nativeKeys.length !== 7) ctx.addIssue({ code: 'custom', message: 'Native OAuth binding must be complete' });
+});
 const diagnoseSchema = z.object({ force: z.boolean().optional() }).strict();
 
 export function createMcpRouter(deps: McpRouterDeps): Router {
@@ -306,11 +308,20 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     if (!oauthService) return res.status(503).send('MCP OAuth is not configured');
     const state = stringQuery(req.query.state, 1000);
     if (!state) return res.status(400).send('Missing OAuth state');
+    const callbackCode = stringQuery(req.query.code, 20000);
+    const callbackError = stringQuery(req.query.error, 500);
+    if (callbackCode && callbackError) {
+      const nativeRedirect = await deps.nativeOAuthHandoff?.complete(state, {
+        status: 'failed', errorCode: 'OAUTH_CALLBACK_AMBIGUOUS',
+      }).catch(() => null);
+      if (nativeRedirect) return res.redirect(302, nativeRedirect);
+      return res.status(400).send('OAuth callback code/error parameters are mutually exclusive');
+    }
     try {
       const result = await oauthService.finish({
         state,
-        code: stringQuery(req.query.code, 20000),
-        error: stringQuery(req.query.error, 500),
+        code: callbackCode,
+        error: callbackError,
         errorDescription: stringQuery(req.query.error_description, 1000),
       });
       if (!result) return res.status(400).send('OAuth state is invalid or has already been used');
@@ -459,6 +470,9 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
           await deps.nativeOAuthHandoff!.begin({
             providerState: state, userId: req.user!.sub, tenantId,
             connectorId: server.id, deviceId: parsed.data.nativeDeviceId,
+            clientState: parsed.data.nativeState!, pkceChallenge: parsed.data.nativePkceChallenge!,
+            provider: parsed.data.nativeProvider!, redirectUri: parsed.data.nativeRedirectUri!,
+            identityGeneration: parsed.data.nativeIdentityGeneration!, createdAt: parsed.data.nativeCreatedAt!,
           });
         } catch (error) {
           await oauthService.disconnect(username, tenantId, server.id);
@@ -602,14 +616,27 @@ export function createMcpRouter(deps: McpRouterDeps): Router {
     res.json({ ok: true });
   });
 
-  // 列出 admin 视野内可写/可读的 server：平台 admin 看全部；组织 admin 仅本组织 + 全局。
-  // 全局 server 对组织 admin 只读（参考意义），写权限由 PUT/DELETE 业务层兜底。
+  // 不带 tenantId 时保留平台级 Catalog 语义；组织控制台必须显式带目标 tenantId，
+  // 服务端只返回该组织可见的 own + global，避免仅靠前端过滤泄漏或误编辑其他组织。
   router.get('/admin/servers', requireAdmin, (req, res) => {
     const tenantId = currentTenantId(req);
     if (!tenantId) return res.status(401).json({ error: 'Authentication required' });
-    const servers = isPlatformAdmin(req.user)
-      ? store.listCatalogServers()
-      : store.listServersVisibleToTenant(tenantId);
+    const requestedTenant = req.query.tenantId;
+    if (requestedTenant !== undefined && typeof requestedTenant !== 'string') {
+      return res.status(400).json({ error: 'Invalid tenantId' });
+    }
+    if (requestedTenant) {
+      const parsedTenant = tenantIdSchema.safeParse(requestedTenant);
+      if (!parsedTenant.success) return res.status(400).json({ error: 'Invalid tenantId' });
+      if (!isPlatformAdmin(req.user) && parsedTenant.data !== tenantId) {
+        return res.status(403).json({ error: '跨组织访问被拒绝' });
+      }
+    }
+    const servers = requestedTenant
+      ? store.listServersVisibleToTenant(requestedTenant)
+      : isPlatformAdmin(req.user)
+        ? store.listCatalogServers()
+        : store.listServersVisibleToTenant(tenantId);
     res.json({ configVersion: store.getConfigVersion(), servers });
   });
 

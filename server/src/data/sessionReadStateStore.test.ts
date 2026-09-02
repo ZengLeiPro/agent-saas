@@ -26,6 +26,7 @@ describe('FileSessionReadStateStore', () => {
 
     expect(await store.markUnread({ ...identity, eventKey: 'done:run-1' })).toBe(true);
     expect(await store.markUnread({ ...identity, eventKey: 'done:run-1' })).toBe(false);
+    expect(await store.getState(identity)).toEqual({ attentionVersion: 1, readVersion: 0 });
     expect(await store.listUnreadSessionIds({
       tenantId: identity.tenantId,
       userId: identity.userId,
@@ -34,6 +35,7 @@ describe('FileSessionReadStateStore', () => {
 
     expect(await store.markRead(identity)).toBe(true);
     expect(await store.markRead(identity)).toBe(false);
+    expect(await store.getState(identity)).toEqual({ attentionVersion: 1, readVersion: 1 });
     expect(await store.listUnreadSessionIds({
       tenantId: identity.tenantId,
       userId: identity.userId,

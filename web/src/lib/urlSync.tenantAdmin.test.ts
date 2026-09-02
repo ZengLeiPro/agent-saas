@@ -126,12 +126,13 @@ describe("parseUrl 的 tenantAdminSection", () => {
     });
   });
 
-  it("Registry 组织管理设置刷新时保留统一设置工作区", () => {
+  it("旧组织设置 URL canonical 到唯一 Governance route", () => {
     expect(parseUrl("/tenant-admin/settings/billing")).toMatchObject({
       tab: "tenant-admin",
-      tenantAdminSection: null,
-      adminSettings: { target: "tenant", section: "billing" },
-      canonicalPath: null,
+      tenantAdminSection: "usage",
+      adminSettings: null,
+      governanceRoute: { routeId: "organization.governance.usage" },
+      canonicalPath: "/tenant-admin/governance/usage?usageSection=billing",
     });
   });
 

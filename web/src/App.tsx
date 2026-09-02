@@ -15,7 +15,14 @@ import { SubagentTranscriptProvider, type SubagentTranscriptTarget } from "@/con
 import { useOrgAgents } from "@/hooks/useOrgAgents";
 import { DeleteSessionDialog } from "@/components/chat/DeleteSessionDialog";
 import { OrgAgentPickerDialog } from "@/components/OrgAgentPickerDialog";
-import { resolveNewSessionTarget } from "@/lib/orgAgentSessionRouting";
+import { AgentSwitchConfirmationDialog } from "@/components/AgentSwitchConfirmationDialog";
+import {
+  evaluateAgentTargetTransition,
+  resolveNewSessionAgentTarget,
+  type AgentTarget,
+  type AgentTargetTransitionImpact,
+  type AgentTargetUnavailableReason,
+} from "@agent/shared";
 
 import { DesktopLayout } from "@/layouts/DesktopLayout";
 import { MobileLayout } from "@/layouts/MobileLayout";
@@ -49,12 +56,15 @@ function toSidebarSessions(
     orgAgentId: s.orgAgentId,
     orgAgentName: s.orgAgentName,
     orgAgentAvailable: s.orgAgentAvailable,
+    agentTarget: s.agentTarget,
+    agentTargetSnapshot: s.agentTargetSnapshot,
+    agentTargetUnavailableReason: s.agentTargetUnavailableReason,
   }));
 }
 
 function App() {
   const { isAdmin, isPlatformAdmin, user: authUser } = useAuth();
-  const isOnline = useOnlineStatus();
+  const isOnline = useOnlineStatus(); // lifecycle-sensitive media remains fail-closed
   const ttsPlayer = useTtsPlayer();
   const isMobile = useIsMobile();
 
@@ -90,8 +100,10 @@ function App() {
     previewFilePath, previewFileOwner, previewMode, openFilePreview, dockFilePreview, expandFilePreview, closeFilePreview,
     fileBrowserOpen, toggleFileBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession, pendingOrgAgentId,
+    startAgentTargetSession, pendingAgentTarget,
   } = useChatAppState({ onVoiceEvent: handleVoiceEvent });
+
+  useEffect(() => ttsPlayer.stop, [sessionId, ttsPlayer.stop]);
 
   const [subagentTranscript, setSubagentTranscript] = useState<SubagentTranscriptTarget | null>(null);
   const [previewArtifact, setPreviewArtifact] = useState<ArtifactPreviewTarget | null>(null);
@@ -129,63 +141,158 @@ function App() {
     closeTranscript: closeSubagentTranscript,
   }), [closeSubagentTranscript, openSubagentTranscript, subagentTranscript]);
 
-  // 专职 Agent（2026-07 唯恩批次）：当前会话绑定态 = 列表项 orgAgentId 或挂起态
-  const { agents: myOrgAgents, loading: orgAgentsLoading } = useOrgAgents();
-  const personalAgentEnabled = isAdmin || authUser?.tenantFeatures?.personalAgentEnabled !== false;
+  // M20-06 selectors consume only the versioned tenant-scoped target catalog (never a legacy array).
+  const { agents: myOrgAgents, catalog: agentTargetCatalog, compatibilityReason, loading: orgAgentsLoading } = useOrgAgents();
+  const personalAgentEnabled = agentTargetCatalog?.personal.availability.status === 'available';
   const currentSessionItem = useMemo(
     () => sessionId ? sessions.find((s) => s.sessionId === sessionId) ?? null : null,
     [sessionId, sessions],
   );
+  const activeAgentTarget = currentSessionItem?.agentTarget ?? pendingAgentTarget;
   const activeOrgAgent = useMemo(() => {
-    const orgAgentId = currentSessionItem?.orgAgentId ?? pendingOrgAgentId ?? null;
-    if (!orgAgentId) return null;
-    const mine = myOrgAgents.find((agent) => agent.id === orgAgentId);
+    if (activeAgentTarget?.kind !== 'org-agent') return null;
+    const mine = myOrgAgents.find((agent) => agent.id === activeAgentTarget.orgAgentId);
     return {
-      id: orgAgentId,
-      name: mine?.name ?? currentSessionItem?.orgAgentName ?? "企业专家",
+      id: activeAgentTarget.orgAgentId,
+      name: currentSessionItem?.agentTargetSnapshot?.name ?? (!currentSessionItem ? mine?.name : undefined) ?? "企业专家",
       ...(mine?.avatar ? { avatar: mine.avatar } : {}),
       description: mine?.description ?? "这位企业专家由组织统一配置。",
       starterPrompts: mine?.starterPrompts ?? [],
       skillCount: mine?.skillCount ?? 0,
     };
-  }, [currentSessionItem, pendingOrgAgentId, myOrgAgents]);
-  const activeOrgAgentReadOnly = currentSessionItem?.orgAgentId !== undefined
-    && currentSessionItem.orgAgentAvailable === false;
-  const orgAgentIdentityLoading = !personalAgentEnabled
-    && !activeOrgAgent
-    && (orgAgentsLoading || isLoadingSessions);
+  }, [activeAgentTarget, currentSessionItem, myOrgAgents]);
+  const unprovenSessionReason: AgentTargetUnavailableReason | undefined = currentSessionItem && !currentSessionItem.agentTarget && !pendingAgentTarget
+    ? { code: 'legacy_binding_unproven', message: '该历史会话缺少可证明的 Agent 目标，仅支持查看', contactAdmin: true }
+    : undefined;
+  const activeAgentTargetUnavailableReason = currentSessionItem?.agentTargetUnavailableReason ?? unprovenSessionReason;
+  const activeAgentTargetLabel = currentSessionItem
+    ? currentSessionItem.agentTargetSnapshot?.name ?? '绑定不可验证'
+    : activeAgentTarget?.kind === 'personal'
+      ? '个人 Agent'
+      : activeAgentTarget?.kind === 'org-agent' ? activeOrgAgent?.name ?? '企业专家' : undefined;
+  const activeOrgAgentReadOnly = Boolean(activeAgentTargetUnavailableReason);
+  const orgAgentIdentityLoading = !agentTargetCatalog && !compatibilityReason && (orgAgentsLoading || isLoadingSessions);
+  const adminOwnerView = Boolean(isAdmin && currentSessionItem?.owner?.username && currentSessionItem.owner.username !== authUser?.username);
   const [orgAgentPickerOpen, setOrgAgentPickerOpen] = useState(false);
   const pendingPickerGroupIdRef = useRef<string | null>(null);
-  const newSession = useCallback((groupId: string | null = null) => {
-    const target = resolveNewSessionTarget({
-      activeOrgAgentId: activeOrgAgent?.id,
-      availableOrgAgentIds: myOrgAgents.map((agent) => agent.id),
-      personalAgentEnabled,
+  const [pendingSwitch, setPendingSwitch] = useState<{
+    target: AgentTarget;
+    groupId: string | null;
+    impacts: AgentTargetTransitionImpact[];
+    cancelling: boolean;
+    cancelError?: string;
+  } | null>(null);
+  const launchTarget = useCallback((target: AgentTarget, groupId: string | null = null) => {
+    if (adminOwnerView) return;
+    const targetOption = target.kind === 'personal'
+      ? agentTargetCatalog?.personal
+      : agentTargetCatalog?.orgAgents.find(option => option.target.kind === 'org-agent' && option.target.orgAgentId === target.orgAgentId);
+    const runtimeStatus = sessionId ? sessionRuntimeStatuses.get(sessionId) : undefined;
+    const currentQueue = sessionId ? queuedInterjections.filter(item => item.sessionId === sessionId && item.status === 'queued') : [];
+    const decision = evaluateAgentTargetTransition({
+      currentSession: sessionId && currentSessionItem?.agentTarget
+        ? { sessionId, target: currentSessionItem.agentTarget, bindingVersion: currentSessionItem.agentTargetBindingVersion ?? 0 }
+        : null,
+      requestedTarget: target,
+      runLiveness: runtimeStatus
+        ? { state: runtimeStatus.startsWith('waiting_') ? 'waiting_interaction' : 'active', recoveryActions: ['cancel'], version: 1 }
+        : { state: 'terminal', recoveryActions: [], version: 1 },
+      queueSnapshot: sessionId && currentQueue.length ? {
+        version: 1,
+        sessionId,
+        generatedAt: new Date().toISOString(),
+        items: currentQueue.map((item, index) => ({
+          sessionId,
+          clientMsgId: item.clientMsgId,
+          runId: item.sourceRunId ?? item.clientMsgId,
+          sourceRunId: item.sourceRunId ?? item.clientMsgId,
+          deliveryMode: item.deliveryMode,
+          status: 'queued' as const,
+          queuePosition: item.queuePosition ?? index + 1,
+        })),
+      } : null,
+      pendingInteraction: currentSessionItem?.activeInteraction ?? null,
+      availability: targetOption?.availability ?? {
+        status: 'unavailable',
+        reason: { code: 'no_available_target', message: '该 Agent 当前不可用', contactAdmin: true },
+      },
+      generation: 1,
+      availabilityVersion: currentSessionItem?.agentTargetSnapshot?.version ?? 1,
     });
-    if (target.kind === "personal") {
-      newPersonalSession(groupId);
-    } else if (target.kind === "org-agent") {
-      startOrgAgentSession(target.agentId, groupId);
-    } else {
+    if (decision.kind === 'blocked') { window.alert(decision.reason.message); return; }
+    if (decision.kind === 'reuse') { selectSession(decision.sessionId); return; }
+    if (decision.kind === 'new-session') { startAgentTargetSession(decision.target, groupId); return; }
+    setPendingSwitch({ target, groupId, impacts: decision.impacts, cancelling: false });
+  }, [adminOwnerView, agentTargetCatalog, currentSessionItem, queuedInterjections, selectSession, sessionId, sessionRuntimeStatuses, startAgentTargetSession]);
+
+  const keepOldOpenAndSwitch = useCallback(() => {
+    if (!pendingSwitch) return;
+    const { target, groupId } = pendingSwitch;
+    setPendingSwitch(null);
+    startAgentTargetSession(target, groupId);
+  }, [pendingSwitch, startAgentTargetSession]);
+
+  const cancelActiveAndSwitch = useCallback(async () => {
+    if (!pendingSwitch || pendingSwitch.cancelling) return;
+    setPendingSwitch(current => current ? { ...current, cancelling: true, cancelError: undefined } : current);
+    if (runningSessionIds.has(sessionId ?? '')) stopGeneration();
+    const queued = queuedInterjections.filter(item => item.sessionId === sessionId && item.status === 'queued');
+    const acknowledgements = await Promise.all(queued.map(item => cancelQueuedInterjection(item.clientMsgId)));
+    if (acknowledgements.some(ok => !ok)) {
+      setPendingSwitch(current => current ? { ...current, cancelling: false, cancelError: '服务端未确认全部排队消息已取消' } : current);
+    }
+  }, [cancelQueuedInterjection, pendingSwitch, queuedInterjections, runningSessionIds, sessionId, stopGeneration]);
+
+  useEffect(() => {
+    if (!pendingSwitch?.cancelling) return;
+    const hasRunning = Boolean(sessionId && runningSessionIds.has(sessionId));
+    const hasQueue = queuedInterjections.some(item => item.sessionId === sessionId && item.status === 'queued');
+    const hasInteraction = Boolean(currentSessionItem?.activeInteraction);
+    if (hasRunning || hasQueue || hasInteraction) return;
+    const { target, groupId } = pendingSwitch;
+    setPendingSwitch(null);
+    startAgentTargetSession(target, groupId);
+  }, [currentSessionItem?.activeInteraction, pendingSwitch, queuedInterjections, runningSessionIds, sessionId, startAgentTargetSession]);
+  const newSession = useCallback((groupId: string | null = null) => {
+    if (!agentTargetCatalog) {
+      window.alert(compatibilityReason?.message ?? 'Agent 目录仍在加载，请稍后重试。');
+      return;
+    }
+    const selection = resolveNewSessionAgentTarget({
+      catalog: agentTargetCatalog,
+      activeTarget: adminOwnerView ? null : activeAgentTarget,
+    });
+    if (selection.kind === 'selected') {
+      // A new-conversation action is intentionally forced to a fresh session.
+      startAgentTargetSession(selection.target, groupId);
+    } else if (selection.kind === 'picker') {
       pendingPickerGroupIdRef.current = groupId;
       setOrgAgentPickerOpen(true);
+    } else {
+      window.alert(selection.reason.message);
     }
-  }, [activeOrgAgent?.id, myOrgAgents, newPersonalSession, personalAgentEnabled, startOrgAgentSession]);
+  }, [activeAgentTarget, adminOwnerView, agentTargetCatalog, compatibilityReason, startAgentTargetSession]);
+
+  const startOrgAgentWithTransition = useCallback((agentId: string, groupId: string | null = null) => {
+    const target = agentTargetCatalog?.selectableTargets.find(candidate => candidate.kind === 'org-agent' && candidate.orgAgentId === agentId);
+    if (target) launchTarget(target, groupId);
+  }, [agentTargetCatalog, launchTarget]);
 
   const handleOrgAgentPickerSelect = useCallback((agentId: string) => {
     setOrgAgentPickerOpen(false);
     const groupId = pendingPickerGroupIdRef.current;
     pendingPickerGroupIdRef.current = null;
-    startOrgAgentSession(agentId, groupId);
-  }, [startOrgAgentSession]);
+    if (!agentTargetCatalog) return;
+    const target = agentTargetCatalog.selectableTargets.find(candidate => candidate.kind === 'org-agent' && candidate.orgAgentId === agentId);
+    if (target) launchTarget(target, groupId);
+  }, [agentTargetCatalog, launchTarget]);
 
-  // 关闭个人 Agent 且只有一位企业专家：空首页直接进入专家草稿，不创建服务端会话。
   useEffect(() => {
-    if (orgAgentsLoading || personalAgentEnabled || myOrgAgents.length !== 1) return;
+    if (orgAgentsLoading || !agentTargetCatalog || personalAgentEnabled || agentTargetCatalog.selectableTargets.length !== 1) return;
     if (activeTab !== "chat" || settingsOpen || adminSettings) return;
-    if (sessionId || pendingOrgAgentId || messages.length > 0) return;
-    startOrgAgentSession(myOrgAgents[0].id);
-  }, [activeTab, adminSettings, messages.length, myOrgAgents, orgAgentsLoading, pendingOrgAgentId, personalAgentEnabled, sessionId, settingsOpen, startOrgAgentSession]);
+    if (sessionId || pendingAgentTarget || messages.length > 0) return;
+    startAgentTargetSession(agentTargetCatalog.selectableTargets[0]!);
+  }, [activeTab, adminSettings, agentTargetCatalog, messages.length, orgAgentsLoading, pendingAgentTarget, personalAgentEnabled, sessionId, settingsOpen, startAgentTargetSession]);
 
   // iOS PWA 生命周期：后台恢复时刷新数据，进入后台时保存状态
   const onResume = useCallback(() => {
@@ -255,7 +362,7 @@ function App() {
     previewArtifact, closeArtifactPreview,
     fileBrowserOpen, toggleFileBrowser: toggleBrowser, closeFileBrowser,
     isTrashPreview, previewTrashSession, trashPreviewSessionId,
-    startOrgAgentSession, activeOrgAgent, activeOrgAgentReadOnly, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
+    startOrgAgentSession: startOrgAgentWithTransition, activeOrgAgent, activeOrgAgentReadOnly, activeAgentTargetUnavailableReason, activeAgentTargetLabel, myOrgAgents, personalAgentEnabled, orgAgentIdentityLoading,
   };
 
   // 反馈 Provider 恒挂载（2026-07 审查 F8：条件包裹会让 Layout 卸载重挂丢 DOM 状态）；
@@ -319,6 +426,18 @@ function App() {
         }}
         isAdmin={isAdmin}
         count={deleteSessionCount}
+      />
+      <AgentSwitchConfirmationDialog
+        open={Boolean(pendingSwitch)}
+        targetName={!pendingSwitch || pendingSwitch.target.kind === 'personal'
+          ? '个人 Agent'
+          : myOrgAgents.find(agent => agent.id === (pendingSwitch.target as Extract<AgentTarget, { kind: 'org-agent' }>).orgAgentId)?.name ?? '企业专家'}
+        impacts={pendingSwitch?.impacts ?? []}
+        cancelling={pendingSwitch?.cancelling ?? false}
+        cancelError={pendingSwitch?.cancelError}
+        onKeepOldOpen={keepOldOpenAndSwitch}
+        onCancelActive={() => { void cancelActiveAndSwitch(); }}
+        onClose={() => setPendingSwitch(null)}
       />
       <OrgAgentPickerDialog
         open={orgAgentPickerOpen}

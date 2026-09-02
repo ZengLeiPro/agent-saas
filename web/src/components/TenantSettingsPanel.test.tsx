@@ -106,6 +106,18 @@ beforeEach(() => {
 });
 
 describe("TenantSettingsPanel model-tools 别名编辑", () => {
+  it("general 只渲染功能、配额和个性化，不加载模型目录", async () => {
+    render(<TenantSettingsPanel tenantId="tenant-a" section="general" />);
+    expect(await screen.findByText("功能与配额")).toBeTruthy();
+    expect(screen.getByText("功能开关")).toBeTruthy();
+    expect(screen.getByText("配额")).toBeTruthy();
+    expect(screen.getByText("个性化")).toBeTruthy();
+    expect(screen.queryByText("模型策略")).toBeNull();
+    expect(screen.queryByText("品牌")).toBeNull();
+    expect(screen.queryByText("安全")).toBeNull();
+    expect(mocks.authFetch).not.toHaveBeenCalledWith("/api/models");
+  });
+
   it("渲染模型别名 / 展示名称编辑区，展示平台原始名与别名输入框", async () => {
     render(<TenantSettingsPanel tenantId="tenant-a" section="model-tools" />);
     expect(await screen.findByText("模型别名 / 展示名称")).toBeTruthy();

@@ -1,0 +1,22 @@
+appId: ${APP_ID}
+name: 03 personal to org Agent switch with running and queued confirmation
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- assertVisible:
+    id: "agent-target-picker"
+- tapOn:
+    id: "agent-target-picker"
+- tapOn:
+    id: "dropdown-action-agent-org-e2e"
+- assertVisible: "当前会话仍有运行中、排队中或待处理交互"
+- tapOn: "保留旧会话运行"
+- extendedWaitUntil:
+    visible:
+      id: "chat-composer-input"
+    timeout: 10000
+- assertVisible: "企业 E2E Agent"
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/03-agent-switch

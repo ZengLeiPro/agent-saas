@@ -2,19 +2,22 @@ import { useState, useEffect, useCallback } from 'react';
 import { authFetch } from '@agent/shared';
 import type { UserInfo, CreateUserInput, UpdateUserInput } from '@agent/shared';
 
-let cachedUsers: UserInfo[] | null = null;
-
-export function useUsers() {
-  const [users, setUsers] = useState<UserInfo[]>(cachedUsers || []);
-  const [loading, setLoading] = useState(!cachedUsers);
+export function useUsers(enabled = true) {
+  const [users, setUsers] = useState<UserInfo[]>([]);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!enabled) {
+      setUsers([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     try {
       const res = await authFetch('/api/auth/users');
       if (!res.ok) throw new Error('获取用户列表失败');
       const data = await res.json() as { users: UserInfo[] };
-      cachedUsers = data.users;
       setUsers(data.users);
       setError(null);
     } catch (err) {
@@ -22,7 +25,7 @@ export function useUsers() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     void refresh();

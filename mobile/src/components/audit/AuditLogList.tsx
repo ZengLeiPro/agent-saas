@@ -13,7 +13,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   StyleSheet,
-  Linking,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FlashList } from "@shopify/flash-list";
@@ -34,7 +33,7 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useRouter } from "expo-router";
-import { wgs84ToGcj02, authFetch, type LoginLogEntry } from "@agent/shared";
+import { authFetch, type LoginLogEntry } from "@agent/shared";
 import { useLoginLogs } from "../../hooks/useLoginLogs";
 import { useUsers } from "../../hooks/useUsers";
 import {
@@ -236,9 +235,9 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
         .catch(() => {
           filtersRestoredRef.current = true;
         });
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []);
 
-    // 包装 setter，同时写入 AsyncStorage
+    // 包装 setter，同时写入 AsyncStorage。
     const setCategory = useCallback((v: string) => {
       setCategoryRaw(v);
       AsyncStorage.setItem("audit_filter_category", v).catch(() => {});
@@ -367,11 +366,6 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
             color: colors.primary,
             fontFamily: "monospace" as const,
           },
-          locationLink: {
-            ...typography.caption,
-            color: colors.primary,
-            textDecorationLine: "none" as const,
-          },
           empty: {
             alignItems: "center",
             paddingTop: 80,
@@ -393,13 +387,6 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
       [colors],
     );
 
-    const openLocationInAmap = useCallback((lng: number, lat: number) => {
-      const gcj = wgs84ToGcj02(lng, lat);
-      void Linking.openURL(
-        `https://uri.amap.com/marker?position=${gcj.lng},${gcj.lat}`,
-      );
-    }, []);
-
     const navigateToSession = useCallback(
       (sessionId: string) => {
         router.push(`/chat/${sessionId}`);
@@ -411,8 +398,6 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
       ({ item }: { item: LoginLogEntry }) => {
         const icon = getEventIcon(item.event, colors);
         const detail = getDetailText(item);
-        const hasLocation = !item.detail && !item.failReason && !!item.location;
-
         // session 事件：从 detail 提取 sessionId，查 sessionsMap 获取标题
         const isSessionEvent =
           item.event.startsWith("session_") && !!item.detail;
@@ -463,20 +448,6 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
                     {sessionLabel}
                   </Text>
                 )}
-                {hasLocation && secondParts.length > 0 ? " · " : ""}
-                {hasLocation && (
-                  <Text
-                    style={styles.locationLink}
-                    onPress={() =>
-                      openLocationInAmap(
-                        item.location!.longitude,
-                        item.location!.latitude,
-                      )
-                    }
-                  >
-                    {`${item.location!.latitude.toFixed(4)}, ${item.location!.longitude.toFixed(4)}`}
-                  </Text>
-                )}
               </Text>
             </View>
           </View>
@@ -486,7 +457,6 @@ export const AuditLogList = forwardRef<AuditLogListRef, AuditLogListProps>(
         showUsername,
         colors,
         styles,
-        openLocationInAmap,
         sessionsMap,
         navigateToSession,
         realNameMap,

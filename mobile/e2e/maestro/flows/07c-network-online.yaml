@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: 07c provider-controlled physical network online recovery
+---
+# Runner invokes provider phase network-online immediately before this segment.
+- launchApp
+- extendedWaitUntil:
+    notVisible:
+      id: "connection-banner"
+    timeout: 15000
+- tapOn:
+    id: "chat-composer-input"
+- inputText: "M60 recovered"
+- tapOn:
+    id: "chat-send-button"
+- extendedWaitUntil:
+    visible: "M60_RECOVERY_ACK"
+    timeout: 15000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/07c-network-online

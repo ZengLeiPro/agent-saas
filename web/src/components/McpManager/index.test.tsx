@@ -1,13 +1,28 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { updateSelections, fetchMyMcp, diagnoseMyMcp, fetchAliyunConnection, fetchXConnection, dwsAuthFetch } = vi.hoisted(() => ({
+const {
+  updateSelections,
+  fetchMyMcp,
+  fetchMcpAdminServers,
+  fetchMcpTemplates,
+  upsertMcpServer,
+  diagnoseMyMcp,
+  fetchAliyunConnection,
+  fetchXConnection,
+  dwsAuthFetch,
+  authState,
+} = vi.hoisted(() => ({
   updateSelections: vi.fn(),
   fetchMyMcp: vi.fn(),
+  fetchMcpAdminServers: vi.fn(),
+  fetchMcpTemplates: vi.fn(),
+  upsertMcpServer: vi.fn(),
   diagnoseMyMcp: vi.fn(),
   fetchAliyunConnection: vi.fn(),
   fetchXConnection: vi.fn(),
   dwsAuthFetch: vi.fn(),
+  authState: { isAdmin: false, isPlatformAdmin: false },
 }));
 
 // 钉钉/飞书内置连接卡片经 @/lib/authFetch 请求各自 API。
@@ -18,14 +33,14 @@ vi.mock("@/lib/authFetch", () => ({
 
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({
-    isAdmin: false,
-    isPlatformAdmin: false,
+    isAdmin: authState.isAdmin,
+    isPlatformAdmin: authState.isPlatformAdmin,
     user: { username: "zenglei", tenantId: "kaiyan" },
   }),
 }));
 
 vi.mock("@/components/TenantManager/hooks", () => ({
-  useTenants: () => ({ tenants: [] }),
+  useTenants: () => ({ tenants: [{ id: "tenant-a", name: "甲组织" }] }),
 }));
 
 vi.mock("@agent/shared", () => ({
@@ -43,19 +58,24 @@ vi.mock("@agent/shared", () => ({
   connectX: vi.fn(),
   disconnectX: vi.fn(),
   setNativeConnectorRuntimeEnabled: vi.fn(),
-  fetchMcpAdminServers: vi.fn(),
-  fetchMcpTemplates: vi.fn(),
+  fetchMcpAdminServers,
+  fetchMcpTemplates,
   fetchMyMcp,
   updateMyMcpSelections: updateSelections,
   startMyMcpOAuth: vi.fn(),
-  upsertMcpServer: vi.fn(),
+  upsertMcpServer,
   upsertMyMcpServer: vi.fn(),
 }));
 
-import { McpManager } from "./index";
+import { McpAdminCatalog, McpManager } from "./index";
 
 describe("McpManager 连接器目录", () => {
   beforeEach(() => {
+    authState.isAdmin = false;
+    authState.isPlatformAdmin = false;
+    fetchMcpAdminServers.mockReset().mockResolvedValue({ configVersion: 1, servers: [] });
+    fetchMcpTemplates.mockReset().mockResolvedValue({ templates: [] });
+    upsertMcpServer.mockReset().mockResolvedValue(undefined);
     dwsAuthFetch.mockReset().mockImplementation(async (url: string) => ({
       ok: true,
       status: 200,
@@ -95,6 +115,37 @@ describe("McpManager 连接器目录", () => {
         { id: "crm", name: "开沿 CRM", description: "组织客户数据", enabledByDefault: true, enabled: true, transport: "http", tenantId: "kaiyan" },
         { id: "mine", name: "我的服务", description: "个人连接器", enabledByDefault: false, enabled: false, transport: "streamable-http", tenantId: "kaiyan", personal: true, config: {} },
       ],
+    });
+  });
+
+  it("组织入口按目标组织读取并锁定新建 Server 的 tenantId", async () => {
+    authState.isAdmin = true;
+    authState.isPlatformAdmin = true;
+    fetchMcpAdminServers.mockResolvedValue({
+      configVersion: 1,
+      servers: [
+        { id: "tenant-a-server", name: "甲组织服务", tenantId: "tenant-a", config: { type: "http", url: "https://a.example.com" } },
+        { id: "global-server", name: "全局服务", tenantId: "*", config: { type: "http", url: "https://g.example.com" } },
+      ],
+    });
+
+    render(<McpAdminCatalog tenantId="tenant-a" />);
+
+    expect(await screen.findByText("tenant-a：MCP Server Catalog")).toBeTruthy();
+    expect(fetchMcpAdminServers).toHaveBeenCalledWith("tenant-a");
+    expect(screen.getByText("组织归属已锁定")).toBeTruthy();
+    expect(screen.queryByText(/跨组织/)).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("server id，如 github"), { target: { value: "new-server" } });
+    fireEvent.change(screen.getByPlaceholderText("显示名称"), { target: { value: "新服务" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存 Server" }));
+
+    await waitFor(() => {
+      expect(upsertMcpServer).toHaveBeenCalledWith(expect.objectContaining({
+        id: "new-server",
+        name: "新服务",
+        tenantId: "tenant-a",
+      }));
     });
   });
 

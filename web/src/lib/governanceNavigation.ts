@@ -109,13 +109,14 @@ const platformWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
 
 const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
   {
-    id: "overview", label: "总览", routes: [
+    id: "overview", label: "组织总览", routes: [
       route("organization", "overview", "overview", "综合分析", ["tenant-admin", "overview"], { navigation: "workspace" }),
     ],
   },
   {
     id: "members", label: "成员与权限", routes: [
       route("organization", "members", "list", "成员", ["tenant-admin", "members", "list"]),
+      route("organization", "members", "accounts", "账号与登录", ["tenant-admin", "members", "accounts"]),
       route("organization", "members", "owners", "组织所有者与管理员", ["tenant-admin", "members", "owners"]),
       route("organization", "members", "policies", "权限策略", ["tenant-admin", "members", "policies"]),
       route("organization", "members", "groups", "部门/群组", ["tenant-admin", "members", "groups"]),
@@ -130,12 +131,14 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
     ],
   },
   {
-    id: "agents", label: "智能体资源", routes: [
+    id: "agents", label: "智能体与资源", routes: [
       route("organization", "agents", "org-agents", "组织智能体", ["tenant-admin", "agents", "org-agents"], { entity: "optional" }),
       route("organization", "agents", "workflows", "工作流", ["tenant-admin", "agents", "workflows"]),
       route("organization", "agents", "dingtalk-accounts", "钉钉账号", ["tenant-admin", "agents", "dingtalk-accounts"]),
       route("organization", "agents", "skills", "技能", ["tenant-admin", "agents", "skills"], { entity: "optional" }),
       route("organization", "agents", "connectors", "连接器与凭据", ["tenant-admin", "agents", "connectors"], { entity: "optional" }),
+      route("organization", "agents", "mcp-catalog", "MCP 服务", ["tenant-admin", "agents", "mcp-catalog"]),
+      route("organization", "agents", "connector-mappings", "连接器映射", ["tenant-admin", "agents", "connector-mappings"]),
       route("organization", "agents", "memory-knowledge", "记忆与知识", ["tenant-admin", "agents", "memory-knowledge"], { entity: "optional" }),
       route("organization", "agents", "files-data", "文件与数据", ["tenant-admin", "agents", "files-data"]),
       route("organization", "agents", "model-tools", "模型与工具策略", ["tenant-admin", "agents", "model-tools"]),
@@ -143,7 +146,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
     ],
   },
   {
-    id: "governance", label: "运行与治理", routes: [
+    id: "governance", label: "用量与治理", routes: [
       route("organization", "governance", "automation", "自动化任务", ["tenant-admin", "governance", "automation"], { entity: "optional" }),
       route("organization", "governance", "usage", "用量、预算与计费", ["tenant-admin", "governance", "usage"]),
       route("organization", "governance", "qa", "会话质检", ["tenant-admin", "governance", "qa"], { entity: "optional" }),
@@ -154,6 +157,7 @@ const organizationWorkspaces: readonly GovernanceWorkspaceDefinition[] = [
     id: "settings", label: "组织设置", routes: [
       route("organization", "settings", "profile", "组织资料", ["tenant-admin", "settings", "profile"]),
       route("organization", "settings", "rules", "智能体规则", ["tenant-admin", "settings", "rules"]),
+      route("organization", "settings", "general", "功能与配额", ["tenant-admin", "settings", "general"]),
       route("organization", "settings", "brand", "品牌", ["tenant-admin", "settings", "brand"]),
       route("organization", "settings", "security", "登录与安全", ["tenant-admin", "settings", "security"]),
     ],
@@ -231,7 +235,7 @@ const TENANT_LEGACY: Readonly<Record<string, string>> = {
   "/tenant-admin/usage": "organization.governance.usage",
   "/tenant-admin/qa": "organization.governance.qa",
   "/tenant-admin/audit": "organization.governance.audit",
-  "/users": "organization.members.list",
+  "/users": "organization.members.accounts",
   "/skills": "organization.agents.skills",
   "/usage": "organization.governance.usage",
 };
@@ -406,7 +410,9 @@ function parseLegacy(pathname: string, parts: readonly string[], params: URLSear
   const tenant = TENANT_LEGACY[pathname];
   if (tenant) return legacyResult(tenant, params);
   if (parts[0] === "tenant-admin" && parts[1] === "settings" && parts.length <= 3) {
-    return legacyResult(TENANT_SETTINGS_LEGACY[parts[2] ?? "users"] ?? "organization.members.list", params);
+    const legacySection = parts[2] ?? "";
+    if (legacySection === "billing" && !params.has("usageSection")) params.set("usageSection", "billing");
+    return legacyResult(TENANT_SETTINGS_LEGACY[legacySection] ?? "organization.members.list", params);
   }
 
   if (parts[0] !== "platform-admin") return null;
@@ -452,14 +458,19 @@ export function filterCustomerOrganizations<T extends { id: string }>(organizati
 }
 
 /** 切组织后保留工作区/叶子，清除实体、tab 与所有页内筛选；详情页退回其父叶子。 */
-export function buildOrganizationSwitchUrl(current: GovernanceRouteState, nextOrgId: string): string {
+export function organizationSwitchRoute(current: GovernanceRouteState, nextOrgId: string): GovernanceRouteState {
   if (current.area !== "organization") throw new Error("Organization switch only accepts organization routes");
   if (!isCustomerOrganizationId(nextOrgId)) throw new Error("pantheon is not a customer organization scope");
   const currentDefinition = routesById.get(current.routeId);
   if (!currentDefinition) throw new Error(`Unknown governance route: ${current.routeId}`);
   const target = currentDefinition.parentId ? routesById.get(currentDefinition.parentId) : currentDefinition;
   if (!target) throw new Error(`Missing parent route for ${current.routeId}`);
-  return buildFromDefinition(target, makeState(target, { orgId: nextOrgId }));
+  return makeState(target, { orgId: nextOrgId });
+}
+
+export function buildOrganizationSwitchUrl(current: GovernanceRouteState, nextOrgId: string): string {
+  const next = organizationSwitchRoute(current, nextOrgId);
+  return buildGovernanceUrl(next);
 }
 
 /** returnTo 只接受无控制字符、无反斜杠、无点段的站内绝对路径。 */

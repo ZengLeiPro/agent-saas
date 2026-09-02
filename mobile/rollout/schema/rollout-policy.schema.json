@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.kaiyan.net/schemas/mobile-m70-03-rollout-policy-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "policyId", "status", "testFixture", "authoritativeOrder", "hardStops", "metrics", "stages"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "policyId": { "const": "M70-03" },
+    "status": { "enum": ["pending_external_approval", "approved", "approved_test_fixture"] },
+    "testFixture": { "type": "boolean" },
+    "authoritativeOrder": { "const": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"] },
+    "hardStops": { "const": ["crossAccountIdentityLeak", "crossTenantIdentityLeak", "wrongAgentExecution", "signatureFailure", "upgradeFailure", "duplicateRunExecution"] },
+    "metrics": { "type": "object", "minProperties": 10, "additionalProperties": { "$ref": "#/$defs/metricDefinition" } },
+    "stages": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/stage" } },
+    "thresholds": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "number" } } }
+  },
+  "$defs": {
+    "metricDefinition": { "type": "object", "additionalProperties": false, "required": ["direction", "unit"], "properties": { "direction": { "enum": [">=", "<="] }, "unit": { "enum": ["ratio", "count"] } } },
+    "pendingOrNumber": { "oneOf": [{ "type": "number" }, { "const": "pending_external_approval" }] },
+    "stage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "cohort", "traffic", "observationWindowSeconds", "snapshotFreshnessSeconds", "minimumSampleSize", "metricChecks", "approvedThresholdSource", "manualApproval", "entryEvidence", "exitReceipt"],
+      "properties": {
+        "id": { "enum": ["employee-dogfood", "closed-test", "small-percentage", "expanded", "full"] },
+        "cohort": { "type": "object", "additionalProperties": false, "required": ["kind", "definition"], "properties": { "kind": { "type": "string" }, "definition": { "type": "string" } } },
+        "traffic": { "type": "object", "additionalProperties": false, "required": ["unit", "min", "max"], "properties": { "unit": { "enum": ["users", "percent"] }, "min": { "$ref": "#/$defs/pendingOrNumber" }, "max": { "$ref": "#/$defs/pendingOrNumber" } } },
+        "observationWindowSeconds": { "$ref": "#/$defs/pendingOrNumber" }, "snapshotFreshnessSeconds": { "$ref": "#/$defs/pendingOrNumber" }, "minimumSampleSize": { "$ref": "#/$defs/pendingOrNumber" },
+        "metricChecks": { "const": "all" }, "approvedThresholdSource": { "type": "string" },
+        "manualApproval": { "type": "object", "additionalProperties": false, "required": ["required", "environment"], "properties": { "required": { "const": true }, "environment": { "type": "string" } } },
+        "entryEvidence": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true }, "exitReceipt": { "const": "signed-stage-receipt-v1" }
+      }
+    }
+  }
+}

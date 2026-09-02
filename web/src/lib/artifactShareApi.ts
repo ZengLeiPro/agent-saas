@@ -1,3 +1,4 @@
+import { parseArtifactReadGrant, type ArtifactReadGrant } from "@agent/shared";
 import { apiUrl, resolveApiAssetUrl } from "@/lib/apiBase";
 import { authFetch } from "@/lib/authFetch";
 
@@ -56,14 +57,27 @@ export function resolveArtifactContentUrl(url: string): string {
   return resolveApiAssetUrl(url) || url;
 }
 
-export async function getArtifactContentUrl(artifactId: string): Promise<string> {
-  // 预览统一走 API proxy：OSS 直链未必开放 CORS，HTML/text fetch 会因此失败；
-  // 下载按钮仍可使用同一个短期签名地址，不暴露长期存储 URL。
-  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url?proxy=true`);
-  if (!res.ok) throw new Error(await readApiError(res, "读取 Artifact 失败"));
-  const data = await res.json() as { url?: string };
-  if (!data.url) throw new Error("读取 Artifact 失败：响应缺少内容地址");
-  return resolveArtifactContentUrl(data.url);
+export class ArtifactReadError extends Error {
+  constructor(readonly status: number, readonly reason?: string, message = '读取 Artifact 失败') {
+    super(message);
+  }
+}
+
+export async function getArtifactReadGrant(artifactId: string, download = false): Promise<ArtifactReadGrant> {
+  const suffix = download ? '?download=true' : '';
+  const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url${suffix}`, {
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null) as { error?: string; code?: string } | null;
+    throw new ArtifactReadError(res.status, body?.code, body?.error || '读取 Artifact 失败');
+  }
+  const grant = parseArtifactReadGrant(await res.json());
+  if (!grant || grant.descriptor.artifactId !== artifactId) {
+    throw new ArtifactReadError(502, 'malformed_descriptor', '读取 Artifact 失败：安全描述符无效');
+  }
+  return { ...grant, readUrl: resolveArtifactContentUrl(grant.readUrl) };
 }
 
 export async function getArtifactShare(artifactId: string): Promise<ArtifactShareSummary> {

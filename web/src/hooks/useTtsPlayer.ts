@@ -8,6 +8,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { authFetch } from '@/lib/authFetch';
 import { TTS_AUTOPLAY_KEY } from '@/lib/constants';
+import { isTtsCapabilityAvailable } from '@agent/shared';
 
 export type TtsState = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -43,7 +44,7 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [autoPlay, setAutoPlay] = useState(() => {
     const stored = localStorage.getItem(TTS_AUTOPLAY_KEY);
-    return stored === null ? true : stored === 'true';
+    return stored === 'true';
   });
   const [available, setAvailable] = useState(false);
 
@@ -52,8 +53,7 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
     authFetch('/api/health')
       .then((res) => res.json())
       .then((data) => {
-        // health 端点返回配置信息，检查 tts 是否存在
-        setAvailable(data?.ttsAvailable === true);
+        setAvailable(isTtsCapabilityAvailable(data));
       })
       .catch(() => setAvailable(false));
   }, []);
@@ -90,7 +90,8 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
 
   const play = useCallback(
     (key: string, text: string, voice?: string, speed?: number) => {
-      // 停止当前播放
+      // Capability is authoritative and fail-closed: unavailable never touches /api/tts.
+      if (!available) return;
       stop();
 
       updateState(key, 'loading');
@@ -152,7 +153,7 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
         }
       })();
     },
-    [stop, updateState, cleanup],
+    [available, stop, updateState, cleanup],
   );
 
   const activeKeyRef = useRef(activeKey);
@@ -183,9 +184,15 @@ export function useTtsPlayer(): UseTtsPlayerReturn {
     [],
   );
 
-  // Cleanup on unmount
+  // Leaving the foreground or unmounting always stops synthesis playback and releases blobs.
   useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState !== 'visible') stop(); };
+    const onPageHide = () => stop();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
       audioRef.current?.pause();
       abortRef.current?.abort();
       if (objectUrlRef.current) {

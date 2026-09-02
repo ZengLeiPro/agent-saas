@@ -1,0 +1,27 @@
+appId: ${APP_ID}
+name: 09 microphone denial leaves text chat available
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- longPressOn:
+    id: "chat-microphone-button"
+- tapOn:
+    text: "Don’t Allow"
+    optional: true
+- tapOn:
+    text: "不允许"
+    optional: true
+- assertVisible:
+    id: "chat-composer-input"
+- tapOn:
+    id: "chat-composer-input"
+- inputText: "M60 microphone denied text fallback"
+- tapOn:
+    id: "chat-send-button"
+- extendedWaitUntil:
+    visible: "M60_TEXT_FALLBACK_ACK"
+    timeout: 15000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/09-permission-deny

@@ -6,7 +6,12 @@ import { GovernanceUnavailable } from "@/components/Governance/GovernanceUnavail
 import { MembershipIdentityActions } from "@/components/OrganizationGovernance/MembershipIdentityActions";
 import { ContextCenterPage, ContextEntitiesPanel, ContextReviewsPanel, ContextTimelinePanel, type ContextCenterApiPort } from "@/components/ContextCenter";
 import { MemoryKnowledgeGovernance } from "@/components/OrganizationGovernance/MemoryKnowledgeGovernance";
+import {
+  OrganizationAssignmentManager,
+  OrganizationCatalogAccessPanel,
+} from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { UserFormDialog, type UserFormData } from "@/components/UserManager/UserFormDialog";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -384,15 +389,15 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
     finally { setBusy(false); }
   };
   const commit = async () => {
-    if (!preview) return;
+    if (!preview) return false;
     const unresolvedAuthority = unresolvedOffboardingAuthority(preview);
     if (unresolvedAuthority) {
       setError(`${unresolvedAuthority}，为避免遗漏撤权，当前不能提交。请刷新权威预览后重试。`);
-      return;
+      return false;
     }
     if (!preview.canCommit || preview.blockers.length > 0) {
       setError("当前预览仍有阻断，不能提交离职撤权。");
-      return;
+      return false;
     }
     setBusy(true); setError("");
     try {
@@ -405,9 +410,24 @@ export function OrganizationOffboardingPage({ tenantId }: { tenantId: string }) 
       });
       setReceipt(started);
       setResult(started);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+      return true;
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return false; }
     finally { setBusy(false); }
   };
+  const discardDraft = () => {
+    setUserId(""); setHandoffTargetUserId(""); setReasonCode("employee_departure"); resetPreview();
+  };
+  useSettingsDirtyEntry({
+    id: `organization-offboarding:${tenantId}`,
+    label: "离职撤权与资源交接",
+    dirty: !result && Boolean(userId || handoffTargetUserId || reasonCode !== "employee_departure" || preview),
+    save: async () => {
+      if (!preview) { setError("请先生成并确认权威影响预览，再保存并离开。"); throw new Error("Offboarding preview required"); }
+      if (!await commit()) throw new Error("Offboarding commit failed");
+    },
+    discard: discardDraft,
+    draft: { userId, handoffTargetUserId, reasonCode },
+  });
   useEffect(() => {
     if (!result || ["succeeded", "partial", "failed"].includes(result.job.status)) return;
     const timer = window.setTimeout(() => {
@@ -453,7 +473,17 @@ function CredentialAction({ tenantId, item, mode, onCommitted }: { tenantId: str
   const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const command = mode === "rotate" ? { expectedVersion: item.version, secret: value, reason } : { expectedVersion: item.version, custodianUserId: value, reason };
   const runPreview = async () => { setBusy(true); setError(null); try { setPreview(mode === "rotate" ? await governanceResourcesApi.previewCredentialRotation<GovernancePreview>(item.credentialId, command, tenantId) : await governanceResourcesApi.previewCredentialTransfer<GovernancePreview>(item.credentialId, command, tenantId)); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
-  const commit = async () => { if (!preview) return; setBusy(true); setError(null); try { const result = mode === "rotate" ? await governanceResourcesApi.rotateCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId) : await governanceResourcesApi.transferCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setValue(""); setReason(""); setPreview(null); onCommitted(); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commit = async () => { if (!preview) return false; setBusy(true); setError(null); try { const result = mode === "rotate" ? await governanceResourcesApi.rotateCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId) : await governanceResourcesApi.transferCredential<GovernanceReceipt>(item.credentialId, { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setValue(""); setReason(""); setPreview(null); onCommitted(); return true; } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return false; } finally { setBusy(false); } };
+  const discardDraft = () => { setValue(""); setReason(""); setPreview(null); setError(null); };
+  useSettingsDirtyEntry({
+    id: `organization-credential-${mode}:${tenantId}:${item.credentialId}`,
+    label: mode === "rotate" ? `轮换凭据 ${item.alias || item.credentialId}` : `交接凭据 ${item.alias || item.credentialId}`,
+    dirty: Boolean(value || reason || preview),
+    save: async () => { if (!preview) { setError("请先生成签名预览，再保存并离开。"); throw new Error("Credential preview required"); } if (!await commit()) throw new Error("Credential commit failed"); },
+    discard: discardDraft,
+    secret: mode === "rotate",
+    draft: mode === "rotate" ? undefined : { value, reason },
+  });
   return <div className="mt-3 space-y-2 rounded-lg border p-3"><div className="text-xs font-medium">{mode === "rotate" ? "轮换密钥" : "交接责任人"}</div><input aria-label={mode === "rotate" ? `${item.credentialId} 新密钥` : `${item.credentialId} 新责任人`} type={mode === "rotate" ? "password" : "text"} autoComplete="new-password" className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder={mode === "rotate" ? "新密钥（提交后永不回显）" : "同组织有效成员 ID"} value={value} onChange={event => { setValue(event.target.value); setPreview(null); }} /><input aria-label={`${item.credentialId} ${mode}原因`} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="变更原因" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy || !value || reason.trim().length < 3} onClick={() => void runPreview()}>预览</Button>{preview ? <Button size="sm" disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="text-xs text-muted-foreground">签名预览有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{error ? <div role="alert" className="text-xs text-destructive">{error}</div> : null}<Receipt receipt={receipt} /></div>;
 }
 
@@ -465,12 +495,25 @@ export function OrganizationCredentialsPage({ tenantId }: { tenantId: string }) 
   const { data, loading, error, retry } = useGovernanceRequest(request, `credentials:${tenantId}`);
   const [connectorId, setConnectorId] = useState(""); const [alias, setAlias] = useState(""); const [purpose, setPurpose] = useState(""); const [secret, setSecret] = useState(""); const [custodianUserId, setCustodianUserId] = useState(""); const [reason, setReason] = useState("");
   const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null); const [formError, setFormError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
-  if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   const createCommand = { kind: "org_shared", connectorId, alias, purpose, secret, custodianUserId: custodianUserId || undefined, reason };
   const previewCreate = async () => { setBusy(true); setFormError(null); try { setPreview(await governanceResourcesApi.previewCredentialCreate<GovernancePreview>(createCommand)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
-  const commitCreate = async () => { if (!preview) return; setBusy(true); setFormError(null); try { const result = await governanceResourcesApi.createCredential<GovernanceReceipt>({ ...createCommand, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }); setReceipt(result); setSecret(""); setPreview(null); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commitCreate = async () => { if (!preview) return false; setBusy(true); setFormError(null); try { const result = await governanceResourcesApi.createCredential<GovernanceReceipt>({ ...createCommand, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }); setReceipt(result); setConnectorId(""); setAlias(""); setPurpose(""); setSecret(""); setCustodianUserId(""); setReason(""); setPreview(null); retry(); return true; } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); return false; } finally { setBusy(false); } };
+  const discardCreate = () => { setConnectorId(""); setAlias(""); setPurpose(""); setSecret(""); setCustodianUserId(""); setReason(""); setPreview(null); setFormError(null); };
+  useSettingsDirtyEntry({
+    id: `organization-credential-create:${tenantId}`,
+    label: "创建组织共享凭据",
+    dirty: Boolean(connectorId || alias || purpose || secret || custodianUserId || reason || preview),
+    save: async () => { if (!preview) { setFormError("请先生成签名预览，再保存并离开。"); throw new Error("Credential preview required"); } if (!await commitCreate()) throw new Error("Credential create failed"); },
+    discard: discardCreate,
+    secret: true,
+  });
+  if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   const health = async (item: CredentialRecord) => { setBusy(true); setFormError(null); try { const result = await governanceResourcesApi.testCredentialHealth<{ healthy: boolean; code: string }>(item.credentialId, item.version, tenantId); setReceipt(result as unknown as GovernanceReceipt); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
   return <div><SectionTitle title="连接器与凭据" description="目录、凭据状态与健康结果来自权威服务；secret 仅写入 Vault，响应与页面永不回显。" />
+    <div className="mb-4 space-y-4">
+      <OrganizationCatalogAccessPanel tenantId={tenantId} resourceType="connector" scopeTitle="连接器可用范围" assignmentTitle="连接器成员与群组授权" />
+      <OrganizationAssignmentManager tenantId={tenantId} resourceType="credential" title="组织凭据成员与群组授权" items={(data?.credentials ?? []).filter(item => item.status === "active" && item.kind === "org_shared").map(item => ({ resourceId: item.credentialId, label: item.alias || item.connectorId || item.credentialId }))} />
+    </div>
     <div className="mb-4 space-y-3 rounded-xl border bg-card p-4"><div className="font-medium">创建组织共享凭据</div><div className="grid gap-2 md:grid-cols-2"><select aria-label="连接器目录" className="rounded-md border bg-background px-3 py-2 text-sm" value={connectorId} onChange={event => { setConnectorId(event.target.value); setPreview(null); }}><option value="">选择已发布连接器</option>{data?.connectors.filter(item => item.status === "published").map(item => <option key={item.connectorId} value={item.connectorId}>{item.name}（{item.authMethods.join("/")}）</option>)}</select><select aria-label="凭据责任人" className="rounded-md border bg-background px-3 py-2 text-sm" value={custodianUserId} onChange={event => { setCustodianUserId(event.target.value); setPreview(null); }}><option value="">当前管理员</option>{data?.memberships.filter(item => item.status === "active").map(item => <option key={item.userId} value={item.userId}>{item.directoryProfile?.displayName ?? item.userId}</option>)}</select><input aria-label="凭据别名" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="别名" value={alias} onChange={event => { setAlias(event.target.value); setPreview(null); }} /><input aria-label="凭据用途" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="用途" value={purpose} onChange={event => { setPurpose(event.target.value); setPreview(null); }} /><input aria-label="凭据密钥" type="password" autoComplete="new-password" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="secret（永不回显）" value={secret} onChange={event => { setSecret(event.target.value); setPreview(null); }} /><input aria-label="创建原因" className="rounded-md border bg-background px-3 py-2 text-sm" placeholder="创建原因" value={reason} onChange={event => { setReason(event.target.value); setPreview(null); }} /></div><div className="flex gap-2"><Button variant="outline" disabled={busy || !connectorId || !purpose || !secret || reason.trim().length < 3} onClick={() => void previewCreate()}>预览创建</Button>{preview ? <Button disabled={busy} onClick={() => void commitCreate()}>确认创建</Button> : null}</div>{preview ? <div className="text-xs text-muted-foreground">目录与责任人基线已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div>
     {!data?.credentials.length ? <Empty text="当前组织没有治理凭据。" /> : <div className="grid gap-3 md:grid-cols-2">{data.credentials.map(item => <div key={item.credentialId} className="rounded-xl border bg-card p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-medium">{item.alias || item.connectorId || "未命名凭据"}</div><div className="mt-1 text-xs text-muted-foreground">{item.purpose}</div></div><Badge variant={item.status === "active" ? "secondary" : "outline"}>{localizedValue(item.status)}</Badge></div><div className="mt-3 text-xs text-muted-foreground">责任人 {item.custodianUserId ?? "—"} · 代次 {item.generation} · v{item.version}{item.lastValidatedAt ? ` · 验证 ${new Date(item.lastValidatedAt).toLocaleString()}` : ""}</div><Button className="mt-3" size="sm" variant="outline" disabled={busy || !data.connectors.find(connector => connector.connectorId === item.connectorId)?.healthTestSupported} onClick={() => void health(item)}>{data.connectors.find(connector => connector.connectorId === item.connectorId)?.healthTestSupported ? "真实健康测试" : "健康测试无安全合同"}</Button><CredentialAction tenantId={tenantId} item={item} mode="rotate" onCommitted={retry} /><CredentialAction tenantId={tenantId} item={item} mode="transfer" onCommitted={retry} /></div>)}</div>}
   </div>;
@@ -559,12 +602,22 @@ export function OrganizationEnvironmentsPage({ tenantId }: { tenantId: string })
   const scope = data?.entitlements.scopes.find(item => item.resourceType === "environment_template");
   const [mode, setMode] = useState<"all" | "selected">("selected"); const [selected, setSelected] = useState<string[]>([]); const [preview, setPreview] = useState<GovernancePreview | null>(null); const [receipt, setReceipt] = useState<GovernanceReceipt | null>(null); const [formError, setFormError] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   useEffect(() => { if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); } }, [scope?.version]);
+  const command = scope ? { expectedVersion: scope.version, mode, resourceIds: mode === "all" ? [] : selected } : null;
+  const runPreview = async () => { if (!command) return; setBusy(true); setFormError(null); try { setPreview(await governanceAccessApi.previewEntitlementScope<GovernancePreview>("environment_template", command, tenantId)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
+  const commit = async () => { if (!preview || !command) return false; setBusy(true); setFormError(null); try { const result = await governanceAccessApi.updateEntitlementScope<GovernanceReceipt>("environment_template", { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setPreview(null); await retry(); return true; } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); return false; } finally { setBusy(false); } };
+  const scopeIds = scope?.mode === "selected" ? [...scope.resourceIds].sort() : [];
+  const draftIds = mode === "selected" ? [...selected].sort() : [];
+  useSettingsDirtyEntry({
+    id: `organization-environment-scope:${tenantId}`,
+    label: "环境可用范围",
+    dirty: Boolean(scope && (mode !== scope.mode || JSON.stringify(draftIds) !== JSON.stringify(scopeIds))),
+    save: async () => { if (!preview) { setFormError("请先生成签名预览，再保存并离开。"); throw new Error("Environment preview required"); } if (!await commit()) throw new Error("Environment commit failed"); },
+    discard: () => { if (scope) { setMode(scope.mode); setSelected(scope.resourceIds); } setPreview(null); setFormError(null); },
+    draft: { mode, resourceIds: draftIds },
+  });
   if (loading) return <Loading />; if (error) return <GovernanceUnavailable error={error} onRetry={retry} />;
   if (!scope) return <Empty text="本组织尚无 environment_template entitlement scope，无法安全编辑。" />;
-  const command = { expectedVersion: scope.version, mode, resourceIds: mode === "all" ? [] : selected };
-  const runPreview = async () => { setBusy(true); setFormError(null); try { setPreview(await governanceAccessApi.previewEntitlementScope<GovernancePreview>("environment_template", command, tenantId)); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
-  const commit = async () => { if (!preview) return; setBusy(true); setFormError(null); try { const result = await governanceAccessApi.updateEntitlementScope<GovernanceReceipt>("environment_template", { ...command, previewId: preview.previewId, baselineDigest: preview.baselineDigest, expiresAt: preview.expiresAt }, tenantId); setReceipt(result); setPreview(null); retry(); } catch (cause) { setFormError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
-  return <div><SectionTitle title="环境可用范围" description="展示已发布环境模板权威目录和本组织 effective scope；组织管理员通过 entitlement preview → commit 修改。" /><div className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between"><span className="font-medium">Effective scope</span><Badge variant="outline">v{scope.version}</Badge></div><select aria-label="环境范围模式" className="mt-3 rounded-md border bg-background px-3 py-2 text-sm" value={mode} onChange={event => { setMode(event.target.value as "all" | "selected"); setPreview(null); }}><option value="all">全部已发布模板</option><option value="selected">仅所选模板</option></select><div className="mt-3 grid gap-2 md:grid-cols-2">{data?.templates.map(item => <label key={item.templateId} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={mode === "all"} checked={mode === "all" || selected.includes(item.templateId)} onChange={event => { setSelected(current => event.target.checked ? [...new Set([...current, item.templateId])] : current.filter(id => id !== item.templateId)); setPreview(null); }} /><span>{item.name}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{item.templateId}</span></label>)}</div>{!data?.templates.length ? <Empty text="权威目录当前没有已发布环境模板。" /> : null}<div className="mt-3 flex gap-2"><Button variant="outline" disabled={busy} onClick={() => void runPreview()}>预览范围变更</Button>{preview ? <Button disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="mt-2 text-xs text-muted-foreground">影响已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="mt-2 text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div></div>;
+  return <div><SectionTitle title="环境可用范围" description="展示已发布环境模板权威目录和本组织 effective scope；组织管理员通过 entitlement preview → commit 修改。" /><div className="space-y-4"><div className="rounded-xl border bg-card p-4"><div className="flex items-center justify-between"><span className="font-medium">Effective scope</span><Badge variant="outline">v{scope.version}</Badge></div><select aria-label="环境范围模式" className="mt-3 rounded-md border bg-background px-3 py-2 text-sm" value={mode} onChange={event => { setMode(event.target.value as "all" | "selected"); setPreview(null); }}><option value="all">全部已发布模板</option><option value="selected">仅所选模板</option></select><div className="mt-3 grid gap-2 md:grid-cols-2">{data?.templates.map(item => <label key={item.templateId} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" disabled={mode === "all"} checked={mode === "all" || selected.includes(item.templateId)} onChange={event => { setSelected(current => event.target.checked ? [...new Set([...current, item.templateId])] : current.filter(id => id !== item.templateId)); setPreview(null); }} /><span>{item.name}</span><span className="ml-auto font-mono text-xs text-muted-foreground">{item.templateId}</span></label>)}</div>{!data?.templates.length ? <Empty text="权威目录当前没有已发布环境模板。" /> : null}<div className="mt-3 flex gap-2"><Button variant="outline" disabled={busy} onClick={() => void runPreview()}>预览范围变更</Button>{preview ? <Button disabled={busy} onClick={() => void commit()}>确认提交</Button> : null}</div>{preview ? <div className="mt-2 text-xs text-muted-foreground">影响已签名，有效至 {new Date(preview.expiresAt).toLocaleString()}</div> : null}{formError ? <div role="alert" className="mt-2 text-sm text-destructive">{formError}</div> : null}<Receipt receipt={receipt} /></div><OrganizationAssignmentManager tenantId={tenantId} resourceType="environment_template" title="环境模板成员与群组授权" items={(data?.templates ?? []).map(item => ({ resourceId: item.templateId, label: item.name }))} /></div></div>;
 }
 
 export function OrganizationGovernancePlaceholder({ title, detail }: { title: string; detail: string }) {

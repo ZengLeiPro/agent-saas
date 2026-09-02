@@ -65,8 +65,8 @@ class CapacityPool {
   }
 }
 
-describe('PgRunStore unified parent/child scheduler capacity', () => {
-  it('skips startup ALTER TABLE statements when every compatibility column exists', async () => {
+describe('PgRunStore unified parent/child scheduler capacity, liveness and schema compatibility', () => {
+  it('skips startup ALTER TABLE statements when all compatibility columns exist', async () => {
     const queries: string[] = [];
     const existingColumns = [
       'enqueue_seq',
@@ -79,6 +79,11 @@ describe('PgRunStore unified parent/child scheduler capacity', () => {
       'sandbox_scope_id',
       'tenant_id',
       'submitter_scope',
+      'last_heartbeat_at',
+      'liveness_state',
+      'liveness_reason_code',
+      'liveness_detected_at',
+      'liveness_version',
     ];
     const client = {
       query: async <T>(sql: string) => {

@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, ArrowUpCircle, Pencil, Trash2, Upload, Zap } from "lucide-react";
 import {
   fetchTenantSkillPool,
-  updateTenantSkillSettings,
   importPoolSkill,
   fetchTenantOwnSkills,
-  updateTenantOwnSkillSettings,
   fetchTenantOwnSkillDocument,
   updateTenantOwnSkillDocument,
   deleteTenantOwnSkill,
@@ -17,7 +15,6 @@ import {
   type PoolSkillInfo,
   type TenantSkillInfo,
   type TenantOwnSkillInfo,
-  type TenantSkillSettings,
 } from "@agent/shared";
 import { governanceResourcesApi } from "@agent/shared/lib/governanceApi";
 import { Button } from "@/components/ui/button";
@@ -34,6 +31,11 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
+import { OrganizationAssignmentManager } from "@/components/OrganizationGovernance/ResourceAccessEditors";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useUsers } from "@/components/UserManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
@@ -47,6 +49,7 @@ export interface SkillManagerProps {
 }
 
 export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: SkillManagerProps = {}) {
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const {
     poolSkills,
     customData,
@@ -71,6 +74,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const [deleting, setDeleting] = useState(false);
   const [editTarget, setEditTarget] = useState<{ kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string } | null>(null);
   const [editContent, setEditContent] = useState("");
+  const [editBaselineContent, setEditBaselineContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [tenantSkills, setTenantSkills] = useState<TenantSkillInfo[]>([]);
@@ -157,23 +161,6 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
   }, [isTenantMode, tenantIdScope, refreshAll, refreshTenantSkills]);
 
-  const handleUpdateOwnSkill = useCallback(async (skill: TenantOwnSkillInfo, patch: Partial<TenantSkillSettings>) => {
-    if (!tenantIdScope) return;
-    try {
-      await updateTenantOwnSkillSettings(tenantIdScope, {
-        [skill.id]: {
-          enabled: skill.enabled,
-          exposure: skill.exposure,
-          usernames: skill.usernames,
-          ...patch,
-        },
-      });
-      await refreshTenantSkills();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "更新失败");
-    }
-  }, [refreshTenantSkills, tenantIdScope]);
-
   const handlePromoteOwnToPool = useCallback(async (skillId: string) => {
     if (!tenantIdScope) return;
     try {
@@ -211,23 +198,6 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
     }
   }, [updatePlatformSettings]);
 
-  const handleUpdateTenantSkill = useCallback(async (skill: TenantSkillInfo, patch: Partial<TenantSkillSettings>) => {
-    if (!tenantIdScope) return;
-    try {
-      await updateTenantSkillSettings(tenantIdScope, {
-        [skill.id]: {
-          enabled: skill.enabled,
-          exposure: skill.exposure,
-          usernames: skill.usernames,
-          ...patch,
-        },
-      });
-      await refreshTenantSkills();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "更新失败");
-    }
-  }, [refreshTenantSkills, tenantIdScope]);
-
   /** user tab 的提升：platform mode → 全局 pool；tenant mode → 组织自有 */
   const handlePromote = useCallback(async (skillId: string, sourceUser: string) => {
     try {
@@ -245,12 +215,14 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const openEditor = useCallback(async (target: { kind: "custom" | "tenantOwn"; username: string; skillId: string; name: string }) => {
     setEditTarget(target);
     setEditContent("");
+    setEditBaselineContent("");
     setEditLoading(true);
     try {
       const doc = target.kind === "tenantOwn" && tenantIdScope
         ? await fetchTenantOwnSkillDocument(tenantIdScope, target.skillId)
         : await fetchCustomSkillDocument(target.username, target.skillId);
       setEditContent(doc.content);
+      setEditBaselineContent(doc.content);
     } catch (err) {
       alert(err instanceof Error ? err.message : "读取失败");
       setEditTarget(null);
@@ -260,7 +232,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   }, [fetchCustomSkillDocument, tenantIdScope]);
 
   const saveEditor = useCallback(async () => {
-    if (!editTarget) return;
+    if (!editTarget) return false;
     setEditSaving(true);
     try {
       if (editTarget.kind === "tenantOwn" && tenantIdScope) {
@@ -270,12 +242,25 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
       }
       setEditTarget(null);
       await refreshAll();
+      return true;
     } catch (err) {
       alert(err instanceof Error ? err.message : "保存失败");
+      return false;
     } finally {
       setEditSaving(false);
     }
   }, [editContent, editTarget, refreshAll, tenantIdScope, updateCustomSkillDocument]);
+
+  useSettingsDirtyEntry({
+    id: `organization-skill-document:${tenantIdScope ?? "platform"}:${editTarget?.kind ?? "none"}:${editTarget?.skillId ?? "none"}`,
+    label: `编辑技能文档 ${editTarget?.name ?? ""}`.trim(),
+    dirty: Boolean(editTarget && !editLoading && editContent !== editBaselineContent),
+    save: async () => { if (!await saveEditor()) throw new Error("Skill document save failed"); },
+    discard: () => { setEditContent(editBaselineContent); setEditTarget(null); },
+    draft: { content: editContent },
+  });
+
+  const requestEditorClose = () => requestDirtyNavigation(() => setEditTarget(null));
 
   const openPoolDelete = useCallback(async (skill: PoolSkillInfo) => {
     if (skill.enabled) {
@@ -328,10 +313,6 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
   const hasCustomSkills = userSkillCount > 0;
   const activePoolSkillsCount = isTenantMode ? tenantSkills.length + ownSkills.length : poolSkills.length;
   const platformTenantOptions = tenants.filter((tenant) => !tenant.disabled);
-  const tenantMemberOptions = tenantIdScope
-    ? users.filter((user) => user.tenantId === tenantIdScope && !user.disabled)
-    : [];
-
   if (loading || tenantLoading || (tenantIdScope && usersLoading) || (!isTenantMode && tenantsLoading)) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -429,6 +410,16 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
               {ownError && (
                 <div className="mb-2 rounded-lg border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">{ownError}</div>
               )}
+              {tenantIdScope && ownSkills.length > 0 ? (
+                <div className="mb-4">
+                  <OrganizationAssignmentManager
+                    tenantId={tenantIdScope}
+                    resourceType="skill"
+                    title="组织自有技能成员与群组授权"
+                    items={ownSkills.map(skill => ({ resourceId: skill.governance?.resourceId ?? skill.id, label: skill.name }))}
+                  />
+                </div>
+              ) : null}
               {ownSkills.length > 0 && (
                 <>
                   <div className="mb-1 mt-1 text-xs font-medium text-muted-foreground">组织自有技能（上传/沉淀）</div>
@@ -482,49 +473,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                           >
                             <Trash2 className="size-3.5" />
                           </Button>
-                          <Select
-                            value={skill.exposure}
-                            onValueChange={(value) => {
-                              void handleUpdateOwnSkill(skill, { exposure: value as TenantOwnSkillInfo["exposure"] });
-                            }}
-                          >
-                            <SelectTrigger className="h-8 w-36" aria-label={`设置技能 ${skill.name} 的成员开放范围`}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">全员开放</SelectItem>
-                              <SelectItem value="allow_users">指定成员开放</SelectItem>
-                              <SelectItem value="deny_users">指定成员禁用</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Switch
-                            checked={skill.enabled}
-                            aria-label={`启用技能 ${skill.name}`}
-                            onCheckedChange={(checked) => { void handleUpdateOwnSkill(skill, { enabled: checked }); }}
-                            className="shrink-0"
-                          />
+                          <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Assignment 权威授权</span>
                         </div>
                       </div>
-                      {skill.exposure !== "all" && (
-                        <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
-                          {tenantMemberOptions.map((user) => (
-                            <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
-                              <Checkbox
-                                checked={skill.usernames.includes(user.username)}
-                                aria-label={`设置技能 ${skill.name} 对成员 ${user.realName || user.username} 的开放范围`}
-                                onCheckedChange={(checked) => {
-                                  const usernames = checked === true
-                                    ? Array.from(new Set([...skill.usernames, user.username]))
-                                    : skill.usernames.filter((username: string) => username !== user.username);
-                                  void handleUpdateOwnSkill(skill, { usernames });
-                                }}
-                              />
-                              <span className="truncate">{user.realName || user.username}</span>
-                              {user.realName && <span className="truncate text-muted-foreground">{user.username}</span>}
-                            </label>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   ))}
                   {tenantSkills.length > 0 && (
@@ -542,49 +493,9 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <Select
-                        value={skill.exposure}
-                        onValueChange={(value) => {
-                          void handleUpdateTenantSkill(skill, { exposure: value as TenantSkillInfo["exposure"] });
-                        }}
-                      >
-                        <SelectTrigger className="h-8 w-36" aria-label={`设置技能 ${skill.name} 的成员开放范围`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">全员开放</SelectItem>
-                          <SelectItem value="allow_users">指定成员开放</SelectItem>
-                          <SelectItem value="deny_users">指定成员禁用</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Switch
-                        checked={skill.enabled}
-                        aria-label={`启用技能 ${skill.name}`}
-                        onCheckedChange={(checked) => { void handleUpdateTenantSkill(skill, { enabled: checked }); }}
-                        className="shrink-0"
-                      />
+                      <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Entitlement + Assignment 权威授权</span>
                     </div>
                   </div>
-                  {skill.exposure !== "all" && (
-                    <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
-                      {tenantMemberOptions.map((user) => (
-                        <label key={user.username} className="flex min-w-0 items-center gap-2 text-xs">
-                          <Checkbox
-                            checked={skill.usernames.includes(user.username)}
-                            aria-label={`设置技能 ${skill.name} 对成员 ${user.realName || user.username} 的开放范围`}
-                            onCheckedChange={(checked) => {
-                              const usernames = checked === true
-                                ? Array.from(new Set([...skill.usernames, user.username]))
-                                : skill.usernames.filter((username) => username !== user.username);
-                              void handleUpdateTenantSkill(skill, { usernames });
-                            }}
-                          />
-                          <span className="truncate">{user.realName || user.username}</span>
-                          {user.realName && <span className="truncate text-muted-foreground">{user.username}</span>}
-                        </label>
-                      ))}
-                    </div>
-                  )}
                 </div>
               ))}
               </>
@@ -735,7 +646,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
         </div>
       </div>
 
-      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) setEditTarget(null); }}>
+      <Dialog open={!!editTarget} onOpenChange={(open) => { if (!open) requestEditorClose(); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{editTarget?.kind === "tenantOwn" ? "编辑组织技能" : "接管编辑技能"}</DialogTitle>
@@ -757,7 +668,7 @@ export function SkillManager({ mode = "platform", tenantIdScope, tenantName }: S
             />
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTarget(null)}>取消</Button>
+            <Button variant="outline" onClick={requestEditorClose}>取消</Button>
             <Button onClick={() => { void saveEditor(); }} disabled={writeDisabled || editLoading || editSaving}>
               {editSaving && <Loader2 className="size-4 animate-spin" />}
               保存

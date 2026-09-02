@@ -20,9 +20,10 @@ export default defineConfig({
     jsx: 'automatic',
   },
   resolve: {
-    alias: {
-      'react-native': resolve(__dirname, './src/test/reactNativeStub.tsx'),
-    },
+    alias: [
+      { find: /^@agent\/shared$/, replacement: resolve(__dirname, '../shared/src/index.ts') },
+      { find: 'react-native', replacement: resolve(__dirname, './src/test/reactNativeStub.tsx') },
+    ],
   },
   test: {
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

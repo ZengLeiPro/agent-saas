@@ -1,0 +1,19 @@
+# M60-02 deterministic native configuration. Flows/segments are isolated; timeouts are bounded and not race workarounds.
+flows:
+  - "flows/*.yaml"
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - 01-fresh-install-login
+    - 02-identity-boundary
+    - 03-agent-switch
+    - 04-text-chat-queue
+    - 05-attachments
+    - 05b-share-intent
+    - 06-interaction-zone
+    - 07-lifecycle-background
+    - 07b-network-offline
+    - 07c-network-online
+    - 08-artifacts
+    - 09-permission-deny
+    - 10-upgrade-pending

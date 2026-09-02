@@ -26,6 +26,9 @@ import {
   type PreparedConfigRecoveryPublication,
 } from '../runtime/configIdentityRuntime.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
+import { configFingerprint } from './configDigest.js';
+
+export { configFingerprint };
 
 const LOCK_STALE_MS = 120_000;
 const BACKUP_LIMIT = 20;
@@ -114,8 +117,28 @@ export class ConfigConflictError extends Error {
   }
 }
 
-export class ConfigRuntimeRecoveryError extends AggregateError {
-  readonly code = 'CONFIG_RUNTIME_RECOVERY_REQUIRED';
+/**
+ * 磁盘配置已回滚（或正在恢复），但运行时回滚/受信恢复发布未能完成。
+ * 调用方必须停止撤销候选 Secret 等清理，避免仍在运行的候选配置失去凭据。
+ */
+export class RuntimeRestoreFailedError extends AggregateError {
+  /** 稳定公开错误码，供能力启用事务识别并保留仍可能在用的 Secret。 */
+  readonly code: string = 'CONFIG_RUNTIME_RESTORE_FAILED';
+
+  constructor(
+    readonly originalError: unknown,
+    readonly restoreError: unknown,
+    errors: unknown[] = [originalError, restoreError].filter((error) => error !== undefined),
+    message = '运行时回滚失败，进程内配置与 config.json 可能不一致',
+  ) {
+    super(errors, message);
+    this.name = 'RuntimeRestoreFailedError';
+  }
+}
+
+export class ConfigRuntimeRecoveryError extends RuntimeRestoreFailedError {
+  /** 旧恢复状态语义保留为附加分类；稳定错误码继承 CONFIG_RUNTIME_RESTORE_FAILED。 */
+  readonly recoveryCode = 'CONFIG_RUNTIME_RECOVERY_REQUIRED';
 
   constructor(
     readonly originalApplyError: unknown,
@@ -125,16 +148,23 @@ export class ConfigRuntimeRecoveryError extends AggregateError {
     readonly diskRestored: boolean,
   ) {
     super(
+      originalApplyError,
+      rollbackError ?? recoveryError,
       [originalApplyError, rollbackError, recoveryError].filter((error) => error !== undefined),
-      '运行时配置尚未恢复，后续配置变更已阻断',
+      '运行时回滚失败或恢复发布未完成，后续配置变更已阻断',
     );
+    this.name = 'ConfigRuntimeRecoveryError';
   }
 }
 
 export interface AdminConfigMutationResult {
   config: AppConfig;
   previousConfig: AppConfig;
+  /** 写入前的原始 config.json 指纹。 */
   beforeFingerprint: string;
+  /** 写入后的原始 config.json 指纹（乐观锁口径）。 */
+  rawConfigFingerprint: string;
+  /** @deprecated 兼容旧调用方；与 rawConfigFingerprint 相同。 */
   effectiveConfigFingerprint: string;
   revision: string;
   appliedAt: string;
@@ -178,22 +208,6 @@ interface RuntimeRecoveryState {
 function auditError(error: unknown): string | undefined {
   if (error === undefined) return undefined;
   return (error instanceof Error ? `${error.name}: ${error.message}` : String(error)).slice(0, 500);
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-export function configFingerprint(value: unknown): string {
-  return `sha256:${createHash('sha256').update(canonicalJson(value)).digest('hex')}`;
 }
 
 function configRevision(text: string): string {
@@ -243,6 +257,11 @@ export class AdminConfigMutationService {
     this.auditPath = join(this.stateDir, 'audit.jsonl');
   }
 
+  /** 当前 config.json 的原始指纹，即 If-Match 使用的乐观锁令牌。 */
+  async readRawFingerprint(): Promise<string> {
+    return configFingerprint(parseRaw(await readFile(this.options.configPath, 'utf8')));
+  }
+
   async mutate(input: MutationInput): Promise<AdminConfigMutationResult> {
     const releaseLock = await this.acquireLock();
     try {
@@ -271,10 +290,19 @@ export class AdminConfigMutationService {
         const latestText = await readFile(this.options.configPath, 'utf8');
         throw new ConfigConflictError(configFingerprint(parseRaw(latestText)), configRevision(latestText));
       }
-      const effectiveConfigFingerprint = configFingerprint(candidateRaw);
+      const rawConfigFingerprint = configFingerprint(candidateRaw);
+      const effectiveConfigFingerprint = rawConfigFingerprint;
       const appliedAt = (this.options.now?.() ?? new Date()).toISOString();
-      if (effectiveConfigFingerprint === beforeFingerprint) {
-        return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, revision: beforeRevision, appliedAt };
+      if (rawConfigFingerprint === beforeFingerprint) {
+        return {
+          config,
+          previousConfig,
+          beforeFingerprint,
+          rawConfigFingerprint,
+          effectiveConfigFingerprint,
+          revision: beforeRevision,
+          appliedAt,
+        };
       }
 
       const backupPath = await this.createBackup(currentText, beforeFingerprint, appliedAt);
@@ -283,7 +311,7 @@ export class AdminConfigMutationService {
         await input.applyRuntime(config, previousConfig);
         const readbackText = await readFile(this.options.configPath, 'utf8');
         const readbackRaw = parseRaw(readbackText);
-        if (readbackText !== candidateText || configFingerprint(readbackRaw) !== effectiveConfigFingerprint) {
+        if (readbackText !== candidateText || configFingerprint(readbackRaw) !== rawConfigFingerprint) {
           throw new ConfigConflictError(configFingerprint(readbackRaw), configRevision(readbackText));
         }
         await this.appendAudit({
@@ -293,7 +321,7 @@ export class AdminConfigMutationService {
           processRole: this.options.processRole,
           changedPaths: [...new Set(input.changedPaths)].sort(),
           beforeFingerprint,
-          afterFingerprint: effectiveConfigFingerprint,
+          afterFingerprint: rawConfigFingerprint,
           result: 'applied',
           backup: basename(backupPath),
         });
@@ -342,7 +370,7 @@ export class AdminConfigMutationService {
               processRole: this.options.processRole,
               changedPaths,
               beforeFingerprint,
-              afterFingerprint: effectiveConfigFingerprint,
+              afterFingerprint: rawConfigFingerprint,
               result: 'rolled_back',
               backup: basename(backupPath),
               error: auditError(error),
@@ -366,7 +394,7 @@ export class AdminConfigMutationService {
           actor: input.actor,
           changedPaths,
           beforeFingerprint,
-          afterFingerprint: effectiveConfigFingerprint,
+          afterFingerprint: rawConfigFingerprint,
           backup: basename(backupPath),
           targetText: currentText,
           targetConfig: previousConfig,
@@ -387,8 +415,12 @@ export class AdminConfigMutationService {
           processRole: this.options.processRole,
           changedPaths,
           beforeFingerprint,
-          afterFingerprint: effectiveConfigFingerprint,
+          afterFingerprint: rawConfigFingerprint,
           result: 'rollback_failed',
+          runtimeRestore: {
+            result: 'runtime_restore_failed',
+            code: 'CONFIG_RUNTIME_RESTORE_FAILED',
+          },
           backup: basename(backupPath),
           error: auditError(error),
           originalApplyError: auditError(error),
@@ -409,7 +441,15 @@ export class AdminConfigMutationService {
       await input.onCommitted?.(candidateText);
       await this.options.onCommitted?.(candidateText);
       await this.pruneBackups();
-      return { config, previousConfig, beforeFingerprint, effectiveConfigFingerprint, revision: configRevision(candidateText), appliedAt };
+      return {
+        config,
+        previousConfig,
+        beforeFingerprint,
+        rawConfigFingerprint,
+        effectiveConfigFingerprint,
+        revision: configRevision(candidateText),
+        appliedAt,
+      };
     } finally {
       await releaseLock();
     }

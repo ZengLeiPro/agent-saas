@@ -1,10 +1,11 @@
 import express from 'express';
 import type { Server } from 'node:http';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => {
   const healthRouter = { id: 'health-router' };
   const appUpdateRouter = { id: 'app-update-router' };
+  const mobileTelemetryRouter = { id: 'mobile-telemetry-router' };
   const uploadRouter = { id: 'upload-router' };
   const fileRouter = { id: 'file-router' };
   const voiceRouter = { id: 'voice-router' };
@@ -43,6 +44,7 @@ const mocked = vi.hoisted(() => {
   return {
     healthRouter,
     appUpdateRouter,
+    mobileTelemetryRouter,
     uploadRouter,
     fileRouter,
     voiceRouter,
@@ -79,6 +81,7 @@ const mocked = vi.hoisted(() => {
     requireAdmin,
     createHealthRouter: vi.fn(() => healthRouter),
     createAppUpdateRouter: vi.fn(() => appUpdateRouter),
+    configuredMobileTelemetryRouter: vi.fn(() => mobileTelemetryRouter),
     createUploadRouter: vi.fn(() => uploadRouter),
     createFileRouter: vi.fn(() => fileRouter),
     createVoiceRouter: vi.fn(() => voiceRouter),
@@ -136,6 +139,10 @@ vi.mock('../routes/index.js', () => ({
   createGroupsRouter: mocked.createGroupsRouter,
   createPreviewRoutes: mocked.createPreviewRoutes,
 }));
+vi.mock('../telemetry/mobileTelemetry.js', () => ({
+  configuredMobileTelemetryRouter: mocked.configuredMobileTelemetryRouter,
+}));
+
 vi.mock('../routes/azeroth-proxy.js', () => ({
   createAzerothProxyRouter: mocked.createAzerothProxyRouter,
 }));
@@ -191,8 +198,11 @@ import { activeOffboardingWriteFence, registerRoutes } from '../app/routes.js';
 
 describe('registerRoutes', () => {
   beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
     mocked.createHealthRouter.mockClear();
     mocked.createAppUpdateRouter.mockClear();
+    mocked.configuredMobileTelemetryRouter.mockClear();
     mocked.createUploadRouter.mockClear();
     mocked.createFileRouter.mockClear();
     mocked.createVoiceRouter.mockClear();
@@ -221,6 +231,8 @@ describe('registerRoutes', () => {
     mocked.createSystemPromptsAdminRouter.mockClear();
     mocked.createPreviewRoutes.mockClear();
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it('registers base routes, config baseline/identity callbacks, and skips cron without a service', async () => {
     const app = {
@@ -283,9 +295,12 @@ describe('registerRoutes', () => {
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
     });
+    // Legacy grants are checked against live principal and auth-epoch state.
     expect(mocked.createPreviewRoutes).toHaveBeenCalledWith({
       agentCwd: '/agent',
       userOverrides: { zengky: { extraDirs: ['/Users/admin/code/kai'] } },
+      userStore: runtime.userStore,
+      authEpochAuthority: runtime.authEpochAuthority,
     });
     expect(mocked.createSearchRouter).toHaveBeenCalledWith({
       agentCwd: '/agent',
@@ -341,7 +356,7 @@ describe('registerRoutes', () => {
     //   + 有效配置状态管理路由 = 49
     // 注：upload / uploads / file 三个 guard 都是 tenantFeatureGuard("filesEnabled") 中间件，
     //     无条件注册（cron/mcp 的 guard 仅在对应 service 存在时注册，本用例未命中）。
-    expect(app.use).toHaveBeenCalledTimes(49);
+    expect(app.use).toHaveBeenCalledTimes(50);
     expect(app.use).toHaveBeenCalledWith('/api/admin/config-status', expect.any(Function));
     expect(app.use).toHaveBeenCalledWith('/api', mocked.contextCitationsRouter);
     expect(app.use).toHaveBeenCalledWith(
@@ -376,6 +391,8 @@ describe('registerRoutes', () => {
     expect(app.use).not.toHaveBeenCalledWith('/api', mocked.requireAdmin, expect.anything());
     expect(app.use).toHaveBeenCalledWith('/api/admin/qa', mocked.requireAdmin, mocked.orgQaRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.healthRouter);
+    expect(mocked.configuredMobileTelemetryRouter).toHaveBeenCalledWith('/agent/data');
+    expect(app.use).toHaveBeenCalledWith('/api', mocked.mobileTelemetryRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.appUpdateRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.uploadRouter);
     expect(app.use).toHaveBeenCalledWith('/api', mocked.fileRouter);

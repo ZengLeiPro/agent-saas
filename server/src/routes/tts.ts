@@ -7,11 +7,13 @@
 
 import { Router } from 'express';
 import { synthesize, estimateDuration } from '../integrations/tts/ttsClient.js';
+import { isTtsCapabilityEnabled } from '../integrations/tts/capability.js';
 import { chatLogger } from '../utils/logger.js';
 
 /** 窄 Config 接口 — 只声明自己需要的最小配置 */
 export interface TtsRouterConfig {
   tts?: {
+    enabled?: boolean;
     doubaoAppId: string;
     doubaoApiKey: string;
     defaultVoice?: string;
@@ -88,11 +90,12 @@ export function createTtsRouter(config: TtsRouterConfig): Router {
   const router = Router();
 
   router.post('/tts', async (req, res) => {
-    if (!config.tts) {
-      res.status(503).json({ error: 'TTS not configured' });
+    if (!isTtsCapabilityEnabled(config.tts)) {
+      res.status(503).json({ error: 'TTS unavailable', code: 'TTS_DISABLED' });
       return;
     }
 
+    const tts = config.tts!; // gated above by explicit enablement and complete credentials
     const { text, voice, speed } = req.body ?? {};
 
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -107,15 +110,17 @@ export function createTtsRouter(config: TtsRouterConfig): Router {
 
     try {
       const audioBuffer = await synthesize(stripMarkdownForTts(text), {
-        appId: config.tts.doubaoAppId,
-        token: config.tts.doubaoApiKey,
-        voice: voice || config.tts.defaultVoice || 'cancan',
-        speed: speed || config.tts.defaultSpeed || 1.2,
+        appId: tts.doubaoAppId,
+        token: tts.doubaoApiKey,
+        voice: voice || tts.defaultVoice || 'cancan',
+        speed: speed || tts.defaultSpeed || 1.2,
       });
 
       const duration = estimateDuration(audioBuffer);
 
       res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, no-store');
       res.setHeader('Content-Length', audioBuffer.length);
       res.setHeader('X-TTS-Duration-Ms', String(duration));
       res.send(audioBuffer);

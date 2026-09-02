@@ -150,7 +150,12 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
   'egress-proxy': { read: ['__system__'], write: ['egress_config_admin'] },
   feishu_connector: { read: ['__system__'] },
   github_app: { read: ['__system__'] },
-  image_gen_tools: { read: ['__system__'], write: ['image_gen_config_admin'] },
+  // 配置 admin 的 revoke 与 write 同权：启用事务失败时必须撤销暂存 Secret。
+  image_gen_tools: {
+    read: ['__system__'],
+    write: ['image_gen_config_admin'],
+    revoke: ['image_gen_config_admin'],
+  },
   models: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
   memory_index: { read: ['__system__'], write: ['models_config_admin'], revoke: ['models_config_admin'] },
   server_remote: { read: ['__system__'] },
@@ -158,10 +163,28 @@ const SYSTEM_INFRASTRUCTURE_PRINCIPALS: Readonly<Record<string, Partial<Record<V
     read: ['auth_sms_service', 'signup_sms_service'],
     write: ['signup_config_admin'],
   },
-  stt: { read: ['__system__'], write: ['__system__', 'audio_transcribe_config_admin'] },
-  'tenant-hand': { read: ['__system__'], write: ['__system__'], rotate: ['__system__'] },
-  tenant_hand: { read: ['__system__'], write: ['__system__'], rotate: ['__system__'] },
-  web_tools: { read: ['__system__'], write: ['tool_controls_admin'] },
+  stt: {
+    read: ['__system__'],
+    write: ['__system__', 'audio_transcribe_config_admin'],
+    revoke: ['audio_transcribe_config_admin'],
+  },
+  'tenant-hand': {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
+  tenant_hand: {
+    read: ['__system__'],
+    write: ['__system__'],
+    rotate: ['__system__'],
+    revoke: ['__system__'],
+  },
+  web_tools: {
+    read: ['__system__'],
+    write: ['tool_controls_admin'],
+    revoke: ['tool_controls_admin'],
+  },
 };
 
 function assertSystemInfrastructurePrincipal(

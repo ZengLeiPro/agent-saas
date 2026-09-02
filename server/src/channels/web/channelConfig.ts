@@ -19,6 +19,8 @@ import type { EventStore } from '../../runtime/types.js';
 import type { UserOverrides } from '../../security/extraDirs.js';
 import type { OutboundEvent } from '../../types/index.js';
 import type { UploadManager } from '../../uploads/manager.js';
+import type { VoiceTranscriptionService } from '../../services/voiceTranscriptionService.js';
+import type { AuthEpochAuthority } from '../../auth/authEpochAuthority.js';
 
 export type ModelResolver = (ref: string, tenantId?: string) => ResolvedModel | null;
 
@@ -26,6 +28,8 @@ export interface WebChannelRuntimeConfig {
   /** 运行期可变配置均优先通过 getter 读取。 */
   /** 是否启用 WebSocket 身份认证；直连测试缺省为 false。 */
   authEnabled?: boolean;
+  /** M30-01 durable authority shared by HTTP tokens and WS. */
+  authEpochAuthority?: AuthEpochAuthority;
   /** 主 + fallback 链；主返回空或异常时按顺序回落，全部失败再 return null。 */
   titleGeneratorConfigs?: TitleGeneratorConfig[];
   titleModelAdapterFactory?: TitleModelAdapterFactory;
@@ -33,9 +37,9 @@ export interface WebChannelRuntimeConfig {
   refreshSharedConfig?: (force?: boolean) => boolean | Promise<boolean>;
   /** 平台系统提示语热更新 getter；每次标题生成现取。 */
   getTitleSystemPrompt?: () => string;
+  /** @deprecated compatibility only; M50-04 uses voiceTranscriptionService. */
   sttConfig?: SttConfig;
-  /** 语音识别在强制刷新完成后读取最新配置；未提供时兼容启动快照。 */
-  getSttConfig?: () => SttConfig | undefined;
+  voiceTranscriptionService?: VoiceTranscriptionService;
   userOverrides?: UserOverrides;
   /** Token 用量统计 store（可选，注入失败时静默跳过统计） */
   tokenUsageStore?: TokenUsageStore;

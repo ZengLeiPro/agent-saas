@@ -145,6 +145,24 @@ class FileCacheService {
     }
   }
 
+  /** Authenticated attachmentId route; never accepts a client path or external URL. */
+  async getOrDownloadAttachment(attachmentId: string, originalName: string): Promise<string> {
+    if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) throw new Error('attachmentId is invalid');
+    this.ensureCacheDir();
+    const platform = getPlatform();
+    const baseUrl = platform.platformConfig.getBaseUrl();
+    const url = `${baseUrl}/api/attachments/${encodeURIComponent(attachmentId)}/content`;
+    platform.platformConfig.assertTrustedUrl?.(url, 'http');
+    const token = await platform.secureStorage.getItem(TOKEN_KEY);
+    const extension = originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')).replace(/[^.A-Za-z0-9]/g, '') : '';
+    const destination = new File(Paths.cache, `${CACHE_DIR}/attachment-${djb2Hash(attachmentId)}${extension}`);
+    const downloaded = await File.downloadFileAsync(url, destination, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      idempotent: true,
+    });
+    return downloaded.uri;
+  }
+
   /**
    * Clear all cached files and reset index.
    */
@@ -169,7 +187,7 @@ class FileCacheService {
     } catch { /* silent */ }
   }
 
-  // --- Private methods ---
+  // --- Private methods (trusted service transport) ---
 
   private ensureCacheDir(): void {
     try {
@@ -191,11 +209,14 @@ class FileCacheService {
     this.ensureCacheDir();
 
     const platform = getPlatform();
-    const token = await platform.secureStorage.getItem(TOKEN_KEY);
     const baseUrl = platform.platformConfig.getBaseUrl();
     const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
     const rootParam = root ? '&root=true' : '';
     const url = `${baseUrl}/api/file/download?path=${encodeURIComponent(serverPath)}${ownerParam}${rootParam}`;
+    // Native downloads bypass authFetch, so enforce the identical origin policy
+    // before reading the Bearer token or handing the request to Expo FileSystem.
+    platform.platformConfig.assertTrustedUrl?.(url, 'http');
+    const token = await platform.secureStorage.getItem(TOKEN_KEY);
 
     const localFileName = makeLocalFileName(serverPath, owner, root);
     const destFile = new File(Paths.cache, `${CACHE_DIR}/${localFileName}`);

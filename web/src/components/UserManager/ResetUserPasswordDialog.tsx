@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -30,6 +34,7 @@ export function ResetUserPasswordDialog({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
 
   useEffect(() => {
     if (open) {
@@ -40,14 +45,14 @@ export function ResetUserPasswordDialog({
   }, [open]);
 
   const handleConfirm = async () => {
-    if (!user) return;
+    if (!user) return false;
     if (password.length < 6) {
       setError("密码至少 6 位");
-      return;
+      return false;
     }
     if (password !== confirmPassword) {
       setError("两次输入的密码不一致");
-      return;
+      return false;
     }
 
     setError("");
@@ -55,15 +60,28 @@ export function ResetUserPasswordDialog({
     try {
       await onConfirm(user.id, password);
       onOpenChange(false);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "重置失败");
+      return false;
     } finally {
       setLoading(false);
     }
   };
 
+  useSettingsDirtyEntry({
+    id: `user-password-reset:${user?.id ?? "none"}`,
+    label: `重置 ${user?.realName || user?.username || "成员"} 的密码`,
+    dirty: open && Boolean(password || confirmPassword),
+    save: async () => { if (!await handleConfirm()) throw new Error("Password reset failed"); },
+    discard: () => { setPassword(""); setConfirmPassword(""); setError(""); },
+    secret: true,
+  });
+
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>重置密码</DialogTitle>
@@ -109,7 +127,7 @@ export function ResetUserPasswordDialog({
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={requestClose}
               disabled={loading}
             >
               取消

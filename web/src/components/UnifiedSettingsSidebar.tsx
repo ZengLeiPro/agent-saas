@@ -1,15 +1,30 @@
 import { useMemo, type MouseEventHandler, type ReactNode } from "react";
-import { ArrowRight, CircleAlert, ChevronLeft, Loader2, Settings2 } from "lucide-react";
+import { CircleAlert, CircleGauge, ChevronLeft, Loader2, Settings2, type LucideIcon } from "lucide-react";
 
 import { PanelToggleIcon } from "@/components/icons/PanelToggleIcon";
 import { SETTINGS_SECTIONS } from "@/components/SettingsCenter/settingsConfig";
-import { PLATFORM_SETTINGS_SECTIONS, TENANT_SETTINGS_SECTIONS } from "@/components/SettingsCenter/unifiedSettingsConfig";
+import { PLATFORM_SETTINGS_SECTIONS } from "@/components/SettingsCenter/unifiedSettingsConfig";
 import { NAV_ITEM_SELECTED, NAV_ITEM_UNSELECTED } from "@/components/DesktopSessionSidebarControls";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EntityIcons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { AdminSettingsTarget } from "@/lib/urlSync";
 import type { ManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { ORGANIZATION_SETTINGS_WORKSPACES } from "@/components/OrganizationManagement/organizationManagementRegistry";
+
+const ORGANIZATION_WORKSPACE_ICONS: Record<string, LucideIcon> = {
+  overview: CircleGauge,
+  members: EntityIcons.members,
+  agents: EntityIcons.expert,
+  governance: EntityIcons.billing,
+  settings: Settings2,
+};
+
+const ORGANIZATION_SETTINGS_ITEMS = ORGANIZATION_SETTINGS_WORKSPACES.map((workspace) => ({
+  id: workspace.id,
+  label: workspace.label,
+  icon: ORGANIZATION_WORKSPACE_ICONS[workspace.iconKey],
+}));
 
 export interface UnifiedSettingsSidebarProps {
   width: number;
@@ -20,7 +35,6 @@ export interface UnifiedSettingsSidebarProps {
   target: "personal" | AdminSettingsTarget;
   activeSection: string;
   onNavigate?: (target: "personal" | AdminSettingsTarget, section: string) => void;
-  onOpenOrganizationGovernance?: () => void;
   onClose?: () => void;
   onCollapse?: () => void;
   onResizeMouseDown: MouseEventHandler<HTMLDivElement>;
@@ -30,7 +44,7 @@ export interface UnifiedSettingsSidebarProps {
 
 export function UnifiedSettingsSidebar({
   width, hidden, className, access, personalAgentEnabled,
-  target, activeSection, onNavigate, onOpenOrganizationGovernance, onClose, onCollapse,
+  target, activeSection, onNavigate, onClose, onCollapse,
   onResizeMouseDown, onResizeDoubleClick, footer,
 }: UnifiedSettingsSidebarProps) {
   const groups = useMemo(() => [
@@ -41,7 +55,7 @@ export function UnifiedSettingsSidebar({
         .filter((item) => personalAgentEnabled || item.id !== "my-agent")
         .map((item) => ({ id: item.id, label: item.label, icon: item.icon })),
     },
-    ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: TENANT_SETTINGS_SECTIONS }] : []),
+    ...((access.status === "ready" || access.status === "refreshing") && access.tenantEntryAllowed ? [{ id: "tenant" as const, label: "组织管理", items: ORGANIZATION_SETTINGS_ITEMS }] : []),
     ...((access.status === "ready" || access.status === "refreshing") && access.platformEntryAllowed ? [{ id: "platform" as const, label: "平台管理", items: PLATFORM_SETTINGS_SECTIONS }] : []),
   ], [access.platformEntryAllowed, access.status, access.tenantEntryAllowed, personalAgentEnabled]);
 
@@ -97,15 +111,6 @@ export function UnifiedSettingsSidebar({
                     </button>
                   );
                 })}
-                {group.id === "tenant" && onOpenOrganizationGovernance && (
-                  <div className="mt-1 border-t pt-1">
-                    <button type="button" className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-medium transition-colors", NAV_ITEM_UNSELECTED)} onClick={onOpenOrganizationGovernance}>
-                      <EntityIcons.admin className="size-4 shrink-0" />
-                      <span className="truncate">进入组织治理</span>
-                      <ArrowRight className="ml-auto size-4 shrink-0" />
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           ))}

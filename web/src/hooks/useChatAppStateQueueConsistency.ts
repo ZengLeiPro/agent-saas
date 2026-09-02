@@ -29,9 +29,8 @@ type QueueCallbacks = Pick<WsProcessingContext,
 export interface QueueConsistencyCallbackArgs {
   ackTimersRef: MutableRef<Map<string, ReturnType<typeof setTimeout>>>;
   activeRunsBySession: MutableRef<Map<string, SessionRuntime>>;
-  confirmProvisionalSession: (clientMsgId: string, sessionId: string) => void;
+  confirmAuthoritativeSession: (clientMsgId: string, sessionId: string) => void;
   consumedInterjectionsRef: MutableRef<InterjectionConsumptionRegistry>;
-  failProvisionalBatch: (rootClientMsgId: string, reason: string) => void;
   immediateSessionIdRef: MutableRef<string | null>;
   markBubbleFailed: (clientMsgId: string | undefined, fallbackIndex: number, reason: string) => void;
   msgRef: MutableRef<WsProcessingContext['msg'] & {
@@ -74,8 +73,8 @@ function removeOptimisticBubbleForQueue(
 
 export function createQueueConsistencyCallbacks(args: QueueConsistencyCallbackArgs): QueueCallbacks {
   const {
-    ackTimersRef, activeRunsBySession, confirmProvisionalSession, consumedInterjectionsRef,
-    failProvisionalBatch, immediateSessionIdRef, markBubbleFailed, msgRef, mutateQueuedInterjections,
+    ackTimersRef, activeRunsBySession, confirmAuthoritativeSession, consumedInterjectionsRef,
+    immediateSessionIdRef, markBubbleFailed, msgRef, mutateQueuedInterjections,
     newSessionClientMsgIdsRef, outboxRef, pendingNewSessionClientMsgIdRef, queuedInterjectionsRef,
     sessionIdRef, sessionRef, setLoading, submissionBelongsToCurrentSession, wsAttachedRef,
     wsBlockRef, wsUserMsgIndexRef,
@@ -88,7 +87,7 @@ onChatAck: (clientMsgId, ackEvent) => {
   const ackedOutboxEntry = outboxRef.current.find((entry) => entry.clientMsgId === clientMsgId);
   outboxRef.current = outboxRef.current.filter((entry) => entry.clientMsgId !== clientMsgId);
   if (ackEvent?.type === 'chat_ack') {
-    if (ackEvent.sessionId) confirmProvisionalSession(clientMsgId, ackEvent.sessionId);
+    if (ackEvent.sessionId) confirmAuthoritativeSession(clientMsgId, ackEvent.sessionId);
     const currentSessionId = immediateSessionIdRef.current ?? sessionIdRef.current;
     const belongsToCurrentSession = ackEvent.sessionId
       ? ackEvent.sessionId === currentSessionId
@@ -102,7 +101,7 @@ onChatAck: (clientMsgId, ackEvent) => {
         status: 'queued' as const,
         sourceRunId: ackEvent.runId ?? entry.sourceRunId,
         deliveryMode: ackEvent.deliveryMode ?? entry.deliveryMode,
-        ...(ackEvent.queuePosition ? { queuePosition: ackEvent.queuePosition } : {}),
+        ...(ackEvent.queuePosition !== undefined ? { queuePosition: ackEvent.queuePosition } : {}),
         reason: undefined,
       } : entry));
     } else if (
@@ -200,7 +199,7 @@ onSteeringAckQueued: (clientMsgId, sourceRunId, targetRunId, queuedDeliveryMode,
         ...entry,
         status: 'queued' as const,
         deliveryMode: queuedDeliveryMode === 'steer' ? 'steer' as const : entry.deliveryMode,
-        ...(queuePosition ? { queuePosition } : {}),
+        ...(queuePosition !== undefined ? { queuePosition } : {}),
         ...(sourceRunId ? { sourceRunId } : {}),
         ...(targetRunId ? { targetRunId } : {}),
       }
@@ -224,7 +223,7 @@ onMessageQueued: (event) => {
         sourceRunId: event.runId,
         deliveryMode: event.deliveryMode,
         ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
-        ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+        ...(event.queuePosition !== undefined ? { queuePosition: event.queuePosition } : {}),
       } : entry);
     }
     return [...prev, {
@@ -233,7 +232,7 @@ onMessageQueued: (event) => {
       sourceRunId: event.runId,
       ...(event.targetRunId ? { targetRunId: event.targetRunId } : {}),
       deliveryMode: event.deliveryMode,
-      ...(event.queuePosition ? { queuePosition: event.queuePosition } : {}),
+      ...(event.queuePosition !== undefined ? { queuePosition: event.queuePosition } : {}),
       content: event.content,
       ...(event.attachments?.length ? { attachments: event.attachments } : {}),
       status: 'queued' as const,
@@ -322,7 +321,6 @@ onChatRejected: (clientMsgId, reasonCode, reason) => {
   if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
   outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
   if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
-    failProvisionalBatch(clientMsgId, '会话建立被拒绝，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
   }
   newSessionClientMsgIdsRef.current.delete(clientMsgId);
@@ -363,7 +361,6 @@ onChatDone: (clientMsgId) => {
   if (t) { clearTimeout(t); ackTimersRef.current.delete(clientMsgId); }
   outboxRef.current = outboxRef.current.filter(e => e.clientMsgId !== clientMsgId);
   if (pendingNewSessionClientMsgIdRef.current === clientMsgId) {
-    failProvisionalBatch(clientMsgId, '会话未完成建立，请重新发送');
     pendingNewSessionClientMsgIdRef.current = null;
   }
   newSessionClientMsgIdsRef.current.delete(clientMsgId);
@@ -375,7 +372,7 @@ export type SendChatViaWs = (
   inputText: string,
   attachments: import("@/components/types").UploadedFile[],
   showBubble: boolean,
-  voiceFile?: { savedPath: string; relativePath: string; duration: number },
+  voice?: never,
   existingClientMsgId?: string,
   autoApproveRunShellForMessage?: boolean,
   preserveActiveStream?: boolean,

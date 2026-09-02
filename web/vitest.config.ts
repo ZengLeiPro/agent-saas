@@ -8,6 +8,11 @@ const hoistedReactJsxDevRuntime = fileURLToPath(new URL("../node_modules/react/j
 const hoistedReactDom = fileURLToPath(new URL("../node_modules/react-dom", import.meta.url));
 const hoistedReactDomClient = fileURLToPath(new URL("../node_modules/react-dom/client.js", import.meta.url));
 
+const coverageReporters =
+  process.env.COVERAGE_REPORT_MODE === "ci"
+    ? ["text", "lcovonly", "json-summary"]
+    : ["text", "lcov", "json-summary", "html"];
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -35,7 +40,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       // lcov 供 diff coverage 脚本使用；json-summary 供 CI 汇总；text/html 便于本地看
-      reporter: ["text", "lcov", "json-summary", "html"],
+      reporter: coverageReporters,
       reportsDirectory: "./coverage",
       include: ["src/**/*.{ts,tsx}"],
       exclude: [

@@ -3,7 +3,7 @@ import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TITLE_SYSTEM_PROMPT } from '../agent/titleGenerator.js';
 import { parseAppConfig } from '../app/config.js';
@@ -94,7 +94,13 @@ function revision(text: string): string {
 
 // PUT 必须先验证完整候选，再允许 config.json 与运行态一起前进。
 describe('models admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     while (servers.length > 0) servers.pop()?.close();
   });
 

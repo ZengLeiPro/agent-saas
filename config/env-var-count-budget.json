@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "reason": "TASK-318: 为每个 Runtime 实例配置私有 ConfigIdentity 快照路径，供发布 Evidence 严格读取且不暴露于匿名 readiness",
-  "updatedAt": "2026-08-30",
+  "reason": "TASK-318 为每个 Runtime 实例配置私有 ConfigIdentity 快照路径并保护匿名 readiness；TASK-331 增加移动端 V1 fail-closed 发布 SHA、原生 OAuth、生产 telemetry 配置及 Web DEV 构建标志",
+  "updatedAt": "2026-09-01",
   "domains": {
     "server": {
-      "budget": 50,
+      "budget": 63,
       "names": [
         "ACS_ALERT_INBOUND_TOKEN",
         "AGENT_AZEROTH_LEAD_SECRET",
@@ -48,6 +48,19 @@
         "KY_AGENT_WORKSPACE_CHOWN",
         "KY_AGENT_WORKSPACE_DEEP_REPAIR",
         "MCP_OAUTH_CALLBACK_URL",
+        "MOBILE_RELEASE_COMMIT",
+        "MOBILE_TELEMETRY_ALERT_POLICY_ID",
+        "MOBILE_TELEMETRY_DASHBOARD_ID",
+        "MOBILE_TELEMETRY_DSN_SECRET_REFERENCE",
+        "MOBILE_TELEMETRY_INTAKE_SIGNING_KEY",
+        "MOBILE_TELEMETRY_OWNER",
+        "MOBILE_TELEMETRY_PROVIDER_KIND",
+        "MOBILE_TELEMETRY_PSEUDONYM_KEY",
+        "MOBILE_TELEMETRY_RATE_LIMIT_PER_MINUTE",
+        "MOBILE_TELEMETRY_RETENTION_DAYS",
+        "MOBILE_TELEMETRY_SAMPLE_RATE",
+        "NATIVE_OAUTH_ALLOW_CUSTOM_SCHEME",
+        "NATIVE_OAUTH_CALLBACK_URL",
         "NODE_ENV",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
@@ -134,9 +147,10 @@
       ]
     },
     "web build-time": {
-      "budget": 3,
+      "budget": 4,
       "names": [
         "BUNDLE_API_ORIGIN",
+        "DEV",
         "VITE_API_BASE",
         "VITE_WEB_ORIGIN"
       ]

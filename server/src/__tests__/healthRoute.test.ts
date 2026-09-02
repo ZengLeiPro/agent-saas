@@ -32,6 +32,7 @@ const WORKER_CONFIG_IDENTITY = {
 
 async function startHealthServer(
   options: Parameters<typeof createHealthRouter>[1] = {},
+  config: any = APP_CONFIG,
   requestUser?: unknown,
 ) {
   const originalNodeEnv = process.env.NODE_ENV;
@@ -44,7 +45,7 @@ async function startHealthServer(
     });
   }
   try {
-    app.use('/api', createHealthRouter(APP_CONFIG, options));
+    app.use('/api', createHealthRouter(config, options));
   } finally {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
@@ -67,6 +68,23 @@ describe('health router', () => {
   afterEach(async () => {
     await Promise.all(servers.splice(0).map((server) => server.close()));
     for (const dir of cleanupDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reports the same fail-closed TTS capability used by server and clients', async () => {
+    const requestUser = { sub: 'user-1', username: 'alice', role: 'user', tenantId: 'tenant-a' };
+    const disabled = await startHealthServer(
+      {},
+      { ...APP_CONFIG, tts: { enabled: false, doubaoAppId: 'app', doubaoApiKey: 'key' } },
+      requestUser,
+    );
+    const enabled = await startHealthServer(
+      {},
+      { ...APP_CONFIG, tts: { enabled: true, doubaoAppId: 'app', doubaoApiKey: 'key' } },
+      requestUser,
+    );
+    servers.push(disabled, enabled);
+    expect(await (await disabled.request('/api/health')).json()).toMatchObject({ ttsAvailable: false });
+    expect(await (await enabled.request('/api/health')).json()).toMatchObject({ ttsAvailable: true });
   });
 
   it('keeps /healthz as a lightweight text probe', async () => {
@@ -528,6 +546,7 @@ describe('health router', () => {
             credentialVersionDigest: 'must-not-leak-credential-version',
           }) as any,
       },
+      APP_CONFIG,
       user,
     );
     servers.push(server);

@@ -1,11 +1,7 @@
 {
   "expo": {
-    "name": "Agent SaaS",
-    "slug": "ky-agent",
-    "version": "1.9.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "agent-saas",
     "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -17,54 +13,64 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.agentsaas.mobile",
-      "buildNumber": "85",
-      "appleTeamId": "T4D4M5B485",
-      "entitlements": {
-        "keychain-access-groups": [
-          "$(AppIdentifierPrefix)group.com.agentsaas.mobile.share"
-        ],
-        "com.apple.developer.associated-domains": [
-          "applinks:kaiyan.net"
-        ]
-      },
       "infoPlist": {
         "CFBundleDevelopmentRegion": "zh_CN",
         "CFBundleLocalizations": [
           "zh_CN",
           "zh"
         ],
-        "NSMicrophoneUsageDescription": "用于发送语音消息",
-        "NSCameraUsageDescription": "用于拍照上传",
-        "NSPhotoLibraryUsageDescription": "用于从系统图库选择图片或视频作为附件、头像",
-        "NSLocationWhenInUseUsageDescription": "用于操作日志中的位置记录",
+        "NSMicrophoneUsageDescription": "用于录制并发送语音消息",
+        "NSCameraUsageDescription": "用于在用户选择拍照时拍摄并上传附件",
+        "NSPhotoLibraryUsageDescription": "用于在用户选择图库时选取图片或视频作为附件、头像",
         "ITSAppUsesNonExemptEncryption": false,
-        "LSApplicationQueriesSchemes": [
-          "iosamap"
-        ]
+        "NSFaceIDUsageDescription": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面"
+      },
+      "privacyManifests": {
+        "NSPrivacyAccessedAPITypes": [
+          {
+            "NSPrivacyAccessedAPIType": "NSPrivacyAccessedAPICategoryUserDefaults",
+            "NSPrivacyAccessedAPITypeReasons": [
+              "CA92.1"
+            ]
+          }
+        ],
+        "NSPrivacyCollectedDataTypes": [],
+        "NSPrivacyTracking": false,
+        "NSPrivacyTrackingDomains": []
       }
     },
     "android": {
-      "package": "com.agentsaas.mobile",
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [{ "scheme": "https", "host": "kaiyan.net", "pathPrefix": "/oauth/callback" }],
-          "category": ["BROWSABLE", "DEFAULT"]
-        }
-      ],
       "permissions": [
-        "RECORD_AUDIO",
-        "CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.REQUEST_INSTALL_PACKAGES"
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CAMERA",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.FOREGROUND_SERVICE_HEALTH",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+        "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+        "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.MANAGE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ],
+      "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -74,48 +80,42 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store",
-      "expo-audio",
       [
-        "expo-location",
+        "expo-local-authentication",
         {
-          "locationWhenInUsePermission": "用于操作日志中的位置记录"
+          "faceIDPermission": "用于在您明确开启应用锁后，以 Face ID 解锁本机上的 Agent SaaS 界面"
         }
       ],
-      "expo-video",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false,
+          "configureAndroidBackup": false
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "用于录制并发送语音消息",
+          "recordAudioAndroid": true,
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": false,
+          "supportsPictureInPicture": false
+        }
+      ],
       "expo-sharing",
-      [
-        "expo-share-intent",
-        {
-          "iosShareExtensionName": "AgentSaaSShare",
-          "iosAppGroupIdentifier": "group.com.agentsaas.mobile.share",
-          "iosActivationRules": {
-            "NSExtensionActivationSupportsImageWithMaxCount": 10,
-            "NSExtensionActivationSupportsMovieWithMaxCount": 5,
-            "NSExtensionActivationSupportsFileWithMaxCount": 10
-          },
-          "androidIntentFilters": [
-            "image/*",
-            "video/*",
-            "*/*"
-          ],
-          "androidMultiIntentFilters": [
-            "image/*",
-            "video/*",
-            "*/*"
-          ]
-        }
-      ],
       "@react-native-community/datetimepicker",
       "./plugins/withAndroidSigningConfig",
-      "./plugins/withInstallPermission"
+      "./plugins/withMobilePrivacyControls"
     ],
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "c5c346ce-795f-4dae-9570-b7e937028923"
-      }
-    },
-    "owner": "zengleipro"
+      "router": {}
+    }
   }
 }

@@ -1,10 +1,13 @@
+import type { RunLiveness } from '@agent/shared';
 import type { RunRecord, RunStore } from '../../runtime/runStore.js';
+import { projectRunLiveness } from '../../runtime/runLiveness.js';
 
 export interface ResumeDurableBinding {
   active: boolean;
   runId?: string;
   streamId?: string;
   status?: string;
+  liveness?: RunLiveness;
   tenantId?: string;
   accessError?: string;
 }
@@ -24,6 +27,7 @@ export async function resolveResumeDurableBinding(
     runId: activeRun.runId,
     streamId: typeof metadataStreamId === 'string' ? metadataStreamId : activeRun.runId,
     status: activeRun.status,
+    liveness: projectRunLiveness(activeRun),
     ...(tenantId ? { tenantId } : { accessError: 'Access denied' }),
   };
 }

@@ -20,6 +20,10 @@ import {
 import { DEFAULT_TENANT_ID, isDebugModeAvailable } from "@/components/TenantManager/types";
 import { useTenants } from "@/components/TenantManager/hooks";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  useSettingsDirtyEntry,
+  useSettingsDirtyNavigation,
+} from "@/components/PersonalSettings/dirtyRegistry";
 import { ROLE_POSITION_OPTIONS } from "@/lib/roleOptions";
 import type { UserInfo, UserPermissions } from "./types";
 
@@ -72,6 +76,7 @@ export function UserFormDialog({
   const [tenantId, setTenantId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const requestDirtyNavigation = useSettingsDirtyNavigation();
   const isEditingSelf = isEdit && editingUser?.id === currentUser?.id;
   const isEditingPeerAdmin =
     isEdit &&
@@ -119,31 +124,31 @@ export function UserFormDialog({
   const handleSubmit = async () => {
     if (!isEdit && !username.trim()) {
       setError("请输入用户名");
-      return;
+      return false;
     }
     if (!isEdit && !password) {
       setError("请输入密码");
-      return;
+      return false;
     }
     if (!isEdit && password.length < 6) {
       setError("密码至少 6 位");
-      return;
+      return false;
     }
     if (isPlatformAdmin && !tenantId) {
       setError("请选择组织");
-      return;
+      return false;
     }
     if (isEditingPeerAdmin) {
       setError("组织管理员不能管理其他管理员");
-      return;
+      return false;
     }
     if (isEditingSelf && editingUser?.role === "admin" && role !== "admin") {
       setError("不能降级自己");
-      return;
+      return false;
     }
     if (isEditingSelf && tenantId && tenantId !== editingUser?.tenantId) {
       setError("不能修改自己的组织归属");
-      return;
+      return false;
     }
     setError("");
     setLoading(true);
@@ -166,15 +171,44 @@ export function UserFormDialog({
         tenantId: isPlatformAdmin ? tenantId : undefined,
       });
       onOpenChange(false);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败");
+      return false;
     } finally {
       setLoading(false);
     }
   };
 
+  const baseline = {
+    username: editingUser?.username || "",
+    role: editingUser?.role || "user",
+    realName: editingUser?.realName || "",
+    position: editingUser?.position || "",
+    dingtalkStaffId: editingUser?.dingtalkStaffId || "",
+    debugMode: editingUser?.debugMode === true,
+    tenantId: editingUser?.tenantId || defaultTenantId || currentUser?.tenantId || DEFAULT_TENANT_ID,
+    maxTurns: editingUser?.permissions?.maxTurns?.toString() || "",
+    maxRequests: editingUser?.permissions?.rateLimit?.maxRequests?.toString() || "",
+  };
+  const draft = { username, role, realName, position, dingtalkStaffId, debugMode, tenantId, maxTurns, maxRequests };
+  useSettingsDirtyEntry({
+    id: `user-form:${editingUser?.id ?? "new"}:${baseline.tenantId}`,
+    label: isEdit ? `编辑账号 ${editingUser.username}` : "新建组织账号",
+    dirty: open && Boolean(password || JSON.stringify(draft) !== JSON.stringify(baseline)),
+    save: async () => { if (!await handleSubmit()) throw new Error("User form save failed"); },
+    discard: () => {
+      setUsername(baseline.username); setPassword(""); setRole(baseline.role); setRealName(baseline.realName);
+      setPosition(baseline.position); setDingtalkStaffId(baseline.dingtalkStaffId); setDebugMode(baseline.debugMode);
+      setTenantId(baseline.tenantId); setMaxTurns(baseline.maxTurns); setMaxRequests(baseline.maxRequests); setError("");
+    },
+    secret: true,
+  });
+
+  const requestClose = () => requestDirtyNavigation(() => onOpenChange(false));
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "编辑用户" : "新建用户"}</DialogTitle>
@@ -348,7 +382,7 @@ export function UserFormDialog({
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
-                onClick={() => onOpenChange(false)}
+                onClick={requestClose}
                 disabled={loading}
               >
                 取消

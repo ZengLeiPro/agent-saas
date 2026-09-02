@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { SETTINGS_CONTENT_WIDTH, SettingsPanelHeader } from "@/components/SettingsCenter/SettingsPanelHeader";
+import { useSettingsDirtyEntry } from "@/components/PersonalSettings/dirtyRegistry";
 import { useAuth } from "@/contexts/AuthContext";
 import { authFetch } from "@/lib/authFetch";
 import { refreshAll } from "@/lib/refreshBus";
@@ -60,7 +61,7 @@ function SettingSwitch({
   );
 }
 
-type TenantSettingsPanelSection = "all" | "model-tools" | "brand" | "security";
+export type TenantSettingsPanelSection = "all" | "general" | "model-tools" | "brand" | "security";
 
 type GovernedTenantSettingsResponse = {
   tenantId: string;
@@ -79,6 +80,7 @@ export function TenantSettingsPanel({
   const readOnly = isPlatformAdmin
     && (tenantId === DEFAULT_TENANT_ID || !canPlatform("customer_config.manage"));
   const [settings, setSettings] = useState<TenantSettings>(() => cloneTenantSettings(DEFAULT_TENANT_SETTINGS));
+  const [baselineSettings, setBaselineSettings] = useState<TenantSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +95,7 @@ export function TenantSettingsPanel({
     try {
       const data = await governanceAccessApi.getTenantSettings<GovernedTenantSettingsResponse>(tenantId);
       setSettings(data.settings);
+      setBaselineSettings(cloneTenantSettings(data.settings));
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       setError(null);
@@ -139,18 +142,37 @@ export function TenantSettingsPanel({
         expectedUpdatedAt: settingsUpdatedAt,
       });
       setSettings(data.settings);
+      setBaselineSettings(cloneTenantSettings(data.settings));
       setSettingsUpdatedAt(data.updatedAt);
       setDefaultMcpText(data.settings.mcp.defaultEnabledServerIds.join("\n"));
       if (user?.tenantId === tenantId) updateTenantFeatures(data.settings.features);
       await refreshAll();
       setSaved(true);
       setError(null);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setSaving(false);
     }
   }, [defaultMcpText, settings, settingsUpdatedAt, tenantId, updateTenantFeatures, user?.tenantId]);
+
+  const settingsDraft = cloneTenantSettings(settings);
+  settingsDraft.mcp.defaultEnabledServerIds = splitLines(defaultMcpText);
+  useSettingsDirtyEntry({
+    id: `organization-settings:${tenantId}`,
+    label: "组织设置",
+    dirty: Boolean(baselineSettings && JSON.stringify(settingsDraft) !== JSON.stringify(baselineSettings)),
+    save: async () => { if (!await save()) throw new Error("Tenant settings save failed"); },
+    discard: () => {
+      if (!baselineSettings) return;
+      setSettings(cloneTenantSettings(baselineSettings));
+      setDefaultMcpText(baselineSettings.mcp.defaultEnabledServerIds.join("\n"));
+      setError(null); setSaved(false);
+    },
+    draft: settingsDraft,
+  });
 
   const modelOptions = modelList?.groups.flatMap(group =>
     group.models.map(model => ({
@@ -163,15 +185,6 @@ export function TenantSettingsPanel({
     { value: "", label: "继承平台默认" },
     ...modelOptions.map(model => ({ value: model.ref, label: model.label })),
   ];
-
-  const toggleAllowedModel = useCallback((modelRef: string, checked: boolean) => {
-    patch(d => {
-      d.models.allowedModels = checked
-        ? Array.from(new Set([...d.models.allowedModels, modelRef]))
-        : d.models.allowedModels.filter(ref => ref !== modelRef);
-      if (d.models.defaultModel === modelRef && !checked) d.models.defaultModel = undefined;
-    });
-  }, [patch]);
 
   const updateModelOverride = useCallback((
     modelRef: string,
@@ -200,6 +213,10 @@ export function TenantSettingsPanel({
       title: "组织管理",
       description: `配置组织 ${tenantId} 的功能开关、配额、模型、MCP、安全和品牌策略。`,
     },
+    general: {
+      title: "功能与配额",
+      description: `配置组织 ${tenantId} 的功能开关、配额和个性化策略。`,
+    },
     "model-tools": {
       title: "模型与工具",
       description: `配置组织 ${tenantId} 可用的模型与 MCP 策略。`,
@@ -213,7 +230,7 @@ export function TenantSettingsPanel({
       description: `配置组织 ${tenantId} 的密码、会话和钉钉绑定策略。`,
     },
   };
-  const showGeneral = section === "all";
+  const showGeneral = section === "all" || section === "general";
   const showModelTools = section === "all" || section === "model-tools";
   const showBrand = section === "all" || section === "brand";
   const showSecurity = section === "all" || section === "security";
@@ -308,31 +325,9 @@ export function TenantSettingsPanel({
             </div>
             <SettingSwitch label="允许用户切换模型" description="关闭后可在后续运行时策略中限制用户只能使用默认模型。" checked={settings.models.allowUserModelSwitch} onCheckedChange={checked => patch(d => { d.models.allowUserModelSwitch = checked; })} />
             <SettingSwitch label="显示分组名" description="模型选择器中显示模型分组标题。" checked={!!settings.models.showGroupNames} onCheckedChange={checked => patch(d => { d.models.showGroupNames = checked; })} />
-            <div className="space-y-2">
-              <div>
-                <Label>可用模型白名单</Label>
-                <p className="mt-1 text-xs text-muted-foreground">不勾选任何模型表示继承平台默认可用范围。</p>
-              </div>
-              {modelOptions.length === 0 ? (
-                <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">模型列表加载中或暂无可选模型。</div>
-              ) : (
-                <div className="grid max-h-56 gap-2 overflow-auto rounded-md border p-3 sm:grid-cols-2">
-                  {modelOptions.map(model => (
-                    <label key={model.ref} className="flex items-start gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={settings.models.allowedModels.includes(model.ref)}
-                        onChange={event => toggleAllowedModel(model.ref, event.target.checked)}
-                      />
-                      <span>
-                        <span className="block font-medium">{model.label}</span>
-                        <span className="block text-xs text-muted-foreground">{model.ref}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="font-medium">可用模型范围由 Entitlement 统一管理</div>
+              <p className="mt-1 text-xs text-muted-foreground">本区只配置默认模型、切换策略和展示名称；模型白名单通过页面上方的权威范围编辑器修改。</p>
             </div>
             <div className="space-y-3 rounded-md border bg-muted/20 p-3">
               <div>

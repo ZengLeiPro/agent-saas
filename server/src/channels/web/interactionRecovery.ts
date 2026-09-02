@@ -6,7 +6,9 @@ import type { EventStore, PlatformEvent } from '../../runtime/types.js';
  */
 export interface PendingInteractionShape {
   interactionId: string;
-  type: 'ask_user' | 'permission_request';
+  type: 'ask_user' | 'permission_request' | 'approval';
+  version: number;
+  order: number;
   runId?: string;
   toolCallId?: string;
   invocationId?: string;
@@ -84,13 +86,15 @@ export function scanBufferForPendingInteractions(
       const data = JSON.parse(evt.data) as Record<string, unknown>;
       if (!data || typeof data.type !== 'string') continue;
       if (
-        (data.type === 'ask_user' || data.type === 'permission_request')
+        (data.type === 'ask_user' || data.type === 'permission_request' || data.type === 'approval')
         && typeof data.interactionId === 'string'
         && !excluded.has(data.interactionId)
       ) {
         result.push({
           interactionId: data.interactionId,
           type: data.type,
+          version: typeof data.version === 'number' ? data.version : 0,
+          order: typeof data.order === 'number' ? data.order : (typeof data.version === 'number' ? data.version : 0),
           ...(typeof data.runId === 'string' ? { runId: data.runId } : {}),
           ...(typeof data.toolCallId === 'string' ? { toolCallId: data.toolCallId } : {}),
           ...(typeof data.invocationId === 'string' ? { invocationId: data.invocationId } : {}),

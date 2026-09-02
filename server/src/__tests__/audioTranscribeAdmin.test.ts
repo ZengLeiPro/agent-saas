@@ -2,7 +2,7 @@ import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -11,6 +11,7 @@ import { InMemorySecretVault } from '../security/secretVault.js';
 
 const servers: Array<{ close: () => void }> = [];
 const roots: string[] = [];
+
 
 function baseRawConfig() {
   return {
@@ -102,11 +103,17 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (servers.length > 0) servers.pop()?.close();
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
 describe('audio transcribe admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
+
   it('GET returns only configured booleans for secrets, pricing, and status', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/admin/audio-transcribe`);

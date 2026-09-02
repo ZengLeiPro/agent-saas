@@ -1,4 +1,5 @@
 import type { RunStatus, RunStore } from './runStore.js';
+import type { RunHeartbeatSource } from './runLiveness.js';
 import { isTerminalRunStatus } from './wakeDispatchHelpers.js';
 
 export { isTerminalRunStatus };
@@ -8,7 +9,7 @@ export const STEERING_RECOVERY_FAILURE_MESSAGE = '会话恢复连续失败，本
 export interface RuntimeWakeLease {
   runId: string;
   workerId?: string;
-  renew(): Promise<void>;
+  renew(source?: RunHeartbeatSource): Promise<void>;
   release(finalStatus?: RunStatus, reason?: string): Promise<void>;
 }
 
@@ -25,7 +26,7 @@ export function startWakeLeaseRenewal(input: {
     if (renewalInFlight) return;
     renewalInFlight = (async () => {
       try {
-        await input.lease?.renew();
+        await input.lease?.renew('stream');
         if (!input.abortController.signal.aborted && input.runStore) {
           const current = await input.runStore.get(input.runId).catch(() => null);
           if (current?.status === 'cancelled') {

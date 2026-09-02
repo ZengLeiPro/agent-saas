@@ -84,47 +84,69 @@ export class PgOAuthGrantStore {
 
   async beginNativeHandoff(input: {
     providerState: string; userId: string; tenantId: string; connectorId: string; deviceId: string;
+    clientState: string; pkceChallenge: string; provider: string; redirectUri: string; identityGeneration: number; createdAt: number;
   }): Promise<void> {
     const result = await this.options.pool.query(
       `INSERT INTO ${this.nativeHandoffsTable} (
-         provider_state_hash,user_id,tenant_id,connector_id,device_hash,request_expires_at
-       ) VALUES ($1,$2,$3,$4,$5,NOW()+INTERVAL '10 minutes')
+         provider_state_hash,user_id,tenant_id,connector_id,device_hash,request_expires_at,
+         client_state,client_state_hash,pkce_challenge,callback_provider,redirect_uri,identity_generation
+       ) VALUES ($1,$2,$3,$4,$5,NOW()+INTERVAL '10 minutes',$6,$7,$8,$9,$10,$11)
        ON CONFLICT (provider_state_hash) DO UPDATE SET
          request_expires_at=EXCLUDED.request_expires_at,updated_at=NOW()
        WHERE ${this.nativeHandoffsTable}.user_id=EXCLUDED.user_id
          AND ${this.nativeHandoffsTable}.tenant_id=EXCLUDED.tenant_id
          AND ${this.nativeHandoffsTable}.connector_id=EXCLUDED.connector_id
          AND ${this.nativeHandoffsTable}.device_hash=EXCLUDED.device_hash
+         AND ${this.nativeHandoffsTable}.client_state_hash=EXCLUDED.client_state_hash
+         AND ${this.nativeHandoffsTable}.pkce_challenge=EXCLUDED.pkce_challenge
+         AND ${this.nativeHandoffsTable}.callback_provider=EXCLUDED.callback_provider
+         AND ${this.nativeHandoffsTable}.redirect_uri=EXCLUDED.redirect_uri
+         AND ${this.nativeHandoffsTable}.identity_generation=EXCLUDED.identity_generation
          AND ${this.nativeHandoffsTable}.code_hash IS NULL
          AND ${this.nativeHandoffsTable}.status IS NULL
        RETURNING provider_state_hash`,
-      [digest(input.providerState), input.userId, input.tenantId, input.connectorId, digest(input.deviceId)],
+      [digest(input.providerState), input.userId, input.tenantId, input.connectorId, digest(input.deviceId),
+       input.clientState, digest(input.clientState), input.pkceChallenge, input.provider, input.redirectUri, input.identityGeneration],
     );
     if (!result.rows[0]) throw new Error('NATIVE_OAUTH_HANDOFF_CONFLICT');
   }
 
   async completeNativeHandoff(input: {
     providerState: string; status: 'succeeded' | 'failed'; errorCode?: string;
-  }): Promise<string | null> {
+  }): Promise<({ code: string; clientState: string; provider: string; redirectUri: string; identityGeneration: number }) | null> {
     const code = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '').slice(0, 16);
-    const result = await this.options.pool.query(
-      `UPDATE ${this.nativeHandoffsTable} SET code_hash=$2,code_expires_at=NOW()+INTERVAL '2 minutes',
-         status=$3,error_code=$4,updated_at=NOW()
-       WHERE provider_state_hash=$1 AND request_expires_at>NOW() AND code_hash IS NULL RETURNING provider_state_hash`,
-      [digest(input.providerState), digest(code), input.status, input.errorCode ?? null],
-    );
-    return result.rows[0] ? code : null;
+    const result = input.status === 'failed'
+      ? await this.options.pool.query(
+          `DELETE FROM ${this.nativeHandoffsTable}
+           WHERE provider_state_hash=$1 AND request_expires_at>NOW() AND code_hash IS NULL
+           RETURNING client_state,callback_provider,redirect_uri,identity_generation`,
+          [digest(input.providerState)],
+        )
+      : await this.options.pool.query(
+          `UPDATE ${this.nativeHandoffsTable} SET code_hash=$2,code_expires_at=NOW()+INTERVAL '2 minutes',
+             status=$3,error_code=$4,updated_at=NOW()
+           WHERE provider_state_hash=$1 AND request_expires_at>NOW() AND code_hash IS NULL
+           RETURNING client_state,callback_provider,redirect_uri,identity_generation`,
+          [digest(input.providerState), digest(code), input.status, input.errorCode ?? null],
+        );
+    const row = result.rows[0];
+    return row ? { code, clientState: String(row.client_state), provider: String(row.callback_provider),
+      redirectUri: String(row.redirect_uri), identityGeneration: Number(row.identity_generation) } : null;
   }
 
   async consumeNativeHandoff(input: {
-    code: string; userId: string; tenantId: string; deviceId: string;
+    code: string; userId: string; tenantId: string; deviceId: string; clientState: string;
+    pkceChallenge: string; provider: string; redirectUri: string; identityGeneration: number;
   }): Promise<{ connectorId: string; status: 'succeeded' | 'failed'; errorCode?: string } | null> {
     const result = await this.options.pool.query(
       `DELETE FROM ${this.nativeHandoffsTable}
        WHERE code_hash=$1 AND user_id=$2 AND tenant_id=$3 AND device_hash=$4
+         AND client_state_hash=$5 AND pkce_challenge=$6 AND callback_provider=$7
+         AND redirect_uri=$8 AND identity_generation=$9
          AND code_expires_at>NOW() AND status IS NOT NULL
        RETURNING connector_id,status,error_code`,
-      [digest(input.code), input.userId, input.tenantId, digest(input.deviceId)],
+      [digest(input.code), input.userId, input.tenantId, digest(input.deviceId), digest(input.clientState),
+       input.pkceChallenge, input.provider, input.redirectUri, input.identityGeneration],
     );
     const row = result.rows[0];
     if (!row) return null;

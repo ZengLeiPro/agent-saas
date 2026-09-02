@@ -29,7 +29,13 @@ import {
   withTrustedTranscript,
   type SessionListItem,
 } from "../data/transcripts/index.js";
-import { readSessionMeta, writeSessionMeta, updateSessionMeta, type SessionMeta } from "../data/transcripts/meta.js";
+import {
+  readSessionMeta,
+  writeSessionMeta,
+  updateSessionMeta,
+  resolveSessionAgentTarget,
+  type SessionMeta,
+} from "../data/transcripts/meta.js";
 import { resolveUserCwd } from "../workspace/resolver.js";
 import { TTLCache } from "../utils/cache.js";
 import {
@@ -78,118 +84,51 @@ import type { SessionReadStateStore } from "../data/sessionReadStateStore.js";
 import { collectSessionShareCandidateFiles, normalizeSessionShareFilePath, projectSessionShareSnapshot, SessionShareProjectionError } from "../data/sessionShares/publicProjection.js";
 import { openTrustedFile } from "../security/trustedFile.js";
 import { resolveSessionSandboxProfile } from '../runtime/sandboxProfile.js';
+import {
+  AGENT_TARGET_BINDING_VERSION,
+  redactInteractionCredentials,
+  type AgentTarget,
+  type AgentTargetIdentitySnapshot,
+  type AgentTargetUnavailableReason,
+  type SessionListActiveInteraction,
+} from '@agent/shared';
+import { parseCanonicalChatSubmission } from '@agent/shared';
+import type { ChatQueueSnapshot } from '@agent/shared';
+import { buildChatQueueSnapshot } from '../channels/web/chatQueueSnapshot.js';
+import type { RunRecord } from '../runtime/runStoreTypes.js';
+import { projectRunLiveness, type RunLiveness } from '../runtime/runLiveness.js';
 import type { RuntimeSessionListQuery, RuntimeSessionListResult, RuntimeSessionProjectionRecord } from "../runtime/sessionProjectionStore.js";
 // Session list enrichment and projection helpers.
+import {
+  buildMetaOnlyTranscript,
+  buildSessionDetailPayload,
+  filterProjectedQueuedMessages,
+  getLastRunState,
+  reqTranscriptOwner,
+  resolveSessionPathForRead,
+  SESSION_DETAIL_DEFAULT_PAGE_SIZE,
+  SESSION_DETAIL_MAX_PAGE_SIZE,
+  type LastRunState,
+  type ResolvedSessionPath,
+} from './sessionDetailHelpers.js';
+export { buildSessionDetailPayload, filterProjectedQueuedMessages, type LastRunState } from './sessionDetailHelpers.js';
+export { listDurablyProjectedQueuedRunIds } from './sessionListHelpers.js';
 import {
   buildCronSessionIndex,
   buildDingtalkSessionIndex,
   listDurablyProjectedQueuedRunIds,
   projectQueuedMessageAttachments,
   stripMarkdown,
+  compareCanonicalSessionKeys,
+  decodeSessionListCursor,
+  encodeSessionListCursor,
+  isSessionAfterCursor,
   type CronSessionInfo,
 } from "./sessionListHelpers.js";
 
 // 5 分钟。所有 mutation(create/delete/rename/restore/fork...)都已主动 sessionsListCache.clear(),
 // 所以 TTL 只是兜底,越长越好。
 const SESSIONS_LIST_CACHE_TTL_MS = 5 * 60_000;
-const SESSION_DETAIL_DELTA_OVERLAP_BLOCKS = 32;
-const SESSION_DETAIL_DEFAULT_PAGE_SIZE = 100;
-const SESSION_DETAIL_MAX_PAGE_SIZE = 200;
-
-type SessionDetailPayload = SessionShareSnapshot & {
-  mode: "full" | "delta" | "before";
-  cursor?: string;
-  oldestCursor?: string;
-  historyComplete?: boolean;
-  after?: string;
-  before?: string;
-};
-
-interface SessionDetailPayloadOptions {
-  after?: string;
-  before?: string;
-  limit?: number;
-  /** window API 未从文件起点解析时，用于避免误报 historyComplete。 */
-  windowStartsAtBeginning?: boolean;
-  /** before 窗口不含 EOF，由窗口 API 提供真实最新 cursor。 */
-  latestCursor?: string;
-}
-
-function withoutTranscriptRaw(
-  blocks: SessionShareSnapshot["blocks"],
-): SessionShareSnapshot["blocks"] {
-  return blocks.map(({ raw: _raw, ...block }) => block);
-}
-
-/**
- * 详情分页协议：
- * - after 命中时返回重叠尾部和新增块；
- * - before 命中时返回游标之前一页，并携带一个边界重叠块；
- * - 指定 limit 的普通请求只返回最新一页；未指定 limit 保持旧客户端的完整快照行为。
- */
-export function buildSessionDetailPayload(
-  detail: SessionShareSnapshot,
-  options: SessionDetailPayloadOptions = {},
-): SessionDetailPayload {
-  const { after, before } = options;
-  const requestedLimit = options.limit === undefined
-    ? undefined
-    : Math.min(
-      SESSION_DETAIL_MAX_PAGE_SIZE,
-      Math.max(1, Math.floor(options.limit || SESSION_DETAIL_DEFAULT_PAGE_SIZE)),
-    );
-  const cursor = options.latestCursor ?? detail.blocks.at(-1)?.id;
-  const windowStartsAtBeginning = options.windowStartsAtBeginning ?? true;
-
-  if (after) {
-    const afterIndex = detail.blocks.findIndex((block) => block.id === after);
-    const addedBlockCount = afterIndex >= 0 ? detail.blocks.length - afterIndex - 1 : 0;
-    if (
-      afterIndex >= 0 &&
-      (requestedLimit === undefined || addedBlockCount <= requestedLimit)
-    ) {
-      const start = Math.max(0, afterIndex - SESSION_DETAIL_DELTA_OVERLAP_BLOCKS + 1);
-      return {
-        ...detail,
-        mode: "delta",
-        blocks: withoutTranscriptRaw(detail.blocks.slice(start)),
-        after,
-        ...(cursor ? { cursor } : {}),
-      };
-    }
-  }
-
-  if (before) {
-    const beforeIndex = detail.blocks.findIndex((block) => block.id === before);
-    if (beforeIndex >= 0) {
-      const limit = requestedLimit ?? SESSION_DETAIL_DEFAULT_PAGE_SIZE;
-      const start = Math.max(0, beforeIndex - limit);
-      const blocks = detail.blocks.slice(start, beforeIndex + 1);
-      return {
-        ...detail,
-        mode: "before",
-        blocks: withoutTranscriptRaw(blocks),
-        before,
-        historyComplete: start === 0 && windowStartsAtBeginning,
-        ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
-        ...(cursor ? { cursor } : {}),
-      };
-    }
-  }
-
-  const limit = requestedLimit;
-  const start = limit === undefined ? 0 : Math.max(0, detail.blocks.length - limit);
-  const blocks = detail.blocks.slice(start);
-  return {
-    ...detail,
-    mode: "full",
-    blocks: withoutTranscriptRaw(blocks),
-    historyComplete: start === 0 && windowStartsAtBeginning,
-    ...(blocks[0]?.id ? { oldestCursor: blocks[0].id } : {}),
-    ...(cursor ? { cursor } : {}),
-  };
-}
-
 interface SessionSource {
   type: string;
   label: string;
@@ -217,11 +156,16 @@ interface EnrichedSessionListItem extends SessionListItem {
   cronJobId?: string;
   cronJobName?: string;
   hasUnreadAiReply?: boolean;
+  version?: number;
+  serverUpdatedAt?: string;
+  sourceSeq?: number;
+  activeInteraction?: SessionListActiveInteraction;
 }
 
 interface SessionsListResponse {
   sessions: EnrichedSessionListItem[];
   hasMore: boolean;
+  nextCursor?: string;
 }
 
 interface TokenContextAccounting {
@@ -473,6 +417,8 @@ export interface SessionsRouterOptions {
     requestedAt: string;
     metadata: Record<string, unknown>;
   }>>;
+  /** M20-02：所有 durable V1 用户提交，供 lifecycle snapshot 投影。 */
+  listUserMessagesBySession?: (sessionId: string) => Promise<RunRecord[]>;
   /** clientMessageId 权威状态核验（ACK 超时/断线重连）。 */
   findRunByClientMessageId?: (userId: string | undefined, clientMessageId: string) => Promise<{
     runId: string;
@@ -481,165 +427,6 @@ export interface SessionsRouterOptions {
     statusReason?: string;
     metadata: Record<string, unknown>;
   } | null>;
-}
-
-interface ResolvedSessionPath {
-  transcriptPath: string;
-  hasTranscript: boolean;
-}
-
-/**
- * steering 的 durable user_message 已进入 transcript 后，不再属于队列区。
- * claim 与首个模型事件绑定，二者之间的短暂 pending 窗口不能让 detail API 复活该消息。
- */
-export function filterProjectedQueuedMessages<T extends { sourceRunId: string }>(
-  pending: T[],
-  blocks: Array<{ interjectionSourceRunId?: string }>,
-  durableProjectedSourceRunIds: Iterable<string> = [],
-): T[] {
-  const projectedSourceRunIds = new Set(durableProjectedSourceRunIds);
-  for (const block of blocks) {
-    if (block.interjectionSourceRunId) projectedSourceRunIds.add(block.interjectionSourceRunId);
-  }
-  return pending.filter((input) => !projectedSourceRunIds.has(input.sourceRunId));
-}
-
-export { listDurablyProjectedQueuedRunIds } from './sessionListHelpers.js';
-
-function reqTranscriptOwner(reqUser: Request["user"] | undefined): { tenantId?: string; userId?: string } | undefined {
-  return reqUser ? { tenantId: reqUser.tenantId, userId: reqUser.sub } : undefined;
-}
-
-async function resolveSessionPathForRead(
-  userCwd: string,
-  sessionId: string,
-  owner?: { tenantId?: string; userId?: string },
-): Promise<ResolvedSessionPath | null> {
-  let transcriptPath = getTranscriptPath(userCwd, sessionId, owner);
-  try {
-    await statTrustedTranscript(transcriptPath);
-    return { transcriptPath, hasTranscript: true };
-  } catch {
-    const foundTranscript = await findTranscriptPathBySessionId(sessionId);
-    if (foundTranscript)
-      return { transcriptPath: foundTranscript, hasTranscript: true };
-    const foundMeta = await findMetaPathBySessionId(sessionId);
-    if (foundMeta) return { transcriptPath: foundMeta, hasTranscript: false };
-    return null;
-  }
-}
-
-function isUserMessageSubmittedEvent(
-  event: PlatformEvent,
-): event is Extract<PlatformEvent, { type: "user_message_submitted" }> {
-  return (
-    event.type === "user_message_submitted" &&
-    typeof event.content === "string" &&
-    event.content.trim().length > 0
-  );
-}
-
-/**
- * 会话最近一次 run 的终态。前端进会话时原子拿到,用于对账"后端早结束、
- * 前端 UI 仍显示 running" 这种鬼状态：
- * - status='failed'/'cancelled' → 显示对应失败/取消 banner
- * - status='running' 但 WS 未 active → 提示"上次回复未完成"
- * - 缺省 → 兼容旧会话(无 run_state_changed 事件)
- */
-export interface LastRunState {
-  runId: string;
-  status: string;
-  /** run_state_changed.reason —— failed/cancelled 时通常是 model error message */
-  error?: string; failureKind?: 'policy_rejection'; recoveryAction?: 'switch_model';
-  /** 该 run_state_changed 事件的 ISO timestamp */
-  finishedAt?: string;
-}
-
-/**
- * 拉最近一条 `run_state_changed` 事件,派生 lastRunState。
- *
- * 用 `listPage({type:'run_state_changed', limit:200})` 拉所有同类型事件再取末位。
- * run_state_changed 是稀疏事件(每个 run 通常 2-3 条),即使百 run 的超长会话也仅
- * 数百条;PG 后端走 (session_id, event_type) 索引几毫秒内完成。
- *
- * EventStore 不支持 DESC 排序 + LIMIT 1,所以采用拉全分页方案;后端类型也保证
- * filtered 行数远低于全表全量。任何异常都吞掉返回 undefined(对端将走 legacy 路径)。
- */
-async function getLastRunState(
-  eventStore: EventStore,
-  tenantId: string,
-  sessionId: string,
-): Promise<LastRunState | undefined> {
-  try {
-    const collected: PlatformEvent[] = [];
-    if (eventStore.listPage) {
-      let cursor: string | undefined;
-      // 安全上限：单 session run_state_changed 极少超过 1000 条
-      for (let guard = 0; guard < 10; guard++) {
-        const page = await eventStore.listPage(tenantId, sessionId, {
-          type: "run_state_changed",
-          limit: 200,
-          afterCursor: cursor,
-        });
-        collected.push(...page.events);
-        if (!page.hasMore || !page.nextCursor) break;
-        cursor = page.nextCursor;
-      }
-    } else {
-      const all = await eventStore.list(tenantId, sessionId);
-      for (const event of all) {
-        if (event.type === "run_state_changed") collected.push(event);
-      }
-    }
-    const last = collected.at(-1);
-    if (!last || last.type !== "run_state_changed") return undefined;
-    return {
-      runId: last.runId,
-      status: last.status,
-      ...(last.reason ? { error: last.reason } : {}), ...(last.failureKind ? { failureKind: last.failureKind } : {}), ...(last.recoveryAction ? { recoveryAction: last.recoveryAction } : {}),
-      ...(last.timestamp ? { finishedAt: last.timestamp } : {}),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-async function buildMetaOnlyTranscript(
-  tenantId: string,
-  sessionId: string,
-  transcriptPath: string,
-  runtimeEventStoreFor?: (transcriptPath: string, tenantId: string) => EventStore,
-): Promise<ParsedTranscript> {
-  let events: PlatformEvent[] = [];
-  try {
-    const eventStore = runtimeEventStoreFor
-      ? runtimeEventStoreFor(transcriptPath, tenantId)
-      : new FileEventStore(getRuntimeEventLogPath(transcriptPath), tenantId);
-    events = await eventStore.list(tenantId, sessionId);
-  } catch {
-    events = [];
-  }
-
-  const submitted = events.filter(isUserMessageSubmittedEvent);
-  return {
-    sessionId,
-    blocks: submitted.map((event, index) => {
-      const parsedTs = Date.parse(event.timestamp);
-      return {
-        id: `runtime-${event.id || index}-user`,
-        ...(Number.isFinite(parsedTs) ? { tsMs: parsedTs } : {}),
-        kind: "prompt" as const,
-        title: "输入（Prompt）",
-        defaultOpen: true,
-        content: event.content,
-      };
-    }),
-    stats: {
-      lines: submitted.length,
-      parsedLines: submitted.length,
-      parseErrors: 0,
-    },
-  };
 }
 
 // 模块级缓存实例（供外部清除）
@@ -673,19 +460,71 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
   function orgAgentFields(
     meta: SessionMeta | null,
     reqUser: Request["user"] | undefined,
-  ): { orgAgentId?: string; orgAgentName?: string; orgAgentAvailable?: boolean } {
-    if (!meta?.orgAgentId) return {};
-    const record = options.orgAgentStore?.get(meta.orgAgentId);
+  ): {
+    orgAgentId?: string;
+    orgAgentName?: string;
+    orgAgentAvailable?: boolean;
+    agentTarget?: AgentTarget;
+    agentTargetBindingVersion?: number;
+    agentTargetSnapshot?: AgentTargetIdentitySnapshot;
+    agentTargetUnavailableReason?: AgentTargetUnavailableReason;
+  } {
+    if (!meta) return {};
+    const resolved = resolveSessionAgentTarget(meta, meta.tenantId);
+    if (resolved.status === 'unproven') {
+      return {
+        orgAgentAvailable: false,
+        agentTargetUnavailableReason: {
+          code: 'legacy_binding_unproven',
+          message: '历史会话缺少可证明的 Agent 绑定，仅支持查看',
+          contactAdmin: true,
+        },
+      };
+    }
+    const target = resolved.target;
+    const base = {
+      agentTarget: target,
+      agentTargetBindingVersion: meta.agentTargetBindingVersion ?? AGENT_TARGET_BINDING_VERSION,
+    };
+    if (target.kind === 'personal') return {
+      ...base,
+      agentTargetSnapshot: meta.agentTargetSnapshot ?? { name: '个人 Agent', status: 'available', version: 1 },
+    };
+
+    const record = options.orgAgentStore?.get(target.orgAgentId);
     const adminExempt = reqUser?.role === "admin"
       && (reqUser.tenantId === DEFAULT_TENANT_ID || record?.tenantId === reqUser.tenantId);
-    const available = !!record?.audience
-      && record.enabled
-      && record.tenantId === meta.tenantId
-      && (adminExempt || isAssignedToOrgAgent(record, meta.username));
+    let reason: AgentTargetUnavailableReason | undefined;
+    if (!record) {
+      reason = { code: 'org_agent_deleted', message: '该企业专家已删除，历史会话仅支持查看', contactAdmin: true };
+    } else if (record.tenantId !== target.tenantId || (meta.tenantId && record.tenantId !== meta.tenantId)) {
+      reason = { code: 'tenant_mismatch', message: '会话与企业专家的组织不一致，仅支持查看', contactAdmin: true };
+    } else if (!record.enabled) {
+      reason = { code: 'org_agent_disabled', message: '该企业专家已停用，历史会话仅支持查看', contactAdmin: true };
+    } else if (!record.audience || !(adminExempt || isAssignedToOrgAgent(record, meta.username))) {
+      reason = { code: 'org_agent_unassigned', message: '你已无权使用该企业专家，历史会话仅支持查看', contactAdmin: true };
+    }
+    const status: AgentTargetIdentitySnapshot['status'] = !reason
+      ? 'available'
+      : reason.code === 'org_agent_deleted' ? 'deleted'
+        : reason.code === 'org_agent_disabled' ? 'disabled'
+          : 'revoked';
+    const snapshotVersion = Math.max(
+      meta.agentTargetSnapshot?.version ?? 1,
+      record?.updatedAt ? Date.parse(record.updatedAt) || 1 : 1,
+    );
+    const agentTargetSnapshot: AgentTargetIdentitySnapshot = {
+      name: reason?.code === 'tenant_mismatch' ? '企业专家' : meta.agentTargetSnapshot?.name ?? record?.name ?? '企业专家',
+      status,
+      version: snapshotVersion,
+    };
     return {
-      orgAgentId: meta.orgAgentId,
-      ...(record && record.tenantId === meta.tenantId && record.name ? { orgAgentName: record.name } : {}),
-      orgAgentAvailable: available,
+      ...base,
+      agentTargetSnapshot,
+      orgAgentId: target.orgAgentId,
+      orgAgentName: reason?.code === 'tenant_mismatch' ? undefined : agentTargetSnapshot.name,
+      orgAgentAvailable: !reason,
+      ...(reason ? { agentTargetUnavailableReason: reason } : {}),
     };
   }
 
@@ -761,6 +600,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         runtimeStatus: "idle",
         sandboxProfile: 'daily',
         orgAgentId,
+        agentTarget: { kind: 'org-agent', tenantId: user.tenantId, orgAgentId },
+        agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+        agentTargetSnapshot: { name: record.name, status: 'available', version: Date.parse(record.updatedAt) || 1 },
       });
       sessionsListCache.clear();
       auditLog(req, "session_opened", `created orgAgentId=${orgAgentId} sessionId=${sessionId}`);
@@ -780,6 +622,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           orgAgentId,
           orgAgentName: record.name,
           orgAgentAvailable: true,
+          agentTarget: { kind: 'org-agent', tenantId: user.tenantId, orgAgentId },
+          agentTargetBindingVersion: AGENT_TARGET_BINDING_VERSION,
+          agentTargetSnapshot: { name: record.name, status: 'available', version: Date.parse(record.updatedAt) || 1 },
         },
       });
     } catch (err) {
@@ -887,8 +732,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       }
     }
     const parseDurationMs = Date.now() - parseStartedAt;
-    const lastRunState = await getLastRunState(detailEventStore, tenantId, sessionId);
+    let lastRunState = await getLastRunState(detailEventStore, tenantId, sessionId);
     // 尚未开始执行的用户消息不进 transcript，统一从 durable run.wakeMessage 恢复。
+    let queueSnapshot: ChatQueueSnapshot = buildChatQueueSnapshot(sessionId, []);
     let queuedMessages: Array<{
       sourceRunId: string;
       runId?: string;
@@ -899,15 +745,25 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       content: string;
       attachments?: Array<{
         name: string;
-        attachmentId?: string;
-        savedPath?: string;
-        relativePath?: string;
+        attachmentId: string;
         size?: number;
         mimeType?: string;
         isImage?: boolean;
       }>;
       acceptedAt: string;
     }> = [];
+    if (options.listUserMessagesBySession) {
+      try {
+        const userMessageRuns = await options.listUserMessagesBySession(sessionId);
+        queueSnapshot = buildChatQueueSnapshot(sessionId, userMessageRuns);
+        if (lastRunState) {
+          const lastRun = userMessageRuns.find((run) => run.runId === lastRunState!.runId);
+          if (lastRun) lastRunState = { ...lastRunState, liveness: projectRunLiveness(lastRun) };
+        }
+      } catch (err) {
+        apiLogger.warn(`[sessions] queue snapshot lookup failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     if (options.listPendingUserMessagesBySession) {
       try {
         const queriedPending = await options.listPendingUserMessagesBySession(sessionId);
@@ -917,13 +773,16 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         queuedMessages = queriedPending.flatMap((run, index) => {
           if (projectedRunIds.has(run.runId)) return [];
           const wakeMessage = run.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
-          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const parsedSubmission = parseCanonicalChatSubmission(run.metadata?.chatSubmission);
+          if (!parsedSubmission.ok && (!wakeMessage || typeof wakeMessage.content !== 'string')) return [];
           const clientMsgId = typeof run.metadata?.clientMsgId === 'string' ? run.metadata.clientMsgId : undefined;
           const deliveryMode = run.metadata?.deliveryMode === 'steer' ? 'steer' as const : 'queue' as const;
           const targetRunId = deliveryMode === 'steer'
             ? (typeof run.metadata?.steeringTargetRunId === 'string' ? run.metadata.steeringTargetRunId : undefined)
             : (typeof run.metadata?.queuedBehindRunId === 'string' ? run.metadata.queuedBehindRunId : undefined);
-          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
+          const attachments = projectQueuedMessageAttachments(
+            parsedSubmission.ok ? parsedSubmission.value.attachments : wakeMessage?.attachments,
+          );
           return [{
             sourceRunId: run.runId,
             runId: run.runId,
@@ -931,7 +790,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             deliveryMode,
             ...(targetRunId ? { targetRunId } : {}),
             queuePosition: index + 1,
-            content: wakeMessage.content,
+            content: parsedSubmission.ok ? parsedSubmission.value.text : wakeMessage!.content as string,
             ...(attachments.length ? { attachments } : {}),
             acceptedAt: typeof run.metadata?.acceptedAt === 'string' ? run.metadata.acceptedAt : run.requestedAt,
           }];
@@ -948,9 +807,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         const pending = filterProjectedQueuedMessages(queriedPending, [], durableProjectedSourceRunIds);
         queuedMessages = pending.flatMap((input, index) => {
           const wakeMessage = input.sourceRun.metadata?.wakeMessage as { content?: unknown; attachments?: unknown } | undefined;
-          if (!wakeMessage || typeof wakeMessage.content !== 'string') return [];
+          const parsedSubmission = parseCanonicalChatSubmission(input.sourceRun.metadata?.chatSubmission);
+          if (!parsedSubmission.ok && (!wakeMessage || typeof wakeMessage.content !== 'string')) return [];
           const clientMsgId = typeof input.sourceRun.metadata?.clientMsgId === 'string' ? input.sourceRun.metadata.clientMsgId : undefined;
-          const attachments = projectQueuedMessageAttachments(wakeMessage.attachments);
+          const attachments = projectQueuedMessageAttachments(
+            parsedSubmission.ok ? parsedSubmission.value.attachments : wakeMessage?.attachments,
+          );
           return [{
             sourceRunId: input.sourceRunId,
             runId: input.sourceRunId,
@@ -958,7 +820,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             deliveryMode: 'steer' as const,
             targetRunId: input.targetRunId,
             queuePosition: index + 1,
-            content: wakeMessage.content,
+            content: parsedSubmission.ok ? parsedSubmission.value.text : wakeMessage!.content as string,
             ...(attachments.length ? { attachments } : {}),
             acceptedAt: input.acceptedAt,
           }];
@@ -1016,7 +878,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         ...(owner ? { owner } : {}),
         ...(source ? { source } : {}),
         sandboxProfile: resolveSessionSandboxProfile({ existing: meta }),
+        ...orgAgentFields(meta, req.user),
         ...(lastRunState ? { lastRunState } : {}),
+        ...({ queueSnapshot }),
         ...(queuedMessages.length ? { queuedMessages } : {}),
       },
     };
@@ -1248,6 +1112,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const before = req.query.before
         ? parseInt(req.query.before as string)
         : undefined;
+      const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+      if (cursorParam && req.query.before !== undefined) {
+        res.status(400).json({ error: 'cursor and before cannot be mixed' });
+        return;
+      }
+      let canonicalCursor: ReturnType<typeof decodeSessionListCursor> | undefined;
+      if (cursorParam) {
+        try {
+          canonicalCursor = decodeSessionListCursor(cursorParam);
+        } catch {
+          res.status(400).json({ error: 'Invalid session list cursor' });
+          return;
+        }
+      }
 
       const isAdmin = req.user?.role === "admin";
       const userCwd = resolveUserCwd(
@@ -1265,7 +1143,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       // 非 admin 用户不使用缓存（结果因人而异），admin 也只看自己；未认证用户共享缓存
       const fresh = req.query.fresh === "1" || req.query.fresh === "true";
       const cacheKey =
-        !fresh && !before && !req.user ? `${scope}:${limit}` : null;
+        !fresh && !before && !canonicalCursor && !req.user ? `${scope}:${limit}` : null;
 
       if (cacheKey) {
         const cached = sessionsListCache.get(cacheKey);
@@ -1298,8 +1176,10 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       if (options.sessionProjectionStore && req.user) {
         try {
           const visibleRecords: RuntimeSessionProjectionRecord[] = [];
-          let cursor: RuntimeSessionListQuery["cursor"];
-          const updatedTo = before && Number.isFinite(before)
+          let cursor: RuntimeSessionListQuery["cursor"] = canonicalCursor
+            ? { updatedAt: new Date(canonicalCursor.updatedAtMs).toISOString(), sessionId: canonicalCursor.sessionId }
+            : undefined;
+          const updatedTo = !canonicalCursor && before && Number.isFinite(before)
             ? new Date(before - 1).toISOString()
             : undefined;
 
@@ -1315,6 +1195,8 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               ...(cursor ? { cursor } : {}),
             });
             for (const record of page.items) {
+              // Defense in depth: a custom/proxy projection reader cannot bypass tenant/user scope.
+              if (record.tenantId !== req.user.tenantId || record.userId !== req.user.sub) continue;
               if (hidesSystemSessionFrom(req.user, record.metaJson)) continue;
               visibleRecords.push(record);
               if (visibleRecords.length > limit) break;
@@ -1376,7 +1258,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           });
           metaOnlySessionIds.add(item.sessionId);
         }
-        sessions = [...bySessionId.values()].sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+        sessions = [...bySessionId.values()].sort(compareCanonicalSessionKeys);
         markStage(`listSessionsWithMeta[user,metaOnly=${metaOnlySessionIds.size}]`, listStageStartedAt);
       }
 
@@ -1453,8 +1335,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         });
       }
 
-      sessions.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
-      if (before) sessions = sessions.filter((s) => s.updatedAtMs < before);
+      sessions.sort(compareCanonicalSessionKeys);
+      if (!projectionUsed && canonicalCursor) sessions = sessions.filter((session) => isSessionAfterCursor(session, canonicalCursor));
+      if (!projectionUsed && !canonicalCursor && before) sessions = sessions.filter((session) => session.updatedAtMs < before);
       const totalVisibleSessions = sessions.length;
       hasMore = totalVisibleSessions > limit;
       sessions = sessions.slice(0, limit);
@@ -1542,6 +1425,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               title,
               preview,
               createdAtMs: Number.isFinite(createdAtFromMeta)
@@ -1580,6 +1466,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               title,
               preview,
               createdAtMs: summary.createdAtMs ?? session.updatedAtMs,
@@ -1599,6 +1488,9 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             const { transcriptPath: _transcriptPath, ...publicSession } = session;
             return {
               ...publicSession,
+              version: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
+              serverUpdatedAt: meta?.updatedAt ?? new Date(session.updatedAtMs).toISOString(),
+              sourceSeq: meta?.updatedAt ? Date.parse(meta.updatedAt) : session.updatedAtMs,
               source,
               ...(owner ? { owner } : {}),
               ...(agent ? { agent } : {}),
@@ -1630,14 +1522,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         }));
       }
 
-      const payload = { sessions: visibleSessions, hasMore };
+      visibleSessions = visibleSessions.map((session) => {
+        const activeInteraction = interactionStore.getActiveInteraction(session.sessionId);
+        return activeInteraction ? { ...session, activeInteraction } : session;
+      });
+      const lastVisibleSession = visibleSessions[visibleSessions.length - 1];
+      const nextCursor = hasMore && lastVisibleSession
+        ? encodeSessionListCursor({ updatedAtMs: lastVisibleSession.updatedAtMs, sessionId: lastVisibleSession.sessionId })
+        : undefined;
+      const payload: SessionsListResponse = { sessions: visibleSessions, hasMore, ...(nextCursor ? { nextCursor } : {}) };
       if (cacheKey) {
         sessionsListCache.set(cacheKey, payload);
       }
       const totalDurationMs = Date.now() - requestStartedAt;
       if (totalDurationMs >= 800) {
         apiLogger.warn(
-          `[sessions] slow list ${totalDurationMs}ms scope=${scope} limit=${limit} before=${before ?? "none"} count=${visibleSessions.length} hasMore=${hasMore} stages=${stageTimings.join(", ")}`,
+          `[sessions] slow list ${totalDurationMs}ms scope=${scope} limit=${limit} cursor=${cursorParam ?? 'none'} before=${before ?? "none"} count=${visibleSessions.length} hasMore=${hasMore} stages=${stageTimings.join(", ")}`,
         );
       }
       res.json(payload);
@@ -2206,11 +2106,12 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         }
       }
 
-      const changed = await options.sessionReadStateStore.markRead({
-        tenantId: req.user.tenantId,
-        userId: req.user.sub,
-        sessionId,
-      });
+      const readScope = { tenantId: req.user.tenantId, userId: req.user.sub, sessionId };
+      const changed = await options.sessionReadStateStore.markRead(readScope);
+      const readState = await options.sessionReadStateStore.getState?.(readScope);
+      const updatedAt = readState?.updatedAt ?? new Date().toISOString();
+      const serverVersion = Math.max(readState?.attentionVersion ?? 0, readState?.readVersion ?? 0);
+      const readSeq = readState?.readVersion ?? serverVersion;
       if (changed) {
         const store = resolved
           ? options.runtimeEventStoreFor?.(resolved.transcriptPath, req.user.tenantId)
@@ -2221,12 +2122,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             sessionId,
             userId: req.user.sub,
             hasUnreadAiReply: false,
+            readSeq,
+            serverVersion,
+            updatedAt,
+            sourceSeq: readSeq,
           }, { tenantId: req.user.tenantId });
         } else {
           const readEvent = {
             type: "session_read_state_changed",
             sessionId,
             hasUnreadAiReply: false,
+            readSeq,
+            serverVersion,
+            updatedAt,
+            sourceSeq: readSeq,
           } as const;
           const eventBus = options.getEventBus?.();
           if (eventBus) {
@@ -2236,7 +2145,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
           }
         }
       }
-      res.json({ ok: true, sessionId, hasUnreadAiReply: false });
+      res.json({ ok: true, sessionId, hasUnreadAiReply: false, ack: { status: changed ? "applied" : "duplicate", sessionId, hasUnreadAiReply: false, readSeq, serverVersion, updatedAt } });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         res.status(404).json({ error: "Session not found" });
@@ -2288,7 +2197,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         sessionId: run.sessionId,
         status,
         deliveryMode,
-        ...(queuePosition ? { queuePosition } : {}),
+        ...(queuePosition !== undefined ? { queuePosition } : {}),
         ...(run.statusReason ? { reason: run.statusReason } : {}),
       });
     } catch (err) {
@@ -2318,8 +2227,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const before = typeof req.query.before === "string" && req.query.before.trim()
         ? req.query.before.trim()
         : undefined;
-      if (after && before) {
-        res.status(400).json({ error: "after and before cannot be used together" });
+      const hasOffset = typeof req.query.offset === "string";
+      const parsedOffset = hasOffset ? Number.parseInt(req.query.offset as string, 10) : undefined;
+      const offset = parsedOffset !== undefined && Number.isFinite(parsedOffset)
+        ? Math.max(0, parsedOffset)
+        : undefined;
+      if ((after && before) || (offset !== undefined && (after || before))) {
+        res.status(400).json({ error: "canonical cursor and N-1 offset modes cannot be mixed" });
         return;
       }
       const hasLimit = typeof req.query.limit === "string";
@@ -2338,7 +2252,7 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
 
       const built = await buildSessionDetailSnapshot(req, sessionId, {
         includeDeleted,
-        ...(transcriptWindowLimit === undefined ? {} : {
+        ...(transcriptWindowLimit === undefined || offset !== undefined ? {} : {
           transcriptWindow: { after, before, limit: transcriptWindowLimit },
         }),
       });
@@ -2362,12 +2276,14 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const payload = buildSessionDetailPayload(built.detail, {
         after: built.transcriptWindow ? built.transcriptWindow.resolvedAfter : after,
         before: built.transcriptWindow ? built.transcriptWindow.resolvedBefore : before,
+        ...(offset !== undefined ? { offset } : {}),
         limit,
         ...(built.transcriptWindow ? {
           windowStartsAtBeginning: built.transcriptWindow.startsAtBeginning,
           ...(built.transcriptWindow.latestCursor
             ? { latestCursor: built.transcriptWindow.latestCursor }
             : {}),
+          historyRevision: built.transcriptWindow.cursorGeneration,
         } : {}),
       });
       if (built.transcriptWindow) {
@@ -2381,8 +2297,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         );
         if (encodedCursor) payload.cursor = encodedCursor;
         else delete payload.cursor;
-        if (encodedOldestCursor) payload.oldestCursor = encodedOldestCursor;
-        else delete payload.oldestCursor;
+        if (encodedOldestCursor) {
+          payload.oldestCursor = encodedOldestCursor;
+          payload.nextCursor = encodedOldestCursor;
+        } else {
+          delete payload.oldestCursor;
+          delete payload.nextCursor;
+        }
       }
       const transcriptTiming = built.transcriptWindow
         ? `transcript-index;dur=${built.transcriptWindow.indexDurationMs}, transcript-read-parse;dur=${built.transcriptWindow.readParseDurationMs}`
@@ -2459,14 +2380,20 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
         return;
       }
 
+      const priorVersion = Date.parse(meta?.updatedAt ?? meta?.createdAt ?? '') || 0;
+      const mutationUpdatedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
       const updated = await updateSessionMeta(transcriptPath, {
         customTitle: title.trim() || undefined,
+        updatedAt: mutationUpdatedAt,
       });
 
       if (!updated) {
         res.status(404).json({ error: "Session meta not found" });
         return;
       }
+
+      const updatedAt = updated.updatedAt ?? new Date().toISOString();
+      const serverVersion = Date.parse(updatedAt) || Date.now();
 
       // 审计：记录会话重命名
       auditLog(req, "session_renamed", `${sessionId} → ${title.trim()}`);
@@ -2480,16 +2407,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             type: "title_updated",
             sessionId,
             title: updated.customTitle || "",
+            serverVersion,
+            updatedAt,
+            sourceSeq: serverVersion,
           });
         } else {
           options.broadcastToUser?.(req.user.sub, {
             type: "title_updated",
             sessionId,
             title: updated.customTitle || "",
+            serverVersion,
+            updatedAt,
+            sourceSeq: serverVersion,
           });
         }
       }
-      res.json({ ok: true, title: updated.customTitle || null });
+      res.json({ ok: true, title: updated.customTitle || null, ack: { status: "applied", sessionId, title: updated.customTitle || null, serverVersion, updatedAt } });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {
@@ -3012,19 +2945,19 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               "approval_resolved",
             ],
           });
-          const existingIds = new Set(
-            pending.map((entry) => entry.interactionId),
-          );
+          const existingIds = new Set(pending.map((entry) => entry.interactionId));
           for (const state of buildPendingInteractionsFromEvents(
             durableInteractionEvents,
             sessionId,
           )) {
             if (existingIds.has(state.interactionId)) continue;
-            if (state.type !== "ask_user" && state.type !== "permission_request")
+            if (state.type !== "ask_user" && state.type !== "permission_request" && state.type !== "approval")
               continue;
             pending.push({
               interactionId: state.interactionId,
               type: state.type,
+              version: state.version ?? 0,
+              order: state.order ?? state.version ?? 0,
               runId: state.runId,
               toolCallId: state.toolCallId,
               invocationId: state.invocationId,
@@ -3032,10 +2965,13 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
               toolId: state.toolId,
               toolName: state.toolName,
               displayName: state.displayName,
-              toolInput: state.toolInput,
+              toolInput: state.type === 'approval'
+                ? redactInteractionCredentials(state.toolInput) as Record<string, unknown> | undefined
+                : state.toolInput,
             });
             existingIds.add(state.interactionId);
           }
+          // Durable approvals use the same fixed interaction zone as runtime permission/AskUser cards.
           for (const approval of buildApprovalRecordsFromEvents(
             durableInteractionEvents,
             sessionId,
@@ -3044,14 +2980,17 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             if (existingIds.has(approval.id)) continue;
             pending.push({
               interactionId: approval.id,
-              type: "permission_request",
+              type: "approval",
+              version: Number.isFinite(Date.parse(approval.createdAt)) ? Date.parse(approval.createdAt) : 0,
+              order: Number.isFinite(Date.parse(approval.createdAt)) ? Date.parse(approval.createdAt) : 0,
               toolId: approval.toolId,
               toolName: approval.toolName,
               displayName: approval.displayName,
-              toolInput:
+              toolInput: redactInteractionCredentials(
                 approval.input && typeof approval.input === "object"
-                  ? (approval.input as Record<string, unknown>)
+                  ? approval.input
                   : { value: approval.input },
+              ) as Record<string, unknown>,
             });
           }
         }
@@ -3065,11 +3004,38 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
     },
   );
 
+  /** Canonical owner-scoped interaction detail/receipt endpoint used after list-summary hydration. */
+  router.get('/chat/interactions/:interactionId', async (req: Request, res: Response) => {
+    const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+    const interactionId = req.params.interactionId;
+    if (!sessionId || !interactionId) { res.status(400).json({ error: 'sessionId and interactionId required' }); return; }
+    const pending = interactionStore.get(interactionId);
+    if (pending) {
+      if (pending.sessionId !== sessionId || (pending.userId && pending.userId !== req.user?.sub)) {
+        res.status(404).json({ error: 'Interaction not found' }); return;
+      }
+      res.json({
+        sessionId, interactionId, type: pending.type, version: pending.version, order: pending.order,
+        questions: pending.questions, toolId: pending.toolId, toolName: pending.toolName,
+        displayName: pending.displayName,
+        toolInput: pending.type === 'approval' ? redactInteractionCredentials(pending.toolInput) : pending.toolInput,
+      });
+      return;
+    }
+    const completed = interactionStore.getCompleted(sessionId, interactionId);
+    if (!completed || (completed.userId && completed.userId !== req.user?.sub)) { res.status(404).json({ error: 'Interaction not found' }); return; }
+    const status = completed.response.answers ? 'answered' : completed.response.allow === false ? 'rejected' : 'approved';
+    res.json({
+      sessionId, interactionId, version: completed.version, order: completed.order,
+      receipt: { status, requestId: completed.requestId, respondedAt: new Date(completed.completedAt).toISOString() },
+    });
+  });
+
   /**
    * POST /api/sessions/:sessionId/restore
    *
    * 从回收站恢复自己的会话（移除 deletedAt）。
-   * Owner-self only：只允许会话原 owner 恢复，任何 admin（含平台 admin / 组织 admin）
+   * Owner-self only：只允许会话原 owner 恢复；任何 admin（含平台 admin / 组织 admin）
    * 都不能代恢复他人会话。普通 user 也能恢复自己的。
    */
   router.post(
@@ -3283,8 +3249,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             `[sessions] revoke share on delete failed sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
+        const priorVersion = Date.parse(currentMeta.updatedAt ?? currentMeta.createdAt) || 0;
+        const deletedAt = new Date(Math.max(Date.now(), priorVersion + 1)).toISOString();
         await updateSessionMeta(transcriptPath, {
-          deletedAt: new Date().toISOString(),
+          deletedAt,
+          updatedAt: deletedAt,
           deletedBy: req.user?.username || "anonymous",
         });
         return true;
@@ -3292,8 +3261,11 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
       const changed = options.artifactLifecycle
         ? await options.artifactLifecycle.withRevoked(sessionId, meta.userId, applySoftDelete)
         : await applySoftDelete();
+      const deletedMeta = await readSessionMeta(transcriptPath);
+      const deletedAt = deletedMeta?.deletedAt ?? new Date().toISOString();
+      const serverVersion = Date.parse(deletedAt) || Date.now();
       if (!changed) {
-        res.json({ ok: true, softDeleted: true });
+        res.json({ ok: true, softDeleted: true, ack: { status: "duplicate", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
         return;
       }
 
@@ -3311,16 +3283,22 @@ export function createSessionsRouter(options: SessionsRouterOptions): Router {
             eventBus.emitUser(userId, {
               type: "session_deleted",
               sessionId,
+              serverVersion,
+              updatedAt: deletedAt,
+              sourceSeq: serverVersion,
             });
           } else {
             options.broadcastToUser?.(userId, {
               type: "session_deleted",
               sessionId,
+              serverVersion,
+              updatedAt: deletedAt,
+              sourceSeq: serverVersion,
             });
           }
         }
       }
-      res.json({ ok: true, softDeleted: true });
+      res.json({ ok: true, softDeleted: true, ack: { status: "applied", sessionId, deleted: true, serverVersion, updatedAt: deletedAt } });
     } catch (err) {
       const msg = String(err instanceof Error ? err.message : err);
       if (msg.includes("outside allowed directory")) {

@@ -152,6 +152,23 @@ describe('MCP 路由组织隔离', () => {
       expect(ids).toEqual(['global_shared', 'wain_only']);
       expect(ids).not.toContain('kaiyan_only');
     });
+
+    it('平台 admin 的组织控制台查询只返回目标组织 + 全局', async () => {
+      await seedServers();
+      h.setCaller(PLATFORM_ADMIN);
+      const res = await h.request('/api/mcp/admin/servers?tenantId=wain');
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const ids = body.servers.map((s: ManagedMcpServer) => s.id).sort();
+      expect(ids).toEqual(['global_shared', 'wain_only']);
+    });
+
+    it('组织 admin 不能借 tenantId 查询其他组织', async () => {
+      await seedServers();
+      h.setCaller(WAIN_ADMIN);
+      const res = await h.request('/api/mcp/admin/servers?tenantId=kaiyan');
+      expect(res.status).toBe(403);
+    });
   });
 
   // ============================================================

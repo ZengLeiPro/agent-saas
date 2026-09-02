@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyModelFailure,
   customerSafeRuntimeError,
+  mapRuntimeFailureToCanonical,
   POLICY_REJECTION_CUSTOMER_MESSAGE,
 } from '../runtime/runtimeFailure.js';
 
@@ -18,6 +19,21 @@ describe('runtimeFailure', () => {
     const rawError = 'Responses API HTTP 400: cyber_policy request_id=req-secret';
     expect(customerSafeRuntimeError(rawError, 'policy_rejection')).toBe(POLICY_REJECTION_CUSTOMER_MESSAGE);
     expect(customerSafeRuntimeError(rawError, undefined)).toBe(rawError);
+  });
+
+  it('adapts existing runtime authority into canonical safe semantics without raw provider text', () => {
+    const failure = mapRuntimeFailureToCanonical({
+      failureKind: 'policy_rejection',
+      correlationId: 'corr-runtime-123',
+      legacyMessage: 'token=RUNTIME_SECRET /workspace/private',
+    });
+    expect(failure).toMatchObject({
+      kind: 'capability_unavailable',
+      correlationId: 'corr-runtime-123',
+      recoveryAction: { kind: 'contact-admin' },
+      terminal: true,
+    });
+    expect(JSON.stringify(failure)).not.toMatch(/RUNTIME_SECRET|workspace/);
   });
 
   it.each([

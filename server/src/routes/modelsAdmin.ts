@@ -445,6 +445,7 @@ export function createModelsAdminRouter(options: CreateModelsAdminRouterOptions)
         ...(options.onConfigReloaded ? { onCommitted: options.onConfigReloaded } : {}),
       });
       await revokeModelRefs(options.secretVault, replacedRefs);
+      // ETag is the raw-text CAS revision; rawConfigFingerprint remains a separate governance identity.
       res.setHeader('ETag', `"${result.revision}"`);
       res.json({
         revision: result.revision,

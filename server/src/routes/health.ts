@@ -8,6 +8,7 @@ import { assertRuntimeEnvironmentSafety } from '../release/environmentSafety.js'
 import type { RuntimeIdentity } from '../release/runtimeIdentity.js';
 import type { ConfigIdentitySummary } from '@agent/shared';
 import type { EffectiveConfigStatus } from '../config/effectiveConfigStatus.js';
+import { isTtsCapabilityEnabled } from '../integrations/tts/capability.js';
 
 interface IntegrationV3HealthStatus {
   status: string;
@@ -96,7 +97,7 @@ export function createHealthRouter(config: AppConfig, options: HealthRouteOption
       activeStreams: options.getActiveStreamCount?.() ?? 0,
       uploads: options.getUploadMetrics?.(),
       draining,
-      ttsAvailable: !!config.tts,
+      ttsAvailable: isTtsCapabilityEnabled(config.tts),
       dispatch: options.getDispatchMetrics?.(),
     });
   });

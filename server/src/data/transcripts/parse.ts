@@ -4,12 +4,13 @@
  * 将 JSONL 格式的 transcript 解析为结构化的 blocks。
  */
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import * as readline from "node:readline";
 import { apiLogger } from "../../utils/logger.js";
 import { ContextTokenAccumulator } from "../../runtime/contextAccounting.js";
 import { truncateReplayToolResultContent } from "../../runtime/replayEventBounds.js";
+import { isValidAttachmentId } from '@agent/shared';
+import type { MessageAttachmentDisplay } from '@agent/shared';
 import type { ModelResponseMode } from "../../runtime/types.js";
 import { computeCacheHitDenominatorTokens, computeUsageTotalTokens } from "../usage/pricing.js";
 import {
@@ -21,6 +22,12 @@ import {
   readTrustedTranscriptHeadLines,
   readTrustedTranscriptTailLines,
 } from "./trustedSummaryRead.js";
+import {
+  createTranscriptWindowGeneration,
+  encodeTranscriptWindowCursor,
+  resolveTranscriptWindowCursor,
+} from './transcriptCursor.js';
+export { encodeTranscriptWindowCursor } from './transcriptCursor.js';
 
 export type TranscriptBlockKind =
   | "prompt"
@@ -71,7 +78,7 @@ export interface TranscriptBlock {
   /** User prompt originated from mobile voice transcription */
   isVoiceTranscript?: boolean;
   /** User prompt 携带的附件元数据（来自 transcript user 行顶层 attachments 字段） */
-  attachments?: Array<{ name: string; isImage?: boolean; relativePath?: string }>;
+  attachments?: MessageAttachmentDisplay[];
   /** 用户消息客户端幂等 ID；刷新后继续用于消息与队列精确对账。 */
   clientMsgId?: string;
   /** 插话来源 run ID；detail API 据此排除已经投影进时间线的 pending steering。 */
@@ -86,6 +93,8 @@ export interface TranscriptBlock {
   finalOutput?: boolean;
   /** 门禁拒答合成 assistant 行关联的 guardrail event id（员工申诉入口用） */
   guardrailEventId?: string;
+  /** Explicit moderation domain fact; never inferred from text/error/tool payloads. */
+  moderation?: { eventId: string; outcome: 'allowed' | 'blocked' | 'flagged'; reasonCode?: string };
   /**
    * tool_use block：工具执行的「给人看」摘要。
    *
@@ -208,56 +217,6 @@ interface TranscriptLineIndex {
   endedWithNewline: boolean;
   tailAnchor: string;
   generation: string;
-}
-
-const TRANSCRIPT_WINDOW_CURSOR_PREFIX = 'tw1.';
-const transcriptWindowProcessSeed = createHash('sha256')
-  .update(`${process.pid}:${Date.now()}:${Math.random()}`)
-  .digest('base64url')
-  .slice(0, 12);
-let transcriptWindowGenerationSequence = 0;
-
-function createTranscriptWindowGeneration(stat: Stats): string {
-  transcriptWindowGenerationSequence += 1;
-  return `${transcriptWindowProcessSeed}:${stat.dev}:${stat.ino}:${transcriptWindowGenerationSequence}`;
-}
-
-export function encodeTranscriptWindowCursor(generation: string, blockId?: string): string | undefined {
-  if (!blockId) return undefined;
-  return `${TRANSCRIPT_WINDOW_CURSOR_PREFIX}${Buffer.from(JSON.stringify({
-    generation,
-    blockId,
-  })).toString('base64url')}`;
-}
-
-function resolveTranscriptWindowCursor(
-  cursor: string | undefined,
-  generation: string,
-): { blockId?: string; invalidated: boolean } {
-  if (!cursor) return { invalidated: false };
-  if (!cursor.startsWith(TRANSCRIPT_WINDOW_CURSOR_PREFIX)) {
-    // 兼容升级前已经落进 IndexedDB 的 line-* cursor。
-    return /^line-\d+(?:-|$)/.test(cursor)
-      ? { blockId: cursor, invalidated: false }
-      : { invalidated: true };
-  }
-  if (cursor.length > 2_048) return { invalidated: true };
-  try {
-    const decoded = JSON.parse(Buffer.from(
-      cursor.slice(TRANSCRIPT_WINDOW_CURSOR_PREFIX.length),
-      'base64url',
-    ).toString('utf8')) as { generation?: unknown; blockId?: unknown };
-    if (
-      decoded.generation !== generation
-      || typeof decoded.blockId !== 'string'
-      || !/^line-\d+(?:-|$)/.test(decoded.blockId)
-    ) {
-      return { invalidated: true };
-    }
-    return { blockId: decoded.blockId, invalidated: false };
-  } catch {
-    return { invalidated: true };
-  }
 }
 
 const TRANSCRIPT_LINE_INDEX_MAX_ENTRIES = 128;
@@ -591,12 +550,12 @@ function toTsMs(value: unknown): number | undefined {
   return undefined;
 }
 
-/** 解析 transcript user 行顶层 attachments 字段（legacyTranscriptProjection userLine 写入） */
+/** 解析 transcript user 行顶层 attachments 字段（V1 ID metadata + N-1 legacy path display）。 */
 function parseUserAttachments(
   value: unknown,
-): Array<{ name: string; isImage?: boolean; relativePath?: string }> | undefined {
+): MessageAttachmentDisplay[] | undefined {
   if (!Array.isArray(value)) return undefined;
-  const out: Array<{ name: string; isImage?: boolean; relativePath?: string }> = [];
+  const out: MessageAttachmentDisplay[] = [];
   for (const item of value) {
     const name = typeof (item as { name?: unknown })?.name === "string"
       ? (item as { name: string }).name
@@ -605,9 +564,22 @@ function parseUserAttachments(
     const relativePath = typeof (item as { relativePath?: unknown })?.relativePath === "string"
       ? (item as { relativePath: string }).relativePath
       : undefined;
+    const attachmentId = isValidAttachmentId((item as { attachmentId?: unknown })?.attachmentId)
+      ? (item as { attachmentId: string }).attachmentId
+      : undefined;
+    const mimeType = typeof (item as { mimeType?: unknown })?.mimeType === 'string'
+      ? (item as { mimeType: string }).mimeType
+      : undefined;
+    const size = typeof (item as { size?: unknown })?.size === 'number'
+      ? (item as { size: number }).size
+      : undefined;
     out.push({
       name,
+      ...(attachmentId ? { attachmentId } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(size !== undefined ? { size } : {}),
       ...((item as { isImage?: unknown })?.isImage === true ? { isImage: true } : {}),
+      // N-1 transcript only. New projection no longer writes this field.
       ...(relativePath ? { relativePath } : {}),
     });
   }
@@ -846,6 +818,15 @@ async function parseTranscriptFileUncached(
       const sourceEventId =
         typeof obj?.sourceEventId === "string" ? obj.sourceEventId : undefined;
       const runId = typeof obj?.runId === "string" ? obj.runId : undefined;
+      const moderation = obj?.moderation && typeof obj.moderation === 'object'
+        && typeof obj.moderation.eventId === 'string'
+        && (obj.moderation.outcome === 'allowed' || obj.moderation.outcome === 'blocked' || obj.moderation.outcome === 'flagged')
+        ? {
+          eventId: obj.moderation.eventId,
+          outcome: obj.moderation.outcome as 'allowed' | 'blocked' | 'flagged',
+          ...(typeof obj.moderation.reasonCode === 'string' ? { reasonCode: obj.moderation.reasonCode } : {}),
+        }
+        : undefined;
       if (Array.isArray(content)) {
         let idx = 0;
         for (const block of content) {
@@ -864,6 +845,7 @@ async function parseTranscriptFileUncached(
               ...(sourceEventId ? { sourceEventId } : {}),
               ...(runId ? { runId } : {}),
               ...(guardrailEventId ? { guardrailEventId } : {}),
+              ...(moderation ? { moderation } : {}),
             });
             continue;
           }

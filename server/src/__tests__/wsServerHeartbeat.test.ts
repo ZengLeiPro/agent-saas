@@ -175,7 +175,7 @@ describe('WsServer authenticated lifecycle and heartbeat', () => {
     });
   });
 
-  it('legacy client without epoch overflows once per socket and again after epoch rotation', async () => {
+  it('N-1 client without epoch reuses a continuous cursor without overflow or sync loop', async () => {
     await withWsServer(async ({ url, token, wsServer }) => {
       wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-1' });
       const firstEpoch = wsServer.userEventLog.getEpoch('user-1');
@@ -184,26 +184,14 @@ describe('WsServer authenticated lifecycle and heartbeat', () => {
       messages.length = 0;
 
       ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
-      await waitUntil(() => messages.length >= 2);
-      expect(messages.slice(0, 2)).toEqual([
+      await waitUntil(() => messages.length >= 1);
+      expect(messages).toEqual([
         { data: { type: 'pong', seq: 1, epoch: firstEpoch } },
-        { data: { type: 'sync_overflow', seq: 1, epoch: firstEpoch } },
       ]);
 
       ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
-      await waitUntil(() => messages.length >= 3);
-      expect(messages[2]).toEqual({ data: { type: 'pong', seq: 1, epoch: firstEpoch } });
-
-      wsServer.userEventLog.stop();
-      wsServer.userEventLog.push('user-1', { type: 'session_updated', sessionId: 'session-2' });
-      const nextEpoch = wsServer.userEventLog.getEpoch('user-1');
-      expect(nextEpoch).not.toBe(firstEpoch);
-      ws.send(JSON.stringify({ action: 'ping', lastSeq: 1 }));
-      await waitUntil(() => messages.length >= 5);
-      expect(messages.slice(3)).toEqual([
-        { data: { type: 'pong', seq: 1, epoch: nextEpoch } },
-        { data: { type: 'sync_overflow', seq: 1, epoch: nextEpoch } },
-      ]);
+      await waitUntil(() => messages.length >= 2);
+      expect(messages[1]).toEqual({ data: { type: 'pong', seq: 1, epoch: firstEpoch } });
       ws.close();
     });
   });
@@ -217,10 +205,13 @@ describe('WsServer authenticated lifecycle and heartbeat', () => {
       ws.send(JSON.stringify({ action: 'ping', lastSeq: 1, epoch: 'previous-instance' }));
       await waitUntil(() => messages.length >= 2);
       const userEpoch = wsServer.userEventLog.getEpoch('user-1');
-      expect(messages).toEqual([
-        { data: { type: 'pong', seq: 1, epoch: userEpoch } },
-        { data: { type: 'sync_overflow', seq: 1, epoch: userEpoch } },
-      ]);
+      expect(messages[0]).toEqual({ data: { type: 'pong', seq: 1, epoch: userEpoch } });
+      expect(messages[1]).toMatchObject({
+        data: {
+          type: 'sync_overflow', seq: 1, epoch: userEpoch,
+          recovery: { version: 1, authoritative: true },
+        },
+      });
       ws.close();
     });
   });

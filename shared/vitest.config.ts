@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
+const coverageReporters =
+  process.env.COVERAGE_REPORT_MODE === 'ci'
+    ? ['text', 'lcovonly', 'json-summary']
+    : ['text', 'lcov', 'json-summary', 'html'];
+
 export default defineConfig({
   test: {
     include: ['src/**/*.{test,spec}.ts'],
@@ -8,7 +13,7 @@ export default defineConfig({
     globals: true,
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov', 'json-summary', 'html'],
+      reporter: coverageReporters,
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
       exclude: [

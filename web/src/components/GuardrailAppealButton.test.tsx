@@ -6,9 +6,8 @@
  *  B. 点击 → 弹层 → 可选理由 → POST /api/appeals → 「已申诉」态
  *  C. 幂等：同一 guardrailEventId 二次渲染仍为已申诉态；服务端 409 视为已申诉成功
  */
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { webcrypto } from 'node:crypto';
 import { GuardrailAppealButton, __resetSubmittedAppealsForTest } from './GuardrailAppealButton';
 import { MessageFeedbackProvider } from '@/contexts/MessageFeedbackContext';
 
@@ -22,11 +21,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-beforeAll(() => {
-  if (!globalThis.crypto?.subtle) {
-    Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true });
-  }
-});
+
 
 describe('GuardrailAppealButton', () => {
   beforeEach(() => {

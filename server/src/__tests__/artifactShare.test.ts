@@ -78,6 +78,7 @@ describe('ArtifactShare backend', () => {
     now = new Date('2026-08-22T08:00:00.000Z');
     shareStore = new InMemoryArtifactShareStore(() => new Date(now));
     artifactService = new ArtifactService({
+      runtimeEnvironment: 'test',
       artifactStore,
       blobStore,
       agentCwd,
@@ -276,6 +277,7 @@ describe('ArtifactShare backend', () => {
     });
     const store = new InMemoryArtifactStore();
     const service = new ArtifactService({
+      runtimeEnvironment: 'test',
       artifactStore: store,
       blobStore,
       agentCwd,
@@ -305,6 +307,7 @@ describe('ArtifactShare backend', () => {
     });
     const store = new InMemoryArtifactStore();
     const service = new ArtifactService({
+      runtimeEnvironment: 'test',
       artifactStore: store,
       blobStore,
       agentCwd,

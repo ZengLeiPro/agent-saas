@@ -60,7 +60,7 @@ export default defineConfig({
   build: {
     modulePreload: {
       resolveDependencies: (_filename, deps) =>
-        deps.filter((d) => !d.includes("vendor-markdown")),
+        deps.filter((d) => !d.includes("vendor-markdown") && !d.includes("ResourceAccessEditors")),
     },
     rollupOptions: {
       output: {

@@ -10,6 +10,8 @@ interface RuntimeStreamBlockProjectionState {
   /** 已投影给客户端的内容；终态补差可能暂时领先于 content。 */
   projectedContent: string;
   draftId?: string;
+  /** Stable identity of the current stream block; replaced on every explicit restart. */
+  blockId?: string;
 }
 
 export interface RuntimeStreamProjectionState {
@@ -80,7 +82,7 @@ function reconcileRuntimeStreamAggregate(
   return events;
 }
 
-export function projectRuntimePlatformEvent(
+function projectRuntimePlatformEventLegacy(
   event: PlatformEvent,
   options: {
     clientMsgId?: string;
@@ -119,7 +121,7 @@ export function projectRuntimePlatformEvent(
         }],
       };
     case 'user_message':
-      // 队列消息在真正取得执行权时才进入时间线。带 clientMsgId 的普通 queue 与带
+      // 队列消息在真正取得执行权时才进入时间线；附件重放只投影 ID + 展示元数据。带 clientMsgId 的普通 queue 与带
       // interjectionSourceRunId 的显式插话都必须投影；客户端按 clientMsgId 幂等去重。
       if (!event.clientMsgId && !event.interjectionSourceRunId) return { events: [] };
       return {
@@ -130,8 +132,10 @@ export function projectRuntimePlatformEvent(
           ...(event.attachments?.length ? {
             attachments: event.attachments.map((attachment) => ({
               name: attachment.originalName,
+              attachmentId: attachment.attachmentId,
+              mimeType: attachment.mimeType,
+              size: attachment.sizeBytes,
               isImage: attachment.isImage,
-              relativePath: attachment.relativePath,
             })),
           } : {}),
           timestamp: Date.parse(event.timestamp) || Date.now(),
@@ -255,6 +259,7 @@ export function projectRuntimePlatformEvent(
           block.open = true;
           block.content = '';
           block.projectedContent = '';
+          block.blockId = event.id;
           if (event.draftId) block.draftId = event.draftId;
           else delete block.draftId;
         }
@@ -448,6 +453,154 @@ export function projectRuntimePlatformEvent(
     default:
       return { events: [] };
   }
+}
+
+type RuntimeProjectionResult = { events: object[]; terminal?: boolean; sessionStatus?: 'completed' | 'failed' | 'cancelled'; terminalError?: string };
+
+type RuntimePresentationInput = {
+  kind: 'tool' | 'business_step';
+  source: Record<string, unknown>;
+};
+
+const BUSINESS_STEP_STATUSES = new Set([
+  'pending', 'in_progress', 'waiting', 'blocked', 'completed', 'failed',
+]);
+
+function structuredBusinessStepSources(argumentsText: string): RuntimePresentationInput[] {
+  try {
+    const parsed = JSON.parse(argumentsText) as { todos?: unknown };
+    if (!Array.isArray(parsed.todos)) return [];
+    return parsed.todos.flatMap((entry): RuntimePresentationInput[] => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const todo = entry as Record<string, unknown>;
+      if (todo.kind !== 'business' || typeof todo.content !== 'string'
+        || typeof todo.status !== 'string' || !BUSINESS_STEP_STATUSES.has(todo.status)) return [];
+      return [{
+        kind: 'business_step',
+        source: {
+          kind: 'business', content: todo.content, status: todo.status,
+          ...(typeof todo.activeForm === 'string' ? { activeForm: todo.activeForm } : {}),
+          ...(todo.outcome && typeof todo.outcome === 'object' ? { outcome: todo.outcome } : {}),
+          ...(Array.isArray(todo.detail) ? { detail: todo.detail } : {}),
+          ...(Array.isArray(todo.display) ? { display: todo.display } : {}),
+          ...(Array.isArray(todo.evidenceRefs) ? { evidenceRefs: todo.evidenceRefs } : {}),
+        },
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Server supplies structured presenter inputs but never evaluates client authentication/build/session
+ * gates and never emits showRaw. The shared client presenter remains disclosure authority.
+ */
+function structuredPresentationInputs(
+  event: PlatformEvent,
+  frame: Record<string, unknown>,
+): RuntimePresentationInput[] {
+  if (event.type === 'assistant_tool_calls' && frame.type === 'tool_input') {
+    const toolCallId = typeof frame.toolId === 'string' ? frame.toolId : undefined;
+    const call = event.toolCalls.find((candidate) => candidate.id === toolCallId);
+    if (!call) return [];
+    if (call.name === 'TodoWrite') return structuredBusinessStepSources(call.arguments);
+    return [{
+      kind: 'tool',
+      source: {
+        id: `tool:${event.runId}:${call.id}`,
+        kind: 'tool_activity', status: 'running',
+        content: [{ type: 'tool', toolName: call.name }],
+      },
+    }];
+  }
+  if (event.type === 'tool_result' && frame.type === 'tool_result') {
+    return [{
+      kind: 'tool',
+      source: {
+        id: `tool:${event.runId}:${event.toolCallId}`,
+        kind: 'tool_activity', status: event.isError ? 'failed' : 'completed',
+        content: [{
+          type: 'tool', toolName: event.toolName,
+          ...(event.presentation ? { presentation: event.presentation } : {}),
+        }],
+      },
+    }];
+  }
+  return [];
+}
+
+/** Attach canonical domain + stable identities without changing the legacy frame payload contract. */
+function attachCanonicalProjectionMetadata(
+  event: PlatformEvent,
+  result: RuntimeProjectionResult,
+  streamStates?: Map<string, RuntimeStreamProjectionState>,
+): RuntimeProjectionResult {
+  const runId = 'runId' in event && typeof event.runId === 'string' ? event.runId : `event:${event.id}`;
+  const messageId = event.type === 'user_message'
+    ? event.clientMsgId ?? event.id
+    : `assistant:${runId}`;
+  let activeBlockId: string | undefined;
+  const events = result.events.map((raw, index) => {
+    const frame = raw as Record<string, unknown>;
+    const type = typeof frame.type === 'string' ? frame.type : '';
+    const canonicalTypes = new Set([
+      'user_message', 'block_start', 'block_end', 'text', 'thinking', 'tool_input',
+      'tool_execution', 'tool_result', 'subagent_start', 'subagent_end',
+    ]);
+    if (!canonicalTypes.has(type)) return frame;
+    const blockType = typeof frame.blockType === 'string' ? frame.blockType : undefined;
+    const toolCallId = typeof frame.toolId === 'string'
+      ? frame.toolId
+      : 'toolCallId' in event && typeof event.toolCallId === 'string'
+        ? event.toolCallId
+        : undefined;
+    if (type === 'block_start') {
+      activeBlockId = blockType === 'tool_use' && toolCallId
+        ? `tool:${runId}:${toolCallId}`
+        : event.type === 'assistant_stream_event'
+          ? `stream:${runId}:${event.blockType ? streamStates?.get(runId)?.[event.blockType].blockId ?? event.id : event.id}`
+          : `block:${event.id}:${blockType ?? index}`;
+    }
+    const domain = type === 'subagent_start' || type === 'subagent_end'
+      ? 'subagent'
+      : type === 'tool_execution' || type === 'tool_result' || blockType === 'tool_use' || type === 'tool_input'
+        ? 'tool'
+        : 'message';
+    const blockId = domain === 'tool' && toolCallId
+      ? `tool:${runId}:${toolCallId}`
+      : domain === 'subagent' && toolCallId
+        ? `subagent:${runId}:${toolCallId}`
+        : activeBlockId ?? (event.type === 'assistant_stream_event' && event.blockType
+          ? `stream:${runId}:${streamStates?.get(runId)?.[event.blockType].blockId ?? event.draftId ?? event.id}`
+          : undefined);
+    const presentationInputs = structuredPresentationInputs(event, frame);
+    const projection = {
+      eventId: `${event.id}:${index}`,
+      domain,
+      runId,
+      messageId,
+      ...(blockId ? { blockId } : {}),
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(presentationInputs.length ? { presentationInputs } : {}),
+      ...(domain === 'subagent' ? { subagentId: typeof frame.childRunId === 'string' ? frame.childRunId : `${runId}:${toolCallId ?? event.id}` } : {}),
+    };
+    const decorated = { ...frame, projection };
+    if (type === 'block_end') activeBlockId = undefined;
+    return decorated;
+  });
+  return { ...result, events };
+}
+
+export function projectRuntimePlatformEvent(
+  event: PlatformEvent,
+  options: {
+    clientMsgId?: string;
+    expandStreamed?: boolean;
+    streamStates?: Map<string, RuntimeStreamProjectionState>;
+  } = {},
+): RuntimeProjectionResult {
+  return attachCanonicalProjectionMetadata(event, projectRuntimePlatformEventLegacy(event, options), options.streamStates);
 }
 
 export function isDurableCursorAtOrBefore(cursor: string, target: string): boolean {

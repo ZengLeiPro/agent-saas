@@ -176,7 +176,7 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     vi.mocked(fetchPublicSessionShare).mockResolvedValue(sharedResponse());
   });
 
-  it("按需加载主卡后通过只读 Sheet 查看结果、过程、依据与只读 Artifact", async () => {
+  it("正式 Artifact 在公开主区可见，并可通过只读 Sheet 追溯步骤归属", async () => {
     render(<SessionSharePage token="share-token" />);
 
     const stepRow = await screen.findByRole(
@@ -187,7 +187,7 @@ describe("SessionSharePage 业务步骤只读详情", () => {
     expect(fetchPublicSessionShare).toHaveBeenCalledWith("share-token");
     expect(stepRow.getAttribute("aria-selected")).toBe("false");
     expect(screen.queryByText("分享核验完成")).toBeNull();
-    expect(screen.queryByText("分享核验报告.xlsx")).toBeNull();
+    expect(screen.getByText("分享核验报告.xlsx")).toBeTruthy();
 
     fireEvent.click(stepRow);
     const sheet = await screen.findByRole("dialog");

@@ -6,7 +6,7 @@
  * 整页面板走 lazy 加载，避免互相拖入对方的 bundle。
  */
 import { lazy, Suspense, useState, type CSSProperties } from "react";
-import { Globe, MessageSquareShare, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
+import { Globe, MessageSquareShare, Play, Repeat, ShieldAlert, Upload, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -248,24 +248,24 @@ export function WorkflowScenarioCard({
       <h3 className="text-base font-semibold leading-snug transition-colors group-hover:text-brand-600">
         {scenario.title}
       </h3>
-      <div className="mt-auto flex items-center justify-end gap-2 pt-6">
+      <div className="mt-auto grid w-full grid-cols-2 gap-2 pt-5" data-workflow-actions>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
-          className="h-8 px-3 text-xs text-muted-foreground hover:text-foreground"
+          className="h-8 w-full border-border/80 bg-background px-3 text-xs text-foreground shadow-none hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
           onClick={(event) => {
             event.stopPropagation();
             onPrimaryAction("presentation", scenario);
           }}
         >
+          <Play className="h-3.5 w-3.5" aria-hidden="true" />
           看演示
         </Button>
         <Button
           type="button"
-          variant="outline"
           size="sm"
-          className="h-8 border-brand-200 bg-brand-50 px-3 text-xs text-brand-700 transition-colors duration-200 group-hover:border-brand-600 group-hover:bg-brand-600 group-hover:text-white group-focus-within:border-brand-600 group-focus-within:bg-brand-600 group-focus-within:text-white"
+          className="h-8 w-full px-3 text-xs"
           onClick={(event) => {
             event.stopPropagation();
             onPrimaryAction("chat", scenario);

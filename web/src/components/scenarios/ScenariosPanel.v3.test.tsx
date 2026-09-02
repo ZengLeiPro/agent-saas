@@ -293,6 +293,9 @@ describe("ScenariosPanel V3", () => {
     expect(catalog.textContent).not.toContain("执行动作");
     expect(within(catalog).getByRole("button", { name: "看演示" })).toBeTruthy();
     expect(within(catalog).getByRole("button", { name: "立即试一试" })).toBeTruthy();
+    const actions = catalog.querySelector("[data-workflow-actions]");
+    expect(actions?.className).toContain("grid-cols-2");
+    expect(within(catalog).getByRole("button", { name: "看演示" }).querySelector("svg")).toBeTruthy();
     expect(catalog.firstElementChild?.className).not.toContain("before:bg-gradient-to-b");
   });
 

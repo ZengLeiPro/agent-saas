@@ -13,7 +13,7 @@
 2. 表中“主体”优先标记最终闭合权威定义的提交；早期提交信息中的编号若与权威定义错位，只按实际 diff 语义列为“支持”，不伪造一项一提交。例如早期 `M50-01 unify message timeline RenderModel` 实际支持 M20-05/M40-04，而不是权威 M50-01。
 3. M00-01 已在 main：PR #289；主体 `f0c5c5c79b83a275f8884ec1f11fa8b7dec50394`，支持 `2027c25d06abf7379643f44ace76fe83da4459b1`。M00-03 只有人工渠道决策，**没有代码提交**。
 4. “通过”仅表示仓库代码/契约自动化通过；“部分”表示代码门禁存在但仍依赖真实环境、制品或人工事实；“blocked”表示该项没有可宣称完成的代码或关键输入。代码状态不等于生产 Gate。
-5. 下列定向用例数来自当前树实际执行；`pnpm mobile-contract` 共 **1,698** 项（Shared Vitest 1,303；Mobile Vitest 196；Mobile Node 199），另含 Shared/Mobile typecheck 与离线 Expo 检查。
+5. 下列定向用例数来自当前树实际执行；`pnpm mobile-contract` 共 **1,699** 项（Shared Vitest 1,303；Mobile Vitest 197；Mobile Node 199），另含 Shared/Mobile typecheck 与离线 Expo 检查。
 
 ## 2. 36 项证据矩阵
 
@@ -23,7 +23,7 @@
 | M00-02 | 发布签名配置不再回退 debug，源码/日志不含签名秘密 | 主体 `a82152ab1ad0a85a77fdac51a5109f79ccd9dd05` | `mobile/plugins/withAndroidSigningConfig.js:26`；`docs/mobile-android-credential-incident-runbook.md:1` | `pnpm -F mobile test:android-signing`：7/7，另完成 source scan 与 Android clean prebuild/Gradle 静态核验 | 部分 | 凭证管理员轮换回执、既有 signer 指纹、旧包→新包真实升级连续性、发布 robot token |
 | M00-03 | Android 首发渠道、owner、包名、签名、升级和回滚方式有唯一书面决定 | **无代码提交（0）** | 权威外部决策项；仓库无可替代实现 | 无自动化命令：0 项；不得以 flavor 代码代替决策 | blocked | Store/Enterprise/两者的唯一渠道决策及产品/发布负责人签字 |
 | M10-01 | 首装只连接受信 HTTPS/WSS 服务，任意 origin 和示例域被拒绝 | 主体 `7a3ff002de3e3e1e47b0118f23284e9651f8d7c8` | `mobile/src/platform/trustedServiceOrigin.ts:54`；`mobile/src/platform/mobileConfig.ts:38` | `pnpm -F mobile exec vitest run src/platform/trustedServiceOrigin.test.ts src/platform/mobileConfig.test.ts`：22/22 | 通过 | 唯一生产 API/WSS、dev/staging/prod 域清单、真实 TLS/MITM 抓包 |
-| M10-02 | Expo SDK 55 依赖矩阵收口且双平台原生生成可解释 | 主体 `7d7e55dba4d8b0e2166cda0e8bf00952e1ce7055` | `mobile/package.json:52`；`pnpm-workspace.yaml:13` | `pnpm mobile-contract`：1,698/1,698；其中 `EXPO_OFFLINE=1 ... expo install --check` 退出 0 | 部分 | 在线检查发现 55.0.31，但受 `minimumReleaseAge: 2880`（48h cooling）未升级；离线结果不得写成在线 0 mismatch；仍需在线检查与双平台真实 clean prebuild 回执 |
+| M10-02 | Expo SDK 55 依赖矩阵收口且双平台原生生成可解释 | 主体 `7d7e55dba4d8b0e2166cda0e8bf00952e1ce7055` | `mobile/package.json:52`；`pnpm-workspace.yaml:13` | `pnpm mobile-contract`：1,699/1,699；其中 `EXPO_OFFLINE=1 ... expo install --check` 退出 0 | 部分 | 在线检查发现 55.0.31，但受 `minimumReleaseAge: 2880`（48h cooling）未升级；离线结果不得写成在线 0 mismatch；仍需在线检查与双平台真实 clean prebuild 回执 |
 | M10-03 | App ID、版本、build number/versionCode 与 Git SHA 可由单一 manifest 反查 | 主体 `7b5b9ff3bc2ec3815f09a3b5a6ec23a90270a8a1` | `mobile/scripts/release-manifest.cjs:42`；`mobile/release-manifest.json:1` | `pnpm -F mobile test:release-manifest`：16/16 | 部分 | Apple/Google/Expo 组织身份、Team/EAS project、现网最高版本与递增链、真实 RC manifest |
 | M10-04 | Store AAB 与 Enterprise APK 的权限、更新和签名路径分离 | 主体 `3fea4611de21590e34aab8aec61c2a53140c486c` | `mobile/eas.json:1`；`mobile/src/updates/enterpriseUpdateManifest.ts:20` | `pnpm -F mobile test:m10-04`：30/30（Vitest 11 + Node 19） | 部分 | 渠道决定、真实 Store/Enterprise 签名、AAB/APK 解包、旧正式包覆盖升级和 manifest 验签回执 |
 | M10-05 | 冷装不索取非必要权限，媒体权限只在用户动作时请求，拒绝后文字聊天仍可用 | 主体 `21b3195b0c90db61cb1c6a2a576dbca1fc30e952` | `mobile/src/platform/jitMediaPermissions.ts:30`；`docs/mobile-m10-05-privacy-and-store-review.md:1` | `pnpm -F mobile test:m10-05`：16/16（Vitest 5 + Node 11） | 部分 | 真机冷装权限弹窗=0、最低 OS/iPad 口径、Apple Privacy/Google Data Safety/隐私政策与抓包一致性 |
@@ -34,7 +34,7 @@
 | M20-05 | Tool/BusinessStep/presentation 共用安全 RenderModel，非 debug 不含 raw input/result | 主体 `6862c343fb3f8cded2615400a2f6e8cf811378ba`；支持 `e7cf07b9ddfd2aff2a874c266afb650c16b5227c`、`077e8db6495003440b2aa7a8e0d385d2a0c5acd3` | `shared/src/lib/presentationPresenter.ts:214`；`shared/src/lib/renderModel.ts:284` | `pnpm -F @agent/shared exec vitest run src/lib/presentationPresenter.test.ts src/lib/renderModel.test.ts`：45/45 | 通过 | 生产 tenant debug policy、真机 accessibility tree/截图敏感串审计 |
 | M20-06 | personal/assigned org Agent 路由明确，禁用/撤权/不可用不静默回退 | 主体 `21179f9d0f85a31335b1943b968bcc3b8c7922bf`；支持 `f508cb49524b416f53c5cdbf1df3a70875ea1614` | `shared/src/lib/agentTarget.ts:96`；`mobile/src/lib/agentTargetRouting.ts:2` | `pnpm -F @agent/shared exec vitest run src/lib/agentTarget.test.ts`：4/4 | 通过 | 生产 org 指派/撤权、personal disabled、删除 Agent 与审计日志回执 |
 | M20-07 | 长历史分页稳定，pending interaction 可达且 ACK/重复点击幂等 | 主体 `fdafa35e12fa117f34e82c24d38b4057ae6bd129`；支持 `de0107eec8990667898755deb3700b2889db028f`、`529b48944d9c2c9cbc4116c23f0032949c3ddcbf` | `shared/src/lib/sessionListPager.ts:95`；`shared/src/lib/activeInteraction.ts:74` | `pnpm -F @agent/shared exec vitest run src/lib/sessionListPager.test.ts src/lib/activeInteraction.test.ts`：13/13 | 通过 | 生产万条消息/慢请求/ACK 丢失与真实 pending 冷启动回执 |
-| M30-01 | 登录、刷新、失效、退出和换号按原子顺序断连、清状态并重建身份 | 主体 `ca87b81ecb388b00f56f160c390e07bce12294d2`；支持 `8c78600c3bf416abc6af834048783d8936ba597f`、`b68919ceb96b560e04a9f78674dd121b6d472c28`、`858c0659e9b18b468665ed3a1c48e23620ebc620`、`ed67c1f29e9ae37838c0901c5bd970858b6f7134`、`4ad67904801751e0c9de136de7b5dca82f7c9b95`、`321f94e2597f11fe93815c433c4d513a23b30a95`、`f72a3e0fb355c0850fb1ceb78e1257d482c10852` | `shared/src/lib/authLifecycle.ts:82`；`shared/src/lib/authFetch.ts:23`；`web/src/contexts/savedAccountLifecycle.ts:1` | Auth lifecycle 18/18；authFetch 15/15；Web saved-account 并发 4/4；生产 user-detail 身份隔离 4/4；OAuth handoff 11/11 | 通过 | 生产 OAuth provider/Universal Link/App Link、测试账号、真机 token 失效和 A→B 竞态 |
+| M30-01 | 登录、刷新、失效、退出和换号按原子顺序断连、清状态并重建身份 | 主体 `ca87b81ecb388b00f56f160c390e07bce12294d2`；支持 `8c78600c3bf416abc6af834048783d8936ba597f`、`b68919ceb96b560e04a9f78674dd121b6d472c28`、`858c0659e9b18b468665ed3a1c48e23620ebc620`、`ed67c1f29e9ae37838c0901c5bd970858b6f7134`、`4ad67904801751e0c9de136de7b5dca82f7c9b95`、`321f94e2597f11fe93815c433c4d513a23b30a95`、`f72a3e0fb355c0850fb1ceb78e1257d482c10852`、`9ddce9610dc7ce5a788deb974af10a96b231391c` | `shared/src/lib/authLifecycle.ts:82`；`shared/src/lib/authFetch.ts:23`；`web/src/contexts/savedAccountLifecycle.ts:1` | Auth lifecycle 18/18；authFetch 15/15；Web saved-account 并发 4/4；生产 user-detail 身份隔离 5/5；OAuth handoff 11/11 | 通过 | 生产 OAuth provider/Universal Link/App Link、测试账号、真机 token 失效和 A→B 竞态 |
 | M30-02 | cache schema v2 按账号分区，旧键迁移，备份/退出不保留业务明文 | 主体 `ad954747809ceb8ab2a6cc30ce7dc191d58b6523` | `shared/src/lib/cacheSchemaV2.ts:4`；`mobile/src/platform/mobileCacheAdapter.ts:6` | `pnpm -F @agent/shared exec vitest run src/lib/cacheSchemaV2.test.ts`：11/11 | 通过 | iOS/Android 真实 backup/restore、logout 后磁盘扫描、多租户同 sessionId 回执 |
 | M30-03 | Agent switcher 只显示可用目标，切换时会话身份明确且不可静默换 Agent | 主体 `4f620b1754c133e56628a28d75338cb94e182d2c` | `shared/src/lib/agentTargetTransition.ts:73`；`mobile/src/lib/agentTargetTransitionParity.test.ts:1` | `pnpm -F @agent/shared exec vitest run src/lib/agentTargetTransition.test.ts`：6/6 | 通过 | 生产 personal/org 组合、撤权历史只读、当前 run 切换策略真机回执 |
 | M40-01 | Mobile 发送/排队/插话/停止接入 shared 状态机，不再以本地 outbox 为真源 | 主体 `1f98a26561c3cb9822e5c7a5e0aab692069a2764` | `shared/src/lib/chatClientState.ts:55`；`mobile/src/hooks/useChatAppState.ts:204` | `pnpm -F @agent/shared exec vitest run src/lib/chatClientState.test.ts`：8/8 | 通过 | 生产弱网、后台、杀进程、三条队列和重复 run=0 的端到端回执 |
@@ -47,7 +47,7 @@
 | M50-03 | 旧 workspace HTML preview 在 V1 不可达，目录 token/JS WebView 风险关闭 | 主体 `784998335266a0560b468d1e3d306a3dcd3c585a` | `mobile/src/v1/v1Capabilities.ts:1`；已删除 `mobile/app/chat/html-preview.tsx` | M00-01 四套 V1 路由测试命令：43/43 | 通过 | 真机恶意 HTML/SVG 对 sibling、beacon、form、iframe、scheme、外跳的 0 字节回执 |
 | M50-04 | 录音/播放状态可清理，权限拒绝回文字；TTS 不健康时默认降级关闭 | 主体 `16b464dac68a88efe32ab349f76f985932af94d7`；支持 `75bce08031fac66110713a9670f9ae094f8540ae` | `shared/src/lib/voiceRecording.ts:96`；`shared/src/lib/ttsCapability.ts:6`；`mobile/src/services/voiceMediaCachePolicy.ts:18` | `pnpm -F @agent/shared exec vitest run src/lib/voiceRecording.test.ts src/lib/ttsCapability.test.ts`：11/11；Mobile media cache 2/2 | 部分 | **真实 STT/TTS**、麦克风权限拒绝、Range 播放、后台停止、长录音和缓存清理真机回执 |
 | M50-05 | 前后台/弱网按预算退避，回前台 attach active stream，旧 pending 不跨版本自动重放 | 主体 `e660e81057fe078ad3fe06a31767f35a3e6c72fe` | `shared/src/lib/appLifecycle.ts:276`；`mobile/src/platform/lifecycleAdapter.ts:35` | `pnpm -F @agent/shared exec vitest run src/lib/appLifecycle.test.ts src/lib/appLifecycleEffects.test.ts src/lib/pendingSubmissionRecovery.test.ts && pnpm -F mobile exec vitest run src/platform/lifecycleAdapter.test.ts`：22/22 | 通过 | 2G/300ms/5% 丢包/切网、后台 3秒至1小时、杀进程、服务重启真机回执 |
-| M60-01 | Shared/Mobile P0 契约成为稳定门禁，OAuth 并发不再 timeout | 主体 `1c1fdb526134258b13e0d79345fae465118f7212`；支持 `17407f4457522494b3284af51744bac0ef30a2fc`、`8ed70369790f777507bb14f3992d574c3a9f76a4`、`69e2f5cda66a6bad15d631af53a3e311b0540cef` | `package.json:25`；`mobile/src/contracts/p0ContractManifest.test.ts:13` | `pnpm mobile-contract`：1,698/1,698，Shared/Mobile typecheck 通过，offline Expo 退出 0；OAuth handoff 11/11 | 部分 | required-check 多次连续稳定回执；在线 Expo 0 mismatch；根并行 test 的资源策略需在 CI 证明不再 timeout/137 |
+| M60-01 | Shared/Mobile P0 契约成为稳定门禁，OAuth 并发不再 timeout | 主体 `1c1fdb526134258b13e0d79345fae465118f7212`；支持 `17407f4457522494b3284af51744bac0ef30a2fc`、`8ed70369790f777507bb14f3992d574c3a9f76a4`、`69e2f5cda66a6bad15d631af53a3e311b0540cef` | `package.json:25`；`mobile/src/contracts/p0ContractManifest.test.ts:13` | `pnpm mobile-contract`：1,699/1,699，Shared/Mobile typecheck 通过，offline Expo 退出 0；OAuth handoff 11/11 | 部分 | required-check 多次连续稳定回执；在线 Expo 0 mismatch；根并行 test 的资源策略需在 CI 证明不再 timeout/137 |
 | M60-02 | iOS/Android 四槽原生 E2E 门禁能拒绝模拟器、跨 SHA、重放和缺槽证据 | 主体 `358625a2c933102358843e100774a46062177a53` | `.github/workflows/mobile-native-e2e.yml:1`；`mobile/e2e/maestro/tests/native-e2e.test.mjs:1` | `pnpm -F mobile test:m60-02`：13/13 | 部分 | 当前四槽 pass 数据位于 `tests/fixtures`，只是 mock；缺最低 iOS、最新 iOS、Android 旗舰、低端/小屏四台真机及 provider 回执 |
 | M60-03 | clean prebuild 对最终 manifest/entitlement/PrivacyInfo/Gradle 做 fail-closed 静态门禁 | 主体 `c047f39cd345137111da16b4f30f6184b0f2b9a0`；补充 `afe685cbb0da009868038a66800ed2205cca99bc` | `mobile/scripts/native-policy.test.mjs:1`；`docs/mobile-m60-03-native-prebuild-gate.md:1` | `pnpm -F mobile test:m60-03`：14/14 mutation tests | 部分 | clean prebuild/golden 不是签名 release 制品；仍缺真实 IPA/AAB/APK 的 plist/entitlement/manifest/Gradle 与签名核验 |
 | M60-04 | 同一已审 SHA 构建、验证、提交，产物绑定版本/hash/签名/SBOM/审批 | 主体 `c123f24d065217c417904d6a655582c33c3bc9b4`；支持 `d20fa2ccc3339847558fd317f45cd08cc86c4295`、`ff537f85813facf128f16826d9f27652cbc122c3`、`6a0ad1cda9aa6e60c5358f5761a34f653453560b`、`d0d3f75675e474bbb93fc8acfb7b558eae20b694` | `.github/workflows/mobile-submit.yml:1`；`mobile/scripts/mobile-release-evidence.test.mjs:1` | `pnpm -F mobile test:m60-04`：29/29 | 部分 | 组织 robot token、保护环境审批、EAS build ID、真实 IPA/AAB/APK、签名指纹、SHA-256、SBOM/provenance、submit 回执 |
@@ -62,7 +62,7 @@
 
 | 验证项 | 当前事实 | 解释边界 |
 |---|---|---|
-| Mobile contract | `pnpm mobile-contract` 当前退出 0：Shared typecheck；Shared 100 files / 1,303 tests；Mobile typecheck；Mobile Vitest 42 files / 196 tests；Mobile Node 199 tests；合计 1,698 tests | 证明 Shared/Mobile 代码与契约当前通过；不证明生产服务、真机、签名、商店或灰度通过 |
+| Mobile contract | `pnpm mobile-contract` 当前退出 0：Shared typecheck；Shared 100 files / 1,303 tests；Mobile typecheck；Mobile Vitest 42 files / 197 tests；Mobile Node 199 tests；合计 1,699 tests | 证明 Shared/Mobile 代码与契约当前通过；不证明生产服务、真机、签名、商店或灰度通过 |
 | Expo 检查 | `EXPO_OFFLINE=1 pnpm -F mobile exec expo install --check` 退出 0，并明确输出 `Dependency validation is unreliable in offline-mode` | 只能记“offline 检查通过”。在线可见 Expo 55.0.31，但 `pnpm-workspace.yaml:13` 的 2,880 分钟（48h）cooling 令当前未升级；**不能写在线 0 mismatch** |
 | Web 全量与 build | 288 files / 2,222 tests 全部通过（3 个互斥批次：96/728、96/810、96/684）；production build 通过 | 保留非阻断 Browserslist 数据旧、部分大 chunk、Radix Description 与 React act warning；未掩盖失败 |
 | 六包 typecheck | server、web、shared、mobile、hand-server、acs-orchestrator 均通过 | 类型门禁与测试门禁分别留证，不混写 |
@@ -125,7 +125,7 @@
 
 ### Gate F：质量与运行
 
-1. **shared/mobile typecheck/test 连续稳定全绿**：当前 mobile-contract 1,698/1,698；但历史根并行 OAuth timeout/137，连续稳定性及 required-check 仍仅部分；生产 Gate **blocked**。
+1. **shared/mobile typecheck/test 连续稳定全绿**：当前 mobile-contract 1,699/1,699；但历史根并行 OAuth timeout/137，连续稳定性及 required-check 仍仅部分；生产 Gate **blocked**。
 2. **iOS/Android 原生 E2E 全绿**：证据 validator 13/13；生产 Gate **blocked**（四槽数据是 `tests/fixtures` mock，不是真机）。
 3. **冷装、升级、迁移、kill switch、回滚已演练**：contract/workflow 18/18；生产 Gate **blocked**（无真实现网旧包、设备、制品 digest、kill switch/回滚回执）。
 4. **crash/ANR/登录/WS/ACK/附件 dashboard 可用**：telemetry 契约 9/9；生产 Gate **blocked**（监控平台、owner、dashboard、SLO 和真实 crash/ANR 均缺）。
@@ -179,7 +179,7 @@
 
 ## 7. 当前任务提交账本
 
-本账本覆盖审计基线 `c340bc0e9ba2027b47ac00e01309a095f2f35155..HEAD` 的全部 **88** 个提交。末行使用符号 `HEAD` 表示包含本文件与 verifier 的自引用证据提交，由 verifier 实时解析并要求该提交只修改这两个证据文件；任何后续提交若不刷新本账本都会失败。
+本账本覆盖审计基线 `c340bc0e9ba2027b47ac00e01309a095f2f35155..HEAD` 的全部 **90** 个提交。末行使用符号 `HEAD` 表示包含本文件与 verifier 的自引用证据提交，由 verifier 实时解析并要求该提交只修改这两个证据文件；任何后续提交若不刷新本账本都会失败。
 
 | 序号 | 当前 full SHA / 符号 | 声明 ID / 类型 | Commit subject |
 |---:|---|---|---|
@@ -270,7 +270,9 @@
 | 85 | `30ddd0e57fd8fcb773009c1947e64786aa43bda7` | M00-01 | docs(mobile): M00-01 bind evidence verifier to head |
 | 86 | `f72a3e0fb355c0850fb1ceb78e1257d482c10852` | M30-01 | fix(auth): M30-01 close stale identity windows |
 | 87 | `d0d3f75675e474bbb93fc8acfb7b558eae20b694` | M60-04 | fix(mobile): M60-04 checkout before submit policy |
-| 88 | `HEAD` | M00-01 | docs(mobile): M00-01 refresh evidence after identity fixes |
+| 88 | `abbe8b7d68783cbd452567ffc786ee3d2a172ac0` | M00-01 | docs(mobile): M00-01 refresh evidence after identity fixes |
+| 89 | `9ddce9610dc7ce5a788deb974af10a96b231391c` | M30-01 | test(mobile): M30-01 cover stale self response generation |
+| 90 | `HEAD` | M00-01 | docs(mobile): M00-01 bind final stale-response evidence |
 
 ## 8. 后续 Reviewer 检查重点
 

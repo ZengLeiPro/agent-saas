@@ -44,9 +44,9 @@ if (missingPaths.length > 0) {
 }
 
 for (const required of [
-  '共 **1,698** 项（Shared Vitest 1,303；Mobile Vitest 196；Mobile Node 199）',
+  '共 **1,699** 项（Shared Vitest 1,303；Mobile Vitest 197；Mobile Node 199）',
   'Shared 100 files / 1,303 tests',
-  'Mobile Vitest 42 files / 196 tests',
+  'Mobile Vitest 42 files / 197 tests',
   'Mobile Node 199 tests',
 ]) {
   if (!document.includes(required)) throw new Error(`TASK-331 evidence matrix has stale test totals; missing: ${required}`);

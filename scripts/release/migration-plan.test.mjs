@@ -949,6 +949,147 @@ test('tracks imported callbacks through aliases, descriptor factories, class fie
       },
     },
     {
+      label: 'descriptor factory defineProperty merges a value member assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; prop.value = descriptor; Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges Reflect.set',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; Reflect.set(prop, 'value', descriptor); Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges Object.assign',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; Object.assign(prop, { value: descriptor }); Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperties merges a dynamic member assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const props = {}; props[key] = { value: descriptor }; Object.defineProperties(stores, props);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperties merges dynamic Object.assign',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const props = {}; Object.assign(props, { [key]: { value: descriptor } }); Object.defineProperties(stores, props);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype unshift call fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; Array.prototype.unshift.call(arr, descriptor); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges a computed static value assignment',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; prop['value'] = descriptor; Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty dynamic descriptor field fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const field = process.argv[3]; const stores = {}; const prop = {}; prop[field] = descriptor; Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty ambiguous value writes fail closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; prop.value = descriptor; prop.value = other; Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges a get member assignment',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst stores = {}; const prop = {}; prop.get = descriptor; Object.defineProperty(stores, 'fixed', prop);\nstores.fixed().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges a set member assignment',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst stores = {}; const prop = {}; prop.set = descriptor; Object.defineProperty(stores, 'fixed', prop);\nstores.fixed().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperties merges a static member assignment',
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst stores = {}; const props = {}; props.fixed = { value: descriptor }; Object.defineProperties(stores, props);\nstores.fixed().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory defineProperty merges an Object.assign source alias',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst key = process.argv[2]; const stores = {}; const prop = {}; const source = { value: descriptor }; Object.assign(prop, source); Object.defineProperty(stores, key, prop);\nstores[key]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype push apply fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; Array.prototype.push.apply(arr, [descriptor]); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype splice call fails closed',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; Array.prototype.splice.call(arr, 0, 0, descriptor); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype apply follows an argument array alias',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; const args = [descriptor]; Array.prototype.unshift.apply(arr, args); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'descriptor factory callable through a single static factory return',
       rootSource:
         "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } const alias = select();\nalias().value(db);",

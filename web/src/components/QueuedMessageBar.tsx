@@ -4,7 +4,7 @@ import type { QueuedInterjection } from "@/hooks/useChatAppState";
 import { cn } from "@/lib/utils";
 
 /**
- * 插话队列区（2026-08-04 终态设计）。
+ * 运行中发送的补充消息队列。
  *
  * 运行中发送的消息不进时间线，在输入框上方排队展示；被目标 run 消费或回退接管时
  * 由上层状态移除并进入时间线。条目支持撤回/编辑（排队中）与重发/移除（已取消/失败）。
@@ -52,7 +52,7 @@ export function QueuedMessageBar({
             ? (entry.reason || "正在核验服务端状态")
             : entry.status === "queued"
               ? entry.deliveryMode === "steer"
-                ? "显式插话，将在安全边界处理"
+                ? "已发送，将在当前步骤结束后处理"
                 : `已排队${entry.queuePosition !== undefined ? ` · 第 ${entry.queuePosition} 位` : ""}`
               : entry.status === "cancelled"
                 ? (entry.reason || "已撤销")

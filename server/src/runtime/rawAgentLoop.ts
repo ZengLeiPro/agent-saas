@@ -116,6 +116,7 @@ import { ApprovalAlreadyResolvedError, ApprovalPendingWithoutInteractionHook, In
 import { collectParallelToolCallSegment, type PreparedParallelToolCall } from './toolParallelism.js';
 import { createSuccessfulCompletionController, finishSuccessfulRun } from './rawAgentLoopCompletion.js';
 import { announceAppliedInterjections as announceInterjections, buildAtomicSteeringInputs, collectDurableInterjectionAnnouncementSourceRunIds, projectAtomicInterjectionEvents } from './rawAgentLoopInterjections.js';
+import { buildUserInterjectionSkippedToolResults, hasQueuedUserInputAtToolBoundary, skipToolCallForQueuedUserInput } from './rawAgentLoopToolInterjection.js';
 import {
   COMPACT_COMMAND_MODEL_CONTENT,
   MIN_COMPACTABLE_MESSAGES,
@@ -1742,14 +1743,18 @@ export class RawAgentLoop implements AgentLoop {
             ? { provider_continuation: completed.providerContinuation }
             : {}),
         });
-
+        let yieldedToUserInput = false;
         yield* this.drainToolCalls({
           calls: completed.toolCalls,
           descriptorsByName: this.callableDescriptorsForMessages(descriptorsByName, messages),
           baseToolContext,
           context,
           messages,
+          shouldYieldToUserInput: async () => (yieldedToUserInput = await hasQueuedUserInputAtToolBoundary({
+            context, disabled: steeringAbsorptionDisabled, warn: (message) => logger.warn(message),
+          })),
         });
+        if (yieldedToUserInput && turn >= turnLimit) turnLimit = turn + input.maxTurns;
         if (turn < turnLimit) {
           try {
             carriedBoundaryInterjections = await drainQueuedInterjections();
@@ -2156,30 +2161,17 @@ export class RawAgentLoop implements AgentLoop {
     );
   }
 
-  /**
-   * 执行 batch：默认串行；连续 ≥2 个已预授权调用组成 parallel fan-out：
-   *   - safe + never 工具可静态 opt-in；有风险工具只能由 resolveConcurrency 按
-   *     入参 opt-in，且必须在 fan-out 前取得 policy=allow 并固化 authorization。
-   *     需要人工审批的调用仍走串行挂起/恢复，绝不带并发兄弟进入 Promise.all。
-   *   - 顺序契约不变：tool_use 块先按原 toolCalls 顺序全部 yield，执行完成后
-   *     tool_result 三件套（yield + eventStore append + messages.push）仍按原顺序逐个
-   *     进行——模型协议要求 tool_result 顺序稳定。并发期间 durable 的
-   *     tool_invocation_* 事件会交错落库，replay/recovery 按 toolCallId 建 Map
-   *     （runtime/replay.ts）不依赖跨 call 顺序，已核实安全。
-   *   - Agent 并发由 subagentLimits 控制；Shell 每段最多 4 个，防止资源过载。
-   *   - abort：父 signal 经 ToolCallContext 传导给每个并发工具，级联取消。
-   * 单个并发安全调用（段长 1）仍走下方串行分支，行为与既有路径一致。
-   */
+  /** 默认串行；预授权并发工具稳定回填，交互型工具串行挂起。 */
   private async *drainToolCalls(args: {
     calls: ModelToolCall[];
     descriptorsByName: Map<string, ToolDescriptor>;
     baseToolContext: ToolCallContext;
     context: RunContext;
     messages?: ModelChatMessage[];
+    shouldYieldToUserInput?: () => Promise<boolean>;
   }): AsyncIterable<OutboundEvent> {
     const calls = args.calls;
-    let index = 0;
-    while (index < calls.length) {
+    for (let index = 0; index < calls.length;) {
       const { end: segmentEnd, preparedCalls } = await collectParallelToolCallSegment({
         calls,
         start: index,
@@ -2189,12 +2181,21 @@ export class RawAgentLoop implements AgentLoop {
         refreshPolicyContext: (context) => refreshRunApprovalPolicy(this.runStore, context),
       });
 
+      if (args.shouldYieldToUserInput && await args.shouldYieldToUserInput()) {
+        for (const result of buildUserInterjectionSkippedToolResults(calls.slice(index))) yield* this.appendToolResult({ ...result, context: args.context, messages: args.messages });
+        return;
+      }
+
       if (preparedCalls.length >= 2) {
         const segment = calls.slice(index, segmentEnd);
         for (const call of segment) {
           yield { type: 'tool_start', toolId: call.id, toolName: call.name, runId: args.context.runId };
           yield { type: 'tool_input_delta', toolId: call.id, toolName: call.name, partialJson: call.arguments };
           yield { type: 'tool_end', toolId: call.id, toolName: call.name };
+        }
+        if (args.shouldYieldToUserInput && await args.shouldYieldToUserInput()) {
+          for (const result of buildUserInterjectionSkippedToolResults(calls.slice(index))) yield* this.appendToolResult({ ...result, context: args.context, messages: args.messages });
+          return;
         }
         // 第一项 invocation 是该并行段的 durable owner claim。它取得 claim 后先
         // 停在真正 invoke 之前，待其余调用启动再一起放行；重复 worker 会在第一项
@@ -2269,7 +2270,7 @@ export class RawAgentLoop implements AgentLoop {
         args.descriptorsByName,
         args.baseToolContext,
         args.context,
-        prepared,
+        prepared, args.shouldYieldToUserInput,
       );
       yield* this.appendToolResult({
         call,
@@ -2282,6 +2283,7 @@ export class RawAgentLoop implements AgentLoop {
       });
       index += 1;
     }
+    await args.shouldYieldToUserInput?.();
   }
 
   private async *drainRemainingToolCallBatch(args: {
@@ -2660,7 +2662,7 @@ export class RawAgentLoop implements AgentLoop {
     descriptorsByName: Map<string, ToolDescriptor>,
     baseToolContext: ToolCallContext,
     context: RunContext,
-    prepared?: PreparedParallelToolCall,
+    prepared?: PreparedParallelToolCall, shouldYieldToUserInput?: () => Promise<boolean>,
   ): Promise<ToolExecutionOutcome> {
     const descriptor = prepared?.descriptor ?? descriptorsByName.get(call.name);
     const rawInput = prepared?.input ?? parseToolArguments(call.arguments);
@@ -2774,7 +2776,8 @@ export class RawAgentLoop implements AgentLoop {
         });
       }
     }
-
+    const skipped = await skipToolCallForQueuedUserInput({ shouldYield: shouldYieldToUserInput, call, descriptor, input });
+    if (skipped) return skipped;
     try {
       const result = await this.invokeAuthorizedTool({
         call,
@@ -2794,10 +2797,7 @@ export class RawAgentLoop implements AgentLoop {
         || err instanceof ToolInvocationClaimLostError
         || err instanceof RunLeaseLostError
       ) throw err;
-      // 失败也要有摘要与结构化事实。摘要在 toolRuntime 里已按截断前 metadata 造好
-      // 并随 ToolExecutionError 带上来，这里只负责不把它丢掉——此前这一跳是
-      // 全部失败调用（近 7 天 3,457 次）摘要覆盖率仅 0.2% 的唯一原因，
-      // approval-resume 分支（见 resolveApprovalDecision）早已是这么接的。
+      // 失败也保留摘要与结构化事实；approval-resume 分支同样执行该契约。
       const presentation = buildFailurePresentation(call.name, input, err, resolveRunTenantId(context));
       const metadata = err instanceof ToolExecutionError ? err.resultMetadata : undefined;
       return {

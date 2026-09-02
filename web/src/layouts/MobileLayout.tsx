@@ -66,7 +66,7 @@ export function MobileLayout(props: LayoutProps) {
     retryMessage, forkFromMessage, lastMessageRef, scrollContainerRef, isNearBottomRef,
     handlePermissionResponse, handleAskUserResponse,
     uploadedFiles, removeFile, input, sandboxProfile, setSandboxProfile, uploading, uploadError, dismissUploadError, setInput,
-    sendMessage, interjectMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
+    sendMessage, sendVoiceMessage, stopping, stopGeneration, handleFileSelect, handleAssetSelect, handlePaste, ttsProps, ttsStateMap, modelList,
     queuedInterjections, cancelQueuedInterjection, editQueuedInterjection, resendQueuedInterjection, dismissQueuedInterjection,
     selectedModel, onModelChange, autoApproveRunShell, setAutoApproveRunShell, ttsPlayer, tokenUsage, contextUsage,
     hasMoreSessions, isLoadingMoreSessions, loadMoreSessions, loadGroupSessions,
@@ -599,7 +599,6 @@ export function MobileLayout(props: LayoutProps) {
               onDismissUploadError={dismissUploadError}
               onInputChange={setInput}
               onSend={() => { void handleSendMessage(); }}
-              onInterject={() => { void interjectMessage(); }}
               onStop={stopGeneration}
               stopping={stopping}
               queuedInterjections={queuedInterjections}

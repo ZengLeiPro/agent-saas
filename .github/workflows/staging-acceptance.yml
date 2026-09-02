@@ -78,6 +78,7 @@ jobs:
           pnpm exec tsx server/src/release/validateReleaseManifestCli.ts \
             "$RUNNER_TEMP/release/manifest.json" "$STAGING_RELEASE_ID"
           release_sha="$(jq -r .releaseSha "$RUNNER_TEMP/release/manifest.json")"
+          api_source_sha="$(jq -r .components.api.sourceSha "$RUNNER_TEMP/release/manifest.json")"
           manifest_digest="$(jq -r .digest "$RUNNER_TEMP/release/manifest.json")"
           test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(git rev-parse "$STAGING_RELEASE_ID^{commit}")" = "$release_sha"
@@ -86,6 +87,7 @@ jobs:
           git merge-base --is-ancestor "$release_sha" origin/main
           {
             echo "STAGING_RELEASE_SHA=$release_sha"
+            echo "STAGING_API_SOURCE_SHA=$api_source_sha"
             echo "MANIFEST_DIGEST=$manifest_digest"
           } >> "$GITHUB_ENV"
 

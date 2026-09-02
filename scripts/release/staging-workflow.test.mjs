@@ -27,6 +27,7 @@ const staticDataCopyPath = new URL('../../server/scripts/copy-static-data.mjs', 
 const e2eHelpersPath = new URL('../../e2e/staging/helpers.ts', import.meta.url);
 const e2eConfigPath = new URL('../../e2e/playwright.config.ts', import.meta.url);
 const e2eGlobalSetupPath = new URL('../../e2e/staging/global-setup.ts', import.meta.url);
+const e2eAuthPath = new URL('../../e2e/staging/auth.spec.ts', import.meta.url);
 const chatInputPath = new URL('../../web/src/components/ChatInput.tsx', import.meta.url);
 
 function runScriptLines(text) {
@@ -148,9 +149,10 @@ test('Staging workflow accepts only a reason and locks the dispatch SHA and sing
 });
 
 test('full browser and Agent acceptance is optional, release-bound, and outside deployment attestations', async () => {
-  const [workflow, stagingBinding] = await Promise.all([
+  const [workflow, stagingBinding, authSpec] = await Promise.all([
     readFile(acceptanceWorkflowPath, 'utf8'),
     readFile(stagingBindingPath, 'utf8'),
+    readFile(e2eAuthPath, 'utf8'),
   ]);
   assert.match(workflow, /name: 预发验收/u);
   assert.match(workflow, /workflow_dispatch:[\s\S]*release_id:/u);
@@ -195,6 +197,17 @@ test('full browser and Agent acceptance is optional, release-bound, and outside 
   assert.equal(workflow.match(/127\.0\.0\.1:3410\/health/gu)?.length, 3);
   assert.match(workflow, /releaseIdentityAttested|--acs-health/u);
   assert.match(workflow, /--expected-manifest-digest "\$MANIFEST_DIGEST"/u);
+  assert.match(
+    workflow,
+    /api_source_sha="\$\(jq -r \.components\.api\.sourceSha "\$RUNNER_TEMP\/release\/manifest\.json"\)"/u,
+  );
+  assert.match(workflow, /echo "STAGING_API_SOURCE_SHA=\$api_source_sha"/u);
+  assert.doesNotMatch(workflow, /STAGING_API_SOURCE_SHA=\$release_sha/u);
+  assert.match(
+    authSpec,
+    /body\.release\.releaseSha\)\.toBe\(required\('STAGING_API_SOURCE_SHA'\)\)/u,
+  );
+  assert.doesNotMatch(authSpec, /required\('STAGING_RELEASE_SHA'\)/u);
   assert.match(stagingBinding, /configFingerprint/u);
   assert.match(stagingBinding, /webDigest/u);
   assert.match(stagingBinding, /apiSourceSha/u);

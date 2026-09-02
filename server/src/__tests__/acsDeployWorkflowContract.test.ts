@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -13,6 +14,52 @@ const workflow = readFileSync(workflowPath, 'utf-8');
 const classifierPath = fileURLToPath(
   new URL('../../../.github/scripts/acs-classify.sh', import.meta.url),
 );
+const bundleInputsPath = fileURLToPath(
+  new URL('../../../.github/acs-bundle-inputs.txt', import.meta.url),
+);
+const orchestratorPackagePath = fileURLToPath(
+  new URL('../../../acs-orchestrator/package.json', import.meta.url),
+);
+const requireFromOrchestrator = createRequire(orchestratorPackagePath);
+const bundleInputPatterns = readFileSync(bundleInputsPath, 'utf8')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter((line) => line && !line.startsWith('#'));
+
+function matchesBundleInput(path: string): boolean {
+  return bundleInputPatterns.some((pattern) => {
+    if (pattern.endsWith('/**')) {
+      return path.startsWith(pattern.slice(0, -2));
+    }
+    return path === pattern;
+  });
+}
+
+function actualBundleSourceInputs(): string[] {
+  const esbuild = requireFromOrchestrator('esbuild') as {
+    buildSync(options: Record<string, unknown>): {
+      metafile?: { inputs: Record<string, unknown> };
+    };
+  };
+  const result = esbuild.buildSync({
+    absWorkingDir: dirname(orchestratorPackagePath),
+    entryPoints: ['src/index.ts', 'src/backgroundShellWorker.ts', 'src/restorePerPodCli.ts'],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    outdir: 'dist-contract',
+    external: ['pg-native', '@napi-rs/canvas'],
+    metafile: true,
+    write: false,
+    logLevel: 'silent',
+  });
+  if (!result.metafile) throw new Error('esbuild did not return a metafile');
+  return Object.keys(result.metafile.inputs)
+    .filter((path) => path.startsWith('../server/src/'))
+    .map((path) => path.slice(3))
+    .sort();
+}
 
 function classify(paths: string[]): Record<string, string> {
   const directory = mkdtempSync(join(tmpdir(), 'acs-impact-'));
@@ -50,7 +97,7 @@ describe('ACS deploy workflow contract', () => {
     expect(gate).not.toContain('workflow_dispatch');
   });
 
-  it('对普通 UI、ACS 源码和 ACS Workflow fixture 给出稳定分类', () => {
+  it('对普通 UI、ACS 源码、输入清单和 Workflow fixture 给出稳定分类', () => {
     expect(classify(['web/src/App.tsx'])).toMatchObject({
       publish: 'false',
       contract_check: 'false',
@@ -68,6 +115,36 @@ describe('ACS deploy workflow contract', () => {
       publish: 'true',
       contract_check: 'false',
     });
+    expect(classify(['.github/acs-bundle-inputs.txt'])).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
+    expect(classify(['server/src/runtime/invocationCorrelation.ts'])).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
+  });
+
+  it('从真实 Orchestrator bundle 锁定全部 server 源输入的触发与分类', () => {
+    const sourceInputs = actualBundleSourceInputs();
+    expect(sourceInputs).toContain('server/src/runtime/invocationCorrelation.ts');
+    expect(sourceInputs.length).toBeGreaterThan(0);
+
+    const pushStart = workflow.indexOf('  push:');
+    const dispatchStart = workflow.indexOf('  workflow_dispatch:', pushStart);
+    const pushTrigger = workflow.slice(pushStart, dispatchStart);
+    expect(pushTrigger).toContain("- '.github/acs-bundle-inputs.txt'");
+
+    for (const sourceInput of sourceInputs) {
+      expect(matchesBundleInput(sourceInput), sourceInput).toBe(true);
+    }
+    expect(classify(sourceInputs)).toMatchObject({
+      publish: 'true',
+      contract_check: 'false',
+    });
+    for (const pattern of bundleInputPatterns) {
+      expect(pushTrigger, pattern).toContain(`- '${pattern}'`);
+    }
   });
 
   it('在等待镜像前拒绝已经落后于 main 的 dispatch', () => {

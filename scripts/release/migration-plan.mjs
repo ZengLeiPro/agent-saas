@@ -2315,6 +2315,10 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     }
   };
   const visitCalls = (node) => {
+    if (ts.canHaveDecorators(node)) {
+      for (const decorator of ts.getDecorators(node) ?? [])
+        collectCallableReference(decorator.expression);
+    }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       collectCallTargetIdentifiers(node.expression);
       markCallableMember(node.expression);
@@ -2495,7 +2499,7 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
     visitAliases(sourceFile);
   }
 
-  // Keep class and object member-qualified callable requests intact until import resolution.
+  // Keep decorator, class, and object member-qualified callable requests intact until import resolution.
   const callableLocalBindings = new Set(requestedCallableBindings);
   let callableAliasesChanged = true;
   while (callableAliasesChanged) {

@@ -137,7 +137,7 @@ test('fails closed when a named import dependency gains top-level executable SQL
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
 });
 
-test('fails closed when an aliased called runtime provider gains destructive SQL', () => {
+test('fails closed when an ordinary aliased call reaches a destructive runtime provider', () => {
   const root = 'server/src/data/governance-schema/migrations.ts';
   const barrel = 'server/src/data/governance-schema/providers/index.ts';
   const provider = 'server/src/data/governance-schema/providers/run.ts';
@@ -165,6 +165,41 @@ test('fails closed when an aliased called runtime provider gains destructive SQL
   assert.equal(result.ok, false);
   assert.match(result.blockingReasons.join('\n'), /run\.ts/u);
   assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u);
+});
+
+test('tracks class, member, and parameter decorators as callable providers', () => {
+  const root = 'server/src/data/governance-schema/migrations.ts';
+  const provider = 'server/src/data/governance-schema/providers/run.ts';
+  const baselineProvider = 'export function run() {}';
+  const targetProvider = "export function run(db) { return db.query('DROP TABLE users'); }";
+  for (const decoratorCase of [
+    {
+      label: 'aliased class decorator',
+      rootSource:
+        "import { run as decorate } from './providers/run.js';\n@decorate\nclass Migration {}",
+    },
+    {
+      label: 'parenthesized computed namespace member decorator',
+      rootSource:
+        "import * as providers from './providers/run.js';\nclass Migration { @(providers['run']) execute() {} }",
+    },
+    {
+      label: 'parameter decorator factory call',
+      rootSource:
+        "import { run } from './providers/run.js';\nclass Migration { execute(@run() _db) {} }",
+    },
+  ]) {
+    const result = plan(targetProvider, addedSourceDiff("return db.query('DROP TABLE users');"), {
+      changedPaths: [provider],
+      baselines: { [root]: decoratorCase.rootSource, [provider]: baselineProvider },
+      targets: { [root]: decoratorCase.rootSource, [provider]: targetProvider },
+      diffs: { [provider]: addedSourceDiff("return db.query('DROP TABLE users');") },
+      nameStatus: `M\t${provider}`,
+    });
+    assert.equal(result.ok, false, decoratorCase.label);
+    assert.match(result.blockingReasons.join('\n'), /run\.ts/u, decoratorCase.label);
+    assert.match(result.blockingReasons.join('\n'), /dynamic, custom-query/u, decoratorCase.label);
+  }
 });
 
 test('tracks imported callbacks through aliases, descriptor factories, class fields, and re-exports', () => {

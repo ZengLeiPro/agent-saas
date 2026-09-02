@@ -1,7 +1,7 @@
 import { expect, test } from 'playwright/test';
 import { apiLogin, login, required } from './helpers';
 
-test('真实登录、Web entry、API readiness 与 WebSocket upgrade', async ({ page, request }) => {
+test('真实登录、Web entry、API 组件 identity 与 WebSocket upgrade', async ({ page, request }) => {
   await login(page);
   const token = await apiLogin();
   const readiness = await request.get(`${required('STAGING_API_URL')}/api/healthz/ready`, {
@@ -10,7 +10,7 @@ test('真实登录、Web entry、API readiness 与 WebSocket upgrade', async ({ 
   expect(readiness.ok()).toBeTruthy();
   const body = await readiness.json();
   expect(body.release.releaseId).toBe(required('STAGING_RELEASE_ID'));
-  expect(body.release.releaseSha).toBe(required('STAGING_RELEASE_SHA'));
+  expect(body.release.releaseSha).toBe(required('STAGING_API_SOURCE_SHA'));
   const wsProbe = await page.evaluate(async (apiUrl) => {
     const url = new URL('/ws?probe=1', apiUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';

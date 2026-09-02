@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# ACS 影响分类（acs-sandbox.yml 的 changes job 与 build-deploy 必要性门禁共用）
+# ACS 影响分类（acs-sandbox.yml 的 changes job、bundle 输入清单与 build-deploy 门禁共用）
 # ----------------------------------------------------------------------------
 # 用法: acs-classify.sh <changed_files_path> [base_sha]
 #   changed_files_path: 变更文件清单（每行一个仓库相对路径）
@@ -18,11 +18,19 @@ set -euo pipefail
 
 changed_files="${1:?usage: acs-classify.sh <changed_files_path> [base_sha]}"
 base_sha="${2:-}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "$script_dir/../.." && pwd)"
+bundle_inputs="$repo_root/.github/acs-bundle-inputs.txt"
 
 publish=false
 contract_check=false
 reasons=()
 skipped=()
+
+if [ ! -f "$bundle_inputs" ]; then
+  echo "missing ACS bundle inputs: $bundle_inputs" >&2
+  exit 1
+fi
 
 package_json_affects_acs() {
   if [ -z "$base_sha" ] || ! git cat-file -e "$base_sha:package.json" 2>/dev/null; then
@@ -67,11 +75,21 @@ NODE
 
 is_packaged_runtime_path() {
   awk -v path="$1" '$1 !~ /^#/ && $2 == path { found = 1 } END { exit !found }' \
-    .github/acs-runtime-inputs.txt
+    "$repo_root/.github/acs-runtime-inputs.txt"
+}
+
+# Keep esbuild source inputs centralized instead of duplicating them in the case list below.
+is_bundle_input_path() {
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    case "$pattern" in \#*) continue ;; esac
+    [[ "$1" == $pattern ]] && return 0
+  done < "$bundle_inputs"
+  return 1
 }
 
 is_publish_path() {
-  if is_packaged_runtime_path "$1"; then
+  if is_bundle_input_path "$1" || is_packaged_runtime_path "$1"; then
     return 0
   fi
   case "$1" in
@@ -81,19 +99,13 @@ is_publish_path() {
       ;;
   esac
   case "$1" in
-    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh)
+    Dockerfile|.dockerignore|.npmrc|pnpm-workspace.yaml|.github/acs-bundle-inputs.txt|.github/acs-runtime-inputs.txt|.github/workflows/acs-sandbox.yml|.github/workflows/ci.yml|.github/scripts/acs-classify.sh|.github/scripts/redeliver_acr_webhook.py|scripts/deploy-acs-orchestrator.sh|scripts/release/upload-oss-object-immutable.sh)
       return 0
       ;;
-    acs-orchestrator/*|patches/*|server/package.json|server/src/data/tenants/types.ts)
+    acs-orchestrator/*|patches/*|server/package.json)
       return 0
       ;;
-    server/src/agent/toolRuntime.ts|server/src/agent/workspaceHandTools.ts|server/src/agent/toolOutput.ts|server/src/agent/shellOutputFiles.ts|server/src/agent/containerExecutionProvider.ts|server/src/agent/memorySearchToolProvider.ts|server/src/agent/tools/descriptionLoader.ts)
-      return 0
-      ;;
-    server/src/agent/descriptions/Read.md|server/src/agent/descriptions/Write.md|server/src/agent/descriptions/List.md|server/src/agent/descriptions/Shell.md|server/src/agent/descriptions/WaitForWorkspaceReady.md|server/src/agent/descriptions/Edit.md|server/src/agent/descriptions/Glob.md|server/src/agent/descriptions/Grep.md|server/src/agent/descriptions/CreateArtifact.md|server/src/agent/descriptions/MemorySearch.md|server/src/agent/descriptions/MemoryList.md)
-      return 0
-      ;;
-    server/src/runtime/handProtocol.ts|server/src/runtime/httpTransport.ts|server/src/runtime/inProcessTransport.ts|server/src/runtime/clientDaemonTransport.ts|server/src/runtime/handStore.ts|server/src/runtime/networkPolicy.ts)
+    server/src/runtime/handProtocol.ts)
       return 0
       ;;
   esac

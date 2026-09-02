@@ -1090,6 +1090,42 @@ test('tracks imported callbacks through aliases, descriptor factories, class fie
       },
     },
     {
+      label: 'descriptor factory Array prototype push apply expands a direct array spread',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; Array.prototype.push.apply(arr, [...[descriptor]]); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype unshift apply expands an argument alias spread',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; const args = [descriptor]; Array.prototype.unshift.apply(arr, [...args]); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype splice apply expands nested multi-element spreads',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; const prefix = [0, 0]; const values = [descriptor]; Array.prototype.splice.apply(arr, [...prefix, 'safe', ...[...values]]); arr[1]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
+      label: 'descriptor factory Array prototype push apply fails closed for a dynamic spread',
+      closureOnly: true,
+      rootSource:
+        "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nconst arr = []; const args = process.argv[2] ? [descriptor] : []; Array.prototype.push.apply(arr, [...args]); arr[0]().value(db);",
+      extraTree: {
+        [barrel]: "import { run } from './run.js';\nexport const wrapper = { run };",
+      },
+    },
+    {
       label: 'descriptor factory callable through a single static factory return',
       rootSource:
         "import { wrapper } from './providers/index.js';\nfunction descriptor() { return Reflect.getOwnPropertyDescriptor(wrapper, 'run'); }\nfunction select() { return descriptor; } const alias = select();\nalias().value(db);",

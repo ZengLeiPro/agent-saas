@@ -1779,18 +1779,51 @@ function relativeModuleDependencies(content, path, requestedBindings, requestedC
             : undefined;
           if (match && mutationOwner) {
             const mutation = match[1];
-            let values = [];
-            if (method === 'call')
-              values = [...node.arguments].slice(mutation === 'splice' ? 3 : 1);
-            else {
-              const applied = node.arguments[1] && unwrapExpression(node.arguments[1]);
-              if (applied && ts.isArrayLiteralExpression(applied))
-                values = [...applied.elements].slice(mutation === 'splice' ? 2 : 0);
-              else if (node.arguments[1]) values = [node.arguments[1]];
-            }
-            for (const value of values)
-              if (!ts.isSpreadElement(value))
+            if (method === 'call') {
+              const values = [...node.arguments].slice(mutation === 'splice' ? 3 : 1);
+              for (const value of values)
                 addDescriptorFactoryDynamicMemberWrite(mutationOwner, value);
+            } else if (node.arguments[1]) {
+              const staticArrayEntries = (expression) => {
+                const current = unwrapExpression(expression);
+                if (ts.isArrayLiteralExpression(current)) {
+                  const entries = [];
+                  for (const element of current.elements) {
+                    if (!ts.isSpreadElement(element)) {
+                      entries.push({ expression: element });
+                      continue;
+                    }
+                    const spreadEntries = staticArrayEntries(element.expression, visited);
+                    if (!spreadEntries) return undefined;
+                    entries.push(...spreadEntries);
+                  }
+                  return entries;
+                }
+                const reference = staticDescriptorAliasReferenceKey(current);
+                const length = reference ? descriptorFactoryArrayLengths.get(reference) : undefined;
+                if (!reference || !Number.isInteger(length) || visited.has(reference))
+                  return undefined;
+                return Array.from({ length }, (_, index) => {
+                  const member = `${reference}.${index}`;
+                  const writes = descriptorFactoryAliasWrites.get(member) ?? [];
+                  if (writes.length === 1) return { expression: writes[0] };
+                  const references = descriptorFactoryAliasReferences.get(member) ?? [];
+                  if (writes.length === 0 && references.length === 1)
+                    return { reference: references[0] };
+                  return { reference: member };
+                });
+              };
+              const applied = node.arguments[1];
+              const entries = staticArrayEntries(applied);
+              if (!entries) addDescriptorFactoryDynamicMemberWrite(mutationOwner, applied);
+              else
+                for (const entry of entries.slice(mutation === 'splice' ? 2 : 0)) {
+                  if (entry.expression)
+                    addDescriptorFactoryDynamicMemberWrite(mutationOwner, entry.expression);
+                  else if (entry.reference)
+                    addDescriptorFactoryDynamicMemberReference(mutationOwner, entry.reference);
+                }
+            }
           }
         }
       }

@@ -317,6 +317,10 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       globalSequence: 1, tenantId, sessionId: original.sessionId,
       runId: stale.targetRunId, status: 'cancelled',
     });
+    const cancellation = (await store.claimCancellations()).find(item => item.runId === stale.targetRunId);
+    expect(cancellation).toBeDefined();
+    await runs.markStatus(stale.targetRunId, 'cancelled', 'replacement cancellation settled');
+    await store.completeCancellation(cancellation!);
     await control(original, 'run');
     await store.claimDue();
     const replacement = (await store.claimDispatch()).find(item => item.automationId === original.automationId)!;

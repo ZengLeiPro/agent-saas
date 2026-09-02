@@ -50,6 +50,6 @@ A run writes an exclusive, read-only HMAC-sealed `receipt.json`, `junit.xml`, `s
 3. `android-flagship`
 4. `android-low-end-small`
 
-It rejects tampering, cross-SHA evidence, simulator/browser claims, replayed receipt/test/provider IDs, failed flows, missing/extra slots and artifact digest mismatches. Checked-in deterministic fixtures are marked `deterministic-mock`; they pass only `--mode mock` and are rejected by the default real-device validator.
+It rejects tampering, cross-SHA evidence, simulator/browser claims, replayed receipt/test/provider IDs, failed flows, missing/extra slots and artifact digest mismatches. Checked-in deterministic fixtures are marked `deterministic-mock`; they pass only `--mode mock` and are rejected by the default real-device validator. This distinction is enforced by the main CI contract suite.
 
-`.github/workflows/mobile-native-e2e.yml` supports both `workflow_dispatch` and `workflow_call`. Real jobs exist only when `configured=true` and the exact four-slot matrix passes validation. Secrets are scoped to the real-device and validator jobs; this workflow never runs from pull requests, so fork PRs cannot receive them.
+The repository currently runs only the deterministic contract and validator tests in its main CI; it does not expose a real-device GitHub Actions entry point. A future provider integration must inject an explicit four-slot matrix, scope secrets only to real-device and validator jobs, and avoid pull-request secret paths. `run-native-e2e.mjs` and `validate-evidence.mjs` remain the fail-closed execution and evidence boundaries.

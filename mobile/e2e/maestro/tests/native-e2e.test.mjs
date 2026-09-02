@@ -157,18 +157,7 @@ test('device matrix contract requires explicit provider and exact four slots', (
   assert.throws(() => validateDeviceMatrix(matrix.map((entry) => ({ ...entry, runnerLabels: ['ubuntu-latest'] }))), /self-hosted runner label/);
 });
 
-test('workflow is dispatch/call only and never invents a real-device provider or fork secret path', async () => {
-  const source = await readFile(path.resolve(mobileRoot, '../.github/workflows/mobile-native-e2e.yml'), 'utf8');
-  assert.match(source, /workflow_call:/);
-  assert.match(source, /workflow_dispatch:/);
-  assert.doesNotMatch(source, /pull_request:/);
-  assert.match(source, /if: inputs\.configured/);
-  assert.match(source, /real_device:[\s\S]*runs-on: \$\{\{ matrix\.runnerLabels \}\}/);
-  assert.doesNotMatch(source, /runs-on:\s*self-hosted/);
-  assert.match(source, /RC\/release four-slot evidence validator/);
-});
-
-test('runner contract requires all authoritative fields and secret injection names', async () => {
+test('provider runner contract requires all authoritative fields and secret injection names', async () => {
   const source = await readFile(path.join(root, 'scripts/run-native-e2e.mjs'), 'utf8');
   for (const field of ['platform', 'device', 'osVersion', 'deviceClass', 'buildSha', 'appId', 'version', 'signingFingerprint', 'testRunId']) {
     assert.ok(source.includes(`'${field}'`), `runner missing --${field}`);

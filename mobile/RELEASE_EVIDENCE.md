@@ -1,6 +1,6 @@
 # M60-04 mobile release evidence
 
-The release is a three-boundary process. **Build never submits; submit never rebuilds; rollout accepts only a signed submit receipt.** Contract-only invocations use `execute_build=false`, `execute_submit=false`, or `execute_rollout=false` and create no release receipt.
+The release contract has three boundaries. **Build never submits; submit never rebuilds; rollout accepts only a signed submit receipt.** The repository currently validates these boundaries in CI but does not expose an active GitHub Actions release entry point. A live release workflow must be reviewed and added only after the protected environments, organization credentials, provider adapters, and runners are provisioned.
 
 ## Protected configuration (fail closed)
 
@@ -18,11 +18,11 @@ Protected environment secrets (organization robot credentials only):
 - Submit adapters: `APP_STORE_CONNECT_API_KEY_P8`, `ANDROID_PLAY_SERVICE_ACCOUNT_JSON`, or `ENTERPRISE_MDM_ROBOT_TOKEN`; `MOBILE_STORE_LOOKUP_ROBOT_TOKEN` performs the post-submit store build reverse lookup.
 - Rollout adapter: `MOBILE_ROLLOUT_ROBOT_TOKEN`.
 
-The environments `mobile-build-production`, `mobile-submit-<profile>`, and `mobile-rollout-<profile>` must each have required reviewers and self-review prevention. Workflows query and hash the protection rules and fail if approval metadata cannot be obtained. Build, submit, and rollout approvals are intentionally separate.
+A future release integration must provision `mobile-build-production`, `mobile-submit-<profile>`, and `mobile-rollout-<profile>` with required reviewers and self-review prevention. It must query and hash the protection rules and fail if approval metadata cannot be obtained. Build, submit, and rollout approvals remain intentionally separate.
 
 ## Source and artifact contract
 
-`testflight.yml` accepts only an annotated `mobile-vX.Y.Z-rc.N` tag contained in `main`, or an exact reviewed commit that is on `main` or is the current head of an open, non-draft PR with a current non-author approval. The checked-out SHA, clean tree, frozen lock digest, release manifest identity/version/profile, and M60-03 policy gate are verified before EAS. A production manifest may set `target.distribution` to `both` to authorize Store AAB and Enterprise APK from the same SHA; the EAS profile still selects one concrete distribution.
+`mobile/scripts/authorize-mobile-release-source.mjs` accepts only an annotated `mobile-vX.Y.Z-rc.N` tag contained in `main`, or an exact reviewed commit that is on `main` or is the current head of an open, non-draft PR with a current non-author approval. Any future release integration must verify the checked-out SHA, clean tree, frozen lock digest, release manifest identity/version/profile, and M60-03 policy gate before EAS. A production manifest may set `target.distribution` to `both` to authorize Store AAB and Enterprise APK from the same SHA; the EAS profile still selects one concrete distribution.
 
 Downloaded IPA/AAB/APK files are verified with platform tools before evidence is sealed. Evidence does not contain credentials or temporary EAS download URLs. `mobile/scripts/mobile-release-evidence.mjs` validates canonical digest, Ed25519 signature, nonce, approvals, all three same-SHA profiles, SBOM/provenance binding, and submit/rollout boundaries offline when supplied a trusted public-key store.
 

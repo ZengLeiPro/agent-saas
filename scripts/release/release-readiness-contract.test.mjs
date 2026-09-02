@@ -216,11 +216,12 @@ test('rollback release env is parsed without shell evaluation and must match the
   }
 });
 
-test('Production and Staging deploy modules enforce topology and private snapshot commit boundaries', async () => {
-  const [production, staging, healthRoute] = await Promise.all([
+test('Production and Staging deploy modules enforce atomic App topology and private snapshot commit boundaries', async () => {
+  const [production, staging, healthRoute, adminConfigMutation] = await Promise.all([
     readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8'),
     readFile(new URL('./deploy-staging-release.sh', import.meta.url), 'utf8'),
     readFile(new URL('../../server/src/routes/health.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../../server/src/config/adminConfigMutationService.ts', import.meta.url), 'utf8'),
   ]);
   for (const deploy of [production, staging]) {
     assert.match(deploy, /validateCandidateReleaseReadiness/u);
@@ -237,23 +238,61 @@ test('Production and Staging deploy modules enforce topology and private snapsho
   assert.match(production, /privateSnapshotPath: snapshotPath/u);
   assert.match(production, /readReleaseConfigIdentityBinding/u);
   assert.match(production, /runtime_data_root\/config-governance\/config\.lock/u);
+  assert.match(production, /CONFIG_GOVERNANCE_FENCE_OWNER/u);
+  assert.match(production, /config\.lock\.guard/u);
+  assert.match(production, /flock -n "\$guard_fd"/u);
+  const cleanupLifecycle = production.slice(
+    production.indexOf('deploy_rollback_cleanup() {'),
+    production.indexOf('# END deploy rollback cleanup lifecycle'),
+  );
+  assert.ok(
+    cleanupLifecycle.indexOf('"$rollback_handler"')
+      < cleanupLifecycle.indexOf('release_config_governance_fence'),
+  );
+  assert.match(adminConfigMutation, /acquireFileGuard/u);
+  assert.match(adminConfigMutation, /isProcessAlive\(owner\?\.pid\)/u);
+  assert.match(production, /\.owner-token/u);
+  assert.match(
+    production,
+    /cat "\$fence\/\.owner-token"[\s\S]*= "\$owner"[\s\S]*rm -rf "\$fence"/u,
+  );
+  assert.match(production, /"token":"%s"/u);
+  const workerValidator = production.slice(
+    production.indexOf('validate_worker_release_boundary() {'),
+    production.indexOf('revoke_systemd_authority() {'),
+  );
+  assert.ok(
+    workerValidator.lastIndexOf('systemctl is-active --quiet')
+      > workerValidator.indexOf("await validatePrivateConfigIdentityReleaseBinding"),
+  );
+  assert.match(workerValidator, /systemctl is-enabled --quiet/u);
+  const apiValidator = production.slice(
+    production.indexOf('validate_api_release_boundary() {'),
+    production.indexOf('validate_api_release_boundary_from_env() {'),
+  );
+  assert.ok(
+    apiValidator.lastIndexOf('/api/healthz/ready')
+      > apiValidator.indexOf('await validateCandidateReleaseReadiness'),
+  );
+  assert.match(apiValidator, /systemctl is-enabled --quiet/u);
 
   const candidateInitialCheck = production.indexOf("'Candidate Worker private ConfigIdentity'");
-  const candidateFence = production.indexOf(
+  const candidateFence = production.lastIndexOf(
     'acquire_config_governance_fence /mnt/agent-saas/server-data',
     candidateInitialCheck,
   );
   const candidateFinalCheck = production.indexOf(
-    "'Candidate Worker final ConfigIdentity'",
+    "'Candidate App final Worker ConfigIdentity'",
     candidateFence,
   );
   const candidateMarker = production.indexOf(
-    'commit_worker_active_color "$worker_idle"',
+    'commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"',
     candidateFinalCheck,
   );
   assert.ok(candidateInitialCheck > -1);
-  assert.ok(candidateFence > candidateInitialCheck);
-  assert.ok(candidateFinalCheck > candidateFence);
+  assert.ok(candidateFence > -1);
+  assert.ok(candidateInitialCheck > candidateFence);
+  assert.ok(candidateFinalCheck > candidateInitialCheck);
   assert.ok(candidateMarker > candidateFinalCheck);
 
   const rollbackHelperStart = production.indexOf('commit_rollback_worker_authority() {');
@@ -277,39 +316,52 @@ test('Production and Staging deploy modules enforce topology and private snapsho
   assert.ok(rollbackFinalCheck > -1);
   assert.ok(rollbackMarker > rollbackFinalCheck);
 
-  const rollbackInitialCheck = production.indexOf("'Rollback Worker private ConfigIdentity'");
-  const rollbackFence = production.indexOf(
-    'acquire_config_governance_fence /mnt/agent-saas/server-data',
-    rollbackInitialCheck,
+  const rollbackStopCandidate = rollbackHelper.indexOf(
+    'systemctl disable --now "agent-saas-runtime-worker@$candidate_color"',
   );
+  const rollbackStartOld = rollbackHelper.indexOf(
+    'systemctl restart "agent-saas-runtime-worker@$active_color"',
+  );
+  const rollbackFence = rollbackHelper.indexOf('acquire_config_governance_fence');
+  assert.ok(rollbackFence > -1);
+  assert.ok(rollbackStopCandidate > rollbackFence);
+  assert.ok(rollbackStartOld > rollbackStopCandidate);
+  assert.ok(rollbackFinalCheck > rollbackStartOld);
+  const cleanupStart = production.indexOf('cleanup_app_failure() {');
   const rollbackHelperCall = production.indexOf(
-    'elif commit_rollback_worker_authority "$worker_active" "$worker_idle"',
-    rollbackFence,
+    'if commit_rollback_worker_authority "$worker_active" "$worker_idle"',
+    cleanupStart,
   );
   const rollbackCleanup = production.indexOf(
-    'rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"',
+    '"/run/agent-saas-runtime-worker-$worker_idle.config-identity.json"',
     rollbackHelperCall,
   );
-  assert.ok(rollbackInitialCheck > -1);
-  assert.ok(rollbackFence > rollbackInitialCheck);
-  assert.ok(rollbackHelperCall > rollbackFence);
+  assert.ok(rollbackHelperCall > cleanupStart);
   assert.ok(rollbackCleanup > rollbackHelperCall);
   const workerRecoveryStart = production.indexOf('restore_candidate_worker_authority() {');
   const workerRecoveryEnd = production.indexOf('deploy_acs() {', workerRecoveryStart);
   const workerRecovery = production.slice(workerRecoveryStart, workerRecoveryEnd);
+  const workerRecoveryFence = workerRecovery.indexOf(
+    'acquire_config_governance_fence',
+  );
   const stopOldWorker = workerRecovery.indexOf(
     'revoke_systemd_authority "agent-saas-runtime-worker@$active_color"',
   );
   const startCandidateWorker = workerRecovery.indexOf(
     'systemctl restart "agent-saas-runtime-worker@$candidate_color"',
   );
-  assert.ok(stopOldWorker > -1);
+  assert.ok(workerRecoveryFence > -1);
+  assert.ok(stopOldWorker > workerRecoveryFence);
   assert.ok(startCandidateWorker > stopOldWorker);
   assert.match(
     workerRecovery,
     /systemctl is-active --quiet "agent-saas-runtime-worker@\$candidate_color"[\s\S]*! systemctl is-active --quiet "agent-saas-runtime-worker@\$active_color"[\s\S]*<"\$marker"/u,
   );
-  assert.match(production, /restore_candidate_worker_authority \\\n\s*"\$worker_active" "\$worker_idle" "\$worker_env"/u);
+  assert.match(production, /restore_candidate_app_authority \\\n\s*"\$api_active" "\$api_idle"/u);
+  assert.match(production, /validate_api_release_boundary_from_env/u);
+  assert.match(production, /Rollback old API final ConfigIdentity/u);
+  assert.match(production, /rollback_target=candidate/u);
+  assert.match(production, /\[ "\$rollback_target" = old \]/u);
   const initialApiCleanup = production.indexOf(
     'rm -f "/run/agent-saas-server-$api_idle.pid"',
   );
@@ -341,6 +393,10 @@ test('Production and Staging deploy modules enforce topology and private snapsho
     /\[ "\$disable_status" -ne 0 \] \|\| \[ "\$candidate_stopped_ref" != true \]/u,
   );
   assert.match(apiCommit, /if \[ "\$nginx_changed" = true \]; then/u);
+  assert.match(
+    apiCommit,
+    /systemctl is-enabled --quiet "agent-saas-server@\$candidate_color"/u,
+  );
 
   const apiRecoveryStart = apiCommitEnd;
   const apiRecoveryEnd = production.indexOf('commit_worker_active_color() {', apiRecoveryStart);
@@ -359,18 +415,126 @@ test('Production and Staging deploy modules enforce topology and private snapsho
   const stopOldApi = apiRecovery.indexOf(
     'revoke_systemd_authority "agent-saas-server@$active_color"',
   );
-  assert.ok(restoreCandidateNginx > -1);
-  assert.ok(stopOldApi > restoreCandidateNginx);
+  const recoveryFinalCheck = apiRecovery.indexOf(
+    "'Rollback candidate API final ConfigIdentity'",
+  );
+  assert.ok(stopOldApi > recoveryApiStart);
+  assert.ok(restoreCandidateNginx > stopOldApi);
+  assert.ok(recoveryFinalCheck > restoreCandidateNginx);
+  assert.match(apiRecovery, /restore_old_api_authority/u);
   assert.match(
     apiRecovery,
-    /systemctl is-active --quiet "agent-saas-server@\$candidate_color"[\s\S]*<"\$marker"/u,
+    /systemctl is-active --quiet "agent-saas-server@\$candidate_color"[\s\S]*! systemctl.is-active/u,
   );
   assert.match(production, /nginx-candidate-upstream\.conf/u);
   assert.match(apiRecovery, /commit_api_active_color "\$candidate_color"/u);
   assert.match(workerRecovery, /commit_worker_active_color "\$candidate_color"/u);
   assert.match(production, /DEPLOY_APP_ROLLBACK_API_CANDIDATE_ADMITTED=true/u);
   assert.match(production, /DEPLOY_APP_ROLLBACK_WORKER_CANDIDATE_ADMITTED=true/u);
+  assert.match(production, /validate_app_release_envs_match "\$old_api_env" "\$old_worker_env"/u);
+  const appRecoveryStart = production.indexOf('restore_candidate_app_authority() {');
+  const appRecoveryEnd = production.indexOf('deploy_acs() {', appRecoveryStart);
+  const appRecovery = production.slice(appRecoveryStart, appRecoveryEnd);
+  const appRecoveryFence = appRecovery.indexOf('acquire_config_governance_fence');
+  const prepareApi = appRecovery.indexOf('"$nginx_changed" "$old_api_env" false');
+  const prepareWorker = appRecovery.indexOf('"$worker_env" false true');
+  const finalAppApi = appRecovery.indexOf("'Rollback candidate App final API ConfigIdentity'");
+  const finalAppWorker = appRecovery.indexOf(
+    "'Rollback candidate App final Worker ConfigIdentity'",
+  );
+  const commitAppMarkers = appRecovery.indexOf(
+    'commit_app_active_colors "$api_candidate" "$worker_candidate" "$api_active"',
+  );
+  assert.ok(appRecoveryFence > -1);
+  assert.ok(prepareApi > appRecoveryFence);
+  assert.ok(prepareWorker > prepareApi);
+  assert.ok(finalAppApi > prepareWorker);
+  assert.ok(finalAppWorker > finalAppApi);
+  assert.ok(commitAppMarkers > finalAppWorker);
+  const finalAppRoute = appRecovery.indexOf(
+    'validate_api_routing_boundary "$api_candidate" "$release_id"',
+    finalAppWorker,
+  );
+  assert.ok(finalAppRoute > finalAppWorker);
+  assert.ok(commitAppMarkers > finalAppRoute);
+  assert.match(appRecovery, /restore_old_api_authority/u);
+  assert.match(appRecovery, /restore_old_worker_authority/u);
+  const deployAppStart = production.indexOf('deploy_app() {');
+  const routedReady = production.indexOf(
+    "curl -kfsS -H 'Host: api.agent.kaiyan.net' https://127.0.0.1/api/healthz/ready",
+    deployAppStart,
+  );
+  const forwardApiFinalCheck = production.indexOf(
+    "'Candidate API final ConfigIdentity'",
+    routedReady,
+  );
+  const forwardAppApiCheck = production.indexOf(
+    "'Candidate App final API ConfigIdentity'",
+    forwardApiFinalCheck,
+  );
+  const forwardAppWorkerCheck = production.indexOf(
+    "'Candidate App final Worker ConfigIdentity'",
+    forwardAppApiCheck,
+  );
+  const forwardAppMarker = production.indexOf(
+    'commit_app_active_colors "$api_idle" "$worker_idle" "$api_active"',
+    forwardAppWorkerCheck,
+  );
+  assert.ok(deployAppStart > -1);
+  assert.ok(routedReady > deployAppStart);
+  assert.ok(forwardApiFinalCheck > routedReady);
+  assert.ok(forwardAppApiCheck > forwardApiFinalCheck);
+  assert.ok(forwardAppWorkerCheck > forwardAppApiCheck);
+  assert.ok(forwardAppMarker > forwardAppWorkerCheck);
+  const forwardRetireApi = production.indexOf(
+    'retire_systemd_authority "agent-saas-server@$api_active"',
+    forwardAppMarker,
+  );
+  const forwardRetireWorker = production.indexOf(
+    'retire_systemd_authority "agent-saas-runtime-worker@$worker_active"',
+    forwardRetireApi,
+  );
+  const committedApiFinalCheck = production.indexOf(
+    "'Committed candidate App final API ConfigIdentity'",
+    forwardRetireWorker,
+  );
+  const committedWorkerFinalCheck = production.indexOf(
+    "'Committed candidate App final Worker ConfigIdentity'",
+    committedApiFinalCheck,
+  );
+  const rollbackCommitted = production.indexOf(
+    'DEPLOY_APP_ROLLBACK_COMMITTED=true',
+    committedWorkerFinalCheck,
+  );
+  const candidateCommitFailure = production.slice(
+    production.indexOf("echo 'Candidate App lost authority before marker commit'"),
+    production.indexOf('old_worker_pid=', forwardAppMarker),
+  );
+  assert.doesNotMatch(candidateCommitFailure, /release_config_governance_fence/u);
+  assert.ok(forwardRetireApi > forwardAppMarker);
+  assert.ok(forwardRetireWorker > forwardRetireApi);
+  assert.ok(committedApiFinalCheck > forwardRetireWorker);
+  assert.ok(committedWorkerFinalCheck > committedApiFinalCheck);
+  const committedRouteCheck = production.indexOf(
+    'validate_api_routing_boundary "$api_idle" "$release_id"',
+    committedWorkerFinalCheck,
+  );
+  assert.ok(committedRouteCheck > committedWorkerFinalCheck);
+  assert.ok(rollbackCommitted > committedRouteCheck);
   assert.match(production, /\[ "\$api_candidate_admitted" = true \]/u);
+  const appMarkerCommit = production.slice(
+    production.indexOf('commit_app_active_colors() {'),
+    production.indexOf('commit_rollback_worker_authority() {'),
+  );
+  const apiAuthorityLink = appMarkerCommit.indexOf('ln -s "$authority_link/api"');
+  const workerAuthorityLink = appMarkerCommit.indexOf('ln -s "$authority_link/worker"');
+  const finalAuthoritySwap = appMarkerCommit.lastIndexOf(
+    'mv -fT "$link_candidate" "$authority_link"',
+  );
+  assert.ok(apiAuthorityLink > 0);
+  assert.ok(workerAuthorityLink > apiAuthorityLink);
+  assert.ok(finalAuthoritySwap > workerAuthorityLink);
+  assert.doesNotMatch(appMarkerCommit, /commit_(api|worker)_active_color/u);
   assert.match(production, /\[ "\$worker_candidate_admitted" = true \]/u);
   assert.match(healthRoute, /摘要本身只走平台管理员 API \/ 私有运行态快照，不进匿名响应/u);
   assert.doesNotMatch(

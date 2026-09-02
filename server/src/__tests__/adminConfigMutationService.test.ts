@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -77,6 +77,108 @@ describe('AdminConfigMutationService', () => {
     expect(audit).toContain('"result":"applied"');
     expect(audit).toContain('agent.maxTurns');
     expect(await readdir(join(test.root, 'data/config-governance/backups'))).toHaveLength(1);
+  });
+
+  it('serializes concurrent service instances with the shared OS guard', async () => {
+    const test = await fixture();
+    const second = new AdminConfigMutationService({
+      configPath: test.configPath,
+      processCwd: test.root,
+      environment: 'staging',
+      processRole: 'ws-only',
+    });
+    let releaseRuntime!: () => void;
+    let markRuntimeEntered!: () => void;
+    const runtimeEntered = new Promise<void>((resolve) => {
+      markRuntimeEntered = resolve;
+    });
+    const holdRuntime = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const firstMutation = test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 21, {})),
+      applyRuntime: async () => {
+        markRuntimeEntered();
+        await holdRuntime;
+      },
+    });
+    await runtimeEntered;
+    const secondBuild = vi.fn((text: string) => text);
+    await expect(second.mutate({
+      actor: 'admin-2',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: secondBuild,
+      applyRuntime: vi.fn(),
+    })).rejects.toBeInstanceOf(ConfigConflictError);
+    expect(secondBuild).not.toHaveBeenCalled();
+    releaseRuntime();
+    await firstMutation;
+  });
+
+  it('does not reclaim a stale-looking deployment lock while its owner pid is alive', async () => {
+    const test = await fixture();
+    const lockPath = join(test.root, 'data/config-governance/config.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, 'owner.json'), JSON.stringify({
+      pid: process.pid,
+      createdAt: '2020-01-01T00:00:00.000Z',
+      token: 'deploy-owner',
+    }));
+    await utimes(lockPath, new Date(0), new Date(0));
+    const buildCandidate = vi.fn((text: string) => text);
+
+    await expect(test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate,
+      applyRuntime: vi.fn(),
+    })).rejects.toBeInstanceOf(ConfigConflictError);
+    expect(buildCandidate).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8'))).toMatchObject({
+      token: 'deploy-owner',
+    });
+  });
+
+  it('reclaims a stale lock under the OS guard only after its recorded owner process is dead', async () => {
+    const test = await fixture();
+    const lockPath = join(test.root, 'data/config-governance/config.lock');
+    await mkdir(lockPath, { recursive: true });
+    await writeFile(join(lockPath, 'owner.json'), JSON.stringify({
+      pid: 2_147_483_647,
+      createdAt: '2020-01-01T00:00:00.000Z',
+      token: 'dead-owner',
+    }));
+    await utimes(lockPath, new Date(0), new Date(0));
+
+    await expect(test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => text,
+      applyRuntime: vi.fn(),
+    })).resolves.toBeDefined();
+  });
+
+  it('does not delete a replacement lock owner during release', async () => {
+    const test = await fixture();
+    const lockPath = join(test.root, 'data/config-governance/config.lock');
+    // Simulate ownership replacement after the runtime transition but before finally releases.
+    await test.service.mutate({
+      actor: 'admin-1',
+      changedPaths: ['agent.maxTurns'],
+      buildCandidate: (text) => applyEdits(text, modify(text, ['agent', 'maxTurns'], 21, {})),
+      applyRuntime: async () => {
+        await writeFile(join(lockPath, 'owner.json'), JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+          token: 'replacement-owner',
+        }));
+      },
+    });
+    expect(JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8'))).toMatchObject({
+      token: 'replacement-owner',
+    });
   });
 
   it('rejects a stale optimistic fingerprint without touching the file', async () => {

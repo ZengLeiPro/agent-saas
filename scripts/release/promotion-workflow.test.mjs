@@ -557,7 +557,8 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
   assert.match(deploy, /runtime_data_root\/config-governance\/config\.lock/u);
   assert.match(deploy, /acquire_config_governance_fence \/mnt\/agent-saas\/server-data/u);
-  assert.match(deploy, /Candidate Worker final ConfigIdentity/u);
+  assert.match(deploy, /Candidate App final API ConfigIdentity/u);
+  assert.match(deploy, /Candidate App final Worker ConfigIdentity/u);
   assert.match(deploy, /Rollback Worker final ConfigIdentity/u);
   assert.match(deploy, /\[ "\$disable_status" -ne 0 \]/u);
   assert.match(deploy, /DEPLOY_APP_ROLLBACK_COMMITTED=true/u);
@@ -574,7 +575,7 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
     /systemctl disable --now "agent-saas-runtime-worker@\$candidate_color"[\s\S]{0,240}systemctl is-active --quiet "agent-saas-runtime-worker@\$candidate_color"/u,
   );
   assert.match(deploy, /commit_rollback_api_authority "\$api_active" "\$api_idle"/u);
-  assert.match(deploy, /restore_candidate_api_authority "\$api_active" "\$api_idle"/u);
+  assert.match(deploy, /restore_candidate_app_authority/u);
   assert.match(deploy, /rollback_root\/nginx-upstream\.conf/u);
   assert.match(deploy, /nginx-candidate-upstream\.conf/u);
   assert.match(deploy, /had_nginx=false/u);

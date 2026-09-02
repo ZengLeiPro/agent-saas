@@ -1,4 +1,6 @@
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import {
   appendFile,
   mkdir,
@@ -27,6 +29,83 @@ import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
 
 const LOCK_STALE_MS = 120_000;
 const BACKUP_LIMIT = 20;
+
+interface LockOwner {
+  pid: number;
+  token?: string;
+}
+
+async function readLockOwner(lockPath: string): Promise<LockOwner | undefined> {
+  try {
+    const value = JSON.parse(await readFile(join(lockPath, 'owner.json'), 'utf8')) as unknown;
+    if (!value || typeof value !== 'object') return undefined;
+    const pid = (value as { pid?: unknown }).pid;
+    const token = (value as { token?: unknown }).token;
+    if (!Number.isInteger(pid) || (pid as number) <= 0) return undefined;
+    return {
+      pid: pid as number,
+      ...(typeof token === 'string' && token.length > 0 ? { token } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+class ConfigLockGuardBusyError extends Error {}
+
+async function acquireFileGuard(path: string): Promise<() => Promise<void>> {
+  const child = spawn(
+    'flock',
+    ['--nonblock', path, 'sh', '-c', 'printf "acquired\\n"; cat >/dev/null'],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  await new Promise<void>((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (!settled && stdout.includes('\n')) {
+        settled = true;
+        resolve();
+      }
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    child.once('exit', (code) => {
+      if (!settled) {
+        settled = true;
+        reject(code === 1
+          ? new ConfigLockGuardBusyError()
+          : new Error(`配置锁 guard 异常退出 (${code ?? 'signal'}): ${stderr.trim()}`));
+      }
+    });
+  });
+  return async () => {
+    if (child.exitCode !== null) return;
+    child.stdin.end();
+    await once(child, 'exit');
+  };
+}
 
 export class ConfigConflictError extends Error {
   readonly code = 'CONFIG_FINGERPRINT_CONFLICT';
@@ -132,6 +211,7 @@ function parseRaw(text: string): Record<string, unknown> {
 export class AdminConfigMutationService {
   private readonly stateDir: string;
   private readonly lockPath: string;
+  private readonly lockGuardPath: string;
   private readonly backupDir: string;
   private readonly auditPath: string;
   private runtimeRecovery?: RuntimeRecoveryState;
@@ -158,6 +238,7 @@ export class AdminConfigMutationService {
   ) {
     this.stateDir = join(options.processCwd, 'data', 'config-governance');
     this.lockPath = join(this.stateDir, 'config.lock');
+    this.lockGuardPath = join(this.stateDir, 'config.lock.guard');
     this.backupDir = join(this.stateDir, 'backups');
     this.auditPath = join(this.stateDir, 'audit.jsonl');
   }
@@ -426,38 +507,69 @@ export class AdminConfigMutationService {
 
   private async acquireLock(): Promise<() => Promise<void>> {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
-    while (true) {
+    let releaseGuard: () => Promise<void>;
+    try {
+      releaseGuard = await acquireFileGuard(this.lockGuardPath);
+    } catch (error) {
+      if (!(error instanceof ConfigLockGuardBusyError)) throw error;
+      const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
+      throw new ConfigConflictError(configFingerprint(parseRaw(currentText)), configRevision(currentText));
+    }
+
+    try {
       try {
         await mkdir(this.lockPath, { mode: 0o700 });
-        await writeFile(
-          join(this.lockPath, 'owner.json'),
-          JSON.stringify({
-            pid: process.pid,
-            createdAt: new Date().toISOString(),
-          }),
-          { flag: 'wx', mode: 0o600 },
-        );
-        return async () => {
-          await rm(this.lockPath, { recursive: true, force: true });
-        };
       } catch (error) {
         if (
           !error ||
           typeof error !== 'object' ||
           (error as NodeJS.ErrnoException).code !== 'EEXIST'
-        )
-          throw error;
+        ) throw error;
         const lockStat = await stat(this.lockPath).catch(() => undefined);
-        if (lockStat && Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+        const owner = await readLockOwner(this.lockPath);
+        if (
+          lockStat &&
+          Date.now() - lockStat.mtimeMs > LOCK_STALE_MS &&
+          !isProcessAlive(owner?.pid)
+        ) {
           await rm(this.lockPath, { recursive: true, force: true });
-          continue;
+          await mkdir(this.lockPath, { mode: 0o700 });
+        } else {
+          const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
+          throw new ConfigConflictError(
+            configFingerprint(parseRaw(currentText)),
+            configRevision(currentText),
+          );
         }
-        const currentText = await readFile(this.options.configPath, 'utf8').catch(() => '{}');
-        throw new ConfigConflictError(configFingerprint(parseRaw(currentText)), configRevision(currentText));
       }
+
+      const token = randomUUID();
+      await writeFile(
+        join(this.lockPath, 'owner.json'),
+        JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+          token,
+        }),
+        { flag: 'wx', mode: 0o600 },
+      );
+      return async () => {
+        try {
+          const owner = await readLockOwner(this.lockPath);
+          if (owner?.pid === process.pid && owner.token === token) {
+            await rm(this.lockPath, { recursive: true, force: true });
+          }
+        } finally {
+          await releaseGuard();
+        }
+      };
+    } catch (error) {
+      await releaseGuard();
+      throw error;
     }
   }
 
+  // All lock-directory reclamation and release occurs while the OS guard is held.
   private async createBackup(
     text: string,
     fingerprint: string,

@@ -11,6 +11,7 @@ import type { CronService } from './cron/service.js';
 import { verifyAzerothTokenMetadata } from './integrations/azeroth/tokens.js';
 import { startKbPreviewScheduler, type KbPreviewScheduler } from './kb/previewScheduler.js';
 import { serverLogger, cronLogger } from './utils/logger.js';
+import { requestTargetForLog } from './security/httpLogRedaction.js';
 import { sessionCompression } from './middleware/sessionCompression.js';
 import { runtimeRunController } from './runtime/runController.js';
 import {
@@ -192,7 +193,7 @@ async function startServer(): Promise<void> {
       const durationMs = Date.now() - startedAt;
       const eventLoopLagMs = Number(eventLoopDelayMonitor.mean / 1e6);
       if (durationMs >= 1500 || eventLoopLagMs >= 200) {
-        serverLogger.warn(`[HTTP] ${req.method} ${req.originalUrl} -> ${res.statusCode} in ${durationMs}ms (eventLoopMean=${eventLoopLagMs.toFixed(1)}ms)`);
+        serverLogger.warn(`[HTTP] ${req.method} ${requestTargetForLog(req)} -> ${res.statusCode} in ${durationMs}ms (eventLoopMean=${eventLoopLagMs.toFixed(1)}ms)`);
       }
     });
     next();

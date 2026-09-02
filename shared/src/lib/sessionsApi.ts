@@ -314,6 +314,15 @@ function mapBlock(
         ...(block.finalOutput ? { finalOutput: true } : {}),
         ...(owner ? { owner } : {}),
         ...(block.guardrailEventId ? { guardrailEventId: block.guardrailEventId } : {}),
+        ...(block.moderation ? { moderation: {
+          eventId: block.moderation.eventId,
+          moderationId: block.moderation.eventId,
+          runId: block.runId ?? `moderation:${block.moderation.eventId}`,
+          messageId: block.id,
+          blockId: block.id,
+          outcome: block.moderation.outcome,
+          ...(block.moderation.reasonCode ? { reasonCode: block.moderation.reasonCode } : {}),
+        } } : {}),
         ...(display ? { display } : {}),
         timestamp: block.tsMs,
       };

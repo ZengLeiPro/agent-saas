@@ -1,0 +1,238 @@
+{
+  "$schema": "./schema/rehearsal-plan.schema.json",
+  "schemaVersion": "1.0.0",
+  "planId": "M70-02",
+  "cases": [
+    {
+      "id": "M70-02-IOS-01",
+      "platform": "ios",
+      "action": "fresh_install",
+      "installMethod": "testflight",
+      "expectedOutcome": "fresh install starts empty and reaches ready",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-01",
+      "platform": "android",
+      "action": "fresh_install",
+      "installMethod": "play-store",
+      "expectedOutcome": "fresh install starts empty and reaches ready",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-02",
+      "platform": "ios",
+      "action": "same_version_reinstall",
+      "installMethod": "testflight",
+      "expectedOutcome": "same-version reinstall preserves platform-defined data safely",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-02",
+      "platform": "android",
+      "action": "same_version_reinstall",
+      "installMethod": "play-store",
+      "expectedOutcome": "same-version reinstall preserves platform-defined data safely",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-03",
+      "platform": "ios",
+      "action": "n_minus_1_to_n_overlay",
+      "installMethod": "testflight",
+      "expectedOutcome": "N-1 to N overlay succeeds with the same signer",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-03",
+      "platform": "android",
+      "action": "n_minus_1_to_n_overlay",
+      "installMethod": "play-store",
+      "expectedOutcome": "N-1 to N overlay succeeds with the same signer",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-04",
+      "platform": "ios",
+      "action": "cache_v1_to_v2",
+      "installMethod": "testflight",
+      "expectedOutcome": "cache v1 migrates once to cache v2",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-04",
+      "platform": "android",
+      "action": "cache_v1_to_v2",
+      "installMethod": "play-store",
+      "expectedOutcome": "cache v1 migrates once to cache v2",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-05",
+      "platform": "ios",
+      "action": "expired_token",
+      "installMethod": "testflight",
+      "expectedOutcome": "expired token executes M30 transaction and requires login",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-05",
+      "platform": "android",
+      "action": "expired_token",
+      "installMethod": "play-store",
+      "expectedOutcome": "expired token executes M30 transaction and requires login",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-06",
+      "platform": "ios",
+      "action": "revoked_token",
+      "installMethod": "testflight",
+      "expectedOutcome": "revoked token executes M30 transaction and requires login",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-06",
+      "platform": "android",
+      "action": "revoked_token",
+      "installMethod": "play-store",
+      "expectedOutcome": "revoked token executes M30 transaction and requires login",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-07",
+      "platform": "ios",
+      "action": "old_pending_same_protocol",
+      "installMethod": "testflight",
+      "expectedOutcome": "old pending queries ACK and is never automatically replayed",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-07",
+      "platform": "android",
+      "action": "old_pending_same_protocol",
+      "installMethod": "play-store",
+      "expectedOutcome": "old pending queries ACK and is never automatically replayed",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-08",
+      "platform": "ios",
+      "action": "old_pending_protocol_upgrade",
+      "installMethod": "testflight",
+      "expectedOutcome": "old pending becomes failed_upgrade without replay",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-08",
+      "platform": "android",
+      "action": "old_pending_protocol_upgrade",
+      "installMethod": "play-store",
+      "expectedOutcome": "old pending becomes failed_upgrade without replay",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-09",
+      "platform": "ios",
+      "action": "server_epoch_restart",
+      "installMethod": "testflight",
+      "expectedOutcome": "server epoch change performs authoritative resync",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-09",
+      "platform": "android",
+      "action": "server_epoch_restart",
+      "installMethod": "play-store",
+      "expectedOutcome": "server epoch change performs authoritative resync",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-IOS-10",
+      "platform": "ios",
+      "action": "store_pause_kill_compat_hotfix",
+      "installMethod": "testflight",
+      "expectedOutcome": "pause rollout, kill capability, verify metrics/compat, then higher-version hotfix",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-10",
+      "platform": "android",
+      "action": "store_pause_kill_compat_hotfix",
+      "installMethod": "play-store",
+      "expectedOutcome": "pause rollout, kill capability, verify metrics/compat, then higher-version hotfix",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    },
+    {
+      "id": "M70-02-ANDROID-11",
+      "platform": "android",
+      "action": "enterprise_signed_rollback",
+      "installMethod": "enterprise-signed-apk",
+      "expectedOutcome": "signed emergency rollback APK has higher versionCode, same signer, audit and replay ledger",
+      "artifactSlots": [
+        "previous",
+        "current"
+      ]
+    }
+  ]
+}

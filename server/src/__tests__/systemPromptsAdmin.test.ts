@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { DEFAULT_TENANT_ID } from '../data/tenants/types.js';
@@ -51,7 +51,13 @@ async function withApp(
 }
 
 describe('system prompts admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
+
   afterEach(() => {
+    vi.unstubAllEnvs();
     while (servers.length > 0) servers.pop()?.close();
   });
 

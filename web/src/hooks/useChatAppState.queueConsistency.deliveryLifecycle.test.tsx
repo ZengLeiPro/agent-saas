@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatAppState } from "./useChatAppState";
 import type { UploadedFile } from "@/components/types";
+import type { ChatQueueSnapshot } from "@agent/shared";
+import { createChatPayloadReader } from "./chatPayloadTestHelper";
 const harness = vi.hoisted(() => {
   const messageHandlers = new Set<(envelope: { data: unknown }) => void>();
   const stateHandlers = new Set<(state: string) => void>();
@@ -11,7 +13,7 @@ const harness = vi.hoisted(() => {
     sends: vi.fn(async (_payload: unknown) => true),
     forceReconnect: vi.fn(async () => {}),
     authFetch: vi.fn(async (_url: string, _init?: unknown): Promise<Response> => new Response("{}", { status: 404 })),
-    pendingOrgAgentIdRef: { current: null as string | null },
+    pendingAgentTargetRef: { current: { kind: 'personal' as const, tenantId: 'tenant-a' } },
     pendingNewSessionGroupIdRef: { current: null as string | null },
     assignPendingGroup: vi.fn(),
     currentFiles: [] as UploadedFile[],
@@ -22,6 +24,7 @@ const harness = vi.hoisted(() => {
       onSessionsLoaded?: (sessions: Array<{ sessionId: string }>) => void;
       onLastRunState?: (sessionId: string, lastRunState: { status: string; runId: string; error?: string }) => void;
       onQueuedMessages?: (sessionId: string, messages: unknown[]) => void;
+      onQueueSnapshot?: (sessionId: string, snapshot: ChatQueueSnapshot) => void;
       onSandboxProfile?: (sessionId: string, profile: "daily" | "coding" | undefined, activate?: boolean) => void; onSessionInvalidated?: (sessionId: string, status: 403 | 404) => void;
       onNewSession?: () => void;
       cancelActiveStream?: () => void;
@@ -81,6 +84,7 @@ vi.mock("@/hooks/useFileUpload", () => ({
     uploading: false,
     uploadError: null,
     dismissUploadError: vi.fn(),
+    reportUploadError: vi.fn(),
     isDragging: false,
     replaceFiles: harness.replaceFiles,
     removeFile: vi.fn(),
@@ -99,10 +103,11 @@ vi.mock("@/lib/authFetch", () => ({
 }));
 vi.mock("@/hooks/usePendingNewSessionTarget", () => ({
   usePendingNewSessionTarget: () => ({
-    pendingOrgAgentIdRef: harness.pendingOrgAgentIdRef,
+    pendingAgentTargetRef: harness.pendingAgentTargetRef,
     pendingNewSessionGroupIdRef: harness.pendingNewSessionGroupIdRef,
+    pendingAgentTarget: harness.pendingAgentTargetRef.current,
     pendingOrgAgentId: null,
-    setPendingOrgAgentId: vi.fn(),
+    setPendingAgentTarget: vi.fn(),
     clearPendingOrgAgent: vi.fn(),
     assignPendingGroup: harness.assignPendingGroup,
   }),
@@ -129,12 +134,9 @@ vi.mock("@/lib/wsClient", () => ({
 }));
 function response(body: unknown, status = 200): Response { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
 function emit(data: unknown): void { for (const handler of [...harness.messageHandlers]) handler({ data }); }
-function chatPayloads(): Array<Record<string, unknown>> {
-  return harness.sends.mock.calls.map(([payload]) => payload as Record<string, unknown>)
-    .filter((payload) => payload.action === "chat");
-}
+const chatPayloads = createChatPayloadReader(harness.sends);
 const fileA: UploadedFile = {
-  attachmentId: "att-a",
+  attachmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   originalName: "a.png",
   savedPath: "/uploads/a.png",
   relativePath: "uploads/a.png",
@@ -143,7 +145,7 @@ const fileA: UploadedFile = {
   isImage: true,
 };
 const fileB: UploadedFile = {
-  attachmentId: "att-b",
+  attachmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   originalName: "b.pdf",
   savedPath: "/uploads/b.pdf",
   relativePath: "uploads/b.pdf",
@@ -158,7 +160,7 @@ beforeEach(() => {
   harness.sends.mockClear();
   harness.forceReconnect.mockReset().mockResolvedValue(undefined);
   harness.assignPendingGroup.mockClear();
-  harness.pendingOrgAgentIdRef.current = null;
+  harness.pendingAgentTargetRef.current = { kind: 'personal', tenantId: 'tenant-a' };
   harness.pendingNewSessionGroupIdRef.current = null;
   harness.replaceFiles.mockClear();
   harness.currentFiles = [];
@@ -191,7 +193,9 @@ describe("useChatAppState queue delivery lifecycle", () => {
       result.current.setInput("compile this");
     });
     await act(async () => { await result.current.sendMessage(); });
-    expect(chatPayloads()[0]).toMatchObject({ message: "compile this", sandboxProfile: "coding" });
+    expect(chatPayloads()[0]).toMatchObject({
+      submission: { text: "compile this", target: { sandboxProfile: "coding", agentTarget: { kind: 'personal', tenantId: 'tenant-a' } } },
+    });
   });
   it("locks existing sessions and falls back legacy details without sandboxProfile to coding", () => {
     const { result } = renderHook(() => useChatAppState());
@@ -216,7 +220,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
   it("locks the draft profile while the first message is pending and adopts the session event authority", async () => {
     const { result } = renderHook(() => useChatAppState());
     act(() => result.current.setInput("first message")); await act(async () => { await result.current.sendMessage(); });
-    const clientMsgId = chatPayloads()[0]?.client_msg_id as string;
+    const clientMsgId = chatPayloads()[0]?.submission.clientMsgId as string;
     act(() => result.current.setSandboxProfile("coding")); expect(result.current.sandboxProfile).toBe("daily");
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: clientMsgId, sandboxProfile: "coding" }));
     expect(result.current.sandboxProfile).toBe("coding");
@@ -238,21 +242,29 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => emit({ type: "sync_ok", seq: 1, events: [{ event: { type: "session_deleted", sessionId: "remote-session" } }] }));
     expect(result.current.sandboxProfile).toBe("daily");
     act(() => result.current.setInput("after deletion")); await act(async () => { await result.current.sendMessage(); });
-    expect(chatPayloads()[0]).toMatchObject({ sandboxProfile: "daily" }); expect(chatPayloads()[0].sessionId).toBeUndefined();
+    expect(chatPayloads()[0]).toMatchObject({ submission: { target: { sandboxProfile: "daily" } } });
+    expect(chatPayloads()[0].submission.target.sessionId).toBeUndefined();
   });
   it.each([403, 404] as const)("详情返回 %s 时跨非聊天页清除失效归属并恢复可选草稿", async (status) => {
     window.history.replaceState(null, "", "/chat/invalid-session"); harness.session.sessionId = "invalid-session"; harness.session.isNewSession = false; const { result, rerender } = renderHook(() => useChatAppState());
     act(() => result.current.setActiveTab("files")); expect(window.location.pathname).not.toContain("invalid-session"); act(() => harness.sessionCallbacks?.onSessionInvalidated?.("invalid-session", status));
     harness.session.sessionId = null; harness.session.isNewSession = true; rerender(); expect(result.current.sandboxProfile).toBe("daily"); act(() => result.current.setActiveTab("chat")); expect(window.location.pathname).not.toContain("invalid-session");
-    act(() => { result.current.setSandboxProfile("coding"); result.current.setInput("after invalidation"); }); await act(async () => { await result.current.sendMessage(); }); expect(chatPayloads()[0]).toMatchObject({ message: "after invalidation", sandboxProfile: "coding" }); expect(chatPayloads()[0].sessionId).toBeUndefined();
+    act(() => { result.current.setSandboxProfile("coding"); result.current.setInput("after invalidation"); });
+    await act(async () => { await result.current.sendMessage(); });
+    expect(chatPayloads()[0]).toMatchObject({
+      submission: { text: "after invalidation", target: { sandboxProfile: "coding" } },
+    });
+    expect(chatPayloads()[0].submission.target.sessionId).toBeUndefined();
   });
   it("reconnects away from a draining server and lets retry resend the rejected message", async () => {
     harness.session.sessionId = "session-draining";
     harness.session.isNewSession = false;
-    const { result } = renderHook(() => useChatAppState());
+    const { result, rerender } = renderHook(() => useChatAppState());
+    harness.currentFiles = [fileA];
+    rerender();
     act(() => result.current.setInput("retry after restart"));
     await act(async () => { await result.current.sendMessage(); });
-    const clientMsgId = chatPayloads()[0].client_msg_id as string;
+    const clientMsgId = chatPayloads()[0].submission.clientMsgId as string;
     act(() => emit({
       type: "chat_rejected",
       client_msg_id: clientMsgId,
@@ -270,10 +282,22 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => result.current.retryMessage(failedMessage));
     await waitFor(() => expect(chatPayloads()).toHaveLength(2));
     expect(chatPayloads()[1]).toMatchObject({
-      client_msg_id: clientMsgId,
-      message: "retry after restart",
-      sessionId: "session-draining",
+      submission: {
+        clientMsgId,
+        text: "retry after restart",
+        target: { sessionId: "session-draining" },
+        attachments: [{
+          attachmentId: fileA.attachmentId,
+          display: {
+            originalName: fileA.originalName,
+            mimeType: fileA.mimeType,
+            size: fileA.size,
+            isImage: fileA.isImage,
+          },
+        }],
+      },
     });
+    expect(JSON.stringify(chatPayloads()[1])).not.toMatch(/savedPath|relativePath|\/uploads\//);
   });
   it("keeps a WS-confirmed runtime when stream-status is inactive during session restore", async () => {
     let resolveStreamStatus!: (value: Response) => void;
@@ -509,7 +533,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
     act(() => emit({
       type: "session",
       sessionId: "session-grouped",
-      client_msg_id: chatPayloads()[0].client_msg_id,
+      client_msg_id: chatPayloads()[0].submission.clientMsgId,
     }));
 
     expect(harness.assignPendingGroup).toHaveBeenCalledWith("session-grouped");
@@ -534,18 +558,18 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const firstId = chatPayloads()[0].client_msg_id;
+    const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
     act(() => emit({ type: "chat_ack", client_msg_id: firstId, server_recv_ts: 1, status: "running", sessionId: "session-authoritative" }));
 
     act(() => result.current.setInput("will fail"));
     await act(async () => { await result.current.sendMessage(); });
-    const failedId = chatPayloads()[1].client_msg_id as string;
+    const failedId = chatPayloads()[1].submission.clientMsgId as string;
     act(() => emit({ type: "chat_ack", client_msg_id: failedId, server_recv_ts: 2, status: "failed", runId: "run-failed", sessionId: "session-authoritative" }));
 
     act(() => result.current.setInput("will cancel"));
     await act(async () => { await result.current.sendMessage(); });
-    expect(chatPayloads()[2].client_msg_id).toBe(cancelledId);
+    expect(chatPayloads()[2].submission.clientMsgId).toBe(cancelledId);
     await act(async () => {
       vi.advanceTimersByTime(15_000);
       await Promise.resolve();
@@ -583,9 +607,9 @@ describe("useChatAppState queue delivery lifecycle", () => {
     await act(async () => { await result.current.sendMessage(); });
     act(() => result.current.setInput("queued-a"));
     await act(async () => { await result.current.sendMessage(); });
-    const rootId = chatPayloads()[0].client_msg_id;
+    const rootId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: rootId }));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await result.current.sendMessage(); });
     expect(chatPayloads()).toHaveLength(2);
     act(() => emit({ type: "chat_ack", client_msg_id: rootId, status: "running", sessionId: "session-a" }));
 
@@ -618,7 +642,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const firstId = chatPayloads()[0].client_msg_id;
+    const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-a", client_msg_id: firstId }));
     act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", sessionId: "session-a" }));
     act(() => result.current.setInput("not received"));
@@ -663,7 +687,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const firstId = chatPayloads()[0].client_msg_id;
+    const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
     act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", runId: "run-first", sessionId: "session-authoritative" }));
 
@@ -684,61 +708,27 @@ describe("useChatAppState queue delivery lifecycle", () => {
     });
   });
 
-  it("restores full attachment references from a refreshed snapshot for edit and resend", async () => {
+  it("uses a refreshed attachmentId-only snapshot as authority without a local resend", async () => {
     const { result } = renderHook(() => useChatAppState());
-
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const firstId = chatPayloads()[0].client_msg_id;
+    const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
-    act(() => emit({ type: "chat_ack", client_msg_id: firstId, status: "running", runId: "run-first", sessionId: "session-authoritative" }));
-
-    const snapshotMessage = {
-      sourceRunId: "queued-snapshot",
-      runId: "queued-snapshot",
-      clientMsgId: "client-snapshot",
-      deliveryMode: "queue" as const,
-      content: "snapshot attachment",
-      acceptedAt: "2026-08-15T01:00:00.000Z",
-      attachments: [{
-        attachmentId: fileB.attachmentId,
-        name: fileB.originalName,
-        savedPath: fileB.savedPath,
-        relativePath: fileB.relativePath,
-        size: fileB.size,
-        mimeType: fileB.mimeType,
-        isImage: fileB.isImage,
-      }],
-    };
-    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
-    expect(result.current.queuedInterjections[0]?.uploadedFiles).toEqual([fileB]);
-
-    let editPromise: Promise<void> | undefined;
-    act(() => { editPromise = result.current.editQueuedInterjection("client-snapshot"); });
-    await waitFor(() => expect(harness.sends).toHaveBeenCalledWith({ action: "cancel_queued", sourceRunId: "queued-snapshot" }));
-    act(() => emit({ type: "cancel_queued_result", ok: true, sourceRunId: "queued-snapshot" }));
-    await act(async () => { await editPromise; });
-    expect(harness.replaceFiles).toHaveBeenLastCalledWith([fileB]);
-
-    act(() => harness.sessionCallbacks?.onQueuedMessages?.("session-authoritative", [snapshotMessage]));
-    act(() => emit({
-      type: "steering_cancelled",
+    act(() => harness.sessionCallbacks?.onQueueSnapshot?.("session-authoritative", {
+      version: 1,
       sessionId: "session-authoritative",
-      sourceRunId: "queued-snapshot",
-      clientMsgId: "client-snapshot",
-      reason: "user_withdrew",
+      generatedAt: "2026-08-15T01:00:00.000Z",
+      items: [{
+        sessionId: "session-authoritative", sourceRunId: "queued-snapshot", runId: "queued-snapshot",
+        clientMsgId: "client-snapshot", deliveryMode: "queue", status: "queued", content: "snapshot attachment",
+        attachments: [{ attachmentId: fileB.attachmentId!, name: fileB.originalName }],
+      }],
     }));
-    act(() => result.current.resendQueuedInterjection("client-snapshot"));
-    await waitFor(() => expect(chatPayloads()).toHaveLength(2));
-    expect(chatPayloads()[1].attachments).toEqual([{
-      attachmentId: fileB.attachmentId,
-      originalName: fileB.originalName,
-      savedPath: fileB.savedPath,
-      relativePath: fileB.relativePath,
-      size: fileB.size,
-      mimeType: fileB.mimeType,
-      isImage: fileB.isImage,
-    }]);
+    expect(result.current.queuedInterjections[0]).toMatchObject({
+      clientMsgId: "client-snapshot",
+      attachments: [{ attachmentId: fileB.attachmentId, name: fileB.originalName }],
+    });
+    expect(chatPayloads()).toHaveLength(1);
   });
 
   it("preserves full UploadedFile data through queued edit and resend", async () => {
@@ -746,7 +736,7 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     act(() => result.current.setInput("first"));
     await act(async () => { await result.current.sendMessage(); });
-    const firstId = chatPayloads()[0].client_msg_id;
+    const firstId = chatPayloads()[0].submission.clientMsgId;
     act(() => emit({ type: "session", sessionId: "session-authoritative", client_msg_id: firstId }));
     act(() => emit({ type: "chat_ack", client_msg_id: firstId, server_recv_ts: 1, status: "running", sessionId: "session-authoritative" }));
 
@@ -754,13 +744,13 @@ describe("useChatAppState queue delivery lifecycle", () => {
     rerender();
     act(() => result.current.setInput("edit me"));
     await act(async () => { await result.current.sendMessage(); });
-    const editId = chatPayloads()[1].client_msg_id as string;
+    const editId = chatPayloads()[1].submission.clientMsgId as string;
 
     harness.currentFiles = [fileB];
     rerender();
     act(() => result.current.setInput("resend me"));
     await act(async () => { await result.current.sendMessage(); });
-    const resendId = chatPayloads()[2].client_msg_id as string;
+    const resendId = chatPayloads()[2].submission.clientMsgId as string;
 
     act(() => {
       emit({ type: "chat_ack", client_msg_id: editId, server_recv_ts: 2, status: "failed", runId: "run-edit" });
@@ -773,21 +763,30 @@ describe("useChatAppState queue delivery lifecycle", () => {
 
     act(() => result.current.resendQueuedInterjection(resendId));
     await waitFor(() => expect(chatPayloads()).toHaveLength(4));
-    expect(chatPayloads()[3].attachments).toEqual([{
+    expect(chatPayloads()[3].submission.attachments).toEqual([{
       attachmentId: fileB.attachmentId,
-      originalName: fileB.originalName,
-      savedPath: fileB.savedPath,
-      relativePath: fileB.relativePath,
-      size: fileB.size,
-      mimeType: fileB.mimeType,
-      isImage: fileB.isImage,
+      display: {
+        originalName: fileB.originalName,
+        size: fileB.size,
+        mimeType: fileB.mimeType,
+        isImage: fileB.isImage,
+      },
     }]);
+    expect(JSON.stringify(chatPayloads()[3])).not.toMatch(/savedPath|relativePath|\/uploads\//);
   });
 
   it("handles a rejected permission response without surfacing an unhandled rejection", async () => {
     harness.session.sessionId = "session-permission";
     harness.session.isNewSession = false;
     const { result } = renderHook(() => useChatAppState());
+    await waitFor(() => expect(harness.sends.mock.calls.some(([payload]) => (payload as { action?: string }).action === "resume")).toBe(true));
+    const resume = harness.sends.mock.calls
+      .map(([payload]) => payload as { action?: string; requestId?: string })
+      .find((payload) => payload.action === "resume");
+    act(() => emit({ type: "active_stream", sessionId: "session-permission", active: true, status: "running", streamId: "stream-permission", runId: "run-permission", requestId: resume?.requestId }));
+    act(() => emit({ type: "pending_interactions", interactions: [{
+      type: "permission_request", interactionId: "permission-1", version: 1, toolName: "Shell", toolInput: { command: "echo test" },
+    }] }));
 
     const pending = result.current.handlePermissionResponse("permission-1", true);
     await waitFor(() => expect(harness.sends).toHaveBeenCalledWith(expect.objectContaining({

@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: 02 account A logout to B with no A cache
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/logout.yaml
+- runFlow: ../helpers/login-b-password.yaml
+- tapOn: "设置"
+- assertVisible:
+    id: "account-username"
+    text: ${E2E_ACCOUNT_B_USERNAME}
+- assertNotVisible: ${E2E_ACCOUNT_A_USERNAME}
+- tapOn: "对话"
+- assertNotVisible:
+    id: "e2e-account-a-cache-marker"
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/02-identity-boundary

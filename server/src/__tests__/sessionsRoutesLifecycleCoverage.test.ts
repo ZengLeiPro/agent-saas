@@ -199,6 +199,7 @@ describe('sessions routes lifecycle coverage', () => {
       init: async () => {},
       markUnread: async () => true,
       markRead,
+      getState: async () => ({ attentionVersion: 7, readVersion: 7, updatedAt: '2026-08-30T00:00:00.000Z' }),
       listUnreadSessionIds: async () => new Set<string>(),
     };
     const projection = {
@@ -247,11 +248,11 @@ describe('sessions routes lifecycle coverage', () => {
       userId: OWNER.id,
       sessionId,
     });
-    expect(broadcastToUser).toHaveBeenCalledWith(OWNER.id, {
-      type: 'session_read_state_changed',
-      sessionId,
-      hasUnreadAiReply: false,
-    });
+    expect(await res.json()).toMatchObject({ ack: { status: 'applied', sessionId, readSeq: 7, serverVersion: 7 } });
+    expect(broadcastToUser).toHaveBeenCalledWith(OWNER.id, expect.objectContaining({
+      type: 'session_read_state_changed', sessionId, hasUnreadAiReply: false,
+      readSeq: 7, serverVersion: 7, sourceSeq: 7,
+    }));
   });
 
   it('PUT /sessions/:id/read：拒绝同租户其他用户的投影会话', async () => {
@@ -302,9 +303,10 @@ describe('sessions routes lifecycle coverage', () => {
       body: JSON.stringify({ title: '  新标题  ' }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json() as { ok: boolean; title: string };
+    const body = await res.json() as { ok: boolean; title: string; ack: { status: string; serverVersion: number } };
     expect(body.ok).toBe(true);
     expect(body.title).toBe('新标题');
+    expect(body.ack).toMatchObject({ status: 'applied', serverVersion: expect.any(Number) });
 
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.customTitle).toBe('新标题');
@@ -320,7 +322,7 @@ describe('sessions routes lifecycle coverage', () => {
     // 软删除 → 200 softDeleted，meta 写入 deletedAt
     const del = await fetch(`${baseUrl}/api/sessions/${sessionId}`, { method: 'DELETE' });
     expect(del.status).toBe(200);
-    expect((await del.json() as { softDeleted: boolean }).softDeleted).toBe(true);
+    expect(await del.json()).toMatchObject({ softDeleted: true, ack: { status: 'applied', deleted: true, serverVersion: expect.any(Number) } });
     const meta = await readSessionMeta(transcriptPath);
     expect(meta?.deletedAt).toBeTruthy();
     expect(meta?.deletedBy).toBe(OWNER.username);

@@ -17,9 +17,12 @@ import type { ModelAttachmentRef, PlatformEvent } from '../runtime/types.js';
  * （实时 WS 路径带结构化 meta 所以发送时可见）。
  */
 
+const ATTACHMENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const IMAGE_ATTACHMENT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
 function attachment(overrides: Partial<ModelAttachmentRef> = {}): ModelAttachmentRef {
   return {
-    attachmentId: 'att-1',
+    attachmentId: ATTACHMENT_ID,
     originalName: '报价单.pdf',
     relativePath: 'uploads/att-1/报价单.pdf',
     sizeBytes: 1024,
@@ -61,7 +64,7 @@ describe('transcript attachments round-trip', () => {
     await projection.project(userMessageEvent({
       attachments: [
         attachment(),
-        attachment({ attachmentId: 'att-2', originalName: 'photo.png', relativePath: 'uploads/att-2/photo.png', mimeType: 'image/png', isImage: true }),
+        attachment({ attachmentId: IMAGE_ATTACHMENT_ID, originalName: 'photo.png', relativePath: 'uploads/att-2/photo.png', mimeType: 'image/png', isImage: true }),
       ],
     }));
 
@@ -69,9 +72,22 @@ describe('transcript attachments round-trip', () => {
     expect(line.type).toBe('user');
     expect(line.message.content).toBe('看下这份报价');
     expect(line.attachments).toEqual([
-      { name: '报价单.pdf', isImage: false, relativePath: 'uploads/att-1/报价单.pdf' },
-      { name: 'photo.png', isImage: true, relativePath: 'uploads/att-2/photo.png' },
+      {
+        attachmentId: ATTACHMENT_ID,
+        name: '报价单.pdf',
+        mimeType: 'application/pdf',
+        size: 1024,
+        isImage: false,
+      },
+      {
+        attachmentId: IMAGE_ATTACHMENT_ID,
+        name: 'photo.png',
+        mimeType: 'image/png',
+        size: 1024,
+        isImage: true,
+      },
     ]);
+    expect(JSON.stringify(line.attachments)).not.toMatch(/savedPath|relativePath|uploads\//);
   });
 
   it('omits the attachments field when the event has none', async () => {
@@ -92,7 +108,13 @@ describe('transcript attachments round-trip', () => {
     const prompt = parsed.blocks.find((block) => block.kind === 'prompt');
     expect(prompt).toBeDefined();
     expect(prompt?.content).toBe('看下这份报价');
-    expect(prompt?.attachments).toEqual([{ name: 'photo.png', isImage: true, relativePath: 'uploads/att-1/photo.png' }]);
+    expect(prompt?.attachments).toEqual([{
+      attachmentId: ATTACHMENT_ID,
+      name: 'photo.png',
+      mimeType: 'image/png',
+      size: 1024,
+      isImage: true,
+    }]);
   });
 
   it('persists interjection identity for queue reconciliation after refresh', async () => {

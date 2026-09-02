@@ -5,6 +5,7 @@ import type { DingtalkMessageContext } from '../types.js';
 import type { DingtalkCredentials } from '../../../integrations/dingtalk/mediaApi.js';
 import { parseVoiceMarkers } from '../../../utils/voiceMarkers.js';
 import type { VoiceMarker, ParsedVoiceMarkers } from '../../../utils/voiceMarkers.js';
+import { isTtsCapabilityEnabled } from '../../../integrations/tts/capability.js';
 
 export type { VoiceMarker, ParsedVoiceMarkers };
 
@@ -19,6 +20,7 @@ export { parseVoiceMarkers };
 
 export async function dispatchVoiceMarkers(input: DispatchVoiceMarkersInput): Promise<void> {
   const { markers, sessionWebhook, ttsConfig, credentials } = input;
+  if (!isTtsCapabilityEnabled(ttsConfig)) return; // no provider/network call
   for (const marker of markers) {
     try {
       const result = await sendVoiceMessage({
@@ -63,6 +65,10 @@ export class DingtalkVoiceService {
       return parsed.cleanedText;
     }
 
+    // N-1 text remains deliverable, but markers never synthesize while the capability is off.
+    if (!isTtsCapabilityEnabled(this.config.tts)) {
+      return [parsed.cleanedText, ...parsed.markers.map((marker) => marker.text)].filter(Boolean).join('\n');
+    }
     await dispatchVoiceMarkers({
       markers: parsed.markers,
       sessionWebhook: context.sessionWebhook,

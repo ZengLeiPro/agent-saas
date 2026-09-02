@@ -19,6 +19,13 @@ const noopDispatch: AgentRunDispatch = async function* () {
   yield { type: 'done' };
 };
 
+function withoutProjection<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutProjection) as T;
+  if (!value || typeof value !== 'object') return value;
+  const { projection: _projection, ...rest } = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(rest).map(([key, entry]) => [key, withoutProjection(entry)])) as T;
+}
+
 describe('WebChannel active stream reconnect', () => {
   const channels: WebChannel[] = [];
 
@@ -89,7 +96,7 @@ describe('WebChannel active stream reconnect', () => {
       { lastEventId: 9, lastEventCursor: '101', activeRunId: 'run-cursor-stream', tenantId: DEFAULT_TENANT_ID },
     );
 
-    expect(ws.sent).toEqual([
+    expect(ws.sent.map(withoutProjection)).toEqual([
       {
         eventCursor: '102',
         data: { type: 'text', content: '，补齐尾段' },

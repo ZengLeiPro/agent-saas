@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: 10 old-build pending submission becomes failed_upgrade
+---
+# Provider prepare-flow installs the injected old build, creates a durable pending submission,
+# upgrades in place to buildSha, and must preserve app data. No synthetic receipt is accepted.
+- launchApp
+- extendedWaitUntil:
+    visible: "应用已升级，此消息未自动重发"
+    timeout: 15000
+- assertVisible:
+    id: "chat-composer-input"
+- assertVisible: "保留的升级草稿"
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/10-upgrade-pending

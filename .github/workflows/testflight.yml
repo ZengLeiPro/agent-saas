@@ -1,49 +1,344 @@
-# ============================================================================
-# CI/CD Pipeline: Build iOS on EAS → Submit to TestFlight
-# ============================================================================
-# 触发: 手动触发 (GitHub 页面 / gh workflow run / AI 代执行)
-# 流程: install → eas build (cloud) → auto submit to TestFlight
-# ============================================================================
-
-name: iOS Release
+# M60-04: immutable three-profile mobile build. This workflow never submits.
+name: Mobile Release / Build Evidence
 
 on:
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: 'Annotated mobile-vX.Y.Z-rc.N tag or exact reviewed commit SHA'
+        required: true
+        type: string
+      commit_oid:
+        description: 'Exact reviewed 40-character commit SHA'
+        required: true
+        type: string
+      reviewed_head_oid:
+        description: 'Exact reviewed PR head SHA (required for commit mode)'
+        required: false
+        type: string
+      pull_request_number:
+        description: 'Target PR number when the commit is not on main'
+        required: false
+        default: '0'
+        type: string
+      execute_build:
+        description: 'Run real EAS builds; false performs only the authorized source gate'
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      release_ref: { required: true, type: string }
+      commit_oid: { required: true, type: string }
+      reviewed_head_oid: { required: false, type: string, default: '' }
+      pull_request_number: { required: false, type: string, default: '0' }
+      execute_build: { required: false, type: boolean, default: false }
+    secrets:
+      EXPO_ORG_ROBOT_TOKEN: { required: false }
+      MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM: { required: false }
+      MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM: { required: false }
+      MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: { required: false }
+      MOBILE_RELEASE_MANIFEST_JSON: { required: false }
+      MOBILE_RELEASE_MANIFEST_HMAC_KEY: { required: false }
+
+permissions:
+  contents: read
+  pull-requests: read
+  deployments: read
+  actions: read
+  attestations: write
+  id-token: write
 
 concurrency:
-  group: testflight-ios
+  group: mobile-release-build-${{ inputs.commit_oid }}
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: '22.23.1'
+  PNPM_VERSION: '10.18.3'
+  EAS_CLI_VERSION: '18.1.0'
+  XCODE_VERSION: '16.4'
+  IOS_RUNNER: 'macos-15'
+  IOS_EAS_IMAGE: 'macos-sequoia-15.6-xcode-16.4'
+  ANDROID_RUNNER: 'ubuntu-24.04'
+  ANDROID_EAS_IMAGE: 'ubuntu-24.04-jdk-17-ndk-r27b-sdk-55'
+  BUILD_ENVIRONMENT: 'mobile-build-production'
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
 jobs:
-  build-and-submit:
-    name: Build & Submit to TestFlight
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+  configuration-gate:
+    name: Authorize invocation and release configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.mode.outputs.tag }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - name: Reject unconfigured real builds and ambiguous refs
+        id: mode
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          COMMIT_OID: ${{ inputs.commit_oid }}
+          EXECUTE_BUILD: ${{ inputs.execute_build }}
+          RELEASE_CONFIGURED: ${{ vars.MOBILE_RELEASE_CONFIGURED }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_OID" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$RELEASE_REF" =~ ^mobile-v[0-9]+\.[0-9]+\.[0-9]+-rc\.[1-9][0-9]*$ ]]; then
+            echo "tag=$RELEASE_REF" >> "$GITHUB_OUTPUT"
+          elif [ "$RELEASE_REF" = "$COMMIT_OID" ]; then
+            echo 'tag=' >> "$GITHUB_OUTPUT"
+          else
+            echo 'release_ref must be an RC tag or the exact commit_oid' >&2; exit 1
+          fi
+          if [ "$EXECUTE_BUILD" = true ] && [ "$RELEASE_CONFIGURED" != true ]; then
+            echo 'MOBILE_RELEASE_CONFIGURED must be true before real external builds' >&2; exit 1
+          fi
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+  source-contract:
+    name: Static source authorization / ${{ matrix.profile }}
+    needs: configuration-gate
+    environment: mobile-build-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [ios-store, android-store, android-enterprise]
+    steps:
+      - uses: actions/checkout@v5
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+          ref: ${{ inputs.commit_oid }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with: { version: '10.18.3', run_install: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1', cache: pnpm, cache-dependency-path: pnpm-lock.yaml }
+      - name: Fetch authoritative main, RC tag, and optional PR review records
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if [ -n '${{ needs.configuration-gate.outputs.tag }}' ]; then
+            git fetch --no-tags origin 'refs/tags/${{ needs.configuration-gate.outputs.tag }}:refs/tags/${{ needs.configuration-gate.outputs.tag }}'
+          fi
+          if [ "$PR_NUMBER" != 0 ]; then
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" --slurp | jq 'add' > "$RUNNER_TEMP/reviews.json"
+          fi
+      - name: Authorize exact reviewed source and manifest
+        env:
+          PROFILE: ${{ matrix.profile }}
+          TAG: ${{ needs.configuration-gate.outputs.tag }}
+          REVIEWED_HEAD: ${{ inputs.reviewed_head_oid }}
+          PR_NUMBER: ${{ inputs.pull_request_number }}
+          MOBILE_RELEASE_MANIFEST_JSON: ${{ secrets.MOBILE_RELEASE_MANIFEST_JSON }}
+          MOBILE_RELEASE_MANIFEST_HMAC_KEY: ${{ secrets.MOBILE_RELEASE_MANIFEST_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$MOBILE_RELEASE_MANIFEST_JSON"
+          test -n "$MOBILE_RELEASE_MANIFEST_HMAC_KEY"
+          manifest="$RUNNER_TEMP/release-manifest.json"
+          signature="$RUNNER_TEMP/release-manifest.hmac"
+          printf '%s' "$MOBILE_RELEASE_MANIFEST_JSON" > "$manifest"
+          node -e "const{createHmac}=require('node:crypto'),{readFileSync}=require('node:fs');process.stdout.write('sha256:'+createHmac('sha256',process.env.MOBILE_RELEASE_MANIFEST_HMAC_KEY).update(readFileSync(process.argv[1])).digest('hex')+'\n')" "$manifest" > "$signature"
+          args=(--root . --repo "$GITHUB_REPOSITORY" --commit '${{ inputs.commit_oid }}' --profile "$PROFILE" --main-ref refs/remotes/origin/main --manifest "$manifest" --manifest-signature "$signature" --output "$RUNNER_TEMP/source.json")
+          if [ -n "$TAG" ]; then args+=(--tag "$TAG"); else args+=(--reviewed-head "$REVIEWED_HEAD"); fi
+          if [ "$PR_NUMBER" != 0 ]; then args+=(--pull-json "$RUNNER_TEMP/pull.json" --reviews-json "$RUNNER_TEMP/reviews.json"); fi
+          node mobile/scripts/authorize-mobile-release-source.mjs "${args[@]}"
+          rm -f "$manifest" "$signature"
+      - name: Verify frozen dependency installation and EAS CLI pin
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          test "$(pnpm --version)" = "$PNPM_VERSION"
+          test "$(pnpm -F mobile exec eas --version | sed -nE 's/^eas-cli\/([^ ]+).*/\1/p')" = "$EAS_CLI_VERSION"
+      - name: Fail closed on missing M60-05 production provider and real test-event evidence
+        if: inputs.execute_build == true
+        env:
+          MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON: ${{ vars.MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON }}
+          MOBILE_TELEMETRY_TEST_RECEIPT_JSON: ${{ vars.MOBILE_TELEMETRY_TEST_RECEIPT_JSON }}
+          MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY: ${{ secrets.MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON"
+          test -n "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON"
+          test -n "$MOBILE_TELEMETRY_EVIDENCE_HMAC_KEY"
+          printf '%s' "$MOBILE_TELEMETRY_PROVIDER_CONTRACT_JSON" > "$RUNNER_TEMP/mobile-telemetry-provider.json"
+          printf '%s' "$MOBILE_TELEMETRY_TEST_RECEIPT_JSON" > "$RUNNER_TEMP/mobile-telemetry-receipt.json"
+          node mobile/scripts/mobile-telemetry-release-gate.mjs --config "$RUNNER_TEMP/mobile-telemetry-provider.json" --receipt "$RUNNER_TEMP/mobile-telemetry-receipt.json" --release '${{ inputs.commit_oid }}' --environment production
+          rm -f "$RUNNER_TEMP/mobile-telemetry-provider.json" "$RUNNER_TEMP/mobile-telemetry-receipt.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-source-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/source.json
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Setup EAS CLI
-        run: pnpm add -g eas-cli
-
-      - name: Build and submit to TestFlight
+  build-profile:
+    name: Build verified ${{ matrix.profile }} (no submit)
+    needs: [configuration-gate, source-contract]
+    if: inputs.execute_build == true
+    environment: mobile-build-production
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              profile: ios-store,
+              platform: ios,
+              eas_profile: production,
+              runner: macos-15,
+              extension: ipa,
+            }
+          - {
+              profile: android-store,
+              platform: android,
+              eas_profile: production-store,
+              runner: ubuntu-24.04,
+              extension: aab,
+            }
+          - {
+              profile: android-enterprise,
+              platform: android,
+              eas_profile: production-enterprise,
+              runner: ubuntu-24.04,
+              extension: apk,
+            }
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_ORG_ROBOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: '${{ inputs.commit_oid }}', fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v6
+        with: { version: '10.18.3', run_install: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1', cache: pnpm, cache-dependency-path: pnpm-lock.yaml }
+      - name: Select exact Xcode
+        if: matrix.platform == 'ios'
+        uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: '16.4' }
+      - name: Fail closed without organization robot and protected approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPO_TOKEN" || { echo 'EXPO_ORG_ROBOT_TOKEN is missing' >&2; exit 1; }
+          protection="$RUNNER_TEMP/environment.json"
+          gh api "repos/$GITHUB_REPOSITORY/environments/$BUILD_ENVIRONMENT" > "$protection"
+          jq -e '.protection_rules[] | select(.type == "required_reviewers")' "$protection" >/dev/null
+          jq -e '.protection_rules[] | select(.type == "required_reviewers") | .prevent_self_review == true' "$protection" >/dev/null
+          rules_hash="sha256:$(jq -S -c .protection_rules "$protection" | shasum -a 256 | awk '{print $1}')"
+          deployment="$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=$BUILD_ENVIRONMENT&sha=${{ inputs.commit_oid }}&per_page=20" | jq -er 'map(select(.environment == env.BUILD_ENVIRONMENT))[0]')"
+          deployment_id="$(jq -er '.id|tostring' <<<"$deployment")"
+          approved_at="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses?per_page=20" | jq -er '.[0].created_at')"
+          jq -n --arg environment "$BUILD_ENVIRONMENT" --arg deploymentId "$deployment_id" --arg runId "$GITHUB_RUN_ID" --argjson runAttempt "$GITHUB_RUN_ATTEMPT" --arg protectionRulesSha256 "$rules_hash" --arg approvedAt "$approved_at" \
+            '{environment:$environment,deploymentId:$deploymentId,runId:$runId,runAttempt:$runAttempt,protectionRulesSha256:$protectionRulesSha256,approvedAt:$approvedAt}' > "$RUNNER_TEMP/approval.json"
+      - name: Install frozen workspace and run M60-03 policy gate
+        env:
+          M60_03_ARTIFACT_DIR: ${{ runner.temp }}/native-policy
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          test "$(node --version)" = "v$NODE_VERSION"
+          test "$(pnpm --version)" = "$PNPM_VERSION"
+          pnpm -F mobile test:m60-03
+          pnpm -F mobile test:m60-03:prebuild
+      - uses: actions/download-artifact@v7
+        with:
+          name: mobile-source-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/source
+      - name: Build on EAS without submit and privately download real artifact
+        id: build
+        env:
+          PROFILE: ${{ matrix.profile }}
+          PLATFORM: ${{ matrix.platform }}
+          EAS_PROFILE: ${{ matrix.eas_profile }}
         working-directory: mobile
-        run: eas build --platform ios --profile production --auto-submit --non-interactive
+        run: |
+          set -euo pipefail
+          started="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          pnpm exec eas build --platform "$PLATFORM" --profile "$EAS_PROFILE" --wait --json --non-interactive > "$RUNNER_TEMP/eas-build.json"
+          build_id="$(jq -er 'if type=="array" then .[0].id else .id end' "$RUNNER_TEMP/eas-build.json")"
+          artifact_url="$(jq -er 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end' "$RUNNER_TEMP/eas-build.json")"
+          curl --fail --silent --show-error --location "$artifact_url" --output "$RUNNER_TEMP/release.${{ matrix.extension }}"
+          unset artifact_url
+          completed="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          { echo "build_id=$build_id"; echo "started=$started"; echo "completed=$completed"; } >> "$GITHUB_OUTPUT"
+      - name: Install pinned Android verification tools
+        if: matrix.platform == 'android'
+        env:
+          BUNDLETOOL_SHA256: ${{ vars.MOBILE_BUNDLETOOL_1_17_2_SHA256 }}
+        run: |
+          set -euo pipefail
+          test "$BUNDLETOOL_SHA256" != '' || { echo 'pinned bundletool checksum is missing' >&2; exit 1; }
+          curl -fsSL 'https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar' -o "$RUNNER_TEMP/bundletool.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum -c -
+          echo "BUNDLETOOL_JAR=$RUNNER_TEMP/bundletool.jar" >> "$GITHUB_ENV"
+      - name: Verify downloaded IPA/AAB/APK identity, version, signer and permissions
+        run: mobile/scripts/verify-mobile-release-artifact.sh '${{ matrix.profile }}' '${{ runner.temp }}/release.${{ matrix.extension }}' '${{ runner.temp }}/source/source.json' '${{ runner.temp }}/artifact.json'
+      - name: Generate deterministic SPDX and CycloneDX SBOM from lock and native policy inputs
+        run: |
+          set -euo pipefail
+          node mobile/scripts/generate-mobile-release-sbom.mjs --lock pnpm-lock.yaml --native mobile/package.json --spdx "$RUNNER_TEMP/sbom.spdx.json" --cyclonedx "$RUNNER_TEMP/sbom.cdx.json"
+          spdx="sha256:$(shasum -a 256 "$RUNNER_TEMP/sbom.spdx.json" | awk '{print $1}')"
+          cdx="sha256:$(shasum -a 256 "$RUNNER_TEMP/sbom.cdx.json" | awk '{print $1}')"
+          artifact="$(jq -er .artifactSha256 "$RUNNER_TEMP/artifact.json")"
+          test "$(git rev-parse HEAD)" = '${{ inputs.commit_oid }}'
+          jq -n --arg id "github:provenance:$GITHUB_RUN_ID:${{ matrix.profile }}" --arg artifactSha256 "$artifact" --arg workflowRunId "$GITHUB_RUN_ID" --arg commitOid '${{ inputs.commit_oid }}' '{id:$id,artifactSha256:$artifactSha256,workflowRunId:$workflowRunId,commitOid:$commitOid}' > "$RUNNER_TEMP/provenance.json"
+          jq --arg easBuildId '${{ steps.build.outputs.build_id }}' --arg spdx "$spdx" --arg cdx "$cdx" --slurpfile provenance "$RUNNER_TEMP/provenance.json" '. + {easBuildId:$easBuildId,sbom:{spdxSha256:$spdx,cycloneDxSha256:$cdx},provenance:$provenance[0]}' "$RUNNER_TEMP/artifact.json" > "$RUNNER_TEMP/profile.json"
+          jq -n --slurpfile source "$RUNNER_TEMP/source/source.json" --slurpfile profile "$RUNNER_TEMP/profile.json" --slurpfile approval "$RUNNER_TEMP/approval.json" --arg buildStartedAt '${{ steps.build.outputs.started }}' --arg buildCompletedAt '${{ steps.build.outputs.completed }}' '{source:$source[0],profile:$profile[0],approval:$approval[0],buildStartedAt:$buildStartedAt,buildCompletedAt:$buildCompletedAt}' > "$RUNNER_TEMP/release-profile.json"
+      - name: Create official artifact provenance attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/release.${{ matrix.extension }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-build-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release.${{ matrix.extension }}
+            ${{ runner.temp }}/release-profile.json
+            ${{ runner.temp }}/sbom.spdx.json
+            ${{ runner.temp }}/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  seal-evidence:
+    name: Seal offline-verifiable evidence (no submit)
+    needs: build-profile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: mobile-build-production
+    steps:
+      - uses: actions/checkout@v5
+        with: { ref: '${{ inputs.commit_oid }}', persist-credentials: false }
+      - uses: actions/setup-node@v5
+        with: { node-version: '22.23.1' }
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: mobile-build-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/profiles
+      - name: Fail closed without evidence robot signing material
+        env:
+          PRIVATE_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PRIVATE_KEY_PEM }}
+          PUBLIC_KEY: ${{ secrets.MOBILE_RELEASE_EVIDENCE_PUBLIC_KEY_PEM }}
+          KEY_ID: ${{ vars.MOBILE_RELEASE_EVIDENCE_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$PRIVATE_KEY" && test -n "$PUBLIC_KEY" && test -n "$KEY_ID" || { echo 'release evidence robot key configuration is missing' >&2; exit 1; }
+          printf '%s' "$PRIVATE_KEY" > "$RUNNER_TEMP/private.pem"
+          jq -n --arg key "$PUBLIC_KEY" --arg keyId "$KEY_ID" '{schema:"agent-saas-mobile-release-public-keys-v1",keys:{($keyId):$key}}' > "$RUNNER_TEMP/public-keys.json"
+          node mobile/scripts/assemble-mobile-release-evidence.mjs --dir "$RUNNER_TEMP/profiles" --output "$RUNNER_TEMP/unsigned.json"
+          node mobile/scripts/mobile-release-evidence.mjs seal --input "$RUNNER_TEMP/unsigned.json" --private-key "$RUNNER_TEMP/private.pem" --key-id "$KEY_ID" --output "$RUNNER_TEMP/mobile-release-evidence.json"
+          node mobile/scripts/mobile-release-evidence.mjs validate-build --input "$RUNNER_TEMP/mobile-release-evidence.json" --public-keys "$RUNNER_TEMP/public-keys.json"
+          rm -f "$RUNNER_TEMP/private.pem" "$RUNNER_TEMP/unsigned.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mobile-release-evidence.json
+          if-no-files-found: error
+          retention-days: 90

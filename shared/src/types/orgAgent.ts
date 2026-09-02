@@ -1,3 +1,5 @@
+import type { AgentTargetCatalog } from '../lib/agentTarget';
+
 /**
  * 公司级专职 Agent（Org Agent）前端类型（2026-07 唯恩批次）
  *
@@ -98,3 +100,6 @@ export interface OrgAgentSummary {
   /** 只公开固有 Skill 数量，不泄漏内部 Skill id */
   skillCount: number;
 }
+
+/** GET /api/org-agents/mine：个人与被指派组织 Agent 的统一 target 目录。 */
+export type OrgAgentMineResponse = AgentTargetCatalog<OrgAgentSummary>;

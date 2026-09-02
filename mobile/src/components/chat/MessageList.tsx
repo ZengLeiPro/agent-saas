@@ -2,8 +2,8 @@ import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import { View, StyleSheet, Text, ActivityIndicator, Animated } from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile } from '@agent/shared';
-import { groupMessages } from '@agent/shared';
+import type { AskUserAnswers, MessageItem, RenderItem, AgentProfile, RawPresentationGate, RenderModel } from '@agent/shared';
+import { groupMessages, isDebugModeAvailable, selectRenderModel } from '@agent/shared';
 import { MessageItemView } from './MessageItem';
 import { CompactionDivider } from './CompactionDivider';
 import { isCompactionItem } from '../../lib/compaction';
@@ -14,6 +14,8 @@ import { useChatAppState } from '../../contexts/ChatAppStateContext';
 import { useAuth } from '../../contexts/AuthContext';
 import type { AuthUser } from '@agent/shared';
 import { AgentAvatar, UserAvatar } from '../AgentAvatar';
+import { adaptRenderModelForMobile } from '../../lib/renderModelAdapter';
+import { INITIAL_MOBILE_TIMELINE_LIST_STATE, reduceMobileTimelineList } from '../../lib/renderTimelineListState';
 
 /** Distance from bottom (in px) within which we consider the user "at bottom" */
 const NEAR_BOTTOM_THRESHOLD = 150;
@@ -30,7 +32,7 @@ interface AiBubbleGroup {
 
 type BubbleRenderItem = RenderItem | AiBubbleGroup;
 
-function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
+function groupIntoBubbles(items: RenderItem[], keyFor: (item: RenderItem) => string = (item) => item.id): BubbleRenderItem[] {
   const result: BubbleRenderItem[] = [];
   let currentGroup: RenderItem[] = [];
 
@@ -38,7 +40,7 @@ function groupIntoBubbles(items: RenderItem[]): BubbleRenderItem[] {
     if (currentGroup.length === 0) return;
     result.push({
       type: 'ai_bubble' as const,
-      id: `bubble-${currentGroup[0].id}`,
+      id: `bubble-${keyFor(currentGroup[0])}`,
       items: [...currentGroup],
     });
     currentGroup = [];
@@ -235,6 +237,7 @@ interface AiBubbleViewProps {
   agentAvatar?: string;
   agentUsername?: string;
   agentAvatarVersion?: number;
+  presentationGate?: RawPresentationGate;
 }
 
 const AiBubbleView = React.memo(function AiBubbleView({
@@ -251,6 +254,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
   agentAvatar,
   agentUsername,
   agentAvatarVersion,
+  presentationGate,
 }: AiBubbleViewProps) {
   const colors = useColors();
   const fadeAnim = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current;
@@ -259,7 +263,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
     const anim = Animated.timing(fadeAnim, { toValue: 1, duration: 200, useNativeDriver: true });
     anim.start();
     return () => anim.stop();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const bubbleStyle = useMemo(() => ({
     backgroundColor: colors.card,
@@ -300,6 +304,7 @@ const AiBubbleView = React.memo(function AiBubbleView({
             onPreviewMd={onPreviewMd}
             onTtsPlay={onTtsPlay}
             isLoading={loading}
+            presentationGate={presentationGate}
           />
         ))}
       </Animated.View>
@@ -329,6 +334,9 @@ interface MessageListProps {
   headerPadding?: number;
   bottomPadding?: number;
   onScrollBtnVisibilityChange?: (visible: boolean) => void;
+  hasMoreHistory?: boolean;
+  isLoadingEarlier?: boolean;
+  onLoadEarlier?: () => Promise<void>;
 }
 
 export function MessageList({
@@ -348,22 +356,55 @@ export function MessageList({
   headerPadding,
   bottomPadding,
   onScrollBtnVisibilityChange,
+  hasMoreHistory,
+  isLoadingEarlier,
+  onLoadEarlier,
 }: MessageListProps) {
   const colors = useColors();
   const internalRef = useRef<FlashListRef<RenderItem>>(null);
   const listRef = externalRef ?? internalRef;
 
-  // [FILE] 标记仍由文本块内联渲染；Artifact(deliver) 没有文本载体，必须保留为
-  // 独立文件卡，且下载走 artifactId 签名 URL，不依赖工作区源文件。
+  const { user } = useAuth();
+  const presentationGate = useMemo(() => ({
+    debugBuild: typeof __DEV__ !== 'undefined' && __DEV__,
+    authenticatedAdmin: user?.role === 'admin',
+    explicitSessionToggle: user?.debugMode === true
+      && isDebugModeAvailable(user.tenantId, user.tenantFeatures),
+  }), [user?.debugMode, user?.role, user?.tenantFeatures, user?.tenantId]);
+  const previousRenderModelRef = useRef<RenderModel | undefined>(undefined);
+  const renderModel = useMemo(() => {
+    const next = selectRenderModel({ messages }, previousRenderModelRef.current);
+    previousRenderModelRef.current = next;
+    return next;
+  }, [messages]);
+  const timelineRows = useMemo(
+    () => adaptRenderModelForMobile(renderModel, presentationGate),
+    [presentationGate, renderModel],
+  );
+  const timelineMessages = useMemo(
+    () => timelineRows.flatMap((row) => row.message ? [row.message] : []),
+    [timelineRows],
+  );
+  const renderKeyByMessageId = useMemo(
+    () => new Map(timelineRows.flatMap((row) => row.message ? [[row.message.id, row.key] as const] : [])),
+    [timelineRows],
+  );
+
+  // [FILE] marker files stay inline. Pending interactions belong only to the fixed composer zone.
   const filteredMessages = useMemo(
-    () => messages.filter(m => m.type !== 'file_download' || !!m.artifactId),
-    [messages],
+    () => timelineMessages.filter(m => (m.type !== 'file_download' || !!m.artifactId)
+      && !((m.type === 'permission_request' || m.type === 'ask_user') && m.status === 'pending')),
+    [timelineMessages],
   );
   const renderItems = useMemo(() => groupMessages(filteredMessages, loading), [filteredMessages, loading]);
-  const bubbleItems = useMemo(() => groupIntoBubbles(renderItems), [renderItems]);
+  const renderKeyFor = useCallback(
+    (item: RenderItem) => renderKeyByMessageId.get(item.id) ?? item.id,
+    [renderKeyByMessageId],
+  );
+  const bubbleItems = useMemo(() => groupIntoBubbles(renderItems, renderKeyFor), [renderItems, renderKeyFor]);
 
   const initialScrollDoneRef = useRef(false);
-  const prevLengthRef = useRef(0);
+  const listPolicyRef = useRef(INITIAL_MOBILE_TIMELINE_LIST_STATE);
 
   const firstUserMsgId = useMemo(() => {
     for (const m of filteredMessages) {
@@ -403,48 +444,47 @@ export function MessageList({
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
-    const nearBottom = distanceFromBottom < NEAR_BOTTOM_THRESHOLD;
-    isNearBottomRef.current = nearBottom;
-    onScrollBtnVisibilityChange?.(!nearBottom && distanceFromBottom > NEAR_BOTTOM_THRESHOLD * 2);
+    listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, {
+      type: 'scroll', distanceFromBottom, nearBottomThreshold: NEAR_BOTTOM_THRESHOLD,
+    });
+    isNearBottomRef.current = listPolicyRef.current.nearBottom;
+    onScrollBtnVisibilityChange?.(!listPolicyRef.current.nearBottom && distanceFromBottom > NEAR_BOTTOM_THRESHOLD * 2);
   }, [isNearBottomRef, onScrollBtnVisibilityChange]);
 
+  const handleViewableItemsChanged = useCallback(({ viewableItems }: {
+    viewableItems: Array<{ item: BubbleRenderItem; isViewable?: boolean | null }>;
+  }) => {
+    const first = viewableItems.find((token) => token.isViewable !== false)?.item;
+    if (!first) return;
+    listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, {
+      type: 'visible', semanticId: first.id, offset: 0,
+    });
+  }, []);
+
+  const bubbleKeys = useMemo(() => bubbleItems.map((item) => item.id), [bubbleItems]);
   useEffect(() => {
-    const len = bubbleItems.length;
-    if (len === 0) {
-      prevLengthRef.current = 0;
-      initialScrollDoneRef.current = false;
-      return;
-    }
-
-    const isInitialLoad = prevLengthRef.current === 0 && len > 0;
-    prevLengthRef.current = len;
-
-    if (isInitialLoad) {
-      shouldScrollRef.current = false;
-      initialScrollDoneRef.current = false;
-      const cancel = scheduleIdle(() => {
-        listRef.current?.scrollToEnd({ animated: false });
-        initialScrollDoneRef.current = true;
-        isNearBottomRef.current = true;
-      });
-      return cancel;
-    }
-
-    if (!initialScrollDoneRef.current) return;
-
-    const forced = shouldScrollRef.current;
+    listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, {
+      type: 'data', keys: bubbleKeys, forceFollow: shouldScrollRef.current,
+    });
     shouldScrollRef.current = false;
+    const command = listPolicyRef.current.command;
+    if (command === 'none') return;
+    if (command === 'instant_end') initialScrollDoneRef.current = false;
+    const cancel = scheduleIdle(() => {
+      listRef.current?.scrollToEnd({ animated: command === 'animated_end' });
+      initialScrollDoneRef.current = true;
+      isNearBottomRef.current = true;
+      listPolicyRef.current = reduceMobileTimelineList(listPolicyRef.current, { type: 'command_consumed' });
+    });
+    return cancel;
+  }, [bubbleKeys, shouldScrollRef, listRef, isNearBottomRef]);
 
-    // Auto-follow: check isNearBottomRef at effect-execution time to avoid race with user scroll
-    if (forced || isNearBottomRef.current) {
-      setTimeout(() => {
-        listRef.current?.scrollToEnd({ animated: true });
-      }, 50);
-    }
-  }, [bubbleItems, shouldScrollRef, listRef, isNearBottomRef]);
+  const handleLoadEarlier = useCallback(() => {
+    if (!hasMoreHistory || isLoadingEarlier || !onLoadEarlier) return;
+    void onLoadEarlier();
+  }, [hasMoreHistory, isLoadingEarlier, onLoadEarlier]);
 
-  // Stable refs for data that changes rarely — keeps renderItem deps minimal
-  const { user } = useAuth();
+  // Stable refs for data that changes rarely — keeps renderItem deps minimal.
   const { agentProfile, sessionParticipants } = useChatAppState();
 
   const displayUser = useMemo(() => {
@@ -493,6 +533,7 @@ export function MessageList({
           agentAvatar={agent?.avatar}
           agentUsername={agent?.username}
           agentAvatarVersion={agent?.avatarVersion}
+          presentationGate={presentationGate}
         />
       );
     }
@@ -518,10 +559,11 @@ export function MessageList({
           onForkMessage={onForkMessage}
           isFirstUser={item.type === 'user' && item.id === firstUserMsgId}
           isLoading={loading}
+          presentationGate={presentationGate}
         />
       </>
     );
-  }, [headerItemIds, lastActivityGroupId, onPermissionResponse, onAskUserResponse, onRetryMessage, onForkMessage, firstUserMsgId, loading, onPreviewMd, onTtsPlay]);
+  }, [headerItemIds, lastActivityGroupId, onPermissionResponse, onAskUserResponse, onRetryMessage, onForkMessage, firstUserMsgId, loading, onPreviewMd, onTtsPlay, presentationGate]);
 
   const getItemType = useCallback((item: BubbleRenderItem) => item.type, []);
   const keyExtractor = useCallback((item: BubbleRenderItem) => item.id, []);
@@ -596,7 +638,11 @@ export function MessageList({
         drawDistance={250}
         overrideProps={{ initialDrawBatchSize: 15 }}
         onScroll={handleScroll}
+        onViewableItemsChanged={handleViewableItemsChanged}
         scrollEventThrottle={16}
+        maintainVisibleContentPosition={{ disabled: false }}
+        onStartReached={handleLoadEarlier}
+        onStartReachedThreshold={0.2}
         ListFooterComponent={syncFooter}
       />
     </View>

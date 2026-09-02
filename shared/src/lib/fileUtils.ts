@@ -32,12 +32,13 @@ export async function resolveImageSrc(src: string, owner?: string, referrer?: st
   }
 
   const platform = getPlatform();
-  const token = await platform.secureStorage.getItem(TOKEN_KEY);
   const baseUrl = platform.platformConfig.getBaseUrl();
   let url = `${baseUrl}/api/file/download?path=${encodeURIComponent(finalSrc)}`;
   if (owner) url += `&owner=${encodeURIComponent(owner)}`;
   if (referrer) url += `&referrer=${encodeURIComponent(referrer)}`;
-  if (token) url += `&token=${token}`;
+  platform.platformConfig.assertTrustedUrl?.(url, 'http');
+  const token = await platform.secureStorage.getItem(TOKEN_KEY);
+  if (token) url += `&token=${encodeURIComponent(token)}`;
   return url;
 }
 
@@ -48,11 +49,13 @@ export async function resolveTaskAttachmentSrc(
   download = false,
 ): Promise<string> {
   const platform = getPlatform();
-  const token = await platform.secureStorage.getItem(TOKEN_KEY);
   const baseUrl = platform.platformConfig.getBaseUrl();
   const query = download ? '?download=1' : '';
+  const url = `${baseUrl}/api/taskboard/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}${query}`;
+  platform.platformConfig.assertTrustedUrl?.(url, 'http');
+  const token = await platform.secureStorage.getItem(TOKEN_KEY);
   const tokenQuery = token ? `${query ? '&' : '?'}token=${encodeURIComponent(token)}` : '';
-  return `${baseUrl}/api/taskboard/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}${query}${tokenQuery}`;
+  return `${url}${tokenQuery}`;
 }
 
 /** 匹配 .md 文件路径：绝对路径(/...)、相对路径(./... ../...)、或简单相对路径(assets/...) */

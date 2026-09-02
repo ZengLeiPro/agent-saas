@@ -1,33 +1,69 @@
 {
   "cli": {
-    "version": ">= 18.1.0",
-    "appVersionSource": "remote"
+    "version": "18.1.0",
+    "appVersionSource": "local",
+    "requireCommit": true
   },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "environment": "development",
       "env": {
         "EXPO_PUBLIC_V1_PROFILE": "development"
       }
     },
     "preview": {
       "distribution": "internal",
+      "environment": "preview",
       "env": {
         "EXPO_PUBLIC_V1_PROFILE": "preview"
       }
     },
     "production": {
-      "autoIncrement": true,
+      "environment": "production",
+      "node": "22.23.1",
+      "pnpm": "10.18.3",
       "env": {
         "EXPO_PUBLIC_V1_PROFILE": "production"
       },
       "ios": {
-        "credentialsSource": "local"
+        "credentialsSource": "local",
+        "image": "macos-sequoia-15.6-xcode-16.4"
       },
       "android": {
         "credentialsSource": "local",
-        "buildType": "apk"
+        "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
+      }
+    },
+    "production-store": {
+      "distribution": "store",
+      "environment": "production",
+      "node": "22.23.1",
+      "pnpm": "10.18.3",
+      "env": {
+        "EXPO_PUBLIC_V1_PROFILE": "production",
+        "MOBILE_ANDROID_DISTRIBUTION": "store"
+      },
+      "android": {
+        "credentialsSource": "local",
+        "buildType": "app-bundle",
+        "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
+      }
+    },
+    "production-enterprise": {
+      "distribution": "internal",
+      "environment": "production",
+      "node": "22.23.1",
+      "pnpm": "10.18.3",
+      "env": {
+        "EXPO_PUBLIC_V1_PROFILE": "production",
+        "MOBILE_ANDROID_DISTRIBUTION": "enterprise"
+      },
+      "android": {
+        "credentialsSource": "local",
+        "buildType": "apk",
+        "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
       }
     }
   },

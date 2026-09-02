@@ -9,6 +9,7 @@ vi.mock("@/platform/webConfig", () => ({
 import {
   createArtifactShare,
   fetchPublicArtifactShare,
+  getArtifactReadGrant,
   getArtifactShare,
   publicArtifactContentUrl,
   revokeArtifactShare,
@@ -61,4 +62,20 @@ describe("artifactShareApi", () => {
     expect(result.contentUrl).toBe("https://api.example.com/api/share/artifacts/t/content");
     vi.unstubAllGlobals();
   });
+
+  it("private viewer accepts only artifactId and rejects malformed descriptors fail-closed", async () => {
+    const descriptor = {
+      artifactId: "artifact-1", name: "safe.txt", safeMime: "text/plain; charset=utf-8", size: 4,
+      digest: "a".repeat(64), viewKind: "text", activeContent: false, requiresWarning: false,
+      expiresAt: "2030-01-01T00:00:00.000Z", correlationId: "corr",
+    };
+    authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ descriptor, readUrl: "/api/artifacts/artifact-1/content?token=secret" }), { status: 200 }));
+    const grant = await getArtifactReadGrant("artifact-1");
+    expect(grant.descriptor).toEqual(descriptor);
+    expect(authFetchMock).toHaveBeenCalledWith("/api/artifacts/artifact-1/read-url", expect.objectContaining({ cache: "no-store" }));
+
+    authFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ url: "https://evil.test/x", path: "/tmp/x", html: "<script/>" }), { status: 200 }));
+    await expect(getArtifactReadGrant("artifact-1")).rejects.toThrow("安全描述符无效");
+  });
+
 });

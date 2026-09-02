@@ -143,6 +143,18 @@ import { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgA
 export { resolveOrgAgentOverrides, resolveOrgAgentSessionSnapshot } from './orgAgentSessionResolution.js';
 import type { ApprovalRecord, EventStore, ModelAttachmentRef, PlatformEvent, QueuedInterjection, RunContext } from './types.js';
 import type { RunRecord, RunStore } from './runStore.js';
+import {
+  acquireDirectRuntimeRunLease,
+  DirectRuntimeLeaseContendedError,
+  DirectRuntimeLeaseLostError,
+  type DirectRuntimeLeaseHandle,
+} from './directRuntimeLease.js';
+export {
+  acquireDirectRuntimeRunLease,
+  DirectRuntimeLeaseContendedError,
+  DirectRuntimeLeaseLostError,
+  type DirectRuntimeLeaseHandle,
+} from './directRuntimeLease.js';
 import type { HandRecord, HandStore, WorkspaceRecipe } from './handStore.js';
 import {
   createTenantRemoteHandAuthTokenResolver,
@@ -249,102 +261,6 @@ const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
 export function resolveSessionCatalog(config: RawRuntimeRunDispatchConfig): SessionCatalog {
   return config.sessionCatalog ?? new FileSessionCatalog({ agentCwd: config.agentCwd });
-}
-// cron/web fallback 直跑路径也会写 runtime_runs；不占 lease 时，scheduler 会把
-// 正在跑的 run 误判为可恢复并二次 wake。
-const DIRECT_RUNTIME_LEASE_MS = 120_000;
-const DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS = 30_000;
-export interface DirectRuntimeLeaseHandle {
-  workerId: string;
-  release(): Promise<void>;
-}
-
-export class DirectRuntimeLeaseContendedError extends Error {
-  constructor(readonly runId: string) {
-    super(`Direct runtime lease not acquired run=${runId}`);
-    this.name = 'DirectRuntimeLeaseContendedError';
-  }
-}
-export class DirectRuntimeLeaseLostError extends Error {
-  constructor(readonly runId: string, reason?: string) {
-    super(`Direct runtime lease lost run=${runId}${reason ? `: ${reason}` : ''}`);
-    this.name = 'DirectRuntimeLeaseLostError';
-  }
-}
-
-export async function acquireDirectRuntimeRunLease(input: {
-  runStore: RunStore | undefined;
-  runId: string;
-  runtimeWorkerId?: string;
-  logger?: RawRuntimeRunDispatchConfig['logger'];
-  onLeaseLost?: (error: DirectRuntimeLeaseLostError) => void;
-  renewIntervalMs?: number;
-}): Promise<DirectRuntimeLeaseHandle | null> {
-  // scheduler wake 已持有自己的 lease；未启用 durable run store 的 legacy 路径也无需抢占。
-  if (input.runtimeWorkerId || !input.runStore) return null;
-  if (!input.runStore.acquireLease) {
-    throw new Error(`Direct runtime lease is unavailable run=${input.runId}`);
-  }
-
-  const workerId = `direct-${process.pid}-${randomUUID()}`;
-  let acquired: RunRecord | null;
-  try {
-    acquired = await input.runStore.acquireLease(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS);
-  } catch (err) {
-    input.logger?.warn(`Direct runtime lease acquire failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
-    throw err;
-  }
-  if (!acquired) {
-    const error = new DirectRuntimeLeaseContendedError(input.runId);
-    input.logger?.warn(error.message);
-    throw error;
-  }
-  let renewTimer: ReturnType<typeof setInterval> | null = null;
-  let leaseLost = false;
-  let released = false;
-  const notifyLeaseLost = (reason?: string): void => {
-    if (leaseLost || released) return;
-    leaseLost = true;
-    if (renewTimer) {
-      clearInterval(renewTimer);
-      renewTimer = null;
-    }
-    const error = new DirectRuntimeLeaseLostError(input.runId, reason);
-    input.logger?.warn(`${error.message} worker=${workerId}`);
-    input.onLeaseLost?.(error);
-  };
-  if (input.runStore.renewLease) {
-    let renewInFlight: Promise<void> | undefined;
-    renewTimer = setInterval(() => {
-      if (renewInFlight) return;
-      renewInFlight = input.runStore!.renewLease!(input.runId, workerId, DIRECT_RUNTIME_LEASE_MS)
-        .then((renewed) => {
-          if (!renewed) notifyLeaseLost('renewal rejected');
-        })
-        .catch((err) => {
-          notifyLeaseLost(err instanceof Error ? err.message : String(err));
-        })
-        .finally(() => {
-          renewInFlight = undefined;
-        });
-    }, input.renewIntervalMs ?? DIRECT_RUNTIME_LEASE_RENEW_INTERVAL_MS);
-    renewTimer.unref?.();
-  }
-
-  return {
-    workerId,
-    async release() {
-      released = true;
-      if (renewTimer) {
-        clearInterval(renewTimer);
-        renewTimer = null;
-      }
-      await input.runStore?.releaseLease?.(input.runId, workerId).catch((err) => {
-        input.logger?.warn(`Direct runtime lease release failed run=${input.runId}: ${err instanceof Error ? err.message : String(err)}`);
-        return null;
-      });
-    },
-  };
 }
 export function deriveWorkspaceMountSubPath(input: { agentCwd: string; cwd?: string }): string | undefined {
   if (!input.cwd) return undefined;
@@ -2912,6 +2828,7 @@ export async function wakeRuntimeSession(
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
       })) {
+        await renewWakeLeaseForActivity(options.lease, event.type);
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'approval resume wake failed';
       }
@@ -2985,6 +2902,7 @@ export async function wakeRuntimeSession(
         runtimeWorkerId: options.lease?.workerId,
         runtimeDrainHandoff: drainHandoff,
       })) {
+        await renewWakeLeaseForActivity(options.lease, event.type);
         await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
         if (event.type === 'error') outboundError = event.error ?? 'interaction resume wake failed';
       }
@@ -3054,6 +2972,7 @@ export async function wakeRuntimeSession(
         runtimeDrainHandoff: drainHandoff,
       },
     )) {
+      await renewWakeLeaseForActivity(options.lease, event.type);
       await options.onOutboundEvent?.(event, { runId: run.runId, sessionId: run.sessionId });
       if (event.type === 'error') outboundError = event.error ?? 'wake dispatch failed';
     }
@@ -3077,6 +2996,20 @@ export async function wakeRuntimeSession(
     runtimeRunController.unregister(run.runId);
   }
 }
+/** Edge-triggered pulses complement the periodic stream renewal without renewing per delta token. */
+async function renewWakeLeaseForActivity(
+  lease: RuntimeWakeLease | undefined,
+  eventType: OutboundEvent['type'],
+): Promise<void> {
+  if (!lease) return;
+  if (eventType === 'tool_start' || eventType === 'tool_execution_start'
+    || eventType === 'tool_execution_end' || eventType === 'tool_end' || eventType === 'tool_result') {
+    await lease.renew('tool');
+  } else if (eventType === 'subagent_start' || eventType === 'subagent_end') {
+    await lease.renew('subagent');
+  }
+}
+
 export async function releaseWakeLeaseForDrainHandoff(input: {
   config: RawRuntimeRunDispatchConfig;
   eventStore: EventStore;
@@ -3089,7 +3022,7 @@ export async function releaseWakeLeaseForDrainHandoff(input: {
   if (!input.drainHandoff.requested || !input.config.runStore || !input.lease) return false;
 
   // renew 是 worker_id CAS：过期 worker 若已被新 worker 接管，会在写 handoff 状态前失败退出。
-  await input.lease.renew();
+  await input.lease.renew('worker');
   const current = await input.config.runStore.get(input.run.runId);
   if (
     !current

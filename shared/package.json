@@ -12,6 +12,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./lib/governanceApi": "./src/lib/governanceApi.ts",
+    "./lib/chatSubmission": "./src/lib/chatSubmission.ts",
     "./types/governance": "./src/types/governance.ts",
     "./*": "./src/*"
   },

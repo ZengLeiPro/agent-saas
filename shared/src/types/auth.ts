@@ -41,6 +41,10 @@ export interface TenantFeatureFlags {
 
 export interface AuthUser {
   id: string;
+  /** Server-authoritative authentication epoch for the active login. */
+  authEpoch?: number;
+  /** Server-issued login generation; distinct from legacy UI render generations. */
+  generation?: number;
   username: string;
   role: "admin" | "user";
   /**
@@ -49,7 +53,7 @@ export interface AuthUser {
    * 组织 admin = role==='admin' && tenantId !== DEFAULT_TENANT_ID
    */
   tenantId: string;
-  /** 所属组织的人类可读名称（登录/`/me` 时由后端从 TenantStore 解析下发）。 */
+  /** 所属组织的人类可读名称（登录及 `/me` 时由后端从 TenantStore 解析下发）。 */
   tenantName?: string;
   /** @deprecated 兼容旧客户端；平台管理员统一返回 true。 */
   isSuperAdmin?: boolean;

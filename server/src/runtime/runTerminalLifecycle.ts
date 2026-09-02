@@ -25,6 +25,10 @@ export async function cancelActiveRunsByUser(
         updated_at=$3::timestamptz,
         worker_id=NULL,
         lease_expires_at=NULL,
+        liveness_state=CASE WHEN liveness_version IS NULL THEN NULL ELSE 'terminal' END,
+        liveness_reason_code=CASE WHEN liveness_version IS NULL THEN NULL ELSE $2 END,
+        liveness_detected_at=CASE WHEN liveness_version IS NULL THEN NULL ELSE $3::timestamptz END,
+        liveness_version=CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version+1 END,
         metadata=(metadata || jsonb_build_object('cancelSource','user_offboarding')) - 'wakeMessage'
     WHERE user_id=$1
       AND status NOT IN ('completed','failed','cancelled','orphaned')
@@ -51,6 +55,18 @@ export async function releaseRunLease(
                       THEN status_reason ELSE COALESCE($4, status_reason) END,
         worker_id = NULL,
         lease_expires_at = NULL,
+        liveness_state = CASE
+          WHEN liveness_version IS NULL THEN NULL
+          WHEN status = 'orphaned' OR $3 = 'orphaned' THEN 'orphaned'
+          WHEN status IN ('completed','failed','cancelled') OR $3::text IN ('completed','failed','cancelled') THEN 'terminal'
+          WHEN $3::text IN ('waiting_approval','waiting_user') THEN 'waiting_interaction'
+          WHEN $3 IS NULL AND status IN ('running','waiting_hand') THEN 'stale'
+          WHEN COALESCE($3,status)::text IN ('running','waiting_hand') THEN 'busy'
+          ELSE 'active'
+        END,
+        liveness_reason_code = CASE WHEN liveness_version IS NULL THEN NULL ELSE COALESCE($4, CASE WHEN $3 IS NULL THEN 'worker_released' ELSE status_reason END) END,
+        liveness_detected_at = CASE WHEN liveness_version IS NULL THEN NULL ELSE $5::timestamptz END,
+        liveness_version = CASE WHEN liveness_version IS NULL THEN NULL ELSE liveness_version+1 END,
         updated_at = $5,
         completed_at = CASE WHEN $3 = 'completed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE completed_at END,
         failed_at = CASE WHEN $3 = 'failed' AND status NOT IN ('completed','failed','cancelled','orphaned') THEN $5 ELSE failed_at END,

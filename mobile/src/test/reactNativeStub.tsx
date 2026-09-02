@@ -49,6 +49,8 @@ export const Alert = {
 export const Linking = {
   openURL: async (..._args: unknown[]) => undefined,
   canOpenURL: async () => false,
+  getInitialURL: async () => null as string | null,
+  addEventListener: () => ({ remove: () => undefined }),
 };
 
 export const Platform = {

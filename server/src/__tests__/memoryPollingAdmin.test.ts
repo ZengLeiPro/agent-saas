@@ -2,7 +2,7 @@ import express from 'express';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseAppConfig } from '../app/config.js';
 import { createMemoryPollingAdminRouter } from '../routes/memoryPollingAdmin.js';
@@ -106,11 +106,16 @@ async function readJson(response: Response) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   while (servers.length > 0) servers.pop()?.close();
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
 describe('memory polling admin router', () => {
+  beforeEach(() => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('AGENT_SAAS_ALLOW_UNIDENTIFIED_ENVIRONMENT', '1');
+  });
   it('returns the complete effective polling config', async () => {
     await withApp(baseRawConfig(), async ({ baseUrl }) => {
       const response = await fetch(`${baseUrl}/api/admin/memory-polling`);

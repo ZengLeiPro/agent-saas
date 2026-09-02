@@ -14,9 +14,16 @@ import {
   finalizeRunningSubagents,
   type WsProcessingContext,
 } from '../../lib/wsEventProcessor';
-import type { WsEvent } from '../../types/ws';
+import type { ChatQueueSnapshot } from '../../lib/chatQueue';
+import type { WsEvent, WsSyncRuntimeSnapshot } from '../../types/ws';
+import {
+  createSyncRecoveryState,
+  reduceSyncRecovery,
+  type AppliedSyncEvent,
+  type SyncInteractionProjection,
+  type SyncRuntimeProjection,
+} from '../../lib/syncRecovery';
 import { loadSessions, refreshCurrentSession, fetchTokenUsage } from './sessionLoader';
-import { sendChatViaWs } from './sendChat';
 
 /** 元数据事件白名单（不受 isAttached 守卫过滤） */
 const METADATA_EVENTS = new Set([
@@ -29,6 +36,11 @@ const METADATA_EVENTS = new Set([
   'groups_changed',
   'sync_ok',
   'sync_overflow',
+  'queue_snapshot',
+  'queue_item_updated',
+  'message_queued',
+  'permission_request',
+  'ask_user',
   // 插话回退为独立 run 的接管 stream_id 到达时 isAttached 已被目标 run 的 done 清掉，
   // 必须放行；串会话由 processWsEvent 内的 sessionId 校验兜底。
   'stream_id',
@@ -39,6 +51,14 @@ let _voiceCallback: ((key: string, text: string, voice?: string, speed?: number)
 let _groupsRefreshCallback: (() => void) | undefined;
 let _onNewSession: ((sessionId: string) => void) | undefined;
 
+export interface SyncRecoveryCallbacks {
+  replaceQueue?: (snapshot: ChatQueueSnapshot) => void;
+  replaceRuntime?: (sessionId: string, runtime: WsSyncRuntimeSnapshot | SyncRuntimeProjection) => void;
+  replacePendingInteractions?: (sessionId: string, interactions: readonly SyncInteractionProjection[]) => void;
+  refreshSessionRecovery?: (sessionId?: string) => void;
+}
+let _syncRecoveryCallbacks: SyncRecoveryCallbacks = {};
+
 function toSessionBusyIdle(status: WsEvent extends infer E ? E extends { type: 'session_status'; status: infer S } ? S : never : never): 'busy' | 'idle' {
   return ['busy', 'queued', 'running', 'waiting_approval', 'waiting_user', 'waiting_hand'].includes(String(status)) ? 'busy' : 'idle';
 }
@@ -46,13 +66,16 @@ function toSessionBusyIdle(status: WsEvent extends infer E ? E extends { type: '
 export function setVoiceCallback(cb: typeof _voiceCallback): void { _voiceCallback = cb; }
 export function setGroupsRefreshCallback(cb: typeof _groupsRefreshCallback): void { _groupsRefreshCallback = cb; }
 export function setOnNewSession(cb: typeof _onNewSession): void { _onNewSession = cb; }
+export function setSyncRecoveryCallbacks(callbacks: SyncRecoveryCallbacks): void { _syncRecoveryCallbacks = callbacks; }
 
 /** 安装统一 WS 消息处理器，返回 unsubscribe 函数 */
-/** 上次发送 sync 的时间戳（防抖：2s 内不重复发） */
-let lastSyncRequestAt = 0;
 const handledTerminalKeysRef = { current: new Set<string>() };
 
 export function setupWsHandler(): () => void {
+  const baseline = getChatStore().getState();
+  let recovery = createSyncRecoveryState({ lastSeq: baseline.lastUserSeq, serverEpoch: baseline.lastUserEpoch });
+  let sentSyncRequestId: number | null = null;
+
   return wsClient.onMessage((envelope: { eventId?: number; eventCursor?: string; seq?: number; data: unknown }) => {
     const data = envelope.data as WsEvent;
     if (!data?.type) return;
@@ -66,28 +89,55 @@ export function setupWsHandler(): () => void {
       store.setState({ lastEventCursor: envelope.eventCursor });
     }
 
-    // ── seq gap 检测：发现不连续立即主动 sync，不等心跳 ──
-    if (typeof envelope.seq === 'number') {
-      const state = store.getState();
-      const prevSeq = state.lastUserSeq;
-      // 只在已建立基线（prevSeq > 0）且发现 gap 时触发
-      if (prevSeq > 0 && envelope.seq > prevSeq + 1) {
-        const now = Date.now();
-        if (now - lastSyncRequestAt > 2000) {
-          lastSyncRequestAt = now;
-          wsClient.send({
-            action: 'sync',
-            lastSeq: prevSeq,
-            ...(state.lastUserEpoch ? { epoch: state.lastUserEpoch } : {}),
-          });
-        }
-      }
-      // 更新 lastUserSeq（只增不减���
-      if (envelope.seq > prevSeq) {
-        store.setState({ lastUserSeq: envelope.seq });
-        wsClient.setLastSeq(envelope.seq);
-      }
+    // The reducer is the sole sequence/epoch acceptance boundary. wsClient also runs the
+    // same kernel at the transport edge; this second boundary protects tests and adapters
+    // that feed setupWsHandler directly.
+    let appliedEvents: readonly AppliedSyncEvent[] = [];
+    const cursorState = store.getState();
+    if (recovery.phase === 'idle' && recovery.lastSeq === 0 && cursorState.lastUserSeq > 0) {
+      recovery = createSyncRecoveryState({
+        lastSeq: cursorState.lastUserSeq,
+        serverEpoch: cursorState.lastUserEpoch,
+      });
     }
+    if (data.type === 'sync_ok') {
+      recovery = reduceSyncRecovery(recovery, {
+        type: 'sync_ok', seq: data.seq, epoch: data.epoch, events: data.events,
+      });
+      appliedEvents = recovery.appliedEvents;
+    } else if (data.type === 'sync_overflow') {
+      recovery = reduceSyncRecovery(recovery, {
+        type: 'sync_overflow', seq: data.seq, epoch: data.epoch,
+      });
+    } else if (data.type === 'pong') {
+      recovery = reduceSyncRecovery(recovery, { type: 'pong', seq: data.seq, epoch: data.epoch });
+    } else if (typeof envelope.seq === 'number') {
+      if (recovery.phase === 'idle' && recovery.lastSeq === 0 && recovery.serverEpoch === null) {
+        recovery = { ...recovery, lastSeq: Math.max(0, envelope.seq - 1) };
+      }
+      recovery = reduceSyncRecovery(recovery, {
+        type: 'event', envelope: { seq: envelope.seq, event: data },
+      });
+      appliedEvents = recovery.appliedEvents;
+    }
+
+    const request = recovery.syncRequest;
+    if (request && request.id !== sentSyncRequestId) {
+      sentSyncRequestId = request.id;
+      wsClient.send({
+        action: 'sync', lastSeq: request.lastSeq,
+        ...(request.epoch ? { epoch: request.epoch } : {}),
+        ...(store.getState().activeSessionId ? { sessionId: store.getState().activeSessionId! } : {}),
+      });
+    }
+    if (data.type === 'pong') return;
+    if (typeof envelope.seq === 'number' && appliedEvents.length === 0) return;
+    store.setState({
+      lastUserSeq: recovery.lastSeq,
+      ...(recovery.serverEpoch ? { lastUserEpoch: recovery.serverEpoch } : {}),
+    });
+    wsClient.setLastSeq(recovery.lastSeq);
+    if (recovery.serverEpoch) wsClient.setEpoch(recovery.serverEpoch);
 
     // ── 控制消息 ──
     if (data.type === 'respond_ok' || data.type === 'respond_error') return;
@@ -102,33 +152,42 @@ export function setupWsHandler(): () => void {
 
     // ── sync 协议响应 ──
     if (data.type === 'sync_ok') {
-      store.setState({
-        lastUserSeq: data.seq,
-        ...(typeof data.epoch === 'string' ? { lastUserEpoch: data.epoch } : {}),
-      });
-      wsClient.setLastSeq(data.seq);
-      if (typeof data.epoch === 'string') wsClient.setEpoch(data.epoch);
-      // 回放漏掉的元数据事件
-      for (const { event } of data.events) {
-        const e = event as WsEvent;
+      // Only reducer-accepted events are projected, once and in contiguous sequence order.
+      for (const { event: e } of appliedEvents) {
         if (e.type === 'title_updated') store.getState().updateSessionTitle(e.sessionId, e.title);
-        else if (e.type === 'session_updated') store.getState().updateSessionMeta(e.sessionId, { preview: e.preview, updatedAtMs: e.updatedAtMs });
+        else if (e.type === 'session_updated') store.getState().updateSessionMeta(e.sessionId, { preview: e.preview, updatedAtMs: e.updatedAtMs, title: e.title });
         else if (e.type === 'session_deleted') store.getState().removeSession(e.sessionId);
-        else if (e.type === 'session_status') store.getState().updateSessionStatus(e.sessionId, toSessionBusyIdle(e.status));
-        else if (e.type === 'stream_started') void loadSessions({ fresh: true });
-        else if (e.type === 'groups_changed') _groupsRefreshCallback?.();
+        else if (e.type === 'session_status') {
+          store.getState().updateSessionStatus(e.sessionId, toSessionBusyIdle(e.status));
+          if (e.sessionId === store.getState().activeSessionId && e.runId) store.setState({ runId: e.runId });
+        } else if (e.type === 'active_stream' || e.type === 'stream_started') {
+          const runtime = recovery.runtimeBySession[e.sessionId];
+          if (runtime) _syncRecoveryCallbacks.replaceRuntime?.(e.sessionId, runtime);
+          if (e.type === 'stream_started') void loadSessions({ fresh: true });
+        } else if (e.type === 'queue_snapshot') _syncRecoveryCallbacks.replaceQueue?.(e.snapshot);
+        else if (e.type === 'pending_interactions') {
+          const sid = store.getState().activeSessionId;
+          if (sid) _syncRecoveryCallbacks.replacePendingInteractions?.(sid, e.interactions);
+        } else if (e.type === 'permission_request' || e.type === 'ask_user' || e.type === 'interaction_resolved') {
+          const sid = 'sessionId' in e && typeof e.sessionId === 'string' ? e.sessionId : store.getState().activeSessionId;
+          if (sid) _syncRecoveryCallbacks.replacePendingInteractions?.(sid, Object.values(recovery.interactions));
+        } else if (e.type === 'groups_changed') _groupsRefreshCallback?.();
       }
       return;
     }
     if (data.type === 'sync_overflow') {
-      store.setState({
-        lastUserSeq: data.seq,
-        ...(typeof data.epoch === 'string' ? { lastUserEpoch: data.epoch } : {}),
-      });
-      wsClient.setLastSeq(data.seq);
-      if (typeof data.epoch === 'string') wsClient.setEpoch(data.epoch);
-      // 降级：全量刷新
+      const snapshot = data.recovery?.session;
+      if (snapshot?.queueSnapshot) _syncRecoveryCallbacks.replaceQueue?.(snapshot.queueSnapshot);
+      if (snapshot?.runtime) _syncRecoveryCallbacks.replaceRuntime?.(snapshot.sessionId, snapshot.runtime);
+      if (snapshot?.pendingInteractions) {
+        _syncRecoveryCallbacks.replacePendingInteractions?.(snapshot.sessionId, snapshot.pendingInteractions);
+      }
+      // Missing inline sections are never guessed: invoke the existing authoritative refreshes.
       void loadSessions({ fresh: true });
+      if (!snapshot?.queueSnapshot || !snapshot.runtime || !snapshot.pendingInteractions) {
+        refreshCurrentSession();
+        _syncRecoveryCallbacks.refreshSessionRecovery?.(snapshot?.sessionId ?? store.getState().activeSessionId ?? undefined);
+      }
       _groupsRefreshCallback?.();
       return;
     }
@@ -274,29 +333,17 @@ export function setupWsHandler(): () => void {
         triggerScroll: s.triggerScroll,
       });
 
-      // 检查排队消息
-      const pending = s.pendingMessage;
-      if (!s.stopping && pending) {
-        store.setState({ pendingMessage: null });
-        void sendChatViaWs({
-          inputText: pending.input,
-          attachments: pending.attachments as SendChatOptions['attachments'],
-          showBubble: false,
-        });
-      } else {
-        store.setState({
-          streamId: null,
-          runId: null,
-          isAttached: false,
-          loading: false,
-          stopping: false,
-        });
-        s.dispatchConnection('complete');
-      }
+      // M20-02: terminal callbacks only settle UI. pendingMessage remains an editable local
+      // intent; durable RunStore queue state is the only business dispatch authority.
+      store.setState({
+        streamId: null,
+        runId: null,
+        isAttached: false,
+        loading: false,
+        stopping: false,
+      });
+      s.dispatchConnection('complete');
       return;
     }
   });
 }
-
-// Re-export type for sendChat
-import type { SendChatOptions } from './sendChat';

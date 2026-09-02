@@ -68,6 +68,7 @@ export function createLifecycleAdapters(
       await cancelRun(invokingRunId,`session_automation_background_resource_${state}_cancel`);
       return lifecycleReceipt(job,'pending',{error:`${state}_worker_cancellation_pending`,invokingRunId,childStatus:childStatus??null,childMissing:!childStatus,sideEffectKnown:false});
     }
+    if(!childStatus&&terminal(invokingStatus))return lifecycleReceipt(job,'completed',{runId,invokingRunId,invokingStatus,childMissing:true,sideEffectKnown:false});
     if(childStatus)return lifecycleReceipt(job,'completed',{runId,childStatus:terminal(childStatus)?childStatus:'cancelled',sideEffectKnown:true});
     if(state==='prepared')return lifecycleReceipt(job,'completed',{runId,invokingRunId,childMissing:true,sideEffectKnown:false});
     return lifecycleReceipt(job,'pending',{error:'worker_stop_receipt_required',invokingRunId,childMissing:true,sideEffectKnown:false});

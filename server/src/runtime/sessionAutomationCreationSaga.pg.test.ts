@@ -51,9 +51,10 @@ describePg('session automation creation receipt saga on real PostgreSQL',()=>{
    await a.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,phase) VALUES($1,$2,$3,$4,$5,'loop','adaptive','active','waiting')`,[randomUUID(),id.tenantId,id.sessionId,id.ownerUserId,randomUUID()]);
    await b.query('BEGIN');
    const blocked=store.create(b,{...id,ownerUserId:'user-b'},{kind:'loop',mode:'adaptive',prompt:'B',budget:{}} as never,new Date(),sourceB.executionEnabled);
+   const rejected=expect(blocked).rejects.toMatchObject({code:'EXECUTION_DISABLED'});
    await new Promise(resolve=>setTimeout(resolve,100));configB.sessionAutomation.executionEnabled=false;
    await a.query('ROLLBACK');
-   await expect(blocked).rejects.toMatchObject({code:'EXECUTION_DISABLED'});
+   await rejected;
    await b.query('ROLLBACK');
    expect((await pool.query(`SELECT count(*)::int count FROM ${store.tables.automations} WHERE tenant_id=$1 AND session_id=$2`,[id.tenantId,sessionId])).rows[0].count).toBe(0);
   }finally{await a.query('ROLLBACK').catch(()=>undefined);await b.query('ROLLBACK').catch(()=>undefined);a.release();b.release();}

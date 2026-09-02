@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   baselineFromState,
+  parseProductionState,
   productionStateMatchesManifestPrefix,
   validateApprovalReason,
 } from './promotionGateCli.js';
@@ -34,6 +35,32 @@ describe('promotion gate evidence', () => {
         sandboxImageDigest: DIGEST,
       },
     });
+  });
+
+  it('runtime-parses the production state before comparing a promotion baseline', () => {
+    const component = { gitSha: SHA, artifactDigest: DIGEST };
+    const valid = {
+      components: {
+        web: component,
+        api: component,
+        runtimeWorker: component,
+        acs: {
+          gitSha: SHA,
+          orchestratorArtifactDigest: DIGEST,
+          sandboxImageDigest: DIGEST,
+        },
+      },
+    };
+    expect(parseProductionState(valid)).toEqual(valid);
+    expect(() =>
+      parseProductionState({
+        ...valid,
+        components: {
+          ...valid.components,
+          runtimeWorker: { gitSha: SHA, artifactDigest: 'sha256:tampered' },
+        },
+      }),
+    ).toThrow();
   });
 
   it('accepts exactly the ACS → App → Web prefixes for resumable production', () => {

@@ -1,6 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { canonicalJson, type ReleaseManifest } from '@agent/shared/schemas/releaseManifest';
+import {
+  canonicalJson,
+  fullShaSchema,
+  sha256DigestSchema,
+  type ReleaseManifest,
+} from '@agent/shared/schemas/releaseManifest';
+import { z } from 'zod';
 import { ReleaseAttestationStore } from './releaseAttestationStore.js';
 import { getPromotionEligibility } from './releasePolicy.js';
 import { validateManifest } from './releaseManifestStore.js';
@@ -16,16 +22,44 @@ function parse(argv: string[]): Record<string, string> {
   return output;
 }
 
-interface ObservedComponent {
-  gitSha: string;
-  artifactDigest?: string;
-  orchestratorArtifactDigest?: string;
-  sandboxImageDigest?: string;
+const observedAppComponentSchema = z
+  .object({
+    gitSha: fullShaSchema,
+    artifactDigest: sha256DigestSchema,
+    deployedAt: z.iso.datetime({ offset: false, precision: 3 }).optional(),
+  })
+  .strict();
+const observedAcsComponentSchema = z
+  .object({
+    gitSha: fullShaSchema,
+    orchestratorArtifactDigest: sha256DigestSchema,
+    sandboxImageDigest: sha256DigestSchema,
+    deployedAt: z.iso.datetime({ offset: false, precision: 3 }).optional(),
+  })
+  .strict();
+const productionStateSchema = z
+  .object({
+    components: z
+      .object({
+        web: observedAppComponentSchema,
+        api: observedAppComponentSchema,
+        runtimeWorker: observedAppComponentSchema,
+        acs: observedAcsComponentSchema,
+      })
+      .strict(),
+  })
+  .passthrough();
+
+type ProductionState = z.infer<typeof productionStateSchema>;
+const productionComponentNames = ['web', 'api', 'runtimeWorker', 'acs'] as const;
+
+export function parseProductionState(value: unknown): ProductionState {
+  return productionStateSchema.parse(value);
 }
 
-export function baselineFromState(state: { components: Record<string, ObservedComponent> }) {
+export function baselineFromState(state: ProductionState) {
   const components = state.components;
-  for (const name of ['web', 'api', 'runtimeWorker', 'acs']) {
+  for (const name of productionComponentNames) {
     if (!components[name]) throw new Error(`Production state is missing ${name}`);
   }
   return {
@@ -46,7 +80,7 @@ export function baselineFromState(state: { components: Record<string, ObservedCo
 /** Recovery accepts only the immutable ACS → App → Web phase prefixes. */
 export function productionStateMatchesManifestPrefix(
   manifest: Pick<ReleaseManifest, 'productionBaseline' | 'components'>,
-  state: { components: Record<string, ObservedComponent> },
+  state: ProductionState,
 ): boolean {
   const expected = structuredClone(manifest.productionBaseline);
   const candidates = [structuredClone(expected)];
@@ -132,9 +166,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!options.manifest || !options['attestation-root'] || !options['production-state'])
     throw new Error('manifest, attestation-root and production-state are required');
   const manifest = validateManifest(JSON.parse(await readFile(options.manifest, 'utf8')));
-  const state = JSON.parse(await readFile(options['production-state'], 'utf8')) as {
-    components: Record<string, ObservedComponent>;
-  };
+  const state = parseProductionState(
+    JSON.parse(await readFile(options['production-state'], 'utf8')),
+  );
   const store = new ReleaseAttestationStore(options['attestation-root']);
   const attestations = await store.read(manifest.releaseId, manifest.digest);
   const latest = attestations.list().at(-1);

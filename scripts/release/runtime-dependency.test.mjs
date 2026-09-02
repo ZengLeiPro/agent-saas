@@ -328,6 +328,25 @@ test('systemd EnvironmentFile parsing is non-executing and clears inherited Runt
     () => runtimeEnvironmentFromSystemdEnvironmentFile('ACS_SNAT_MODE="shared-cidr'),
     /unterminated quote/u,
   );
+
+  const continued = runtimeEnvironmentFromSystemdEnvironmentFile(
+    [
+      '# a standalone comment ending in \\ must not consume the next assignment\\',
+      'ACS_KUBECTL_PATH="/managed/\\',
+      'kubectl"',
+      'ACS_ALIYUN_CLI_PATH=/managed/\\',
+      '# a continued comment must not terminate the assignment',
+      'aliyun',
+      'ACS_SNAT_MODE=shared-cidr',
+    ].join('\n'),
+  );
+  assert.equal(continued.ACS_KUBECTL_PATH, '/managed/ kubectl');
+  assert.equal(continued.ACS_ALIYUN_CLI_PATH, '/managed/ aliyun');
+  assert.equal(continued.ACS_SNAT_MODE, 'shared-cidr');
+  assert.throws(
+    () => runtimeEnvironmentFromSystemdEnvironmentFile('ACS_SNAT_MODE=shared-\\'),
+    /dangling continuation/u,
+  );
 });
 
 test('systemd EnvironmentFile CLI emits NUL-delimited values without executing shell syntax', () => {

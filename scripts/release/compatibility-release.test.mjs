@@ -172,8 +172,18 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
   assert.match(appWorkflow, /GITHUB_RUN_ATTEMPT='\$\{GITHUB_RUN_ATTEMPT\}'/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ID/u);
   assert.match(appWorkflow, /missing GITHUB_RUN_ATTEMPT/u);
+  assert.match(appWorkflow, /pre-deploy rollback state captured/u);
+  assert.match(appWorkflow, /rollback-compatibility-app\.sh/u);
+  assert.ok(
+    appWorkflow.indexOf('pre-deploy rollback state captured') <
+      appWorkflow.indexOf('systemd units refreshed'),
+  );
   assert.ok(
     appWorkflow.indexOf('Production identity atomically rebuilt') <
+      appWorkflow.indexOf('rollback state committed and rollback.sh refreshed'),
+  );
+  assert.ok(
+    appWorkflow.indexOf('rollback state committed and rollback.sh refreshed') <
       appWorkflow.indexOf('drain signal SIGUSR2 sent to old color'),
   );
   assert.match(appWorkflow, /github\.event_name == 'workflow_dispatch' && 'production-runtime'/u);
@@ -223,6 +233,7 @@ test('legacy deploy entrypoints persist immutable baselines and refresh trusted 
     /install_acs_managed_unit "\$unit_source" "\$ACS_UNIT_PATH" "\$SYSTEMCTL_BIN"/u,
   );
   assert.match(acsDeploy, /restore_acs_managed_unit/u);
+  assert.match(acsDeploy, /assert_no_acs_managed_unit_dropins/u);
   assert.ok(
     acsDeploy.indexOf('--environment-file="$runtime_environment_file" --production=true') <
       acsDeploy.indexOf('install_acs_managed_unit'),

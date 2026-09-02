@@ -160,7 +160,6 @@ RUNTIME_IDENTITY_FILE="/etc/agent-saas/runtime-identity.json"
 RUNTIME_IDENTITY_BAK="/tmp/runtime-identity.before-acs-${GITHUB_RUN_ID}.json"
 RUNTIME_IDENTITY_UPDATED=false
 RUNTIME_PREFLIGHT_DIR=""
-RUNTIME_ENV_OUTPUT="/tmp/agent-saas-runtime-environment-${GITHUB_RUN_ID}"
 ACS_NODE=/usr/bin/node
 SYSTEMCTL_BIN=/usr/bin/systemctl
 ACS_UNIT_PATH=/etc/systemd/system/agent-saas-acs-orchestrator.service
@@ -340,7 +339,6 @@ EOF
   case "${RUNTIME_PREFLIGHT_DIR:-}" in
     /tmp/agent-saas-runtime-preflight-*) rm -rf -- "$RUNTIME_PREFLIGHT_DIR" ;;
   esac
-  [ -n "${RUNTIME_ENV_OUTPUT:-}" ] && rm -f "$RUNTIME_ENV_OUTPUT"
   rm -f "$RELEASE_TGZ" "$SMOKE_CLEANUP_ERROR" \
     /tmp/acs-cleanup-sandboxes.json /tmp/acs-cleanup-health.json
   cleanup_acs_unit_backup
@@ -384,6 +382,7 @@ python3 "$RUNTIME_PREFLIGHT_DIR/scripts/apply-orchestrator-env.py" \
 # shellcheck disable=SC1090
 . "$unit_helper"
 validate_acs_managed_unit "$unit_source" "$ACS_NODE" "$ACS_SERVICE_NAME"
+assert_no_acs_managed_unit_dropins "$ACS_SERVICE_NAME"
 "$ACS_NODE" "$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
   --manifest="$RUNTIME_PREFLIGHT_DIR/acs-orchestrator/runtime-dependencies.json" \
   --component=acsOrchestrator --environment-file="$runtime_environment_file" --production=true
@@ -400,6 +399,7 @@ if [ -f "$ACS_UNIT_PATH" ]; then
 fi
 ACS_UNIT_UPDATED=true
 install_acs_managed_unit "$unit_source" "$ACS_UNIT_PATH" "$SYSTEMCTL_BIN"
+assert_no_acs_managed_unit_dropins "$ACS_SERVICE_NAME"
 rm -rf -- "$RUNTIME_PREFLIGHT_DIR"
 RUNTIME_PREFLIGHT_DIR=""
 PRODUCTION_CLEANUP_ARMED=true
@@ -485,16 +485,17 @@ else
   exit 1
 fi
 # 部署事务只读取自身需要的非 Runtime 字段；通过 NUL 分隔传值，不 source/eval EnvironmentFile。
-"$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
-  --environment-file="$ENV_FILE" \
-  --print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE > "$RUNTIME_ENV_OUTPUT"
 unset ACS_ORCH_AUTH_TOKEN ACS_KUBECONFIG
 ACS_NAMESPACE=agent-saas-coding
-while IFS= read -r -d '' environment_key && IFS= read -r -d '' environment_value; do
-  printf -v "$environment_key" '%s' "$environment_value"
-  export "$environment_key"
-done < "$RUNTIME_ENV_OUTPUT"
-rm -f "$RUNTIME_ENV_OUTPUT"
+shopt -s lastpipe
+"$ACS_NODE" "$APP_DIR/acs-orchestrator/dist/runtime-dependency.mjs" \
+  --environment-file="$ENV_FILE" \
+  --print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE \
+  | while IFS= read -r -d '' environment_key && IFS= read -r -d '' environment_value; do
+      printf -v "$environment_key" '%s' "$environment_value"
+      export "$environment_key"
+    done
+shopt -u lastpipe
 : "${ACS_ORCH_AUTH_TOKEN:?missing ACS_ORCH_AUTH_TOKEN in env file}"
 AUTH_HEADER="Authorization: Bearer ${ACS_ORCH_AUTH_TOKEN}"
 SNAT_OPERATION_STATE_FILE="${RUNTIME_CONFIG_FILE}.snat-operation-state.json"

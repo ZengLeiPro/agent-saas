@@ -9,7 +9,7 @@
 # 蓝绿部署脚本: 读 /etc/agent-saas/active-color 定位 idle 色 → 解包新 release →
 #   只改 idle 色 symlink（active 色 symlink 永不动）→ start idle 实例 →
 #   ready(180s) 门禁 + warmup(420s 软门禁) + 冒烟 → 重写 nginx upstream +
-#   reload 切流 → 更新 active-color → 生成蓝绿 rollback.sh →
+#   reload 切流 → 更新 active-color → 固化版本化 rollback.sh 与旧部署状态 →
 #   SIGUSR2 精确 drain 旧色（活跃流清空后自退，Restart=on-failure 不复活）。
 #   切流前任何失败只回收 idle 色并还原 current/previous/idle 色 symlink，
 #   老色全程在服务，用户零影响。
@@ -559,6 +559,7 @@ jobs:
             scripts/release/read-live-production-components.mjs \
             scripts/release/read-production-state.mjs \
             scripts/release/read-runtime-identity.mjs \
+            scripts/release/rollback-compatibility-app.sh \
             scripts/release/seal-compatibility-release.mjs \
             scripts/release/verify-installed-release.mjs \
             scripts/release/write-compatibility-app-env.mjs \
@@ -815,6 +816,8 @@ jobs:
             write_color_marker "$WORKER_ACTIVE_COLOR_FILE" "$1"
           }
           INSTALL_CLEANUP_ARMED=0
+          ROLLBACK_STATE_COMMITTED=0
+          ROLLBACK_STATE_DIR=''
           TRAFFIC_SWITCHED=0
           on_error() {
             local status=$?
@@ -833,6 +836,14 @@ jobs:
                 esac
               fi
               rm -f -- "$RELEASE_TGZ" || log "WARN: failed upload cleanup failed"
+            fi
+            if [ "$ROLLBACK_STATE_COMMITTED" -eq 0 ] && [ -n "$ROLLBACK_STATE_DIR" ]; then
+              case "$ROLLBACK_STATE_DIR" in
+                "$DEPLOY_ROOT/rollback-states/"*)
+                  rm -rf -- "$ROLLBACK_STATE_DIR" || log "WARN: failed rollback state cleanup failed"
+                  ;;
+                *) log "WARN: refuse rollback state cleanup outside managed root: $ROLLBACK_STATE_DIR" ;;
+              esac
             fi
             exit "$status"
           }
@@ -982,6 +993,73 @@ jobs:
             --root "$RELEASE_DIR" --component server \
             --release-id "$COMPAT_RELEASE_ID" --sha "$RELEASE_SHA" >/dev/null
           INSTALL_CLEANUP_ARMED=0
+
+          # 在覆盖 unit 或发布身份前持久保存旧部署拓扑。rollback-state 指针仅在本次
+          # 发布完全收敛后原子切换，因此失败发布不会污染上一份可用回滚状态。
+          ROLLBACK_STATE_DIR="$DEPLOY_ROOT/rollback-states/$RELEASE_ID"
+          ROLLBACK_STATE_LINK="$DEPLOY_ROOT/rollback-state"
+          install -d -m 0700 "$DEPLOY_ROOT/rollback-states"
+          EXISTING_ROLLBACK_STATE=$(readlink -f "$ROLLBACK_STATE_LINK" 2>/dev/null || true)
+          if [ "$EXISTING_ROLLBACK_STATE" = "$ROLLBACK_STATE_DIR" ]; then
+            log "ERROR: current rollback state unexpectedly targets candidate release: $ROLLBACK_STATE_DIR"
+            exit 1
+          fi
+          rm -rf -- "$ROLLBACK_STATE_DIR"
+          install -d -m 0700 "$ROLLBACK_STATE_DIR"
+          snapshot_required_file() {
+            local source="$1" name="$2" mode="$3"
+            if [ ! -f "$source" ] || [ -L "$source" ]; then
+              log "ERROR: required rollback source is missing or unsafe: $source"
+              return 1
+            fi
+            install -m "$mode" "$source" "$ROLLBACK_STATE_DIR/$name"
+          }
+          snapshot_optional_file() {
+            local source="$1" name="$2" mode="$3" marker="$4"
+            if [ -L "$source" ]; then
+              log "ERROR: optional rollback source must not be a symlink: $source"
+              return 1
+            fi
+            if [ -f "$source" ]; then
+              install -m "$mode" "$source" "$ROLLBACK_STATE_DIR/$name"
+              printf 'true\n' > "$ROLLBACK_STATE_DIR/$marker"
+            else
+              printf 'false\n' > "$ROLLBACK_STATE_DIR/$marker"
+            fi
+            chmod 0600 "$ROLLBACK_STATE_DIR/$marker"
+          }
+          OLD_API_TARGET=$(readlink -f "$COLOR_DIR/$ACTIVE")
+          case "$OLD_API_TARGET" in
+            "$RELEASES_DIR"/*) [ -d "$OLD_API_TARGET" ] ;;
+            *) log "ERROR: old API target escapes release root: $OLD_API_TARGET"; exit 1 ;;
+          esac
+          printf '%s\n' "$ACTIVE" > "$ROLLBACK_STATE_DIR/api-active-color"
+          printf '%s\n' "$OLD_API_TARGET" > "$ROLLBACK_STATE_DIR/api-release-target"
+          snapshot_required_file "/etc/systemd/system/${SERVICE_NAME}@.service" server@.service 0644
+          snapshot_required_file "$RUNTIME_IDENTITY_FILE" runtime-identity.json 0444
+          snapshot_optional_file "/etc/agent-saas/server-${ACTIVE}.release.env" \
+            api.release.env 0600 api-env-present
+          snapshot_optional_file "/etc/systemd/system/${WORKER_SERVICE}@.service" \
+            runtime-worker@.service 0644 worker-unit-present
+          OLD_WORKER_ACTIVE=$(tr -d '[:space:]' < "$WORKER_ACTIVE_COLOR_FILE" 2>/dev/null || true)
+          case "$OLD_WORKER_ACTIVE" in
+            blue|green)
+              OLD_WORKER_TARGET=$(readlink -f "$WORKER_DIR/$OLD_WORKER_ACTIVE")
+              case "$OLD_WORKER_TARGET" in
+                "$RELEASES_DIR"/*) [ -d "$OLD_WORKER_TARGET" ] ;;
+                *) log "ERROR: old Worker target escapes release root: $OLD_WORKER_TARGET"; exit 1 ;;
+              esac
+              printf 'true\n' > "$ROLLBACK_STATE_DIR/worker-was-active"
+              printf '%s\n' "$OLD_WORKER_ACTIVE" > "$ROLLBACK_STATE_DIR/worker-active-color"
+              printf '%s\n' "$OLD_WORKER_TARGET" > "$ROLLBACK_STATE_DIR/worker-release-target"
+              snapshot_optional_file "/etc/agent-saas/runtime-worker-${OLD_WORKER_ACTIVE}.release.env" \
+                worker.release.env 0600 worker-env-present
+              ;;
+            '') printf 'false\n' > "$ROLLBACK_STATE_DIR/worker-was-active" ;;
+            *) log "ERROR: invalid old Runtime Worker color: $OLD_WORKER_ACTIVE"; exit 1 ;;
+          esac
+          chmod 0600 "$ROLLBACK_STATE_DIR"/*
+          log "pre-deploy rollback state captured: $ROLLBACK_STATE_DIR"
 
           # 每次发布都以仓库模板刷新 unit；systemd 仅 reload 定义，不重启当前 active
           # 进程。蓝绿 Web 固定 ws-only，runtime worker 由独立蓝绿 unit 承担。
@@ -2054,106 +2132,17 @@ jobs:
           rm -rf "$IDENTITY_SYNC_DIR"
           log "Production identity atomically rebuilt from live API/Worker/Web/ACS evidence"
 
-          # ── 11. 生成蓝绿 rollback.sh（幂等覆盖）：ssh 上来执行 bash /opt/agent-saas-app/rollback.sh ──
-          # 快路径：上一色还在 drain 未退（进程仍跑旧代码）→ 直接把 nginx 翻回去；
-          # 慢路径：上一色已退出 → color symlink 指向 previous release、start、等 ready、翻 nginx。
-          cat > "$DEPLOY_ROOT/rollback.sh" <<'ROLLBACK'
-          #!/usr/bin/env bash
-          # 蓝绿一键回滚。由 ci.yml 部署时生成，手工修改会在下次部署被覆盖。
-          # -E: 函数内失败也触发 ERR trap，保证任何失败都有日志且退出 1
-          set -Eeuo pipefail
-          ROOT="/opt/agent-saas-app"
-          SERVICE="agent-saas-server"
-          ACTIVE_COLOR_FILE="/etc/agent-saas/active-color"
-          UPSTREAM_CONF="/etc/nginx/conf.d/agent-saas-upstream.conf"
-
-          log() { printf '[rollback %s] %s\n' "$(date -Is)" "$*"; }
-          write_color_marker() {
-            local color="$1" candidate="${ACTIVE_COLOR_FILE}.candidate"
-            rm -f "$candidate"
-            printf '%s\n' "$color" > "$candidate"
-            chmod 0644 "$candidate"
-            mv -f "$candidate" "$ACTIVE_COLOR_FILE"
-          }
-          trap 'log "rollback FAILED at line $LINENO"; exit 1' ERR
-
-          CUR=$(tr -d '[:space:]' < "$ACTIVE_COLOR_FILE")
-          case "$CUR" in
-            blue)  OTHER="green"; OTHER_PORT=3201; CUR_PORT=3200 ;;
-            green) OTHER="blue";  OTHER_PORT=3200; CUR_PORT=3201 ;;
-            *) log "invalid active color: '$CUR'"; exit 1 ;;
-          esac
-          log "rollback: active=$CUR -> target=$OTHER"
-
-          switch_traffic_back() {
-            cat > "$UPSTREAM_CONF" <<EOF
-          # active=$OTHER
-          # 由 ci.yml 部署脚本重写，手工修改会在下次部署被覆盖
-          upstream agent_saas_backend {
-              server 127.0.0.1:$OTHER_PORT;
-              server 127.0.0.1:$CUR_PORT backup;
-          }
-          EOF
-            write_color_marker "$OTHER"
-            if ! { nginx -t && systemctl reload nginx; }; then
-              write_color_marker "$CUR" || true
-              return 1
-            fi
-            systemctl enable "$SERVICE@$OTHER"
-            systemctl disable "$SERVICE@$CUR"
-            log "traffic switched back: active=$OTHER"
-          }
-
-          if systemctl is-active --quiet "$SERVICE@$OTHER"; then
-            if curl -fsS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/ready" >/dev/null 2>&1; then
-              log "$SERVICE@$OTHER still ready; fast path: flip nginx only"
-              switch_traffic_back
-              log "rollback ok (fast path)"
-              exit 0
-            fi
-            TARGET_DRAIN_BODY=$(curl -sS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/drain" 2>/dev/null || true)
-            TARGET_ACTIVE_UPLOADS=$(node -e '
-              try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? 0)); }
-              catch { console.log(-1); }
-            ' "$TARGET_DRAIN_BODY")
-            if [ "$TARGET_ACTIVE_UPLOADS" -eq -1 ]; then
-              TARGET_DRAIN_SNAPSHOT=$(cat "/run/${SERVICE}-${OTHER}.draining" 2>/dev/null || true)
-              TARGET_ACTIVE_UPLOADS=$(node -e '
-                try { console.log(Number(JSON.parse(process.argv[1]).activeUploads ?? -1)); }
-                catch { console.log(-1); }
-              ' "$TARGET_DRAIN_SNAPSHOT")
-              log "rollback drain endpoint unavailable; marker snapshot reports activeUploads=$TARGET_ACTIVE_UPLOADS"
-            fi
-            if [ "$TARGET_ACTIVE_UPLOADS" -ne 0 ]; then
-              log "rollback refused: target $OTHER is draining with activeUploads=$TARGET_ACTIVE_UPLOADS; wait for upload completion"
-              exit 1
-            fi
-            log "$SERVICE@$OTHER is draining with no active uploads; stop before slow-path restart"
-            systemctl stop "$SERVICE@$OTHER"
-          fi
-
-          PREV=$(readlink "$ROOT/previous" 2>/dev/null || true)
-          if [ -z "$PREV" ] || [ ! -d "$PREV" ]; then
-            log "previous release missing: '${PREV:-<none>}'"
-            exit 1
-          fi
-          log "slow path: color/$OTHER -> $PREV, start $SERVICE@$OTHER"
-          ln -sfn "$PREV" "$ROOT/color/$OTHER"
-          rm -f "/run/${SERVICE}-${OTHER}.pid" "/run/${SERVICE}-${OTHER}.draining"
-          systemctl start "$SERVICE@$OTHER"
-          for _ in $(seq 1 180); do
-            if curl -fsS -m 5 "http://127.0.0.1:$OTHER_PORT/api/healthz/ready" >/dev/null 2>&1; then
-              switch_traffic_back
-              log "rollback ok"
-              exit 0
-            fi
-            sleep 1
-          done
-          log "rollback FAILED: $SERVICE@$OTHER not ready after 180s"
-          exit 1
-          ROLLBACK
-          chmod +x "$DEPLOY_ROOT/rollback.sh"
-          log "rollback.sh regenerated (blue-green semantics)"
+          # ── 11. 固化本次发布对应的回滚状态与版本化脚本 ──
+          # 先安装脚本，再原子切换状态指针；回滚会先恢复旧 unit/env/identity/Worker
+          # 拓扑，再启动旧 release，因此首次引入 Runtime guard 也能安全回退。
+          install -m 0755 "$RELEASE_DIR/scripts/release/rollback-compatibility-app.sh" \
+            "$DEPLOY_ROOT/rollback.sh.candidate"
+          mv -f "$DEPLOY_ROOT/rollback.sh.candidate" "$DEPLOY_ROOT/rollback.sh"
+          rm -f "$ROLLBACK_STATE_LINK.candidate"
+          ln -s "$ROLLBACK_STATE_DIR" "$ROLLBACK_STATE_LINK.candidate"
+          mv -Tf "$ROLLBACK_STATE_LINK.candidate" "$ROLLBACK_STATE_LINK"
+          ROLLBACK_STATE_COMMITTED=1
+          log "rollback state committed and rollback.sh refreshed: $ROLLBACK_STATE_DIR"
 
           # ── 12. drain 旧色：SIGUSR2 精确送 node 主进程（拒新流量→停 cron→活跃流清空→自行 exit 0）──
           # 绝不能用 systemctl kill：默认 cgroup 广播，SIGUSR2 会终止无 handler 的 SDK 子进程。

@@ -144,9 +144,15 @@ describe('releaseManifestSchema', () => {
       releaseManifestContentSchema.safeParse({ ...validManifestContent(), releaseSha: 'abc123' })
         .success,
     ).toBe(false);
-    const unsafe = validManifestContent();
-    unsafe.artifacts.webAssets.uri = 'https://user:password@example.test/web.tgz?signature=secret';
-    expect(releaseManifestContentSchema.safeParse(unsafe).success).toBe(false);
+    for (const uri of [
+      'https://user:password@example.test/web.tgz?signature=secret',
+      'file:///etc/agent-saas/runtime-identity.json',
+      'http://release-records.example.test/web.tgz',
+    ]) {
+      const unsafe = validManifestContent();
+      unsafe.artifacts.webAssets.uri = uri;
+      expect(releaseManifestContentSchema.safeParse(unsafe).success).toBe(false);
+    }
     expect(
       releaseManifestContentSchema.safeParse({
         ...validManifestContent(),
@@ -193,6 +199,18 @@ describe('releaseManifestSchema', () => {
     const keep = validManifestContent();
     keep.components.acs.sandboxImageDigest = MANIFEST_DIGEST;
     expect(releaseManifestContentSchema.safeParse(keep).success).toBe(false);
+  });
+
+  it('rejects split API and Runtime Worker identities in the frozen baseline', () => {
+    const sourceMismatch = validManifestContent();
+    sourceMismatch.productionBaseline.runtimeWorker.sourceSha = RELEASE_SHA;
+    sourceMismatch.rollbackTargets.runtimeWorker.sourceSha = RELEASE_SHA;
+    expect(releaseManifestContentSchema.safeParse(sourceMismatch).success).toBe(false);
+
+    const digestMismatch = validManifestContent();
+    digestMismatch.productionBaseline.runtimeWorker.artifactDigest = MANIFEST_DIGEST;
+    digestMismatch.rollbackTargets.runtimeWorker.artifactDigest = MANIFEST_DIGEST;
+    expect(releaseManifestContentSchema.safeParse(digestMismatch).success).toBe(false);
   });
 
   it('rejects conflicting API and Runtime Worker source SHAs for a deploy serverBundle', () => {

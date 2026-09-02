@@ -163,3 +163,13 @@ for (const [label, failure, laterAction] of [
     assert.equal((await lstat(value.files.unitBak)).isFile(), true);
   });
 }
+
+test('ACS Token extraction streams through a checked pipe without a predictable temporary file', async () => {
+  const script = await readFile(SCRIPT, 'utf8');
+  assert.doesNotMatch(script, /RUNTIME_ENV_OUTPUT|agent-saas-runtime-environment/u);
+  assert.match(script, /shopt -s lastpipe/u);
+  assert.match(
+    script,
+    /--print-environment=ACS_ORCH_AUTH_TOKEN,ACS_KUBECONFIG,ACS_NAMESPACE \\\n\s+\| while IFS=/u,
+  );
+});

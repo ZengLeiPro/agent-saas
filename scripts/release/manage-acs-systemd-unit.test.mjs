@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -45,6 +45,54 @@ test('managed unit rejects PATH Node and any executable other than /usr/bin/node
   );
   assert.notEqual(wrongExecutable.status, 0);
   assert.match(wrongExecutable.stderr, /requires \/usr\/bin\/node/u);
+});
+
+test('managed unit rejects non-fixed Environment values and any effective drop-in', async () => {
+  const value = await fixture();
+  const badUnit = join(value.root, 'environment-override.service');
+  await writeFile(
+    badUnit,
+    `${await readFile(template, 'utf8')}\nEnvironment=ACS_SNAT_MODE=disabled\n`,
+  );
+  const extraEnvironment = bash(
+    `validate_acs_managed_unit '${badUnit}' /usr/bin/node agent-saas-acs-orchestrator.service`,
+  );
+  assert.notEqual(extraEnvironment.status, 0);
+  assert.match(extraEnvironment.stderr, /must use only the managed EnvironmentFile/u);
+
+  const dropin = join(value.root, 'agent-saas-acs-orchestrator.service.d');
+  await mkdir(dropin);
+  await writeFile(join(dropin, 'override.conf'), '[Service]\nEnvironment=ACS_SNAT_MODE=disabled\n');
+  const effectiveOverride = bash(
+    `assert_no_acs_managed_unit_dropins agent-saas-acs-orchestrator.service '${value.root}'`,
+  );
+  assert.notEqual(effectiveOverride.status, 0);
+  assert.match(effectiveOverride.stderr, /Unmanaged systemd drop-in/u);
+
+  const globalRoot = await mkdtemp(join(tmpdir(), 'acs-managed-unit-global-'));
+  const globalDropin = join(globalRoot, 'service.d');
+  const globalOverride = join(globalRoot, 'global-override.conf');
+  await mkdir(globalDropin);
+  await writeFile(globalOverride, '[Service]\nEnvironment=ACS_SNAT_MODE=disabled\n');
+  await symlink(globalOverride, join(globalDropin, 'symlink.conf'));
+  const globalEffectiveOverride = bash(
+    `assert_no_acs_managed_unit_dropins agent-saas-acs-orchestrator.service '${globalRoot}'`,
+  );
+  assert.notEqual(globalEffectiveOverride.status, 0);
+  assert.match(globalEffectiveOverride.stderr, /service\.d\/symlink\.conf/u);
+
+  const prefixRoot = await mkdtemp(join(tmpdir(), 'acs-managed-unit-prefix-'));
+  const prefixDropin = join(prefixRoot, 'agent-saas-.service.d');
+  await mkdir(prefixDropin);
+  await writeFile(
+    join(prefixDropin, 'environment.conf'),
+    '[Service]\nEnvironmentFile=/tmp/override\n',
+  );
+  const prefixOverride = bash(
+    `assert_no_acs_managed_unit_dropins agent-saas-acs-orchestrator.service '${prefixRoot}'`,
+  );
+  assert.notEqual(prefixOverride.status, 0);
+  assert.match(prefixOverride.stderr, /agent-saas-\.service\.d/u);
 });
 
 test('first managed upgrade replaces an old unit and rollback restores exact old bytes', async () => {

@@ -31,10 +31,16 @@ const artifactUriSchema = z
   .superRefine((value, ctx) => {
     try {
       const uri = new URL(value);
-      if (!uri.protocol || uri.username || uri.password || uri.search || uri.hash) {
+      if (
+        !['https:', 'oss:'].includes(uri.protocol) ||
+        uri.username ||
+        uri.password ||
+        uri.search ||
+        uri.hash
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Artifact URI must not contain credentials, query strings, or fragments',
+          message: 'Artifact URI must be an uncredentialed HTTPS or OSS URI',
         });
       }
     } catch {
@@ -366,6 +372,25 @@ function refineManifest(manifest: ManifestContentCandidate, ctx: z.RefinementCtx
       path: ['components', 'runtimeWorker', 'sourceSha'],
       message: 'API and Runtime Worker must identify the same serverBundle source SHA',
     });
+  }
+  for (const [field, matrix] of [
+    ['productionBaseline', manifest.productionBaseline],
+    ['rollbackTargets', manifest.rollbackTargets],
+  ] as const) {
+    if (matrix.api.artifactDigest !== matrix.runtimeWorker.artifactDigest) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field, 'runtimeWorker', 'artifactDigest'],
+        message: 'API and Runtime Worker baseline must identify the same serverBundle digest',
+      });
+    }
+    if (matrix.api.sourceSha !== matrix.runtimeWorker.sourceSha) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field, 'runtimeWorker', 'sourceSha'],
+        message: 'API and Runtime Worker baseline must identify the same serverBundle source SHA',
+      });
+    }
   }
   const digestBindings: Array<[unknown, unknown, (string | number)[]]> = [
     [

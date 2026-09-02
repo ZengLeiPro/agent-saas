@@ -115,16 +115,47 @@ function parseSystemdEnvironmentValue(raw, lineNumber) {
   return value;
 }
 
+function logicalSystemdEnvironmentLines(text) {
+  const logicalLines = [];
+  let pending = '';
+  let pendingLineNumber = 0;
+  for (const [index, raw] of String(text).split(/\r?\n/u).entries()) {
+    const lineNumber = index + 1;
+    const trimmed = raw.trimStart();
+    const ignored = !trimmed || trimmed.startsWith('#') || trimmed.startsWith(';');
+    if (pending && ignored) continue;
+    if (!pending) {
+      pendingLineNumber = lineNumber;
+      if (ignored) {
+        logicalLines.push({ line: raw, lineNumber });
+        continue;
+      }
+    }
+    const trailingBackslashes = /\\+$/u.exec(raw)?.[0].length ?? 0;
+    if (trailingBackslashes % 2 === 1) {
+      pending += `${raw.slice(0, -1)} `;
+      continue;
+    }
+    logicalLines.push({ line: pending + raw, lineNumber: pendingLineNumber });
+    pending = '';
+    pendingLineNumber = 0;
+  }
+  if (pending) {
+    throw new Error(`Systemd environment line ${pendingLineNumber} has a dangling continuation`);
+  }
+  return logicalLines;
+}
+
 export function parseSystemdEnvironmentFile(text) {
   const values = {};
-  for (const [index, raw] of String(text).split(/\r?\n/u).entries()) {
+  for (const { line: raw, lineNumber } of logicalSystemdEnvironmentLines(text)) {
     const line = raw.trimStart();
     if (!line || line.startsWith('#') || line.startsWith(';')) continue;
     const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/u.exec(line);
-    if (!assignment) throw new Error(`Systemd environment line ${index + 1} is invalid`);
-    const value = parseSystemdEnvironmentValue(assignment[2], index + 1);
+    if (!assignment) throw new Error(`Systemd environment line ${lineNumber} is invalid`);
+    const value = parseSystemdEnvironmentValue(assignment[2], lineNumber);
     if (value.includes('\0'))
-      throw new Error(`Systemd environment line ${index + 1} contains a null byte`);
+      throw new Error(`Systemd environment line ${lineNumber} contains a null byte`);
     values[assignment[1]] = value;
   }
   return values;

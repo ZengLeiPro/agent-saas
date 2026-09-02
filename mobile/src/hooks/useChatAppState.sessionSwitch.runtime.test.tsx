@@ -47,6 +47,8 @@ const h = vi.hoisted(() => {
     messages,
     session,
     addMessage: vi.fn((message: unknown) => messages.push(message)),
+    resetMessages: vi.fn(() => { messages.length = 0; }),
+    wsSend: vi.fn(),
     dispatchConnection: vi.fn(),
   };
 });
@@ -64,7 +66,7 @@ vi.mock('@agent/shared', async (importOriginal) => {
       acquire: vi.fn(async () => vi.fn()),
       onMessage: vi.fn((listener: (envelope: { data: any }) => void) => { h.listener = listener; return vi.fn(); }),
       onStateChange: vi.fn(() => vi.fn()),
-      send: vi.fn(),
+      send: h.wsSend,
       ensureConnectedSend: vi.fn(async () => true),
       setLastSeq: vi.fn(),
       setSyncSessionId: vi.fn(),
@@ -75,10 +77,17 @@ vi.mock('./useMessages', () => ({ useMessages: () => ({
   messages: h.messages,
   messagesRef: { current: h.messages },
   addMessage: h.addMessage,
-  setMessages: vi.fn(), resetMessages: vi.fn(), updateMessageAt: vi.fn(), triggerScroll: vi.fn(),
+  setMessages: vi.fn(), resetMessages: h.resetMessages, updateMessageAt: vi.fn(), triggerScroll: vi.fn(),
   shouldScrollRef: { current: false }, isNearBottomRef: { current: true },
 }) }));
-vi.mock('./useSession', () => ({ useSession: () => h.session }));
+vi.mock('./useSession', () => ({ useSession: (callbacks: { cancelActiveStream: () => void; clearComposer: () => void; resetMessages: () => void }) => {
+  h.session.selectSession.mockImplementation(() => {
+    callbacks.cancelActiveStream();
+    callbacks.clearComposer();
+    callbacks.resetMessages();
+  });
+  return h.session;
+} }));
 vi.mock('./useFileUpload', () => ({ useFileUpload: () => ({
   uploadedFiles: [], uploading: false, uploadError: null,
   dismissUploadError: vi.fn(), pickFile: vi.fn(), pickImage: vi.fn(), takePhoto: vi.fn(),
@@ -101,10 +110,10 @@ beforeEach(() => {
   h.listener = null;
   vi.clearAllMocks();
 });
-afterEach(cleanup);
+afterEach(() => { vi.restoreAllMocks(); cleanup(); });
 
-describe('useChatAppState 同帧切换时的会话归属', () => {
-  it('把延迟 legacy ask/permission 只记入 attached 的 A，不污染刚选中的 B 视图', () => {
+describe('useChatAppState 会话切换窗口的事件归属', () => {
+  it('真实 detach 后仍把延迟 legacy ask/permission 记入 A，不污染刚选中的 B', () => {
     render(<Harness />);
     act(() => emit({ type: 'stream_started', sessionId: 'session-a', streamId: 'stream-a', runId: 'run-a' }));
     vi.clearAllMocks();
@@ -115,6 +124,8 @@ describe('useChatAppState 同帧切换时的会话归属', () => {
       emit({ type: 'permission_request', interactionId: 'permission-a', toolName: 'Shell', toolInput: {} });
     });
 
+    expect(h.wsSend).toHaveBeenCalledWith({ action: 'detach' });
+    expect(h.resetMessages).toHaveBeenCalledOnce();
     expect(h.session.applySessionInteractionEvent).toHaveBeenCalledTimes(2);
     expect(h.session.applySessionInteractionEvent).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: 'requested', sessionId: 'session-a' }));
     expect(h.session.applySessionInteractionEvent).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: 'requested', sessionId: 'session-a' }));
@@ -135,9 +146,23 @@ describe('useChatAppState 同帧切换时的会话归属', () => {
       emit({ type: 'sync_overflow', seq: 10, recovery: { version: 1, authoritative: true, refresh: {}, session: { sessionId: 'session-a', runtime: { runId: 'run-a', streamId: 'stream-a', active: false } } } });
     });
 
-    expect(h.latest!.loading).toBe(true);
+    expect(h.latest!.loading).toBe(false);
     expect(h.addMessage).not.toHaveBeenCalled();
     expect(h.session.refreshCurrentSession).not.toHaveBeenCalled();
     expect(h.dispatchConnection).not.toHaveBeenCalledWith('complete');
+  });
+
+  it('detach 归属过期后丢弃无 sessionId 的旧协议 interaction', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    render(<Harness />);
+    act(() => emit({ type: 'stream_started', sessionId: 'session-a', streamId: 'stream-a', runId: 'run-a' }));
+    act(() => h.latest!.selectSession('session-b'));
+    vi.clearAllMocks();
+
+    now.mockReturnValue(31_001);
+    act(() => emit({ type: 'ask_user', interactionId: 'late-ask-a', questions: [] }));
+
+    expect(h.session.applySessionInteractionEvent).not.toHaveBeenCalled();
+    expect(h.addMessage).not.toHaveBeenCalled();
   });
 });

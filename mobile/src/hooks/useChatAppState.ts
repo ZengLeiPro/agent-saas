@@ -541,6 +541,7 @@ export function useChatAppStateCore(): ChatAppState {
     currentBlockType: null,
   });
   const wsLatestSessionIdRef = useRef<{ value: string | null }>(null!);
+  const detachedStreamSessionRef = useRef<{ sessionId: string; expiresAt: number } | null>(null);
   const wsUserMsgIndexRef = useRef(-1);
   /** 是否已挂载到某个流（detach 后为 false，发起/订阅流时为 true） */
   const wsAttachedRef = useRef(false);
@@ -644,6 +645,9 @@ export function useChatAppStateCore(): ChatAppState {
   /** 会话切换时：保存当前会话运行态并取消当前 WS 订阅，不发 abort */
   const detachFromStream = useCallback(() => {
     saveRuntimeForSession();
+    const detachedSessionId = wsAttachedRef.current ? wsLatestSessionIdRef.current?.value : null;
+    detachedStreamSessionRef.current = detachedSessionId
+      ? { sessionId: detachedSessionId, expiresAt: Date.now() + 30_000 } : null;
     streamIdRef.current = null;
     runIdRef.current = null;
     streamNonceRef.current += 1;
@@ -1178,7 +1182,10 @@ export function useChatAppStateCore(): ChatAppState {
   // WS message handler (wsClient already fences old epochs, gaps, and duplicate callbacks)
   useEffect(() => {
     const projectSessionListInteraction = (event: WsEvent) => {
-      const fallbackSessionId = wsLatestSessionIdRef.current?.value;
+      const detached = detachedStreamSessionRef.current;
+      if (detached && detached.expiresAt < Date.now()) detachedStreamSessionRef.current = null;
+      const fallbackSessionId = wsAttachedRef.current
+        ? wsLatestSessionIdRef.current?.value : detachedStreamSessionRef.current?.sessionId;
       if (event.type === 'pending_interactions' && event.sessionId) {
         const authoritativeSessionId = event.sessionId;
         sessionRef.current.applySessionInteractionEvent?.({ type: 'terminal', sessionId: authoritativeSessionId });
@@ -1386,6 +1393,7 @@ export function useChatAppStateCore(): ChatAppState {
         const currentSid =
           immediateSessionIdRef.current ?? sessionIdRef.current;
         if (data.sessionId === currentSid && !loadingRef.current) {
+          detachedStreamSessionRef.current = null;
           streamIdRef.current = data.streamId;
           wsLatestSessionIdRef.current = { value: data.sessionId };
           wsBlockRef.current = {
@@ -1687,8 +1695,9 @@ export function useChatAppStateCore(): ChatAppState {
           }
           return;
         }
+        detachedStreamSessionRef.current = null;
         if (!data.active) {
-          // 服务端确认不活跃 → 清掉陈旧运行态并回退乐观状态
+          // 服务端已确认目标会话状态，旧 detach 窗口随之关闭
           wsAttachedRef.current = false;
           streamIdRef.current = null;
           runIdRef.current = null;

@@ -460,6 +460,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
 
   it('rejects the remote dispatch barrier when the root execution Run is already terminal', async () => {
     const prepared = await preparedInterruptedChild();
+    await guard.claimBackgroundResourceLaunch(prepared.context, prepared.parentRunId, { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId });
     await runs.markStatus(prepared.setup.dispatch.targetRunId, 'completed', 'root_terminal_race');
 
     await expect(guard.recordBackgroundResource(
@@ -469,11 +470,12 @@ describePg('automation background child recovery on PostgreSQL', () => {
     expect((await pool.query(
       `SELECT state FROM ${store.tables.backgroundResources} WHERE resource_key=$1`,
       [prepared.parentRunId],
-    )).rows[0]?.state).toBe('prepared');
+    )).rows[0]?.state).toBe('launching');
   });
 
   it('releases an active resource only after the authoritative child Run is terminal', async () => {
     const prepared = await preparedInterruptedChild();
+    await guard.claimBackgroundResourceLaunch(prepared.context, prepared.parentRunId, { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId });
     await guard.recordBackgroundResource(
       prepared.context, prepared.parentRunId,
       { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
@@ -492,6 +494,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
 
   it('parks an active resource and lifecycle work as result_unknown when child terminality is unknown', async () => {
     const prepared = await preparedInterruptedChild();
+    await guard.claimBackgroundResourceLaunch(prepared.context, prepared.parentRunId, { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId });
     await guard.recordBackgroundResource(
       prepared.context, prepared.parentRunId,
       { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',
@@ -572,6 +575,7 @@ describePg('automation background child recovery on PostgreSQL', () => {
 
   it('does not requeue active resources and retains cancellation authority', async () => {
     const prepared = await preparedInterruptedChild();
+    await guard.claimBackgroundResourceLaunch(prepared.context, prepared.parentRunId, { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId });
     await guard.recordBackgroundResource(
       prepared.context, prepared.parentRunId,
       { childSessionId: prepared.childSessionId, childRunId: prepared.childRunId }, 'active',

@@ -61,6 +61,7 @@ export function createLifecycleAdapters(
     const invokingRunId=typeof metadata?.invokingRunId==='string'?metadata.invokingRunId:undefined;
     const invokingStatus=typeof job.details.invoking_run_status==='string'?job.details.invoking_run_status:undefined;
     const terminal=(status:string|undefined)=>status!==undefined&&['completed','failed','cancelled','orphaned'].includes(status);
+    if(state==='released')return lifecycleReceipt(job,'completed',{runId,invokingRunId,childStatus:childStatus??null,sideEffectKnown:true});
     if(childStatus&&!terminal(childStatus))await cancelRun(runId,'session_automation_background_resource_release');
     if(invokingStatus&&!terminal(invokingStatus)){
       if(!invokingRunId)return lifecycleReceipt(job,'pending',{error:'resource_invoking_run_id_unavailable',childStatus,sideEffectKnown:false});

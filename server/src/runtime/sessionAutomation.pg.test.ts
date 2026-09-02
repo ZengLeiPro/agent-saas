@@ -23,7 +23,7 @@ describePg('session automation real PostgreSQL integration',()=>{
   await runs.init();
   await pool.query(`INSERT INTO ${store.tables.automations}(automation_id,tenant_id,session_id,owner_user_id,incarnation_id,kind,mode,status,generation,spec_version,control_version,projection_version) VALUES($1,$2,$3,'user-a',$4,'loop','adaptive','active',1,1,1,1)`,[automation,tenant,session,incarnation]);
   await pool.query(`INSERT INTO ${store.tables.specs}(automation_id,tenant_id,session_id,spec_version,spec_digest,spec) VALUES($1,$2,$3,1,'digest',$4)`,[automation,tenant,session,JSON.stringify({kind:'loop',mode:'adaptive',prompt:'continue',budget:{}})]);
- });
+ },30_000);
  afterAll(async()=>{if(!pool)return;await events.close();await pool.query(`DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE '${prefix}_%' LOOP EXECUTE format('DROP TABLE IF EXISTS %I CASCADE',r.tablename); END LOOP; END $$`).catch(()=>undefined);await pool.end();},30_000);
 
  async function schedule(automationId:string,sessionId:string,key:string,dueAt:Date,generation:number){const current=await pool.query(`SELECT incarnation_id,continuation_epoch FROM ${store.tables.automations} WHERE automation_id=$1`,[automationId]);await store.tx(c=>store.scheduleTx(c,{tenantId:tenant,sessionId,automationId,incarnationId:String(current.rows[0].incarnation_id),generation,specVersion:1,continuationEpoch:Number(current.rows[0].continuation_epoch),triggerKey:key,dueAt,payload:{}}));}

@@ -30,10 +30,6 @@ import type { LayoutProps } from "./types";
 import { hasSuccessfulFinalOutput } from "./firstDayGuideVisibility";
 import type { ScenarioItem } from "@agent/shared";
 
-const GovernanceConsole = lazy(() => import("@/components/GovernanceConsole").then(m => ({ default: m.GovernanceConsole })));
-const CronManager = lazy(() => import("@/components/CronManager").then(m => ({ default: m.CronManager })));
-const UserManager = lazy(() => import("@/components/UserManager").then(m => ({ default: m.UserManager })));
-const TenantManager = lazy(() => import("@/components/TenantManager").then(m => ({ default: m.TenantManager })));
 const FileBrowserLazy = lazy(() => import("@/components/FileBrowser").then(m => ({ default: m.FileBrowser })));
 const MarkdownPreviewPanel = lazy(() => import("@/components/MarkdownPreviewPanel").then(m => ({ default: m.MarkdownPreviewPanel })));
 const HtmlPreviewPanel = lazy(() => import("@/components/HtmlPreviewPanel").then(m => ({ default: m.HtmlPreviewPanel })));
@@ -43,26 +39,16 @@ const VideoPreviewPanel = lazy(() => import("@/components/VideoPreviewPanel").th
 const SubagentTranscriptPanel = lazy(() => import("@/components/SubagentTranscriptPanel").then(m => ({ default: m.SubagentTranscriptPanel })));
 const AgentProfilePanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.AgentProfile })));
 const MemorySectionPanel = lazy(() => import("@/components/AgentProfile").then(m => ({ default: m.MemorySection })));
-const SkillManagerPanel = lazy(() => import("@/components/SkillManager").then(m => ({ default: m.SkillManager })));
-const McpManagerPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpManager })));
-const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager").then(m => ({ default: m.McpAdminCatalog })));
-const renderTenantMcpCatalog = (tenantId?: string) => <McpAdminCatalogPanel tenantId={tenantId} />;
-const UsageDashboard = lazy(() => import("@/components/UsageDashboard").then(m => ({ default: m.UsageDashboard })));
-const EfficiencyViewPanel = lazy(() => import("@/components/UsageDashboard/EfficiencyView").then(m => ({ default: m.EfficiencyView })));
-const ModelManagerPanel = lazy(() => import("@/components/ModelManager").then(m => ({ default: m.ModelManager })));
-const TenantRemoteHandsManagerPanel = lazy(() => import("@/components/TenantRemoteHandsManager").then(m => ({ default: m.TenantRemoteHandsManager })));
-const ToolControlsManagerPanel = lazy(() => import("@/components/ToolControlsManager").then(m => ({ default: m.ToolControlsManager })));
-const SignupConfigManagerPanel = lazy(() => import("@/components/SignupConfigManager").then(m => ({ default: m.SignupConfigManager })));
-const MemoryPollingManagerPanel = lazy(() => import("@/components/MemoryPollingManager").then(m => ({ default: m.MemoryPollingManager })));
 const MobileSettingsModal = lazy(() => import("@/components/SettingsCenter/MobileSettingsModal"));
-const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry").then(m => ({ default: m.SettingsDirtyBoundary })));
 const CapabilityCenterPanel = lazy(() => import("@/components/CapabilityCenter").then(m => ({ default: m.CapabilityCenter })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
-const TenantAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.TenantAdminShell })));
-const CompanyInfoSectionPanel = lazy(() => import("@/components/CompanyInfoEditor").then(m => ({ default: m.CompanyInfoSection })));
-const OrgAgentManagerPanel = lazy(() => import("@/components/OrgAgentManager").then(m => ({ default: m.OrgAgentManager })));
-const PlatformAdminShell = lazy(() => import("@/components/AdminShells").then(m => ({ default: m.PlatformAdminShell })));
-const ManagementSettingsAccessGate = lazy(() => import("@/components/ManagementSettingsAccessGate").then(m => ({ default: m.ManagementSettingsAccessGate })));
+import {
+  CompanyInfoSectionPanel, CronManager, EfficiencyViewPanel, GovernanceConsole,
+  ManagementSettingsAccessGate, McpManagerPanel, MemoryPollingManagerPanel,
+  ModelManagerPanel, OrgAgentManagerPanel, PlatformAdminShell, SettingsDirtyBoundary,
+  SignupConfigManagerPanel, SkillManagerPanel, TenantAdminShell, TenantManager,
+  TenantRemoteHandsManagerPanel, ToolControlsManagerPanel, UsageDashboard, UserManager,
+} from "./lazySettingsComponents";
 
 const SuspenseFallback = (
   <div className="flex flex-1 items-center justify-center">
@@ -307,7 +293,6 @@ export function MobileLayout(props: LayoutProps) {
                 renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                 renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                renderMcp={renderTenantMcpCatalog}
                 renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
                 renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                 renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -347,7 +332,6 @@ export function MobileLayout(props: LayoutProps) {
             renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
             renderToolControls={() => <ToolControlsManagerPanel />}
             renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderMcp={() => <McpAdminCatalogPanel />}
             renderSkills={() => <SkillManagerPanel mode="platform" />}
             renderEfficiency={() => <EfficiencyViewPanel />}
             activeSection={platformAdminSection}
@@ -501,7 +485,6 @@ export function MobileLayout(props: LayoutProps) {
                     renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
                     renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-                    renderMcp={renderTenantMcpCatalog}
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
                     renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -531,7 +514,6 @@ export function MobileLayout(props: LayoutProps) {
                     renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
                     renderToolControls={() => <ToolControlsManagerPanel />}
                     renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-                    renderMcp={() => <McpAdminCatalogPanel />}
                     renderSkills={() => <SkillManagerPanel mode="platform" />}
                     renderEfficiency={() => <EfficiencyViewPanel />}
                     activeSection={platformAdminSection}
@@ -772,7 +754,6 @@ export function MobileLayout(props: LayoutProps) {
             renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
             renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
             renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderMcp={renderTenantMcpCatalog}
             renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
             renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
             renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
@@ -800,7 +781,6 @@ export function MobileLayout(props: LayoutProps) {
             renderRemoteHands={() => <TenantRemoteHandsManagerPanel />}
             renderToolControls={() => <ToolControlsManagerPanel />}
             renderMemoryPolling={() => <MemoryPollingManagerPanel />}
-            renderMcp={() => <McpAdminCatalogPanel />}
             renderSkills={() => <SkillManagerPanel mode="platform" />}
             renderEfficiency={() => <EfficiencyViewPanel />}
             activeSection={platformAdminSection}

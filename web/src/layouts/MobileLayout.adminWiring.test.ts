@@ -3,6 +3,7 @@ import { managementAccessTarget } from "@/lib/managementAccessView";
 import mobileSessionListSource from "@/components/MobileSessionList.tsx?raw";
 import mobileSettingsModalSource from "@/components/SettingsCenter/MobileSettingsModal.tsx?raw";
 import source from "./MobileLayout.tsx?raw";
+import lazySettingsSource from "./lazySettingsComponents.ts?raw";
 
 describe("MobileLayout 管理模块接线", () => {
   it("每个组织管理壳实例都接入组织智能体模块", () => {
@@ -14,7 +15,8 @@ describe("MobileLayout 管理模块接线", () => {
   });
 
   it("组织与平台治理入口接入统一 dirty boundary", () => {
-    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain("SettingsDirtyBoundary");
+    expect(lazySettingsSource).toContain('export const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
     expect(source).not.toContain('<GovernanceConsole area="organization"');
     expect(source).toContain('data-testid="mobile-organization-settings"');

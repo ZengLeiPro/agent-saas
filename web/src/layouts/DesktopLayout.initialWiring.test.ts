@@ -3,6 +3,7 @@ import analysisContentSource from "@/components/AnalysisWorkspaceContent.tsx?raw
 import taskBoardSource from "@/components/TaskBoard/index.tsx?raw";
 import taskDetailSource from "@/components/TaskBoard/TaskDetail.tsx?raw";
 import source from "./DesktopLayout.tsx?raw";
+import lazySettingsSource from "./lazySettingsComponents.ts?raw";
 
 describe("DesktopLayout 初始会话接线", () => {
   it("个人与企业专家都启用统一初始 composer", () => {
@@ -44,7 +45,8 @@ describe("DesktopLayout 初始会话接线", () => {
   });
 
   it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
-    expect(source).toContain('const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(source).toContain("SettingsDirtyBoundary");
+    expect(lazySettingsSource).toContain('export const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
     expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (");
     expect(source).toContain("dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");

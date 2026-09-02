@@ -48,6 +48,9 @@ const EgressConfigManagerPanel = lazy(() => import("@/components/EgressConfigMan
 const ConnectorDictionaryManagerPanel = lazy(() => import("@/components/ConnectorDictionaryManager"));
 const TenantConnectorDictionaryPanel = lazy(() => import("@/components/ConnectorDictionaryManager/TenantPanel"));
 const WorkflowDisplaySettingsPage = lazy(() => import('@/components/WorkflowDisplaySettingsPage'));
+const McpAdminCatalogPanel = lazy(() => import("@/components/McpManager")
+  .then((m) => ({ default: m.McpAdminCatalog })));
+const renderDefaultMcpCatalog = (tenantId?: string) => <McpAdminCatalogPanel tenantId={tenantId} />;
 
 export type TenantSection = "overview" | "usage" | "qa" | "audit" | TenantSettingsSectionId;
 export type PlatformSection = PlatformSettingsSectionId;
@@ -236,7 +239,7 @@ export function TenantAdminShell({
   renderUsers,
   renderSkills,
   renderOrgAgents,
-  renderMcp,
+  renderMcp = renderDefaultMcpCatalog,
   renderUsage,
   renderFiles,
   renderCompanyInfo,
@@ -264,7 +267,7 @@ export function TenantAdminShell({
    * 缺省时导航项整体隐藏（零变化）。
    */
   renderOrgAgents?: (tenantId?: string, tenantName?: string) => ReactNode;
-  renderMcp: (tenantId?: string, tenantName?: string) => ReactNode;
+  renderMcp?: (tenantId?: string, tenantName?: string) => ReactNode;
   renderUsage: (tenantId?: string) => ReactNode;
   renderFiles: () => ReactNode;
   renderCompanyInfo: (tenantId: string, tenantName?: string) => ReactNode;
@@ -516,7 +519,7 @@ export function PlatformAdminShell({
   renderRemoteHands,
   renderToolControls,
   renderMemoryPolling,
-  renderMcp,
+  renderMcp = renderDefaultMcpCatalog,
   renderSkills,
   renderEfficiency,
   activeSection,
@@ -539,7 +542,7 @@ export function PlatformAdminShell({
   renderRemoteHands: () => ReactNode;
   renderToolControls: () => ReactNode;
   renderMemoryPolling: () => ReactNode;
-  renderMcp: () => ReactNode;
+  renderMcp?: () => ReactNode;
   renderSkills: () => ReactNode;
   renderEfficiency: () => ReactNode;
   activeSection: PlatformAdminSection;

@@ -4,8 +4,8 @@ import type {
   ReleaseManifestContent,
   ReleaseManifestContentV2,
   ReleaseManifestV2,
-} from '@agent/shared';
-import { releaseManifestContentSchema } from '@agent/shared';
+} from '@agent/shared/schemas/releaseManifest';
+import { releaseManifestContentSchema } from '@agent/shared/schemas/releaseManifest';
 import { calculateManifestDigest } from './releaseManifestStore.js';
 
 interface ArtifactEntry {

@@ -315,20 +315,6 @@ export type {
   WorkflowTraceGateRequestedEventV1,
   WorkflowTraceV1,
 } from './schemas/workflowTrace';
-export {
-  RELEASE_COMPONENTS,
-  releaseComponentSchema,
-  releaseIdSchema,
-  fullShaSchema,
-  sha256DigestSchema,
-  releaseComponentMatrixSchema,
-  releaseComponentsPlanSchema,
-  releaseArtifactsSchema,
-  releaseManifestContentSchema,
-  releaseManifestSchema,
-  canonicalJson,
-  canonicalizeJson,
-} from './schemas/releaseManifest';
 export type {
   ReleaseComponent,
   ReleaseComponentMatrix,

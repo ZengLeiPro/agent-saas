@@ -12,6 +12,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./lib/governanceApi": "./src/lib/governanceApi.ts",
+    "./schemas/releaseManifest": "./src/schemas/releaseManifest.ts",
     "./types/governance": "./src/types/governance.ts",
     "./*": "./src/*"
   },

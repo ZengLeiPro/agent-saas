@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { canonicalJson, type ReleaseManifest } from '@agent/shared';
+import { canonicalJson, type ReleaseManifest } from '@agent/shared/schemas/releaseManifest';
 import { ReleaseAttestationStore } from './releaseAttestationStore.js';
 import { getPromotionEligibility } from './releasePolicy.js';
 import { validateManifest } from './releaseManifestStore.js';

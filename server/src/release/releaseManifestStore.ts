@@ -6,7 +6,7 @@ import {
   releaseManifestSchema,
   type ReleaseManifest,
   type ReleaseManifestContent,
-} from '@agent/shared';
+} from '@agent/shared/schemas/releaseManifest';
 
 export interface StoredReleaseManifest {
   manifest: ReleaseManifest;

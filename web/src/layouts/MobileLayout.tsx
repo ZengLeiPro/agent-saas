@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { ChevronLeft, CircleGauge, Settings2, Volume2, VolumeX, Loader2, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveApprovalTier } from "@/lib/approvalTier";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,11 @@ import { BillingMiniBadge } from "@/components/BillingMiniBadge";
 import { getPreviewFileType } from "@agent/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
+import { EntityIcons } from "@/lib/icons";
+import { navigateSettingsRoute } from "@/lib/urlSync";
+import { ORGANIZATION_SETTINGS_WORKSPACES } from "@/components/OrganizationManagement/organizationManagementRegistry";
+import { organizationWorkspaceRoute } from "@/components/OrganizationManagement/organizationManagementRouting";
+import { PLATFORM_SETTINGS_SECTIONS } from "@/components/SettingsCenter/unifiedSettingsConfig";
 import { useChatFontSize } from "@/hooks/useChatFontSize";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
 import { EmptyChatRecommendCards } from "@/components/scenarios/EmptyChatRecommendCards";
@@ -72,7 +77,7 @@ const SuspenseFallback = (
 export function MobileLayout(props: LayoutProps) {
   const {
     sidebarSessions, sessionId, selectSession, newSession, newPersonalSession, confirmDeleteSession, renameSession, autoTitleSession,
-    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, pushActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
+    isLoadingSessions, activeTab, governanceRoute, platformAdminSection, platformAdminEntityId, tenantAdminSection, setTenantAdminRoute, setActiveTab, setPlatformAdminRoute, settingsOpen, settingsSection, openSettings, closeSettings, setSettingsSection,
     adminSettings, openAdminSettings, closeAdminSettings, setAdminSettingsSection,
     isAdmin, isPlatformAdmin, isOnline, connectionState,
     messages, loading, isLoadingMessages, sessionLoadError, retrySessionLoad, hasMoreHistory, isLoadingEarlier, loadEarlierMessages,
@@ -99,6 +104,39 @@ export function MobileLayout(props: LayoutProps) {
   const managementAccess = useManagementSettingsAccess({
     user: authUser, authLoading, authEnabled, active: accessTarget !== null,
   });
+  const organizationWorkspaceIcons: Record<string, LucideIcon> = useMemo(() => ({
+    overview: CircleGauge,
+    members: EntityIcons.members,
+    agents: EntityIcons.expert,
+    governance: EntityIcons.billing,
+    settings: Settings2,
+  }), []);
+  const mobileSettingsManagementGroups = useMemo(() => {
+    const ready = managementAccess.status === "ready" || managementAccess.status === "refreshing";
+    return [
+      ...(ready && managementAccess.tenantEntryAllowed ? [{
+        id: "tenant",
+        label: "组织管理",
+        items: ORGANIZATION_SETTINGS_WORKSPACES.map((workspace) => ({
+          id: workspace.id,
+          label: workspace.label,
+          icon: organizationWorkspaceIcons[workspace.iconKey],
+          onSelect: () => navigateSettingsRoute(organizationWorkspaceRoute(
+            workspace.id,
+            governanceRoute?.area === "organization" ? governanceRoute : null,
+          )),
+        })),
+      }] : []),
+      ...(ready && managementAccess.platformEntryAllowed ? [{
+        id: "platform",
+        label: "平台管理",
+        items: PLATFORM_SETTINGS_SECTIONS.map((item) => ({
+          ...item,
+          onSelect: () => openAdminSettings("platform", item.id),
+        })),
+      }] : []),
+    ];
+  }, [governanceRoute, managementAccess.platformEntryAllowed, managementAccess.status, managementAccess.tenantEntryAllowed, openAdminSettings, organizationWorkspaceIcons]);
   const handleReturnPersonalSettings = useCallback(() => {
     openSettings(settingsSection);
   }, [openSettings, settingsSection]);
@@ -286,24 +324,37 @@ export function MobileLayout(props: LayoutProps) {
           onRetry={managementAccess.retry}
           onReturnPersonal={handleReturnPersonalSettings}
         >
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
-          <TenantAdminShell
-            renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderMcp={() => <McpAdminCatalogPanel />}
-            renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-            renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderAutomation={() => <CronManager />}
-            settingsOpen={false}
-            settingsSection="users"
-            onSettingsSectionChange={() => undefined}
-            onSettingsClose={() => undefined}
-            governanceRoute={governanceRoute}
-            governanceContentOnly
-          />
-          </GovernanceConsole>
+          <div className="flex h-full min-h-0 flex-col bg-card" data-testid="mobile-organization-settings">
+            <div className="flex shrink-0 items-center gap-2 border-b px-2 py-2">
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(() => openSettings(settingsSection))} aria-label="返回设置菜单">
+                <ChevronLeft className="size-5" />
+              </button>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold">设置 / 组织管理</span>
+              <button type="button" className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => dirtyController.requestNavigation(() => setActiveTab("chat"))} aria-label="关闭设置">
+                <X className="size-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <TenantAdminShell
+                renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
+                renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
+                renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
+                renderMcp={() => <McpAdminCatalogPanel />}
+                renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" />}
+                renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
+                renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
+                renderAutomation={() => <CronManager />}
+                settingsOpen={false}
+                settingsSection="users"
+                onSettingsSectionChange={() => undefined}
+                onSettingsClose={() => undefined}
+                governanceRoute={governanceRoute}
+                governanceContentOnly
+                governanceContentEmbedded
+                dirtyController={dirtyController}
+              />
+            </div>
+          </div>
         </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary>
       </Suspense>
     );
@@ -456,9 +507,7 @@ export function MobileLayout(props: LayoutProps) {
               isLoading={isLoadingSessions}
               activeTab={activeTab}
               onTabChange={setActiveTab}
-              onPushTab={pushActiveTab}
               onOpenSettings={openSettings}
-              onOpenAdminSettings={openAdminSettings}
               isAdmin={isAdmin}
               className="w-full border-r-0"
               onClose={closeDrawer}
@@ -734,6 +783,7 @@ export function MobileLayout(props: LayoutProps) {
           chatFontLarge={chatFontLarge}
           onChatFontSizeChange={setChatFontLarge}
           personalAgentEnabled={personalAgentEnabled}
+          managementGroups={mobileSettingsManagementGroups}
         />
 
         <SettingsDirtyBoundary>{(dirtyController) => (<>

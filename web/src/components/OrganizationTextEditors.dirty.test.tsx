@@ -59,8 +59,7 @@ const access: ManagementSettingsAccess = {
 
 type EditorProps = { tenantId: string; tenantName?: string };
 
-function renderEditor(Editor: ComponentType<EditorProps>, activeSection: "company" | "instructions") {
-  const onGovernance = vi.fn();
+function renderEditor(Editor: ComponentType<EditorProps>, _activeSection: "company" | "instructions") {
   const onClose = vi.fn();
   const onSwitchLeaf = vi.fn();
   render(
@@ -74,9 +73,8 @@ function renderEditor(Editor: ComponentType<EditorProps>, activeSection: "compan
             access={access}
             personalAgentEnabled
             target="tenant"
-            activeSection={activeSection}
+            activeSection="settings"
             onNavigate={(_target, section) => requestNavigation(() => onSwitchLeaf(section))}
-            onOpenOrganizationGovernance={() => requestNavigation(onGovernance)}
             onClose={() => requestNavigation(onClose)}
             onResizeMouseDown={vi.fn()}
             onResizeDoubleClick={vi.fn()}
@@ -86,7 +84,7 @@ function renderEditor(Editor: ComponentType<EditorProps>, activeSection: "compan
       )}
     </SettingsDirtyBoundary>,
   );
-  return { onGovernance, onClose, onSwitchLeaf };
+  return { onClose, onSwitchLeaf };
 }
 
 async function startEditing(nextContent: string) {
@@ -114,19 +112,19 @@ describe("组织文本编辑器未保存导航保护", () => {
   it.each([
     ["公司信息", CompanyInfoSection, "company" as const, "公司信息草稿", mocks.updateCompanyInfo],
     ["自定义规则", TenantInstructionsSection, "instructions" as const, "自定义规则草稿", mocks.updateInstructions],
-  ])("%s 修改后进入组织治理可取消或放弃", async (_label, Editor, activeSection, draft, update) => {
-    const { onGovernance } = renderEditor(Editor, activeSection);
+  ])("%s 修改后切换组织分类可取消或放弃", async (_label, Editor, activeSection, draft, update) => {
+    const { onSwitchLeaf } = renderEditor(Editor, activeSection);
     const input = await startEditing(draft);
 
-    fireEvent.click(screen.getByRole("button", { name: "进入组织治理" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
     expect(await screen.findByText("有未保存的更改")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    expect(onGovernance).not.toHaveBeenCalled();
+    expect(onSwitchLeaf).not.toHaveBeenCalled();
     expect(input.value).toBe(draft);
 
-    fireEvent.click(screen.getByRole("button", { name: "进入组织治理" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃更改" }));
-    await waitFor(() => expect(onGovernance).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onSwitchLeaf).toHaveBeenCalledWith("members"));
     expect(update).not.toHaveBeenCalled();
     expect(screen.getByText(activeSection === "company" ? "公司信息基线" : "自定义规则基线")).toBeTruthy();
   });
@@ -147,7 +145,7 @@ describe("组织文本编辑器未保存导航保护", () => {
     const { onSwitchLeaf } = renderEditor(TenantInstructionsSection, "instructions");
     const input = await startEditing("不能丢失的规则草稿");
 
-    fireEvent.click(screen.getByRole("button", { name: "公司信息" }));
+    fireEvent.click(screen.getByRole("button", { name: "成员与权限" }));
     fireEvent.click(await screen.findByRole("button", { name: "保存并继续" }));
 
     expect(await screen.findByText("保存失败: 规则保存失败")).toBeTruthy();

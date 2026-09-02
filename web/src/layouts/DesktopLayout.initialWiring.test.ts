@@ -20,7 +20,7 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(analysisContentSource).toContain('data-testid="unified-analysis-content"');
     expect(analysisContentSource).toContain("governanceContentEmbedded");
     expect(source).toContain('if (!analysisMode && activeTab === "platform-admin"');
-    expect(source).toContain('if (!analysisMode && activeTab === "tenant-admin"');
+    expect(source).not.toContain('<GovernanceConsole area="organization"');
   });
 
   it("能力中心与任务中心使用同一 Header 高度和水平位置", () => {
@@ -50,11 +50,12 @@ describe("DesktopLayout 初始会话接线", () => {
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId}");
     expect(source).toContain("onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}");
+    expect(source).toContain("governanceContentOnly={governanceRoute?.area === \"organization\"}");
+    expect(source).toContain("<SettingsDirtyControllerBridge controller={dirtyController}");
     expect(source).toContain(")}</SettingsDirtyBoundary></Suspense>}");
     expect(source).toContain('<GovernanceConsole area="platform" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
-    expect(source).toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
+    expect(source).not.toContain('<GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>');
     expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="platform"');
-    expect(source).toContain('<SettingsDirtyBoundary>{(dirtyController) => (\n        <ManagementSettingsAccessGate scope="tenant"');
     expect(analysisContentSource).toContain('<OrganizationScopeBanner route={route} dirtyController={dirtyController} />');
     expect(analysisContentSource).toContain('dirtyController={dirtyController}');
   });

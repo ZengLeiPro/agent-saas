@@ -53,6 +53,7 @@ const PlatformAdminHeaderControls = lazy(() => import("@/components/PlatformAdmi
 const TenantAdminHeaderControls = lazy(() => import("@/components/TenantAdminHeaderControls").then(m => ({ default: m.TenantAdminHeaderControls })));
 import type { TenantSection, PlatformSection } from "@/components/AdminShells";
 import { useUnifiedSettingsWorkspace } from "@/hooks/useUnifiedSettingsWorkspace";
+import type { SettingsDirtyController } from "@/components/PersonalSettings/dirtyRegistry";
 import { useManagementSettingsAccess } from "@/hooks/useManagementSettingsAccess";
 import { isAnalysisRoute, useUnifiedAnalysisWorkspace } from "@/hooks/useUnifiedAnalysisWorkspace";
 import { legacyRoleFallbackTab, managementAccessTarget } from "@/lib/managementAccessView";
@@ -78,6 +79,20 @@ const SuspenseFallback = (
     <Loader2 className="size-6 animate-spin text-muted-foreground" />
   </div>
 );
+
+function SettingsDirtyControllerBridge({
+  controller,
+  onChange,
+}: {
+  controller: SettingsDirtyController;
+  onChange: (controller: SettingsDirtyController | null) => void;
+}) {
+  useEffect(() => {
+    onChange(controller);
+    return () => onChange(null);
+  }, [controller, onChange]);
+  return null;
+}
 
 export function DesktopLayout(props: LayoutProps) {
   const {
@@ -108,11 +123,12 @@ export function DesktopLayout(props: LayoutProps) {
     activeSection: activeSettingsSection,
     navigate: handleSettingsNavigate,
     close: handleCloseUnifiedSettings,
-    open: handleOpenUnifiedSettings, openOrganizationGovernance: handleOpenOrganizationGovernance,
+    open: handleOpenUnifiedSettings,
     onControllerChange: handleSettingsControllerChange,
   } = useUnifiedSettingsWorkspace({
     settingsOpen, settingsSection, adminSettings, openSettings, closeSettings, setSettingsSection,
     openAdminSettings, closeAdminSettings, setAdminSettingsSection, isPlatformAdmin, organizationSettingsTargetId,
+    governanceRoute, closeOrganizationSettings: () => setActiveTab("chat"),
   });
   const analysisMode = !settingsMode && isAnalysisRoute(governanceRoute); const accessTarget = managementAccessTarget({ settingsOpen, adminSettingsTarget: adminSettings?.target, activeTab, governanceArea: governanceRoute?.area });
   const managementAccess = useManagementSettingsAccess({ user: authUser, authLoading, authEnabled, active: accessTarget !== null || isAdmin }); const { open: handleOpenAnalysis, close: handleCloseAnalysis, navigate: handleAnalysisNavigate } = useUnifiedAnalysisWorkspace({ mode: analysisMode, governanceRoute, managementAccess, sessionId, pushActiveTab, setActiveTab });
@@ -333,33 +349,6 @@ export function DesktopLayout(props: LayoutProps) {
     if (fallback) setActiveTab(fallback);
   }, [isAdmin, isPlatformAdmin, personalAgentEnabled, activeTab, setActiveTab]);
 
-  if (!analysisMode && activeTab === "tenant-admin" && governanceRoute?.area === "organization") {
-    return (
-      <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
-        <ManagementSettingsAccessGate scope="tenant" target="tenant" access={managementAccess}
-          onRetry={managementAccess.retry} onReturnPersonal={() => handleOpenUnifiedSettings(settingsSection)}>
-          <GovernanceConsole area="organization" route={governanceRoute} onExit={() => setActiveTab("chat")} dirtyController={dirtyController}>
-          <TenantAdminShell
-            renderUsers={(tenantId, tenantName) => <UserManager tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderSkills={(tenantId, tenantName) => <SkillManagerPanel mode="tenant" tenantIdScope={tenantId} tenantName={tenantName} />}
-            renderOrgAgents={(tenantId, tenantName) => <OrgAgentManagerPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderMcp={() => <McpAdminCatalogPanel />}
-            renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
-            renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
-            renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
-            renderAutomation={() => <CronManager />}
-            settingsOpen={false}
-            settingsSection="users"
-            onSettingsSectionChange={() => undefined}
-            onSettingsClose={() => undefined}
-            governanceRoute={governanceRoute}
-            governanceContentOnly
-          />
-          </GovernanceConsole>
-        </ManagementSettingsAccessGate>)}</SettingsDirtyBoundary></Suspense>
-    );
-  }
-
   if (!analysisMode && activeTab === "platform-admin" && governanceRoute?.area === "platform") {
     return (
       <Suspense fallback={SuspenseFallback}>
@@ -412,7 +401,7 @@ export function DesktopLayout(props: LayoutProps) {
         settingsMode={settingsMode}
         settingsTarget={settingsTarget}
         activeSettingsSection={activeSettingsSection}
-        onSettingsNavigate={handleSettingsNavigate} onOpenOrganizationGovernance={handleOpenOrganizationGovernance}
+        onSettingsNavigate={handleSettingsNavigate}
         onCloseSettings={handleCloseUnifiedSettings}
         isAdmin={isAdmin}
         isPlatformAdmin={isPlatformAdmin}
@@ -839,6 +828,7 @@ export function DesktopLayout(props: LayoutProps) {
           openFilePreview={handleOpenFilePreview} platformAdminSection={platformAdminSection} platformAdminEntityId={platformAdminEntityId} setPlatformAdminRoute={setPlatformAdminRoute} />}
         {settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary>{(dirtyController) => (
           <div className="absolute inset-0 z-30 min-h-0 overflow-hidden bg-card" data-testid="unified-settings-content">
+            <SettingsDirtyControllerBridge controller={dirtyController} onChange={handleSettingsControllerChange} />
             <div className={cn("h-full min-h-0", settingsTarget !== "personal" && "hidden")}>
               <Suspense fallback={SuspenseFallback}>
                 <SettingsContent
@@ -883,8 +873,13 @@ export function DesktopLayout(props: LayoutProps) {
                     renderUsage={(tenantId) => <UsageDashboard tenantId={tenantId} scope="tenant" fullWidth />}
                     renderFiles={() => <FileBrowserLazy onPreviewFile={handleOpenFilePreview} owner={authUser?.username} fullPage reserveCloseButtonSpace />}
                     renderCompanyInfo={(tenantId, tenantName) => <CompanyInfoSectionPanel tenantId={tenantId} tenantName={tenantName} />}
+                    renderAutomation={() => <CronManager />}
                     settingsOpen={settingsTarget === "tenant"}
-                    settingsContentOnly onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
+                    settingsContentOnly={governanceRoute?.area !== "organization"}
+                    governanceRoute={governanceRoute?.area === "organization" ? governanceRoute : null}
+                    governanceContentOnly={governanceRoute?.area === "organization"}
+                    governanceContentEmbedded
+                    onSettingsTargetTenantIdChange={setOrganizationSettingsTargetId} dirtyController={dirtyController}
                     settingsSection={(settingsTarget === "tenant" ? activeSettingsSection : "users") as TenantSection}
                     onSettingsSectionChange={(section) => handleSettingsNavigate("tenant", section)}
                     onSettingsClose={handleCloseUnifiedSettings}

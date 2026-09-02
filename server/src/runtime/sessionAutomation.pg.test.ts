@@ -236,6 +236,8 @@ describePg('session automation real PostgreSQL integration',()=>{
  });
 
  it('markDispatched atomically loses when another active run occupies the slot',async()=>{
+  await wake(`dispatch-fence-${randomUUID()}`);
+  expect(await store.claimDue()).toBe(1);
   const [dispatch]=await store.claimDispatch();
   expect(dispatch).toBeTruthy();
   const blocker=randomUUID();

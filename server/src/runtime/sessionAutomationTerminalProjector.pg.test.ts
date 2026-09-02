@@ -139,6 +139,22 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     expect(readTerminalEventOutbox(await runs.get(runId))).toMatchObject({ state: 'delivered' });
   });
 
+  async function recordPreparedDispatch(
+    item: { outboxId: string; targetRunId: string },
+    automation: { automationId: string; incarnationId: string; sessionId: string },
+  ) {
+    const preparedId = randomUUID();
+    await pool.query(
+      `INSERT INTO ${store.tables.preparedDispatchAttempts}
+        (prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,
+         execution_id,run_id,outbox_id,idempotency_key,request_payload,state)
+       VALUES($1,$2,$3,$4,$5,1,$6,$7,$6,$8,'{}','completed')`,
+      [preparedId, tenantId, automation.sessionId, automation.automationId, automation.incarnationId,
+        item.outboxId, item.targetRunId, `dispatch:${item.outboxId}`],
+    );
+    return preparedId;
+  }
+
   it('keeps the fixed anchor single when an active run-now terminates', async () => {
     const fixed = await createAutomation({
       kind: 'loop', mode: 'fixed', continuationEpoch: 5,
@@ -192,10 +208,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
     });
     const item = await dispatch({ ...adaptive, triggerKey: `usage-${randomUUID()}`, continuationEpoch: 1 });
     if (input.providerAttempt !== false && input.providerUsage) {
-      const prepared = await pool.query(
-        `SELECT prepared_dispatch_attempt_id FROM ${store.tables.preparedDispatchAttempts} WHERE execution_id=$1`,
-        [item.outboxId],
-      );
+      const preparedId = await recordPreparedDispatch(item, adaptive);
       const attemptId = randomUUID();
       const reservationId = randomUUID();
       const sourceKey = `model:${randomUUID()}`;
@@ -206,7 +219,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
           (provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,
            execution_id,run_id,provider,operation,idempotency_key,request_payload,state)
          VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,'model','test',$9,$10,$11)`,
-        [attemptId,prepared.rows[0].prepared_dispatch_attempt_id,tenantId,adaptive.sessionId,adaptive.automationId,
+        [attemptId,preparedId,tenantId,adaptive.sessionId,adaptive.automationId,
           adaptive.incarnationId,item.outboxId,item.targetRunId,sourceKey,JSON.stringify({ purpose: 'work' }),
           settled ? 'completed' : 'result_unknown'],
       );
@@ -309,10 +322,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
       await pool.query(`UPDATE ${store.tables.executions} SET state='prepared' WHERE execution_id=$1`, [item.outboxId]);
     }
     if (input.attemptState) {
-      const prepared = await pool.query(
-        `SELECT prepared_dispatch_attempt_id FROM ${store.tables.preparedDispatchAttempts} WHERE execution_id=$1`,
-        [item.outboxId],
-      );
+      const preparedId = await recordPreparedDispatch(item, automation);
       const sourceKey = `model:${randomUUID()}`;
       const reservationId = randomUUID();
       await pool.query(
@@ -320,7 +330,7 @@ describePg('session automation terminal projector state machine (real PostgreSQL
           (provider_attempt_id,prepared_dispatch_attempt_id,tenant_id,session_id,automation_id,incarnation_id,generation,
            execution_id,run_id,provider,operation,idempotency_key,request_payload,state)
          VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,'model','test',$9,$10,$11)`,
-        [randomUUID(),prepared.rows[0].prepared_dispatch_attempt_id,tenantId,automation.sessionId,automation.automationId,
+        [randomUUID(),preparedId,tenantId,automation.sessionId,automation.automationId,
           automation.incarnationId,item.outboxId,item.targetRunId,sourceKey,JSON.stringify({ purpose: 'work' }),input.attemptState],
       );
       await pool.query(

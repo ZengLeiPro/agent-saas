@@ -14,16 +14,9 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { ChevronRight } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../../../src/contexts/AuthContext";
+import { useLocalAppLock } from "../../../src/contexts/LocalAppLockContext";
 import { useTtsPlayer } from "../../../src/hooks/useTtsPlayer";
-import {
-  getServerUrl,
-  setServerUrl,
-  getLanUrl,
-  setLanUrl,
-  isLanActive,
-  startLanProbe,
-  mobileConfig,
-} from "../../../src/platform/mobileConfig";
+import { mobileConfig } from "../../../src/platform/mobileConfig";
 import Constants from "expo-constants";
 import {
   useColors,
@@ -42,8 +35,8 @@ import {
 import type { AgentProfile } from "@agent/shared";
 import { fetchMyGovernanceSummary, type MyGovernanceSummary } from "@agent/shared/lib/governanceApi";
 import { showTextPrompt } from "../../../src/lib/prompt";
-import { isV1RouteAllowed } from "../../../src/app/v1Capabilities";
-import { getV1BuildProfile } from "../../../src/app/v1Runtime";
+import { isV1RouteAllowed } from "../../../src/v1/v1Capabilities";
+import { getV1BuildProfile } from "../../../src/v1/v1Runtime";
 
 const APP_VERSION = Constants.expoConfig?.version ?? "0.0.0";
 
@@ -62,13 +55,19 @@ export default function SettingsScreen() {
   );
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const {
+    user,
+    logout,
+    serviceConfig,
+    changeServiceOrigin,
+  } = useAuth();
   const tts = useTtsPlayer();
+  const localLock = useLocalAppLock();
+  const [localLockBusy, setLocalLockBusy] = useState(false);
   const router = useRouter();
   const tenantFeatures =
     user?.tenantFeatures ?? DEFAULT_TENANT_SETTINGS.features;
   const { level: fontSizeLevel, setLevel: setFontSizeLevel } = useFontSize();
-  const [lanActive, setLanActiveState] = useState(isLanActive());
 
   // V1 范围裁剪（M00-01）：生产构建隐藏延期菜单项。
   const v1Profile = getV1BuildProfile();
@@ -76,15 +75,6 @@ export default function SettingsScreen() {
   const showCron = isV1RouteAllowed("cron", v1Profile);
   const showGovernance = isV1RouteAllowed("settings/my-permissions", v1Profile);
   const showConnections = isV1RouteAllowed("settings/connections", v1Profile);
-
-  // Refresh LAN status indicator while settings page is visible
-  useFocusEffect(
-    useCallback(() => {
-      setLanActiveState(isLanActive());
-      const timer = setInterval(() => setLanActiveState(isLanActive()), 5000);
-      return () => clearInterval(timer);
-    }, []),
-  );
 
   const [agentProfile, setAgentProfile] = useState<AgentProfile | null>(null);
   const [governanceSummary, setGovernanceSummary] = useState<MyGovernanceSummary | null>(null);
@@ -248,41 +238,21 @@ export default function SettingsScreen() {
   );
 
   const handleEditServer = () => {
+    if (!serviceConfig.editable) return;
     showTextPrompt({
-      title: "服务器地址",
-      message: "输入服务器 URL",
-      defaultValue: getServerUrl(),
+      title: "切换可信服务",
+      message: `仅可使用此构建允许的地址：\n${serviceConfig.apiAllowlist.join("\n")}`,
+      defaultValue: serviceConfig.apiOrigin ?? "",
       placeholder: "https://...",
-      confirmText: "保存",
+      confirmText: "切换并退出登录",
       keyboardType: "url",
       onConfirm: async (url) => {
-        if (url) {
-          await setServerUrl(url.replace(/\/$/, ""));
-          Alert.alert("已保存", "重启应用后生效");
+        const result = await changeServiceOrigin(url.trim());
+        if (!result.ok) {
+          Alert.alert("无法切换服务", result.error ?? "服务地址不可用");
+        } else if (result.changed) {
+          Alert.alert("服务已切换", "原登录状态已清除，请重新登录");
         }
-      },
-    });
-  };
-
-  const handleEditLanUrl = () => {
-    showTextPrompt({
-      title: "内网地址",
-      message: "局域网直连地址，留空禁用\n例：http://agent.local:3000",
-      defaultValue: getLanUrl(),
-      placeholder: "http://agent.local:3000",
-      confirmText: "保存",
-      keyboardType: "url",
-      onConfirm: async (url) => {
-        const trimmed = url.trim();
-        await setLanUrl(trimmed);
-        if (trimmed) {
-          startLanProbe();
-          Alert.alert(
-            "已保存",
-            isLanActive() ? "内网连接正常" : "暂时无法连接，将自动重试",
-          );
-        }
-        setLanActiveState(isLanActive());
       },
     });
   };
@@ -301,8 +271,18 @@ export default function SettingsScreen() {
     ]);
   };
 
+  const handleLocalLockChange = async (enabled: boolean) => {
+    setLocalLockBusy(true);
+    try {
+      const result = enabled ? await localLock.enable() : await localLock.disable();
+      if (!result.ok) Alert.alert(enabled ? "无法开启应用锁" : "无法关闭应用锁", result.error);
+    } finally {
+      setLocalLockBusy(false);
+    }
+  };
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="settings-screen" accessibilityLabel="设置">
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -332,7 +312,7 @@ export default function SettingsScreen() {
                   <Text style={styles.avatarText}>{initial}</Text>
                 </View>
               )}
-              <Text style={styles.avatarUsername}>
+              <Text style={styles.avatarUsername} testID="account-username" accessibilityLabel="当前账户">
                 {agentProfile?.realName || user?.username || "-"}
               </Text>
               <ChevronRight
@@ -399,6 +379,27 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* M30-02 Security Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>安全</Text>
+          <View style={styles.card}>
+            <View style={styles.switchRow}>
+              <View style={{ flex: 1, paddingRight: spacing.md }}>
+                <Text style={styles.rowLabel}>生物识别应用锁</Text>
+                <Text style={styles.rowValue}>离开后台 30 秒后锁定；不替代服务端登录</Text>
+              </View>
+              <Switch
+                value={localLock.enabled}
+                disabled={localLockBusy || !localLock.availability?.supported || !localLock.availability?.enrolled}
+                onValueChange={(value) => { void handleLocalLockChange(value); }}
+                trackColor={{ false: colors.muted, true: colors.success }}
+                thumbColor={colors.card}
+                ios_backgroundColor={colors.muted}
+              />
+            </View>
+          </View>
+        </View>
+
         {/* General Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>通用</Text>
@@ -442,53 +443,32 @@ export default function SettingsScreen() {
                 />
               </View>
             )}
-            <TouchableOpacity
-              style={[styles.row, styles.rowBorder]}
-              onPress={handleEditServer}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.rowLabel}>外网地址</Text>
-              <View style={styles.rowRight}>
-                <Text style={styles.rowValue} numberOfLines={1}>
-                  {getServerUrl()}
-                </Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.row}
-              onPress={handleEditLanUrl}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.rowLabel}>内网地址</Text>
-              <View style={styles.rowRight}>
-                {!!getLanUrl() && (
-                  <View
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: lanActive
-                        ? colors.statusIcon.success
-                        : colors.muted,
-                      marginRight: 6,
-                    }}
+            {serviceConfig.editable ? (
+              <TouchableOpacity
+                style={styles.row}
+                onPress={handleEditServer}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.rowLabel}>服务地址</Text>
+                <View style={styles.rowRight}>
+                  <Text style={styles.rowValue} numberOfLines={1}>
+                    {serviceConfig.apiOrigin ?? "未配置"}
+                  </Text>
+                  <ChevronRight
+                    size={16}
+                    color={colors.mutedForeground}
+                    strokeWidth={2}
                   />
-                )}
+                </View>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>服务地址</Text>
                 <Text style={styles.rowValue} numberOfLines={1}>
-                  {getLanUrl() || "未设置"}
+                  {serviceConfig.apiOrigin ?? "构建配置缺失"}
                 </Text>
-                <ChevronRight
-                  size={16}
-                  color={colors.mutedForeground}
-                  strokeWidth={2}
-                />
               </View>
-            </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -526,6 +506,8 @@ export default function SettingsScreen() {
         {/* Logout */}
         <View style={styles.section}>
           <TouchableOpacity
+            testID="logout-button"
+            accessibilityLabel="退出登录"
             style={styles.logoutBtn}
             onPress={handleLogout}
             activeOpacity={0.7}

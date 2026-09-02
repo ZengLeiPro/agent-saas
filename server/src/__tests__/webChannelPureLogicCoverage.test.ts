@@ -256,18 +256,18 @@ describe('UserEventLog', () => {
     log.stop();
   });
 
-  it('epoch: 按用户隔离并仅对正 seq 校验，实例 epoch 只作匿名 probe', () => {
+  it('epoch: 进程内共享并仅对正 seq 校验', () => {
     const userEpoch = log.getEpoch('u1');
     expect(userEpoch).toMatch(/^[0-9a-f-]{36}$/i);
     expect(log.getEpoch('u1')).toBe(userEpoch);
-    expect(log.getEpoch('u2')).not.toBe(userEpoch);
-    expect(log.epoch).not.toBe(userEpoch);
+    expect(log.getEpoch('u2')).toBe(userEpoch);
+    expect(log.epoch).toBe(userEpoch);
     expect(log.hasEpochMismatch('u1', undefined, 0)).toBe(false);
     expect(log.hasEpochMismatch('u1', undefined, 1)).toBe(true);
     expect(log.hasEpochMismatch('u1', userEpoch, 1)).toBe(false);
   });
 
-  it('TTL 删除后同一用户 seq 重置时分配新 epoch', () => {
+  it('TTL 删除后同一用户 seq 重置但进程 epoch 保持稳定', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-16T00:00:00Z'));
     log.push('u1', { type: 'title_updated' });
@@ -278,7 +278,7 @@ describe('UserEventLog', () => {
 
     expect(log.getCurrentSeq('u1')).toBe(0);
     expect(log.push('u1', { type: 'session_updated' })).toBe(1);
-    expect(log.getEpoch('u1')).not.toBe(firstEpoch);
+    expect(log.getEpoch('u1')).toBe(firstEpoch);
     vi.useRealTimers();
   });
 
@@ -332,9 +332,8 @@ describe('UserEventLog', () => {
     // 请求一个已被淘汰的老 seq → gap
     const res = log.getEventsAfter('u1', 1);
     expect(res.gapDetected).toBe(true);
-    // 只返回仍在缓冲内的事件
-    expect(res.events.length).toBeGreaterThan(0);
-    expect(res.events.every(e => e.seq > 1)).toBe(true);
+    // 窗口不连续时 fail closed，不把残余事件伪装成连续回放。
+    expect(res.events).toEqual([]);
   });
 });
 

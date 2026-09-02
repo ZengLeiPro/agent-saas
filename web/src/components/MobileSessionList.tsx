@@ -338,7 +338,7 @@ export function MobileSessionList({
                   <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
                 </span>
               )}
-              <span className="truncate">{s.title || "新会话"}</span>
+              <span className="truncate" title={s.title || "新会话"}>{s.title || "新会话"}</span>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">
               {waitingLabel ? (
@@ -352,7 +352,7 @@ export function MobileSessionList({
           </div>
           <div className="mt-1 text-xs text-muted-foreground/60">
             <span>{sourceDisplayText(s.source)}</span>
-            {s.orgAgentName && <span> · {s.orgAgentName}</span>}
+            <span> · {s.agentTarget ? (s.agentTarget.kind === 'personal' ? '个人 Agent' : s.orgAgentName || '企业专家') : '绑定不可验证'}</span>
             {isAdmin && s.owner && (
               <span> - {s.owner.realName || s.owner.username}</span>
             )}

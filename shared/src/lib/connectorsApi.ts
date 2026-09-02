@@ -11,6 +11,7 @@ import type {
   NotionConnectionResponse,
   NotionDisconnectResponse,
 } from '../types/connectors';
+import type { NativeOAuthStartBinding } from './oauthCallbackBridge';
 
 async function jsonOrError<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) {
@@ -201,12 +202,12 @@ export async function fetchGoogleWorkspaceConnection(): Promise<GoogleWorkspaceC
   );
 }
 
-export async function startGoogleWorkspaceOAuth(nativeDeviceId?: string): Promise<GoogleWorkspaceOAuthStartResponse> {
+export async function startGoogleWorkspaceOAuth(nativeBinding?: NativeOAuthStartBinding): Promise<GoogleWorkspaceOAuthStartResponse> {
   return jsonOrError(await authFetch('/api/connectors/google-workspace/oauth/start', {
     method: 'POST',
-    ...(nativeDeviceId ? {
+    ...(nativeBinding ? {
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nativeDeviceId }),
+      body: JSON.stringify(nativeBinding),
     } : {}),
   }), '启动 Google Workspace 授权失败');
 }

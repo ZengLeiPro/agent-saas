@@ -6,8 +6,14 @@
 
 import { getChatStore } from '../index';
 import { INITIAL_BLOCK_STATE } from '../types';
-import { wsClient, type WsChatMessage } from '../../lib/wsClient';
+import { wsClient, type CanonicalWsChatMessage } from '../../lib/wsClient';
+import {
+  canonicalChatAttachmentToDisplay,
+  normalizeChatSubmission,
+  toCanonicalChatSubmissionWireMessage,
+} from '../../lib/chatSubmission';
 import { getPlatform } from '../../platform/context';
+import type { AgentTarget } from '../../lib/agentTarget';
 
 export interface SendChatOptions {
   inputText: string;
@@ -21,9 +27,10 @@ export interface SendChatOptions {
     isImage?: boolean;
   }>;
   showBubble?: boolean;
-  voiceFile?: { savedPath: string; relativePath: string; duration: number };
   selectedModel?: string | null;
   autoApproveRunShell?: boolean;
+  /** Required for a new session; existing sessions use their persisted list projection. */
+  agentTarget?: AgentTarget;
 }
 
 /**
@@ -35,13 +42,30 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     inputText,
     attachments = [],
     showBubble = true,
-    voiceFile,
     selectedModel,
     autoApproveRunShell,
   } = opts;
   const store = getChatStore();
   const state = store.getState();
   const activeSessionId = state.activeSessionId;
+  const cryptoApi = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  const clientMsgId = cryptoApi?.randomUUID?.()
+    ?? `c-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const agentTarget = activeSessionId
+    ? state.sessions.find(session => session.sessionId === activeSessionId)?.agentTarget
+    : opts.agentTarget;
+  if (!agentTarget) return false;
+  const normalized = normalizeChatSubmission({
+    text: inputText,
+    clientMsgId,
+    target: { ...(activeSessionId ? { sessionId: activeSessionId } : {}), agentTarget },
+    deliveryMode: 'queue',
+    model: selectedModel ?? undefined,
+    attachments,
+  });
+  // Fail closed before mutating chat state; callers retain their draft/upload state.
+  if (!normalized.ok) return false;
+  const submission = normalized.value;
 
   // 初始化 WS refs
   store.setState({
@@ -59,8 +83,11 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
     const userMsgIndex = state.addMessage({
       type: 'user',
       content: inputText,
-      ...(attachments.length > 0 ? { attachments: attachments.map(f => ({ name: f.originalName, isImage: (f as { isImage?: boolean }).isImage })) } : {}),
+      ...(submission.attachments.length > 0
+        ? { attachments: submission.attachments.map(canonicalChatAttachmentToDisplay) }
+        : {}),
       status: 'pending',
+      clientMsgId: submission.clientMsgId,
       timestamp: Date.now(),
     });
     store.setState({ userMsgIndex });
@@ -89,26 +116,10 @@ export async function sendChatViaWs(opts: SendChatOptions): Promise<boolean> {
   store.setState({ loading: true });
   store.getState().dispatchConnection('connect');
 
-  // 构造 WS 消息
-  const wsMsg: WsChatMessage = {
-    action: 'chat',
-    clientCapabilities: ['replaceable_drafts'],
-    message: inputText || 'Please check the attachments I uploaded',
-    sessionId: activeSessionId || undefined,
-    model: selectedModel || undefined,
+  // 构造唯一的 canonical V1 WS 消息；附件路径不会进入抓包 DTO。
+  const wsMsg: CanonicalWsChatMessage = {
+    ...toCanonicalChatSubmissionWireMessage(submission, ['replaceable_drafts']),
     ...(autoApproveRunShell ? { approvalPolicy: { autoApproveTools: true } } : {}),
-    ...(attachments.length > 0 ? {
-      attachments: attachments.map(f => ({
-        ...(f.attachmentId ? { attachmentId: f.attachmentId } : {}),
-        originalName: f.originalName,
-        ...(f.savedPath ? { savedPath: f.savedPath } : {}),
-        relativePath: f.relativePath,
-        size: f.size,
-        mimeType: f.mimeType,
-        isImage: f.isImage ?? false,
-      })),
-    } : {}),
-    ...(voiceFile ? { voiceFile } : {}),
   };
 
   // 发送

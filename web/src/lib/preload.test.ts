@@ -28,6 +28,7 @@ function stubFetchByPath(handler: (path: string) => { status: number; body?: unk
     return Promise.resolve({
       ok: status >= 200 && status < 300,
       status,
+      headers: new Headers(),
       json: () => Promise.resolve(body ?? {}),
     } as Response);
   });

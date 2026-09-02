@@ -134,6 +134,8 @@ export async function loadSessionDetail(
           const pendingList = (await pendingRes.json()) as Array<{
             interactionId: string;
             type: string;
+            version: number;
+            order: number;
             questions?: WsAskUserQuestion[];
             toolId?: string;
             toolName?: string;
@@ -159,10 +161,12 @@ export async function loadSessionDetail(
                 id: `pending-${p.interactionId}`,
                 type: "ask_user",
                 interactionId: p.interactionId,
+                interactionVersion: p.version,
+                interactionOrder: p.order,
                 questions: p.questions,
                 status: "pending",
               });
-            } else if (p.type === "permission_request" && p.toolName) {
+            } else if ((p.type === "permission_request" || p.type === "approval") && p.toolName) {
               const label = resolvePlanModeDisplay(
                 p.toolName,
                 p.toolInput ? JSON.stringify(p.toolInput, null, 2) : "",
@@ -173,6 +177,8 @@ export async function loadSessionDetail(
                 id: `pending-${p.interactionId}`,
                 type: "permission_request",
                 interactionId: p.interactionId,
+                interactionVersion: p.version,
+                interactionOrder: p.order,
                 toolName: label.name,
                 toolInput: label.description,
                 status: "pending",

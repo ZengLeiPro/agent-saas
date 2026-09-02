@@ -197,6 +197,8 @@ describe('buildSessionDetailPayload', () => {
     expect(payload.blocks).toHaveLength(100);
     expect(payload.blocks[0]?.id).toBe('line-141');
     expect(payload.oldestCursor).toBe('line-141');
+    expect(payload.nextCursor).toBe('line-141');
+    expect(payload.hasMore).toBe(true);
     expect(payload.cursor).toBe('line-240');
     expect(payload.historyComplete).toBe(false);
   });
@@ -258,5 +260,20 @@ describe('buildSessionDetailPayload', () => {
     expect(payload).not.toHaveProperty('after');
     expect(payload.blocks).toHaveLength(100);
     expect(payload.blocks[0]?.id).toBe('line-141');
+  });
+
+  it('returns canonical nextCursor/hasMore/revision and semantic order without timestamp ordering', () => {
+    const payload = buildSessionDetailPayload(snapshot(120), { limit: 50, historyRevision: 'revision-1' });
+    expect(payload).toMatchObject({ nextCursor: 'line-71', hasMore: true, historyRevision: 'revision-1' });
+    expect(payload.blocks[0]).toMatchObject({
+      semanticOrder: { sequence: 71, eventIndex: 0, stableId: 'line-71' },
+    });
+  });
+
+  it('keeps N-1 numeric offset compatibility independent from canonical cursors', () => {
+    const payload = buildSessionDetailPayload(snapshot(120), { limit: 50, offset: 50 });
+    expect(payload.blocks[0]?.id).toBe('line-21');
+    expect(payload.blocks.at(-1)?.id).toBe('line-70');
+    expect(payload.hasMore).toBe(true);
   });
 });

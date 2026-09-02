@@ -1,19 +1,15 @@
 import type { UploadedFileInfo } from '../../types/index.js';
+import type { CanonicalChatSubmission } from '@agent/shared';
 
-export interface VoiceFileInfo {
-  /** 上传后的绝对路径 */
-  savedPath: string;
-  /** 相对于 userCwd 的路径 */
-  relativePath: string;
-  /** 录音时长（毫秒） */
-  duration: number;
+/** Canonical HTTP-equivalent boundary (the active transport is WS). */
+export interface ChatRequest {
+  submission: CanonicalChatSubmission;
 }
 
-export interface ChatRequest {
+/** @deprecated N-1 HTTP shape retained only for explicit compatibility adapters. */
+export interface LegacyChatRequest {
   message: string;
   sessionId?: string;
   attachments?: UploadedFileInfo[];
   model?: string;
-  /** 语音消息附带的音频文件信息 */
-  voiceFile?: VoiceFileInfo;
 }

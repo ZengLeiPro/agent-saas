@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "1.0.0",
+  "evidenceKind": "deterministic-mock",
+  "receiptId": "a0e2a80ebc5bd250ee550038f0e58732648f83dd808f56c1a2218ef3be397689",
+  "contract": {
+    "platform": "android",
+    "device": "mock-android-low-end-small",
+    "osVersion": "mock-current",
+    "osRole": "current",
+    "deviceClass": "low-end-small",
+    "buildSha": "547f5f87a8cea7696135f611a42e2dcdcaebd9f5f",
+    "sourceHead": "547f5f87a8cea7696135f611a42e2dcdcaebd9f5f",
+    "appId": "mock.android",
+    "version": "1.0.0-mock",
+    "signingFingerprint": "abababababababababababababababababababababababababababababababab",
+    "testRunId": "mock-run-android-low-end-small",
+    "slot": "android-low-end-small"
+  },
+  "device": {
+    "physical": false,
+    "virtual": true,
+    "browser": false,
+    "providerName": "deterministic-mock",
+    "providerRunId": "mock-provider-android-low-end-small",
+    "deviceIdentifierHash": "88712749f2d5971cc143d42da08da632ce596e78bbb2a806f10662901d9fdef2",
+    "model": "non-device-fixture"
+  },
+  "run": {
+    "completedAt": "2026-09-01T00:00:00.000Z",
+    "status": "passed",
+    "fixtureVersion": "mock-v1"
+  },
+  "flowHash": "0b763d6ea992dd2c55a53b942c1d8af69bd4d8a3913b9099394a17f14f06f10b",
+  "flows": [
+    {
+      "id": "fresh-install-login",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "identity-boundary",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "agent-switch",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "text-chat-queue",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "attachments",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "share-intent",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "interaction-zone",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "lifecycle-recovery",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "artifacts",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "permission-deny",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    },
+    {
+      "id": "upgrade-pending",
+      "status": "passed",
+      "durationMs": 0,
+      "error": null
+    }
+  ],
+  "artifacts": {
+    "junit": {
+      "path": "junit.xml",
+      "sha256": "e2fb4544a51b09e500aa62fcbc7a264bc4f1930c978cad2e6c7fb4f225ca729e"
+    },
+    "screenshots": {
+      "path": "screenshots.json",
+      "count": 0
+    },
+    "limitedLog": {
+      "path": "maestro.sanitized.txt",
+      "bytes": 52,
+      "truncated": false
+    }
+  },
+  "integrity": {
+    "algorithm": "HMAC-SHA256",
+    "payloadSha256": "85e4df51489f5ea7102c3d277c1ab239831e392ff04d25e96d67f53dfd5ccfb8",
+    "hmacSha256": "a6337c4f08daa9170ca0cdd438f2d3e1dfee96ef2b94ebe19c5f6c6ed0ca5020"
+  }
+}

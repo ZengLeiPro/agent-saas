@@ -22,6 +22,7 @@ const METADATA_EVENT_TYPES = new Set([
   'stream_started',
   'interaction_resolved',
   'message_queued',
+  'queue_item_updated',
   'steering_queued',
   'steering_cancelled',
 ]);
@@ -33,7 +34,6 @@ export interface UserEvent {
 }
 
 interface UserLog {
-  epoch: string;
   events: UserEvent[];
   nextSeq: number;
   lastAccessAt: number;
@@ -44,14 +44,18 @@ const LOG_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 export class UserEventLog {
-  /** 当前日志实例的随机代际，仅供没有 userId 的匿名 probe 使用。 */
-  readonly epoch = randomUUID();
+  /** 当前服务进程的权威代际；单实例生命周期内稳定，进程重启后变化。 */
+  readonly epoch: string;
   private logs = new Map<string, UserLog>();
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-  /** 获取用户日志代际；首次访问及 TTL 删除后的重建都会分配新代际。 */
-  getEpoch(userId: string): string {
-    return this.getOrCreateLog(userId).epoch;
+  constructor(epoch: string = randomUUID()) {
+    this.epoch = epoch;
+  }
+
+  /** 获取服务进程代际；userId 保留在签名中以兼容现有调用方。 */
+  getEpoch(_userId: string): string {
+    return this.epoch;
   }
 
   /** lastSeq=0 是首次同步；其余请求必须证明来自当前用户日志代际。 */
@@ -79,7 +83,7 @@ export class UserEventLog {
   private getOrCreateLog(userId: string): UserLog {
     let log = this.logs.get(userId);
     if (!log) {
-      log = { epoch: randomUUID(), events: [], nextSeq: 1, lastAccessAt: Date.now() };
+      log = { events: [], nextSeq: 1, lastAccessAt: Date.now() };
       this.logs.set(userId, log);
     } else {
       log.lastAccessAt = Date.now();
@@ -125,12 +129,21 @@ export class UserEventLog {
       return { events: [], gapDetected: false };
     }
 
-    // 检测 gap：客户端的 lastSeq 比日志中最老的还老
-    const gapDetected = lastSeq > 0 && lastSeq < oldestSeq - 1;
+    // lastSeq=0 也必须覆盖 seq=1；保留窗口不完整时明确 overflow。
+    const gapDetected = lastSeq < oldestSeq - 1;
+    if (gapDetected) return { events: [], gapDetected: true };
 
-    // 返回 lastSeq 之后的所有事件
     const events = log.events.filter(e => e.seq > lastSeq);
-    return { events, gapDetected };
+    // 防御性连续性校验：绝不把稀疏窗口伪装成连续回放。
+    let expectedSeq = lastSeq + 1;
+    for (const entry of events) {
+      if (entry.seq !== expectedSeq) return { events: [], gapDetected: true };
+      expectedSeq += 1;
+    }
+    if (events.length > 0 && events.at(-1)!.seq !== currentSeq) {
+      return { events: [], gapDetected: true };
+    }
+    return { events, gapDetected: false };
   }
 
   /** 获取用户当前的最大 seq */

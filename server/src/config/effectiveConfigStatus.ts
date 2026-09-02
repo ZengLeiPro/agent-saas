@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { AppConfig } from '../app/config.js';
 import type { RuntimeEnvironment } from '../release/runtimeIdentity.js';
+import { isTtsCapabilityEnabled } from '../integrations/tts/capability.js';
 
 export const EFFECTIVE_CONFIG_SCHEMA_VERSION = 1;
 
@@ -133,7 +134,7 @@ export function capabilitySnapshot(config: AppConfig): Record<string, boolean> {
     webTools: config.webTools?.enabled === true,
     imageGen: config.imageGenTools?.enabled === true,
     stt: config.stt?.enabled === true,
-    tts: Boolean(config.tts),
+    tts: isTtsCapabilityEnabled(config.tts),
     memory: config.memory?.enabled === true,
     memoryPolling: config.memory?.polling?.enabled === true,
     memoryConsolidation: config.memory?.consolidation?.enabled === true,

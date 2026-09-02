@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: 05 native picker preserves server attachmentId
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- runFlow: ../helpers/login-a-password.yaml
+- runFlow: ../helpers/open-fixture-chat.yaml
+- tapOn:
+    id: "chat-attachment-button"
+- tapOn:
+    id: "dropdown-action-file"
+- tapOn: ${E2E_PICKER_FILE_NAME}
+- extendedWaitUntil:
+    visible: ${E2E_PICKER_FILE_NAME}
+    timeout: 15000
+- tapOn:
+    id: "chat-composer-input"
+- inputText: "M60 picker attachment"
+- tapOn:
+    id: "chat-send-button"
+- extendedWaitUntil:
+    visible: ${E2E_ATTACHMENT_ID}
+    timeout: 15000
+- takeScreenshot: ${E2E_SCREENSHOT_DIR}/05-attachments

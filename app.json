@@ -1,8 +1,0 @@
-{
-  "ios": {
-    "bundleIdentifier": "net.kaiyan.agent"
-  },
-  "android": {
-    "package": "net.kaiyan.agent"
-  }
-}

@@ -33,6 +33,8 @@ import {
   Lightbulb,
   Mic,
   Paperclip,
+  Play,
+  Pause,
   Presentation,
   Square,
   SquareCheck,
@@ -46,17 +48,43 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import { DropdownMenu, type DropdownSection } from '../overlays/DropdownMenu';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import type { AskUserAnswers, MessageItem, RenderItem, ActivityGroup } from '@agent/shared';
-import { truncateContent, formatJson, formatFileSize, formatTokenCount, authFetch, parseToolResult, getPreviewFileType, getToolDisplayLabel, getToolDisplayInfo, getFileTypeVisual } from '@agent/shared';
+import type {
+  ActivityGroup,
+  AskUserAnswers,
+  BusinessStepEventItem,
+  MessageItem,
+  PresentationBlock,
+  RawPresentationGate,
+  RenderItem,
+  SharedPresentation,
+} from '@agent/shared';
+import {
+  authFetch,
+  formatFileSize,
+  formatJson,
+  formatTokenCount,
+  getFileTypeVisual,
+  getPreviewFileType,
+  getToolDisplayInfo,
+  getToolDisplayLabel,
+  parseToolResult,
+  selectBusinessStepPresentation,
+  selectErrorPresentation,
+  selectRenderModel,
+  selectToolPresentation,
+  truncateContent,
+} from '@agent/shared';
 import type { FileTypeCategory } from '@agent/shared';
 import { fileCacheService } from '../../services/fileCacheService';
 import Markdown from 'react-native-markdown-display';
+import { useVoicePlayer } from '../../hooks/useVoicePlayer';
 import { useColors, spacing, typography, radius, useChatTypography } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { MessageErrorBoundary } from '../ErrorBoundary';
 import { ImageLightbox } from './ImageLightbox';
 import { TextSelectModal } from './TextSelectModal';
 import { createMarkdownStyles } from './markdownStyles';
+import { fetchMobileArtifactGrant, mobileArtifactWarning, selectMobileArtifactViewer } from '../../lib/artifactViewAdapter';
 import { createMarkdownRules } from './markdownRules';
 import { hapticLight } from '../../lib/haptics';
 import { AgentActivityShell, type AgentActivityState } from './AgentActivityShell';
@@ -188,6 +216,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
     },
     permButton: {
       flex: 1,
+      minHeight: 44,
+      justifyContent: 'center',
       paddingVertical: spacing.sm,
       borderRadius: radius.md,
       alignItems: 'center',
@@ -237,6 +267,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
       marginBottom: spacing.sm,
     },
     optionButton: {
+      minHeight: 44,
+      justifyContent: 'center',
       borderWidth: 1,
       borderColor: colors.border,
       borderRadius: radius.md,
@@ -257,6 +289,8 @@ function useMessageStyles(colors: ThemeColors, typo: typeof typography) {
       marginTop: 2,
     },
     submitButton: {
+      minHeight: 44,
+      justifyContent: 'center',
       backgroundColor: colors.primary,
       borderRadius: radius.md,
       paddingVertical: spacing.sm,
@@ -367,6 +401,7 @@ interface MessageItemViewProps {
   isLoading?: boolean;
   onPreviewMd?: (filePath: string) => void;
   onTtsPlay?: (key: string, text: string) => void;
+  presentationGate?: RawPresentationGate;
 }
 
 export const MessageItemView = React.memo(function MessageItemView({
@@ -381,6 +416,7 @@ export const MessageItemView = React.memo(function MessageItemView({
   isLoading,
   onPreviewMd,
   onTtsPlay,
+  presentationGate,
 }: MessageItemViewProps) {
   // Skip fade animation for initial batch to avoid blocking JS thread
   const fadeAnim = useRef(new Animated.Value(skipAnimation ? 1 : 0)).current;
@@ -394,20 +430,22 @@ export const MessageItemView = React.memo(function MessageItemView({
   let content: React.ReactNode;
 
   if (item.type === 'activity_group') {
-    content = <ActivityGroupView group={item} isLast={isLast} />;
+    content = <ActivityGroupView group={item} isLast={isLast} gate={presentationGate} onRetry={onRetryMessage} />;
   } else {
     switch (item.type) {
       case 'user':
         content = <UserMessage message={item} onRetry={onRetryMessage} onFork={onForkMessage} isFirstUser={isFirstUser} isLoading={isLoading} />;
         break;
       case 'text':
-        content = <TextMessage message={item} onPreviewMd={onPreviewMd} onTtsPlay={onTtsPlay} />;
+        content = item.moderation && item.moderation.outcome !== 'allowed'
+          ? <ModerationMessage message={item} />
+          : <TextMessage message={item} onPreviewMd={onPreviewMd} onTtsPlay={onTtsPlay} />;
         break;
       case 'thinking':
         content = <ThinkingBlock message={item} />;
         break;
       case 'tool_use':
-        content = <ToolUseBlock message={item} />;
+        content = <ToolUseBlock message={item} gate={presentationGate} onRecovery={onRetryMessage ? () => onRetryMessage(item) : undefined} />;
         break;
       case 'tool_result':
         content = <ToolResultBlock message={item} />;
@@ -430,6 +468,14 @@ export const MessageItemView = React.memo(function MessageItemView({
       case 'user-voice':
         content = <UserVoiceBlock message={item} />;
         break;
+      case 'business_step':
+        content = <BusinessStepCard event={item} gate={presentationGate} />;
+        break;
+      case 'runtime_status':
+      case 'system_event':
+      case 'system-error':
+        content = <SystemTimelineMessage message={item} gate={presentationGate} onRetry={onRetryMessage} />;
+        break;
       default:
         content = null;
     }
@@ -443,6 +489,67 @@ export const MessageItemView = React.memo(function MessageItemView({
     </MessageErrorBoundary>
   );
 });
+
+function SystemTimelineMessage({ message, gate, onRetry }: {
+  message: Extract<MessageItem, { type: 'runtime_status' | 'system_event' | 'system-error' }>;
+  gate?: RawPresentationGate;
+  onRetry?: (message: MessageItem) => void;
+}) {
+  const colors = useColors();
+  if (message.type === 'system-error') {
+    const item = selectRenderModel({ messages: [message] }).items[0];
+    const presentation = selectErrorPresentation(item, gate);
+    const recovery = presentation.recoveryAction;
+    return (
+      <View
+        accessibilityRole={presentation.tone === 'danger' ? 'alert' : 'summary'}
+        accessibilityLabel={[presentation.title, presentation.statusLabel, presentation.summary, recovery?.label].filter(Boolean).join('，')}
+        accessibilityLiveRegion={presentation.tone === 'danger' ? 'assertive' : 'polite'}
+        style={{ paddingVertical: spacing.sm, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: presentation.tone === 'danger' ? colors.destructive : colors.border }}
+      >
+        <Text style={{ ...typography.bodySmall, fontWeight: '600', color: presentation.tone === 'danger' ? colors.destructive : colors.foreground }}>{presentation.title}</Text>
+        <Text style={{ ...typography.bodySmall, color: colors.mutedForeground }}>{presentation.summary ?? presentation.statusLabel}</Text>
+        {presentation.showRaw && presentation.summary !== message.content ? (
+          <Text style={{ ...typography.caption, color: colors.mutedForeground }}>{message.content}</Text>
+        ) : null}
+        {recovery?.kind === 'retry' && onRetry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${presentation.title}，${recovery.label}`}
+            onPress={() => onRetry(message)}
+            style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: spacing.sm }}
+          >
+            <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{recovery.label}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }
+  const text = message.type === 'runtime_status'
+    ? (message.content ?? message.status)
+    : `${message.title}：${message.content}`;
+  return (
+    <View
+      accessibilityRole="summary"
+      accessibilityLabel={`运行状态：${text}`}
+      accessibilityLiveRegion="polite"
+      style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm, borderLeftWidth: 2, borderLeftColor: colors.border }}
+    >
+      <Text style={{ ...typography.bodySmall, color: colors.mutedForeground }}>{text}</Text>
+    </View>
+  );
+}
+
+function ModerationMessage({ message }: { message: MessageItem & { type: 'text' } }) {
+  const colors = useColors();
+  const outcome = message.moderation?.outcome ?? 'flagged';
+  const text = outcome === 'blocked' ? '内容已被安全策略拦截' : '内容已标记，等待审核';
+  return (
+    <View accessibilityRole={outcome === 'blocked' ? 'alert' : 'summary'} accessibilityLabel={text} accessibilityLiveRegion={outcome === 'blocked' ? 'assertive' : 'polite'} style={{ paddingVertical: spacing.xs, paddingHorizontal: spacing.sm }}>
+      <Text style={{ ...typography.bodySmall, color: outcome === 'blocked' ? colors.destructive : colors.mutedForeground }}>{text}</Text>
+    </View>
+  );
+}
 
 // --- User Message ---
 function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
@@ -460,6 +567,20 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [anchorTop, setAnchorTop] = useState(0);
+  const [attachmentPreviewUri, setAttachmentPreviewUri] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  const openAttachment = useCallback(async (attachment: NonNullable<typeof message.attachments>[number]) => {
+    if (!attachment.attachmentId) return;
+    setAttachmentError(null);
+    try {
+      const uri = await fileCacheService.getOrDownloadAttachment(attachment.attachmentId, attachment.name);
+      if (attachment.isImage) setAttachmentPreviewUri(uri);
+      else await Share.share({ url: uri, title: attachment.name });
+    } catch {
+      setAttachmentError('附件已过期、删除或无权访问');
+    }
+  }, [message.attachments]);
 
   const sections = useMemo<DropdownSection[]>(() => [{
     id: 's1',
@@ -513,12 +634,25 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
           {message.attachments && message.attachments.length > 0 && (
             <View style={[styles.attachmentChips, displayText ? { marginTop: 6 } : undefined]}>
               {message.attachments.map((att, i) => (
-                <View key={i} style={styles.attachmentChip}>
+                <Pressable
+                  key={att.attachmentId ?? i}
+                  style={styles.attachmentChip}
+                  onPress={att.attachmentId ? () => void openAttachment(att) : undefined}
+                  accessibilityRole={att.attachmentId ? 'button' : 'text'}
+                  accessibilityLabel={`${att.isImage ? '查看图片' : '下载附件'}：${att.name}${att.size !== undefined ? `，${formatFileSize(att.size)}` : ''}`}
+                >
                   {att.isImage
                     ? <ImageIcon size={12} color={colors.mutedForeground} strokeWidth={2} />
                     : <Paperclip size={12} color={colors.mutedForeground} strokeWidth={2} />}
-                  <Text style={styles.attachmentChipText} numberOfLines={1}>{att.name}</Text>
-                </View>
+                  <View style={{ maxWidth: 180 }}>
+                    <Text style={styles.attachmentChipText} numberOfLines={1}>{att.name}</Text>
+                    {(att.mimeType || att.size !== undefined) && (
+                      <Text style={[styles.attachmentChipText, { fontSize: 10 }]} numberOfLines={1}>
+                        {[att.mimeType?.split('/').at(-1), att.size !== undefined ? formatFileSize(att.size) : undefined].filter(Boolean).join(' · ')}
+                      </Text>
+                    )}
+                  </View>
+                </Pressable>
               ))}
             </View>
           )}
@@ -539,6 +673,10 @@ function UserMessage({ message, onRetry, onFork, isFirstUser, isLoading }: {
       )}
       {message.status === 'pending' && (
         <Text style={styles.pendingText}>发送中...</Text>
+      )}
+      {attachmentError && <Text accessibilityRole="alert" style={styles.retryText}>{attachmentError}</Text>}
+      {attachmentPreviewUri && (
+        <ImageLightbox visible uri={attachmentPreviewUri} onClose={() => setAttachmentPreviewUri(null)} />
       )}
     </View>
   );
@@ -610,9 +748,10 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
     return () => { cancelled = true; };
   }, [segment.filePath, segment.fileSize, ownerParam]);
 
-  // mobile 暂仅预览 md/html；text/code 预览为 web 端能力，移动端这些类型走下载
+  // Mobile only previews inert Markdown workspace files. HTML is fail-closed to Artifact delivery.
   const previewKind = getPreviewFileType(segment.fileName);
-  const isPreviewable = previewKind === 'md' || previewKind === 'html';
+  const isPreviewable = previewKind === 'md';
+  const isRetiredHtml = previewKind === 'html';
   const fileVisual = getFileTypeVisual(segment.fileName);
 
   const handleDownload = useCallback(async () => {
@@ -631,9 +770,13 @@ function InlineFileCard({ segment, onPreviewMd, colors, styles: s }: {
   }, [segment.filePath, segment.fileName, segment.fileSize, segment.owner]);
 
   const handlePress = useCallback(async () => {
+    if (isRetiredHtml) {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
     if (isPreviewable && onPreviewMd) { onPreviewMd(segment.filePath); return; }
     await handleDownload();
-  }, [isPreviewable, onPreviewMd, segment.filePath, handleDownload]);
+  }, [isRetiredHtml, isPreviewable, onPreviewMd, segment.filePath, handleDownload]);
 
   return (
     <TouchableOpacity
@@ -818,7 +961,7 @@ function ThinkingBlock({ message }: { message: MessageItem & { type: 'thinking' 
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
+      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
         <Lightbulb size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel}>{message.streaming ? '思考中...' : '已思考'}</Text>
         <ChevronRight
@@ -837,8 +980,73 @@ function ThinkingBlock({ message }: { message: MessageItem & { type: 'thinking' 
   );
 }
 
-// --- Tool Use Block (unified: tool_use + result) ---
-function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' } }) {
+function detailLineText(line: SharedPresentation['detail'][number]): string {
+  if (typeof line === 'string') return line;
+  if ('k' in line) return `${line.k}：${line.v}`;
+  if ('no' in line) return `${line.no}. ${line.text}`;
+  if ('indent' in line) return line.text;
+  if ('section' in line) return line.section;
+  if ('warn' in line) return line.warn;
+  if ('insight' in line) return `${line.label ? `${line.label}：` : ''}${line.insight}`;
+  if ('risk' in line) return `${line.text}${line.action ? `；${line.action}` : ''}`;
+  if ('verdict' in line) return `${line.text}${line.note ? `；${line.note}` : ''}`;
+  if ('quote' in line) return `${line.quote}${line.source ? ` — ${line.source}` : ''}`;
+  if ('original' in line) return `${line.original}${line.translation ? `；${line.translation}` : ''}`;
+  return line.fields.map((field) => `${field.k}：${field.v}`).join('；');
+}
+
+function displayBlockLines(block: PresentationBlock): string[] {
+  if (block.kind === 'callout') return [block.title, ...block.body, ...(block.detail?.map(detailLineText) ?? [])].filter((value): value is string => !!value);
+  if (block.kind === 'records') return [
+    block.title,
+    ...block.items.map((item) => [
+      item.label,
+      item.value,
+      item.baseline,
+      item.current,
+      item.delta,
+      item.note,
+    ].filter(Boolean).join(' · ')),
+    block.footer,
+  ].filter((value): value is string => !!value);
+  return [block.title, ...(block.body ?? [])];
+}
+
+function CanonicalPresentationBody({ presentation }: { presentation: SharedPresentation }) {
+  const colors = useColors();
+  const lines = [
+    ...presentation.detail.map(detailLineText),
+    ...presentation.display.flatMap(displayBlockLines),
+    ...presentation.evidence.map((item) => `依据：${item}`),
+  ];
+  return (
+    <View style={{ gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs }}>
+      {presentation.summary ? <Text style={{ ...typography.bodySmall, color: colors.foreground }}>{presentation.summary}</Text> : null}
+      {lines.map((line, index) => <Text key={`${index}-${line}`} style={{ ...typography.caption, color: colors.mutedForeground }}>{line}</Text>)}
+      {presentation.receipt ? <Text style={{ ...typography.caption, color: colors.mutedForeground }}>{presentation.receipt.system} · {presentation.receipt.id}</Text> : null}
+    </View>
+  );
+}
+
+function BusinessStepCard({ event, gate }: { event: BusinessStepEventItem; gate?: RawPresentationGate }) {
+  const colors = useColors();
+  const presentation = useMemo(() => selectBusinessStepPresentation(event, gate), [event, gate]);
+  return (
+    <View
+      accessibilityRole={presentation.tone === 'danger' ? 'alert' : 'summary'}
+      accessibilityLabel={[presentation.title, presentation.statusLabel, presentation.summary].filter(Boolean).join('，')}
+      accessibilityLiveRegion={presentation.tone === 'danger' ? 'assertive' : 'polite'}
+      style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, gap: spacing.xs }}
+    >
+      <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{presentation.title}</Text>
+      <Text style={{ ...typography.caption, color: presentation.tone === 'danger' ? colors.destructive : colors.mutedForeground }}>{presentation.statusLabel}</Text>
+      <CanonicalPresentationBody presentation={presentation} />
+    </View>
+  );
+}
+
+// --- Tool Use Block (canonical summary + debug-authorized raw payload) ---
+function ToolUseBlock({ message, gate, onRecovery }: { message: MessageItem & { type: 'tool_use' }; gate?: RawPresentationGate; onRecovery?: () => void }) {
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
@@ -846,67 +1054,64 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
   const [lightboxUri, setLightboxUri] = useState<string | null>(null);
 
   const hasResult = message.resultReady === true;
-  const hasIssue = message.executionStatus === 'failed';
-  const isCancelled = message.executionStatus === 'cancelled';
+  const item = useMemo(() => selectRenderModel({ messages: [message] }).items[0], [message]);
+  const canonical = useMemo(() => selectToolPresentation(item, gate), [gate, item]);
+  const hasIssue = canonical.status === 'failed';
+  const isCancelled = canonical.status === 'cancelled';
 
   // 延迟解析结果中的图片
   const parsed = useMemo(
-    () => (expanded && hasResult) ? parseToolResult(message.result || "") : null,
-    [expanded, hasResult, message.result],
+    () => (expanded && hasResult && canonical.showRaw) ? parseToolResult(message.result || "") : null,
+    [canonical.showRaw, expanded, hasResult, message.result],
   );
   const hasImages = parsed !== null && parsed.images.length > 0;
 
-  const displayInfo = useMemo(
-    () => getToolDisplayInfo(message.toolName, message.toolInput),
-    [message.toolName, message.toolInput],
-  );
-
-  const icon = message.streaming || message.executionStatus === 'running'
-    ? <Wrench size={16} color={colors.mutedForeground} strokeWidth={2} />
+  const icon = canonical.busy
+    ? <ActivityIndicator size={16} color={colors.primary} />
     : hasIssue
       ? <CircleAlert size={16} color={colors.warning} strokeWidth={2} />
       : isCancelled
         ? <CircleSlash2 size={16} color={colors.mutedForeground} strokeWidth={2} />
-    : hasResult
-      ? <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
-      : <ActivityIndicator size={16} color={colors.primary} />;
+        : <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />;
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
-        {icon}
-        {displayInfo.detail ? (
-          <View style={{ flexDirection: 'row', flexShrink: 1, minWidth: 0, alignItems: 'baseline' }}>
-            <Text style={[styles.toolLabel, { flexShrink: 0 }]}>
-              {displayInfo.name}:{' '}
-            </Text>
-            <Text
-              style={[styles.toolLabel, { maxWidth: 384, minWidth: 0 }]}
-              numberOfLines={1}
-              ellipsizeMode={displayInfo.detailTruncate === 'start' ? 'head' : 'tail'}
-            >
-              {displayInfo.detail}
-            </Text>
-            {message.streaming && (
-              <Text style={[styles.toolLabel, { flexShrink: 0 }]}>...</Text>
-            )}
-          </View>
-        ) : (
-          <Text style={styles.toolLabel} numberOfLines={1}>
-            {displayInfo.name}{message.streaming ? '...' : ''}
-          </Text>
-        )}
-        {hasIssue && <Text style={{ color: colors.warning, fontSize: 11 }}>有异常</Text>}
-        <ChevronRight
-          size={16}
-          color={colors.mutedForeground}
-          strokeWidth={2}
-          style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
-        />
+      <Pressable
+        onPress={() => setExpanded(!expanded)}
+        style={[styles.toolRow, { minHeight: 44 }]}
+        accessibilityRole="button"
+        accessibilityLabel={[canonical.title, canonical.statusLabel, canonical.summary, expanded ? '收起详情' : '展开详情'].filter(Boolean).join('，')}
+        accessibilityState={{ expanded, busy: canonical.busy }}
+      >
+        <View accessible={false}>{icon}</View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.toolLabel} numberOfLines={1}>{canonical.title}{canonical.busy ? '...' : ''}</Text>
+          {canonical.summary ? <Text style={{ ...typography.caption, color: colors.mutedForeground }} numberOfLines={1}>{canonical.summary}</Text> : null}
+        </View>
+        <Text style={{ color: hasIssue ? colors.warning : colors.mutedForeground, fontSize: 11 }}>{canonical.statusLabel}</Text>
+        <View accessible={false}>
+          <ChevronRight
+            size={16}
+            color={colors.mutedForeground}
+            strokeWidth={2}
+            style={expanded ? { transform: [{ rotate: '90deg' }] } : undefined}
+          />
+        </View>
       </Pressable>
+      {canonical.recoveryAction && onRecovery ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${canonical.title}，${canonical.recoveryAction.label}`}
+          onPress={onRecovery}
+          style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: spacing.sm }}
+        >
+          <Text style={{ ...typography.bodySmall, fontWeight: '600', color: colors.foreground }}>{canonical.recoveryAction.label}</Text>
+        </Pressable>
+      ) : null}
       {expanded && (
         <View>
-          <ScrollView style={styles.codePreviewScrollable} nestedScrollEnabled>
+          <CanonicalPresentationBody presentation={canonical} />
+          {canonical.showRaw ? <ScrollView style={styles.codePreviewScrollable} nestedScrollEnabled>
             <Text style={styles.codePreviewText}>
               {formatJson(message.toolInput)}
             </Text>
@@ -918,8 +1123,8 @@ function ToolUseBlock({ message }: { message: MessageItem & { type: 'tool_use' }
                 </View>
               </>
             )}
-          </ScrollView>
-          {hasResult && hasImages && (
+          </ScrollView> : null}
+          {canonical.showRaw && hasResult && hasImages && (
             <>
               <Text style={{ ...typo.caption, fontWeight: '600', color: colors.mutedForeground, marginVertical: 6 }}>Result:</Text>
               <View style={styles.imageGrid}>
@@ -969,7 +1174,7 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
 
   return (
     <View>
-      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow}>
+      <Pressable onPress={() => setExpanded(!expanded)} style={styles.toolRow} accessibilityRole="button" accessibilityLabel="展开或折叠详情" accessibilityState={{ expanded }}>
         <CircleCheck size={16} color={colors.mutedForeground} strokeWidth={2} />
         <Text style={styles.toolLabel} numberOfLines={1}>Result: {message.toolName}</Text>
         <ChevronRight
@@ -1017,9 +1222,10 @@ function ToolResultBlock({ message }: { message: MessageItem & { type: 'tool_res
 }
 
 // --- Permission Block ---
-function PermissionBlock({ message, onResponse }: {
+export function PermissionBlock({ message, onResponse, disabled = false }: {
   message: MessageItem & { type: 'permission_request' };
   onResponse?: (interactionId: string, allow: boolean) => Promise<void>;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
@@ -1030,17 +1236,27 @@ function PermissionBlock({ message, onResponse }: {
     <View style={styles.permissionBlock}>
       <Text style={styles.permissionTitle}>{message.toolName}</Text>
       <Markdown style={mdStyles}>{message.toolInput}</Markdown>
-      {message.status === 'pending' && onResponse && (
+      {message.status === 'pending' && (
         <View style={styles.permissionButtons}>
           <TouchableOpacity
+            testID="permission-deny-button"
             style={[styles.permButton, styles.denyButton]}
-            onPress={() => onResponse(message.interactionId, false)}
+            accessibilityRole="button"
+            accessibilityLabel={`拒绝权限请求 ${message.toolName}`}
+            disabled={disabled || !onResponse}
+            accessibilityState={{ disabled: disabled || !onResponse }}
+            onPress={() => onResponse?.(message.interactionId, false)}
           >
             <Text style={styles.denyText}>拒绝</Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="permission-allow-button"
             style={[styles.permButton, styles.allowButton]}
-            onPress={() => onResponse(message.interactionId, true)}
+            accessibilityRole="button"
+            accessibilityLabel={`允许权限请求 ${message.toolName}`}
+            disabled={disabled || !onResponse}
+            accessibilityState={{ disabled: disabled || !onResponse }}
+            onPress={() => onResponse?.(message.interactionId, true)}
           >
             <Text style={styles.allowText}>允许</Text>
           </TouchableOpacity>
@@ -1056,9 +1272,10 @@ function PermissionBlock({ message, onResponse }: {
 }
 
 // --- Ask User Block ---
-function AskUserBlock({ message, onResponse }: {
+export function AskUserBlock({ message, onResponse, disabled = false }: {
   message: MessageItem & { type: 'ask_user' };
   onResponse?: (interactionId: string, answers: AskUserAnswers) => Promise<void>;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   const typo = useChatTypography();
@@ -1112,7 +1329,7 @@ function AskUserBlock({ message, onResponse }: {
   );
 
   const isAnswered = message.status === 'answered';
-  const isPending = message.status === 'pending';
+  const isPending = message.status === 'pending' && !disabled;
 
   // Parse answered multi-select values back to Set for highlight
   const answeredSets = useMemo(() => {
@@ -1154,6 +1371,9 @@ function AskUserBlock({ message, onResponse }: {
                     { flexDirection: 'row', alignItems: 'center', gap: 8 },
                     isSelected && styles.optionSelected,
                   ]}
+                  accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
+                  accessibilityLabel={`${q.header || q.question}: ${opt.label}${opt.description ? `, ${opt.description}` : ''}`}
+                  accessibilityState={{ checked: isSelected, disabled: !isPending }}
                   onPress={() => isPending && handleOptionSelect(q, opt.label)}
                   disabled={!isPending}
                 >
@@ -1185,6 +1405,9 @@ function AskUserBlock({ message, onResponse }: {
                       { flexDirection: 'row', alignItems: 'center', gap: 8 },
                       isCustomSelected && styles.optionSelected,
                     ]}
+                    accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
+                    accessibilityLabel={`${q.header || q.question}: 自定义回答`}
+                    accessibilityState={{ checked: isCustomSelected, disabled: !isPending }}
                     onPress={() => isPending && handleOptionSelect(q, '__custom__')}
                     disabled={!isPending}
                   >
@@ -1205,7 +1428,8 @@ function AskUserBlock({ message, onResponse }: {
                         color: colors.foreground,
                         ...typo.body,
                       }}
-                      placeholder="Enter your answer..."
+                      accessibilityLabel={`${q.header || q.question} 自定义回答`}
+                      placeholder="请输入回答"
                       placeholderTextColor={colors.mutedForeground}
                       value={customInputs[q.question] ?? ''}
                       onChangeText={(text) => setCustomInputs(prev => ({ ...prev, [q.question]: text }))}
@@ -1219,7 +1443,10 @@ function AskUserBlock({ message, onResponse }: {
       })}
       {isPending && onResponse && (
         <TouchableOpacity
+          testID="ask-user-submit"
           style={[styles.submitButton, !hasAnySelection && { opacity: 0.5 }]}
+          accessibilityRole="button"
+          accessibilityLabel="提交回答"
           onPress={handleSubmit}
           disabled={!hasAnySelection}
         >
@@ -1309,23 +1536,34 @@ function FileDownloadCard({ message, onPreviewMd }: {
     return () => { cancelled = true; };
   }, [message.filePath, message.fileSize, ownerParam, artifactId]);
 
-  // mobile 暂仅预览 md/html；text/code 预览为 web 端能力，移动端这些类型走下载
+  // Mobile only previews inert Markdown workspace files. HTML is fail-closed to Artifact delivery.
   const previewKind = getPreviewFileType(message.fileName);
-  const isPreviewable = previewKind === 'md' || previewKind === 'html';
+  const isPreviewable = previewKind === 'md';
+  const isRetiredHtml = previewKind === 'html';
   const fileVisual = getFileTypeVisual(message.fileName);
 
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     try {
-      // Artifact 走签名 URL 直下：/api/artifacts/:id/read-url 拿 15 min URL,
-      // 交给 expo-sharing 打开分享面板（原生下载/保存/发送）。
+      // Artifact only accepts artifactId. The server owns MIME+magic policy and returns a
+      // short, principal-bound grant. Mobile never executes artifact HTML in a WebView.
       if (artifactId) {
-        const res = await authFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/read-url`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await res.json() as { url?: string };
-        if (!body.url) throw new Error('signed url missing');
+        let grant = await fetchMobileArtifactGrant(artifactId);
+        if (selectMobileArtifactViewer(grant) === 'download-only') {
+          const confirmed = await new Promise<boolean>((resolve) => Alert.alert(
+            '确认下载此文件？',
+            mobileArtifactWarning(grant),
+            [
+              { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+              { text: '仍要下载', style: 'destructive', onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          ));
+          if (!confirmed) return;
+          grant = await fetchMobileArtifactGrant(artifactId, true);
+        }
         const { openOrShareUrl } = await import('../../utils/openOrShareFile');
-        await openOrShareUrl(body.url, message.fileName);
+        await openOrShareUrl(grant.readUrl, grant.descriptor.name);
         return;
       }
       const { openOrShareFile } = await import('../../utils/openOrShareFile');
@@ -1334,24 +1572,32 @@ function FileDownloadCard({ message, onPreviewMd }: {
       );
       await openOrShareFile(uri);
     } catch (err: any) {
-      console.error('File download/share failed:', err, 'filePath:', message.filePath);
-      Alert.alert('下载失败', `${err?.message || String(err)}\n\npath: ${message.filePath}`);
+      // Never emit signed URLs/tokens to console, analytics, crash logs or user-visible errors.
+      const messageText = artifactId ? 'Artifact 暂时无法安全打开，请稍后重试' : (err?.message || String(err));
+      if (!artifactId) console.error('File download/share failed for legacy workspace file');
+      Alert.alert('下载失败', messageText);
     } finally {
       setDownloading(false);
     }
   }, [artifactId, message.filePath, message.fileName, message.fileSize, message.owner]);
 
   const handlePress = useCallback(async () => {
-    // Artifact 卡片不支持工作区路径预览，直接触发下载/分享
+    // Formal artifacts stay on the M50-02 artifactId/grant path. Legacy workspace HTML fails closed.
+    if (!artifactId && isRetiredHtml) {
+      Alert.alert('旧预览已停用', 'Mobile V1 不打开 workspace HTML。正式交付请使用 Artifact viewer。');
+      return;
+    }
     if (!artifactId && isPreviewable && onPreviewMd) {
       onPreviewMd(message.filePath);
       return;
     }
     await handleDownload();
-  }, [artifactId, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
+  }, [artifactId, isRetiredHtml, isPreviewable, onPreviewMd, message.filePath, handleDownload]);
 
   return (
     <TouchableOpacity
+      testID={artifactId ? `artifact-${artifactId}` : undefined}
+      accessibilityLabel={`${artifactId ? 'Artifact' : '文件'}：${message.fileName}`}
       style={styles.fileCard}
       onPress={() => void handlePress()}
       activeOpacity={0.7}
@@ -1401,19 +1647,34 @@ function UserVoiceBlock({ message }: { message: MessageItem & { type: 'user-voic
   const colors = useColors();
   const typo = useChatTypography();
   const styles = useMessageStyles(colors, typo);
-  const fallbackText = message.status === 'uploading' ? '上传中...'
-    : message.status === 'transcribing' ? '识别中...'
-    : message.status === 'failed' ? message.failedReason || '发送失败'
-    : '';
+  const player = useVoicePlayer();
+  const playState = player.getState(message.id);
+  const playable = !!message.attachmentId && (message.status === 'ready' || message.status === 'sent');
+  const fallbackText = message.status === 'uploading' ? '上传中…'
+    : message.status === 'transcribing' ? '转写中…'
+    : message.status === 'ready' ? '转写已就绪，请编辑后发送'
+    : message.status === 'failed' ? message.failedReason || '语音处理失败'
+    : '已发送';
   const displayText = message.transcribedText || fallbackText;
+  const durationLabel = `${Math.max(0, Math.round(message.duration))} 秒`;
 
   return (
-    <View style={styles.userBubbleContainer}>
+    <View style={styles.userBubbleContainer} accessible accessibilityRole="summary" accessibilityLabel={`语音 ${durationLabel}，${fallbackText}`}>
       <View style={[styles.userBubble, message.status === 'failed' && styles.failedBubble]}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4 }}>
-          <Mic size={14} color={colors.foreground} strokeWidth={2} style={{ marginTop: 3 }} />
-          <Text style={[styles.userText, { flexShrink: 1 }]}>{displayText}</Text>
-        </View>
+        <Pressable
+          style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 4 }}
+          disabled={!playable}
+          accessibilityRole={playable ? 'button' : undefined}
+          accessibilityLabel={playable ? `播放语音，${durationLabel}` : undefined}
+          onPress={() => {
+            if (!message.attachmentId) return;
+            if (playState === 'idle') player.play(message.id, message.attachmentId);
+            else player.togglePause(message.id);
+          }}
+        >
+          {playable ? (playState === 'playing' ? <Pause size={14} color={colors.foreground} /> : <Play size={14} color={colors.foreground} />) : <Mic size={14} color={colors.foreground} />}
+          <Text style={[styles.userText, { flexShrink: 1 }]}>{durationLabel} · {displayText}</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -1436,6 +1697,7 @@ function getSummary(item: MessageItem): SummaryInfo {
     }
     case 'tool_result': return { text: `Result: ${item.toolName}`, ellipsizeMode: 'tail' };
     case 'subagent': return { text: item.status === 'running' ? `子任务 ${item.agentType}...` : `子任务 ${item.agentType}`, ellipsizeMode: 'tail' };
+    case 'runtime_status': return { text: item.content ?? item.status, ellipsizeMode: 'tail' };
     default: return { text: '', ellipsizeMode: 'tail' };
   }
 }
@@ -1446,16 +1708,17 @@ function renderActivityItem(item: MessageItem) {
     case 'tool_use': return <ToolUseBlock key={item.id} message={item as MessageItem & { type: 'tool_use' }} />;
     case 'tool_result': return <ToolResultBlock key={item.id} message={item as MessageItem & { type: 'tool_result' }} />;
     case 'subagent': return <SubagentBlock key={item.id} message={item as MessageItem & { type: 'subagent' }} />;
+    case 'runtime_status': return <SystemTimelineMessage key={item.id} message={item} />;
     default: return null;
   }
 }
 
-function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }) {
+function ActivityGroupView({ group, gate, onRetry }: { group: ActivityGroup; isLast?: boolean; gate?: RawPresentationGate; onRetry?: (message: MessageItem) => void }) {
   const [expanded, setExpanded] = useState(false);
   const lastItem = group.items[group.items.length - 1];
   const summary = getSummary(lastItem);
   const hasFailure = group.items.some((item) => (
-    (item.type === 'tool_result' && /^Error:|^错误[:：]/i.test(item.result.trim()))
+    (item.type === 'tool_use' && item.executionStatus === 'failed')
     || (item.type === 'subagent' && (item.status === 'failed' || item.status === 'timeout'))
   ));
   const state: AgentActivityState = group.isActive ? 'running' : hasFailure ? 'warning' : 'completed';
@@ -1470,7 +1733,9 @@ function ActivityGroupView({ group }: { group: ActivityGroup; isLast?: boolean }
       onToggle={() => setExpanded((value) => !value)}
     >
       <View style={{ gap: spacing.xs }}>
-        {group.items.map(item => renderActivityItem(item))}
+        {group.items.map(item => item.type === 'tool_use'
+          ? <ToolUseBlock key={item.id} message={item} gate={gate} onRecovery={onRetry ? () => onRetry(item) : undefined} />
+          : renderActivityItem(item))}
       </View>
     </AgentActivityShell>
   );

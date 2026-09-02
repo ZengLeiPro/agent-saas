@@ -62,8 +62,11 @@ test('CI 并行任务与 Build & Check 汇总门禁完整连接', () => {
     'bash scripts/pr-preflight-task.sh coverage "${{ matrix.workspace }}"',
     'bash scripts/pr-preflight-task.sh postgres',
     'bash scripts/pr-preflight-task.sh web',
+    'pnpm mobile-contract',
+    'MOBILE_CONTRACT_RESULT: ${{ needs.mobile_contract.result }}',
+    '"mobile_contract=$MOBILE_CONTRACT_RESULT"',
     'name: Build & Check',
-    'needs: [preflight_checks, coverage, postgres_contracts, web_production]',
+    'needs: [preflight_checks, coverage, postgres_contracts, web_production, mobile_contract]',
     'needs.preflight_checks.result',
     'needs.coverage.result',
     'needs.postgres_contracts.result',
@@ -99,6 +102,31 @@ test('PR 覆盖率范围按依赖方向收窄，未知路径 fail closed', () =>
     'server',
     'web',
   ]);
+});
+
+test('M60-01 Mobile gate 固定工具链、全量顺序且只上传失败日志', () => {
+  const match = workflow.match(/\n  mobile_contract:\n[\s\S]*?(?=\n  # 保留仓库 Ruleset)/u);
+  assert.ok(match, 'mobile_contract job is missing');
+  const job = match[0];
+
+  for (const marker of [
+    'version: 10.18.3',
+    'node-version: ${{ env.NODE_VERSION }}',
+    'cache: pnpm',
+    'cache-dependency-path: pnpm-lock.yaml',
+    'pnpm install --frozen-lockfile',
+    'pnpm mobile-contract',
+    'if: failure()',
+    'retention-days: 1',
+  ]) {
+    assert.match(job, new RegExp(escapeRegExp(marker), 'u'));
+  }
+  assert.doesNotMatch(job, /continue-on-error|\|\| true|retry/u);
+  assert.match(workflow, /NODE_VERSION: '22\.23\.1'/u);
+  assert.match(
+    workflow,
+    /cancel-in-progress: \$\{\{ github\.event_name != 'workflow_dispatch' \}\}/u,
+  );
 });
 
 function escapeRegExp(value) {

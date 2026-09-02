@@ -216,7 +216,7 @@ test('rollback release env is parsed without shell evaluation and must match the
   }
 });
 
-test('Production and Staging deploy modules consume the same private snapshot contract', async () => {
+test('Production and Staging deploy modules enforce the private snapshot commit boundary', async () => {
   const [production, staging, healthRoute] = await Promise.all([
     readFile(new URL('./deploy-production-release.sh', import.meta.url), 'utf8'),
     readFile(new URL('./deploy-staging-release.sh', import.meta.url), 'utf8'),
@@ -226,37 +226,59 @@ test('Production and Staging deploy modules consume the same private snapshot co
     assert.match(deploy, /validateCandidateReleaseReadiness/u);
     assert.doesNotMatch(deploy, /(?:ready|api)\.configIdentity/u);
   }
-  const workerPidCheck = production.indexOf('test -n "${pid:-}"');
+  const workerPidCheck = production.indexOf(
+    'pid="$(cat "$run_root/agent-saas-runtime-worker-$color.pid"',
+  );
   const workerEnvironmentCheck = production.indexOf(
-    'systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value',
-  );
-  const workerBindingCheck = production.indexOf(
-    "label: 'Candidate Worker private ConfigIdentity'",
-  );
-  const workerPromotion = production.indexOf(
-    'echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color',
+    'systemctl show "agent-saas-runtime-worker@$color" --property Environment --value',
   );
   assert.ok(workerPidCheck > -1);
   assert.ok(workerEnvironmentCheck > workerPidCheck);
-  assert.ok(workerBindingCheck > workerEnvironmentCheck);
-  assert.ok(workerPromotion > workerBindingCheck);
-  assert.match(
-    production,
-    /agent-saas-runtime-worker-\$worker_idle\.config-identity\.json/u,
+  assert.match(production, /privateSnapshotPath: snapshotPath/u);
+  assert.match(production, /readReleaseConfigIdentityBinding/u);
+  assert.match(production, /runtime_data_root\/config-governance\/config\.lock/u);
+
+  const candidateInitialCheck = production.indexOf("'Candidate Worker private ConfigIdentity'");
+  const candidateFence = production.indexOf(
+    'acquire_config_governance_fence /mnt/agent-saas/server-data',
+    candidateInitialCheck,
   );
-  const rollbackReadyCheck = production.indexOf('if [ "$worker_restored" = true ]; then');
-  const rollbackBindingCheck = production.indexOf(
-    "label: 'Rollback Worker private ConfigIdentity'",
-    rollbackReadyCheck,
+  const candidateFinalCheck = production.indexOf(
+    "'Candidate Worker final ConfigIdentity'",
+    candidateFence,
+  );
+  const candidateMarker = production.indexOf(
+    'commit_worker_active_color "$worker_idle"',
+    candidateFinalCheck,
+  );
+  assert.ok(candidateInitialCheck > -1);
+  assert.ok(candidateFence > candidateInitialCheck);
+  assert.ok(candidateFinalCheck > candidateFence);
+  assert.ok(candidateMarker > candidateFinalCheck);
+
+  const rollbackInitialCheck = production.indexOf("'Rollback Worker private ConfigIdentity'");
+  const rollbackFence = production.indexOf(
+    'acquire_config_governance_fence /mnt/agent-saas/server-data',
+    rollbackInitialCheck,
+  );
+  const rollbackCandidateStop = production.indexOf(
+    'systemctl disable --now "agent-saas-runtime-worker@$worker_idle"',
+    rollbackFence,
+  );
+  const rollbackFinalCheck = production.indexOf(
+    "'Rollback Worker final ConfigIdentity'",
+    rollbackCandidateStop,
   );
   const rollbackMarker = production.indexOf(
-    'runtime-worker-active-color',
-    rollbackBindingCheck,
+    'commit_worker_active_color "$worker_active"',
+    rollbackFinalCheck,
   );
-  assert.ok(rollbackReadyCheck > -1);
-  assert.ok(rollbackBindingCheck > rollbackReadyCheck);
-  assert.ok(rollbackMarker > rollbackBindingCheck);
-  assert.match(production, /readReleaseConfigIdentityBinding/u);
+  assert.ok(rollbackInitialCheck > -1);
+  assert.ok(rollbackFence > rollbackInitialCheck);
+  assert.ok(rollbackCandidateStop > rollbackFence);
+  assert.ok(rollbackFinalCheck > rollbackCandidateStop);
+  assert.ok(rollbackMarker > rollbackFinalCheck);
+  assert.match(production, /Rollback candidate Worker restored authority/u);
   assert.match(healthRoute, /摘要本身只走平台管理员 API \/ 私有运行态快照，不进匿名响应/u);
   assert.doesNotMatch(
     healthRoute.slice(

@@ -16,7 +16,7 @@ lifecycle="$tmp/deploy-rollback-cleanup-lifecycle.sh"
 test -s "$lifecycle"
 bash -n "$lifecycle"
 
-# The harness executes the exact production arm/disarm/EXIT dispatcher while
+# This harness executes the exact production arm/disarm/EXIT dispatcher while
 # replacing only phase-specific recovery operations with harmless sentinels.
 harness="$tmp/cleanup-harness.sh"
 cat > "$harness" <<'HARNESS'
@@ -185,4 +185,104 @@ done
 grep -F 'arm_deploy_rollback cleanup_acs_failure' "$deploy" >/dev/null
 grep -F 'arm_deploy_rollback cleanup_app_failure' "$deploy" >/dev/null
 
-echo 'deploy rollback EXIT lifecycle, marker failure, and set-e fault injection: ok'
+worker_helpers="$tmp/worker-authority-helpers.sh"
+{
+  sed -n '/^acquire_config_governance_fence() {/,/^}$/p' "$deploy"
+  sed -n '/^validate_worker_release_boundary() {/,/^}$/p' "$deploy"
+  sed -n '/^commit_worker_active_color() {/,/^}$/p' "$deploy"
+} > "$worker_helpers"
+test -s "$worker_helpers"
+bash -n "$worker_helpers"
+
+worker_harness="$tmp/worker-authority-harness.sh"
+cat > "$worker_harness" <<'HARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$CLEANUP_LIFECYCLE"
+source "$WORKER_HELPERS"
+
+systemctl() {
+  case "$1" in
+    is-active) return 0 ;;
+    show) printf 'AGENT_SAAS_ENVIRONMENT=production\n' ;;
+    *) return 0 ;;
+  esac
+}
+kill() { return 0; }
+node() { test "$PRIVATE_BINDING_VALID" = true; }
+
+write_runtime_state() {
+  printf '%s\n' 4242 >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$BOUNDARY_COLOR.pid"
+  printf '%s\n' 4242 >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$BOUNDARY_COLOR.ready"
+  printf '{}\n' >"$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$BOUNDARY_COLOR.config-identity.json"
+}
+
+write_runtime_state
+validate_worker_release_boundary "$BOUNDARY_COLOR" - rc-test '{}' initial
+
+case "$FAULT" in
+  ready-revoked)
+    rm "$AGENT_SAAS_WORKER_RUN_ROOT/agent-saas-runtime-worker-$BOUNDARY_COLOR.ready"
+    ;;
+  snapshot-drift|rollback-snapshot-drift-after-stop)
+    PRIVATE_BINDING_VALID=false
+    ;;
+  none) ;;
+  *) exit 90 ;;
+esac
+
+acquire_config_governance_fence "$PROCESS_ROOT"
+if validate_worker_release_boundary "$BOUNDARY_COLOR" - rc-test '{}' final; then
+  commit_worker_active_color "$BOUNDARY_COLOR"
+fi
+release_config_governance_fence
+HARNESS
+chmod +x "$worker_harness"
+
+run_worker_boundary_case() {
+  local fault="$1" color="$2" initial_marker="$3" expected_marker="$4"
+  local case_dir="$tmp/worker-$fault"
+  mkdir -p "$case_dir/run" "$case_dir/process" "$case_dir/etc"
+  if [ "$initial_marker" != absent ]; then
+    printf '%s\n' "$initial_marker" >"$case_dir/etc/active-color"
+  fi
+  CLEANUP_LIFECYCLE="$lifecycle" \
+    WORKER_HELPERS="$worker_helpers" \
+    AGENT_SAAS_WORKER_RUN_ROOT="$case_dir/run" \
+    AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE="$case_dir/etc/active-color" \
+    PROCESS_ROOT="$case_dir/process" \
+    PRIVATE_BINDING_VALID=true \
+    BOUNDARY_COLOR="$color" \
+    FAULT="$fault" \
+    GITHUB_RUN_ID=4242 \
+    GITHUB_RUN_ATTEMPT=7 \
+    config_identity_reader="$deploy" \
+    bash "$worker_harness"
+  if [ "$expected_marker" = absent ]; then
+    test ! -e "$case_dir/etc/active-color"
+  else
+    test "$(cat "$case_dir/etc/active-color")" = "$expected_marker"
+  fi
+  test ! -e "$case_dir/process/config-governance/config.lock"
+}
+
+# Both failures happen after initial admission and before the final marker commit.
+# The exact production helper must reject each stale state.
+run_worker_boundary_case ready-revoked green absent absent
+run_worker_boundary_case snapshot-drift green absent absent
+run_worker_boundary_case none green absent green
+# Rollback already points at the candidate (green). If old blue loses its private
+# binding after the candidate stop, the final check must leave candidate authority.
+run_worker_boundary_case rollback-snapshot-drift-after-stop blue green green
+
+source "$lifecycle"
+source "$worker_helpers"
+fence_root="$tmp/fence-conflict"
+mkdir -p "$fence_root/config-governance/config.lock"
+CONFIG_GOVERNANCE_FENCE=
+if acquire_config_governance_fence "$fence_root" 2>/dev/null; then
+  echo 'existing config mutation fence must block Worker marker commit' >&2
+  exit 1
+fi
+
+echo 'deploy rollback lifecycle and Worker authority boundary fault injection: ok'

@@ -33,6 +33,14 @@ emit_rollback_attempted_sentinel() {
 # trap may only dispatch through script-scope state and handlers.
 DEPLOY_ROLLBACK_ARMED=false
 DEPLOY_ROLLBACK_HANDLER=
+CONFIG_GOVERNANCE_FENCE=
+
+release_config_governance_fence() {
+  if [ -n "$CONFIG_GOVERNANCE_FENCE" ]; then
+    rm -rf "$CONFIG_GOVERNANCE_FENCE"
+    CONFIG_GOVERNANCE_FENCE=
+  fi
+}
 
 arm_deploy_rollback() {
   DEPLOY_ROLLBACK_HANDLER="$1"
@@ -51,7 +59,7 @@ deploy_rollback_cleanup() {
   local exit_status=$?
   trap - EXIT
   trap '' HUP INT TERM
-  # Cleanup is one-shot, best-effort, and must run every recovery step even when
+  # Cleanup is one-shot, best-effort, and must attempt every recovery step even when
   # the marker or an earlier recovery operation fails. The strict stdout sentinel
   # is an independent run-attempt-bound receipt when marker installation fails.
   set +e
@@ -59,6 +67,7 @@ deploy_rollback_cleanup() {
     local rollback_handler="$DEPLOY_ROLLBACK_HANDLER"
     DEPLOY_ROLLBACK_ARMED=false
     DEPLOY_ROLLBACK_HANDLER=
+    release_config_governance_fence
     emit_rollback_attempted_sentinel
     mark_rollback_attempted
     "$rollback_handler"
@@ -137,6 +146,62 @@ if (identity.credentialVersionDigest) {
 fs.writeFileSync(`${target}.candidate`, `${Object.entries(desired).map(([key, value]) => `${key}=${value}`).join('\n')}\n`, { mode: 0o600 });
 fs.renameSync(`${target}.candidate`, target);
 NODE
+}
+
+acquire_config_governance_fence() {
+  local runtime_data_root="$1"
+  local fence="$runtime_data_root/config-governance/config.lock"
+  test -z "$CONFIG_GOVERNANCE_FENCE" || return 1
+  mkdir -p "$(dirname "$fence")"
+  if ! mkdir "$fence"; then
+    echo "Config mutation is active; refusing Worker authority commit: $fence" >&2
+    return 1
+  fi
+  if ! printf '{"pid":%s,"createdAt":"%s"}\n' "$$" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >"$fence/owner.json"; then
+    rm -rf "$fence"
+    return 1
+  fi
+  CONFIG_GOVERNANCE_FENCE="$fence"
+}
+
+validate_worker_release_boundary() {
+  local color="$1" env_path="$2" expected_release_id="$3" expected_json="$4" label="$5"
+  local run_root="${AGENT_SAAS_WORKER_RUN_ROOT:-/run}"
+  local pid ready snapshot_path
+  pid="$(cat "$run_root/agent-saas-runtime-worker-$color.pid" 2>/dev/null || true)"
+  ready="$(cat "$run_root/agent-saas-runtime-worker-$color.ready" 2>/dev/null || true)"
+  snapshot_path="$run_root/agent-saas-runtime-worker-$color.config-identity.json"
+  systemctl is-active --quiet "agent-saas-runtime-worker@$color" \
+    && test -n "$pid" && test "$pid" = "$ready" && kill -0 "$pid" 2>/dev/null \
+    && systemctl show "agent-saas-runtime-worker@$color" --property Environment --value \
+      | tr ' ' '\n' | grep -Fx 'AGENT_SAAS_ENVIRONMENT=production' >/dev/null \
+    || return 1
+  node --input-type=module - "$env_path" "$snapshot_path" "$expected_release_id" \
+    "$expected_json" "$label" "$config_identity_reader" <<'NODE'
+import { pathToFileURL } from 'node:url';
+const [envPath, snapshotPath, releaseId, expectedJson, label, readerPath] = process.argv.slice(2);
+const {
+  readReleaseConfigIdentityBinding,
+  validatePrivateConfigIdentityReleaseBinding,
+} = await import(pathToFileURL(readerPath));
+const binding = envPath === '-'
+  ? { releaseId, expectedConfigIdentity: JSON.parse(expectedJson) }
+  : await readReleaseConfigIdentityBinding(envPath);
+await validatePrivateConfigIdentityReleaseBinding({
+  privateSnapshotPath: snapshotPath,
+  ...binding,
+  label,
+});
+NODE
+}
+
+commit_worker_active_color() {
+  local color="$1"
+  local marker="${AGENT_SAAS_WORKER_ACTIVE_COLOR_FILE:-/etc/agent-saas/runtime-worker-active-color}"
+  local candidate="$marker.candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  printf '%s\n' "$color" >"$candidate"
+  mv -f "$candidate" "$marker"
 }
 
 deploy_acs() {
@@ -320,7 +385,7 @@ deploy_app() {
   DEPLOY_APP_ROLLBACK_NGINX_CHANGED=false
   cleanup_app_failure() {
     local api_restored=false worker_restored=false
-    local rollback_pid rollback_ready
+    local candidate_stopped=false candidate_restored=false
     local app_committed="$DEPLOY_APP_ROLLBACK_COMMITTED"
     local api_active="$DEPLOY_APP_ROLLBACK_API_ACTIVE" api_idle="$DEPLOY_APP_ROLLBACK_API_IDLE"
     local worker_active="$DEPLOY_APP_ROLLBACK_WORKER_ACTIVE" worker_idle="$DEPLOY_APP_ROLLBACK_WORKER_IDLE"
@@ -376,7 +441,7 @@ deploy_app() {
         echo 'ERROR: preserving candidate API release/env because old traffic or candidate stop is unverified' >&2
       fi
 
-      # 旧 Worker 必须重新 ready 且私有身份匹配旧 release env，随后才能停候选、翻 marker。
+      # 旧 Worker 先完成初检；停候选后，在配置 mutation fence 内再复检并提交 marker。
       rm -f "/run/agent-saas-runtime-worker-$worker_active.pid" \
         "/run/agent-saas-runtime-worker-$worker_active.ready" \
         "/run/agent-saas-runtime-worker-$worker_active.draining" \
@@ -385,56 +450,75 @@ deploy_app() {
       if systemctl enable "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1 \
         && systemctl restart "agent-saas-runtime-worker@$worker_active" >/dev/null 2>&1; then
         for _ in $(seq 1 180); do
-          rollback_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
-          rollback_ready="$(cat "/run/agent-saas-runtime-worker-$worker_active.ready" 2>/dev/null || true)"
-          if systemctl is-active --quiet "agent-saas-runtime-worker@$worker_active" \
-            && [ -n "$rollback_pid" ] && [ "$rollback_pid" = "$rollback_ready" ] \
-            && kill -0 "$rollback_pid" 2>/dev/null; then
+          if validate_worker_release_boundary "$worker_active" \
+            "/etc/agent-saas/runtime-worker-$worker_active.release.env" - - \
+            'Rollback Worker private ConfigIdentity'; then
             worker_restored=true
             break
           fi
           sleep 1
         done
       fi
-      if [ "$worker_restored" = true ]; then
-        if ! node --input-type=module - \
-          "/etc/agent-saas/runtime-worker-$worker_active.release.env" \
-          "/run/agent-saas-runtime-worker-$worker_active.config-identity.json" \
-          "$config_identity_reader" <<'NODE'
-import { pathToFileURL } from 'node:url';
-const [envPath, snapshotPath, readerPath] = process.argv.slice(2);
-const {
-  readReleaseConfigIdentityBinding,
-  validatePrivateConfigIdentityReleaseBinding,
-} = await import(pathToFileURL(readerPath));
-const binding = await readReleaseConfigIdentityBinding(envPath);
-await validatePrivateConfigIdentityReleaseBinding({
-  privateSnapshotPath: snapshotPath,
-  ...binding,
-  label: 'Rollback Worker private ConfigIdentity',
-});
-NODE
-        then
-          worker_restored=false
-        fi
-      fi
       if [ "$worker_restored" = true ] \
-        && systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 \
-        && ! systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
-        rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
-        printf '%s\n' "$worker_active" >/etc/agent-saas/runtime-worker-active-color
-        if [ -n "$worker_idle_previous" ]; then
-          ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
+        && acquire_config_governance_fence /mnt/agent-saas/server-data; then
+        if ! validate_worker_release_boundary "$worker_active" \
+          "/etc/agent-saas/runtime-worker-$worker_active.release.env" - - \
+          'Rollback Worker private ConfigIdentity'; then
+          worker_restored=false
         else
-          rm -f "/opt/agent-saas-app/worker/$worker_idle" || true
+          systemctl disable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1
+          if ! systemctl is-active --quiet "agent-saas-runtime-worker@$worker_idle"; then
+            candidate_stopped=true
+            if validate_worker_release_boundary "$worker_active" \
+              "/etc/agent-saas/runtime-worker-$worker_active.release.env" - - \
+              'Rollback Worker final ConfigIdentity' \
+              && commit_worker_active_color "$worker_active"; then
+              release_config_governance_fence
+              rm -f "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
+              if [ -n "$worker_idle_previous" ]; then
+                ln -sfn "$worker_idle_previous" "/opt/agent-saas-app/worker/$worker_idle" || true
+              else
+                rm -f "/opt/agent-saas-app/worker/$worker_idle" || true
+              fi
+              if [ "$had_worker_env" = true ]; then
+                cp -a "$rollback_root/worker.release.env" "$worker_env" || true
+              else
+                rm -f "$worker_env" || true
+              fi
+            else
+              worker_restored=false
+            fi
+          else
+            worker_restored=false
+          fi
         fi
-        if [ "$had_worker_env" = true ]; then
-          cp -a "$rollback_root/worker.release.env" "$worker_env" || true
-        else
-          rm -f "$worker_env" || true
-        fi
+        release_config_governance_fence
       else
-        echo 'ERROR: preserving candidate Worker release/env because old authority or candidate stop is unverified' >&2
+        worker_restored=false
+      fi
+      if [ "$worker_restored" != true ]; then
+        if [ "$candidate_stopped" = true ]; then
+          rm -f "/run/agent-saas-runtime-worker-$worker_idle.pid" \
+            "/run/agent-saas-runtime-worker-$worker_idle.ready" \
+            "/run/agent-saas-runtime-worker-$worker_idle.draining" \
+            "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" || true
+          systemctl reset-failed "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1 || true
+          if systemctl enable --now "agent-saas-runtime-worker@$worker_idle" >/dev/null 2>&1; then
+            for _ in $(seq 1 180); do
+              if validate_worker_release_boundary "$worker_idle" "$worker_env" - - \
+                'Rollback candidate Worker restored authority'; then
+                candidate_restored=true
+                break
+              fi
+              sleep 1
+            done
+          fi
+        fi
+        if [ "$candidate_stopped" = true ] && [ "$candidate_restored" != true ]; then
+          echo 'ERROR: Worker rollback failed after candidate stop; candidate restart is not ready' >&2
+        else
+          echo 'ERROR: preserving candidate Worker authority because rollback final validation failed' >&2
+        fi
       fi
     fi
   }
@@ -518,25 +602,17 @@ EOF
     [ -n "$pid" ] && [ "$pid" = "$ready" ] && kill -0 "$pid" 2>/dev/null && break
     sleep 1
   done
-  test -n "${pid:-}" && test "$pid" = "${ready:-}" && kill -0 "$pid"
-  systemctl show "agent-saas-runtime-worker@$worker_idle" --property Environment --value \
-    | tr ' ' '\n' | grep -Fx 'AGENT_SAAS_ENVIRONMENT=production' >/dev/null
-  node --input-type=module - "$MANIFEST_PATH" \
-    "/run/agent-saas-runtime-worker-$worker_idle.config-identity.json" \
-    "$config_identity" "$config_identity_reader" <<'NODE'
-import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
-const [manifestPath, snapshotPath, expectedJson, readerPath] = process.argv.slice(2);
-const { validatePrivateConfigIdentityReleaseBinding } = await import(pathToFileURL(readerPath));
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-await validatePrivateConfigIdentityReleaseBinding({
-  privateSnapshotPath: snapshotPath,
-  releaseId: manifest.releaseId,
-  expectedConfigIdentity: JSON.parse(expectedJson),
-  label: 'Candidate Worker private ConfigIdentity',
-});
-NODE
-  echo "$worker_idle" >/etc/agent-saas/runtime-worker-active-color
+  validate_worker_release_boundary "$worker_idle" - "$release_id" "$config_identity" \
+    'Candidate Worker private ConfigIdentity'
+  acquire_config_governance_fence /mnt/agent-saas/server-data
+  if ! validate_worker_release_boundary "$worker_idle" - "$release_id" "$config_identity" \
+    'Candidate Worker final ConfigIdentity'; then
+    release_config_governance_fence
+    echo 'Candidate Worker lost authority before marker commit' >&2
+    exit 1
+  fi
+  commit_worker_active_color "$worker_idle"
+  release_config_governance_fence
 
   old_worker_pid="$(cat "/run/agent-saas-runtime-worker-$worker_active.pid" 2>/dev/null || true)"
   if [ -n "$old_worker_pid" ]; then

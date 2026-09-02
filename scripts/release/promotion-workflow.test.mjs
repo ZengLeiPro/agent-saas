@@ -552,9 +552,13 @@ test('workflow preserves partial matrices, rollback evidence, migrations, and ac
   assert.doesNotMatch(deploy, /ready\.configIdentity/u);
   assert.match(
     deploy,
-    /systemctl show "agent-saas-runtime-worker@\$worker_idle" --property Environment --value/u,
+    /systemctl show "agent-saas-runtime-worker@\$color" --property Environment --value/u,
   );
   assert.match(deploy, /grep -Fx 'AGENT_SAAS_ENVIRONMENT=production'/u);
+  assert.match(deploy, /runtime_data_root\/config-governance\/config\.lock/u);
+  assert.match(deploy, /acquire_config_governance_fence \/mnt\/agent-saas\/server-data/u);
+  assert.match(deploy, /Candidate Worker final ConfigIdentity/u);
+  assert.match(deploy, /Rollback Worker final ConfigIdentity/u);
   assert.match(deploy, /DEPLOY_APP_ROLLBACK_COMMITTED=true/u);
   assert.match(
     deploy,

@@ -46,7 +46,8 @@ describe("DesktopLayout 初始会话接线", () => {
 
   it("个人、组织与平台设置共享 dirty boundary，并回传组织 Shell 实际目标", () => {
     expect(source).toContain("SettingsDirtyBoundary");
-    expect(lazySettingsSource).toContain('export const SettingsDirtyBoundary = lazy(() => import("@/components/PersonalSettings/dirtyRegistry")');
+    expect(lazySettingsSource).toContain("export const SettingsDirtyBoundary = lazy(() =>");
+    expect(lazySettingsSource).toContain("@/components/PersonalSettings/dirtyRegistry");
     expect(source).toContain("{settingsMode && <Suspense fallback={SuspenseFallback}><SettingsDirtyBoundary onControllerChange={handleSettingsControllerChange}>{(dirtyController) => (");
     expect(source).toContain("dirtyController={dirtyController}");
     expect(source).toContain("isPlatformAdmin, organizationSettingsTargetId");

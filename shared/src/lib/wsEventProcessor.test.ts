@@ -676,7 +676,7 @@ describe('processWsEvent - 基础交互事件', () => {
     expect((ctrl.messages[0] as Extract<MessageItem, { type: 'permission_request' }>).status).toBe('pending');
   });
 
-  it('pending_interactions：批量补齐未存在的卡片，已存在的跳过', () => {
+  it('pending_interactions：仅为当前会话补齐卡片，已存在的跳过', () => {
     const ctrl = makeController([
       { id: 'p', type: 'permission_request', interactionId: 'exist', toolName: 'T', toolInput: '', status: 'pending' },
     ]);
@@ -690,42 +690,14 @@ describe('processWsEvent - 基础交互事件', () => {
           { interactionId: 'new-p', type: 'permission_request', toolName: 'Bash', toolInput: { cmd: 'ls' } },
           { interactionId: 'new-a', type: 'ask_user', questions: [{ question: 'q', header: 'h', options: [], multiSelect: false }] },
         ],
-      },
-      ctx,
-      freshBlock(),
-      { value: 's' },
-      's',
-    );
-    // 原 1 条 + 等待状态 + 新增 2 条
+      }, ctx, freshBlock(), { value: 's' }, 's');
+    // 原 1 条 + 等待状态 + 当前会话新增 2 条
     expect(ctrl.messages).toHaveLength(4);
     expect(ctrl.messages[1]).toMatchObject({ type: 'runtime_status', status: 'waiting_user', content: '待补充' });
     expect(ctrl.messages[2]).toMatchObject({ type: 'permission_request', interactionId: 'new-p' });
     expect(ctrl.messages[3]).toMatchObject({ type: 'ask_user', interactionId: 'new-a' });
   });
 
-  it('A 的恢复事件不会修改当前 B 会话的 interaction 卡片', () => {
-    const ctrl = makeController([
-      { id: 'b', type: 'ask_user', interactionId: 'b-card', questions: [], status: 'pending' },
-    ]);
-    const { ctx } = makeCtx(ctrl);
-    dispatch(
-      { type: 'pending_interactions', sessionId: 'A', interactions: [] },
-      ctx,
-      freshBlock(),
-      { value: 'B' },
-      'B',
-    );
-    dispatch(
-      { type: 'interaction_resolved', sessionId: 'A', interactionId: 'b-card', response: { answers: { q: 'wrong' } } },
-      ctx,
-      freshBlock(),
-      { value: 'B' },
-      'B',
-    );
-    expect(ctrl.messages).toEqual([
-      { id: 'b', type: 'ask_user', interactionId: 'b-card', questions: [], status: 'pending' },
-    ]);
-  });
 });
 
 describe('processWsEvent - subagent', () => {

@@ -1502,13 +1502,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
         userMsgIndex: wsUserMsgIndexRef.current,
         sessionOwnerRef,
       };
-      processWsEvent(
-        event,
-        ctx,
-        wsBlockRef.current,
-        wsLatestSessionIdRef.current,
-        immediateSessionIdRef.current ?? sessionIdRef.current,
-      );
+      processWsEvent(event, ctx, wsBlockRef.current, wsLatestSessionIdRef.current, immediateSessionIdRef.current ?? sessionIdRef.current);
     };
     const unsub = wsClient.onMessage((envelope: WsEnvelope) => {
       const data = envelope.data as WsEvent;
@@ -1701,11 +1695,7 @@ export function useChatAppState(options?: ChatAppStateOptions): ChatAppState {
           });
         }
         if (inline?.pendingInteractions) {
-          projectRecoveredInteraction({
-            type: 'pending_interactions',
-            sessionId: inline.sessionId,
-            interactions: inline.pendingInteractions,
-          });
+          projectRecoveredInteraction({ type: 'pending_interactions', sessionId: inline.sessionId, interactions: inline.pendingInteractions });
         }
         if (!inline?.queueSnapshot || !inline.runtime || !inline.pendingInteractions) {
           void recoverQueueSnapshotAfterSyncOverflow(sessionRef.current);
